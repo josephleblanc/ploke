@@ -41,20 +41,15 @@ use super::{
 
 #[derive(Debug, Clone)]
 pub(crate) struct HeadlessRun {
-    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) attempts: Vec<HeadlessAttempt>,
-    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) events: Vec<Event>,
-    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) validations:
-        Vec<CargoValidationObservation>,
-    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) debug_relay: DebugRelay,
-    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) prompt_diagnostics:
-        Vec<PromptDiagnostic>,
-    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) full_response_records:
-        Vec<RawFullResponseRecord>,
-    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) next_response_index: usize,
-    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) terminal:
-        Option<HeadlessTerminal>,
-    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) model_route:
-        Option<ModelRouteRecord>,
+    pub(super) attempts: Vec<HeadlessAttempt>,
+    pub(super) events: Vec<Event>,
+    pub(super) validations: Vec<CargoValidationObservation>,
+    pub(super) debug_relay: DebugRelay,
+    pub(super) prompt_diagnostics: Vec<PromptDiagnostic>,
+    pub(super) full_response_records: Vec<RawFullResponseRecord>,
+    pub(super) next_response_index: usize,
+    pub(super) terminal: Option<HeadlessTerminal>,
+    pub(super) model_route: Option<ModelRouteRecord>,
 }
 
 #[derive(Debug, Clone, Copy)]

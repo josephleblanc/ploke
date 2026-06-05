@@ -26,6 +26,126 @@ Related earlier reports:
 - [`2026-05-22-prototype1-google-post-apply-indexing-timeout.md`](./2026-05-22-prototype1-google-post-apply-indexing-timeout.md)
 - [`2026-05-25-headless-tui-timeout-submission-admission.md`](./2026-05-25-headless-tui-timeout-submission-admission.md)
 
+## 2026-06-05 Post-Refactor Hypothesis
+
+Status: hypothesis from the fresh Gemini 3.5 Flash run; not yet reproduced by a
+focused test.
+
+Fresh evidence:
+
+```text
+campaign = p1-admissionfix-g35flash-p25flash-20260604-221908
+parent = node-740a46b2efbdf119
+child plan = prototype1/messages/child-plan/node-740a46b2efbdf119.json
+children = []
+rejected_surface_attempts = 10
+error = broad harness admitted 0 child transaction(s), fewer than required minimum 5
+```
+
+The old zero-admission persistence bug is not the active failure here: the
+rejected-attempt-only child-plan message exists. The downstream admission guard
+is also behaving conservatively: no submitted result JSON exists for these
+slots, so no child transaction should be admitted.
+
+The current suspect is the refactored headless bridge lifecycle in
+`crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter/tui_bridge.rs`.
+`run_attempt` records applied edits when a completed tool batch is settled, but
+it only runs request-declared validation and returns `HeadlessTerminal::Applied`
+inside the later `ChatTurnFinished { outcome: "completed" }` branch. If the
+model keeps issuing tool calls, stalls, or otherwise never reaches that clean
+completed turn boundary after one or more edits have already been applied, the
+outer `run_headless_with_model_inner` wall-clock timeout fires and
+`timeout_terminal_for_run` classifies the slot as `AppliedTimedOut`.
+
+Line-level boundary in the refactored file:
+
+```text
+tui_bridge.rs:121-143   outer 900s timeout wraps the whole attempt loop
+tui_bridge.rs:497-562   ToolCallCompleted settles staged batches and extends `applied`
+tui_bridge.rs:662-792   ChatTurnFinished is the only path that runs declared validation and returns Applied
+tui_bridge.rs:819-826   outer timeout converts any run with applied evidence into AppliedTimedOut
+```
+
+Broken contract, restated for the refactored bridge:
+
+```text
+A broad headless-TUI slot with applied edits must cross a bounded post-apply
+validation/admission boundary owned by the harness. It must not depend on the
+model eventually producing a clean completed chat turn after the current tool
+batch has already applied candidate edits.
+```
+
+The missing regression should exercise the event-loop path, not only the
+terminal classifier. It should construct or replay a post-apply turn where the
+tool batch has applied at least one allowed edit but no subsequent completed
+chat-turn boundary arrives before the global timeout. Expected behavior after a
+fix: the harness either runs request-declared validation and publishes an
+`Applied` submitted result when validation passes, or returns a typed
+non-admission terminal quickly when validation fails or is unsupported. It
+should not burn the full slot timeout as `AppliedTimedOut` merely because the
+model did not decide to stop.
+
+## 2026-06-05 Refined Source Boundary: Inner Policy Repair Loop
+
+Status: source-level ordering bug identified and removed locally by the user.
+The fresh `p1-admissionfix-g35flash-p25flash-20260604-221908` artifacts do not
+prove this branch fired, because every sidecar recorded zero `turn` events and
+the branch was only reachable inside the `ChatTurnFinished` handler. The source
+boundary was still wrong and could explain future or adjacent post-apply stalls.
+
+The removed block lived inside `run_attempt`'s `ChatTurnFinished` arm, before the
+adapter checked `outcome != "completed"`, before it checked whether `applied` was
+empty, and before request-declared validation/classification. It consumed
+`policy_feedbacks`, submitted an in-place repair prompt with `submit_prompt`,
+cleared local batch state, replaced `active_parent_id`, and continued inside the
+same attempt.
+
+That placement mixed two responsibilities:
+
+- `policy_feedbacks` describe staged edits rejected before application, such as
+  empty material edits, protected/out-of-surface paths, or same-batch overlap.
+- applied-edit admission is a post-turn harness boundary. Once at least one
+  allowed edit has been applied and the chat turn completes, rejected side
+  proposals must not outrank request-declared validation of the applied
+  candidate.
+
+Broken source contract for that block:
+
+```text
+Rejected side proposals may inform an outer retry only when no allowed edit has
+been applied. They must not create an inner hidden sub-turn after an allowed edit
+has already been applied, and they must not bypass the post-stop validation /
+submitted-result admission path.
+```
+
+Correct layering:
+
+```text
+run_attempt observes one TUI chat/tool session.
+run_headless_with_model_inner owns retries between fresh TUI attempts.
+```
+
+If a policy rejection leaves no applied edit, `run_attempt` should return an
+`AttemptEnd::Retry*` value and let the outer loop rebuild `next_prompt`,
+advance the attempt budget, drop the old runtime, and start a fresh session. If
+an allowed edit has already been applied, `run_attempt` should continue through
+post-turn validation and terminal classification.
+
+After the local removal, the current `ChatTurnFinished` ordering in
+`tui_bridge.rs` is:
+
+```text
+provider failure checks
+outcome != "completed" -> abort/retry handling
+applied.is_empty() -> no-edit retry handling
+applied non-empty -> request-declared validation -> classify_applied_terminal
+```
+
+Missing repro for this specific boundary: construct or replay a completed turn
+where one staged proposal is rejected by policy and another allowed proposal is
+applied. The expected terminal should validate/classify the applied candidate,
+not submit an inner repair prompt or wait for another hidden turn.
+
 ## Broken Contract
 
 A broad headless-TUI slot should preserve an authoritative final status for an

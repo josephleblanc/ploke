@@ -3,41 +3,26 @@
 use std::{
     collections::{HashMap, VecDeque},
     fs,
-    marker::PhantomData,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, mpsc::Receiver},
     time::{Duration, Instant},
 };
 
-use ploke_llm::{
-    ModelId, ProviderKey,
-    manager::RecordedResponse,
-    router_only::{RouterVariants, google::Google, openrouter::OpenRouter},
-};
-use ploke_records::{
-    agent_turn::{
-        AgentTurnArtifactRecord, MessageSnapshotRecord, ModelRouteRecord, ObservedTurnEventRecord,
-        PatchArtifactRecord, ToolCompletedRecord, ToolFailedRecord, ToolRequestRecord,
-        TurnFinishedRecord,
-    },
-    llm_response::RawFullResponseRecord,
-};
+use ploke_llm::{manager::RecordedResponse, router_only::RouterVariants};
+use ploke_records::llm_response::RawFullResponseRecord;
 use ploke_tui::app::commands::harness::TestAppAccessor;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-use super::super::{
-    harness_request::{
-        BroadEditPolicy, EvidenceRoot, EvidenceRootKind, EvidenceRootLocation, contract,
-    },
-    surface,
+use super::super::harness_request::{
+    BroadEditPolicy, EvidenceRoot, EvidenceRootKind, EvidenceRootLocation, contract,
 };
 use super::{
-    ArtifactDelta, Budget, Error, LIVE_TRACE_ENV, ModelSelection, POST_APPLY_INDEX_START_GRACE_MS,
+    Budget, Error, LIVE_TRACE_ENV, ModelSelection, POST_APPLY_INDEX_START_GRACE_MS,
     POST_APPLY_INDEX_TIMEOUT_SECS, POST_APPLY_STATUS_TIMEOUT_SECS,
     harness_io::{
-        AppliedEdit, CargoValidationObservation, DebugRelay, Event, Feedback, HeadlessAttempt,
+        AppliedEdit, CargoValidationObservation, Event, Feedback, HeadlessAttempt,
         HeadlessAttemptResult, HeadlessRun, HeadlessTerminal, Outcome, PromptDiagnostic, Reject,
         Tool, join_paths, latest_failed_cargo_validation_feedback, observe_cargo_validation,
         observed_headless_error, push_changed_paths, truncate_chars,
@@ -144,6 +129,8 @@ async fn run_headless_with_model_inner(
                 model.as_ref(),
             )
             .await?;
+            // TODO: This doesn't need to take &mut runtime, since it drops it
+            // right after anyways.
             let end = run_attempt(
                 &mut runtime,
                 parent_id,
@@ -156,6 +143,7 @@ async fn run_headless_with_model_inner(
                 response_rx,
             )
             .await?;
+            // TODO: Should happen inside `run_attempt`
             runtime.app.pump_pending_events().await;
             drain_debug(&mut runtime.debug_rx, &mut run);
             drop(runtime);
@@ -177,10 +165,7 @@ async fn run_headless_with_model_inner(
                             last: feedback,
                         });
                     }
-                    observer.emit(format!(
-                        "retry attempt={turn} feedback={}",
-                        truncate_chars(&feedback, 240)
-                    ));
+                    observer.emit(format!("retry attempt={turn} feedback={}", feedback,));
                     next_prompt = attempt_prompt(
                         workspace_path,
                         edit_policy,
@@ -240,7 +225,7 @@ async fn run_headless_with_model_inner(
     Ok(run)
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) async fn start_attempt_runtime(
+pub(super) async fn start_attempt_runtime(
     workspace_path: &Path,
     extra_read_roots: &[PathBuf],
     prompt: String,
@@ -307,7 +292,7 @@ fn write_scope_for_policy(
 }
 
 #[derive(Debug)]
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) enum AttemptEnd {
+pub(super) enum AttemptEnd {
     Terminal(HeadlessTerminal),
     RetryFailure(String),
     RetryNoEdit {
@@ -320,13 +305,13 @@ pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) enum AttemptEnd 
 const MAX_POLICY_REPAIR_TURNS: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) enum AppliedItem {
+pub(super) enum AppliedItem {
     Edit(Uuid),
     Create(Uuid),
 }
 
 impl AppliedItem {
-    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn id(self) -> Uuid {
+    pub(super) fn id(self) -> Uuid {
         match self {
             Self::Edit(id) | Self::Create(id) => id,
         }
@@ -334,13 +319,13 @@ impl AppliedItem {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) enum StagedItem {
+pub(super) enum StagedItem {
     Edit(Uuid),
     Create(Uuid),
 }
 
 impl StagedItem {
-    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn id(self) -> Uuid {
+    pub(super) fn id(self) -> Uuid {
         match self {
             Self::Edit(id) | Self::Create(id) => id,
         }
@@ -355,17 +340,14 @@ impl StagedItem {
 }
 
 #[derive(Debug, Default)]
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) struct ToolBatch {
+pub(super) struct ToolBatch {
     expected: Vec<ploke_core::ArcStr>,
     completed: Vec<ploke_core::ArcStr>,
     staged: Vec<StagedItem>,
 }
 
 impl ToolBatch {
-    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn request(
-        &mut self,
-        call_id: ploke_core::ArcStr,
-    ) {
+    pub(super) fn request(&mut self, call_id: ploke_core::ArcStr) {
         if !self.expected.contains(&call_id) {
             self.expected.push(call_id);
         }
@@ -392,10 +374,10 @@ impl ToolBatch {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) struct Candidate {
-    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) item: StagedItem,
-    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) proposed_at_ms: i64,
-    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) paths: Vec<PathBuf>,
+pub(super) struct Candidate {
+    pub(super) item: StagedItem,
+    pub(super) proposed_at_ms: i64,
+    pub(super) paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Default)]
@@ -407,7 +389,8 @@ struct BatchOutcome {
     retry: Option<String>,
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) async fn run_attempt(
+// TODO: I think this actually wants to be a method of `HeadlessRun`
+pub(super) async fn run_attempt(
     runtime: &mut crate::runner::WorkspaceTuiRuntime,
     mut active_parent_id: Uuid,
     workspace_path: &Path,
@@ -714,23 +697,6 @@ pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) async fn run_att
                 }
                 let repaired_failure = pending_retry.take();
 
-                if !policy_feedbacks.is_empty() && policy_repair_turns < MAX_POLICY_REPAIR_TURNS {
-                    let feedback = policy_feedbacks.join("\n");
-                    policy_feedbacks.clear();
-                    policy_repair_turns += 1;
-                    let prompt = policy_repair_prompt(&feedback, !applied.is_empty());
-                    batches.clear();
-                    pending_events.clear();
-                    active_parent_id = submit_prompt(&runtime.app, prompt).await?;
-                    observer.emit(format!(
-                        "attempt {turn} policy_repair_prompt parent={} count={} feedback={}",
-                        active_parent_id,
-                        policy_repair_turns,
-                        truncate_chars(&feedback, 240)
-                    ));
-                    continue;
-                }
-
                 if outcome != "completed" {
                     if let Some(applied_edit) =
                         applied_edit_from_terminal_items(&applied, &changed_paths)
@@ -811,9 +777,7 @@ pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) async fn run_att
     }
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn terminal_ids(
-    applied: &[AppliedItem],
-) -> Option<(Uuid, Vec<Uuid>)> {
+pub(super) fn terminal_ids(applied: &[AppliedItem]) -> Option<(Uuid, Vec<Uuid>)> {
     let proposal_ids = applied.iter().map(|item| item.id()).collect::<Vec<_>>();
     proposal_ids
         .last()
@@ -833,17 +797,14 @@ fn applied_edit_from_terminal_items(
     })
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn timeout_terminal_for_run(
-    run: &HeadlessRun,
-    secs: u64,
-) -> HeadlessTerminal {
+pub(super) fn timeout_terminal_for_run(run: &HeadlessRun, secs: u64) -> HeadlessTerminal {
     if let Some(applied) = run.applied_edit() {
         return HeadlessTerminal::AppliedTimedOut { secs, applied };
     }
     HeadlessTerminal::TimedOut { secs }
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn turn_aborted_after_apply_terminal(
+pub(super) fn turn_aborted_after_apply_terminal(
     applied: AppliedEdit,
     outcome: String,
     summary: String,
@@ -855,7 +816,7 @@ pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn turn_aborted_
     }
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn classify_applied_terminal(
+pub(super) fn classify_applied_terminal(
     run: &HeadlessRun,
     validation_commands: &[contract::Command],
     request_id: Uuid,
@@ -928,16 +889,11 @@ fn latest_observation_for_command<'a>(
         .find(|observation| command_display_matches(required, &observation.display_command))
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn command_display_matches(
-    required: &str,
-    observed: &str,
-) -> bool {
+pub(super) fn command_display_matches(required: &str, observed: &str) -> bool {
     observed == required || observed.replace(" -- ", " ") == required
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn validation_command_display(
-    command: &contract::Command,
-) -> String {
+pub(super) fn validation_command_display(command: &contract::Command) -> String {
     std::iter::once(command.program.as_str())
         .chain(command.args.iter().map(String::as_str))
         .collect::<Vec<_>>()
@@ -1034,9 +990,7 @@ async fn run_contract_validations(
     }
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn contract_cargo_args(
-    command: &contract::Command,
-) -> Result<String, String> {
+pub(super) fn contract_cargo_args(command: &contract::Command) -> Result<String, String> {
     if command.program != "cargo" {
         return Err(format!(
             "unsupported validation program `{}`",
@@ -1189,7 +1143,7 @@ fn record_validation_failure(run: &mut HeadlessRun, call_id: &str, command: &con
     });
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn drain_response_records(
+pub(super) fn drain_response_records(
     run: &mut HeadlessRun,
     assistant_message_id: Uuid,
     response_rx: Option<&Mutex<Receiver<RecordedResponse>>>,
@@ -1210,7 +1164,7 @@ pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn drain_respons
     }
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn record_batch_terminal(
+pub(super) fn record_batch_terminal(
     batches: &mut HashMap<Uuid, ToolBatch>,
     request_id: Uuid,
     call_id: ploke_core::ArcStr,
@@ -1394,7 +1348,7 @@ async fn settle_staged_batch(
     Ok(outcome)
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn record_post_approval_indeterminate(
+pub(super) fn record_post_approval_indeterminate(
     run: &mut HeadlessRun,
     turn: u32,
     observer: &LiveObserver,
@@ -1469,7 +1423,7 @@ async fn candidate_for_item(
     }
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn select_disjoint(
+pub(super) fn select_disjoint(
     mut candidates: Vec<Candidate>,
     workspace_path: &Path,
 ) -> (Vec<Candidate>, Vec<Candidate>) {
@@ -1711,7 +1665,7 @@ async fn item_status(
     }
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) async fn wait_for_refresh(
+pub(super) async fn wait_for_refresh(
     runtime: &mut crate::runner::WorkspaceTuiRuntime,
     pending_events: &mut VecDeque<ploke_tui::AppEvent>,
     turn: u32,
@@ -1817,7 +1771,7 @@ async fn wait_for_sparse_search_refresh(
     }
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn sparse_search_refresh_enabled(
+pub(super) fn sparse_search_refresh_enabled(
     strategy: &ploke_tui::user_config::RetrievalStrategyUser,
     strict_bm25_by_default: bool,
 ) -> bool {
@@ -1899,9 +1853,7 @@ async fn wait_for_index_output(
     }
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn provider_unavailable_reason(
-    content: &str,
-) -> Option<String> {
+pub(super) fn provider_unavailable_reason(content: &str) -> Option<String> {
     let normalized = content.to_ascii_lowercase();
     if normalized.contains("api error")
         && (normalized.contains("status 401")
@@ -1922,7 +1874,7 @@ pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn provider_unav
     None
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn provider_failure_from_message(
+pub(super) fn provider_failure_from_message(
     kind: ploke_tui::chat_history::MessageKind,
     status: &ploke_tui::chat_history::MessageStatus,
     content: &str,
@@ -1958,7 +1910,7 @@ fn advance_turn(budget: &Budget, turn: &mut u32) -> bool {
     true
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn attempt_prompt(
+pub(super) fn attempt_prompt(
     _workspace_path: &Path,
     _edit_policy: BroadEditPolicy,
     _evidence_roots: &[EvidenceRoot],
@@ -1974,9 +1926,7 @@ pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn attempt_promp
     prompt
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn evidence_read_roots(
-    evidence_roots: &[EvidenceRoot],
-) -> Vec<PathBuf> {
+pub(super) fn evidence_read_roots(evidence_roots: &[EvidenceRoot]) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     for root in evidence_roots {
         if root.kind == EvidenceRootKind::SubmittedResultOutput {
@@ -2022,9 +1972,7 @@ fn prototype_navigation_root(root: &EvidenceRoot) -> Option<PathBuf> {
     }
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn retry_feedback(
-    feedback: &str,
-) -> String {
+pub(super) fn retry_feedback(feedback: &str) -> String {
     #[derive(Deserialize)]
     struct ToolFailure {
         user: String,
@@ -2042,7 +1990,7 @@ pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn retry_feedbac
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) struct LiveObserver {
+pub(super) struct LiveObserver {
     enabled: bool,
     resources: bool,
     started: Instant,
@@ -2070,7 +2018,7 @@ impl LiveObserver {
     }
 
     #[cfg(test)]
-    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn disabled() -> Self {
+    pub(super) fn disabled() -> Self {
         Self {
             enabled: false,
             resources: false,
@@ -2177,7 +2125,7 @@ fn dir_size_limited(path: &Path, max_entries: usize) -> DirSize {
     size
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) async fn submit_prompt(
+pub(super) async fn submit_prompt(
     app: &ploke_tui::app::App,
     content: String,
 ) -> Result<Uuid, Error> {
@@ -2221,7 +2169,7 @@ async fn send_state(
         .map_err(|source| Error::HeadlessEvent(format!("state command send failed: {source}")))
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) async fn next_event(
+pub(super) async fn next_event(
     runtime: &mut crate::runner::WorkspaceTuiRuntime,
 ) -> Result<ploke_tui::AppEvent, Error> {
     tokio::select! {
@@ -2290,7 +2238,7 @@ fn proposal_paths(proposal: &ploke_tui::app_state::core::EditProposal) -> Vec<Pa
     paths
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn classify_paths(
+pub(super) fn classify_paths(
     workspace_path: &Path,
     edit_policy: BroadEditPolicy,
     paths: &[PathBuf],
@@ -2334,10 +2282,7 @@ fn repair_prompt_feedback(feedback: &str) -> String {
     format!("The headless harness rejected a staged edit before applying it: {feedback}.")
 }
 
-pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn policy_repair_prompt(
-    feedback: &str,
-    has_applied_edits: bool,
-) -> String {
+pub(super) fn policy_repair_prompt(feedback: &str, has_applied_edits: bool) -> String {
     let mut prompt = String::new();
     prompt.push_str("Previous attempt result:\n");
     prompt.push_str(feedback);
