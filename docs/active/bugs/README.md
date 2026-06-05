@@ -121,3 +121,5 @@ file and current code before treating a report as still open.
   Fixed in source: recorded headless-TUI tape coverage now proves post-apply refresh retracts stale snippet rows before indexing can emit `ContentMismatch` or byte-range warnings after truncating edits; fresh live-log validation remains pending.
 - [`2026-06-04-type-context-missing-type-contains-relation.md`](./2026-06-04-type-context-missing-type-contains-relation.md)
   TUI/RAG type-context expansion can query `type_contains` against a database that was imported through a plain/active fixture path and does not contain typed type graph relations.
+- [`2026-06-05-prototype1-protected-core-path-stale-after-backend-split.md`](./2026-06-05-prototype1-protected-core-path-stale-after-backend-split.md)
+  Fixed in source: broad-harness protected-core metadata and doctor prompt preflight now point at `backend/mod.rs` after the backend module split instead of stale `backend.rs`.

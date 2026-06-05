@@ -3491,7 +3491,7 @@ Suggested validation after editing: run `cargo test`.
     }
 
     fn write_protected_core(repo: &Path) {
-        let path = repo.join("crates/ploke-eval/src/cli/prototype1_state/backend.rs");
+        let path = repo.join("crates/ploke-eval/src/cli/prototype1_state/backend/mod.rs");
         fs::create_dir_all(path.parent().expect("backend parent")).expect("create backend parent");
         fs::write(path, "pub const EVAL_CORE_SURFACE_ROOT: &[&str] = &[];\n")
             .expect("write backend");

@@ -2288,7 +2288,7 @@ pub(super) fn policy_repair_prompt(feedback: &str, has_applied_edits: bool) -> S
     prompt.push_str(feedback);
     prompt.push_str("\n\n");
     prompt.push_str(
-        "Protected core: see `crates/ploke-eval/src/cli/prototype1_state/backend.rs::EVAL_CORE_SURFACE_ROOT` and `WORKSPACE_EXCEPT_AUTHORITY_*`. Ordinary edits touching that surface will be rejected.\n",
+        "Protected core: see `crates/ploke-eval/src/cli/prototype1_state/backend/mod.rs::EVAL_CORE_SURFACE_ROOT` and `WORKSPACE_EXCEPT_AUTHORITY_*`. Ordinary edits touching that surface will be rejected.\n",
     );
     if has_applied_edits {
         prompt

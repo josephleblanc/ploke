@@ -1131,7 +1131,7 @@ impl BroadHarnessRequest {
             protected_core: ProtectedCorePointer {
                 anchor: ProtectedCoreAnchor::AuthorityConstant {
                     code_path: PathBuf::from(
-                        "crates/ploke-eval/src/cli/prototype1_state/backend.rs",
+                        "crates/ploke-eval/src/cli/prototype1_state/backend/mod.rs",
                     ),
                     symbol: ProtectedCoreSymbol::EvalCoreSurfaceRoot,
                 },
