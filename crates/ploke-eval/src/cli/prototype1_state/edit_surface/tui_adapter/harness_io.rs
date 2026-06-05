@@ -412,7 +412,7 @@ impl CargoValidationObservation {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
-struct CargoRequestArgs {
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) struct CargoRequestArgs {
     command: Option<String>,
     package: Option<String>,
     all_features: Option<bool>,
@@ -468,7 +468,10 @@ pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn observe_cargo
     Some(observation)
 }
 
-fn display_cargo_command(args: &CargoRequestArgs, result_command: &str) -> String {
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn display_cargo_command(
+    args: &CargoRequestArgs,
+    result_command: &str,
+) -> String {
     let mut parts = vec![
         "cargo".to_string(),
         args.command
@@ -652,17 +655,17 @@ impl PromptDiagnostic {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WorkspaceDiagnostic {
-    loaded: bool,
-    root: Option<PathBuf>,
-    member_count: usize,
-    focused_root: Option<PathBuf>,
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) loaded: bool,
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) root: Option<PathBuf>,
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) member_count: usize,
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) focused_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Bm25Diagnostic {
     pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) status: String,
     pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) docs: Option<usize>,
-    error: Option<String>,
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) error: Option<String>,
 }
 
 impl From<ploke_db::bm25_index::bm25_service::Bm25Status> for Bm25Diagnostic {
@@ -699,9 +702,9 @@ impl From<ploke_db::bm25_index::bm25_service::Bm25Status> for Bm25Diagnostic {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MessagePreview {
-    role: String,
-    chars: usize,
-    preview: String,
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) role: String,
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) chars: usize,
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) preview: String,
 }
 
 impl From<&ploke_tui::llm::RequestMessage> for MessagePreview {
@@ -716,10 +719,10 @@ impl From<&ploke_tui::llm::RequestMessage> for MessagePreview {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct RagPartPreview {
-    file_path: String,
-    kind: String,
-    estimated_tokens: usize,
-    score: f32,
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) file_path: String,
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) kind: String,
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) estimated_tokens: usize,
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) score: f32,
 }
 
 impl Eq for RagPartPreview {}
@@ -737,11 +740,11 @@ impl From<&ploke_tui::llm::ContextPlanRagPart> for RagPartPreview {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ContextStatsDiagnostic {
-    total_tokens: usize,
-    files: usize,
-    parts: usize,
-    truncated_parts: usize,
-    dedup_removed: usize,
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) total_tokens: usize,
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) files: usize,
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) parts: usize,
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) truncated_parts: usize,
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) dedup_removed: usize,
 }
 
 impl From<&ploke_core::rag_types::ContextStats> for ContextStatsDiagnostic {
@@ -2244,10 +2247,3 @@ impl From<&record::RejectRecord> for Reject {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "test_fixtures.rs"]
-mod test_fixtures;
-#[cfg(test)]
-#[path = "tests.rs"]
-mod tests;

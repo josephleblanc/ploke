@@ -24,22 +24,25 @@ use std::{
 };
 use uuid::Uuid;
 
-use super::super::super::{
-    backend::EditSurfaceAdmission,
-    harness_request::{
-        AttachedReport, BroadEditPolicy, EvidenceRole, HarnessChildBudget,
-        PublishedBroadHarnessRequest, RequestAdmissionBinding, contract, request,
-    },
-    harness_result::SubmittedBroadHarnessResult,
-    surface,
-};
-use super::super::{
-    LiveObserver, ModelSelection, next_event, run_attempt, run_headless, run_headless_with_model,
-    run_headless_with_model_capture_responses, submit_prompt,
-};
-use super::test_fixtures::*;
 use super::*;
+use super::{
+    LiveObserver, ModelSelection, next_event, run_attempt, run_headless, run_headless_with_model,
+    run_headless_with_model_capture_responses, submit_prompt, validation_command_display,
+};
+use crate::cli::prototype1_state::{
+    backend::EditSurfaceAdmission,
+    edit_surface::{
+        harness_request::{
+            AttachedReport, BroadEditPolicy, EvidenceRole, HarnessChildBudget,
+            PublishedBroadHarnessRequest, RequestAdmissionBinding, contract, request,
+        },
+        harness_result::SubmittedBroadHarnessResult,
+        surface,
+    },
+};
 use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, RuntimeId};
+
+include!("test_fixtures.rs");
 
 #[test]
 fn model_selection_sets_openrouter_route() {

@@ -1,29 +1,4 @@
-//! Live-canary and historical replay test fixtures.
-
-#![cfg(test)]
-
-use ploke_llm::{manager::RecordedResponse, router_only::RouterVariants};
-use ploke_records::{agent_turn::ModelRouteRecord, llm_response::RawFullResponseRecord};
-use serde::Serialize;
-use std::{
-    borrow::Cow,
-    fs,
-    path::{Path, PathBuf},
-    process::Command,
-    sync::Arc,
-};
-use uuid::Uuid;
-
-use super::super::super::{
-    backend::EditSurfaceAdmission,
-    harness_request::{
-        BroadEditPolicy, HarnessChildBudget, PublishedBroadHarnessRequest, RequestAdmissionBinding,
-        contract,
-    },
-    harness_result::SubmittedBroadHarnessResult,
-};
-use super::super::{ModelSelection, run_headless_with_model};
-use super::{Budget, Event, HeadlessRun, HeadlessTerminal, evidence, validation_command_display};
+// Live-canary and historical replay test fixtures (included from tests.rs).
 
 fn recorded_replay_test_mutex() -> &'static tokio::sync::Mutex<()> {
     crate::test_support::llm_lock()

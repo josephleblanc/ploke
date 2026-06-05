@@ -28,7 +28,10 @@ use crate::cli::prototype1_state::identity::{
 pub(crate) struct GitWorktreeBackend;
 
 impl GitWorktreeBackend {
-    fn branch_name(&self, node_id: &str) -> GitBranch {
+    pub(in crate::cli::prototype1_state::backend) fn branch_name(
+        &self,
+        node_id: &str,
+    ) -> GitBranch {
         // Use a flat ref name rather than a nested namespace. Nested names
         // like `prototype1/<node>` are fragile because any existing flat ref
         // at an intermediate path segment blocks creation of descendant refs.
@@ -1105,7 +1108,9 @@ pub(crate) fn sanitize_git_branch_component(input: &str) -> String {
     }
 }
 
-fn parse_worktree_list(stdout: &str) -> Vec<WorktreeEntry> {
+pub(in crate::cli::prototype1_state::backend) fn parse_worktree_list(
+    stdout: &str,
+) -> Vec<WorktreeEntry> {
     let mut entries = Vec::new();
     let mut current: Option<WorktreeEntry> = None;
 
@@ -1142,7 +1147,7 @@ fn parse_worktree_list(stdout: &str) -> Vec<WorktreeEntry> {
     entries
 }
 
-fn parse_dirty_paths(stdout: &str) -> Vec<PathBuf> {
+pub(in crate::cli::prototype1_state::backend) fn parse_dirty_paths(stdout: &str) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     for line in stdout.lines() {
         if line.len() < 3 {

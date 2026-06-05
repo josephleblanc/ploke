@@ -307,7 +307,7 @@ fn write_scope_for_policy(
 }
 
 #[derive(Debug)]
-enum AttemptEnd {
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) enum AttemptEnd {
     Terminal(HeadlessTerminal),
     RetryFailure(String),
     RetryNoEdit {
@@ -320,13 +320,13 @@ enum AttemptEnd {
 const MAX_POLICY_REPAIR_TURNS: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AppliedItem {
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) enum AppliedItem {
     Edit(Uuid),
     Create(Uuid),
 }
 
 impl AppliedItem {
-    fn id(self) -> Uuid {
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn id(self) -> Uuid {
         match self {
             Self::Edit(id) | Self::Create(id) => id,
         }
@@ -334,13 +334,13 @@ impl AppliedItem {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum StagedItem {
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) enum StagedItem {
     Edit(Uuid),
     Create(Uuid),
 }
 
 impl StagedItem {
-    fn id(self) -> Uuid {
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn id(self) -> Uuid {
         match self {
             Self::Edit(id) | Self::Create(id) => id,
         }
@@ -355,14 +355,17 @@ impl StagedItem {
 }
 
 #[derive(Debug, Default)]
-struct ToolBatch {
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) struct ToolBatch {
     expected: Vec<ploke_core::ArcStr>,
     completed: Vec<ploke_core::ArcStr>,
     staged: Vec<StagedItem>,
 }
 
 impl ToolBatch {
-    fn request(&mut self, call_id: ploke_core::ArcStr) {
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn request(
+        &mut self,
+        call_id: ploke_core::ArcStr,
+    ) {
         if !self.expected.contains(&call_id) {
             self.expected.push(call_id);
         }
@@ -389,10 +392,10 @@ impl ToolBatch {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct Candidate {
-    item: StagedItem,
-    proposed_at_ms: i64,
-    paths: Vec<PathBuf>,
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) struct Candidate {
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) item: StagedItem,
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) proposed_at_ms: i64,
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Default)]
@@ -808,7 +811,9 @@ pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) async fn run_att
     }
 }
 
-fn terminal_ids(applied: &[AppliedItem]) -> Option<(Uuid, Vec<Uuid>)> {
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn terminal_ids(
+    applied: &[AppliedItem],
+) -> Option<(Uuid, Vec<Uuid>)> {
     let proposal_ids = applied.iter().map(|item| item.id()).collect::<Vec<_>>();
     proposal_ids
         .last()
@@ -828,14 +833,17 @@ fn applied_edit_from_terminal_items(
     })
 }
 
-fn timeout_terminal_for_run(run: &HeadlessRun, secs: u64) -> HeadlessTerminal {
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn timeout_terminal_for_run(
+    run: &HeadlessRun,
+    secs: u64,
+) -> HeadlessTerminal {
     if let Some(applied) = run.applied_edit() {
         return HeadlessTerminal::AppliedTimedOut { secs, applied };
     }
     HeadlessTerminal::TimedOut { secs }
 }
 
-fn turn_aborted_after_apply_terminal(
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn turn_aborted_after_apply_terminal(
     applied: AppliedEdit,
     outcome: String,
     summary: String,
@@ -847,7 +855,7 @@ fn turn_aborted_after_apply_terminal(
     }
 }
 
-fn classify_applied_terminal(
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn classify_applied_terminal(
     run: &HeadlessRun,
     validation_commands: &[contract::Command],
     request_id: Uuid,
@@ -920,11 +928,16 @@ fn latest_observation_for_command<'a>(
         .find(|observation| command_display_matches(required, &observation.display_command))
 }
 
-fn command_display_matches(required: &str, observed: &str) -> bool {
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn command_display_matches(
+    required: &str,
+    observed: &str,
+) -> bool {
     observed == required || observed.replace(" -- ", " ") == required
 }
 
-fn validation_command_display(command: &contract::Command) -> String {
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn validation_command_display(
+    command: &contract::Command,
+) -> String {
     std::iter::once(command.program.as_str())
         .chain(command.args.iter().map(String::as_str))
         .collect::<Vec<_>>()
@@ -1021,7 +1034,9 @@ async fn run_contract_validations(
     }
 }
 
-fn contract_cargo_args(command: &contract::Command) -> Result<String, String> {
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn contract_cargo_args(
+    command: &contract::Command,
+) -> Result<String, String> {
     if command.program != "cargo" {
         return Err(format!(
             "unsupported validation program `{}`",
@@ -1174,7 +1189,7 @@ fn record_validation_failure(run: &mut HeadlessRun, call_id: &str, command: &con
     });
 }
 
-fn drain_response_records(
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn drain_response_records(
     run: &mut HeadlessRun,
     assistant_message_id: Uuid,
     response_rx: Option<&Mutex<Receiver<RecordedResponse>>>,
@@ -1195,7 +1210,7 @@ fn drain_response_records(
     }
 }
 
-fn record_batch_terminal(
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn record_batch_terminal(
     batches: &mut HashMap<Uuid, ToolBatch>,
     request_id: Uuid,
     call_id: ploke_core::ArcStr,
@@ -1379,7 +1394,7 @@ async fn settle_staged_batch(
     Ok(outcome)
 }
 
-fn record_post_approval_indeterminate(
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn record_post_approval_indeterminate(
     run: &mut HeadlessRun,
     turn: u32,
     observer: &LiveObserver,
@@ -1454,7 +1469,7 @@ async fn candidate_for_item(
     }
 }
 
-fn select_disjoint(
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn select_disjoint(
     mut candidates: Vec<Candidate>,
     workspace_path: &Path,
 ) -> (Vec<Candidate>, Vec<Candidate>) {
@@ -1696,7 +1711,7 @@ async fn item_status(
     }
 }
 
-async fn wait_for_refresh(
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) async fn wait_for_refresh(
     runtime: &mut crate::runner::WorkspaceTuiRuntime,
     pending_events: &mut VecDeque<ploke_tui::AppEvent>,
     turn: u32,
@@ -1802,7 +1817,7 @@ async fn wait_for_sparse_search_refresh(
     }
 }
 
-fn sparse_search_refresh_enabled(
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn sparse_search_refresh_enabled(
     strategy: &ploke_tui::user_config::RetrievalStrategyUser,
     strict_bm25_by_default: bool,
 ) -> bool {
@@ -1884,7 +1899,9 @@ async fn wait_for_index_output(
     }
 }
 
-fn provider_unavailable_reason(content: &str) -> Option<String> {
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn provider_unavailable_reason(
+    content: &str,
+) -> Option<String> {
     let normalized = content.to_ascii_lowercase();
     if normalized.contains("api error")
         && (normalized.contains("status 401")
@@ -1905,7 +1922,7 @@ fn provider_unavailable_reason(content: &str) -> Option<String> {
     None
 }
 
-fn provider_failure_from_message(
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn provider_failure_from_message(
     kind: ploke_tui::chat_history::MessageKind,
     status: &ploke_tui::chat_history::MessageStatus,
     content: &str,
@@ -1941,7 +1958,7 @@ fn advance_turn(budget: &Budget, turn: &mut u32) -> bool {
     true
 }
 
-fn attempt_prompt(
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn attempt_prompt(
     _workspace_path: &Path,
     _edit_policy: BroadEditPolicy,
     _evidence_roots: &[EvidenceRoot],
@@ -1957,7 +1974,9 @@ fn attempt_prompt(
     prompt
 }
 
-fn evidence_read_roots(evidence_roots: &[EvidenceRoot]) -> Vec<PathBuf> {
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn evidence_read_roots(
+    evidence_roots: &[EvidenceRoot],
+) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     for root in evidence_roots {
         if root.kind == EvidenceRootKind::SubmittedResultOutput {
@@ -2051,7 +2070,7 @@ impl LiveObserver {
     }
 
     #[cfg(test)]
-    fn disabled() -> Self {
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn disabled() -> Self {
         Self {
             enabled: false,
             resources: false,
@@ -2271,7 +2290,7 @@ fn proposal_paths(proposal: &ploke_tui::app_state::core::EditProposal) -> Vec<Pa
     paths
 }
 
-fn classify_paths(
+pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn classify_paths(
     workspace_path: &Path,
     edit_policy: BroadEditPolicy,
     paths: &[PathBuf],
