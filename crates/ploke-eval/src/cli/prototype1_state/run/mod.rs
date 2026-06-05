@@ -210,5 +210,6 @@
 
 pub(crate) mod core;
 mod loop_cmd;
+mod state_cmd;
 
 pub(crate) use core::{doctor, prompt, resume, step};
