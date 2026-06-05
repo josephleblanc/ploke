@@ -1320,16 +1320,18 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                             req.core
                                 .messages
                                 .push(RequestMessage::new_tool(replay_content, call_id.clone()));
-                            state_cmd_tx
-                                .send(StateCommand::AddMessageTool {
+                            let _ = send_state_command_or_warn(
+                                &state_cmd_tx,
+                                StateCommand::AddMessageTool {
                                     new_msg_id: Uuid::new_v4(),
                                     msg: tool_result.content,
                                     kind: MessageKind::Tool,
                                     tool_call_id: call_id_for_state,
                                     tool_payload: tool_result.ui_payload,
-                                })
-                                .await
-                                .expect("state manager must be running");
+                                },
+                                "tool_result_message",
+                            )
+                            .await;
                             commit_phase = CommitPhase::ToolResultsCommitted;
                         }
                         Err(tool_error) => {
@@ -1344,16 +1346,18 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                                 .messages
                                 .push(RequestMessage::new_tool(content.clone(), call_id.clone()));
 
-                            state_cmd_tx
-                                .send(StateCommand::AddMessageTool {
+                            let _ = send_state_command_or_warn(
+                                &state_cmd_tx,
+                                StateCommand::AddMessageTool {
                                     new_msg_id: Uuid::new_v4(),
                                     msg: content,
                                     kind: MessageKind::Tool,
                                     tool_call_id: call_id_for_state,
                                     tool_payload: tool_error.ui_payload,
-                                })
-                                .await
-                                .expect("state manager must be running");
+                                },
+                                "tool_error_message",
+                            )
+                            .await;
                             commit_phase = CommitPhase::ToolResultsCommitted;
                             let mut context = base_error_context(
                                 attempts,
@@ -1667,14 +1671,16 @@ async fn add_or_update_assistant_message(
         .await;
         *initial_message_updated = is_updated;
     } else {
-        state_cmd_tx
-            .send(StateCommand::AddMessageImmediate {
+        let _ = send_state_command_or_warn(
+            state_cmd_tx,
+            StateCommand::AddMessageImmediate {
                 msg,
                 kind: MessageKind::Assistant,
                 new_msg_id: Uuid::new_v4(),
-            })
-            .await
-            .expect("state manager must be running");
+            },
+            "assistant_message",
+        )
+        .await;
     }
 }
 
@@ -1707,14 +1713,16 @@ async fn emit_loop_error(
         return;
     }
 
-    state_cmd_tx
-        .send(StateCommand::AddMessageImmediate {
+    let _ = send_state_command_or_warn(
+        state_cmd_tx,
+        StateCommand::AddMessageImmediate {
             msg,
             kind: MessageKind::System,
             new_msg_id: Uuid::new_v4(),
-        })
-        .await
-        .expect("state manager must be running");
+        },
+        "loop_error_message",
+    )
+    .await;
 }
 
 fn push_llm_payload<R: Router>(req: &mut ChatCompRequest<R>, error: &LoopError) {
@@ -1805,21 +1813,39 @@ async fn update_assistant_placeholder_once(
     initial_message_updated: bool,
 ) -> bool {
     if !initial_message_updated {
-        state_cmd_tx
-            .send(StateCommand::UpdateMessage {
+        send_state_command_or_warn(
+            state_cmd_tx,
+            StateCommand::UpdateMessage {
                 id: assistant_message_id,
                 update: MessageUpdate {
                     content: Some(content),
                     status: Some(status),
                     ..Default::default()
                 },
-            })
-            .await
-            .inspect_err(|e| tracing::error!("{e:#?}"))
-            .expect("state command must be running");
-        true
+            },
+            "assistant_placeholder_update",
+        )
+        .await
     } else {
         false
+    }
+}
+
+async fn send_state_command_or_warn(
+    state_cmd_tx: &mpsc::Sender<StateCommand>,
+    command: StateCommand,
+    context: &'static str,
+) -> bool {
+    match state_cmd_tx.send(command).await {
+        Ok(()) => true,
+        Err(_) => {
+            tracing::warn!(
+                target: "chat-loop",
+                context,
+                "state manager channel closed while emitting chat session message"
+            );
+            false
+        }
     }
 }
 
@@ -2060,14 +2086,16 @@ async fn add_sysinfo_message(
     status_msg: &str,
 ) {
     let completed_msg = format!("Tool call {}: {}", status_msg, call_id.as_ref());
-    cmd_tx
-        .send(StateCommand::AddMessageImmediate {
+    let _ = send_state_command_or_warn(
+        cmd_tx,
+        StateCommand::AddMessageImmediate {
             msg: completed_msg,
             kind: MessageKind::SysInfo,
             new_msg_id: Uuid::new_v4(),
-        })
-        .await
-        .expect("state manager must be running");
+        },
+        "sysinfo_message",
+    )
+    .await;
 }
 
 #[tracing::instrument]
@@ -2077,14 +2105,16 @@ async fn add_tool_failed_message(
     status_msg: &str,
 ) {
     let completed_msg = format!("Tool call {}: {}", status_msg, call_id.as_ref());
-    cmd_tx
-        .send(StateCommand::AddMessageImmediate {
+    let _ = send_state_command_or_warn(
+        cmd_tx,
+        StateCommand::AddMessageImmediate {
             msg: completed_msg,
             kind: MessageKind::System,
             new_msg_id: Uuid::new_v4(),
-        })
-        .await
-        .expect("state manager must be running");
+        },
+        "tool_failed_message",
+    )
+    .await;
 }
 
 #[cfg(test)]
@@ -3638,6 +3668,25 @@ mod tests {
         let mut retries = 0_u32;
         assert!(!should_retry_error(TuiErrorPolicy::Strict, &mut retries));
         assert_eq!(retries, 0);
+    }
+
+    #[tokio::test]
+    async fn state_command_emit_after_state_manager_close_is_nonfatal() {
+        let (cmd_tx, cmd_rx) = mpsc::channel(1);
+        drop(cmd_rx);
+
+        let emitted = send_state_command_or_warn(
+            &cmd_tx,
+            StateCommand::AddMessageImmediate {
+                msg: "late teardown message".to_string(),
+                kind: MessageKind::System,
+                new_msg_id: Uuid::new_v4(),
+            },
+            "test_closed_state_manager",
+        )
+        .await;
+
+        assert!(!emitted);
     }
 
     #[test]

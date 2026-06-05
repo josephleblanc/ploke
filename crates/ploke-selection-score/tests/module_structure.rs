@@ -1,7 +1,7 @@
 use ploke_selection_score::{
     catalog::{Exactness, MechanismKind, registry},
     common::{probability, ranking, selection},
-    papers::raser,
+    papers::{raser, sadn},
     ploke::{evidence, frontier},
 };
 
@@ -32,6 +32,12 @@ fn module_paths_expose_existing_scoring_helpers() {
         },
     ];
     assert_eq!(raser::choose_route(&route, 0.5), Some(1));
+
+    let chosen = sadn::sequential_greedy(&[2], |_agent, _prefix, action| {
+        [0.2, 0.7].get(action).copied()
+    })
+    .expect("finite SADN advantages should choose an action");
+    assert_eq!(chosen, vec![1]);
 }
 
 #[test]
@@ -62,6 +68,14 @@ fn catalog_uses_stable_formal_note_keys() {
     assert_eq!(raser.exactness, Exactness::Interpretive);
     assert_eq!(raser.source[0].path, registry::FORMAL_NOTE);
     assert_eq!(raser.source[0].section_key, "2606.02488");
+
+    let sadn = registry::by_id("2510.23535-sadn-sequential-advantage")
+        .expect("SADN sequential advantage algorithm should be cataloged");
+    assert_eq!(sadn.paper_id, Some("2510.23535"));
+    assert_eq!(sadn.kind, MechanismKind::ComponentSet);
+    assert_eq!(sadn.exactness, Exactness::ScopeLimited);
+    assert_eq!(sadn.source[0].path, registry::SADN_ALGORITHM_NOTE);
+    assert_eq!(sadn.source[0].section_key, "2510.23535");
 
     let unresolved = registry::by_id("2606.01066-verifier-metrics-lead")
         .expect("candidate-only mechanisms should remain cataloged separately");

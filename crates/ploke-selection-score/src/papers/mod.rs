@@ -8,6 +8,7 @@ pub mod entropy;
 pub mod eva;
 pub mod planning;
 pub mod raser;
+pub mod sadn;
 pub mod trace;
 pub mod traits;
 pub mod weak_critics;

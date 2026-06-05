@@ -5,6 +5,9 @@ use super::{Exactness, MechanismKind, MechanismSpec, SourceRef};
 /// Formal mechanism note used as the current source authority.
 pub const FORMAL_NOTE: &str = "/home/brasides/wiki/queries/research/ploke-arxiv-cs-ai-2026-06-02/synthesis/formal-scoring-mechanisms.md";
 
+/// SADN setup/algorithm equation note used as the source authority.
+pub const SADN_ALGORITHM_NOTE: &str = "/home/brasides/wiki/queries/ploke/selection-scoring/sadn-equations/setup-and-algorithm-equations.md";
+
 macro_rules! spec {
     ($id:literal, Some($paper:literal), $name:literal, $kind:expr, $exact:expr) => {
         MechanismSpec {
@@ -113,6 +116,17 @@ pub static MECHANISMS: &[MechanismSpec] = &[
         MechanismKind::Formula,
         Exactness::Faithful
     ),
+    MechanismSpec {
+        id: "2510.23535-sadn-sequential-advantage",
+        paper_id: Some("2510.23535"),
+        name: "SADN sequential advantage decomposition and greedy IGM",
+        kind: MechanismKind::ComponentSet,
+        exactness: Exactness::ScopeLimited,
+        source: [SourceRef {
+            path: SADN_ALGORITHM_NOTE,
+            section_key: "2510.23535",
+        }],
+    },
     spec!(
         "2606.00103-game-benchmark-status",
         Some("2606.00103"),

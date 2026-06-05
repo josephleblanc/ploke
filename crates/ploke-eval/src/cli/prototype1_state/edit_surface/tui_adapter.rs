@@ -12,7 +12,7 @@ use std::{
     fs,
     marker::PhantomData,
     path::{Path, PathBuf},
-    sync::{Mutex, mpsc::Receiver},
+    sync::{Arc, Mutex, mpsc::Receiver},
     time::{Duration, Instant},
 };
 
@@ -883,6 +883,18 @@ async fn run_attempt(
 
                 let applied_edit = applied_edit_from_terminal_items(&applied, &changed_paths)
                     .expect("applied is not empty");
+                if !validation_commands.is_empty() {
+                    run_contract_validations(
+                        runtime,
+                        active_parent_id,
+                        request_id,
+                        turn,
+                        run,
+                        observer,
+                        validation_commands,
+                    )
+                    .await;
+                }
                 return Ok(AttemptEnd::Terminal(classify_applied_terminal(
                     run,
                     validation_commands,
@@ -1018,6 +1030,249 @@ fn validation_command_display(command: &contract::Command) -> String {
         .join(" ")
 }
 
+async fn run_contract_validations(
+    runtime: &crate::runner::WorkspaceTuiRuntime,
+    parent_id: Uuid,
+    request_id: Uuid,
+    turn: u32,
+    run: &mut HeadlessRun,
+    observer: &LiveObserver,
+    validation_commands: &[contract::Command],
+) {
+    for (idx, command) in validation_commands.iter().enumerate() {
+        let required = validation_command_display(command);
+        let call_id = format!("declared_validation_{turn}_{idx}");
+        let args = match contract_cargo_args(command) {
+            Ok(args) => args,
+            Err(error) => {
+                observer.emit(format!(
+                    "attempt {turn} declared_validation_unsupported command={} error={}",
+                    required,
+                    truncate_chars(&error, 240)
+                ));
+                continue;
+            }
+        };
+        observer.emit(format!(
+            "attempt {turn} declared_validation_start call_id={} command={}",
+            call_id, required
+        ));
+
+        let ctx = ploke_tui::tools::Ctx {
+            state: Arc::clone(&runtime.state),
+            event_bus: Arc::new(ploke_tui::EventBus::new(ploke_tui::EventBusCaps::default())),
+            request_id,
+            parent_id,
+            call_id: ploke_core::ArcStr::from(call_id.clone()),
+        };
+        let params =
+            match <ploke_tui::tools::cargo::CargoTool as ploke_tui::tools::Tool>::deserialize_params(
+                &args,
+            ) {
+                Ok(params) => params,
+                Err(error) => {
+                    let detail =
+                        <ploke_tui::tools::cargo::CargoTool as ploke_tui::tools::Tool>::adapt_error(
+                            error,
+                        )
+                        .to_wire_string();
+                    observer.emit(format!(
+                        "attempt {turn} declared_validation_deserialize_failed call_id={} command={} error={}",
+                        call_id,
+                        required,
+                        truncate_chars(&detail, 240)
+                    ));
+                    record_validation_failure(run, &call_id, command);
+                    continue;
+                }
+            };
+        match <ploke_tui::tools::cargo::CargoTool as ploke_tui::tools::Tool>::execute(params, ctx)
+            .await
+        {
+            Ok(result) => {
+                if let Some(validation) =
+                    observe_cargo_validation(run, &call_id, &args, &result.content)
+                {
+                    observer.emit(format!(
+                        "attempt {turn} declared_validation_done call_id={} ok={} status={} command={}",
+                        call_id,
+                        validation.ok,
+                        validation.status_reason,
+                        validation.display_command
+                    ));
+                }
+            }
+            Err(error) => {
+                let detail =
+                    <ploke_tui::tools::cargo::CargoTool as ploke_tui::tools::Tool>::adapt_error(
+                        ploke_tui::tools::ToolInvocationError::Exec(error),
+                    )
+                    .to_wire_string();
+                observer.emit(format!(
+                    "attempt {turn} declared_validation_failed call_id={} command={} error={}",
+                    call_id,
+                    required,
+                    truncate_chars(&detail, 240)
+                ));
+                record_validation_failure(run, &call_id, command);
+            }
+        }
+    }
+}
+
+fn contract_cargo_args(command: &contract::Command) -> Result<String, String> {
+    if command.program != "cargo" {
+        return Err(format!(
+            "unsupported validation program `{}`",
+            command.program
+        ));
+    }
+    let Some((subcommand, rest)) = command.args.split_first() else {
+        return Err("cargo validation command is missing subcommand".to_string());
+    };
+    if !matches!(subcommand.as_str(), "check" | "test") {
+        return Err(format!("unsupported cargo subcommand `{subcommand}`"));
+    }
+
+    let mut args = serde_json::Map::new();
+    args.insert(
+        "command".to_string(),
+        serde_json::Value::String(subcommand.clone()),
+    );
+    let mut test_args = Vec::<String>::new();
+    let mut rest = rest.iter();
+    let mut passthrough = false;
+
+    while let Some(arg) = rest.next() {
+        if passthrough {
+            test_args.push(arg.clone());
+            continue;
+        }
+        match arg.as_str() {
+            "--" => passthrough = true,
+            "-p" | "--package" => insert_next(&mut args, &mut rest, "package", arg)?,
+            "--features" => insert_features(&mut args, rest.next(), arg)?,
+            "--target" => insert_next(&mut args, &mut rest, "target", arg)?,
+            "--profile" => insert_next(&mut args, &mut rest, "profile", arg)?,
+            "--all-features" => insert_bool(&mut args, "all_features"),
+            "--no-default-features" => insert_bool(&mut args, "no_default_features"),
+            "--release" => insert_bool(&mut args, "release"),
+            "--lib" => insert_bool(&mut args, "lib"),
+            "--tests" => insert_bool(&mut args, "tests"),
+            "--bins" => insert_bool(&mut args, "bins"),
+            "--examples" => insert_bool(&mut args, "examples"),
+            "--benches" => insert_bool(&mut args, "benches"),
+            _ if arg.starts_with("--package=") => {
+                insert_str(&mut args, "package", &arg["--package=".len()..])?
+            }
+            _ if arg.starts_with("--features=") => {
+                insert_features_value(&mut args, &arg["--features=".len()..])?
+            }
+            _ if arg.starts_with("--target=") => {
+                insert_str(&mut args, "target", &arg["--target=".len()..])?
+            }
+            _ if arg.starts_with("--profile=") => {
+                insert_str(&mut args, "profile", &arg["--profile=".len()..])?
+            }
+            _ if subcommand == "test" => test_args.push(arg.clone()),
+            _ => {
+                return Err(format!(
+                    "unsupported cargo validation argument `{arg}` in `{}`",
+                    validation_command_display(command)
+                ));
+            }
+        }
+    }
+
+    if !test_args.is_empty() {
+        args.insert(
+            "test_args".to_string(),
+            serde_json::Value::Array(
+                test_args
+                    .into_iter()
+                    .map(serde_json::Value::String)
+                    .collect(),
+            ),
+        );
+    }
+
+    serde_json::to_string(&serde_json::Value::Object(args))
+        .map_err(|error| format!("failed to serialize cargo validation args: {error}"))
+}
+
+fn insert_next<'a>(
+    args: &mut serde_json::Map<String, serde_json::Value>,
+    rest: &mut impl Iterator<Item = &'a String>,
+    key: &str,
+    flag: &str,
+) -> Result<(), String> {
+    let Some(value) = rest.next() else {
+        return Err(format!("missing value for `{flag}`"));
+    };
+    insert_str(args, key, value)
+}
+
+fn insert_str(
+    args: &mut serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    value: &str,
+) -> Result<(), String> {
+    if value.is_empty() {
+        return Err(format!("empty value for `{key}`"));
+    }
+    args.insert(
+        key.to_string(),
+        serde_json::Value::String(value.to_string()),
+    );
+    Ok(())
+}
+
+fn insert_bool(args: &mut serde_json::Map<String, serde_json::Value>, key: &str) {
+    args.insert(key.to_string(), serde_json::Value::Bool(true));
+}
+
+fn insert_features<'a>(
+    args: &mut serde_json::Map<String, serde_json::Value>,
+    value: Option<&'a String>,
+    flag: &str,
+) -> Result<(), String> {
+    let Some(value) = value else {
+        return Err(format!("missing value for `{flag}`"));
+    };
+    insert_features_value(args, value)
+}
+
+fn insert_features_value(
+    args: &mut serde_json::Map<String, serde_json::Value>,
+    value: &str,
+) -> Result<(), String> {
+    let features = value
+        .split(',')
+        .filter(|feature| !feature.is_empty())
+        .map(|feature| serde_json::Value::String(feature.to_string()))
+        .collect::<Vec<_>>();
+    if features.is_empty() {
+        return Err("empty value for `features`".to_string());
+    }
+    args.insert("features".to_string(), serde_json::Value::Array(features));
+    Ok(())
+}
+
+fn record_validation_failure(run: &mut HeadlessRun, call_id: &str, command: &contract::Command) {
+    let command_name = command.args.first().cloned().unwrap_or_default();
+    run.validations.push(CargoValidationObservation {
+        call_id: call_id.to_string(),
+        command: command_name,
+        display_command: validation_command_display(command),
+        ok: false,
+        status_reason: "cargo_failed_or_invalid_args".to_string(),
+        exit_code: None,
+        manifest_path: String::new(),
+        errors: 1,
+        warnings: 0,
+    });
+}
+
 fn drain_response_records(
     run: &mut HeadlessRun,
     assistant_message_id: Uuid,
@@ -1029,15 +1284,14 @@ fn drain_response_records(
     let Ok(response_rx) = response_rx.lock() else {
         return;
     };
-    run.full_response_records
-        .extend(
-            response_rx
-                .try_iter()
-                .map(|recorded_response| RawFullResponseRecord {
-                    assistant_message_id,
-                    recorded_response,
-                }),
-        );
+    for recorded_response in response_rx.try_iter() {
+        let response_index = run.next_response_index;
+        run.next_response_index = run.next_response_index.saturating_add(1);
+        run.full_response_records.push(RawFullResponseRecord {
+            assistant_message_id,
+            recorded_response: RecordedResponse::new(response_index, recorded_response.response),
+        });
+    }
 }
 
 fn record_batch_terminal(
@@ -2188,6 +2442,7 @@ pub(crate) struct HeadlessRun {
     debug_relay: DebugRelay,
     prompt_diagnostics: Vec<PromptDiagnostic>,
     full_response_records: Vec<RawFullResponseRecord>,
+    next_response_index: usize,
     terminal: Option<HeadlessTerminal>,
     model_route: Option<ModelRouteRecord>,
 }
@@ -2208,6 +2463,7 @@ impl HeadlessRun {
             debug_relay: DebugRelay::new(),
             prompt_diagnostics: Vec::new(),
             full_response_records: Vec::new(),
+            next_response_index: 0,
             terminal: None,
             model_route: None,
         }
@@ -2409,6 +2665,7 @@ impl HeadlessRun {
             debug_relay: DebugRelay::new(),
             prompt_diagnostics: Vec::new(),
             full_response_records: Vec::new(),
+            next_response_index: 0,
             terminal,
             model_route: None,
         }
@@ -4319,6 +4576,16 @@ mod tests {
     };
 
     use super::*;
+    use crate::cli::prototype1_state::{
+        backend::EditSurfaceAdmission,
+        edit_surface::{
+            harness_request::{
+                HarnessChildBudget, PublishedBroadHarnessRequest, RequestAdmissionBinding,
+            },
+            harness_result::SubmittedBroadHarnessResult,
+        },
+    };
+    use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, RuntimeId};
 
     #[test]
     fn model_selection_sets_openrouter_route() {
@@ -4402,6 +4669,7 @@ mod tests {
             debug_relay: DebugRelay::new(),
             prompt_diagnostics: Vec::new(),
             full_response_records: vec![response],
+            next_response_index: 1,
             terminal: Some(HeadlessTerminal::CompletedWithoutEdit {
                 outcome: "completed".to_string(),
                 summary: "done".to_string(),
@@ -4563,6 +4831,23 @@ mod tests {
             "cargo test -p syn_parser"
         );
         assert!(!evidence.validations[0].ok);
+    }
+
+    #[test]
+    fn declared_cargo_test_command_maps_to_tool_args() {
+        let command = declared_cargo_command(
+            "edit surface tests",
+            &["test", "-p", "ploke-eval", "edit_surface"],
+        );
+        let args = contract_cargo_args(&command).expect("map declared cargo command");
+        let parsed = serde_json::from_str::<CargoRequestArgs>(&args).expect("parse cargo args");
+        let observed = display_cargo_command(&parsed, "test");
+
+        assert_eq!(observed, "cargo test -p ploke-eval -- edit_surface");
+        assert!(command_display_matches(
+            &validation_command_display(&command),
+            &observed
+        ));
     }
 
     #[test]
@@ -5210,6 +5495,7 @@ Suggested action: Verify API credentials and retry."#;
             debug_relay: DebugRelay::new(),
             prompt_diagnostics: Vec::new(),
             full_response_records: Vec::new(),
+            next_response_index: 0,
             terminal: Some(HeadlessTerminal::Applied {
                 proposal_id,
                 applied_proposal_ids: vec![proposal_id],
@@ -5299,6 +5585,7 @@ Suggested action: Verify API credentials and retry."#;
             debug_relay: DebugRelay::new(),
             prompt_diagnostics: Vec::new(),
             full_response_records: Vec::new(),
+            next_response_index: 0,
             terminal: Some(HeadlessTerminal::Exhausted {
                 attempts: 2,
                 last: feedback.clone(),
@@ -5592,6 +5879,7 @@ Suggested action: Verify API credentials and retry."#;
             debug_relay: DebugRelay::new(),
             prompt_diagnostics: vec![diagnostic],
             full_response_records: Vec::new(),
+            next_response_index: 0,
             terminal: Some(HeadlessTerminal::ContextUnavailable {
                 reason: reason.clone(),
             }),
@@ -6428,6 +6716,312 @@ Suggested action: Verify API credentials and retry."#;
         );
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn recorded_replay_runs_declared_validation_after_applied_edit() {
+        let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
+        let fixture = prepare_live_canary(
+            "recorded-declared-validation-after-apply",
+            "Use non_semantic_patch to update src/lib.rs, then stop.",
+        )
+        .expect("prepare recorded validation fixture");
+
+        let call_id = "call_validation_allowed_ns_patch";
+        let tape = recorded_allowed_ns_patch_tape(&fixture.artifact_root, call_id);
+        ploke_tui::llm::install_recorded_response_tape(tape);
+        let _clear_tape = ClearRecordedTapeOnDrop;
+        let (mut runtime, parent_id) = start_attempt_runtime(
+            &fixture.workspace,
+            &[],
+            fixture.prompt.clone(),
+            BroadEditPolicy::WorkspaceExceptPlokeEval,
+            None,
+        )
+        .await
+        .expect("start declared validation replay runtime");
+
+        let mut run = HeadlessRun::new();
+        let validations = vec![declared_cargo_command("check canary crate", &["check"])];
+        let outcome = run_attempt(
+            &mut runtime,
+            parent_id,
+            &fixture.workspace,
+            BroadEditPolicy::WorkspaceExceptPlokeEval,
+            1,
+            &mut run,
+            &LiveObserver::disabled(),
+            &validations,
+            None,
+        )
+        .await
+        .expect("declared validation replay should finish");
+
+        assert!(
+            matches!(
+                outcome,
+                AttemptEnd::Terminal(HeadlessTerminal::Applied { .. })
+            ),
+            "adapter should run request-declared validation after apply, got {outcome:?}; validations={:#?}",
+            run.validations()
+        );
+        assert!(
+            run.validations()
+                .iter()
+                .any(|validation| validation.display_command == "cargo check" && validation.ok),
+            "expected successful harness-owned `cargo check`, got {:#?}",
+            run.validations()
+        );
+
+        let final_src =
+            fs::read_to_string(&fixture.src_file).expect("read final validated replay source");
+        assert!(
+            final_src.contains(r#""after""#),
+            "validated replay should update source after admission, got:\n{final_src}"
+        );
+    }
+
+    #[test]
+    fn response_tap_drain_rebases_session_local_indices_to_run_tape() {
+        let assistant_id = Uuid::from_u128(0xaaaaaaaa_aaaa_aaaa_aaaa_aaaaaaaaaaaa);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let rx = Mutex::new(rx);
+        let mut run = HeadlessRun::new();
+
+        tx.send(stop_response_record(assistant_id, 0, "first-local-zero").recorded_response)
+            .expect("send first local response");
+        drain_response_records(&mut run, assistant_id, Some(&rx));
+
+        tx.send(stop_response_record(assistant_id, 0, "second-local-zero").recorded_response)
+            .expect("send second local response");
+        drain_response_records(&mut run, assistant_id, Some(&rx));
+
+        let indices = run
+            .full_response_records()
+            .iter()
+            .map(|record| record.response_index().get())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            indices,
+            vec![0, 1],
+            "turn-live sidecars need monotonic replay indices even when each chat session reports local chain_index=0"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_loop() {
+        const FINAL_EVENT_INDEX: usize = 95;
+        const HISTORICAL_STOP_RESPONSE_INDEX: usize = 34;
+
+        let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
+        let turn_live_dir = historical_r10_turn_live_dir();
+        assert!(
+            turn_live_dir.exists(),
+            "expected historical r10 turn-live bundle at {}",
+            turn_live_dir.display()
+        );
+
+        let cursor = ploke_tree::TurnCursor {
+            artifact_kind: ploke_tree::TurnArtifactKind::Trace,
+            artifact_path: "agent-turn-trace.json".to_string(),
+            event_index: FINAL_EVENT_INDEX,
+        };
+        let (prefix, selected) = crate::replay::turn::resolve_replay_prefix_at(
+            &turn_live_dir,
+            &cursor,
+            crate::replay::turn::ReplayPrefixSelector::ThroughEvent {
+                cursor: cursor.clone(),
+            },
+            crate::replay::turn::ReplayTail::Stop,
+        )
+        .expect("historical r10 completed turn cursor should resolve through turn-live tape");
+        let selected_record_count = selected.records().len();
+        let mut selected_response_indices = selected
+            .records()
+            .iter()
+            .map(|record| record.response_index().get())
+            .collect::<Vec<_>>();
+        selected_response_indices.sort_unstable();
+        selected_response_indices.dedup();
+        let selected_duplicate_count =
+            selected_record_count.saturating_sub(selected_response_indices.len());
+        println!(
+            "\n=== historical r10 replay: resolved prefix ===\n  turn_live_dir: {}\n  trace_event_index: {}\n  through_response_index: {:#?}\n  unique_selected_response_indices: {:#?}\n  selected_record_count: {}\n  duplicate_sidecar_records: {}",
+            turn_live_dir.display(),
+            FINAL_EVENT_INDEX,
+            prefix.through_response_index,
+            selected_response_indices,
+            selected_record_count,
+            selected_duplicate_count
+        );
+        assert_eq!(prefix.anchor.call_id, None);
+        assert_eq!(
+            prefix.through_response_index,
+            Some(HISTORICAL_STOP_RESPONSE_INDEX),
+            "turn-live completed cursor should map to the final historical stop response"
+        );
+        assert!(
+            selected
+                .records()
+                .iter()
+                .any(|record| response_record_contains_tool_call(
+                    record,
+                    "function-call-34662591-b7b8-4c3e-b589-f70d5b7fb2c1",
+                    "non_semantic_patch"
+                )),
+            "selected prefix should include the historical repair ns_patch response"
+        );
+
+        let fixture = prepare_live_canary(
+            "historical-r10-post-stop-admission",
+            "Replay historical r10 through broad headless-TUI admission.",
+        )
+        .expect("prepare historical r10 admission fixture");
+        // This fixture preserves the historical ordering requirement:
+        // the first r10 patch introduces `+ nth`, the repair patch changes it to
+        // `+ *nth`, and the request-declared `ploke-eval` validation only passes
+        // if the harness waits until the completed stop boundary.
+        install_historical_r10_selection_score_workspace(&fixture);
+        let request_path = write_historical_r10_admission_request(&fixture);
+        let tape = historical_r10_completed_tail_tape(&fixture.artifact_root, &turn_live_dir);
+        println!(
+            "\n=== historical r10 replay: fixture and request ===\n  workspace: {}\n  artifact_root: {}\n  request_path: {}",
+            fixture.workspace.display(),
+            fixture.artifact_root.display(),
+            request_path.display()
+        );
+        ploke_tui::llm::install_recorded_response_tape(tape);
+        let _clear_tape = ClearRecordedTapeOnDrop;
+
+        let projection =
+            crate::cli::prototype1_state::cli_facing::run_broad_harness_attempt_from_request_path(
+                request_path.clone(),
+                crate::cli::prototype1_state::cli_facing::BroadTuiAttemptOptions::default(),
+            )
+            .await
+            .expect("historical r10 completed turn should validate and publish a submitted result");
+
+        println!(
+            "\n=== historical r10 replay: broad attempt projection ===\n  status: {}\n  changed_paths: {:#?}\n  diagnostics_path: {}\n  submitted_result_path: {}",
+            projection.status,
+            projection.changed_paths,
+            projection.diagnostics_path.display(),
+            projection.submitted_result_path.display()
+        );
+        assert_eq!(projection.status, "applied");
+        assert!(
+            projection.submitted_result_path.exists(),
+            "post-stop validation should publish submitted result at {}",
+            projection.submitted_result_path.display()
+        );
+        assert!(
+            projection.changed_paths.iter().any(|path| path.as_path()
+                == Path::new("crates/ploke-selection-score/src/ploke/frontier.rs")),
+            "historical r10 admission should report the repaired frontier change, got {:#?}",
+            projection.changed_paths
+        );
+
+        let published = read_published_request(&request_path);
+        let declared_commands = published
+            .request()
+            .contract
+            .validation
+            .commands
+            .iter()
+            .map(validation_command_display)
+            .collect::<Vec<_>>();
+        println!(
+            "\n=== historical r10 replay: declared validation contract ===\n  commands: {:#?}",
+            declared_commands
+        );
+        assert_eq!(
+            declared_commands,
+            vec![
+                "cargo check -p ploke-eval".to_string(),
+                "cargo test -p ploke-eval edit_surface".to_string(),
+            ],
+            "test must exercise the historical request-declared validation contract"
+        );
+        let submitted = read_submitted_result(&projection.submitted_result_path);
+        submitted
+            .verify_request(&published)
+            .expect("submitted result should be request-bound and admissible");
+
+        let diagnostics = read_headless_summary(&projection.diagnostics_path);
+        let completed_turn_count = diagnostics
+            .events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    evidence::Event::Turn { outcome, .. } if outcome == "completed"
+                )
+            })
+            .count();
+        let validation_receipts = diagnostics
+            .validations
+            .iter()
+            .map(|validation| {
+                format!(
+                    "{} ok={} command={}",
+                    validation.call_id, validation.ok, validation.display_command
+                )
+            })
+            .collect::<Vec<_>>();
+        println!(
+            "\n=== historical r10 replay: diagnostics after admission ===\n  terminal: {:#?}\n  completed_turn_count: {}\n  validations: {:#?}",
+            diagnostics.terminal, completed_turn_count, validation_receipts
+        );
+        assert!(
+            matches!(
+                diagnostics.terminal,
+                Some(evidence::Terminal::Applied { .. })
+            ),
+            "diagnostics should record an applied terminal after post-stop validation, got {:#?}",
+            diagnostics.terminal
+        );
+        assert!(
+            diagnostics.events.iter().any(|event| matches!(
+                event,
+                evidence::Event::Turn { outcome, .. } if outcome == "completed"
+            )),
+            "historical replay must reach the completed turn boundary before admission"
+        );
+        assert!(
+            diagnostics.validations.iter().any(|validation| {
+                validation.call_id == "declared_validation_1_0"
+                    && validation.display_command == "cargo check -p ploke-eval"
+                    && validation.ok
+            }) && diagnostics.validations.iter().any(|validation| {
+                validation.call_id == "declared_validation_1_1"
+                    && command_display_matches(
+                        "cargo test -p ploke-eval edit_surface",
+                        &validation.display_command,
+                    )
+                    && validation.ok
+            }),
+            "adapter should run the request-declared validation after the completed turn; got {:#?}",
+            diagnostics.validations
+        );
+
+        let target_file = published
+            .workspace_path()
+            .join("crates/ploke-selection-score/src/ploke/frontier.rs");
+        let final_src = fs::read_to_string(&target_file).expect("read final historical r10 target");
+        println!(
+            "\n=== historical r10 replay: final source check ===\n  target_file: {}\n  contains_repaired_deref: {}\n  contains_unrepaired_nth: {}",
+            target_file.display(),
+            final_src.contains("(left.iter().sum::<f64>() + *nth) / count as f64"),
+            final_src.contains("(left.iter().sum::<f64>() + nth) / count as f64")
+        );
+        assert!(
+            final_src.contains("(left.iter().sum::<f64>() + *nth) / count as f64"),
+            "historical r10 patch should dereference nth, got:\n{final_src}"
+        );
+        assert!(
+            !final_src.contains("(left.iter().sum::<f64>() + nth) / count as f64"),
+            "historical r10 pre-patch expression should be gone, got:\n{final_src}"
+        );
+    }
+
     // RED regression for the 2026-06-02 direct-Google broad-headless run:
     // `Budget::max_attempts == 1` bounded only the outer harness turn while the
     // inner TUI tool loop could keep making provider-step requests. Run with
@@ -6507,6 +7101,410 @@ Suggested action: Verify API credentials and retry."#;
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
             }
         }
+    }
+
+    fn historical_r10_turn_live_dir() -> PathBuf {
+        PathBuf::from(
+            "/home/brasides/.ploke-eval/campaigns/p1-memfix-0604a/prototype1/messages/edit-harness-result/node-a212c1db6c2774de-r10.turn-live",
+        )
+    }
+
+    fn historical_r10_completed_tail_tape(
+        run_dir: &Path,
+        turn_live_dir: &Path,
+    ) -> ploke_llm::manager::RecordedResponseTape {
+        const TAIL_CALLS: [(&str, &str); 5] = [
+            (
+                "function-call-f57da9c4-31f4-4046-9548-532a4b57f143",
+                "non_semantic_patch",
+            ),
+            (
+                "function-call-e62c3e56-4434-43be-92ef-b9d60a9bf9d8",
+                "cargo",
+            ),
+            (
+                "function-call-34662591-b7b8-4c3e-b589-f70d5b7fb2c1",
+                "non_semantic_patch",
+            ),
+            (
+                "function-call-f300448f-a4c2-487a-a610-6db96e13661c",
+                "cargo",
+            ),
+            (
+                "function-call-0c5f5c0d-cc91-4b56-b7cd-7b394493df6e",
+                "cargo",
+            ),
+        ];
+
+        let historical_records = read_historical_turn_live_records(turn_live_dir);
+        let mut selected = TAIL_CALLS
+            .iter()
+            .map(|(call_id, tool)| historical_record_for_call(&historical_records, call_id, tool))
+            .collect::<Vec<_>>();
+        selected.push(historical_stop_record(&historical_records));
+
+        let assistant_id = Uuid::new_v4();
+        let rebased = selected
+            .into_iter()
+            .enumerate()
+            .map(
+                |(response_index, record)| ploke_records::llm_response::RawFullResponseRecord {
+                    assistant_message_id: assistant_id,
+                    recorded_response: ploke_llm::manager::RecordedResponse::new(
+                        response_index,
+                        record.response().clone(),
+                    ),
+                },
+            )
+            .collect::<Vec<_>>();
+        load_recorded_tape(run_dir, assistant_id, rebased)
+    }
+
+    fn read_historical_turn_live_records(
+        turn_live_dir: &Path,
+    ) -> Vec<ploke_records::llm_response::RawFullResponseRecord> {
+        let path = turn_live_dir.join(ploke_records::llm_response::FULL_RESPONSE_TRACE_FILE);
+        let text = fs::read_to_string(&path).unwrap_or_else(|source| {
+            panic!(
+                "read historical turn-live tape {}: {source}",
+                path.display()
+            )
+        });
+        text.lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                serde_json::from_str::<ploke_records::llm_response::RawFullResponseRecord>(line)
+                    .unwrap_or_else(|source| {
+                        panic!(
+                            "parse historical turn-live tape {}: {source}",
+                            path.display()
+                        )
+                    })
+            })
+            .collect()
+    }
+
+    fn historical_record_for_call(
+        records: &[ploke_records::llm_response::RawFullResponseRecord],
+        call_id: &str,
+        tool: &str,
+    ) -> ploke_records::llm_response::RawFullResponseRecord {
+        let matches = records
+            .iter()
+            .filter(|record| response_record_contains_tool_call(record, call_id, tool))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matches.len(),
+            1,
+            "expected exactly one historical provider response for {tool} call {call_id}"
+        );
+        matches.into_iter().next().expect("one match")
+    }
+
+    fn historical_stop_record(
+        records: &[ploke_records::llm_response::RawFullResponseRecord],
+    ) -> ploke_records::llm_response::RawFullResponseRecord {
+        let matches = records
+            .iter()
+            .filter(|record| response_record_is_stop(record))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matches.len(),
+            1,
+            "expected exactly one historical stop response in r10 turn-live tape"
+        );
+        matches.into_iter().next().expect("one stop response")
+    }
+
+    fn response_record_contains_tool_call(
+        record: &ploke_records::llm_response::RawFullResponseRecord,
+        call_id: &str,
+        tool: &str,
+    ) -> bool {
+        let body = serde_json::to_string(record.response())
+            .expect("serialize historical provider response");
+        let step = ploke_llm::manager::parse_chat_outcome(&body)
+            .expect("parse historical provider response");
+        let ploke_llm::manager::ChatStepOutcome::ToolCalls { calls, .. } = step.outcome else {
+            return false;
+        };
+        calls
+            .iter()
+            .any(|call| call.call_id.as_ref() == call_id && call.function.name.as_str() == tool)
+    }
+
+    fn response_record_is_stop(
+        record: &ploke_records::llm_response::RawFullResponseRecord,
+    ) -> bool {
+        serde_json::to_value(record.response())
+            .ok()
+            .and_then(|value| {
+                value
+                    .pointer("/choices/0/finish_reason")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+            })
+            .as_deref()
+            == Some("stop")
+    }
+
+    fn write_historical_r10_admission_request(fixture: &LiveCanaryFixture) -> PathBuf {
+        let prototype_root = fixture.artifact_root.join("prototype1");
+        let request_dir = prototype_root.join("messages/edit-harness-request");
+        let result_dir = prototype_root.join("messages/edit-harness-result");
+        fs::create_dir_all(&request_dir).expect("create historical r10 request dir");
+        fs::create_dir_all(&result_dir).expect("create historical r10 result dir");
+
+        let published = PublishedBroadHarnessRequest::prototype1_workspace(
+            "node-a212c1db6c2774de-r10".to_string(),
+            fixture.workspace.clone(),
+            HarnessChildBudget {
+                min_children: 1,
+                max_children: 1,
+            },
+            &prototype_root,
+            request_dir.join("node-a212c1db6c2774de-r10.json"),
+            request_dir.join("node-a212c1db6c2774de-r10.md"),
+            result_dir.join("node-a212c1db6c2774de-r10.json"),
+            historical_r10_admission_binding(&fixture.workspace),
+        );
+        fs::write(
+            published.request_path(),
+            serde_json::to_vec_pretty(&published).expect("serialize historical r10 request"),
+        )
+        .expect("write historical r10 request");
+        fs::write(published.prompt_path(), published.request().render_prompt())
+            .expect("write historical r10 prompt");
+        published.request_path().to_path_buf()
+    }
+
+    fn historical_r10_admission_binding(repo_root: &Path) -> RequestAdmissionBinding {
+        let artifact_id = ArtifactId::new(format!("artifact:{}", repo_root.display()));
+        RequestAdmissionBinding::from_admission(&EditSurfaceAdmission::new(
+            Coordinate {
+                runtime_id: RuntimeId::new(),
+                target: OperationTarget::Artifact { artifact_id },
+            },
+            surface::SurfacePolicyId::new("workspace except ploke-eval"),
+        ))
+        .expect("construct historical r10 admission binding")
+    }
+
+    fn read_published_request(path: &Path) -> PublishedBroadHarnessRequest {
+        let bytes = fs::read(path)
+            .unwrap_or_else(|source| panic!("read published request {}: {source}", path.display()));
+        serde_json::from_slice(&bytes)
+            .unwrap_or_else(|source| panic!("parse published request {}: {source}", path.display()))
+    }
+
+    fn read_submitted_result(path: &Path) -> SubmittedBroadHarnessResult {
+        let bytes = fs::read(path)
+            .unwrap_or_else(|source| panic!("read submitted result {}: {source}", path.display()));
+        serde_json::from_slice(&bytes)
+            .unwrap_or_else(|source| panic!("parse submitted result {}: {source}", path.display()))
+    }
+
+    fn read_headless_summary(path: &Path) -> evidence::Summary {
+        let bytes = fs::read(path)
+            .unwrap_or_else(|source| panic!("read headless summary {}: {source}", path.display()));
+        serde_json::from_slice(&bytes)
+            .unwrap_or_else(|source| panic!("parse headless summary {}: {source}", path.display()))
+    }
+
+    fn install_historical_r10_selection_score_workspace(fixture: &LiveCanaryFixture) {
+        fs::write(
+            fixture.workspace.join("Cargo.toml"),
+            r#"[workspace]
+members = [
+    "crates/ploke-selection-score",
+    "crates/ploke-eval",
+]
+resolver = "2"
+"#,
+        )
+        .expect("write historical r10 workspace Cargo.toml");
+        fs::write(fixture.workspace.join(".gitignore"), "/target\n")
+            .expect("write historical r10 workspace .gitignore");
+
+        let selection_root = fixture.workspace.join("crates/ploke-selection-score");
+        fs::create_dir_all(selection_root.join("src/common"))
+            .expect("create historical r10 common dir");
+        fs::create_dir_all(selection_root.join("src/ploke"))
+            .expect("create historical r10 ploke dir");
+        fs::write(
+            selection_root.join("Cargo.toml"),
+            r#"[package]
+name = "ploke-selection-score"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+"#,
+        )
+        .expect("write ploke-selection-score Cargo.toml");
+        fs::write(
+            selection_root.join("src/lib.rs"),
+            r#"pub mod common {
+    pub mod ranking;
+}
+
+pub mod ploke {
+    pub mod frontier;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScoreError {
+    Empty,
+    LengthMismatch,
+    NonFinite,
+}
+
+pub use common::ranking::rank_quality;
+pub use ploke::frontier::{frontier_weights, FrontierConfig};
+"#,
+        )
+        .expect("write ploke-selection-score lib.rs");
+        fs::write(
+            selection_root.join("src/common/ranking.rs"),
+            r#"use crate::ScoreError;
+
+pub fn rank_quality(score: &[f64]) -> Result<Vec<f64>, ScoreError> {
+    if score.is_empty() {
+        return Err(ScoreError::Empty);
+    }
+    if score.iter().any(|value| !value.is_finite()) {
+        return Err(ScoreError::NonFinite);
+    }
+    if score.len() == 1 {
+        return Ok(vec![0.5]);
+    }
+
+    let mut pair: Vec<(usize, f64)> = score.iter().copied().enumerate().collect();
+    pair.sort_by(|left, right| left.1.total_cmp(&right.1));
+
+    let denom = (score.len() - 1) as f64;
+    let mut out = vec![0.0; score.len()];
+    for (rank, (idx, _)) in pair.into_iter().enumerate() {
+        out[idx] = rank as f64 / denom;
+    }
+    Ok(out)
+}
+"#,
+        )
+        .expect("write historical r10 ranking.rs");
+        fs::write(
+            selection_root.join("src/ploke/frontier.rs"),
+            r#"use crate::ScoreError;
+
+#[derive(Debug, Clone, Copy)]
+pub struct FrontierConfig {
+    pub top_m: usize,
+    pub lambda: f64,
+}
+
+fn sigmoid(value: f64) -> f64 {
+    1.0 / (1.0 + (-value).exp())
+}
+
+pub fn frontier_weights(
+    qual: &[f64],
+    child: &[usize],
+    cfg: FrontierConfig,
+) -> Result<Vec<f64>, ScoreError> {
+    if qual.is_empty() {
+        return Err(ScoreError::Empty);
+    }
+    if qual.len() != child.len() {
+        return Err(ScoreError::LengthMismatch);
+    }
+    if !cfg.lambda.is_finite() || qual.iter().any(|value| !value.is_finite()) {
+        return Err(ScoreError::NonFinite);
+    }
+
+    let count = cfg.top_m.clamp(1, qual.len());
+    let mut top = qual.to_vec();
+    top.sort_by(|left, right| right.total_cmp(left));
+    let mid = top.iter().take(count).sum::<f64>() / count as f64;
+
+    Ok(qual
+        .iter()
+        .zip(child.iter())
+        .map(|(quality, kids)| sigmoid(cfg.lambda * (quality - mid)) / (1.0 + *kids as f64))
+        .collect())
+}
+"#,
+        )
+        .expect("write historical r10 frontier.rs");
+
+        let eval_root = fixture.workspace.join("crates/ploke-eval");
+        fs::create_dir_all(eval_root.join("src")).expect("create historical r10 eval src");
+        fs::write(
+            eval_root.join("Cargo.toml"),
+            r#"[package]
+name = "ploke-eval"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ploke-selection-score = { path = "../ploke-selection-score" }
+
+[lib]
+path = "src/lib.rs"
+"#,
+        )
+        .expect("write ploke-eval Cargo.toml");
+        fs::write(
+            eval_root.join("src/lib.rs"),
+            r#"pub fn edit_surface_dependency_canary() -> usize {
+    let cfg = ploke_selection_score::FrontierConfig {
+        top_m: 1,
+        lambda: 1.0,
+    };
+    ploke_selection_score::frontier_weights(&[1.0], &[0], cfg)
+        .map(|weights| weights.len())
+        .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn edit_surface() {
+        assert_eq!(super::edit_surface_dependency_canary(), 1);
+    }
+}
+"#,
+        )
+        .expect("write ploke-eval lib.rs");
+
+        command_output(&fixture.workspace, "cargo", &["generate-lockfile"]);
+        command_output(
+            &fixture.workspace,
+            "git",
+            &[
+                "add",
+                "Cargo.toml",
+                "Cargo.lock",
+                ".gitignore",
+                "crates/ploke-selection-score",
+                "crates/ploke-eval",
+            ],
+        );
+        command_output(
+            &fixture.workspace,
+            "git",
+            &[
+                "-c",
+                "user.email=ploke-eval-live-canary@example.invalid",
+                "-c",
+                "user.name=ploke eval live canary",
+                "commit",
+                "-m",
+                "historical r10 frontier midpoint",
+            ],
+        );
     }
 
     fn recorded_protected_ns_patch_tape(

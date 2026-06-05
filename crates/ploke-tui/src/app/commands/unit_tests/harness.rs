@@ -525,11 +525,16 @@ impl MockUserConfig {
 
 pub trait TestAppAccessor {
     fn state_cmd_tx(&self) -> mpsc::Sender<StateCommand>;
+    fn cancel_chat(&self);
 }
 
 impl TestAppAccessor for App {
     fn state_cmd_tx(&self) -> mpsc::Sender<StateCommand> {
         self.cmd_tx.clone()
+    }
+
+    fn cancel_chat(&self) {
+        let _ = self.cancel_tx.send(CancelChatToken::Close);
     }
 }
 
@@ -916,7 +921,7 @@ impl TestRuntimeActorGuard {
 impl Drop for TestRuntimeActorGuard {
     fn drop(&mut self) {
         let _ = self.cancel_tx.send(CancelChatToken::Close);
-        for handle in &self.handles {
+        for handle in self.handles.iter().rev() {
             handle.abort();
         }
     }

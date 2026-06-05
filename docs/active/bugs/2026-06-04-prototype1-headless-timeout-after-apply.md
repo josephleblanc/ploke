@@ -9,6 +9,12 @@ not published. A same-target live replay or fresh `prototype1-state` run that
 hits the post-apply timeout/abort shape is still needed before calling the live
 timeout workflow fully cleared.
 
+Follow-up source fix on 2026-06-04 now makes the headless adapter run
+request-declared cargo validations itself after a clean applied edit and cancel
+the still-open chat turn before returning `HeadlessTerminal::Applied`. This
+addresses the `p1-memfix-0604a` zero-admission shape without admitting
+`applied_timed_out` or validation-missing children.
+
 This report records the observed cause of the June 2026 `prototype1-state`
 parent patch-generation timeouts. It does not make timeout-after-apply slots
 admissible. The submitted-result guard still refuses to publish non-admissible
@@ -293,6 +299,152 @@ original failure shape: rerun a same-target live replay or bounded fresh
 `prototype1-state` broad TUI attempt and confirm the sidecar terminal uses
 `AppliedTimedOut` or `AppliedTurnAborted` instead of plain `timed_out` when a
 patch has already been applied.
+
+## Fresh Validation: `p1-memfix-0604a`
+
+The fresh run rooted at:
+
+```text
+/home/brasides/.ploke-eval/campaigns/p1-memfix-0604a
+```
+
+confirms the old ambiguous terminal did not recur for applied patches. Ten broad
+headless-TUI result sidecars were written under:
+
+```text
+prototype1/messages/edit-harness-result/*.headless-tui.json
+```
+
+Terminal distribution:
+
+```text
+8 applied_timed_out
+1 applied_validation_missing
+1 timed_out
+```
+
+The child plan:
+
+```text
+prototype1/messages/child-plan/node-a212c1db6c2774de.json
+```
+
+had `children = []` and ten `rejected_surface_attempts`.
+
+This validates the terminal-classification side of the fix: applied candidates
+are now persisted as typed post-apply failures with proposal ids and changed
+paths instead of collapsing into plain `timed_out`. It also confirms the
+admission guard remains strict. The batch failed because no candidate satisfied
+the submitted-result contract, not because broad patch generation failed to
+produce artifacts.
+
+The remaining live-run blocker is behavioral: expensive headless slots can
+continue until the 900-second budget after applying edits, and those candidates
+are rightly rejected unless they reach `HeadlessTerminal::Applied` with the
+request-declared validation complete. The follow-up fix below makes the adapter
+produce that contract-clean terminal itself after an applied edit plus requested
+validation. It does not admit
+`applied_timed_out` children as successful selections.
+
+## Follow-up Fix: Adapter-Owned Declared Validation
+
+The `p1-memfix-0604a` run showed that typed post-apply terminals were necessary
+but not sufficient. The submitted-result gate was not looking for stale files;
+it correctly refused non-`Applied` terminals. The remaining bug was that
+`run_attempt` treated request-declared validation as a model obligation. If the
+model applied a valid patch and then stopped, kept reading, or failed to call the
+exact `cargo` tool commands from `BroadHarnessRequest.contract.validation`, the
+adapter had no validation observations to classify.
+
+Minimal repro:
+
+```text
+recorded_replay_runs_declared_validation_after_applied_edit
+```
+
+Pre-fix failure:
+
+```text
+Terminal(AppliedValidationMissing { missing: ["cargo check"], ... })
+validations = []
+```
+
+The fix keeps admission strict and moves only evidence production:
+
+- after a clean applied edit batch, if the request declares validation commands,
+  `run_attempt` maps supported `cargo check` and `cargo test` contracts into the
+  existing `ploke-tui` `CargoTool`;
+- the adapter records the resulting `CargoValidationObservation` entries using
+  the same path already used for model-issued cargo tool completions;
+- it cancels the open chat turn through the harness cancel channel before
+  returning, so the background LLM loop is not left running against a dropped
+  state manager;
+- `classify_applied_terminal` remains the only gate: failed, unsupported, or
+  missing requested validations still prevent `HeadlessTerminal::Applied`.
+
+Verification:
+
+```text
+cargo test -p ploke-eval recorded_replay_runs_declared_validation_after_applied_edit -- --nocapture
+1 passed
+
+cargo test -p ploke-eval requested_validation -- --nocapture
+3 passed
+
+cargo test -p ploke-eval gated_replay_sends_applied_ns_patch_instead_of_staged_success -- --nocapture
+1 passed
+
+cargo test -p ploke-eval edit_surface -- --nocapture
+127 passed; 0 failed; 10 ignored
+```
+
+## Follow-up Fix: Turn-Live Replay Tape Coordinates
+
+The `p1-memfix-0604a` follow-up run also exposed a replay evidence bug in the
+turn-live sidecar. Historical r10 has a replayable near-tail patch event:
+
+```text
+/home/brasides/.ploke-eval/campaigns/p1-memfix-0604a/prototype1/messages/edit-harness-result/node-a212c1db6c2774de-r10.turn-live/
+event 88: non_semantic_patch
+call_id: function-call-34662591-b7b8-4c3e-b589-f70d5b7fb2c1
+provider response_index: 31
+```
+
+The replay resolver can map that `TurnCursor` to the provider response via
+`run replay turn-live` semantics, but the raw sidecar written by the old
+response-tap drain had duplicate response indices. Each continued chat session
+reported a session-local `chain_index` starting at zero, and the headless run
+persisted those local indices under one assistant message. That made full-prefix
+turn-live replay ambiguous even when the provider responses themselves were
+present.
+
+Source fix:
+
+- `HeadlessRun` now owns a monotonic `next_response_index` for the persisted
+  turn-live sidecar;
+- `drain_response_records` rewrites response-tap records onto that run-level
+  sequence before writing `RawFullResponseRecord`s;
+- recorded provider responses still flow through the normal `ploke-tui`
+  parser/session/tool path. The fix changes replay coordinates, not tool
+  results.
+
+Regression coverage:
+
+```text
+cargo test -p ploke-eval response_tap_drain_rebases_session_local_indices_to_run_tape -- --nocapture
+1 passed
+
+cargo test -p ploke-eval historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_loop -- --nocapture
+1 passed
+```
+
+The historical replay test does two things: first, it resolves the r10
+`TurnCursor` through the turn-live tape to response index 31; second, it takes
+that near-tail historical provider response and executes its
+`non_semantic_patch` through the current headless TUI tool loop against a
+fixture workspace prepared at the pre-call file state. This proves the replay
+path exercises current tool behavior rather than injecting historical tool
+results.
 
 ## Notes For Fix Design
 
