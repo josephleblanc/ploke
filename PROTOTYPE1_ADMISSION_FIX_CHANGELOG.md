@@ -185,3 +185,335 @@ Remaining useful follow-up:
 
 - Run any repository-wide checks required before committing. The focused
   historical replay and the adjacent `edit_surface` filter are green.
+
+## 2026-06-04 Post-Commit Handoff
+
+Committed current work:
+
+- commit: `666477bf`
+- subject: `Fix headless TUI admission replay`
+- final status before this handoff update: clean worktree
+
+Important verification already run:
+
+- `cargo test -p ploke-eval historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_loop -- --nocapture`
+- result: passed, `1 passed; 0 failed`
+- `cargo test -p ploke-eval edit_surface -- --nocapture`
+- result: passed, `129 passed; 0 failed; 10 ignored`
+
+What the fix is supposed to prove:
+
+- historical r10 reaches `ChatTurnFinished outcome=completed` after applied
+  edits;
+- the broad headless-TUI path runs request-declared validation after that stop
+  boundary;
+- if validation passes, a submitted result is written and verifies against the
+  published request.
+
+Next requested task after compaction:
+
+- Set up another live Prototype 1 run in a new worktree.
+- Start from the committed checkout at `666477bf` unless the user gives a newer
+  base.
+- Treat this changelog edit itself as uncommitted handoff state unless the user
+  asks to commit it.
+
+## 2026-06-04 New Live Run Setup
+
+Superseded: this setup used the wrong eval/parent model for the intended next
+live run. Leave it in place as evidence; do not advance it.
+
+Created the next live-loop seed from the committed fix:
+
+- campaign: `p1-admissionfix-live-20260604-190511`
+- worktree:
+  `/home/brasides/.ploke-eval/worktrees/p1-admissionfix-live-20260604-190511`
+- seed branch: `seed-p1-admissionfix-live-20260604-190511`
+- setup-created parent branch:
+  `prototype1-parent-p1-admissionfix-live-20260604-190511-gen0`
+- setup parent/node id: `node-0053a8307de26534`
+- setup parent commit: `aaa3a383`
+- base commit: `666477bf`
+- profile source:
+  `/home/brasides/.ploke-eval/profiles/p1-admissionfix-live-20260604-190511.toml`
+- admitted profile:
+  `/home/brasides/.ploke-eval/campaigns/p1-admissionfix-live-20260604-190511/prototype1/run-profile.toml`
+- admitted profile sha256:
+  `764eb95f53ed30325fa17f53b94e68d56312f5d2776df1a96e06fcee43c54ca7`
+
+Profile policy cloned from `p1-memfix-0604a`, changing only the run/profile
+identity:
+
+- eval/parent model: `google/gemini-3.5-flash`
+- eval/parent route: `direct-google`
+- eval/parent provider sentinel: `google`
+- protocol model: `google/gemini-2.5-flash`
+- protocol route: `direct-google`
+- protocol provider sentinel: `google`
+- children: min `5`, max `5`, parallel targets `5`
+- `execution.broad_tui.max_attempts = 2`
+- `execution.broad_tui.fresh_slots_per_child = 2`
+
+Setup verification:
+
+- `cargo build -p ploke-eval`
+- result: completed in the new worktree with existing warnings
+- `./target/debug/ploke-eval loop prototype1-doctor --repo-root . --format json`
+- result: `phase = "baseline_eval"`, `blockers = []`,
+  `allowed_actions = ["doctor", "continue", "step"]`
+- new worktree status after setup/build/doctor: clean on
+  `prototype1-parent-p1-admissionfix-live-20260604-190511-gen0`
+
+Provider preflight from this shell:
+
+- `OPENROUTER_API_KEY`: missing
+- `GOOGLE_API_KEY`: missing
+
+Do not start the live step from this shell unless the intended direct-Google
+credential path is confirmed for the launch environment.
+
+## 2026-06-04 Handoff Evidence Checks
+
+Existing source locations for the handoff evidence boundary:
+
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:6178`
+  `select_artifact_for_handoff`
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:6196`
+  requires selected candidate artifact surface before handoff
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:6204`
+  checks selected node id against `SuccessorDecision`
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:6212`
+  requires `decision.selected_branch_id`
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:6217`
+  checks node branch id against `decision.selected_branch_id`
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:6226`
+  requires selected sealed payload evidence
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:6235`
+  checks sealed payload generation against node generation
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:6245`
+  checks sealed payload node id against node id
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:6253`
+  checks sealed payload branch id against selected branch id
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:6261`
+  requires runtime identity for historical rehydration
+
+Existing tests covering the boundary:
+
+- `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs:4014`
+  `historical_node_150_channel_treatment_reaches_current_generation_handoff`
+- `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs:4247`
+  historical current-generation child carries harness `artifact_surface`
+- `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs:4287`
+  historical current-generation path calls `select_artifact_for_handoff`
+- `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs:4325`
+  `current_generation_selector_trace_follows_child_channel_evidence_path`
+- `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs:4629`
+  `history_handoff_rejects_missing_artifact_surface_before_seal`
+- `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs:4782`
+  `history_handoff_selection_carries_resolved_artifact`
+
+Current happy-path evidence production locations:
+
+- `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter.rs:884`
+  extracts the applied edit only after `ChatTurnFinished outcome="completed"`
+- `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter.rs:887`
+  runs request-declared validations after that stop boundary
+- `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter.rs:949`
+  classifies the terminal as `Applied` only when requested validation is not
+  failed or missing
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:1600`
+  passes request evidence roots, edit policy, and declared validation commands
+  into the headless TUI adapter
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:1682`
+  handles the adapter terminal; only `HeadlessTerminal::Applied` reaches
+  submitted-result publication
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:1827`
+  builds `SubmittedHarnessReturnEvidence` from changed files, evidence roots,
+  and declared check commands
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:1885`
+  binds the submitted result to the published request identity
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:1897`
+  writes the submitted-result JSON at the request-declared path
+- `crates/ploke-eval/src/cli/prototype1_state/backend.rs:1448`
+  admits the submitted result only after request binding and workspace
+  validation
+- `crates/ploke-eval/src/cli/prototype1_state/backend.rs:1495`
+  measures the candidate `ArtifactSurface`
+- `crates/ploke-eval/src/cli/prototype1_state/edit_surface/harness_result.rs:260`
+  projects admitted transaction evidence into child harness evidence, including
+  changed paths and artifact surface
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:2212`
+  attaches admitted harness evidence to the broad child plan
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:5042`
+  carries child harness artifact surface into `PlannedChildOutcome`
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:6149`
+  carries the planned outcome artifact surface into the candidate artifact used
+  by handoff selection
+
+Verification already run:
+
+- `cargo test -p ploke-eval handoff -- --nocapture`
+- result: `6 passed; 0 failed`
+- `cargo test -p ploke-eval current_generation_selector_trace_follows_child_channel_evidence_path -- --nocapture`
+- result: `1 passed; 0 failed`
+
+## 2026-06-04 Corrected Live Run Setup
+
+Created the corrected next live-loop seed from the committed fix:
+
+- campaign: `p1-admissionfix-g31pro-p25flash-20260604-191249`
+- worktree:
+  `/home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249`
+- seed branch: `seed-p1-admissionfix-g31pro-p25flash-20260604-191249`
+- setup-created parent branch:
+  `prototype1-parent-p1-admissionfix-g31pro-p25flash-20260604-191249-gen0`
+- setup parent/node id: `node-9795f351873f2c49`
+- setup parent commit: `719f6b5d`
+- base commit: `666477bf`
+- profile source:
+  `/home/brasides/.ploke-eval/profiles/p1-admissionfix-g31pro-p25flash-20260604-191249.toml`
+- admitted profile:
+  `/home/brasides/.ploke-eval/campaigns/p1-admissionfix-g31pro-p25flash-20260604-191249/prototype1/run-profile.toml`
+- admitted profile sha256:
+  `1bd62ad6dea95601f9cbe92c543aa07dfc4f13d24ae850db587e047a1b28353e`
+
+Profile policy cloned from
+`p1-g31pro-p25flash-10g5c-a2-patch5-eval3-explore-fix-20260604-091439`,
+changing only the run/profile identity:
+
+- eval/parent model: `google/gemini-3.1-pro-preview`
+- eval/parent route: `direct-google`
+- eval/parent provider sentinel: `google`
+- protocol model: `google/gemini-2.5-flash`
+- protocol route: `direct-google`
+- protocol provider sentinel: `google`
+- children: min `5`, max `5`, parallel targets `5`
+- `execution.broad_tui.max_attempts = 2`
+- `execution.broad_tui.fresh_slots_per_child = 2`
+- `control.parallel_cap = 3`
+
+Setup verification:
+
+- `cargo build -p ploke-eval`
+- result: completed in the corrected worktree with existing warnings
+- `./target/debug/ploke-eval loop prototype1-doctor --repo-root . --format json`
+- result: `phase = "baseline_eval"`, `blockers = []`,
+  `allowed_actions = ["doctor", "continue", "step"]`
+- doctor effective control:
+  `parallel_cap = 3`, `patch_generation_parallel_cap = 5`
+- corrected worktree status after setup/build/doctor: clean on
+  `prototype1-parent-p1-admissionfix-g31pro-p25flash-20260604-191249-gen0`
+
+Provider preflight from this shell:
+
+- `OPENROUTER_API_KEY`: missing
+- `GOOGLE_API_KEY`: missing
+
+Do not start the live step from this shell unless the intended direct-Google
+credential path is confirmed for the launch environment.
+
+## 2026-06-04 Historical R10 Fixture Lockfile Repair
+
+Fixed a test-only fixture setup failure in
+`historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_loop`.
+The historical r10 synthetic workspace ran `cargo generate-lockfile`, then
+unconditionally staged `Cargo.lock`; in this workspace, Cargo did not create a
+lockfile for that path-only fixture, so `git add Cargo.lock` failed before the
+adapter replay path was exercised.
+
+Patch:
+
+- `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter.rs`
+- `install_historical_r10_selection_score_workspace` now guarantees the
+  synthetic workspace has a tracked `Cargo.lock` baseline before candidate
+  validation runs.
+
+Verification:
+
+- `cargo test -p ploke-eval historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_loop -- --nocapture`
+- result: passed, `1 passed; 0 failed`
+- observed changed paths stayed limited to:
+  `crates/ploke-selection-score/src/common/ranking.rs` and
+  `crates/ploke-selection-score/src/ploke/frontier.rs`
+- `cargo test -q -p ploke-eval edit_surface`
+- result: passed, `129 passed; 0 failed; 10 ignored`
+
+Follow-up full-lib failure and repair:
+
+- `cargo test -q -p ploke-eval --lib` reproduced an order-sensitive failure in
+  the same historical r10 test.
+- The adapter and backend were behaving correctly: admission rejected
+  `Cargo.lock` as an out-of-policy authority file under
+  `WorkspaceExceptPlokeEval`.
+- The fixture was unstable because the synthetic baseline sometimes lacked a
+  tracked `Cargo.lock`; later validation could create it in the candidate
+  worktree, making the candidate appear to edit an authority file.
+- The test fixture now seeds and commits the minimal lockfile for its closed
+  two-crate path-only workspace before the candidate worktree is created.
+- `cargo test -q -p ploke-eval --lib`
+- result: passed, `767 passed; 0 failed; 27 ignored`
+
+## 2026-06-04 Fresh Live Run Setup
+
+Created a new profile-backed Prototype 1 seed using the same policy as the last
+corrected setup, changing only the run/profile identity:
+
+- campaign: `p1-admissionfix-g31pro-p25flash-20260604-195208`
+- worktree:
+  `/home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-195208`
+- seed branch: `seed-p1-admissionfix-g31pro-p25flash-20260604-195208`
+- setup-created parent branch:
+  `prototype1-parent-p1-admissionfix-g31pro-p25flash-20260604-195208-gen0`
+- setup parent/node id: `node-90cab936910719cb`
+- setup parent commit: `7a2dbc78`
+- base commit: `666477bf`
+- profile source:
+  `/home/brasides/.ploke-eval/profiles/p1-admissionfix-g31pro-p25flash-20260604-195208.toml`
+- admitted profile:
+  `/home/brasides/.ploke-eval/campaigns/p1-admissionfix-g31pro-p25flash-20260604-195208/prototype1/run-profile.toml`
+- admitted profile sha256:
+  `8b6135f87ecbe2c588ebba64df1cf40f25fb08a96beba458e9c10c55dc96c8ba`
+
+Profile policy:
+
+- eval/parent model: `google/gemini-3.1-pro-preview`
+- eval/parent route: `direct-google`
+- eval/parent provider sentinel: `google`
+- protocol model: `google/gemini-2.5-flash`
+- protocol route: `direct-google`
+- protocol provider sentinel: `google`
+- children: min `5`, max `5`, parallel targets `5`
+- `search.max_generations = 10`
+- `search.max_total_nodes = 64`
+- `search.require_keep_for_continuation = true`
+- `search.explore_from_rejected = true`
+- `selection.strategy = "history-score-child-prop"`
+- `selection.evidence = "operational-and-protocol"`
+- `selection.metrics.score_profile = "operational-quality-v1"`
+- `selection.oracle.mode = "record-only"`
+- `selection.oracle.require_evidence = true`
+- `protocol.max_tokens = 8000`
+- `protocol.tool_review_parallelism = 8`
+- `execution.broad_tui.max_attempts = 2`
+- `execution.broad_tui.fresh_slots_per_child = 2`
+- `control.parallel_cap = 3`
+
+Setup verification:
+
+- `cargo build -p ploke-eval`
+- result: completed in the new worktree with existing warnings
+- `./target/debug/ploke-eval loop prototype1-doctor --repo-root . --format json`
+- result: `phase = "baseline_eval"`, `blockers = []`,
+  `allowed_actions = ["doctor", "continue", "step"]`
+- doctor effective control:
+  `parallel_cap = 3`, `patch_generation_parallel_cap = 5`
+- new worktree status after setup/build/doctor: clean on
+  `prototype1-parent-p1-admissionfix-g31pro-p25flash-20260604-195208-gen0`
+
+Provider preflight from this shell:
+
+- `OPENROUTER_API_KEY`: missing
+- `GOOGLE_API_KEY`: missing
+
+Do not start the live step from this shell unless the intended direct-Google
+credential path is confirmed for the launch environment.
