@@ -43,11 +43,18 @@ mod prototype1_process;
 /// See `prototype1_state::mod` for the implementation split and the on-disk
 /// campaign layout under `~/.ploke-eval/campaigns/<campaign-id>/prototype1/`.
 pub(crate) mod prototype1_state;
+mod provider;
 
 pub use args::*;
 
 pub(crate) use format::{
     display_context_length, display_price_per_million, extract_model_size, model_size_string,
+};
+
+pub(crate) use provider::{
+    current_provider_for_model, headless_model_selection,
+    headless_model_selection_from_provider_preference, load_parent_patcher_model_selection,
+    parse_provider_key, registry_route_source, resolve_provider_model_id,
 };
 
 #[cfg(test)]
@@ -825,396 +832,6 @@ impl PrepareMsbBatchCommand {
     }
 }
 
-impl ModelCommand {
-    pub async fn run(self) -> Result<(), PrepareError> {
-        match self.command {
-            ModelSubcommand::Refresh => {
-                let registry = refresh_model_registry().await?;
-                let direct_google = registry
-                    .data
-                    .iter()
-                    .filter(|item| item.route_source.is_direct_google())
-                    .count();
-                println!(
-                    "refreshed {} models ({} direct Google)",
-                    registry.data.len(),
-                    direct_google
-                );
-                Ok(())
-            }
-            ModelSubcommand::List => {
-                let registry = load_model_registry()?;
-                let mut items: Vec<_> = registry.data.iter().collect();
-                items.sort_by(|a, b| a.id.cmp(&b.id));
-                let id_width = items
-                    .iter()
-                    .map(|item| item.id.to_string().len())
-                    .max()
-                    .unwrap_or(0)
-                    .max("model_id".len());
-
-                println!(
-                    "{:<id_width$}  {:>14}  {:>10}  {:>10}  {:>13}  {}",
-                    "model_id",
-                    "context_length",
-                    "in($/M)",
-                    "out($/M)",
-                    "route_source",
-                    "size",
-                    id_width = id_width
-                );
-                for item in items {
-                    let context = display_context_length(item);
-                    let input = display_price_per_million(item.pricing.prompt);
-                    let output = display_price_per_million(item.pricing.completion);
-                    let size = model_size_string(item);
-                    let route_source = if item.route_source.is_direct_google() {
-                        "direct_google"
-                    } else {
-                        "openrouter"
-                    };
-                    println!(
-                        "{:<id_width$}  {:>14}  {:>10}  {:>10}  {:>13}  {}",
-                        item.id,
-                        context,
-                        input,
-                        output,
-                        route_source,
-                        size,
-                        id_width = id_width
-                    );
-                }
-                Ok(())
-            }
-            ModelSubcommand::Find { query } => {
-                let registry = load_model_registry()?;
-                let mut matches = find_models(&registry, &query);
-                matches.sort_by(|a, b| a.id.cmp(&b.id));
-                for item in matches {
-                    println!("{}\t{}", item.id, item.name.as_str());
-                }
-                Ok(())
-            }
-            ModelSubcommand::ParentPatcher(cmd) => cmd.run().await,
-            ModelSubcommand::Providers { model_id } => print_model_providers(model_id).await,
-            ModelSubcommand::Provider(cmd) => cmd.run().await,
-            ModelSubcommand::Set { model_id } => {
-                let registry = load_model_registry()?;
-                let registry_path = crate::model_registry::model_registry_path()?;
-                let selected = registry
-                    .data
-                    .iter()
-                    .find(|item| item.id.to_string() == model_id)
-                    .ok_or_else(|| PrepareError::UnknownModelInRegistry {
-                        model: model_id.clone(),
-                        path: registry_path.clone(),
-                    })?;
-                save_active_model(&selected.id)?;
-                println!("{}", selected.id);
-                Ok(())
-            }
-            ModelSubcommand::Current => {
-                let active = load_active_model()?;
-                match load_model_registry() {
-                    Ok(registry) => {
-                        if let Some(item) =
-                            registry.data.iter().find(|item| item.id == active.model_id)
-                        {
-                            println!("{}\t{}", item.id, item.name.as_str());
-                        } else {
-                            println!("{}", active.model_id);
-                        }
-                    }
-                    Err(PrepareError::MissingModelRegistry(_)) => println!("{}", active.model_id),
-                    Err(err) => return Err(err),
-                }
-                Ok(())
-            }
-        }
-    }
-}
-
-impl ParentPatcherCommand {
-    pub async fn run(self) -> Result<(), PrepareError> {
-        match self.command {
-            ParentPatcherSubcommand::Set { model_id } => {
-                let registry = load_model_registry()?;
-                let registry_path = crate::model_registry::model_registry_path()?;
-                let selected = registry
-                    .data
-                    .iter()
-                    .find(|item| item.id.to_string() == model_id)
-                    .ok_or_else(|| PrepareError::UnknownModelInRegistry {
-                        model: model_id.clone(),
-                        path: registry_path.clone(),
-                    })?;
-                save_parent_patcher_model(&selected.id)?;
-                println!("{}", selected.id);
-                Ok(())
-            }
-            ParentPatcherSubcommand::Current => {
-                let selected = load_parent_patcher_model()?;
-                match load_model_registry() {
-                    Ok(registry) => {
-                        if let Some(item) = registry
-                            .data
-                            .iter()
-                            .find(|item| item.id == selected.model_id)
-                        {
-                            println!("{}\t{}", item.id, item.name.as_str());
-                        } else {
-                            println!("{}", selected.model_id);
-                        }
-                    }
-                    Err(PrepareError::MissingModelRegistry(_)) => println!("{}", selected.model_id),
-                    Err(err) => return Err(err),
-                }
-                Ok(())
-            }
-        }
-    }
-}
-
-impl ProviderCommand {
-    pub async fn run(self) -> Result<(), PrepareError> {
-        match self.command {
-            ProviderSubcommand::Set {
-                provider_slug,
-                model_id,
-            } => set_persisted_provider(model_id, provider_slug).await,
-            ProviderSubcommand::Current { model_id } => {
-                let (model_id, provider) = current_provider_for_model(model_id)?;
-                match provider {
-                    Some(provider) => {
-                        println!("{}\t{}", model_id, provider.slug.as_str());
-                    }
-                    None => {
-                        println!("{}\tauto", model_id);
-                    }
-                }
-                Ok(())
-            }
-            ProviderSubcommand::Clear { model_id } => {
-                let model = resolve_provider_model_id(model_id)?;
-                clear_provider_for_model(&model)?;
-                println!("{}\tauto", model);
-                Ok(())
-            }
-        }
-    }
-}
-
-async fn print_model_providers(model_id: Option<String>) -> Result<(), PrepareError> {
-    let model_id = match model_id {
-        Some(model_id) => model_id,
-        None => load_active_model()?.model_id.to_string(),
-    };
-
-    let model = ModelId::from_str(&model_id).map_err(|err| PrepareError::DatabaseSetup {
-        phase: "parse_model_id",
-        detail: format!("invalid model id '{model_id}': {err}"),
-    })?;
-    if let Ok(registry) = load_model_registry() {
-        if let Some(item) = registry.data.iter().find(|item| item.id == model) {
-            if item.route_source.is_direct_google() {
-                println!("Direct Google route for model '{}':", model);
-                println!(
-                    "  {:<14}  {:<14}  {:<5}  {:<8}  {}",
-                    "provider_slug", "provider_name", "tools", "selected", "context"
-                );
-                println!(
-                    "  {:<14}  {:<14}  {:<5}  {:<8}  {}",
-                    "google",
-                    "Google",
-                    if item.supports_tools() { "yes" } else { "no" },
-                    "yes",
-                    item.context_length
-                        .or(item.top_provider.context_length)
-                        .map(|value| value.to_string())
-                        .unwrap_or_else(|| "-".to_string())
-                );
-                return Ok(());
-            }
-        }
-    }
-    let client = reqwest::Client::new();
-    let typed_model = OpenRouterModelId::from(model.clone());
-    let endpoints = OpenRouter::fetch_model_endpoints(&client, typed_model)
-        .await
-        .map_err(|err| PrepareError::DatabaseSetup {
-            phase: "fetch_model_endpoints",
-            detail: err.to_string(),
-        })?;
-    let selected_provider = load_provider_for_model(&model)?;
-
-    println!("Available endpoints for model '{}':", model);
-    println!(
-        "  {:<14}  {:<14}  {:<5}  {:<8}  {}",
-        "provider_slug", "provider_name", "tools", "selected", "context"
-    );
-    for ep in endpoints.data.endpoints {
-        print_provider_row(&ep, selected_provider.as_ref());
-    }
-    Ok(())
-}
-
-fn print_provider_row(ep: &Endpoint, selected_provider: Option<&ProviderKey>) {
-    let provider_slug = ep.tag.provider_name.as_str();
-    let provider_name = ep.provider_name.as_str();
-    let tools = if ep.supports_tools() { "yes" } else { "no" };
-    let selected = if selected_provider.is_some_and(|p| p.slug.as_str() == provider_slug) {
-        "yes"
-    } else {
-        ""
-    };
-    println!(
-        "  {:<14}  {:<14}  {:<5}  {:<8}  {:.0}",
-        provider_slug, provider_name, tools, selected, ep.context_length
-    );
-}
-
-fn parse_provider_key(provider: Option<String>) -> Result<Option<ProviderKey>, PrepareError> {
-    provider
-        .map(|slug| {
-            ProviderKey::new(&slug).map_err(|err| PrepareError::DatabaseSetup {
-                phase: "parse_provider_key",
-                detail: format!("invalid provider slug '{slug}': {err}"),
-            })
-        })
-        .transpose()
-}
-
-fn resolve_provider_model_id(model_id: Option<String>) -> Result<ModelId, PrepareError> {
-    match model_id {
-        Some(model_id) => ModelId::from_str(&model_id).map_err(|err| PrepareError::DatabaseSetup {
-            phase: "parse_model_id",
-            detail: format!("invalid model id '{model_id}': {err}"),
-        }),
-        None => Ok(load_active_model()?.model_id),
-    }
-}
-
-fn current_provider_for_model(
-    model_id: Option<String>,
-) -> Result<(ModelId, Option<ProviderKey>), PrepareError> {
-    let model = resolve_provider_model_id(model_id)?;
-    if registry_route_source(&model)?.is_some_and(|source| source.is_direct_google()) {
-        let provider = ProviderKey::new("google").map_err(|err| PrepareError::DatabaseSetup {
-            phase: "direct_google_provider_key",
-            detail: err.to_string(),
-        })?;
-        return Ok((model, Some(provider)));
-    }
-    let provider = load_provider_for_model(&model)?;
-    Ok((model, provider))
-}
-
-fn registry_route_source(model_id: &ModelId) -> Result<Option<ModelRouteSource>, PrepareError> {
-    match load_model_registry() {
-        Ok(registry) => Ok(registry
-            .data
-            .iter()
-            .find(|item| item.id == *model_id)
-            .map(|item| item.route_source)),
-        Err(PrepareError::MissingModelRegistry(_)) => Ok(None),
-        Err(err) => Err(err),
-    }
-}
-
-fn headless_model_selection(
-    model_id: ModelId,
-    provider: Option<ProviderKey>,
-) -> Result<prototype1_state::edit_surface::tui_adapter::ModelSelection, PrepareError> {
-    let registry_direct_google =
-        registry_route_source(&model_id)?.is_some_and(|source| source.is_direct_google());
-    let requested_google = provider
-        .as_ref()
-        .is_some_and(|provider| provider.slug.as_str() == "google");
-
-    if registry_direct_google || requested_google {
-        if let Some(provider) = provider.as_ref()
-            && provider.slug.as_str() != "google"
-        {
-            return Err(PrepareError::DatabaseSetup {
-                phase: "headless_model_route",
-                detail: format!(
-                    "direct Google model '{model_id}' does not accept OpenRouter provider '{}'",
-                    provider.slug.as_str()
-                ),
-            });
-        }
-        return Ok(
-            prototype1_state::edit_surface::tui_adapter::ModelSelection::direct_google(model_id),
-        );
-    }
-
-    Ok(prototype1_state::edit_surface::tui_adapter::ModelSelection::openrouter(model_id, provider))
-}
-
-fn headless_model_selection_from_provider_preference(
-    model_id: ModelId,
-    provider: Option<ProviderKey>,
-) -> Result<prototype1_state::edit_surface::tui_adapter::ModelSelection, PrepareError> {
-    if registry_route_source(&model_id)?.is_some_and(|source| source.is_direct_google()) {
-        return Ok(
-            prototype1_state::edit_surface::tui_adapter::ModelSelection::direct_google(model_id),
-        );
-    }
-
-    headless_model_selection(model_id, provider)
-}
-
-fn load_parent_patcher_model_selection()
--> Result<prototype1_state::edit_surface::tui_adapter::ModelSelection, PrepareError> {
-    // Temporary split config: broad parent patch generation reads the
-    // parent-patcher selection here, while eval/protocol defaults still read
-    // `load_active_model()` in `resolve_protocol_model_id()` above. Collapse
-    // both onto the admitted profile/campaign config once that plumbing exists.
-    let selected = load_parent_patcher_model().or_else(|err| match err {
-        PrepareError::MissingParentPatcherModel(_) => load_active_model(),
-        other => Err(other),
-    })?;
-    let provider = load_provider_for_model(&selected.model_id)?;
-    headless_model_selection_from_provider_preference(selected.model_id, provider)
-}
-
-async fn set_persisted_provider(
-    model_id: Option<String>,
-    provider_slug: String,
-) -> Result<(), PrepareError> {
-    let model = resolve_provider_model_id(model_id)?;
-    let registry = load_model_registry()?;
-    let selected = registry
-        .data
-        .into_iter()
-        .find(|item| item.id == model)
-        .ok_or_else(|| PrepareError::UnknownModelInRegistry {
-            model: model.to_string(),
-            path: crate::model_registry::model_registry_path()
-                .unwrap_or_else(|_| PathBuf::from("<unknown>")),
-        })?;
-
-    let provider_key =
-        ProviderKey::new(&provider_slug).map_err(|err| PrepareError::DatabaseSetup {
-            phase: "parse_provider_key",
-            detail: format!("invalid provider slug '{provider_slug}': {err}"),
-        })?;
-    let route = resolve_route_for_model(&selected, Some(&provider_key)).await?;
-    let provider = route
-        .provider_key()
-        .cloned()
-        .ok_or_else(|| PrepareError::DatabaseSetup {
-            phase: "set_provider_for_model",
-            detail: format!(
-                "model '{}' uses a direct route and does not have provider endpoints to persist",
-                selected.id
-            ),
-        })?;
-    set_provider_for_model(&selected.id, provider.clone())?;
-    println!("{}\t{}", selected.id, provider.slug.as_str());
-    Ok(())
-}
-
 #[derive(Debug, Clone, Serialize)]
 struct RegistryDatasetView<'a> {
     dataset: &'a str,
@@ -1990,15 +1607,6 @@ fn short_id(id: &str) -> String {
     id.chars().take(8).collect()
 }
 
-impl TranscriptCommand {
-    pub async fn run(self) -> Result<(), PrepareError> {
-        let resolution = resolve_record_path(None, self.instance, None)?;
-        print_assistant_messages_from_record_path(&resolution.record_path).await?;
-        print_record_resolution_footer(&resolution);
-        Ok(())
-    }
-}
-
 impl RunListCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
         let selection = load_active_selection(OperatorProjectionRead::cli_operator())?;
@@ -2097,63 +1705,6 @@ impl RunListCommand {
     }
 }
 
-impl ConversationsCommand {
-    pub async fn run(self) -> Result<(), PrepareError> {
-        let resolution = resolve_record_path(self.record, self.instance, None)?;
-        let record_path = resolution.record_path.clone();
-
-        let record =
-            read_compressed_record(&record_path).map_err(|source| PrepareError::ReadManifest {
-                path: record_path.clone(),
-                source,
-            })?;
-
-        match self.format {
-            ConversationsOutputFormat::Table => {
-                println!(
-                    "{:<6} {:<24} {:<24} {:<12} {}",
-                    "Turn", "Started", "Ended", "Tools", "Outcome"
-                );
-                println!("{}", "-".repeat(80));
-                for turn in record.conversations() {
-                    let tool_count = turn.tool_calls().len();
-                    let outcome_str = match &turn.outcome {
-                        crate::record::TurnOutcome::ToolCalls { count } => {
-                            format!("tool_calls({})", count)
-                        }
-                        crate::record::TurnOutcome::Content => "content".to_string(),
-                        crate::record::TurnOutcome::Error { message } => {
-                            format!("error: {}", message.chars().take(40).collect::<String>())
-                        }
-                        crate::record::TurnOutcome::Timeout { elapsed_secs } => {
-                            format!("timeout({}s)", elapsed_secs)
-                        }
-                    };
-                    println!(
-                        "{:<6} {:<24} {:<24} {:<12} {}",
-                        turn.turn_number,
-                        turn.started_at.chars().take(23).collect::<String>(),
-                        turn.ended_at.chars().take(23).collect::<String>(),
-                        tool_count,
-                        outcome_str
-                    );
-                }
-                println!("\nTotal turns: {}", record.conversations().count());
-            }
-            ConversationsOutputFormat::Json => {
-                let turns: Vec<_> = record.conversations().collect();
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&turns).map_err(PrepareError::Serialize)?
-                );
-            }
-        }
-
-        print_record_resolution_footer(&resolution);
-        Ok(())
-    }
-}
-
 impl InspectCommand {
     pub async fn run(self) -> Result<(), PrepareError> {
         match self.command {
@@ -2225,125 +1776,6 @@ impl ClosureAdvanceCommand {
             ClosureAdvanceSubcommand::Protocol(cmd) => cmd.run().await,
             ClosureAdvanceSubcommand::All(cmd) => cmd.run().await,
         }
-    }
-}
-
-impl SelectStatusCommand {
-    pub fn run(self) -> Result<(), PrepareError> {
-        let selection = load_active_selection(OperatorProjectionRead::cli_operator())?;
-        let warnings = render_selection_warnings(&selection);
-        match self.format {
-            InspectOutputFormat::Table => {
-                println!("active selection");
-                println!("{}", "-".repeat(40));
-                println!(
-                    "campaign: {}",
-                    selection.campaign.as_deref().unwrap_or("(none)")
-                );
-                println!("batch: {}", selection.batch.as_deref().unwrap_or("(none)"));
-                println!(
-                    "instance: {}",
-                    selection.instance.as_deref().unwrap_or("(none)")
-                );
-                println!(
-                    "attempt: {}",
-                    selection
-                        .attempt
-                        .map(|attempt| attempt.to_string())
-                        .unwrap_or_else(|| "(latest)".to_string())
-                );
-                for warning in warnings {
-                    println!("warning: {warning}");
-                }
-            }
-            InspectOutputFormat::Json => {
-                let payload = serde_json::json!({
-                    "selection": selection,
-                    "warnings": warnings,
-                });
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&payload).map_err(PrepareError::Serialize)?
-                );
-            }
-        }
-        Ok(())
-    }
-}
-
-impl SelectCampaignCommand {
-    pub fn run(self) -> Result<(), PrepareError> {
-        let mut selection = load_active_selection(OperatorProjectionRead::cli_operator())?;
-        selection.campaign = Some(self.campaign);
-        save_active_selection(&selection)?;
-        print_selection_update(&selection);
-        Ok(())
-    }
-}
-
-impl SelectBatchCommand {
-    pub fn run(self) -> Result<(), PrepareError> {
-        let mut selection = load_active_selection(OperatorProjectionRead::cli_operator())?;
-        selection.batch = Some(self.batch);
-        save_active_selection(&selection)?;
-        print_selection_update(&selection);
-        Ok(())
-    }
-}
-
-impl SelectInstanceCommand {
-    pub fn run(self) -> Result<(), PrepareError> {
-        let mut selection = load_active_selection(OperatorProjectionRead::cli_operator())?;
-        selection.instance = Some(self.instance);
-        selection.attempt = None;
-        save_active_selection(&selection)?;
-        print_selection_update(&selection);
-        Ok(())
-    }
-}
-
-impl SelectAttemptCommand {
-    pub fn run(self) -> Result<(), PrepareError> {
-        if self.attempt == 0 {
-            return Err(PrepareError::DatabaseSetup {
-                phase: "select_attempt",
-                detail: "attempt numbers are 1-based".to_string(),
-            });
-        }
-        let mut selection = load_active_selection(OperatorProjectionRead::cli_operator())?;
-        if let Some(instance) = self.instance {
-            selection.instance = Some(instance);
-        }
-        if selection.instance.is_none() {
-            return Err(PrepareError::DatabaseSetup {
-                phase: "select_attempt",
-                detail:
-                    "attempt selection requires an active instance (set one first or pass --instance)"
-                        .to_string(),
-            });
-        }
-        selection.attempt = Some(self.attempt);
-        save_active_selection(&selection)?;
-        print_selection_update(&selection);
-        Ok(())
-    }
-}
-
-impl SelectUnsetCommand {
-    pub fn run(self) -> Result<(), PrepareError> {
-        unset_active_selection_slot(self.scope)?;
-        let selection = load_active_selection(OperatorProjectionRead::cli_operator())?;
-        print_selection_update(&selection);
-        Ok(())
-    }
-}
-
-impl SelectClearCommand {
-    pub fn run(self) -> Result<(), PrepareError> {
-        clear_active_selection()?;
-        let selection = load_active_selection(OperatorProjectionRead::cli_operator())?;
-        print_selection_update(&selection);
-        Ok(())
     }
 }
 
@@ -9788,7 +9220,7 @@ struct RunListRow {
     run_root: PathBuf,
 }
 
-fn resolve_record_path(
+pub(crate) fn resolve_record_path(
     record: Option<PathBuf>,
     instance: Option<String>,
     attempt: Option<u32>,
@@ -10012,7 +9444,7 @@ fn run_registration_sort_key(registration: &RunRegistration) -> (String, String)
     )
 }
 
-fn print_record_resolution_footer(resolution: &RecordResolution) {
+pub(crate) fn print_record_resolution_footer(resolution: &RecordResolution) {
     let _ = std::io::stdout().flush();
     for warning in &resolution.warnings {
         eprintln!("warning: {warning}");
@@ -10022,7 +9454,7 @@ fn print_record_resolution_footer(resolution: &RecordResolution) {
     }
 }
 
-fn print_selection_update(selection: &ActiveSelection) {
+pub(crate) fn print_selection_update(selection: &ActiveSelection) {
     println!(
         "campaign: {}",
         selection.campaign.as_deref().unwrap_or("(none)")
