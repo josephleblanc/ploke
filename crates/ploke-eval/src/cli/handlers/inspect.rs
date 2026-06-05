@@ -22,6 +22,7 @@ use uuid::Uuid;
 
 use crate::campaign::list_campaigns;
 use crate::cli::provider::parse_provider_key;
+use crate::cli::record::{print_record_resolution_footer, resolve_record_path};
 use crate::cli::{
     InspectCommand, InspectConfigCommand, InspectConversationsCommand, InspectDbSnapshotsCommand,
     InspectFailuresCommand, InspectIssueOverviewCommand, InspectMessageRole,
@@ -29,8 +30,7 @@ use crate::cli::{
     InspectProtocolOverviewCommand, InspectQueryCommand, InspectSubcommand,
     InspectToolCallsCommand, InspectToolOverviewCommand, InspectTurnCommand, ProtocolColorMode,
     ProtocolOverviewView, TurnShowOption, print_issue_case_block, print_protocol_state_table,
-    print_record_resolution_footer, protocol_next_command, protocol_state_for_run,
-    resolve_record_path, truncate_for_table, truncate_middle, yes_no,
+    protocol_next_command, protocol_state_for_run, truncate_for_table, truncate_middle, yes_no,
 };
 use crate::closure::{ClosureClass, load_closure_state};
 use crate::intervention_issue_aggregate::{
