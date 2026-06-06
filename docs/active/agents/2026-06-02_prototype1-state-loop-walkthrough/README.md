@@ -24,6 +24,7 @@ The command is not just a CLI wrapper. It is the typed runtime for one **parent 
   - [`campaign-configs.md`](campaign-configs.md): expanded campaign/run-profile config audit, model/provider/route precedence, and config footguns.
   - [`model-api-brief.md`](model-api-brief.md): short source trace of `prototype1-state` live API call boundaries, runtime model provenance, and current local model config values.
   - [`turn-live-replay.md`](turn-live-replay.md): focused guide to the broad headless-TUI turn-live replay bundle, live observer emissions, replay command, branch tapes, and model routing.
+  - [`edit-surface-persistence-walkthrough-2026-06-06.md`](edit-surface-persistence-walkthrough-2026-06-06.md): run-review-backed walkthrough of broad headless-TUI submitted-result persistence, parent batch admission, and edit-surface authority boundaries.
   - [`terminology-conflicts.md`](terminology-conflicts.md): terminology conflicts and proposed conventions.
 
 ## 0. Draft glossary and conceptual map

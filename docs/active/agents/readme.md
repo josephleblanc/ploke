@@ -68,6 +68,7 @@ The former `2026-05-06-prototype1-*` execution-surface inventory links that appe
 - [`2026-06-04_q2-ledger-vs-q1-findings.md`](2026-06-04_q2-ledger-vs-q1-findings.md) — review/report comparing Q2 canonical scoring ledgers against accepted Q1 shard findings.
 - [`2026-06-05_selection-score-ploke-applicability.md`](2026-06-05_selection-score-ploke-applicability.md) — applicability map for which `ploke-selection-score` mechanisms are direct Ploke correlates versus analogy-only candidates.
 - [`2026-06-05_ploke-eval-selection-score-metrics.md`](2026-06-05_ploke-eval-selection-score-metrics.md) — metrics needed in `ploke-eval` before selection-score mechanisms can become useful for reporting or selection.
+- [`2026-06-06_parent-successor-handoff-regression/`](2026-06-06_parent-successor-handoff-regression/README.md) — active investigation log for repeated post-June-2 Prototype 1 failures before child self-evaluation / parent-successor handoff.
 - [`expected-failing-regression-tests.md`](expected-failing-regression-tests.md) — tracker for expected-failing regression tests and bug-pinning reproducers marked with `regr:<name>:DD-MM-YY_HH-MM`.
 - [`ploke-tree-graph-ingestion/`](ploke-tree-graph-ingestion/README.md) — coordination packet for sub-agent lanes, edit boundaries, retry rules, and module organization around `ploke-tree::Graph` ingestion.
 - [`2026-05-11_mbe-instance-patch-provenance/`](2026-05-11_mbe-instance-patch-provenance/README.md) — review/report area for MBE instance patch provenance, oracle targets, run-record lookup, and evidence files.
