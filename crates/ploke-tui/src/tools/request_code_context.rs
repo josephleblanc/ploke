@@ -371,8 +371,8 @@ mod gat_tests {
         use crate::user_config::RetrievalStrategyUser;
         use ploke_core::ArcStr;
         use ploke_core::rag_types::RequestCodeContextResult;
-        use ploke_db::bm25_index::bm25_service::Bm25Status;
         use ploke_db::Database;
+        use ploke_db::bm25_index::bm25_service::Bm25Status;
         use ploke_embed::indexer::EmbeddingProcessor;
         use ploke_test_utils::fixture_dbs::backup_fixture_path_or_seed;
         use ploke_test_utils::{FIXTURE_NODES_CANONICAL, workspace_root};

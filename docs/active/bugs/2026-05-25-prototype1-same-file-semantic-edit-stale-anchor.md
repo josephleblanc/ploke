@@ -221,6 +221,31 @@ either:
 The system should not allow a run to silently proceed with an unused helper and
 a missing call-site update when the intended same-file follow-up edit failed.
 
+## Protocol-Blocked Recovery Chain (2026-06-06 campaign)
+
+Campaign `p1-admissionfix-g35flash-p25flash-20260606-053302`, run
+`run-1780751388442-structured-current-policy-c545d2b2`, protocol artifact
+`1780751777945_tool_call_review_BurntSushi__ripgrep-2209.json`.
+
+| Call | Tool | Outcome | Error / note |
+|------|------|---------|--------------|
+| 35 | `apply_code_edit` | applied | `applied:1, ok:true` on `crates/printer/src/util.rs` |
+| 36 | `cargo test` | completed, tests failed | `status_reason: tests_failed_or_runtime` |
+| 37 | `apply_code_edit` | failed | `Cannot stage apply_code_edit ... Content changed for ".../util.rs". Refresh or re-resolve the target before submitting another semantic edit.` |
+| 38 | `code_item_lookup` | failed | `Internal compiler error: failed to read snippet: Content changed for ".../util.rs"` |
+
+Protocol marked focal call `[36] cargo` as recoverability-blocked
+(`no_clear_recovery`, UI: blocked) because the expected post-test repair path
+(`apply_code_edit` / `code_item_lookup`) failed with stale-file/snippet errors
+immediately after a successful same-file apply.
+
+Instance trace:
+`/home/brasides/.ploke-eval/instances/prototype1/p1-admissionfix-g35flash-p25flash-20260606-053302/BurntSushi__ripgrep-2209/runs/run-1780751388442-structured-current-policy-c545d2b2/agent-turn-trace.json`
+
+This is the same stale post-mutation contract as the 2026-05-24 repro, but
+observed after an auto-applied semantic edit plus a legitimate failing test
+verification step rather than only a staged-then-failed follow-up edit.
+
 ## Fix Direction
 
 - Keep the new stale-anchor regression as fixed-contract coverage:

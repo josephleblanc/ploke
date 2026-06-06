@@ -16,6 +16,17 @@ discriminator).
 | Run | `run-1780751388442-structured-current-policy-c545d2b2` |
 | Stale cache snapshot | `744264bb0078d14a2abe45a9cafda922a677afaf7619206f543bc88e466924c6` (mtime 2026-05-22) |
 | Symptom | `Db(Cozo("Cannot find requested stored relation 'type_contains'"))` |
+| Protocol segment review (blocked) | `1780751792263_tool_call_segment_review_BurntSushi__ripgrep-2209.json` |
+| Blocked tool call | `[0] request_code_context` (`search_term: "printer replacement"`) |
+| Recoverability verdict | `no_clear_recovery` (UI: blocked), confidence high |
+
+Protocol adjudication for segment 0 (`LocateTarget`) marked call `[0]` as
+recoverability-blocked: the only call in the segment failed with an internal
+compilation error and the visible packet offered no agent-recoverable next step.
+
+```text
+request_code_context: Internal compiler error: DB error: Database error: Cannot find requested stored relation 'type_contains'
+```
 
 **Systemic mechanism:** A `typed_type_graph` binary reused a pre-typed-graph starting-DB
 cache snapshot because `starting_db_cache_key` omitted any typed-graph schema

@@ -123,3 +123,5 @@ file and current code before treating a report as still open.
   TUI/RAG type-context expansion can query `type_contains` against a database that was imported through a plain/active fixture path and does not contain typed type graph relations.
 - [`2026-06-05-prototype1-protected-core-path-stale-after-backend-split.md`](./2026-06-05-prototype1-protected-core-path-stale-after-backend-split.md)
   Fixed in source: broad-harness protected-core metadata and doctor prompt preflight now point at `backend/mod.rs` after the backend module split instead of stale `backend.rs`.
+- [`2026-06-06-code-item-lookup-impl-relation-missing-name-field.md`](./2026-06-06-code-item-lookup-impl-relation-missing-name-field.md)
+  `code_item_lookup` with `node_kind: impl` issues a Cozo query against a `name` field the stored `impl` relation does not have; protocol marked call `[36]` recoverability-blocked in `p1-admissionfix-g35flash-p25flash-20260606-053302` treatment run.

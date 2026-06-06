@@ -4350,8 +4350,8 @@ Suggested validation after editing: run `cargo test`.
         use crate::runner::STARTING_DB_CACHE_VERSION;
         use crate::runner::StartingDbCacheMetadata;
         use ploke_db::Database;
-        use ploke_test_utils::fixture_dbs::backup_fixture_path_or_seed;
         use ploke_test_utils::FIXTURE_NODES_CANONICAL;
+        use ploke_test_utils::fixture_dbs::backup_fixture_path_or_seed;
         use tempfile::tempdir;
 
         let repo_root = tempdir().expect("repo root tempdir");
