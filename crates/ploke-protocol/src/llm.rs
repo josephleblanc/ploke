@@ -7,6 +7,7 @@ use ploke_llm::manager::{ChatHttpConfig, ChatStepOutcome, RequestMessage, chat_s
 use ploke_llm::request::models::ModelRouteSource;
 use ploke_llm::response::OpenAiResponse;
 use ploke_llm::router_only::google::Google;
+use ploke_llm::router_only::nebius::Nebius;
 use ploke_llm::router_only::openrouter::{OpenRouter, ProviderPreferences};
 use ploke_llm::router_only::{ChatCompRequest, Router};
 use ploke_llm::{AttemptTimeout, ModelId, ProviderSlug, ReasoningConfig, ReasoningEffort};
@@ -55,6 +56,8 @@ impl JsonLlmConfig {
     pub fn provider_display(&self) -> &str {
         if self.route_source.is_direct_google() {
             "google"
+        } else if self.route_source.is_direct_nebius() {
+            "nebius"
         } else {
             self.provider_slug.as_deref().unwrap_or("auto/openrouter")
         }
@@ -248,6 +251,8 @@ where
     fn label(&self) -> &'static str {
         if self.cfg.route_source.is_direct_google() {
             "google_json_chat"
+        } else if self.cfg.route_source.is_direct_nebius() {
+            "nebius_json_chat"
         } else {
             "openrouter_json_chat"
         }
@@ -547,16 +552,25 @@ pub async fn adjudicate_json<T: DeserializeOwned>(
         wait_for_json_llm_rate_slot(interval).await;
     }
 
-    let response = if cfg.route_source.is_direct_google() {
-        let request = google_json_request(model, cfg, prompt)?;
-        chat_step(client, &request, &http)
-            .await
-            .map_err(|err| ProtocolLlmError::Request(err.to_string()))?
-    } else {
-        let request = openrouter_json_request(model, cfg, prompt);
-        chat_step(client, &request, &http)
-            .await
-            .map_err(|err| ProtocolLlmError::Request(err.to_string()))?
+    let response = match cfg.route_source {
+        ModelRouteSource::DirectGoogle => {
+            let request = google_json_request(model, cfg, prompt)?;
+            chat_step(client, &request, &http)
+                .await
+                .map_err(|err| ProtocolLlmError::Request(err.to_string()))?
+        }
+        ModelRouteSource::DirectNebius => {
+            let request = nebius_json_request(model, cfg, prompt)?;
+            chat_step(client, &request, &http)
+                .await
+                .map_err(|err| ProtocolLlmError::Request(err.to_string()))?
+        }
+        ModelRouteSource::OpenRouter => {
+            let request = openrouter_json_request(model, cfg, prompt);
+            chat_step(client, &request, &http)
+                .await
+                .map_err(|err| ProtocolLlmError::Request(err.to_string()))?
+        }
     };
 
     match response.outcome {
@@ -644,6 +658,24 @@ fn google_json_request(
     }
 
     Ok(base_json_request::<Google>(model, cfg, prompt))
+}
+
+fn nebius_json_request(
+    model: ModelId,
+    cfg: &JsonLlmConfig,
+    prompt: &JsonChatPrompt,
+) -> Result<ChatCompRequest<Nebius>, ProtocolLlmError> {
+    if let Some(provider_slug) = cfg.provider_slug.as_deref()
+        && provider_slug != "nebius"
+    {
+        return Err(ProtocolLlmError::InvalidConfig {
+            detail: format!(
+                "direct Nebius route does not accept OpenRouter provider '{provider_slug}'"
+            ),
+        });
+    }
+
+    Ok(base_json_request::<Nebius>(model, cfg, prompt))
 }
 
 fn chat_http_config_for_json_llm(cfg: &JsonLlmConfig) -> ChatHttpConfig {

@@ -312,12 +312,10 @@ pub fn render_closure_status(state: &ClosureState) -> String {
         state
             .config
             .route_source
-            .map(|source| {
-                if source.is_direct_google() {
-                    "direct_google"
-                } else {
-                    "openrouter"
-                }
+            .map(|source| match source {
+                ModelRouteSource::OpenRouter => "openrouter",
+                ModelRouteSource::DirectGoogle => "direct_google",
+                ModelRouteSource::DirectNebius => "direct_nebius",
             })
             .unwrap_or("unspecified")
     ));
@@ -1503,6 +1501,69 @@ fn format_closure_class(value: ClosureClass) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn empty_state(route_source: ModelRouteSource) -> ClosureState {
+        ClosureState {
+            schema_version: CLOSURE_STATE_SCHEMA_VERSION.to_string(),
+            campaign_id: "direct-nebius".to_string(),
+            updated_at: "2026-06-06T00:00:00Z".to_string(),
+            config: ClosureConfig {
+                benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+                model_id: Some("meta-llama/Meta-Llama-3.1-70B-Instruct".to_string()),
+                provider_slug: None,
+                route_source: Some(route_source),
+                registry_path: None,
+                dataset_sources: Vec::new(),
+                required_procedures: DEFAULT_REQUIRED_PROCEDURES
+                    .iter()
+                    .map(|value| value.to_string())
+                    .collect(),
+                instances_root: PathBuf::from("/tmp/instances"),
+                batches_root: PathBuf::from("/tmp/batches"),
+                framework: FrameworkConfig::default(),
+            },
+            registry: RegistryClosureSummary {
+                expected_total: 0,
+                mapped_total: 0,
+                missing_total: 0,
+                ambiguous_total: 0,
+                status: ClosureClass::Complete,
+            },
+            eval: EvalClosureSummary {
+                expected_total: 0,
+                complete_total: 0,
+                failed_total: 0,
+                missing_total: 0,
+                partial_total: 0,
+                in_progress_total: 0,
+                status: ClosureClass::Complete,
+                last_transition_at: None,
+            },
+            protocol: ProtocolClosureSummary {
+                expected_total: 0,
+                full_total: 0,
+                partial_total: 0,
+                failed_total: 0,
+                missing_total: 0,
+                incompatible_total: 0,
+                ineligible_total: 0,
+                in_progress_total: 0,
+                status: ClosureClass::Complete,
+                required_procedures: Vec::new(),
+                status_by_procedure: BTreeMap::new(),
+                last_transition_at: None,
+            },
+            instances: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn render_closure_status_labels_direct_nebius_route() {
+        let rendered = render_closure_status(&empty_state(ModelRouteSource::DirectNebius));
+
+        assert!(rendered.contains("route direct_nebius"));
+        assert!(!rendered.contains("route openrouter"));
+    }
 
     fn sample_protocol_row(protocol_status: ClosureClass) -> ClosureInstanceRow {
         ClosureInstanceRow {

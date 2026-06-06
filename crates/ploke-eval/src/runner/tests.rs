@@ -109,6 +109,7 @@ mod tests {
     use ploke_tui::tools::ToolVerbosity;
     use ploke_tui::tools::{FunctionMarker, ToolCall, ToolName};
     use ploke_tui::user_config::CommandStyle;
+    use std::ffi::OsString;
     use std::path::PathBuf;
     use std::sync::Arc;
     use tempfile::tempdir;
@@ -123,6 +124,40 @@ mod tests {
             .with_target(false)
             .with_test_writer()
             .try_init();
+    }
+
+    fn hold_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        crate::test_support::env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    struct EvalHomeGuard {
+        old: Option<OsString>,
+    }
+
+    impl EvalHomeGuard {
+        fn set_to(path: &Path) -> Self {
+            let old = std::env::var_os("PLOKE_EVAL_HOME");
+            unsafe {
+                std::env::set_var("PLOKE_EVAL_HOME", path);
+            }
+            Self { old }
+        }
+    }
+
+    impl Drop for EvalHomeGuard {
+        fn drop(&mut self) {
+            if let Some(old) = self.old.take() {
+                unsafe {
+                    std::env::set_var("PLOKE_EVAL_HOME", old);
+                }
+            } else {
+                unsafe {
+                    std::env::remove_var("PLOKE_EVAL_HOME");
+                }
+            }
+        }
     }
 
     fn run_git_test(repo_root: &Path, args: &[&str], label: &str) {
@@ -515,6 +550,50 @@ mod tests {
     }
 
     #[test]
+    fn direct_nebius_ignores_openrouter_provider_preference() {
+        let selected_model = test_model_response_item(
+            "meta-llama/Meta-Llama-3.1-70B-Instruct",
+            ploke_llm::request::models::ModelRouteSource::DirectNebius,
+        );
+        let preferred_provider = ProviderKey::new("deepinfra").expect("provider key");
+
+        let requested_provider =
+            provider_request_for_selected_model(&selected_model, None, Some(&preferred_provider));
+
+        assert!(requested_provider.is_none());
+    }
+
+    #[test]
+    fn direct_nebius_load_preference_suppresses_persisted_openrouter_provider() {
+        let _lock = hold_env_lock();
+        let tmp = tempdir().expect("tempdir");
+        let _guard = EvalHomeGuard::set_to(tmp.path());
+        let models_dir = tmp.path().join("models");
+        fs::create_dir_all(&models_dir).expect("models dir");
+        fs::write(
+            models_dir.join("provider-preferences.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "selected_providers": {
+                    "meta-llama/Meta-Llama-3.1-70B-Instruct": {
+                        "slug": "deepinfra"
+                    }
+                }
+            }))
+            .expect("provider prefs json"),
+        )
+        .expect("write provider prefs");
+        let selected_model = test_model_response_item(
+            "meta-llama/Meta-Llama-3.1-70B-Instruct",
+            ploke_llm::request::models::ModelRouteSource::DirectNebius,
+        );
+
+        let provider =
+            load_provider_preference_for_selected_model(&selected_model, None).expect("preference");
+
+        assert!(provider.is_none());
+    }
+
+    #[test]
     fn explicit_provider_is_still_validated_for_direct_google() {
         let selected_model = test_model_response_item(
             "google/gemini-3.5-flash",
@@ -540,6 +619,32 @@ mod tests {
             provider_request_for_selected_model(&selected_model, None, Some(&preferred_provider));
 
         assert_eq!(requested_provider, Some(&preferred_provider));
+    }
+
+    #[tokio::test]
+    async fn resolve_route_for_direct_nebius_returns_direct_route_without_openrouter_endpoint() {
+        let selected_model = test_model_response_item(
+            "meta-llama/Meta-Llama-3.1-70B-Instruct",
+            ploke_llm::request::models::ModelRouteSource::DirectNebius,
+        );
+        let nebius = ProviderKey::new("nebius").expect("nebius provider key");
+
+        let route = tokio::time::timeout(
+            Duration::from_millis(500),
+            resolve_route_for_model(&selected_model, Some(&nebius)),
+        )
+        .await
+        .expect("direct Nebius route resolution should not wait on OpenRouter endpoint fetch")
+        .expect("resolve direct Nebius route");
+
+        assert!(route.is_direct_nebius());
+        assert!(matches!(
+            route.router(),
+            ploke_llm::router_only::RouterVariants::Nebius(_)
+        ));
+        assert!(route.provider_key().is_none());
+        assert_eq!(route.selected_provider_slug(), "nebius");
+        assert!(selected_endpoint_provenance(&route).is_none());
     }
 
     #[cfg(feature = "live_api_tests")]

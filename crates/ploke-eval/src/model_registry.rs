@@ -148,7 +148,7 @@ fn merge_model_registries(registries: Vec<ModelRegistry>) -> ModelRegistry {
     for registry in registries {
         for item in registry.data {
             let replace = by_id.get(&item.id).is_none_or(|existing: &ResponseItem| {
-                item.route_source.is_direct_google() && existing.route_source.is_openrouter()
+                item.route_source.is_direct_provider() && existing.route_source.is_openrouter()
             });
             if replace {
                 by_id.insert(item.id.clone(), item);
@@ -455,6 +455,35 @@ mod tests {
             .find(|item| item.id == google_id)
             .expect("merged google model");
         assert!(selected.route_source.is_direct_google());
+    }
+
+    #[test]
+    fn merge_model_registries_prefers_direct_nebius_row_on_id_collision() {
+        let mut openrouter = sample_registry();
+        let nebius_id =
+            ModelId::from_str("meta-llama/Meta-Llama-3.1-70B-Instruct").expect("model id");
+        let mut openrouter_nebius = openrouter.data[0].clone();
+        openrouter_nebius.id = nebius_id.clone();
+        openrouter_nebius.route_source = ModelRouteSource::OpenRouter;
+        openrouter.data.push(openrouter_nebius);
+
+        let mut direct_nebius = openrouter.data[0].clone();
+        direct_nebius.id = nebius_id.clone();
+        direct_nebius.route_source = ModelRouteSource::DirectNebius;
+
+        let merged = merge_model_registries(vec![
+            openrouter,
+            ModelRegistry {
+                data: vec![direct_nebius],
+            },
+        ]);
+
+        let selected = merged
+            .data
+            .iter()
+            .find(|item| item.id == nebius_id)
+            .expect("merged nebius model");
+        assert!(selected.route_source.is_direct_nebius());
     }
 
     #[test]

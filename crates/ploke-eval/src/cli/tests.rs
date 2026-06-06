@@ -110,6 +110,60 @@ impl Drop for EvalHomeGuard {
     }
 }
 
+fn write_direct_nebius_registry(home: &std::path::Path, provider_preference: Option<&str>) {
+    let models_dir = home.join("models");
+    fs::create_dir_all(&models_dir).expect("models dir");
+    fs::write(
+        models_dir.join("registry.json"),
+        serde_json::to_string_pretty(&serde_json::json!({
+            "data": [{
+                "id": "meta-llama/Meta-Llama-3.1-70B-Instruct",
+                "name": "Meta-Llama-3.1-70B-Instruct",
+                "created": 0,
+                "description": "Direct Nebius test row",
+                "architecture": {
+                    "input_modalities": ["text"],
+                    "modality": "text->text",
+                    "output_modalities": ["text"],
+                    "tokenizer": "Llama"
+                },
+                "top_provider": {
+                    "is_moderated": false,
+                    "context_length": null,
+                    "max_completion_tokens": null
+                },
+                "pricing": {
+                    "prompt": 0.0,
+                    "completion": 0.0
+                },
+                "canonical_slug": "meta-llama/Meta-Llama-3.1-70B-Instruct",
+                "context_length": 131072,
+                "hugging_face_id": null,
+                "per_request_limits": null,
+                "supported_parameters": ["tools"],
+                "route_source": "direct_nebius"
+            }]
+        }))
+        .expect("registry json"),
+    )
+    .expect("write registry");
+
+    if let Some(provider) = provider_preference {
+        fs::write(
+            models_dir.join("provider-preferences.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "selected_providers": {
+                    "meta-llama/Meta-Llama-3.1-70B-Instruct": {
+                        "slug": provider
+                    }
+                }
+            }))
+            .expect("provider prefs json"),
+        )
+        .expect("write provider prefs");
+    }
+}
+
 #[test]
 fn protocol_llm_config_explicit_direct_google_selects_direct_google_route() {
     let cfg = protocol_llm_config(
@@ -127,6 +181,66 @@ fn protocol_llm_config_explicit_direct_google_selects_direct_google_route() {
     assert!(cfg.provider_slug.is_none());
     assert_eq!(cfg.provider_display(), "google");
     assert_eq!(cfg.reasoning, ProtocolReasoningPolicy::disabled());
+}
+
+#[test]
+fn protocol_llm_config_explicit_direct_nebius_selects_direct_nebius_route() {
+    let cfg = protocol_llm_config(
+        Some("meta-llama/Meta-Llama-3.1-70B-Instruct".to_string()),
+        Some(ModelRouteSource::DirectNebius),
+        Some("nebius".to_string()),
+        120,
+        1,
+        400,
+        ProtocolReasoningPolicy::default(),
+    )
+    .expect("protocol config");
+
+    assert!(cfg.route_source.is_direct_nebius());
+    assert!(cfg.provider_slug.is_none());
+    assert_eq!(cfg.provider_display(), "nebius");
+}
+
+#[test]
+fn protocol_llm_config_ignores_openrouter_preference_for_direct_nebius_registry_row() {
+    let _lock = hold_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let _guard = EvalHomeGuard::set_to(tmp.path());
+    write_direct_nebius_registry(tmp.path(), Some("deepinfra"));
+
+    let cfg = protocol_llm_config(
+        Some("meta-llama/Meta-Llama-3.1-70B-Instruct".to_string()),
+        None,
+        None,
+        120,
+        1,
+        400,
+        ProtocolReasoningPolicy::default(),
+    )
+    .expect("protocol config");
+
+    assert!(cfg.route_source.is_direct_nebius());
+    assert!(cfg.provider_slug.is_none());
+    assert_eq!(cfg.provider_display(), "nebius");
+}
+
+#[test]
+fn protocol_llm_config_explicit_direct_nebius_rejects_openrouter_provider_pin() {
+    let err = protocol_llm_config(
+        Some("meta-llama/Meta-Llama-3.1-70B-Instruct".to_string()),
+        Some(ModelRouteSource::DirectNebius),
+        Some("deepinfra".to_string()),
+        120,
+        1,
+        400,
+        ProtocolReasoningPolicy::default(),
+    )
+    .expect_err("direct Nebius must reject OpenRouter provider pin");
+
+    assert!(
+        err.to_string()
+            .contains("direct Nebius route does not accept OpenRouter provider")
+    );
 }
 
 #[test]
@@ -303,6 +417,22 @@ fn provider_current_reports_google_for_direct_google_registry_row() {
 }
 
 #[test]
+fn provider_current_reports_nebius_for_direct_nebius_registry_row() {
+    let _lock = hold_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let _guard = EvalHomeGuard::set_to(tmp.path());
+    write_direct_nebius_registry(tmp.path(), Some("deepinfra"));
+
+    let (model, provider) =
+        current_provider_for_model(Some("meta-llama/Meta-Llama-3.1-70B-Instruct".to_string()))
+            .expect("current provider");
+
+    assert_eq!(model.to_string(), "meta-llama/Meta-Llama-3.1-70B-Instruct");
+    let provider = provider.expect("direct Nebius provider sentinel");
+    assert_eq!(provider.slug.as_str(), "nebius");
+}
+
+#[test]
 fn protocol_llm_config_preserves_explicit_direct_google_reasoning_omit() {
     let cfg = protocol_llm_config(
         Some("google/gemini-3.5-flash".to_string()),
@@ -454,6 +584,27 @@ fn headless_model_selection_explicit_direct_google_rejects_openrouter_provider_p
         err.to_string()
             .contains("does not accept OpenRouter provider")
     );
+}
+
+#[test]
+fn headless_model_selection_registry_direct_nebius_uses_nebius_router() {
+    let _lock = hold_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let _guard = EvalHomeGuard::set_to(tmp.path());
+    write_direct_nebius_registry(tmp.path(), Some("deepinfra"));
+    let model_id: ModelId = "meta-llama/Meta-Llama-3.1-70B-Instruct"
+        .parse()
+        .expect("model id");
+    let provider = ProviderKey::new("nebius").expect("provider key");
+
+    let selection = headless_model_selection(model_id, Some(provider))
+        .expect("direct Nebius headless selection");
+
+    assert!(matches!(
+        selection.router(),
+        ploke_llm::router_only::RouterVariants::Nebius(_)
+    ));
+    assert!(selection.provider().is_none());
 }
 
 fn procedure_summary(
