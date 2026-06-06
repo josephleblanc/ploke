@@ -2382,13 +2382,15 @@ async fn historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_l
     )
     .expect("prepare historical r10 admission fixture");
     // This fixture preserves the historical ordering requirement:
-    // the first r10 patch introduces `+ nth`, the repair patch changes it to
-    // `+ *nth`, and the request-declared `ploke-eval` validation only passes
-    // after the repair lands. The harness now validates each applied batch and
-    // finalizes as soon as the declared validation passes, so admission happens
-    // at the repaired batch rather than at a later completed chat turn: the
-    // first patch fails `cargo test edit_surface`, the attempt keeps running
-    // (continue-on-fail), the repair lands, and validation then passes.
+    // the first r10 patch introduces `+ nth` (where `nth: &mut f64`, so
+    // `f64 + &mut f64` does not compile), and the repair patch changes it to
+    // `+ *nth`, which compiles. `ploke-eval` depends on `ploke-selection-score`,
+    // so the buildability gate (`cargo check -p ploke-eval`) fails on the first
+    // patch and passes only after the repair. The harness validates each applied
+    // batch and finalizes as soon as the declared validation passes, so
+    // admission happens at the repaired batch rather than at a later completed
+    // chat turn: the first patch fails to compile, the attempt keeps running
+    // (continue-on-fail), the repair lands, and the build check then passes.
     install_historical_r10_selection_score_workspace(&fixture);
     let request_path = write_historical_r10_admission_request(&fixture);
     let tape = historical_r10_completed_tail_tape(&fixture.artifact_root, &turn_live_dir);
@@ -2444,11 +2446,8 @@ async fn historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_l
     );
     assert_eq!(
         declared_commands,
-        vec![
-            "cargo check -p ploke-eval".to_string(),
-            "cargo test -p ploke-eval edit_surface".to_string(),
-        ],
-        "test must exercise the historical request-declared validation contract"
+        vec!["cargo check -p ploke-eval".to_string()],
+        "test must exercise the buildability admission gate (immutability and quality are enforced elsewhere)"
     );
     let submitted = read_submitted_result(&projection.submitted_result_path);
     submitted
@@ -2502,15 +2501,17 @@ async fn historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_l
             validation.call_id == "declared_validation_1_0"
                 && validation.display_command == "cargo check -p ploke-eval"
                 && validation.ok
-        }) && diagnostics.validations.iter().any(|validation| {
-            validation.call_id == "declared_validation_1_1"
-                && command_display_matches(
-                    "cargo test -p ploke-eval edit_surface",
-                    &validation.display_command,
-                )
-                && validation.ok
         }),
-        "adapter should run the request-declared validation after the completed turn; got {:#?}",
+        "adapter should run the request-declared buildability validation and pass it at the repaired batch; got {:#?}",
+        diagnostics.validations
+    );
+    assert!(
+        diagnostics.validations.iter().any(|validation| {
+            validation.call_id == "declared_validation_1_0"
+                && validation.display_command == "cargo check -p ploke-eval"
+                && !validation.ok
+        }),
+        "the broken first patch must fail the buildability gate before the repair lands; got {:#?}",
         diagnostics.validations
     );
 

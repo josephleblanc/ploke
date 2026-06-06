@@ -83,32 +83,33 @@ pub(crate) mod contract {
                         },
                     ],
                 },
+                // Admission only needs to prove the candidate is a runnable
+                // child Artifact. Immutability of the policy-bearing
+                // `crates/ploke-eval` surface is already enforced structurally:
+                // the `WorkspaceExceptPlokeEval` surface policy rejects edits to
+                // that root before apply, and `validate_child_surface` re-checks
+                // the surface-digest commitment before build. Candidate quality
+                // is decided downstream by child self-evaluation and selection,
+                // not at admission. So the gate is buildability of the
+                // ploke-eval binary the child runs: a candidate that edits a
+                // dependency crate (allowed by the broad edit scope) and breaks
+                // ploke-eval's compile is not a runnable child. Running
+                // ploke-eval's own test target here instead recompiled its
+                // dev-dependency-heavy tests, which the broad edit scope can
+                // break for reasons unrelated to runnability, making admission
+                // unsatisfiable for any non-trivial edit.
                 validation: Validation {
-                    commands: vec![
-                        Command {
-                            label: "compile ploke-eval".to_string(),
-                            program: "cargo".to_string(),
-                            args: vec![
-                                "check".to_string(),
-                                "-p".to_string(),
-                                "ploke-eval".to_string(),
-                            ],
-                            workdir: Workdir::CandidateWorkspace,
-                            success: "command exits successfully".to_string(),
-                        },
-                        Command {
-                            label: "edit surface tests".to_string(),
-                            program: "cargo".to_string(),
-                            args: vec![
-                                "test".to_string(),
-                                "-p".to_string(),
-                                "ploke-eval".to_string(),
-                                "edit_surface".to_string(),
-                            ],
-                            workdir: Workdir::CandidateWorkspace,
-                            success: "edit_surface tests pass".to_string(),
-                        },
-                    ],
+                    commands: vec![Command {
+                        label: "compile ploke-eval".to_string(),
+                        program: "cargo".to_string(),
+                        args: vec![
+                            "check".to_string(),
+                            "-p".to_string(),
+                            "ploke-eval".to_string(),
+                        ],
+                        workdir: Workdir::CandidateWorkspace,
+                        success: "command exits successfully".to_string(),
+                    }],
                 },
                 attempt: Attempt {
                     max_attempts: 4,
@@ -1477,7 +1478,11 @@ mod tests {
             ]
         );
         assert_eq!(decoded.request.contract.attempt.max_attempts, 4);
-        assert_eq!(decoded.request.contract.validation.commands.len(), 2);
+        assert_eq!(decoded.request.contract.validation.commands.len(), 1);
+        assert_eq!(
+            decoded.request.contract.validation.commands[0].args,
+            vec!["check".to_string(), "-p".to_string(), "ploke-eval".to_string()]
+        );
         assert!(
             decoded
                 .request
