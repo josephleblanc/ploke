@@ -125,3 +125,4 @@ research-symlink
 .tmp/prototype1-flow.mermaid
 docs/agents/active/prototype1-state-execution-path.excalidraw
 .tmp/prototype1-loop-records.excalidraw
+crates/ploke-egui/fixtures/demo-graph-snapshot.json
