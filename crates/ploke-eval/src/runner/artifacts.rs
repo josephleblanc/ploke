@@ -517,7 +517,6 @@ pub(crate) struct EvalEmbeddingSelection {
     pub(crate) dimensions: u32,
 }
 
-
 #[derive(Debug, Clone)]
 pub(crate) struct StartingDbCachePaths {
     pub(crate) snapshot: PathBuf,
@@ -566,7 +565,7 @@ pub(crate) fn selected_endpoint_provenance(route: &LlmRoute) -> Option<SelectedE
         LlmRoute::OpenRouter(route) => {
             Some(SelectedEndpointProvenance::from_endpoint(&route.endpoint))
         }
-        LlmRoute::Google(_) => None,
+        LlmRoute::Google(_) | LlmRoute::Nebius(_) => None,
     }
 }
 

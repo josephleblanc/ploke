@@ -9,7 +9,7 @@
 
 use ploke_llm::{
     ModelId, ProviderKey,
-    router_only::{RouterVariants, google::Google, openrouter::OpenRouter},
+    router_only::{RouterVariants, google::Google, nebius::Nebius, openrouter::OpenRouter},
 };
 use ploke_records::agent_turn::ModelRouteRecord;
 use thiserror::Error;
@@ -63,6 +63,14 @@ impl ModelSelection {
         }
     }
 
+    pub(crate) fn direct_nebius(model_id: ModelId) -> Self {
+        Self {
+            model_id,
+            provider: None,
+            router: RouterVariants::Nebius(Nebius),
+        }
+    }
+
     pub(crate) fn model_id(&self) -> &ModelId {
         &self.model_id
     }
@@ -85,6 +93,15 @@ impl ModelSelection {
                     .as_ref()
                     .map(|provider| provider.slug.as_str().to_string()),
                 endpoint_host: Some("aiplatform.googleapis.com".to_string()),
+            },
+            RouterVariants::Nebius(_) => ModelRouteRecord {
+                route_source: "direct_nebius".to_string(),
+                router: "nebius".to_string(),
+                provider_slug: self
+                    .provider
+                    .as_ref()
+                    .map(|provider| provider.slug.as_str().to_string()),
+                endpoint_host: Some("api.tokenfactory.nebius.com".to_string()),
             },
             RouterVariants::OpenRouter(_) => ModelRouteRecord {
                 route_source: "openrouter".to_string(),

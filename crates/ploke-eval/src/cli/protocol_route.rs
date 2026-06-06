@@ -41,19 +41,18 @@ pub(crate) fn resolve_protocol_route(
 ) -> Result<(ModelRouteSource, Option<String>), PrepareError> {
     if let Some(route_source) = route_source {
         return match route_source {
-            ModelRouteSource::DirectGoogle => {
-                if let Some(provider) = provider.as_deref()
-                    && provider != "google"
-                {
-                    return Err(PrepareError::DatabaseSetup {
-                        phase: "protocol_route",
-                        detail: format!(
-                            "direct Google route does not accept OpenRouter provider '{provider}'"
-                        ),
-                    });
-                }
-                Ok((ModelRouteSource::DirectGoogle, None))
-            }
+            ModelRouteSource::DirectGoogle => resolve_direct_route(
+                ModelRouteSource::DirectGoogle,
+                "google",
+                "direct Google route",
+                provider,
+            ),
+            ModelRouteSource::DirectNebius => resolve_direct_route(
+                ModelRouteSource::DirectNebius,
+                "nebius",
+                "direct Nebius route",
+                provider,
+            ),
             ModelRouteSource::OpenRouter => {
                 let provider_slug = provider
                     .map(|provider| {
@@ -74,14 +73,17 @@ pub(crate) fn resolve_protocol_route(
             phase: "protocol_provider_slug",
             detail: err.to_string(),
         })?;
-        if registry_route_source(model_id)?.is_some_and(|source| source.is_direct_google()) {
-            if parsed.slug.as_str() == "google" {
-                return Ok((ModelRouteSource::DirectGoogle, None));
+        if let Some(source) = registry_route_source(model_id)?
+            && source.is_direct_provider()
+        {
+            let direct_slug = direct_provider_slug(source);
+            if parsed.slug.as_str() == direct_slug {
+                return Ok((source, None));
             }
             return Err(PrepareError::DatabaseSetup {
                 phase: "protocol_route",
                 detail: format!(
-                    "direct Google model '{model_id}' does not accept OpenRouter provider '{}'",
+                    "direct {direct_slug} model '{model_id}' does not accept OpenRouter provider '{}'",
                     parsed.slug.as_str()
                 ),
             });
@@ -92,8 +94,10 @@ pub(crate) fn resolve_protocol_route(
         ));
     }
 
-    if registry_route_source(model_id)?.is_some_and(|source| source.is_direct_google()) {
-        return Ok((ModelRouteSource::DirectGoogle, None));
+    if let Some(source) = registry_route_source(model_id)?
+        && source.is_direct_provider()
+    {
+        return Ok((source, None));
     }
 
     let provider = load_provider_for_model(model_id)?;
@@ -101,6 +105,31 @@ pub(crate) fn resolve_protocol_route(
         ModelRouteSource::OpenRouter,
         provider.map(|provider| provider.slug.as_str().to_string()),
     ))
+}
+
+fn resolve_direct_route(
+    source: ModelRouteSource,
+    expected_provider: &'static str,
+    label: &'static str,
+    provider: Option<String>,
+) -> Result<(ModelRouteSource, Option<String>), PrepareError> {
+    if let Some(provider) = provider.as_deref()
+        && provider != expected_provider
+    {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "protocol_route",
+            detail: format!("{label} does not accept OpenRouter provider '{provider}'"),
+        });
+    }
+    Ok((source, None))
+}
+
+fn direct_provider_slug(source: ModelRouteSource) -> &'static str {
+    match source {
+        ModelRouteSource::DirectGoogle => "google",
+        ModelRouteSource::DirectNebius => "nebius",
+        ModelRouteSource::OpenRouter => "openrouter",
+    }
 }
 
 pub(crate) fn tool_call_review_error_to_prepare(err: review::ToolCallReviewError) -> PrepareError {

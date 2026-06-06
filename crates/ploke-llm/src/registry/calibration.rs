@@ -7,6 +7,7 @@ use crate::{
     router_only::{
         ChatCompRequest,
         google::Google,
+        nebius::Nebius,
         openrouter::{OpenRouter, ProviderPreferences},
     },
 };
@@ -177,6 +178,11 @@ pub struct GoogleCalibrationKey {
     pub model: ModelKey,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NebiusCalibrationKey {
+    pub model: ModelKey,
+}
+
 impl RouterCalibration for OpenRouter {
     type Model = ModelKey;
     type Provider = ProviderKey;
@@ -251,10 +257,38 @@ impl RouterCalibration for Google {
     }
 }
 
+impl RouterCalibration for Nebius {
+    type Model = ModelKey;
+    type Provider = ();
+    type Preferences = ();
+    type Key = NebiusCalibrationKey;
+
+    fn calibration_input(req: &ChatCompRequest<Self>) -> CalibrationInput<Self> {
+        let key = req
+            .model_key
+            .clone()
+            .map(|model| NebiusCalibrationKey { model });
+
+        CalibrationInput {
+            model: req.model_key.clone(),
+            provider: None,
+            provider_preferences: None,
+            key,
+        }
+    }
+
+    fn calibration_key(input: &CalibrationInput<Self>) -> Option<String> {
+        let key = input.key.as_ref()?;
+        Some(format!("nebius:{}", key.model))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::router_only::{Router as _, google::Google, openrouter::ChatCompFields};
+    use crate::router_only::{
+        Router as _, google::Google, nebius::Nebius, openrouter::ChatCompFields,
+    };
 
     #[test]
     fn default_provider_timing_matches_current_chat_timeout_defaults() {
@@ -331,6 +365,26 @@ mod tests {
         assert_eq!(
             Google::calibration_key(&input).as_deref(),
             Some("google:google/gemini-2.5-flash")
+        );
+    }
+
+    #[test]
+    fn nebius_calibration_input_uses_direct_model_key() {
+        let req = Nebius::default_chat_completion()
+            .with_model_str("meta-llama/Meta-Llama-3.1-70B-Instruct")
+            .expect("model id");
+
+        let input = Nebius::calibration_input(&req);
+
+        assert_eq!(
+            input.model.as_ref().map(ToString::to_string).as_deref(),
+            Some("meta-llama/Meta-Llama-3.1-70B-Instruct")
+        );
+        assert!(input.provider.is_none());
+        assert!(input.provider_preferences.is_none());
+        assert_eq!(
+            Nebius::calibration_key(&input).as_deref(),
+            Some("nebius:meta-llama/Meta-Llama-3.1-70B-Instruct")
         );
     }
 }

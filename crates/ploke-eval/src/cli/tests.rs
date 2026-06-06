@@ -1066,8 +1066,8 @@ fn fixture_backed_tool_call_segmentation_context_renders_diagnostic_sections() {
         agent_turn_artifact: None,
     });
 
-    let sequence = build_tool_call_sequence_subject(&record)
-        .expect("build synthetic tool-call sequence");
+    let sequence =
+        build_tool_call_sequence_subject(&record).expect("build synthetic tool-call sequence");
     let context = ploke_protocol::SequenceReviewContext {
         signals: ploke_protocol::tool_calls::segment::derive_sequence_signals_for_diagnostics(
             &sequence,

@@ -174,15 +174,20 @@ impl ModelDefaults {
                 profile_error(format!("{label}.provider '{provider}' is invalid: {err}"))
             })?;
         }
-        if self
-            .route_source
-            .is_some_and(|source| source.is_direct_google())
+        if let Some(source) = self.route_source
+            && source.is_direct_provider()
             && let Some(provider) = self.provider.as_deref()
-            && provider != "google"
         {
-            return Err(profile_error(format!(
-                "{label}.route_source = direct-google does not accept OpenRouter provider '{provider}'"
-            )));
+            let direct_provider = match source {
+                ModelRouteSource::DirectGoogle => "google",
+                ModelRouteSource::DirectNebius => "nebius",
+                ModelRouteSource::OpenRouter => unreachable!("openrouter is not a direct provider"),
+            };
+            if provider != direct_provider {
+                return Err(profile_error(format!(
+                    "{label}.route_source = direct-{direct_provider} does not accept OpenRouter provider '{provider}'"
+                )));
+            }
         }
         Ok(())
     }
@@ -202,6 +207,7 @@ mod optional_profile_route_source {
     {
         match value {
             Some(ModelRouteSource::DirectGoogle) => serializer.serialize_some("direct-google"),
+            Some(ModelRouteSource::DirectNebius) => serializer.serialize_some("direct-nebius"),
             Some(ModelRouteSource::OpenRouter) => serializer.serialize_some("openrouter"),
             None => serializer.serialize_none(),
         }
@@ -219,8 +225,11 @@ mod optional_profile_route_source {
             "direct-google" | "direct_google" | "google" => {
                 Ok(Some(ModelRouteSource::DirectGoogle))
             }
+            "direct-nebius" | "direct_nebius" | "nebius" => {
+                Ok(Some(ModelRouteSource::DirectNebius))
+            }
             other => Err(serde::de::Error::custom(format!(
-                "invalid route source '{other}'; expected openrouter or direct-google"
+                "invalid route source '{other}'; expected openrouter, direct-google, or direct-nebius"
             ))),
         }
     }

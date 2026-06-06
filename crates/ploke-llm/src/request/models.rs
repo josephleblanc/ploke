@@ -37,6 +37,7 @@ pub enum ModelRouteSource {
     #[default]
     OpenRouter,
     DirectGoogle,
+    DirectNebius,
 }
 
 impl ModelRouteSource {
@@ -46,6 +47,14 @@ impl ModelRouteSource {
 
     pub fn is_direct_google(&self) -> bool {
         matches!(self, Self::DirectGoogle)
+    }
+
+    pub fn is_direct_nebius(&self) -> bool {
+        matches!(self, Self::DirectNebius)
+    }
+
+    pub fn is_direct_provider(&self) -> bool {
+        matches!(self, Self::DirectGoogle | Self::DirectNebius)
     }
 }
 

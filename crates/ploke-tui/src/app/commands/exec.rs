@@ -20,6 +20,7 @@ use crate::app_state::commands::{IndexCmd, LoadCmd, WorkspaceCmd};
 use crate::llm::Router;
 use crate::llm::request::endpoint::EndpointsResponse;
 use crate::llm::router_only::google::Google;
+use crate::llm::router_only::nebius::Nebius;
 use crate::llm::router_only::openrouter::{OpenRouter, OpenRouterModelId};
 use crate::llm::router_only::{HasEndpoint, HasModels, RouterVariants};
 use crate::llm::{self, LlmEvent, ProviderKey};
@@ -505,6 +506,8 @@ fn list_models_async(app: &App) {
         if eps.is_empty() {
             if matches!(cfg.active_router, RouterVariants::Google(_)) {
                 lines.push("Direct Google route uses no provider endpoints.".to_string());
+            } else if matches!(cfg.active_router, RouterVariants::Nebius(_)) {
+                lines.push("Direct Nebius route uses no provider endpoints.".to_string());
             } else {
                 lines
                     .push("No pinned provider endpoints; router default will be used.".to_string());
@@ -545,8 +548,13 @@ fn set_or_show_model_router(app: &App, router: Option<String>) {
                 cfg.active_router = RouterVariants::Google(Google);
                 "Active model router: google".to_string()
             }
+            Some("nebius") | Some("tokenfactory") | Some("token-factory") => {
+                let mut cfg = state.config.write().await;
+                cfg.active_router = RouterVariants::Nebius(Nebius);
+                "Active model router: nebius".to_string()
+            }
             Some(value) => format!(
-                "Unknown model router '{}'. Expected one of: openrouter, google",
+                "Unknown model router '{}'. Expected one of: openrouter, google, nebius",
                 value
             ),
         };
@@ -565,6 +573,7 @@ fn router_label(router: RouterVariants) -> &'static str {
     match router {
         RouterVariants::OpenRouter(_) => "openrouter",
         RouterVariants::Google(_) => "google",
+        RouterVariants::Nebius(_) => "nebius",
         RouterVariants::Anthropic(_) => "anthropic",
     }
 }
@@ -588,6 +597,7 @@ fn check_api_keys(app: &App) {
     let key_msg = [
         key_line("OpenRouter", OpenRouter::API_KEY_NAME),
         key_line("Google", Google::API_KEY_NAME),
+        key_line("Nebius", Nebius::API_KEY_NAME),
     ]
     .join("\n");
 
@@ -614,11 +624,28 @@ fn models_response_from_google(
     }
 }
 
+fn models_response_from_nebius(
+    response: <Nebius as HasModels>::Response,
+) -> llm::request::models::Response {
+    llm::request::models::Response {
+        data: response.into_iter().map(Into::into).collect(),
+    }
+}
+
 fn direct_google_provider_lines(model_id: &str) -> Vec<String> {
     vec![
         format!("Direct Google route for model '{}':", model_id),
         "  No provider endpoints are used for this route.".to_string(),
         "  - google [direct]".to_string(),
+        "  Tool support is a model capability on this route, not endpoint metadata.".to_string(),
+    ]
+}
+
+fn direct_nebius_provider_lines(model_id: &str) -> Vec<String> {
+    vec![
+        format!("Direct Nebius route for model '{}':", model_id),
+        "  No provider endpoints are used for this route.".to_string(),
+        "  - nebius [direct]".to_string(),
         "  Tool support is a model capability on this route, not endpoint metadata.".to_string(),
     ]
 }
@@ -676,6 +703,17 @@ fn list_model_providers_async(app: &App, model_id: &str) {
             let _ = cmd_tx
                 .send(StateCommand::AddMessageImmediate {
                     msg: direct_google_provider_lines(&model_id).join("\n"),
+                    kind: MessageKind::SysInfo,
+                    new_msg_id: Uuid::new_v4(),
+                })
+                .await;
+            return;
+        }
+
+        if matches!(active_router, RouterVariants::Nebius(_)) {
+            let _ = cmd_tx
+                .send(StateCommand::AddMessageImmediate {
+                    msg: direct_nebius_provider_lines(&model_id).join("\n"),
                     kind: MessageKind::SysInfo,
                     new_msg_id: Uuid::new_v4(),
                 })
@@ -770,6 +808,20 @@ fn open_model_search(app: &mut App, keyword: &str) {
                     let _ = cmd_tx
                         .send(StateCommand::AddMessageImmediate {
                             msg: format!("Failed to query Google models: {}", e),
+                            kind: MessageKind::SysInfo,
+                            new_msg_id: Uuid::new_v4(),
+                        })
+                        .await;
+                    return;
+                }
+            }
+        } else if matches!(active_router, RouterVariants::Nebius(_)) {
+            match Nebius::fetch_models(&client).await {
+                Ok(models_resp) => models_response_from_nebius(models_resp),
+                Err(e) => {
+                    let _ = cmd_tx
+                        .send(StateCommand::AddMessageImmediate {
+                            msg: format!("Failed to query Nebius models: {}", e),
                             kind: MessageKind::SysInfo,
                             new_msg_id: Uuid::new_v4(),
                         })

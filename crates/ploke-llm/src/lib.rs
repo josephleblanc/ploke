@@ -38,15 +38,16 @@ pub use manager::{
     handle_endpoint_request_async,
 };
 pub use registry::calibration::{
-    AttemptTimeout, CalibrationInput, GoogleCalibrationKey, OpenRouterCalibrationKey,
-    ProviderTiming, RetryTuning, RouterCalibration,
+    AttemptTimeout, CalibrationInput, GoogleCalibrationKey, NebiusCalibrationKey,
+    OpenRouterCalibrationKey, ProviderTiming, RetryTuning, RouterCalibration,
 };
-pub use registry::route::{GoogleRoute, LlmRoute, OpenRouterRoute};
+pub use registry::route::{GoogleRoute, LlmRoute, NebiusRoute, OpenRouterRoute};
 
 pub use embeddings::{
     EmbClientConfig, fetch_and_write_embedding_models_registry, load_embedding_models_registry,
     write_embedding_models_registry,
 };
+pub use router_only::nebius::Nebius;
 pub use router_only::openrouter::OpenRouter;
 pub use router_only::{HasModels, Router};
 pub use utils::const_settings::{HTTP_REFERER, HTTP_TITLE};

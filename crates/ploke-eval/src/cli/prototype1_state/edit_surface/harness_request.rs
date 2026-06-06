@@ -1481,7 +1481,11 @@ mod tests {
         assert_eq!(decoded.request.contract.validation.commands.len(), 1);
         assert_eq!(
             decoded.request.contract.validation.commands[0].args,
-            vec!["check".to_string(), "-p".to_string(), "ploke-eval".to_string()]
+            vec![
+                "check".to_string(),
+                "-p".to_string(),
+                "ploke-eval".to_string()
+            ]
         );
         assert!(
             decoded
