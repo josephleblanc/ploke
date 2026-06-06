@@ -233,6 +233,8 @@ enum ExecuteMode {
 
 pub(crate) async fn doctor(command: Prototype1DoctorCommand) -> Result<(), PrepareError> {
     let mut status = diagnose_command(&command.control)?;
+    let repo_root = status.repo_root.clone();
+    attach_typed_graph_starting_db_check(&repo_root, &mut status).await;
     if command.live_protocol_preflight {
         let context = resolve_context(command.control.repo_root.as_deref())?;
         attach_protocol_live_preflight(&context, &mut status).await;
@@ -1134,6 +1136,71 @@ fn extend_prompt_preflight_blockers(preflight: &PromptPreflight, blockers: &mut 
     }
 }
 
+#[cfg(feature = "typed_type_graph")]
+async fn attach_typed_graph_starting_db_check(repo_root: &Path, status: &mut ActiveParentStatus) {
+    if let Some(blocker) = typed_graph_starting_db_cache_blocker(repo_root).await {
+        status.blockers.push(blocker);
+        status.phase = DiagnosedPhase::Blocked;
+        status.allowed_actions = allowed_actions_for_phase(status.phase);
+        status.suggested_commands = suggested_commands(status.phase, repo_root);
+    }
+}
+
+#[cfg(not(feature = "typed_type_graph"))]
+async fn attach_typed_graph_starting_db_check(_repo_root: &Path, _status: &mut ActiveParentStatus) {
+}
+
+#[cfg(feature = "typed_type_graph")]
+async fn typed_graph_starting_db_cache_blocker(repo_root: &Path) -> Option<String> {
+    use crate::layout::starting_db_cache_dir;
+    let cache_dir = starting_db_cache_dir().ok()?;
+    typed_graph_starting_db_cache_blocker_at(&cache_dir, repo_root).await
+}
+
+#[cfg(feature = "typed_type_graph")]
+async fn typed_graph_starting_db_cache_blocker_at(
+    cache_dir: &Path,
+    repo_root: &Path,
+) -> Option<String> {
+    use crate::runner::StartingDbCacheMetadata;
+    use ploke_db::Database;
+
+    if !cache_dir.is_dir() {
+        return None;
+    }
+
+    let repo_root = fs::canonicalize(repo_root).ok()?;
+    let entries = fs::read_dir(cache_dir).ok()?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let text = fs::read_to_string(&path).ok()?;
+        let metadata: StartingDbCacheMetadata = serde_json::from_str(&text).ok()?;
+        let metadata_root = fs::canonicalize(&metadata.repo_root).ok()?;
+        if metadata_root != repo_root {
+            continue;
+        }
+        let snapshot = path.with_extension("sqlite");
+        if !snapshot.is_file() {
+            continue;
+        }
+        let db = Database::create_new_backup_default(&snapshot).await.ok()?;
+        if db.has_typed_type_graph_relations().ok()? {
+            continue;
+        }
+        return Some(format!(
+            "starting-db cache snapshot at '{}' for repo '{}' is missing typed-graph relations (type_contains, type_use, type_relation); delete the stale cache entry or re-index",
+            snapshot.display(),
+            repo_root.display(),
+        ));
+    }
+
+    None
+}
+
 fn extend_baseline_eval_registration_blockers(
     closure: &crate::closure::ClosureState,
     blockers: &mut Vec<String>,
@@ -1906,6 +1973,7 @@ async fn advance_child_plan(context: &RuntimeContext) -> Result<(), PrepareError
         parent,
         &context.admitted_profile.profile,
         child_budget,
+        context.resolved_campaign.route_source,
     )
     .await?;
     Ok(())
@@ -2372,6 +2440,7 @@ async fn advance_handoff(diagnosis: Diagnosis) -> Result<(), PrepareError> {
             active_parent_ready(&diagnosis.context)?,
             &diagnosis.context.admitted_profile.profile,
             child_budget,
+            diagnosis.context.resolved_campaign.route_source,
         )
         .await?
         .parent;
@@ -4273,5 +4342,66 @@ Suggested validation after editing: run `cargo test`.
             streams: None,
             result: Some(SpawnObservation::Acknowledged),
         })
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    #[tokio::test]
+    async fn doctor_flags_stale_starting_db_missing_typed_graph_relations() {
+        use crate::runner::STARTING_DB_CACHE_VERSION;
+        use crate::runner::StartingDbCacheMetadata;
+        use ploke_db::Database;
+        use ploke_test_utils::FIXTURE_NODES_CANONICAL;
+        use ploke_test_utils::fixture_dbs::backup_fixture_path_or_seed;
+        use tempfile::tempdir;
+
+        let repo_root = tempdir().expect("repo root tempdir");
+        let cache_dir = tempdir().expect("cache tempdir");
+        let snapshot_source = backup_fixture_path_or_seed(&FIXTURE_NODES_CANONICAL)
+            .expect("plain fixture backup path");
+        let db = Database::create_new_backup_default(&snapshot_source)
+            .await
+            .expect("restore stale plain starting-db snapshot");
+        assert!(
+            !db.has_typed_type_graph_relations()
+                .expect("relation probe must succeed"),
+            "stale plain starting-db restore must lack typed-graph relations for this regression"
+        );
+
+        let key = "stale-plain-starting-db";
+        let metadata_path = cache_dir.path().join(format!("{key}.json"));
+        let snapshot_path = cache_dir.path().join(format!("{key}.sqlite"));
+        db.write_backup_to_path(&snapshot_path)
+            .expect("write starting-db cache snapshot");
+
+        let metadata = StartingDbCacheMetadata {
+            version: STARTING_DB_CACHE_VERSION,
+            task_id: "task".to_string(),
+            repo_root: repo_root.path().to_path_buf(),
+            checkout_sha: None,
+            embedding_provider: "test".to_string(),
+            embedding_model: "test-model".to_string(),
+            embedding_dimensions: 384,
+            embedding_dtype: "f32".to_string(),
+            typed_type_graph: false,
+        };
+        fs::write(
+            &metadata_path,
+            serde_json::to_string_pretty(&metadata).expect("serialize metadata"),
+        )
+        .expect("write starting-db cache metadata");
+
+        let blocker =
+            super::typed_graph_starting_db_cache_blocker_at(cache_dir.path(), repo_root.path())
+                .await
+                .expect("stale plain starting-db cache must be flagged");
+
+        assert!(
+            blocker.contains("missing typed-graph relations"),
+            "unexpected blocker: {blocker}"
+        );
+        assert!(
+            blocker.contains(&snapshot_path.display().to_string()),
+            "blocker should identify the stale snapshot path"
+        );
     }
 }

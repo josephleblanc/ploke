@@ -74,6 +74,32 @@ fn stale_context_next_steps() -> Vec<String> {
     ]
 }
 
+fn type_context_degraded_note() -> String {
+    "Type-context expansion is unavailable for this workspace index; results reflect BM25/dense retrieval only (no typed-graph neighbors)."
+        .to_string()
+}
+
+fn type_context_degraded_next_steps() -> Vec<String> {
+    vec![
+        "Re-index the workspace with a typed type-graph build if typed neighbors are required."
+            .to_string(),
+        "Use code_item_lookup or read_file when you need exact definitions rather than broad retrieval."
+            .to_string(),
+    ]
+}
+
+fn apply_type_context_degraded_note(result: &mut RequestCodeContextResult) {
+    let note = type_context_degraded_note();
+    match result.note.as_mut() {
+        Some(existing) => {
+            existing.push_str("\n\n");
+            existing.push_str(&note);
+        }
+        None => result.note = Some(note),
+    }
+    result.next_steps.extend(type_context_degraded_next_steps());
+}
+
 fn summarize_request_code_context_result(
     result: &mut RequestCodeContextResult,
     stats: &ContextStats,
@@ -258,6 +284,9 @@ impl super::Tool for RequestCodeContextGat {
         tracing::debug!(?parts, ?stats);
         let mut result = RequestCodeContextResult::from_assembled(parts, assembled_meta);
         let summary = summarize_request_code_context_result(&mut result, &stats);
+        if rag.type_context_degraded() {
+            apply_type_context_degraded_note(&mut result);
+        }
         let mut ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
             .with_field("search_term", result.search_term.as_str())
             .with_field(
@@ -333,6 +362,100 @@ mod gat_tests {
         assert_eq!(params.token_budget_per_result, Some(256));
         assert!(params.token_budget_total.is_none());
         assert!(params.search_term.is_none());
+    }
+
+    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[tokio::test]
+    async fn request_code_context_degrades_on_non_typed_db() -> color_eyre::Result<()> {
+        use crate::app::commands::harness::TestRuntime;
+        use crate::user_config::RetrievalStrategyUser;
+        use ploke_core::ArcStr;
+        use ploke_core::rag_types::RequestCodeContextResult;
+        use ploke_db::Database;
+        use ploke_db::bm25_index::bm25_service::Bm25Status;
+        use ploke_embed::indexer::EmbeddingProcessor;
+        use ploke_test_utils::fixture_dbs::backup_fixture_path_or_seed;
+        use ploke_test_utils::{FIXTURE_NODES_CANONICAL, workspace_root};
+        use std::borrow::Cow;
+        use std::sync::Arc;
+        use tokio::time::{Duration, sleep};
+        use uuid::Uuid;
+
+        let snapshot = backup_fixture_path_or_seed(&FIXTURE_NODES_CANONICAL)?;
+        let db = Arc::new(
+            Database::create_new_backup_default(&snapshot)
+                .await
+                .map_err(color_eyre::eyre::Report::from)?,
+        );
+        assert!(
+            !db.has_typed_type_graph_relations()?,
+            "stale plain starting-db restore must lack typed-graph relations for this regression"
+        );
+        let rt = TestRuntime::new_with_embedding_processor(&db, EmbeddingProcessor::new_mock());
+        rt.setup_loaded_standalone_crate(workspace_root()).await;
+        let state = rt.state_arc();
+        {
+            let mut cfg = state.config.write().await;
+            cfg.rag.strategy = RetrievalStrategyUser::Sparse { strict: true };
+            cfg.token_limit = 4096;
+        }
+        let rag = state
+            .rag
+            .as_ref()
+            .expect("test runtime should provide RagService")
+            .clone();
+        assert!(
+            rag.type_context_degraded(),
+            "RagService must record degraded type-context when relations are absent"
+        );
+        rag.bm25_rebuild().await?;
+        let mut ready = false;
+        for _ in 0..50 {
+            match rag.bm25_status().await? {
+                Bm25Status::Ready { docs } if docs > 0 => {
+                    ready = true;
+                    break;
+                }
+                Bm25Status::Error(err) => panic!("BM25 rebuild failed: {err}"),
+                _ => sleep(Duration::from_millis(50)).await,
+            }
+        }
+        assert!(
+            ready,
+            "BM25 index must become ready before request_code_context"
+        );
+
+        let ctx = super::super::Ctx {
+            state,
+            event_bus: Arc::new(crate::EventBus::new(crate::EventBusCaps::default())),
+            request_id: Uuid::new_v4(),
+            parent_id: Uuid::new_v4(),
+            call_id: ArcStr::from("degraded_type_context"),
+        };
+        let tool_result = RequestCodeContextGat::execute(
+            RequestCodeContextParams {
+                token_budget_per_result: Some(512),
+                token_budget_total: Some(2048),
+                search_term: Some(Cow::Borrowed("method")),
+            },
+            ctx,
+        )
+        .await?;
+
+        let parsed: RequestCodeContextResult = serde_json::from_str(&tool_result.content)?;
+        let note = parsed
+            .note
+            .as_deref()
+            .expect("degraded type-context must surface a note for the model");
+        assert!(
+            note.contains("Type-context expansion is unavailable"),
+            "unexpected note: {note}"
+        );
+        assert!(
+            !parsed.next_steps.is_empty(),
+            "degraded type-context must include next_steps"
+        );
+        Ok(())
     }
 
     #[test]

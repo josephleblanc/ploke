@@ -1087,6 +1087,58 @@ mod tests {
     }
 
     #[test]
+    fn starting_db_cache_key_differs_by_typed_graph_surface() {
+        let prepared = PreparedSingleRun {
+            task_id: "case-123".to_string(),
+            repo_root: PathBuf::from("/tmp/repo"),
+            output_dir: PathBuf::from("/tmp/out"),
+            issue: crate::spec::IssueInput {
+                title: Some("Fix the thing".to_string()),
+                body: Some("The body text.".to_string()),
+                body_path: None,
+            },
+            base_sha: Some("abc123".to_string()),
+            head_sha: Some("def456".to_string()),
+            budget: EvalBudget::default(),
+            source: None,
+            campaign: None,
+        };
+        let selection = test_eval_embedding_selection();
+        let baseline = starting_db_cache_metadata(&prepared, &selection);
+
+        assert_eq!(
+            baseline.typed_type_graph,
+            cfg!(feature = "typed_type_graph")
+        );
+
+        let mut with_typed = baseline.clone();
+        with_typed.typed_type_graph = true;
+        let mut without_typed = baseline.clone();
+        without_typed.typed_type_graph = false;
+
+        assert_ne!(with_typed, without_typed);
+        assert_ne!(
+            starting_db_cache_key_for_metadata(&with_typed),
+            starting_db_cache_key_for_metadata(&without_typed),
+            "typed-graph surface must change cache key and metadata"
+        );
+
+        let legacy_json = serde_json::json!({
+            "version": STARTING_DB_CACHE_VERSION,
+            "task_id": prepared.task_id,
+            "repo_root": prepared.repo_root,
+            "checkout_sha": prepared.base_sha,
+            "embedding_provider": baseline.embedding_provider,
+            "embedding_model": baseline.embedding_model,
+            "embedding_dimensions": baseline.embedding_dimensions,
+            "embedding_dtype": baseline.embedding_dtype,
+        });
+        let legacy: StartingDbCacheMetadata =
+            serde_json::from_value(legacy_json).expect("legacy metadata should parse");
+        assert!(!legacy.typed_type_graph);
+    }
+
+    #[test]
     fn starting_db_cache_miss_when_repo_root_changes() {
         let cache_root = tempdir().expect("cache root");
         let prepared_a = PreparedSingleRun {

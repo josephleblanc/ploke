@@ -1,5 +1,10 @@
+use std::fmt as std_fmt;
+use std::sync::OnceLock;
+use std::time::Instant;
+
 use chrono::Local;
-use fmt::format::FmtSpan;
+use fmt::format::{FmtSpan, Writer};
+use fmt::time::FormatTime;
 use ploke_test_utils::workspace_root;
 
 use tracing::Level;
@@ -26,6 +31,8 @@ pub const TOOL_CALL_TARGET: &str = "tool-calls";
 pub const TOKENS_TARGET: &str = "tokens";
 /// Dedicated target for raw serialized full chat responses.
 pub const FULL_RESPONSE_TARGET: &str = "llm-full-response";
+
+static TRACING_START: OnceLock<Instant> = OnceLock::new();
 
 pub struct LoggingGuards {
     /// Guard for the main app log
@@ -90,7 +97,7 @@ pub fn init_tracing() -> LoggingGuards {
         .with_target(true)
         .with_file(true)
         .with_line_number(true)
-        .without_time()
+        .with_timer(WallAndElapsedTimer)
         .with_thread_ids(false)
         // .with_span_events(FmtSpan::CLOSE)
         .with_ansi(false);
@@ -107,7 +114,7 @@ pub fn init_tracing() -> LoggingGuards {
         .with_level(true)
         .with_file(true)
         .with_line_number(true)
-        .without_time()
+        .with_timer(WallAndElapsedTimer)
         .with_thread_ids(false)
         .with_ansi(false)
         .with_writer(embed_pipeline_non_blocking);
@@ -119,7 +126,7 @@ pub fn init_tracing() -> LoggingGuards {
         tracing_appender::rolling::never(&log_dir, format!("api_responses_{run_id}.log"));
     let (api_non_blocking, api_guard) = tracing_appender::non_blocking(api_appender);
 
-    // A super-minimal formatter so the file contains only your pretty JSON (and a trailing newline)
+    // Keep this payload-only: readers expect the file to contain API bodies without log prefixes.
     let api_layer = fmt::layer()
         .with_writer(api_non_blocking)
         .with_ansi(false)
@@ -146,7 +153,7 @@ pub fn init_tracing() -> LoggingGuards {
         .with_thread_names(false)
         .with_file(false)
         .with_line_number(false)
-        .without_time();
+        .with_timer(WallAndElapsedTimer);
     let only_chat = filter::Targets::new().with_target(CHAT_TARGET, Level::TRACE);
 
     // -------- Message update log (focus on message lifecycle updates) --------
@@ -160,7 +167,8 @@ pub fn init_tracing() -> LoggingGuards {
         .with_level(true)
         .with_target(true)
         .with_thread_ids(true)
-        .with_thread_names(true);
+        .with_thread_names(true)
+        .with_timer(WallAndElapsedTimer);
     let only_message_updates =
         filter::Targets::new().with_target(MESSAGE_UPDATE_TARGET, Level::TRACE);
 
@@ -178,7 +186,7 @@ pub fn init_tracing() -> LoggingGuards {
         .with_thread_names(false)
         .with_file(true)
         .with_line_number(true)
-        .without_time();
+        .with_timer(WallAndElapsedTimer);
     let only_finish_reason = filter::Targets::new().with_target(FINISH_REASON_TARGET, Level::TRACE);
 
     // -------- Tool call log (tool requests + params + results) --------
@@ -195,7 +203,7 @@ pub fn init_tracing() -> LoggingGuards {
         .with_thread_names(false)
         .with_file(false)
         .with_line_number(false)
-        .without_time();
+        .with_timer(WallAndElapsedTimer);
     let only_tool_calls = filter::Targets::new().with_target(TOOL_CALL_TARGET, Level::TRACE);
 
     // -------- Token diagnostics log (estimate inputs, requests, usage) --------
@@ -211,7 +219,7 @@ pub fn init_tracing() -> LoggingGuards {
         .with_thread_names(false)
         .with_file(false)
         .with_line_number(false)
-        .without_time();
+        .with_timer(WallAndElapsedTimer);
     let only_tokens = filter::Targets::new().with_target(TOKENS_TARGET, Level::TRACE);
 
     // Install both layers on the global registry
@@ -258,6 +266,7 @@ pub fn init_tracing_tests(level: Level) -> WorkerGuard {
         .with_target(true)
         .with_level(true)
         .with_thread_ids(true)
+        .with_timer(WallAndElapsedTimer)
         .with_span_events(FmtSpan::CLOSE); // Capture span durations
 
     let file_subscriber = fmt_layer
@@ -269,7 +278,7 @@ pub fn init_tracing_tests(level: Level) -> WorkerGuard {
     let console_subscriber = fmt::layer()
         .with_target(true)
         .with_level(true)
-        .without_time()
+        .with_timer(WallAndElapsedTimer)
         .with_line_number(true)
         .with_thread_ids(true)
         .with_span_events(FmtSpan::CLOSE)
@@ -283,4 +292,22 @@ pub fn init_tracing_tests(level: Level) -> WorkerGuard {
         .try_init();
 
     file_guard
+}
+
+#[derive(Clone, Copy, Debug)]
+struct WallAndElapsedTimer;
+
+impl FormatTime for WallAndElapsedTimer {
+    fn format_time(&self, writer: &mut Writer<'_>) -> std_fmt::Result {
+        write!(
+            writer,
+            "{} elapsed_ms={}",
+            Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z"),
+            tracing_start().elapsed().as_millis()
+        )
+    }
+}
+
+fn tracing_start() -> &'static Instant {
+    TRACING_START.get_or_init(Instant::now)
 }

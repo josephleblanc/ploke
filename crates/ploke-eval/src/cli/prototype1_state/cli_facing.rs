@@ -600,12 +600,36 @@ struct HarnessRequestBatch {
     broad_tui: profile::BroadTui,
 }
 
+#[derive(Default)]
+struct BatchLedger {
+    attempted: BTreeSet<usize>,
+    rejections: BTreeMap<usize, String>,
+}
+
+impl BatchLedger {
+    fn mark_attempted(&mut self, slot_index: usize) {
+        self.attempted.insert(slot_index);
+    }
+
+    fn reject(&mut self, slot_index: usize, reason: impl Into<String>) {
+        self.mark_attempted(slot_index);
+        self.rejections.insert(slot_index, reason.into());
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ChildPlanEnv<'a> {
     campaign_id: &'a str,
     manifest_path: &'a Path,
     repo_root: &'a Path,
     broad_tui: profile::BroadTui,
+    /// Active run-level model route for this campaign. A broad-batch
+    /// provider-unavailable abort only permanently fails the parent when this
+    /// is `DirectGoogle`; other routers keep the parent resumable. This is the
+    /// campaign/run route source, which may differ from the temporary
+    /// parent-patcher split selection the broad TUI call actually uses until
+    /// that plumbing collapses onto run config.
+    route_source: ModelRouteSource,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1401,6 +1425,11 @@ async fn run_broad_headless_tui_attempt(
     broad_tui: profile::BroadTui,
 ) -> Result<Option<transaction::Executor>, PrepareError> {
     #[cfg(test)]
+    if let Some(result) = broad_headless_tui_database_setup_fixture() {
+        return result;
+    }
+
+    #[cfg(test)]
     if broad_headless_tui_fixture_enabled() {
         let options = BroadTuiAttemptOptions {
             model: None,
@@ -1423,6 +1452,22 @@ async fn run_broad_headless_tui_attempt(
 #[cfg(test)]
 fn broad_headless_tui_fixture_enabled() -> bool {
     std::env::var_os("PLOKE_EVAL_BROAD_TUI_SUMMARY_FIXTURE").is_some()
+}
+
+/// Test-only hook to exercise the broad-batch fatal `DatabaseSetup` slot path
+/// without a live provider/workspace failure. Mirrors the `ProviderUnavailable`
+/// summary-fixture hook used by the fatal-abort regression tests; the
+/// `Terminal` enum has no `DatabaseSetup` variant because `DatabaseSetup` is a
+/// `PrepareError` raised by workspace preparation rather than a model terminal.
+#[cfg(test)]
+fn broad_headless_tui_database_setup_fixture()
+-> Option<Result<Option<transaction::Executor>, PrepareError>> {
+    let reason = std::env::var_os("PLOKE_EVAL_BROAD_TUI_DATABASE_SETUP_FIXTURE")?;
+    let reason = reason.to_string_lossy().into_owned();
+    Some(Err(PrepareError::DatabaseSetup {
+        phase: "broad_headless_tui_attempt",
+        detail: format!("headless ploke-tui database setup unavailable: {reason}"),
+    }))
 }
 
 fn broad_headless_tui_env_u32(name: &str) -> Result<Option<u32>, PrepareError> {
@@ -1629,6 +1674,12 @@ fn broad_headless_tui_fixture_attempt(
     }
 
     Some(Err(match summary.terminal {
+        Some(tui_adapter::evidence::Terminal::ProviderUnavailable { reason }) => {
+            PrepareError::ProviderUnavailable {
+                phase: "broad_headless_tui_attempt",
+                detail: format!("headless ploke-tui provider unavailable: {reason}"),
+            }
+        }
         Some(terminal) => PrepareError::InvalidBatchSelection {
             detail: format!(
                 "headless ploke-tui test fixture ended without an admissible edit: {}",
@@ -2186,10 +2237,47 @@ fn publish_broad_harness_child_plan_from_admitted_batch(
     batch: HarnessRequestBatch,
     admitted: Vec<AdmittedBroadHarnessResult>,
 ) -> Result<ChildPlanReceipt, PrepareError> {
+    // Task C1: evidence-completeness semantics differ by caller, intentionally.
+    // This batch-completed path ran every slot to exhaustion, so when it falls
+    // below the child minimum it synthesizes the full slot range
+    // `(0..slots.len())` as "attempted" to record evidence for all slots. The
+    // fatal-abort path in `admit_broad_harness_batch` instead passes only the
+    // `BatchLedger::attempted` set (slots actually observed before the abort),
+    // because the remaining slots were cancelled mid-flight and never produced
+    // an outcome to record. Both are deliberate: full-range here, observed-only
+    // there.
+    let attempted = if admitted.len() < batch.child_budget.min as usize {
+        (0..batch.slots.len()).collect::<BTreeSet<_>>()
+    } else {
+        BTreeSet::new()
+    };
+    publish_broad_harness_child_plan_from_attempts(
+        env,
+        batch,
+        admitted,
+        &attempted,
+        &BTreeMap::new(),
+    )
+}
+
+fn publish_broad_harness_child_plan_from_attempts(
+    env: ChildPlanEnv<'_>,
+    batch: HarnessRequestBatch,
+    admitted: Vec<AdmittedBroadHarnessResult>,
+    attempted: &BTreeSet<usize>,
+    rejections: &BTreeMap<usize, String>,
+) -> Result<ChildPlanReceipt, PrepareError> {
     if admitted.len() < batch.child_budget.min as usize {
         let failed_parent = project_node_status(batch.parent.node(), Prototype1NodeStatus::Failed);
-        let rejected_attempts = rejected_attempts(&batch, &admitted);
+        let rejected_attempts =
+            batch_attempt_evidence(&batch, &admitted, attempted, rejections, true);
         let ready_parent = batch.parent.accept_harness_plan();
+        // Task C2: error precedence edge case. If persisting the failed plan
+        // itself errors here, that persistence error is surfaced via `?` and
+        // takes precedence over the original provider/database `source` that
+        // the fatal-abort caller would otherwise re-raise. The failed plan is
+        // the durable record, so a persistence failure is the more urgent
+        // signal to propagate.
         persist_rejected_plan(env.manifest_path, ready_parent, rejected_attempts)?;
         write_node_projection(&failed_parent)?;
         return Err(PrepareError::InvalidBatchSelection {
@@ -2215,7 +2303,9 @@ fn publish_broad_harness_child_plan_from_admitted_batch(
             )
         })
         .collect::<Result<Vec<_>, PrepareError>>()?;
-    let files = ChildPlanFiles::for_parent(env.manifest_path, &parent_identity, children);
+    let attempts = batch_attempt_evidence(&batch, &admitted, attempted, rejections, false);
+    let files = ChildPlanFiles::for_parent(env.manifest_path, &parent_identity, children)
+        .with_rejected_surface_attempts(attempts);
     let at = files.message_at();
     let observed_at = at.clone();
     let ready_parent = batch.parent.accept_harness_plan();
@@ -2265,26 +2355,58 @@ fn rejected_attempts(
     batch: &HarnessRequestBatch,
     admitted: &[AdmittedBroadHarnessResult],
 ) -> Vec<surface_attempt::Evidence> {
-    batch
-        .slots
+    let attempted = (0..batch.slots.len()).collect::<BTreeSet<_>>();
+    batch_attempt_evidence(batch, admitted, &attempted, &BTreeMap::new(), false)
+}
+
+fn batch_attempt_evidence(
+    batch: &HarnessRequestBatch,
+    admitted: &[AdmittedBroadHarnessResult],
+    attempted: &BTreeSet<usize>,
+    rejections: &BTreeMap<usize, String>,
+    include_admitted: bool,
+) -> Vec<surface_attempt::Evidence> {
+    attempted
         .iter()
-        .filter(|slot| {
-            let request_id = slot.published.request_id();
-            !admitted
+        .filter_map(|slot_index| {
+            let slot = batch.slots.get(*slot_index)?;
+            let is_admitted = admitted
                 .iter()
-                .any(|admitted| admitted.request_id() == request_id)
-        })
-        .map(|slot| {
-            surface_attempt::Evidence::rejected(
+                .any(|admitted| admitted.request_id() == slot.published.request_id());
+            if is_admitted && !include_admitted {
+                return None;
+            }
+            let reason = if is_admitted {
+                admitted_below_min_rejection(batch, slot, admitted.len())
+            } else {
+                rejections
+                    .get(slot_index)
+                    .cloned()
+                    .unwrap_or_else(|| slot_rejection(slot))
+            };
+            Some(surface_attempt::Evidence::rejected(
                 BROAD_TUI_PRODUCER,
                 slot.published.request_id().to_string(),
                 slot.published.request_hash().to_string(),
                 serde_name(&slot.published.request().edit_policy),
                 PathBuf::from("."),
-                slot_rejection(slot),
-            )
+                reason,
+            ))
         })
         .collect()
+}
+
+fn admitted_below_min_rejection(
+    batch: &HarnessRequestBatch,
+    slot: &HarnessRequestSlot,
+    admitted_count: usize,
+) -> String {
+    format!(
+        "broad headless-tui slot '{}' wrote submitted result '{}' and was admitted, but was not materialized as a child because broad harness admitted {admitted_count} child transaction(s), fewer than required minimum {}",
+        slot.published.request_id(),
+        slot.published.submitted_result_path().display(),
+        batch.child_budget.min
+    )
 }
 
 fn slot_rejection(slot: &HarnessRequestSlot) -> String {
@@ -4223,6 +4345,7 @@ async fn resolve_child_plan(
     selected_node_id: Option<&str>,
     child_budget: Prototype1ChildBudget,
     broad_tui: profile::BroadTui,
+    route_source: ModelRouteSource,
 ) -> Result<PlannedChildren, PrepareError> {
     let parent_identity = parent.identity().clone();
     let env = ChildPlanEnv {
@@ -4230,6 +4353,7 @@ async fn resolve_child_plan(
         manifest_path,
         repo_root,
         broad_tui,
+        route_source,
     };
     info!(
         target: EXECUTION_DEBUG_TARGET,
@@ -4346,6 +4470,7 @@ async fn admit_broad_harness_batch(
     let mut pending = batch.slots.iter().cloned().enumerate();
     let mut running = tokio::task::JoinSet::new();
     let mut admitted = Vec::with_capacity(max_children);
+    let mut ledger = BatchLedger::default();
 
     loop {
         while admitted.len() + running.len() < max_children && running.len() < cap {
@@ -4382,8 +4507,13 @@ async fn admit_broad_harness_batch(
                 configured_max = batch.child_budget.max,
                 "broad headless-tui slot finished after child max was already admitted; ignoring result"
             );
+            // Task C3: a slot that finishes after `max_children` are already
+            // admitted is intentionally NOT recorded as attempted. Its result
+            // is surplus to the batch and recording it would pollute the
+            // surface-attempt evidence with a slot the batch never needed.
             continue;
         }
+        ledger.mark_attempted(outcome.slot_index);
 
         let executor = match outcome.result {
             Ok(executor) => executor,
@@ -4391,7 +4521,80 @@ async fn admit_broad_harness_batch(
                 source @ (PrepareError::ProviderUnavailable { .. }
                 | PrepareError::DatabaseSetup { .. }),
             ) => {
-                return Err(source);
+                ledger.reject(
+                    outcome.slot_index,
+                    format!(
+                        "broad headless-tui slot '{}' returned fatal admission error: {source}",
+                        outcome.slot.published.request_id()
+                    ),
+                );
+                running.abort_all();
+                while running.join_next().await.is_some() {}
+                admitted.sort_by_key(|(slot_index, _)| *slot_index);
+                let admitted = admitted
+                    .into_iter()
+                    .map(|(_, transaction)| transaction)
+                    .collect::<Vec<_>>();
+                let below_min = admitted.len() < batch.child_budget.min as usize;
+                // Task A: a below-minimum provider-unavailable abort only
+                // permanently fails the parent when the run routes through
+                // direct Google, where the blocker is a hard config/quota
+                // failure that will recur on resume. On other routers the
+                // provider blocker may be transient, so we surface it without
+                // projecting the parent to `Failed` or persisting a
+                // reuse-terminal child-plan. The parent was already projected
+                // to `Running` (kept on the scheduler frontier) at request
+                // publication and no child-plan file is written here, so a
+                // later resume re-mints and re-attempts the broad batch.
+                //
+                // Tradeoff (flagged): this resumable path does NOT persist the
+                // rolled-up child-plan surface-attempt evidence for the aborted
+                // attempt. Raw per-slot diagnostics and turn-live bundles
+                // written during each attempt are left intact on disk, so
+                // already-observed evidence is not erased; only the plan-level
+                // roll-up is skipped to keep the parent re-attemptable.
+                if below_min
+                    && matches!(source, PrepareError::ProviderUnavailable { .. })
+                    && !env.route_source.is_direct_google()
+                {
+                    warn!(
+                        target: EXECUTION_DEBUG_TARGET,
+                        request_id = %outcome.slot.published.request_id(),
+                        request_hash = %outcome.slot.published.request_hash(),
+                        admitted = admitted.len(),
+                        required_min = batch.child_budget.min,
+                        "broad headless-tui batch hit a provider-unavailable abort below child minimum on a non-direct-google route; keeping parent resumable without persisting a terminal child-plan"
+                    );
+                    return Err(source);
+                }
+                let required_min = batch.child_budget.min;
+                let result = publish_broad_harness_child_plan_from_attempts(
+                    env,
+                    batch,
+                    admitted,
+                    &ledger.attempted,
+                    &ledger.rejections,
+                );
+                return match result {
+                    Err(PrepareError::InvalidBatchSelection { .. }) if below_min => Err(source),
+                    // Task B: at or above the child minimum the batch published
+                    // children and the fatal slot error is intentionally not
+                    // propagated. Log the dropped blocker (e.g. a swallowed
+                    // `DatabaseSetup`) so it remains visible in execution logs.
+                    other => {
+                        if other.is_ok() {
+                            warn!(
+                                target: EXECUTION_DEBUG_TARGET,
+                                request_id = %outcome.slot.published.request_id(),
+                                request_hash = %outcome.slot.published.request_hash(),
+                                required_min,
+                                dropped_fatal_error = %source,
+                                "broad headless-tui batch reached child minimum despite a fatal slot error; publishing children and dropping the fatal error"
+                            );
+                        }
+                        other
+                    }
+                };
             }
             Err(source) => {
                 warn_broad_slot_error(
@@ -4416,6 +4619,13 @@ async fn admit_broad_harness_batch(
                 warn_broad_slot_missing_result(&batch, &outcome.slot, admitted.len());
             }
             Err(source) => {
+                ledger.reject(
+                    outcome.slot_index,
+                    format!(
+                        "broad headless-tui slot '{}' submitted result failed admission: {source}",
+                        outcome.slot.published.request_id()
+                    ),
+                );
                 warn_broad_slot_error(
                     &batch,
                     &outcome.slot,
@@ -4432,7 +4642,13 @@ async fn admit_broad_harness_batch(
         .map(|(_, transaction)| transaction)
         .collect::<Vec<_>>();
     drop(pending);
-    publish_broad_harness_child_plan_from_admitted_batch(env, batch, admitted)
+    publish_broad_harness_child_plan_from_attempts(
+        env,
+        batch,
+        admitted,
+        &ledger.attempted,
+        &ledger.rejections,
+    )
 }
 
 struct BroadSlotAttempt {
@@ -4671,6 +4887,7 @@ pub(crate) async fn resolve_profile_child_plan(
     parent: Parent<Ready>,
     run_profile: &profile::Prototype1RunProfile,
     child_budget: Prototype1ChildBudget,
+    route_source: ModelRouteSource,
 ) -> Result<PlannedChildren, PrepareError> {
     resolve_child_plan(
         campaign_id,
@@ -4681,6 +4898,7 @@ pub(crate) async fn resolve_profile_child_plan(
         None,
         child_budget,
         run_profile.execution.broad_tui,
+        route_source,
     )
     .await
 }
@@ -6630,6 +6848,7 @@ pub(crate) async fn run_prototype1_state_turn(
         command.node_id.as_deref(),
         plan_child_budget,
         run_shape.broad_tui,
+        resolved_campaign.route_source,
     )
     .await?;
     let PlannedChildren {

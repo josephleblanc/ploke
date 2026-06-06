@@ -42,6 +42,8 @@ mod msb_batch;
 mod msb_single;
 mod replay;
 
+pub use artifacts::StartingDbCacheMetadata;
+
 pub(crate) const DEFAULT_PHASE_TIMEOUT_SECS: u64 = 900;
 pub(crate) const WAIT_HEARTBEAT_SECS: u64 = 10;
 pub(crate) const FINAL_RESPONSE_GRACE_MILLIS: u64 = 750;
@@ -51,7 +53,7 @@ pub(crate) const HEADLESS_TUI_TOOL_CHAIN_LIMIT: usize = 500;
 pub(crate) const HEADLESS_TUI_REPAIR_ATTEMPT_LIMIT: u32 = 128;
 pub(crate) const HEADLESS_TUI_LLM_TIMEOUT_SECS: u64 = 900;
 pub(crate) const OPENROUTER_CODESTRAL_MODEL: &str = "mistralai/codestral-embed-2505";
-pub(crate) const STARTING_DB_CACHE_VERSION: u32 = 2;
+pub(crate) const STARTING_DB_CACHE_VERSION: u32 = 3;
 pub(crate) const VALIDATION_AUDIT_SCHEMA_V2: &str = "agent-validation-audit.v2";
 pub(crate) const VALIDATION_AUDIT_FILE: &str = "validation-audit.json";
 static EMBEDDING_PREFLIGHT_CACHE: OnceLock<Mutex<HashMap<String, u32>>> = OnceLock::new();

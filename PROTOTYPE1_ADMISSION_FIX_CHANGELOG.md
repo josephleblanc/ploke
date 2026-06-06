@@ -517,3 +517,44 @@ Provider preflight from this shell:
 
 Do not start the live step from this shell unless the intended direct-Google
 credential path is confirmed for the launch environment.
+
+## 2026-06-06 Admissionfix 195048 Run-Review Update
+
+Reviewed the run-review artifacts for
+`p1-admissionfix-g35flash-p25flash-20260605-195048`. They were not present as
+unstaged edits in the main checkout; they were unstaged in the failed run
+worktree:
+
+`/home/brasides/.ploke-eval/worktrees/p1-admissionfix-g35flash-p25flash-20260605-195048/docs/active/agents/run-reviews/`
+
+The review set says this was not a repeat of the earlier "otherwise valid edit
+never writes submitted result" bug. The per-slot submitted-result layer worked
+for two slots:
+
+- `node-28d0482d4bc80fcb-r3.json` exists and binds to a committed candidate
+  diff in `crates/ingest/ploke-mbe/src/structural.rs`.
+- `node-28d0482d4bc80fcb-r4.json` exists and binds to a committed candidate
+  diff in `crates/ploke-ty-mcp/src/manager.rs`.
+
+The persistence failure is at the parent/batch handoff layer, not at those two
+slot files:
+
+- child budget required `min = 5`, `max = 5`;
+- only `r3` and `r4` reached submitted/applied candidate state;
+- the other trace-bearing slots timed out, hit provider-unavailable, or never
+  reached a submitted-result artifact;
+- the parent `node.json` still says `running`;
+- `runner-result.json` is absent;
+- `scheduler.json` still has the parent as frontier/planned with no completed
+  or failed node ids;
+- no completed child plan / successor handoff evidence exists for this run.
+
+Important quality caveat: `r3` is mechanically admissible but benchmark benefit
+is unproven. `r4` is mechanically persisted but likely invalid/benchmark-useless:
+the model intended a six-edit change, while the candidate commit contains only a
+one-line `start_locks` field addition and no matching constructor/method
+changes.
+
+Saved the detailed source/artifact walkthrough at:
+
+`docs/active/agents/2026-06-02_prototype1-state-loop-walkthrough/edit-surface-persistence-walkthrough-2026-06-06.md`
