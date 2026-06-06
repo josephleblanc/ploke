@@ -110,6 +110,60 @@ impl Drop for EvalHomeGuard {
     }
 }
 
+fn write_direct_nebius_registry(home: &std::path::Path, provider_preference: Option<&str>) {
+    let models_dir = home.join("models");
+    fs::create_dir_all(&models_dir).expect("models dir");
+    fs::write(
+        models_dir.join("registry.json"),
+        serde_json::to_string_pretty(&serde_json::json!({
+            "data": [{
+                "id": "meta-llama/Meta-Llama-3.1-70B-Instruct",
+                "name": "Meta-Llama-3.1-70B-Instruct",
+                "created": 0,
+                "description": "Direct Nebius test row",
+                "architecture": {
+                    "input_modalities": ["text"],
+                    "modality": "text->text",
+                    "output_modalities": ["text"],
+                    "tokenizer": "Llama"
+                },
+                "top_provider": {
+                    "is_moderated": false,
+                    "context_length": null,
+                    "max_completion_tokens": null
+                },
+                "pricing": {
+                    "prompt": 0.0,
+                    "completion": 0.0
+                },
+                "canonical_slug": "meta-llama/Meta-Llama-3.1-70B-Instruct",
+                "context_length": 131072,
+                "hugging_face_id": null,
+                "per_request_limits": null,
+                "supported_parameters": ["tools"],
+                "route_source": "direct_nebius"
+            }]
+        }))
+        .expect("registry json"),
+    )
+    .expect("write registry");
+
+    if let Some(provider) = provider_preference {
+        fs::write(
+            models_dir.join("provider-preferences.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "selected_providers": {
+                    "meta-llama/Meta-Llama-3.1-70B-Instruct": {
+                        "slug": provider
+                    }
+                }
+            }))
+            .expect("provider prefs json"),
+        )
+        .expect("write provider prefs");
+    }
+}
+
 #[test]
 fn protocol_llm_config_explicit_direct_google_selects_direct_google_route() {
     let cfg = protocol_llm_config(
@@ -127,6 +181,66 @@ fn protocol_llm_config_explicit_direct_google_selects_direct_google_route() {
     assert!(cfg.provider_slug.is_none());
     assert_eq!(cfg.provider_display(), "google");
     assert_eq!(cfg.reasoning, ProtocolReasoningPolicy::disabled());
+}
+
+#[test]
+fn protocol_llm_config_explicit_direct_nebius_selects_direct_nebius_route() {
+    let cfg = protocol_llm_config(
+        Some("meta-llama/Meta-Llama-3.1-70B-Instruct".to_string()),
+        Some(ModelRouteSource::DirectNebius),
+        Some("nebius".to_string()),
+        120,
+        1,
+        400,
+        ProtocolReasoningPolicy::default(),
+    )
+    .expect("protocol config");
+
+    assert!(cfg.route_source.is_direct_nebius());
+    assert!(cfg.provider_slug.is_none());
+    assert_eq!(cfg.provider_display(), "nebius");
+}
+
+#[test]
+fn protocol_llm_config_ignores_openrouter_preference_for_direct_nebius_registry_row() {
+    let _lock = hold_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let _guard = EvalHomeGuard::set_to(tmp.path());
+    write_direct_nebius_registry(tmp.path(), Some("deepinfra"));
+
+    let cfg = protocol_llm_config(
+        Some("meta-llama/Meta-Llama-3.1-70B-Instruct".to_string()),
+        None,
+        None,
+        120,
+        1,
+        400,
+        ProtocolReasoningPolicy::default(),
+    )
+    .expect("protocol config");
+
+    assert!(cfg.route_source.is_direct_nebius());
+    assert!(cfg.provider_slug.is_none());
+    assert_eq!(cfg.provider_display(), "nebius");
+}
+
+#[test]
+fn protocol_llm_config_explicit_direct_nebius_rejects_openrouter_provider_pin() {
+    let err = protocol_llm_config(
+        Some("meta-llama/Meta-Llama-3.1-70B-Instruct".to_string()),
+        Some(ModelRouteSource::DirectNebius),
+        Some("deepinfra".to_string()),
+        120,
+        1,
+        400,
+        ProtocolReasoningPolicy::default(),
+    )
+    .expect_err("direct Nebius must reject OpenRouter provider pin");
+
+    assert!(
+        err.to_string()
+            .contains("direct Nebius route does not accept OpenRouter provider")
+    );
 }
 
 #[test]
@@ -303,6 +417,22 @@ fn provider_current_reports_google_for_direct_google_registry_row() {
 }
 
 #[test]
+fn provider_current_reports_nebius_for_direct_nebius_registry_row() {
+    let _lock = hold_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let _guard = EvalHomeGuard::set_to(tmp.path());
+    write_direct_nebius_registry(tmp.path(), Some("deepinfra"));
+
+    let (model, provider) =
+        current_provider_for_model(Some("meta-llama/Meta-Llama-3.1-70B-Instruct".to_string()))
+            .expect("current provider");
+
+    assert_eq!(model.to_string(), "meta-llama/Meta-Llama-3.1-70B-Instruct");
+    let provider = provider.expect("direct Nebius provider sentinel");
+    assert_eq!(provider.slug.as_str(), "nebius");
+}
+
+#[test]
 fn protocol_llm_config_preserves_explicit_direct_google_reasoning_omit() {
     let cfg = protocol_llm_config(
         Some("google/gemini-3.5-flash".to_string()),
@@ -454,6 +584,27 @@ fn headless_model_selection_explicit_direct_google_rejects_openrouter_provider_p
         err.to_string()
             .contains("does not accept OpenRouter provider")
     );
+}
+
+#[test]
+fn headless_model_selection_registry_direct_nebius_uses_nebius_router() {
+    let _lock = hold_env_lock();
+    let tmp = tempdir().expect("tempdir");
+    let _guard = EvalHomeGuard::set_to(tmp.path());
+    write_direct_nebius_registry(tmp.path(), Some("deepinfra"));
+    let model_id: ModelId = "meta-llama/Meta-Llama-3.1-70B-Instruct"
+        .parse()
+        .expect("model id");
+    let provider = ProviderKey::new("nebius").expect("provider key");
+
+    let selection = headless_model_selection(model_id, Some(provider))
+        .expect("direct Nebius headless selection");
+
+    assert!(matches!(
+        selection.router(),
+        ploke_llm::router_only::RouterVariants::Nebius(_)
+    ));
+    assert!(selection.provider().is_none());
 }
 
 fn procedure_summary(
@@ -1034,55 +1185,58 @@ fn sample_tool_call_completed(
 }
 
 #[test]
-#[ignore = "diagnostic prompt dump for tool-call intent segmentation context"]
-fn diagnostic_dump_tool_call_segmentation_prompt() {
-    let record_path = PathBuf::from(
-        "/home/brasides/.ploke-eval/instances/prototype1/prototype1-typed-bridge-test-1777120923237/treatments/branch-c766961d14708d45/instances/clap-rs__clap-3670/runs/run-1777136748312-structured-current-policy-a9cd20b3/record.json.gz",
+fn fixture_backed_tool_call_segmentation_context_renders_diagnostic_sections() {
+    let prepared = prepared_run_with_repo_root("clap-rs__clap-3670", PathBuf::from("/tmp/repo"));
+    let mut record = crate::record::RunRecord::new(
+        &prepared,
+        crate::runner::RunArm::structured_current_policy_treatment(),
     );
-    let record = read_compressed_record(&record_path).expect("read diagnostic record");
+    record.phases.agent_turns.push(crate::record::TurnRecord {
+        turn_number: 1,
+        started_at: "2026-06-04T00:00:00Z".to_string(),
+        ended_at: "2026-06-04T00:00:01Z".to_string(),
+        db_timestamp_micros: 42,
+        issue_prompt: "Fix clap parser regression".to_string(),
+        llm_request: None,
+        llm_response: None,
+        tool_calls: vec![
+            sample_tool_call_completed(
+                "request_code_context",
+                r#"{"search_term":"Arg::with_name(\"iglob\")"}"#,
+                "Context assembled",
+                &[("returned", "10 snippets")],
+            ),
+            sample_tool_call_failed(
+                "apply_code_edit",
+                r#"{"edits":[{"file":"src/app.rs"}]}"#,
+                "Wrong target type",
+                &[("field", "node_type"), ("expected", "method")],
+            ),
+        ],
+        outcome: crate::record::TurnOutcome::ToolCalls { count: 2 },
+        agent_turn_artifact: None,
+    });
+
     let sequence =
-        build_tool_call_sequence_subject(&record).expect("build tool-call sequence subject");
+        build_tool_call_sequence_subject(&record).expect("build synthetic tool-call sequence");
     let context = ploke_protocol::SequenceReviewContext {
-        sequence,
         signals: ploke_protocol::tool_calls::segment::derive_sequence_signals_for_diagnostics(
-            &build_tool_call_sequence_subject(&record).expect("rebuild tool-call sequence subject"),
+            &sequence,
         ),
+        sequence,
     };
     let rendered =
         ploke_protocol::tool_calls::segment::render_sequence_context_for_diagnostics(&context);
 
-    eprintln!("SEGMENT_DIAG record_path={}", record_path.display());
-    eprintln!("SEGMENT_DIAG rendered_chars={}", rendered.len());
-    eprintln!("SEGMENT_DIAG total_calls={}", context.sequence.calls.len());
-    for call in &context.sequence.calls {
-        eprintln!(
-            "SEGMENT_DIAG call={} tool={} kind={:?} failed={} summary_len={} args_len={} result_len={} search_term_len={} path_hint_len={}",
-            call.index,
-            call.tool_name,
-            call.tool_kind,
-            call.failed,
-            call.summary.len(),
-            call.args_preview.len(),
-            call.result_preview.len(),
-            call.search_term
-                .as_ref()
-                .map(|value| value.len())
-                .unwrap_or(0),
-            call.path_hint
-                .as_ref()
-                .map(|value| value.len())
-                .unwrap_or(0),
-        );
-        eprintln!("SEGMENT_DIAG summary[{}]={}", call.index, call.summary);
-        eprintln!("SEGMENT_DIAG args[{}]={}", call.index, call.args_preview);
-        eprintln!(
-            "SEGMENT_DIAG result[{}]={}",
-            call.index, call.result_preview
-        );
-    }
-    eprintln!("SEGMENT_DIAG rendered_begin");
-    eprintln!("{rendered}");
-    eprintln!("SEGMENT_DIAG rendered_end");
+    assert_eq!(context.sequence.subject_id, "clap-rs__clap-3670");
+    assert_eq!(context.sequence.calls.len(), 2);
+    assert!(rendered.contains("Sequence summary"));
+    assert!(rendered.contains("Turn summaries"));
+    assert!(rendered.contains("Ordered tool calls"));
+    assert!(rendered.contains("[0] turn=1 tool=request_code_context kind=Search failed=false"));
+    assert!(rendered.contains("[1] turn=1 tool=apply_code_edit kind=Edit failed=true"));
+    assert!(rendered.contains("Arg::with_name"));
+    assert!(rendered.contains("synthetic error"));
 }
 
 fn sample_tool_call_failed(

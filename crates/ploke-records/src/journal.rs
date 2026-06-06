@@ -425,7 +425,8 @@ pub enum JournalEntry {
 mod tests {
     use std::fs;
     use std::io::{BufRead, BufReader};
-    use std::path::PathBuf;
+
+    use crate::test_fixtures::prototype1_root;
 
     use super::*;
 
@@ -561,12 +562,11 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn real_campaign_transition_journal_parses_representative_entries() {
-        let path = real_run_root().join("transition-journal.jsonl");
+        let path = prototype1_root().join("transition-journal.jsonl");
         let file = fs::File::open(&path).unwrap_or_else(|err| {
             panic!(
-                "open real-run journal {} (set PLOKE_RECORDS_REAL_RUN_ROOT to override): {err}",
+                "open prototype1 transition journal {}: {err}",
                 path.display()
             )
         });
@@ -592,19 +592,9 @@ mod tests {
         }
 
         let parent_started = parent_started.expect("parent_started entry");
-        assert!(!parent_started.campaign_id.is_empty());
-        assert!(!parent_started.parent_identity.node_id.is_empty());
-        assert!(count > 0);
-        assert!(observed_child_count > 0);
-    }
-
-    fn real_run_root() -> PathBuf {
-        std::env::var_os("PLOKE_RECORDS_REAL_RUN_ROOT")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                PathBuf::from(
-                    "/home/brasides/.ploke-eval/campaigns/p1-edit-surface-history-long-20260508-1/prototype1",
-                )
-            })
+        assert_eq!(parent_started.campaign_id, "prototype1-sanitized-campaign");
+        assert_eq!(parent_started.parent_identity.node_id, "node-prototype1");
+        assert_eq!(count, 2);
+        assert_eq!(observed_child_count, 1);
     }
 }

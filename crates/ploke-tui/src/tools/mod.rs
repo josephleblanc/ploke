@@ -775,7 +775,7 @@ pub trait Tool {
     fn tool_def() -> ToolDefinition {
         ToolFunctionDef {
             name: Self::name(),
-            description: Self::description().to_string(),
+            description: Self::name().runtime_description().into_owned(),
             parameters: Self::schema().clone(),
         }
         .into()
@@ -840,9 +840,44 @@ pub trait ValidatesAbolutePath {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::borrow::Cow;
-    use std::sync::Arc;
+    use std::{borrow::Cow, path::PathBuf, sync::Arc};
     use tokio::time::{Duration, timeout};
+
+    struct CurrentDirGuard {
+        previous: PathBuf,
+    }
+
+    impl Drop for CurrentDirGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.previous);
+        }
+    }
+
+    #[test]
+    #[ignore = "mutates process current_dir to exercise checkout-local runtime tool text"]
+    fn tool_def_reflects_runtime_description_edits() {
+        let temp_dir = tempfile::tempdir().expect("create temp checkout root");
+        let artifact_path = temp_dir
+            .path()
+            .join(ToolName::RequestCodeContext.description_artifact_relpath());
+        std::fs::create_dir_all(
+            artifact_path
+                .parent()
+                .expect("tool description artifact has parent"),
+        )
+        .expect("create temp tool_text directory");
+        let runtime_description = "runtime description from temp checkout\n";
+        std::fs::write(&artifact_path, runtime_description).expect("write temp tool description");
+
+        let previous = std::env::current_dir().expect("capture current dir");
+        std::env::set_current_dir(temp_dir.path()).expect("switch to temp checkout root");
+        let _guard = CurrentDirGuard { previous };
+
+        let def = RequestCodeContextGat::tool_def();
+
+        assert_eq!(def.function.name, ToolName::RequestCodeContext);
+        assert_eq!(def.function.description, runtime_description);
+    }
 
     #[test]
     fn function_marker_roundtrip() {

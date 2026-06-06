@@ -503,10 +503,10 @@ fn historical_repeated_cargo_ns_patch_requests(
     workspace: &Path,
     count: usize,
 ) -> Vec<ploke_records::agent_turn::ToolRequestRecord> {
-    let trace_path = Path::new(
-        "/home/brasides/.ploke-eval/campaigns/p1-broad-batch-admission-20260518-2/prototype1/messages/edit-harness-result/node-01c9e8fdc70e3ee8.headless-tui.json",
+    let trace_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+        "src/tests/fixtures/historical-headless-tui/node-01c9e8fdc70e3ee8.headless-tui.json",
     );
-    let trace = fs::read_to_string(trace_path).unwrap_or_else(|source| {
+    let trace = fs::read_to_string(&trace_path).unwrap_or_else(|source| {
         panic!(
             "read historical headless trace {}: {source}",
             trace_path.display()

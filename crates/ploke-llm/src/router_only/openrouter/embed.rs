@@ -770,10 +770,10 @@ pub enum OpenRouterEmbeddingError {
 
 impl OpenRouterEmbeddingError {
     fn with_body_snippet(mut self, snippet: String) -> Self {
-        if let OpenRouterEmbeddingError::ApiError { body_snippet, .. } = &mut self {
-            if body_snippet.is_none() {
-                *body_snippet = Some(snippet);
-            }
+        if let OpenRouterEmbeddingError::ApiError { body_snippet, .. } = &mut self
+            && body_snippet.is_none()
+        {
+            *body_snippet = Some(snippet);
         }
         self
     }

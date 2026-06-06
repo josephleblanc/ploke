@@ -110,7 +110,8 @@ pub struct EvaluationReport {
 mod tests {
     use std::fs;
     use std::io::{BufRead, BufReader};
-    use std::path::PathBuf;
+
+    use crate::test_fixtures::prototype1_root;
 
     use super::*;
 
@@ -159,23 +160,23 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn real_campaign_channel_jsonl_parses_representative_child_result() {
-        let path = real_run_root()
+        let path = prototype1_root()
             .join("nodes")
-            .join("node-b3ed41bd152ed715")
+            .join("node-prototype1")
             .join("channels")
-            .join("d77d2e42-578d-4714-bde8-21fd056e7243")
+            .join("runtime-prototype1")
             .join("child-to-parent.jsonl");
         let file = fs::File::open(&path).unwrap_or_else(|err| {
             panic!(
-                "open real-run channel {} (set PLOKE_RECORDS_REAL_RUN_ROOT to override): {err}",
+                "open prototype1 child-to-parent channel {}: {err}",
                 path.display()
             )
         });
 
         let mut count = 0usize;
         let mut saw_ready = false;
+        let mut saw_evaluating = false;
         let mut saw_result = false;
         for line in BufReader::new(file).lines() {
             let line = line.expect("read channel line");
@@ -185,21 +186,23 @@ mod tests {
 
             let envelope: Envelope<ToParent> =
                 serde_json::from_str(&line).expect("parse child-to-parent envelope");
-            assert_eq!(
-                envelope.campaign_id,
-                "p1-edit-surface-history-long-20260508-1"
-            );
-            assert_eq!(envelope.node_id, "node-b3ed41bd152ed715");
+            assert_eq!(envelope.campaign_id, "prototype1-sanitized-campaign");
+            assert_eq!(envelope.node_id, "node-prototype1");
             count += 1;
             match envelope.body {
                 ToParent::Ready => saw_ready = true,
+                ToParent::Evaluating => saw_evaluating = true,
                 ToParent::Result {
                     runner_result,
                     evaluation,
                 } => {
                     saw_result = true;
-                    assert_eq!(runner_result.branch_id.as_str(), "branch-d5aff05ddadfc372");
-                    assert!(evaluation.is_some());
+                    assert_eq!(runner_result.branch_id.as_str(), "branch-keep-prototype1");
+                    let evaluation = evaluation.expect("result carries evaluation report");
+                    assert_eq!(
+                        evaluation.overall_disposition,
+                        crate::branch::Disposition::Keep
+                    );
                 }
                 _ => {}
             }
@@ -207,16 +210,7 @@ mod tests {
 
         assert_eq!(count, 3);
         assert!(saw_ready);
+        assert!(saw_evaluating);
         assert!(saw_result);
-    }
-
-    fn real_run_root() -> PathBuf {
-        std::env::var_os("PLOKE_RECORDS_REAL_RUN_ROOT")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                PathBuf::from(
-                    "/home/brasides/.ploke-eval/campaigns/p1-edit-surface-history-long-20260508-1/prototype1",
-                )
-            })
     }
 }

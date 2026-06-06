@@ -19,18 +19,13 @@ pub struct OpenAIConfig {
     pub model: String,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TruncatePolicy {
+    #[default]
     Truncate,
     Reject,
     PassThrough,
-}
-
-impl Default for TruncatePolicy {
-    fn default() -> Self {
-        Self::Truncate
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Serialize)]

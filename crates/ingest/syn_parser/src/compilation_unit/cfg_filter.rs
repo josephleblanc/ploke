@@ -62,7 +62,7 @@ pub fn filter_structural_slice_by_cfg(
 fn node_passes_cfg(graph: &ParsedCodeGraph, id: Uuid, active: &ActiveCfg) -> bool {
     match cfgs_for_uuid(graph, id) {
         None => true,
-        Some(strings) if strings.is_empty() => true,
+        Some([]) => true,
         Some(strings) => strings.iter().all(|s| {
             parse_cfg_expr_from_inner_tokens(s)
                 .map(|e| active.eval(&e))

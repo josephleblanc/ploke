@@ -63,7 +63,7 @@ pub fn start(db: Arc<Database>, avgdl: f32) -> Result<mpsc::Sender<Bm25Cmd>, DbE
             match cmd {
                 Bm25Cmd::IndexBatch { docs } => {
                     tracing::debug!("BM25 IndexBatch: {} docs", docs.len());
-                    match indexer.upsert_batch_with_cozo(db.as_ref(), docs.into_iter()) {
+                    match indexer.upsert_batch_with_cozo(db.as_ref(), docs) {
                         Ok(_n) => {
                             let docs = indexer.doc_count();
                             status = if docs == 0 {
@@ -154,10 +154,10 @@ pub fn start(db: Arc<Database>, avgdl: f32) -> Result<mpsc::Sender<Bm25Cmd>, DbE
                         docs
                     );
                     let result = (|| -> Result<(), std::io::Error> {
-                        if let Some(dir) = path.parent() {
-                            if !dir.as_os_str().is_empty() {
-                                std::fs::create_dir_all(dir)?;
-                            }
+                        if let Some(dir) = path.parent()
+                            && !dir.as_os_str().is_empty()
+                        {
+                            std::fs::create_dir_all(dir)?;
                         }
                         std::fs::write(&path, content)?;
                         Ok(())
@@ -235,7 +235,7 @@ pub fn start_rebuilt(db: Arc<Database>) -> Result<mpsc::Sender<Bm25Cmd>, DbError
             match cmd {
                 Bm25Cmd::IndexBatch { docs } => {
                     tracing::debug!("BM25 IndexBatch: {} docs", docs.len());
-                    match indexer.upsert_batch_with_cozo(db.as_ref(), docs.into_iter()) {
+                    match indexer.upsert_batch_with_cozo(db.as_ref(), docs) {
                         Ok(_n) => {
                             let docs = indexer.doc_count();
                             status = if docs == 0 {
@@ -324,10 +324,10 @@ pub fn start_rebuilt(db: Arc<Database>) -> Result<mpsc::Sender<Bm25Cmd>, DbError
                         docs
                     );
                     let result = (|| -> Result<(), std::io::Error> {
-                        if let Some(dir) = path.parent() {
-                            if !dir.as_os_str().is_empty() {
-                                std::fs::create_dir_all(dir)?;
-                            }
+                        if let Some(dir) = path.parent()
+                            && !dir.as_os_str().is_empty()
+                        {
+                            std::fs::create_dir_all(dir)?;
                         }
                         std::fs::write(&path, content)?;
                         Ok(())

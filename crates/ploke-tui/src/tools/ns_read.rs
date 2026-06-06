@@ -442,6 +442,26 @@ mod tests {
     }
 
     #[test]
+    fn regression_line_range_after_default_byte_cap_keeps_requested_lines() {
+        let input = (1..=1_200)
+            .map(|line| format!("line-{line:04}-abcdefghijklmnopqrstuvwxyz\n"))
+            .collect::<String>();
+        assert!(input.len() > DEFAULT_READ_BYTE_CAP);
+
+        let (sliced, slice_truncated) = slice_content_lines(input, Some(1_000), Some(1_002));
+        let (out, byte_truncated) = truncate_utf8_to_limit(sliced, DEFAULT_READ_BYTE_CAP);
+
+        assert!(
+            out.contains("line-1000-abcdefghijklmnopqrstuvwxyz\n")
+                && out.contains("line-1001-abcdefghijklmnopqrstuvwxyz\n")
+                && out.contains("line-1002-abcdefghijklmnopqrstuvwxyz\n"),
+            "line range inside the original file must not become an empty successful read"
+        );
+        assert!(slice_truncated);
+        assert!(!byte_truncated);
+    }
+
+    #[test]
     fn byte_offset_for_line_first_line() {
         let content = "first\nsecond";
         assert_eq!(byte_offset_for_line(content, 1), (0, false));

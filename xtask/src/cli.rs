@@ -18,8 +18,8 @@
 //! ```
 
 use crate::commands::{
-    CommandContext, OutputFormat, XtaskError, check::Check, db::Db, orchestrate::Orchestrate,
-    parse::Parse, pipeline::Pipeline,
+    CommandContext, OutputFormat, XtaskError, auth::Auth, check::Check, db::Db,
+    orchestrate::Orchestrate, parse::Parse, pipeline::Pipeline,
 };
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -87,6 +87,10 @@ impl Cli {
                 let result = cmd.execute(&ctx)?;
                 serde_json::to_value(result)?
             }
+            Commands::Auth(cmd) => {
+                let result = cmd.execute(&ctx)?;
+                serde_json::to_value(result)?
+            }
             Commands::Orchestrate(cmd) => {
                 let result = cmd.execute(&ctx)?;
                 serde_json::to_value(result)?
@@ -145,6 +149,10 @@ pub enum Commands {
     #[command(subcommand)]
     Check(Check),
 
+    /// Provider authentication preflights.
+    #[command(subcommand)]
+    Auth(Auth),
+
     /// Coordinate sub-agent worker slots, task queues, blockers, and packets
     #[command(subcommand)]
     Orchestrate(Orchestrate),
@@ -198,6 +206,7 @@ OPTIONS:
 COMMANDS:
     parse         Parse source code and analyze structure
     db            Database operations and queries
+    auth          Provider authentication preflights
     orchestrate   Coordinate sub-agent worker slots and task queues
     pipeline      Look up documented source pipelines
     help          Display help information
@@ -205,6 +214,7 @@ COMMANDS:
 EXAMPLES:
     cargo xtask parse discovery ./my-crate
     cargo xtask --format json db count-nodes
+    cargo xtask auth google --strict-live
     cargo xtask orchestrate status
     cargo xtask pipeline find --path crates/ploke-tui/src/rag/tools.rs
     cargo xtask help examples
@@ -366,14 +376,16 @@ mod tests {
 
     #[test]
     fn test_cli_default_format() {
-        // Parse with no format specified should default to Human
-        let cli = Cli::parse_from(["xtask", "help"]);
+        // Parse with no format specified should default to Human. Use a regular
+        // subcommand instead of clap's built-in `help` command so passing tests
+        // do not print the full help banner during workspace runs.
+        let cli = Cli::parse_from(["xtask", "help-topic"]);
         assert!(matches!(cli.format, OutputFormat::Human));
     }
 
     #[test]
     fn test_cli_json_format() {
-        let cli = Cli::parse_from(["xtask", "--format", "json", "help"]);
+        let cli = Cli::parse_from(["xtask", "--format", "json", "help-topic"]);
         assert!(matches!(cli.format, OutputFormat::Json));
     }
 

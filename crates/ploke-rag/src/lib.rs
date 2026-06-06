@@ -1,4 +1,10 @@
-#![allow(unused_variables, unused_imports, dead_code)]
+#![allow(
+    unused_variables,
+    unused_imports,
+    dead_code,
+    clippy::too_many_arguments,
+    clippy::type_complexity
+)]
 //! ploke-rag — Retrieval and context assembly for the PLOKE workspace
 //!
 //! This crate provides the "R" and "A" of RAG for the PLOKE workspace:

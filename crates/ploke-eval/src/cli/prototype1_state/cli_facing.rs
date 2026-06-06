@@ -5565,7 +5565,7 @@ fn historical_traversal_guard(
     let mut parent_turns_started = 0u32;
     for entry in entries {
         match entry {
-            JournalEntry::ParentStarted(_entry) => {
+            JournalEntry::ParentStarted(_) => {
                 parent_turns_started = parent_turns_started.saturating_add(1);
             }
             _ => {}

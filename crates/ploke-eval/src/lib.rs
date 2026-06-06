@@ -96,6 +96,15 @@ pub(crate) mod test_support {
         LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
     }
 
+    pub(crate) fn trace_capture_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    pub(crate) fn rebuild_trace_interest_cache() {
+        tracing_core::callsite::rebuild_interest_cache();
+    }
+
     #[cfg(feature = "live_api_tests")]
     pub(crate) fn install_default_google_route_env() {
         static INIT: OnceLock<()> = OnceLock::new();
@@ -128,10 +137,10 @@ pub(crate) mod test_support {
             (true, false) => "Google ADC auth",
             (true, true) => unreachable!("handled above"),
         };
-        let message = format!(
+        let message = Google::with_local_auth_preflight_hint(format!(
             "skipping {test_name}: direct Google route is configured for this live test, \
              but missing {missing}; prototype1 did not exercise the live Gemini path"
-        );
+        ));
         if strict_live_tests_requested() {
             panic!("{message}; PLOKE_RUN_LIVE_TESTS requested live execution");
         }

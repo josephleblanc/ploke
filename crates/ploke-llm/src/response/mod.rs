@@ -251,8 +251,91 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "todo"]
+    #[ignore = "fixture documents OpenAI tool-call response shape"]
     fn test_openai_response_with_tool_calls() {
-        todo!()
+        let value = serde_json::json!({
+            "id": "chatcmpl-openai-tool-call-fixture",
+            "object": "chat.completion",
+            "created": 1770000002,
+            "model": "gpt-4o-mini-2024-07-18",
+            "system_fingerprint": "fp_openai_fixture",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": null,
+                        "tool_calls": [
+                            {
+                                "id": "call_request_context_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "request_code_context",
+                                    "arguments": "{\"search_term\":\"OpenAiResponse tool_calls\",\"max_results\":3}"
+                                }
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls"
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 41,
+                "completion_tokens": 13,
+                "total_tokens": 54
+            }
+        });
+
+        let response: OpenAiResponse =
+            serde_json::from_value(value).expect("OpenAI tool-call response parses");
+
+        assert_eq!(response.id, "chatcmpl-openai-tool-call-fixture");
+        assert_eq!(response.object, "chat.completion");
+        assert_eq!(response.created, 1770000002);
+        assert_eq!(response.model, "gpt-4o-mini-2024-07-18");
+        assert_eq!(
+            response.system_fingerprint.as_deref(),
+            Some("fp_openai_fixture")
+        );
+        assert!(response.provider.is_none());
+
+        let usage = response.usage.as_ref().expect("usage");
+        assert_eq!(usage.prompt_tokens, 41);
+        assert_eq!(usage.completion_tokens, 13);
+        assert_eq!(usage.total_tokens, 54);
+
+        let choice = response.choices.first().expect("one choice");
+        assert_eq!(choice.index, Some(0));
+        assert_eq!(choice.finish_reason, Some(FinishReason::ToolCalls));
+        let message = choice.message.as_ref().expect("assistant message");
+        assert_eq!(message.role, Some(Role::Assistant));
+        assert_eq!(message.content, None);
+
+        let tool_calls = message.tool_calls.as_ref().expect("tool calls preserved");
+        assert_eq!(tool_calls.len(), 1);
+        let tool_call = &tool_calls[0];
+        assert_eq!(tool_call.call_id.as_ref(), "call_request_context_1");
+        assert_eq!(tool_call.call_type, ploke_core::tool_types::FunctionMarker);
+        assert_eq!(
+            tool_call.function.name,
+            ploke_core::tool_types::ToolName::RequestCodeContext
+        );
+        assert_eq!(
+            tool_call.function.arguments,
+            "{\"search_term\":\"OpenAiResponse tool_calls\",\"max_results\":3}"
+        );
+
+        let serialized = serde_json::to_value(&response).expect("serialize response");
+        let serialized_tool_call = &serialized["choices"][0]["message"]["tool_calls"][0];
+        assert_eq!(serialized_tool_call["id"], "call_request_context_1");
+        assert_eq!(serialized_tool_call["type"], "function");
+        assert_eq!(
+            serialized_tool_call["function"]["name"],
+            "request_code_context"
+        );
+        assert_eq!(
+            serialized_tool_call["function"]["arguments"],
+            "{\"search_term\":\"OpenAiResponse tool_calls\",\"max_results\":3}"
+        );
     }
 }

@@ -519,17 +519,6 @@ pub(crate) struct EvalEmbeddingSelection {
     pub(crate) dimensions: u32,
 }
 
-impl EvalEmbeddingSelection {
-    fn cache_key(&self) -> String {
-        let provider = self
-            .provider
-            .as_ref()
-            .map(|provider| provider.slug.as_str())
-            .unwrap_or("<auto>");
-        format!("{}::{provider}", self.model.id)
-    }
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct StartingDbCachePaths {
     pub(crate) snapshot: PathBuf,
@@ -578,7 +567,7 @@ pub(crate) fn selected_endpoint_provenance(route: &LlmRoute) -> Option<SelectedE
         LlmRoute::OpenRouter(route) => {
             Some(SelectedEndpointProvenance::from_endpoint(&route.endpoint))
         }
-        LlmRoute::Google(_) => None,
+        LlmRoute::Google(_) | LlmRoute::Nebius(_) => None,
     }
 }
 
@@ -1239,6 +1228,7 @@ pub(crate) fn snapshot_message(
     })
 }
 
+#[cfg(test)]
 pub(crate) async fn collect_patch_artifact(state: &Arc<AppState>) -> PatchArtifact {
     collect_patch_artifact_with_expected(state, &[])
         .await

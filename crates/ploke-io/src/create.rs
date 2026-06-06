@@ -101,18 +101,18 @@ pub(crate) async fn create_file(
         );
 
     // Enforce root containment on the resulting full path when roots configured
-    if let Some(roots) = roots.as_ref() {
-        if !path_within_roots(&target_path, roots.as_ref()) {
-            return Err(IoError::FileOperation {
-                operation: "create",
-                path: target_path.clone(),
-                kind: std::io::ErrorKind::InvalidInput,
-                source: Arc::new(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "path outside configured roots",
-                )),
-            });
-        }
+    if let Some(roots) = roots.as_ref()
+        && !path_within_roots(&target_path, roots.as_ref())
+    {
+        return Err(IoError::FileOperation {
+            operation: "create",
+            path: target_path.clone(),
+            kind: std::io::ErrorKind::InvalidInput,
+            source: Arc::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "path outside configured roots",
+            )),
+        });
     }
 
     // Parents handling
@@ -129,18 +129,18 @@ pub(crate) async fn create_file(
         }
     } else {
         // Ensure parent exists
-        if let Some(p) = target_path.parent() {
-            if tokio::fs::metadata(p).await.is_err() {
-                return Err(IoError::FileOperation {
-                    operation: "create",
-                    path: target_path.clone(),
-                    kind: std::io::ErrorKind::NotFound,
-                    source: Arc::new(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        "parent directory does not exist",
-                    )),
-                });
-            }
+        if let Some(p) = target_path.parent()
+            && tokio::fs::metadata(p).await.is_err()
+        {
+            return Err(IoError::FileOperation {
+                operation: "create",
+                path: target_path.clone(),
+                kind: std::io::ErrorKind::NotFound,
+                source: Arc::new(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "parent directory does not exist",
+                )),
+            });
         }
     }
 

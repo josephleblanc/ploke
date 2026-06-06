@@ -157,10 +157,10 @@ fn live_google_env_or_skip(test_name: &str) -> bool {
         (true, false) => "Google ADC auth",
         (true, true) => unreachable!("handled above"),
     };
-    let message = format!(
+    let message = Google::with_local_auth_preflight_hint(format!(
         "skipping {test_name}: active eval model uses the direct Google route, but missing {missing}; \
          live 7.6 Router path was not exercised"
-    );
+    ));
     if strict_live_tests_requested() {
         panic!("{message}; PLOKE_RUN_LIVE_TESTS requested live execution");
     }

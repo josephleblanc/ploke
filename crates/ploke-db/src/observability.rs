@@ -417,6 +417,8 @@ impl ObservabilityStore for Database {
             if existing_req.request_id == req.request_id
                 && existing_req.call_id == req.call_id
                 && existing_req.parent_id == req.parent_id
+                && existing_req.model == req.model
+                && existing_req.provider_slug == req.provider_slug
                 && existing_req.tool_name == req.tool_name
                 && existing_req.args_sha256 == req.args_sha256
                 && existing_req.arguments_json == req.arguments_json
@@ -515,14 +517,9 @@ impl ObservabilityStore for Database {
                     // exact same payload -> no-op
                     return Ok(());
                 }
-                if existing_done.status != done.status {
-                    // requested → completed → failed (or vice versa) is invalid
-                    return Err(DbError::InvalidLifecycle(
-                        "Cannot change terminal status once recorded".into(),
-                    ));
-                }
-                // Same terminal status but different payload: proceed with update
-                req
+                return Err(DbError::InvalidLifecycle(
+                    "Cannot change terminal state once recorded".into(),
+                ));
             }
             Some((req, None)) => {
                 // Ok to proceed and assert terminal status below

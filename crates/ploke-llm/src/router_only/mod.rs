@@ -5,6 +5,7 @@ mod tests;
 
 pub(super) mod cli;
 pub mod google;
+pub mod nebius;
 pub mod openrouter;
 
 use crate::manager::RequestMessage;
@@ -179,6 +180,7 @@ pub enum RouterVariants {
     OpenRouter(openrouter::OpenRouter),
     Anthropic(anthropic::Anthropic),
     Google(google::Google),
+    Nebius(nebius::Nebius),
 }
 
 impl Default for RouterVariants {

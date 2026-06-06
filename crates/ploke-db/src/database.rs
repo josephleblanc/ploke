@@ -1346,7 +1346,7 @@ desc[id] := parent_of[id, parent], desc[parent], not file_root[id]
             .active_embedding_set
             .read()
             .map_err(|_| DbError::ActiveSetPoisoned)?;
-        Ok(f(&*guard))
+        Ok(f(&guard))
     }
 
     pub fn active_model_id(&self) -> Result<EmbeddingModelId, DbError> {
@@ -1362,7 +1362,7 @@ desc[id] := parent_of[id, parent], desc[parent], not file_root[id]
             .active_embedding_set
             .write()
             .map_err(|_| DbError::ActiveSetPoisoned)?;
-        Ok(f(&mut *guard))
+        Ok(f(&mut guard))
     }
 
     /// Common convenience: replace the whole set.
@@ -1370,7 +1370,7 @@ desc[id] := parent_of[id, parent], desc[parent], not file_root[id]
         self.update_active_set(|slot| *slot = new_set).map(|_| ())
     }
 
-    pub fn rel_names_with_tracking_hash<'a>(&'a self) -> Result<Vec<String>, DbError> {
+    pub fn rel_names_with_tracking_hash(&self) -> Result<Vec<String>, DbError> {
         fn filter_is_th(db: &Database, rel_name: &str) -> Result<bool, DbError> {
             let script_th_col = format!("::columns {rel_name}");
             let is_th = db
@@ -2762,14 +2762,8 @@ desc[id] := parent_of[id, parent], desc[parent]
                     &inventory.descendant_ids,
                 )?;
             } else if relation == "method" {
-                let key_fields = MethodNodeSchema::SCHEMA
-                    .keys()
-                    .map(|field| *field)
-                    .collect::<Vec<_>>();
-                let val_fields = MethodNodeSchema::SCHEMA
-                    .vals()
-                    .map(|field| *field)
-                    .collect::<Vec<_>>();
+                let key_fields = MethodNodeSchema::SCHEMA.keys().copied().collect::<Vec<_>>();
+                let val_fields = MethodNodeSchema::SCHEMA.vals().copied().collect::<Vec<_>>();
                 self.retract_relation_rows_by_id(
                     &relation,
                     &key_fields,
@@ -3098,13 +3092,24 @@ desc[id] := parent_of[id, parent], desc[parent]
         // update the active embedding set functions to correctly use Arc<RwLock<>> within these
         // functions.
         let active_embedding_set = self.with_active_set(|set| set.clone())?;
-        self.deref().update_embeddings_batch(
-            updates
-                .into_iter()
-                .map(|(id, v)| (id, v.into_iter().map(f32::into).collect::<Vec<f64>>()))
-                .collect(),
-            &active_embedding_set,
-        )
+        let expected_dim = active_embedding_set.dims() as usize;
+        let updates = updates
+            .into_iter()
+            .map(|(id, v)| {
+                Self::validate_embedding_vec(&v)?;
+                if v.len() != expected_dim {
+                    return Err(DbError::QueryExecution(format!(
+                        "Embedding vector length {} does not match active embedding set dimension {} for relation {}",
+                        v.len(),
+                        expected_dim,
+                        active_embedding_set.rel_name
+                    )));
+                }
+                Ok((id, v.into_iter().map(f32::into).collect::<Vec<f64>>()))
+            })
+            .collect::<Result<Vec<_>, DbError>>()?;
+        self.deref()
+            .update_embeddings_batch(updates, &active_embedding_set)
     }
 
     /// Validate that an embedding vector is non-empty
@@ -3949,66 +3954,6 @@ mod tests {
         for node in unembedded_data.iter() {
             tracing::trace!("{}", node.id);
         }
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[ignore = "test needs refactoring"]
-    async fn update_embeddings_batch_single() -> Result<(), DbError> {
-        let db = setup_db();
-        let id = Uuid::new_v4();
-        let embedding = vec![1.0, 2.0, 3.0];
-
-        // Insert initial record with null embedding
-        let insert_script = r#"
-            ?[id] <- [[$id]]
-            :put embedding_nodes { id => embedding: null }
-        "#;
-        let mut params = BTreeMap::new();
-        params.insert("id".to_string(), DataValue::Uuid(UuidWrapper(id)));
-        db.db
-            .run_script(insert_script, params, cozo::ScriptMutability::Mutable)
-            .map_err(|e| DbError::Cozo(e.to_string()))?;
-
-        db.update_embeddings_batch(vec![(id, embedding.clone())])?;
-
-        // Verify embedding was saved
-        let result = db
-            .db
-            .run_script(
-                "?[id, embedding] := *embedding_nodes{id, embedding}",
-                std::collections::BTreeMap::new(),
-                ScriptMutability::Immutable,
-            )
-            .map_err(|e| DbError::Cozo(e.to_string()))?;
-
-        assert_eq!(result.rows.len(), 1);
-        if let DataValue::Uuid(uuid_wrapper) = &result.rows[0][0] {
-            assert_eq!(uuid_wrapper.0, id);
-        } else {
-            panic!("Expected Uuid DataValue");
-        }
-        if let DataValue::List(list) = &result.rows[0][1] {
-            assert_eq!(list.len(), 3);
-            if let DataValue::Num(cozo::Num::Float(f)) = list[0] {
-                assert_eq!(f, 1.0);
-            } else {
-                panic!("Expected Float DataValue");
-            }
-            if let DataValue::Num(cozo::Num::Float(f)) = list[1] {
-                assert_eq!(f, 2.0);
-            } else {
-                panic!("Expected Float DataValue");
-            }
-            if let DataValue::Num(cozo::Num::Float(f)) = list[2] {
-                assert_eq!(f, 3.0);
-            } else {
-                panic!("Expected Float DataValue");
-            }
-        } else {
-            panic!("Expected List DataValue");
-        }
-
         Ok(())
     }
 

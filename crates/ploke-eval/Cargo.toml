@@ -39,6 +39,7 @@ sparse-merkle-tree = "0.6.1"
 ploke-test-utils = { workspace = true }
 syn_parser = { workspace = true }
 ploke-error = { workspace = true }
+tracing-core = "0.1"
 
 [features]
 default = ["convert_keyword_2015", "live_api_tests"]

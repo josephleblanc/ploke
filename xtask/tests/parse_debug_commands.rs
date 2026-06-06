@@ -1578,11 +1578,18 @@ edition = "2024"
 }
 
 fn run_git(repo_dir: &Path, args: &[&str]) {
-    let status = ProcessCommand::new("git")
+    let output = ProcessCommand::new("git")
         .arg("-C")
         .arg(repo_dir)
         .args(args)
-        .status()
+        .output()
         .expect("spawn git");
-    assert!(status.success(), "git {:?} failed with {status}", args);
+    assert!(
+        output.status.success(),
+        "git {:?} failed with {}\nstdout:\n{}\nstderr:\n{}",
+        args,
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

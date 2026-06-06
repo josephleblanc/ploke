@@ -104,7 +104,7 @@ fn current_validity_micros_works_with_fixture_database() {
 }
 
 #[test]
-#[ignore = "temporary ignore: test uses todo! placeholders; focusing on feature work"]
+#[ignore = "focused observability regression; run explicitly with tool_call_ -- --ignored"]
 fn tool_call_requested_idempotent() {
     let db = Database::init_with_schema().expect("init db");
     let request_id = uuid::Uuid::new_v4();
@@ -122,8 +122,8 @@ fn tool_call_requested_idempotent() {
             at: 0,
             is_valid: true,
         },
-        model: todo!(),
-        provider_slug: todo!(),
+        model: "openai/gpt-4o-mini".to_string(),
+        provider_slug: Some("openai".to_string()),
     };
 
     // First insert
@@ -145,7 +145,7 @@ fn tool_call_requested_idempotent() {
 }
 
 #[test]
-#[ignore = "temporary ignore: test uses todo! placeholders; focusing on feature work"]
+#[ignore = "focused observability regression; run explicitly with tool_call_ -- --ignored"]
 fn tool_call_done_idempotent_and_transition_rules() {
     let db = Database::init_with_schema().expect("init db");
     let request_id = uuid::Uuid::new_v4();
@@ -164,8 +164,8 @@ fn tool_call_done_idempotent_and_transition_rules() {
             at: 0,
             is_valid: true,
         },
-        model: todo!(),
-        provider_slug: todo!(),
+        model: "openai/gpt-4o-mini".to_string(),
+        provider_slug: Some("openai".to_string()),
     };
     db.record_tool_call_requested(req).expect("requested");
 
@@ -198,6 +198,19 @@ fn tool_call_done_idempotent_and_transition_rules() {
         .expect("must exist");
     assert!(got.1.is_some(), "terminal state should be present");
     assert_eq!(got.1.unwrap().status, ToolStatus::Completed);
+
+    // Attempt invalid transition: Completed -> Completed with conflicting payload
+    let invalid_same_status_done = ToolCallDone {
+        latency_ms: 26,
+        ..done.clone()
+    };
+    let err = db
+        .record_tool_call_done(invalid_same_status_done)
+        .unwrap_err();
+    match err {
+        ploke_db::DbError::InvalidLifecycle(_) => {}
+        other => panic!("expected InvalidLifecycle error, got: {:?}", other),
+    }
 
     // Attempt invalid transition: Completed -> Failed
     let invalid_done = ToolCallDone {

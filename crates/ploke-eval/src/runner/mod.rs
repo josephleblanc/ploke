@@ -184,21 +184,26 @@ pub(crate) async fn resolve_route_for_model(
         });
     }
 
-    if selected_model.route_source.is_direct_google() {
+    if selected_model.route_source.is_direct_provider() {
         if let Some(provider) = requested_provider {
             let requested_slug = provider.slug.as_str();
-            if requested_slug != "google" {
+            let expected_slug = direct_provider_slug(selected_model.route_source);
+            if requested_slug != expected_slug {
                 return Err(PrepareError::DatabaseSetup {
                     phase: "resolve_model_route",
                     detail: format!(
-                        "requested provider '{requested_slug}' is not valid for direct Google model '{}'",
+                        "requested provider '{requested_slug}' is not valid for direct {expected_slug} model '{}'",
                         selected_model.id
                     ),
                 });
             }
         }
 
-        return Ok(LlmRoute::direct_google_model(selected_model));
+        return if selected_model.route_source.is_direct_google() {
+            Ok(LlmRoute::direct_google_model(selected_model))
+        } else {
+            Ok(LlmRoute::direct_nebius_model(selected_model))
+        };
     }
 
     let client = reqwest::Client::new();
@@ -294,7 +299,7 @@ pub(crate) fn provider_request_for_selected_model<'a>(
     preferred_provider: Option<&'a ProviderKey>,
 ) -> Option<&'a ProviderKey> {
     explicit_provider.or_else(|| {
-        if selected_model.route_source.is_direct_google() {
+        if selected_model.route_source.is_direct_provider() {
             None
         } else {
             preferred_provider
@@ -306,10 +311,18 @@ pub(crate) fn load_provider_preference_for_selected_model(
     selected_model: &ResponseItem,
     explicit_provider: Option<&ProviderKey>,
 ) -> Result<Option<ProviderKey>, PrepareError> {
-    if explicit_provider.is_some() || selected_model.route_source.is_direct_google() {
+    if explicit_provider.is_some() || selected_model.route_source.is_direct_provider() {
         Ok(None)
     } else {
         load_provider_for_model(&selected_model.id)
+    }
+}
+
+fn direct_provider_slug(source: ploke_llm::request::models::ModelRouteSource) -> &'static str {
+    match source {
+        ploke_llm::request::models::ModelRouteSource::DirectGoogle => "google",
+        ploke_llm::request::models::ModelRouteSource::DirectNebius => "nebius",
+        ploke_llm::request::models::ModelRouteSource::OpenRouter => "openrouter",
     }
 }
 pub(crate) fn init_runtime_db() -> Result<Arc<Database>, PrepareError> {
@@ -329,6 +342,7 @@ pub(crate) fn init_runtime_db() -> Result<Arc<Database>, PrepareError> {
     Ok(db)
 }
 
+#[cfg(test)]
 pub(crate) async fn setup_replay_runtime(
     prepared: &PreparedSingleRun,
 ) -> Result<(App, Arc<AppState>, XdgConfigHomeGuard), PrepareError> {
@@ -371,6 +385,7 @@ pub(crate) struct WorkspaceTuiRuntime {
     _config_guard: XdgConfigHomeGuard,
 }
 
+#[cfg(test)]
 pub(crate) async fn setup_workspace_tui_runtime(
     workspace_root: &Path,
 ) -> Result<WorkspaceTuiRuntime, PrepareError> {
@@ -1062,7 +1077,7 @@ pub use artifacts::*;
 pub use msb_batch::*;
 #[cfg(test)]
 pub use msb_single::*;
-pub use replay::*;
+pub(crate) use replay::*;
 
 #[cfg(test)]
 mod tests;

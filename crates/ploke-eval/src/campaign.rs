@@ -422,7 +422,7 @@ pub fn adopt_campaign_manifest_from_registry(
 
     let active_model = load_active_model()?;
     let route_source = model_registry_route_source(&active_model.model_id)?.unwrap_or_default();
-    let provider_slug = if route_source.is_direct_google() {
+    let provider_slug = if route_source.is_direct_provider() {
         None
     } else {
         load_provider_for_model(&active_model.model_id)?
@@ -555,18 +555,9 @@ pub fn resolve_campaign_config(
         .provider_slug
         .clone()
         .or_else(|| manifest.provider_slug.clone());
-    let provider_slug = if route_source.is_direct_google() {
-        match explicit_provider.as_deref() {
-            Some("google") | None => None,
-            Some(provider) => {
-                return Err(PrepareError::DatabaseSetup {
-                    phase: "campaign_provider_route",
-                    detail: format!(
-                        "direct Google route does not accept OpenRouter provider '{provider}'"
-                    ),
-                });
-            }
-        }
+    let provider_slug = if route_source.is_direct_provider() {
+        resolve_direct_route_provider(route_source, explicit_provider.as_deref())?;
+        None
     } else {
         explicit_provider.or_else(|| {
             load_provider_for_model(&parsed_model_id)
@@ -672,24 +663,15 @@ pub async fn validate_campaign_config(
         detail: route_source_label(config.route_source).to_string(),
     });
 
-    let selected_provider = if config.route_source.is_direct_google() {
-        if let Some(provider) = config.provider_slug.as_deref()
-            && provider != "google"
-        {
-            return Err(PrepareError::DatabaseSetup {
-                phase: "campaign_validate_provider",
-                detail: format!(
-                    "direct Google route does not accept OpenRouter provider '{provider}'"
-                ),
-            });
-        }
-        "google".to_string()
+    let selected_provider = if config.route_source.is_direct_provider() {
+        resolve_direct_route_provider(config.route_source, config.provider_slug.as_deref())?
+            .to_string()
     } else {
-        if selected_model.route_source.is_direct_google() {
+        if selected_model.route_source.is_direct_provider() {
             return Err(PrepareError::DatabaseSetup {
                 phase: "campaign_validate_provider",
                 detail: format!(
-                    "OpenRouter route requested for direct-Google-only model '{}'",
+                    "OpenRouter route requested for direct-provider-only model '{}'",
                     selected_model.id
                 ),
             });
@@ -761,7 +743,7 @@ pub fn render_resolved_campaign_config(config: &ResolvedCampaignConfig) -> Strin
         route_source_label(config.route_source)
     ));
     let provider_label = match (config.route_source, config.provider_slug.as_deref()) {
-        (source, _) if source.is_direct_google() => "direct_google".to_string(),
+        (source, _) if source.is_direct_provider() => route_source_label(source).to_string(),
         (_, Some(provider)) => provider.to_string(),
         (_, None) => "auto/openrouter".to_string(),
     };
@@ -966,16 +948,56 @@ fn resolve_campaign_route_source(
 }
 
 fn route_source_label(route_source: ModelRouteSource) -> &'static str {
-    if route_source.is_direct_google() {
-        "direct_google"
-    } else {
-        "openrouter"
+    match route_source {
+        ModelRouteSource::OpenRouter => "openrouter",
+        ModelRouteSource::DirectGoogle => "direct_google",
+        ModelRouteSource::DirectNebius => "direct_nebius",
     }
+}
+
+fn direct_route_provider_slug(route_source: ModelRouteSource) -> Option<&'static str> {
+    match route_source {
+        ModelRouteSource::DirectGoogle => Some("google"),
+        ModelRouteSource::DirectNebius => Some("nebius"),
+        ModelRouteSource::OpenRouter => None,
+    }
+}
+
+fn direct_route_provider_label(route_source: ModelRouteSource) -> &'static str {
+    match route_source {
+        ModelRouteSource::DirectGoogle => "direct Google route",
+        ModelRouteSource::DirectNebius => "direct Nebius route",
+        ModelRouteSource::OpenRouter => "OpenRouter route",
+    }
+}
+
+fn resolve_direct_route_provider(
+    route_source: ModelRouteSource,
+    provider: Option<&str>,
+) -> Result<&'static str, PrepareError> {
+    let expected =
+        direct_route_provider_slug(route_source).ok_or_else(|| PrepareError::DatabaseSetup {
+            phase: "campaign_provider_route",
+            detail: "OpenRouter route is not a direct provider route".to_string(),
+        })?;
+    if let Some(provider) = provider
+        && provider != expected
+    {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "campaign_provider_route",
+            detail: format!(
+                "{} does not accept OpenRouter provider '{provider}'",
+                direct_route_provider_label(route_source)
+            ),
+        });
+    }
+    Ok(expected)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
 
     #[test]
     fn render_handles_empty_framework() {
@@ -1002,5 +1024,93 @@ mod tests {
         let rendered = render_resolved_campaign_config(&cfg);
         assert!(rendered.contains("framework tools"));
         assert!(rendered.contains("(none declared)"));
+    }
+
+    fn direct_nebius_campaign_config(provider_slug: Option<String>) -> ResolvedCampaignConfig {
+        ResolvedCampaignConfig {
+            campaign_id: "direct-nebius".to_string(),
+            benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+            dataset_sources: vec![RegistryDatasetSource {
+                key: Some("ripgrep".to_string()),
+                path: PathBuf::from("/tmp/ripgrep.jsonl"),
+                label: "ripgrep".to_string(),
+                url: None,
+            }],
+            model_id: "meta-llama/Meta-Llama-3.1-70B-Instruct".to_string(),
+            provider_slug,
+            route_source: ModelRouteSource::DirectNebius,
+            required_procedures: default_required_procedures(),
+            instances_root: PathBuf::from("/tmp/instances"),
+            batches_root: PathBuf::from("/tmp/batches"),
+            eval: EvalCampaignPolicy::default(),
+            protocol: ProtocolCampaignPolicy::default(),
+            framework: FrameworkConfig::default(),
+        }
+    }
+
+    #[test]
+    fn route_source_label_distinguishes_direct_nebius() {
+        assert_eq!(
+            route_source_label(ModelRouteSource::DirectNebius),
+            "direct_nebius"
+        );
+    }
+
+    #[test]
+    fn render_resolved_campaign_config_labels_direct_nebius_provider() {
+        let rendered = render_resolved_campaign_config(&direct_nebius_campaign_config(None));
+
+        assert!(rendered.contains("route_source: direct_nebius"));
+        assert!(rendered.contains("provider: direct_nebius"));
+        assert!(!rendered.contains("auto/openrouter"));
+    }
+
+    #[test]
+    fn resolve_campaign_config_ignores_openrouter_preference_for_direct_nebius() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _env_guard = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            OsString::from(tmp.path().as_os_str()),
+        )]);
+        let model_id = "meta-llama/Meta-Llama-3.1-70B-Instruct";
+        let manifest = CampaignManifest {
+            schema_version: CAMPAIGN_MANIFEST_SCHEMA_VERSION.to_string(),
+            campaign_id: "direct-nebius".to_string(),
+            benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+            dataset_sources: vec![RegistryDatasetSource {
+                key: Some("ripgrep".to_string()),
+                path: tmp.path().join("ripgrep.jsonl"),
+                label: "ripgrep".to_string(),
+                url: None,
+            }],
+            model_id: Some(model_id.to_string()),
+            provider_slug: None,
+            route_source: Some(ModelRouteSource::DirectNebius),
+            required_procedures: default_required_procedures(),
+            instances_root: Some(tmp.path().join("instances")),
+            batches_root: Some(tmp.path().join("batches")),
+            eval: EvalCampaignPolicy::default(),
+            protocol: ProtocolCampaignPolicy::default(),
+            framework: FrameworkConfig::default(),
+        };
+        save_campaign_manifest(&manifest).expect("save campaign manifest");
+        let models_dir = tmp.path().join("models");
+        fs::create_dir_all(&models_dir).expect("models dir");
+        fs::write(
+            models_dir.join("provider-preferences.json"),
+            serde_json::to_string_pretty(&serde_json::json!({
+                "selected_providers": {
+                    model_id: { "slug": "deepinfra" }
+                }
+            }))
+            .expect("provider prefs json"),
+        )
+        .expect("write provider prefs");
+
+        let resolved = resolve_campaign_config("direct-nebius", &CampaignOverrides::default())
+            .expect("resolve campaign config");
+
+        assert_eq!(resolved.route_source, ModelRouteSource::DirectNebius);
+        assert!(resolved.provider_slug.is_none());
     }
 }

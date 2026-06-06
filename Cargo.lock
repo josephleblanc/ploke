@@ -6922,6 +6922,7 @@ dependencies = [
  "toml 0.9.5",
  "tracing",
  "tracing-appender",
+ "tracing-core",
  "tracing-subscriber",
  "uuid",
 ]

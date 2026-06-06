@@ -10,6 +10,8 @@
 use std::{collections::HashSet, str::FromStr, sync::Arc};
 
 use lazy_static::lazy_static;
+#[cfg(feature = "live_api_tests")]
+use ploke_llm::Router;
 use ploke_llm::router_only::{RouterVariants, google::Google};
 use ploke_test_utils::{FIXTURE_NODES_CANONICAL, fresh_backup_fixture_db};
 use tokio::sync::Mutex;
@@ -204,6 +206,34 @@ fn live_google_chat_model() -> String {
     }
 }
 
+#[cfg(feature = "live_api_tests")]
+async fn live_google_setup_or_panic(test_name: &str) {
+    if let Err(error) = Google::route_config_available() {
+        panic!(
+            "{}",
+            Google::with_local_auth_preflight_hint(format!(
+                "{test_name} requires Google route config; route config unavailable: {error}"
+            ))
+        );
+    }
+    if let Err(error) = Google::auth_config_available() {
+        panic!(
+            "{}",
+            Google::with_local_auth_preflight_hint(format!(
+                "{test_name} requires Google ADC; ADC config unavailable: {error}"
+            ))
+        );
+    }
+    if let Err(error) = Google::resolve_bearer_token().await {
+        panic!(
+            "{}",
+            Google::with_local_auth_preflight_hint(format!(
+                "{test_name} requires Google ADC bearer-token resolution; token unavailable: {error}"
+            ))
+        );
+    }
+}
+
 // ============================================================================
 // TEST CASE 1: /index with no db loaded at workspace root
 // ============================================================================
@@ -283,6 +313,7 @@ async fn test_model_router_parser_show_and_set() {
 
 #[tokio::test]
 #[cfg(feature = "live_api_tests")]
+#[ignore = "live Google route/tool-call test; requires GOOGLE_PROJECT_ID/GOOGLE_REGION and ADC"]
 async fn live_google_harness_router_command_runs_list_dir_through_llm_manager() {
     // This test is the live command-harness surface:
     // `/model router google` -> `/model use google/...` -> `AddUserMessage` ->
@@ -293,6 +324,11 @@ async fn live_google_harness_router_command_runs_list_dir_through_llm_manager() 
     // It intentionally has no route/auth skip helper. With `live_api_tests`
     // enabled, missing Google route config or ADC auth is a live-test setup
     // failure, not a reason to silently pass this surface.
+    live_google_setup_or_panic(
+        "live_google_harness_router_command_runs_list_dir_through_llm_manager",
+    )
+    .await;
+
     let fixture_db =
         Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
     let rt = TestRuntime::new(&fixture_db)

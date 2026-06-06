@@ -123,6 +123,11 @@ node_with_context[id, name, canon_path, file_path] :=
   file_owner_for_module[mod_id, file_owner_id],
   *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }},
   has_embedding[id, name, hash, span]
+node_with_context[id, name, canon_path, file_path] :=
+  *module{{ id, path: canon_path @ 'NOW' }},
+  file_owner_for_module[id, file_owner_id],
+  *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }},
+  has_embedding[id, name, hash, span]
 
 edges_from_focus[source_name, target_name, source_id, target_id, canon_path, file_path, relation_kind] :=
   resolve_item[source_id, source_name, focus_file_path, focus_file_hash, focus_hash, focus_span, focus_namespace, focus_mod_path],

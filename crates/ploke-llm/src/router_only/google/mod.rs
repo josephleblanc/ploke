@@ -245,6 +245,7 @@ impl HasModels for Google {
     type Models = Model;
     type Error = LlmError;
 
+    #[allow(clippy::manual_async_fn)]
     fn fetch_models(
         _client: &reqwest::Client,
     ) -> impl std::future::Future<Output = color_eyre::Result<Self::Response>> + Send {
@@ -422,6 +423,7 @@ impl Router for Google {
         Ok(token)
     }
 
+    #[allow(clippy::manual_async_fn)]
     fn resolve_bearer_token() -> impl std::future::Future<Output = Result<String, LlmError>> + Send
     {
         async { google_adc_bearer_token().await }
@@ -451,6 +453,8 @@ impl Google {
     pub const OPENAPI_ENDPOINT: &'static str = "endpoints/openapi";
     pub const COMPLETION_ENDPOINT: &'static str = "chat/completions";
     pub const MODELS_ENDPOINT: &'static str = "models";
+    pub const LOCAL_AUTH_HINTS_ENV: &'static str = "PLOKE_LOCAL_GOOGLE_AUTH_HINTS";
+    pub const AUTH_PREFLIGHT_COMMAND: &'static str = "cargo xtask auth google --strict-live";
 
     pub fn openapi_base_url() -> Result<&'static str, LlmError> {
         Ok(GOOGLE_OPENAPI_BASE_URL
@@ -471,6 +475,21 @@ impl Google {
     pub fn auth_config_available() -> Result<(), LlmError> {
         Self::adc_credentials_available()
     }
+
+    pub fn local_auth_preflight_hint() -> Option<&'static str> {
+        let enabled = std::env::var(Self::LOCAL_AUTH_HINTS_ENV)
+            .ok()
+            .is_some_and(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"));
+        enabled.then_some("local Google auth hint: run `cargo xtask auth google --strict-live`")
+    }
+
+    pub fn with_local_auth_preflight_hint(mut message: String) -> String {
+        if let Some(hint) = Self::local_auth_preflight_hint() {
+            message.push_str("; ");
+            message.push_str(hint);
+        }
+        message
+    }
 }
 
 #[cfg(test)]
@@ -482,6 +501,7 @@ mod tests {
         router_only::{HasModelId, HasModels, Router},
     };
     use serde_json::json;
+    use std::sync::{Mutex, OnceLock};
 
     #[cfg(feature = "live_api_tests")]
     use std::{collections::BTreeSet, env, time::Duration};
@@ -504,6 +524,44 @@ mod tests {
     use ploke_core::tool_types::{FunctionMarker, ToolDefinition, ToolFunctionDef, ToolName};
     #[cfg(feature = "live_api_tests")]
     use reqwest::Client;
+
+    fn google_auth_hint_env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn local_auth_preflight_hint_is_opt_in_by_env() {
+        let _lock = google_auth_hint_env_lock()
+            .lock()
+            .expect("Google auth hint env lock is available");
+        let previous = std::env::var_os(Google::LOCAL_AUTH_HINTS_ENV);
+
+        unsafe {
+            std::env::remove_var(Google::LOCAL_AUTH_HINTS_ENV);
+        }
+        assert!(
+            Google::local_auth_preflight_hint().is_none(),
+            "local preflight hint should be absent unless explicitly enabled"
+        );
+
+        unsafe {
+            std::env::set_var(Google::LOCAL_AUTH_HINTS_ENV, "1");
+        }
+        assert_eq!(
+            Google::local_auth_preflight_hint(),
+            Some("local Google auth hint: run `cargo xtask auth google --strict-live`")
+        );
+
+        match previous {
+            Some(value) => unsafe {
+                std::env::set_var(Google::LOCAL_AUTH_HINTS_ENV, value);
+            },
+            None => unsafe {
+                std::env::remove_var(Google::LOCAL_AUTH_HINTS_ENV);
+            },
+        }
+    }
 
     #[cfg(feature = "live_api_tests")]
     fn body_snippet(body: &str) -> String {
@@ -533,9 +591,9 @@ mod tests {
             (true, false) => "Google ADC auth",
             (true, true) => unreachable!("handled above"),
         };
-        let message = format!(
+        let message = Google::with_local_auth_preflight_hint(format!(
             "skipping {test_name}: missing {missing}; direct Google live route was not exercised"
-        );
+        ));
         if strict_live_tests_requested() {
             panic!("{message}; PLOKE_RUN_LIVE_TESTS requested live execution");
         }

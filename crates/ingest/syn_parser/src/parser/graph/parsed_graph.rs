@@ -208,7 +208,7 @@ impl ParsedCodeGraph {
     pub fn merge_union_from_partition(
         partition: &RootGraphPartition,
     ) -> Result<Self, SynParserError> {
-        let mut graphs: Vec<Self> = partition.root_graphs.iter().cloned().collect();
+        let mut graphs: Vec<Self> = partition.root_graphs.to_vec();
         if let Some(nr) = &partition.merged_non_root_graph {
             graphs.push(nr.clone());
         }
@@ -940,10 +940,10 @@ impl ParsedCodeGraph {
                 // Iterate over the Boxed Vec
                 debug!("  - Path: {}, ID: {}", info.definition_path, info.module_id);
                 // Optionally include the absolute file path
-                if let Some(module_node) = self.get_module(info.module_id) {
-                    if let Some(file_path) = module_node.file_path() {
-                        debug!("    File: {}", file_path.display());
-                    }
+                if let Some(module_node) = self.get_module(info.module_id)
+                    && let Some(file_path) = module_node.file_path()
+                {
+                    debug!("    File: {}", file_path.display());
                 }
             }
         }

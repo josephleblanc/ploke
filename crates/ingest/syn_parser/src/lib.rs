@@ -33,6 +33,11 @@
 //!     Ok(())
 //! }
 //! ```
+#![allow(
+    clippy::result_large_err,
+    reason = "parser and discovery errors intentionally carry rich diagnostics"
+)]
+
 pub mod compilation_unit;
 pub mod discovery;
 pub mod error;

@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::tool_descriptions::{
-    ToolDescription, ToolDescriptionArtifactRelPath, tool_description,
-    tool_description_artifact_relpath,
+    RuntimeToolDescription, ToolDescription, ToolDescriptionArtifactRelPath,
+    runtime_tool_description, tool_description, tool_description_artifact_relpath,
 };
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialOrd, PartialEq, Ord, Eq, Hash)]
@@ -136,6 +136,10 @@ impl From<ToolFunctionDef> for ToolDefinition {
 impl ToolName {
     pub fn description(self) -> ToolDescription {
         tool_description(self)
+    }
+
+    pub fn runtime_description(self) -> RuntimeToolDescription {
+        runtime_tool_description(self)
     }
 
     pub fn description_artifact_relpath(self) -> ToolDescriptionArtifactRelPath {

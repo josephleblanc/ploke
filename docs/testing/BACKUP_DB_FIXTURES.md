@@ -1,7 +1,7 @@
 # Backup DB Fixtures
 
-Last reviewed: 2026-05-25
-Last updated: 2026-05-25
+Last reviewed: 2026-06-04
+Last updated: 2026-06-04
 
 This document is the current inventory for backup database fixtures under
 the shared DB snapshot fixture directory. It records which source targets
@@ -236,6 +236,8 @@ impl Drop for FixtureRestoreGuard {
     - [crates/ploke-db/src/index/hnsw.rs](../../crates/ploke-db/src/index/hnsw.rs): fresh mutable DB per test
     - [crates/ploke-db/src/multi_embedding/hnsw_ext.rs](../../crates/ploke-db/src/multi_embedding/hnsw_ext.rs): fresh mutable DB per test
     - [crates/ploke-db/benches/resolver_bench.rs](../../crates/ploke-db/benches/resolver_bench.rs): immutable benchmark input
+  - `ploke-eval`
+    - [crates/ploke-eval/tests/introspection_integration.rs](../../crates/ploke-eval/tests/introspection_integration.rs): fresh immutable DB per test paired with a hermetic run-record fixture
   - `ploke-rag`
     - legacy direct-path use removed; immutable consumers should use the local-embedding fixture helper instead
   - `ploke-tui`

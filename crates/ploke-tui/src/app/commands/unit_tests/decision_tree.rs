@@ -342,6 +342,14 @@ impl TestCase {
         self
     }
 
+    fn with_workspace_update_contract(mut self) -> Self {
+        self.expected_state_cmd = "Workspace";
+        self.expected_parsed_contains = Some("Update");
+        self.expected_forwarded_contains = Some("Workspace(WorkspaceUpdate)");
+        self.expected_validation = ValidationExpectation::Success;
+        self
+    }
+
     fn with_resolved_load_ref(mut self, expected: &'static str) -> Self {
         self.expected_resolved_load_ref_contains = Some(expected);
         self
@@ -1686,10 +1694,12 @@ async fn test_single_member_all_cases() {
             DbSetup::SingleMember,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/update",
-            "TestTodo",
+            "Workspace",
             None,
             None,
-        ),
+        )
+        .with_workspace_update_contract()
+        .with_stale_loaded_state(),
     ];
 
     run_test_cases(&cases).await;
@@ -1701,12 +1711,21 @@ async fn test_single_member_all_cases() {
 /// Tests `/index` when single workspace member is loaded re-indexes the focused crate.
 /// Pattern: Single workspace member → /index → IndexTargetDir for focused crate
 #[tokio::test]
-#[ignore = "needs implementation"]
+#[ignore = "fixture-backed strict decision-tree coverage"]
 async fn test_workspace_member_single_index_reindexes_focused() {
-    let fixture_db = Arc::new(
-        fresh_backup_fixture_db(&WS_FIXTURE_01_MEMBER_SINGLE)
-            .expect("load ws_fixture_01_member_single"),
-    );
+    run_test_case(
+        &TestCase::new(
+            "single-member /index re-indexes focused crate",
+            DbSetup::SingleMember,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index",
+            "Index",
+            None,
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01/member_root"),
+    )
+    .await;
 }
 
 // =============================================================================
@@ -1829,10 +1848,12 @@ async fn test_standalone_crate_all_cases() {
             DbSetup::StandaloneCrate,
             TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
             "/update",
-            "TestTodo",
+            "Workspace",
             None,
             None,
-        ),
+        )
+        .with_workspace_update_contract()
+        .with_stale_loaded_state(),
         TestCase::new(
             "4.9 /index path/to/other runs update (not validating target)",
             DbSetup::StandaloneCrate,
@@ -1857,11 +1878,27 @@ async fn test_standalone_crate_all_cases() {
 /// Tests `/index workspace` when standalone crate is loaded returns an error.
 /// Pattern: Standalone crate → /index workspace → error "not a workspace"
 #[tokio::test]
-#[ignore = "needs implementation"]
+#[ignore = "fixture-backed strict decision-tree coverage"]
 async fn test_standalone_crate_index_workspace_error() {
-    let fixture_db = Arc::new(
-        fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture_nodes_canonical"),
-    );
+    run_test_case(
+        &TestCase::new(
+            "standalone crate /index workspace rejects non-workspace",
+            DbSetup::StandaloneCrate,
+            TestPwd::Crate("tests/fixture_crates/fixture_nodes"),
+            "/index workspace",
+            "Index",
+            None,
+            None,
+        )
+        .with_error(ExpectedUiError {
+            message_contains: Some("Current directory is not a workspace member".to_string()),
+            recovery_suggestion: Some(
+                "Open or load a workspace member first, then run `/index workspace` again."
+                    .to_string(),
+            ),
+        }),
+    )
+    .await;
 }
 
 // =============================================================================
@@ -2033,10 +2070,12 @@ async fn test_full_workspace_all_cases() {
             DbSetup::FullWorkspace,
             TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
             "/update",
-            "TestTodo",
+            "Workspace",
             None,
             None,
-        ),
+        )
+        .with_workspace_update_contract()
+        .with_stale_loaded_state(),
     ];
 
     run_test_cases(&cases).await;
@@ -2048,11 +2087,80 @@ async fn test_full_workspace_all_cases() {
 /// Tests command behavior when a full workspace with multiple members is loaded.
 /// Uses `WS_FIXTURE_01_CANONICAL` fixture.
 #[tokio::test]
-#[ignore = "needs implementation"]
+#[ignore = "fixture-backed strict decision-tree coverage"]
 async fn test_full_workspace_index_commands() {
-    let fixture_db = Arc::new(
-        fresh_backup_fixture_db(&WS_FIXTURE_01_CANONICAL).expect("load ws_fixture_01_canonical"),
-    );
+    let cases = vec![
+        TestCase::new(
+            "full workspace /index re-indexes all members",
+            DbSetup::FullWorkspace,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index",
+            "Index",
+            None,
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01"),
+        TestCase::new(
+            "full workspace /index crate member_root indexes that member",
+            DbSetup::FullWorkspace,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index crate member_root",
+            "Index",
+            None,
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01/member_root"),
+        TestCase::new(
+            "full workspace /index crate not_a_member errors with guidance",
+            DbSetup::FullWorkspace,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index crate not_a_member",
+            "Index",
+            None,
+            None,
+        )
+        .with_error(ExpectedUiError {
+            message_contains: Some(
+                "crate 'not_a_member' is not loaded in the current workspace".to_string(),
+            ),
+            recovery_suggestion: None,
+        }),
+        TestCase::new(
+            "full workspace /index workspace re-indexes all members",
+            DbSetup::FullWorkspace,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index workspace",
+            "Index",
+            None,
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01"),
+        TestCase::new(
+            "full workspace /index member_root indexes crate path within workspace",
+            DbSetup::FullWorkspace,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index member_root",
+            "Index",
+            None,
+            None,
+        )
+        .with_resolved_index_target("tests/fixture_workspace/ws_fixture_01/member_root"),
+        TestCase::new(
+            "full workspace /index /outside/workspace/crate rejects outside path",
+            DbSetup::FullWorkspace,
+            TestPwd::Workspace("tests/fixture_workspace/ws_fixture_01"),
+            "/index /outside/workspace/crate",
+            "Index",
+            None,
+            None,
+        )
+        .with_error(ExpectedUiError {
+            message_contains: Some("Failed to normalize target path".to_string()),
+            recovery_suggestion: None,
+        }),
+    ];
+
+    run_test_cases(&cases).await;
 }
 
 // =============================================================================

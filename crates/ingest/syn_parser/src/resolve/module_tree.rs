@@ -487,9 +487,6 @@ impl ModuleTree {
     {
         let relations_iter = relations_iter.into_iter(); // Ensure we have an iterator
 
-        // Get the starting index for the new relations
-        let mut current_index = self.tree_relations.len();
-
         // Reserve capacity in the main vector if the iterator provides a hint
         let (lower_bound, upper_bound) = relations_iter.size_hint();
         let reserve_amount = upper_bound.unwrap_or(lower_bound);
@@ -501,7 +498,7 @@ impl ModuleTree {
         }
 
         // Iterate through the provided relations
-        for tr in relations_iter {
+        for (current_index, tr) in (self.tree_relations.len()..).zip(relations_iter) {
             // Convert to TreeRelation (cheap wrapper)
             let source_id = tr.rel().source(); // Get AnyNodeId
             let target_id = tr.rel().target(); // Get AnyNodeId
@@ -522,9 +519,6 @@ impl ModuleTree {
 
             // Add the relation to the main vector
             self.tree_relations.push(tr);
-
-            // Increment the index for the next relation
-            current_index += 1;
         }
     }
 
@@ -1168,16 +1162,15 @@ impl ModuleTree {
             );
             if let Some(target_primary_id) =
                 self.lookup_definition_by_segments(source_mod_id, trimmed_segments)?
+                && let Ok(target_module_id) = ModuleNodeId::try_from(target_primary_id)
             {
-                if let Ok(target_module_id) = ModuleNodeId::try_from(target_primary_id) {
-                    log::debug!(
-                        target: LOG_TARGET_MOD_TREE_BUILD,
-                        "link_glob_import: canonical lookup matched module {:?}",
-                        target_module_id
-                    );
-                    self.link_module_scope_items(target_module_id, import_node, graph)?;
-                    return Ok(());
-                }
+                log::debug!(
+                    target: LOG_TARGET_MOD_TREE_BUILD,
+                    "link_glob_import: canonical lookup matched module {:?}",
+                    target_module_id
+                );
+                self.link_module_scope_items(target_module_id, import_node, graph)?;
+                return Ok(());
             }
 
             return self.link_glob_import(import_node, base_module_id, segments_to_resolve, graph);
@@ -1206,18 +1199,16 @@ impl ModuleTree {
         }
 
         // Skip external dependency imports; they will be handled when dependency graphs are available.
-        if base_module_id == self.root() {
-            if let Some(first_seg) = segments_to_resolve.first() {
-                if graph
-                    .iter_dependency_names()
-                    .any(|dep_name| dep_name == first_seg)
-                    || first_seg == "std"
-                    || first_seg == "core"
-                    || first_seg == "alloc"
-                {
-                    return Ok(());
-                }
-            }
+        if base_module_id == self.root()
+            && let Some(first_seg) = segments_to_resolve.first()
+            && (graph
+                .iter_dependency_names()
+                .any(|dep_name| dep_name == first_seg)
+                || first_seg == "std"
+                || first_seg == "core"
+                || first_seg == "alloc")
+        {
+            return Ok(());
         }
 
         let target_any_id = match self.resolve_path_relative_to(
@@ -1357,7 +1348,7 @@ impl ModuleTree {
             return Ok(());
         };
 
-        let item_ids: Vec<PrimaryNodeId> = items.iter().copied().collect();
+        let item_ids: Vec<PrimaryNodeId> = items.to_vec();
         log::debug!(
             target: LOG_TARGET_MOD_TREE_BUILD,
             "link_module_scope_items: {} -> module {:?} ({} children)",

@@ -169,7 +169,9 @@ pub struct Prototype1BranchRegistry {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::io::{BufRead, BufReader};
+
+    use crate::test_fixtures::{prototype1_root, read_json_value};
 
     use super::*;
 
@@ -314,47 +316,44 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn real_campaign_branch_registry_roundtrips_selection_and_evaluation_surface() {
-        let path = real_run_root().join("branches.json");
+        let path = prototype1_root().join("branches.json");
         let original = read_json_value(&path);
-        let record: Prototype1BranchRegistry =
-            serde_json::from_value(original.clone()).expect("deserialize real branch registry");
+        let record: Prototype1BranchRegistry = serde_json::from_value(original.clone())
+            .expect("deserialize prototype1 branch registry");
 
         assert_eq!(
-            serde_json::to_value(&record).expect("serialize real branch registry"),
+            serde_json::to_value(&record).expect("serialize prototype1 branch registry"),
             original
         );
-        assert_eq!(
-            record.campaign_id,
-            "p1-edit-surface-history-long-20260508-1"
-        );
-        assert_eq!(record.source_nodes.len(), 11);
+        assert_eq!(record.campaign_id, "prototype1-sanitized-campaign");
+        assert_eq!(record.source_nodes.len(), 1);
+        assert_eq!(record.active_targets.len(), 1);
         assert_eq!(
             record
                 .source_nodes
                 .iter()
                 .map(|source| source.branches.len())
                 .sum::<usize>(),
-            36
+            2
         );
 
         let source = record
             .source_nodes
             .iter()
-            .find(|source| source.source_state_id == "branch-d176496f54e6e755")
+            .find(|source| source.source_state_id == "source-prototype1")
             .expect("generation source with selected successor branch");
         assert_eq!(
             source.selected_branch_id.as_deref(),
-            Some("branch-eeba26463d120530")
+            Some("branch-keep-prototype1")
         );
 
         let selected = source
             .branches
             .iter()
-            .find(|branch| branch.branch_id == "branch-eeba26463d120530")
+            .find(|branch| branch.branch_id == "branch-keep-prototype1")
             .expect("selected branch node");
-        assert_eq!(selected.candidate_id, "candidate-1");
+        assert_eq!(selected.candidate_id, "candidate-keep");
         assert_eq!(selected.status, TreatmentBranchStatus::Selected);
 
         let evaluation = selected
@@ -363,7 +362,7 @@ mod tests {
             .expect("selected branch evaluation");
         assert_eq!(
             evaluation.baseline_campaign_id,
-            "p1-edit-surface-history-long-20260508-1"
+            "prototype1-baseline-campaign"
         );
         assert_eq!(evaluation.compared_instances, 1);
         assert_eq!(evaluation.rejected_instances, 0);
@@ -371,143 +370,34 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
-    fn print_real_campaign_branch_registry_round_trip_states() {
-        let path = real_run_root().join("branches.json");
-        let original = read_json_value(&path);
+    fn prototype1_branch_log_parses_registry_snapshot_and_parent_comparison() {
+        let path = prototype1_root().join("branch-log.jsonl");
+        let file = fs::File::open(&path)
+            .unwrap_or_else(|err| panic!("open prototype1 branch log {}: {err}", path.display()));
 
-        println!(
-            "before deserialize:\n{}",
-            serde_json::to_string_pretty(&branch_registry_probe_from_value(&original))
-                .expect("format original probe")
-        );
-
-        let record: Prototype1BranchRegistry =
-            serde_json::from_value(original.clone()).expect("deserialize real branch registry");
-        println!(
-            "after deserialize:\n{}",
-            serde_json::to_string_pretty(&branch_registry_probe_from_record(&record))
-                .expect("format record probe")
-        );
-
-        let serialized = serde_json::to_value(&record).expect("serialize real branch registry");
-        println!(
-            "after serialize again:\n{}",
-            serde_json::to_string_pretty(&branch_registry_probe_from_value(&serialized))
-                .expect("format serialized probe")
-        );
-
-        assert_eq!(serialized, original);
-    }
-
-    fn branch_registry_probe_from_value(value: &serde_json::Value) -> serde_json::Value {
-        let source_nodes = value
-            .get("source_nodes")
-            .and_then(serde_json::Value::as_array)
-            .expect("source_nodes array");
-        let source = source_nodes
-            .iter()
-            .find(|source| {
-                source
-                    .get("source_state_id")
-                    .and_then(serde_json::Value::as_str)
-                    == Some("branch-d176496f54e6e755")
+        let records: Vec<BranchLogRecord> = BufReader::new(file)
+            .lines()
+            .filter_map(|line| {
+                let line = line.expect("read branch log line");
+                (!line.trim().is_empty()).then_some(line)
             })
-            .expect("selected source");
-        let selected_branch_id = source
-            .get("selected_branch_id")
-            .and_then(serde_json::Value::as_str)
-            .expect("selected_branch_id");
-        let selected = source
-            .get("branches")
-            .and_then(serde_json::Value::as_array)
-            .expect("branches array")
-            .iter()
-            .find(|branch| {
-                branch.get("branch_id").and_then(serde_json::Value::as_str)
-                    == Some(selected_branch_id)
-            })
-            .expect("selected branch");
+            .map(|line| serde_json::from_str(&line).expect("parse prototype1 branch log record"))
+            .collect();
 
-        serde_json::json!({
-            "campaign_id": value.get("campaign_id"),
-            "source_node_count": source_nodes.len(),
-            "branch_count": source_nodes
-                .iter()
-                .map(|source| {
-                    source
-                        .get("branches")
-                        .and_then(serde_json::Value::as_array)
-                        .map_or(0, Vec::len)
-                })
-                .sum::<usize>(),
-            "selected_source": {
-                "source_state_id": source.get("source_state_id"),
-                "selected_branch_id": source.get("selected_branch_id"),
-                "selected_branch": {
-                    "branch_id": selected.get("branch_id"),
-                    "candidate_id": selected.get("candidate_id"),
-                    "status": selected.get("status"),
-                    "latest_evaluation": selected.get("latest_evaluation"),
-                }
-            }
-        })
-    }
-
-    fn branch_registry_probe_from_record(record: &Prototype1BranchRegistry) -> serde_json::Value {
-        let source = record
-            .source_nodes
-            .iter()
-            .find(|source| source.source_state_id == "branch-d176496f54e6e755")
-            .expect("selected source");
-        let selected_branch_id = source
-            .selected_branch_id
-            .as_deref()
-            .expect("selected_branch_id");
-        let selected = source
-            .branches
-            .iter()
-            .find(|branch| branch.branch_id == selected_branch_id)
-            .expect("selected branch");
-
-        serde_json::json!({
-            "campaign_id": record.campaign_id,
-            "source_node_count": record.source_nodes.len(),
-            "branch_count": record
-                .source_nodes
-                .iter()
-                .map(|source| source.branches.len())
-                .sum::<usize>(),
-            "selected_source": {
-                "source_state_id": source.source_state_id,
-                "selected_branch_id": source.selected_branch_id,
-                "selected_branch": {
-                    "branch_id": selected.branch_id,
-                    "candidate_id": selected.candidate_id,
-                    "status": selected.status,
-                    "latest_evaluation": selected.latest_evaluation,
-                }
-            }
-        })
-    }
-
-    fn real_run_root() -> PathBuf {
-        std::env::var_os("PLOKE_RECORDS_REAL_RUN_ROOT")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                PathBuf::from(
-                    "/home/brasides/.ploke-eval/campaigns/p1-edit-surface-history-long-20260508-1/prototype1",
-                )
-            })
-    }
-
-    fn read_json_value(path: &Path) -> serde_json::Value {
-        let text = fs::read_to_string(path).unwrap_or_else(|err| {
-            panic!(
-                "read real-run fixture {} (set PLOKE_RECORDS_REAL_RUN_ROOT to override): {err}",
-                path.display()
-            )
-        });
-        serde_json::from_str(&text).expect("parse real-run JSON value")
+        assert_eq!(records.len(), 2);
+        assert!(matches!(
+            &records[0].body,
+            BranchLogBody::RegistrySnapshot(snapshot)
+                if snapshot.campaign_id == "prototype1-sanitized-campaign"
+                    && snapshot.source_nodes.len() == 1
+                    && snapshot.source_nodes[0].branches.len() == 2
+        ));
+        assert!(matches!(
+            &records[1].body,
+            BranchLogBody::ParentComparison(comparison)
+                if comparison.campaign_id == "prototype1-sanitized-campaign"
+                    && comparison.branch_id == "branch-keep-prototype1"
+                    && comparison.summary.overall_disposition == Disposition::Keep
+        ));
     }
 }

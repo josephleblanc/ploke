@@ -8,10 +8,13 @@ use ploke_embed::local::EmbeddingConfig;
 use ploke_rag::{RagService, TokenBudget};
 use syn_parser::parser::nodes::ToCozoUuid;
 
+use crate::AppEvent;
 use crate::app::message_item::should_render_tool_buttons;
 use crate::app_state::core::derive_edit_proposal_id;
 use crate::app_state::handlers::chat;
 use crate::chat_history::MessageKind;
+use crate::event_bus::EventPriority;
+use crate::llm::manager::events::{ChatEvt, LlmEvent};
 use crate::tools::{ToolName, ToolUiPayload};
 use crate::tracing_setup::init_tracing;
 
@@ -55,8 +58,7 @@ impl MockTrait for ploke_io::IoManagerHandle {
 }
 
 #[tokio::test]
-#[ignore = "needs refactor"]
-async fn test_race_condition_without_oneshot() {
+async fn embed_message_waits_for_add_user_message_completion() {
     let db = Arc::new(ploke_db::Database::new_init().unwrap());
     let mock_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
         Arc::clone(&db.active_embedding_set),
@@ -74,8 +76,8 @@ async fn test_race_condition_without_oneshot() {
     ));
     let (cmd_tx, cmd_rx) = mpsc::channel(32);
     let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+    let mut prompt_rx = event_bus.subscribe(EventPriority::Background);
 
-    // Start state manager
     tokio::spawn(super::dispatcher::state_manager(
         state.clone(),
         cmd_rx,
@@ -85,81 +87,14 @@ async fn test_race_condition_without_oneshot() {
 
     let user_msg_id = Uuid::new_v4();
     let embed_msg_id = Uuid::new_v4();
-
-    // Simulate sending both commands concurrently without synchronization
-    let tx1 = cmd_tx.clone();
-    let tx2 = cmd_tx.clone();
-
-    tokio::join!(
-        async {
-            tx1.send(super::commands::StateCommand::AddUserMessage {
-                content: "tell me a haiku".to_string(),
-                completion_tx: oneshot::channel().0,
-                new_user_msg_id: user_msg_id,
-            })
-            .await
-            .unwrap();
-        },
-        async {
-            tx2.send(super::commands::StateCommand::EmbedMessage {
-                new_msg_id: embed_msg_id,
-                completion_rx: oneshot::channel().1, // dummy
-                scan_rx: oneshot::channel().1,       // dummy
-            })
-            .await
-            .unwrap();
-        }
-    );
-
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    // Check if the embed message read the user message or not
-    let chat = state.chat.0.read().await;
-    let last_user_msg = chat.last_user_msg();
-    assert!(
-        last_user_msg.is_ok_and(|m| m.is_some_and(|im| !im.1.is_empty())),
-        "User message should be present"
-    );
-}
-
-#[tokio::test]
-async fn test_fix_with_oneshot() {
-    let db = Arc::new(ploke_db::Database::new_init().unwrap());
-    let mock_runtime = Arc::new(EmbeddingRuntime::from_shared_set(
-        Arc::clone(&db.active_embedding_set),
-        EmbeddingProcessor::mock(),
-    ));
-    let rag = Arc::new(RagService::new(db.clone(), Arc::clone(&mock_runtime)).unwrap());
-    let (rag_tx, _) = mpsc::channel::<RagEvent>(100);
-    let state = Arc::new(AppState::new(
-        db.clone(),
-        Arc::clone(&mock_runtime),
-        ploke_io::IoManagerHandle::mock(),
-        rag,
-        TokenBudget::default(),
-        rag_tx,
-    ));
-    let (cmd_tx, cmd_rx) = mpsc::channel(32);
-    let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
-
-    // Start state manager
-    tokio::spawn(super::dispatcher::state_manager(
-        state.clone(),
-        cmd_rx,
-        event_bus.clone(),
-        mpsc::channel(32).0,
-    ));
-
-    let user_msg_id = Uuid::new_v4();
-    let embed_msg_id = Uuid::new_v4();
-
-    let (tx, rx) = oneshot::channel();
+    let prompt = "tell me a deterministic haiku".to_string();
+    let (completion_tx, completion_rx) = oneshot::channel();
 
     cmd_tx
         .send(super::commands::StateCommand::AddUserMessage {
-            content: "tell me a haiku".to_string(),
+            content: prompt.clone(),
+            completion_tx,
             new_user_msg_id: user_msg_id,
-            completion_tx: tx,
         })
         .await
         .unwrap();
@@ -167,21 +102,52 @@ async fn test_fix_with_oneshot() {
     cmd_tx
         .send(super::commands::StateCommand::EmbedMessage {
             new_msg_id: embed_msg_id,
-            completion_rx: rx,
-            // TODO: revisit this test
-            scan_rx: oneshot::channel().1, // dummy
+            completion_rx,
+            scan_rx: oneshot::channel().1,
         })
         .await
         .unwrap();
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    let (formatted_prompt, context_plan) = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            match prompt_rx.recv().await {
+                Ok(AppEvent::Llm(LlmEvent::ChatCompletion(ChatEvt::PromptConstructed {
+                    parent_id,
+                    formatted_prompt,
+                    context_plan,
+                }))) if parent_id == user_msg_id => break (formatted_prompt, context_plan),
+                Ok(_) => continue,
+                Err(e) => panic!("event channel closed before PromptConstructed: {e}"),
+            }
+        }
+    })
+    .await
+    .expect("EmbedMessage did not construct a prompt after AddUserMessage completed");
+
+    assert_eq!(
+        context_plan.parent_id, user_msg_id,
+        "EmbedMessage should construct context for the completed user message"
+    );
+    assert!(
+        context_plan.included_messages.iter().any(|message| {
+            message.message_id == Some(user_msg_id) && message.kind == MessageKind::User
+        }),
+        "context plan should include the completed user message"
+    );
+    assert!(
+        formatted_prompt
+            .iter()
+            .any(|message| message.content == prompt),
+        "formatted prompt should include the completed user message content"
+    );
 
     let chat = state.chat.0.read().await;
-    let last_user_msg = chat.last_user_msg();
-    assert!(
-        last_user_msg.is_ok_and(|m| m.is_some_and(|im| !im.1.is_empty())),
-        "User message should always be present"
-    );
+    let last_user_msg = chat
+        .last_user_msg()
+        .expect("last_user_msg lookup should succeed")
+        .expect("completed user message should be present");
+    assert_eq!(last_user_msg.0, user_msg_id);
+    assert_eq!(last_user_msg.1, prompt);
 }
 
 #[tokio::test]

@@ -244,8 +244,7 @@ impl Record for RunnerResultRecord {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
-    use std::path::{Path, PathBuf};
+    use crate::test_fixtures::{prototype1_root, read_json_value};
 
     use super::*;
 
@@ -436,19 +435,18 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn real_campaign_scheduler_json_roundtrips() {
-        let path = real_run_root().join("scheduler.json");
+        let path = prototype1_root().join("scheduler.json");
         let original = read_json_value(&path);
         let record: SchedulerStateRecord =
-            serde_json::from_value(original.clone()).expect("deserialize real scheduler");
+            serde_json::from_value(original.clone()).expect("deserialize prototype1 scheduler");
 
         assert_eq!(
-            serde_json::to_value(&record).expect("serialize real scheduler"),
+            serde_json::to_value(&record).expect("serialize prototype1 scheduler"),
             original
         );
-        assert!(!record.campaign_id.as_str().is_empty());
-        assert!(!record.nodes.is_empty());
+        assert_eq!(record.campaign_id.as_str(), "prototype1-sanitized-campaign");
+        assert_eq!(record.nodes.len(), 1);
         assert!(
             record
                 .nodes
@@ -466,9 +464,8 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn real_campaign_node_json_roundtrips() {
-        let root = real_run_root();
+        let root = prototype1_root();
         let scheduler: SchedulerStateRecord =
             serde_json::from_value(read_json_value(&root.join("scheduler.json")))
                 .expect("deserialize scheduler");
@@ -482,10 +479,10 @@ mod tests {
         let path = root.join("nodes").join(&node_id).join("node.json");
         let original = read_json_value(&path);
         let record: NodeRecord =
-            serde_json::from_value(original.clone()).expect("deserialize real node");
+            serde_json::from_value(original.clone()).expect("deserialize prototype1 node");
 
         assert_eq!(
-            serde_json::to_value(&record).expect("serialize real node"),
+            serde_json::to_value(&record).expect("serialize prototype1 node"),
             original
         );
         assert_eq!(record.node_id.as_str(), node_id);
@@ -497,26 +494,6 @@ mod tests {
         assert_eq!(scheduler_node.generation, record.generation);
         assert_eq!(scheduler_node.instance_id, record.instance_id);
         assert_eq!(scheduler_node.branch_id, record.branch_id);
-        assert!(!record.source_state_id.as_str().is_empty());
-    }
-
-    fn real_run_root() -> PathBuf {
-        std::env::var_os("PLOKE_RECORDS_REAL_RUN_ROOT")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                PathBuf::from(
-                    "/home/brasides/.ploke-eval/campaigns/p1-edit-surface-history-long-20260508-1/prototype1",
-                )
-            })
-    }
-
-    fn read_json_value(path: &Path) -> serde_json::Value {
-        let text = fs::read_to_string(path).unwrap_or_else(|err| {
-            panic!(
-                "read real-run fixture {} (set PLOKE_RECORDS_REAL_RUN_ROOT to override): {err}",
-                path.display()
-            )
-        });
-        serde_json::from_str(&text).expect("parse real-run JSON value")
+        assert_eq!(record.source_state_id.as_str(), "source-prototype1");
     }
 }

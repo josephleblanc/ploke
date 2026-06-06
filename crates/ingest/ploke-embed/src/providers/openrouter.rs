@@ -37,7 +37,7 @@ struct RetryConfig {
 impl RetryConfig {
     fn backoff_for_attempt(&self, attempt: u32) -> Duration {
         // attempt is 1-based; attempt=1 => initial backoff.
-        let shift = attempt.saturating_sub(1).min(16) as u32;
+        let shift = attempt.saturating_sub(1).min(16);
         let mul = 1u64 << shift;
         let backoff = self.initial_backoff.saturating_mul(mul as u32);
         std::cmp::min(backoff, self.max_backoff)
@@ -223,7 +223,6 @@ impl OpenRouterBackend {
                 dimensions: self.request_dimensions,
                 input_type: self.input_type.clone(),
                 provider,
-                ..Default::default()
             })
         // req.model = self.model.clone();
         // req.input = EmbeddingInput::Batch(snippets);

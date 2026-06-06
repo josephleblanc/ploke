@@ -26,7 +26,7 @@ pub(super) fn process_attributes(
         .map(|s| DataValue::from(s.as_str()))
         .collect();
 
-    let attr_params = BTreeMap::from([
+    BTreeMap::from([
         (schema.owner_id().to_string(), owner_id.to_cozo_uuid()),
         (schema.index().to_string(), DataValue::from(i as i64)),
         (
@@ -35,8 +35,7 @@ pub(super) fn process_attributes(
         ),
         (schema.value().to_string(), value),
         (schema.args().to_string(), DataValue::List(args)),
-    ]);
-    attr_params
+    ])
 }
 
 pub(super) fn process_params(
@@ -66,7 +65,7 @@ pub(super) fn process_params(
     //     panic!()
     // });
 
-    let param_params = BTreeMap::from([
+    BTreeMap::from([
         (param_schema.function_id().to_string(), function.id.into()),
         (
             param_schema.param_index().to_string(),
@@ -85,8 +84,7 @@ pub(super) fn process_params(
             param_schema.is_self().to_string(),
             DataValue::from(param.is_self),
         ),
-    ]);
-    param_params
+    ])
 }
 
 pub(super) fn process_generic_params(
@@ -233,7 +231,7 @@ pub(super) fn process_fields(
     let cozo_id = field.id.as_any().to_cozo_uuid();
     let type_id = field.type_id;
 
-    let field_params = BTreeMap::from([
+    BTreeMap::from([
         (schema.id().to_string(), cozo_id),
         (schema.name().to_string(), cozo_name),
         (schema.owner_id().to_string(), any_node_id.to_cozo_uuid()),
@@ -245,8 +243,7 @@ pub(super) fn process_fields(
             vis_path.unwrap_or(DataValue::Null),
         ),
         (schema.cfgs().to_string(), DataValue::List(cfgs)),
-    ]);
-    field_params
+    ])
 }
 
 fn vis_to_dataval(field: &FieldNode) -> (DataValue, Option<DataValue>) {

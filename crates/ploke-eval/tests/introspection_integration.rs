@@ -1,102 +1,54 @@
-//! Canonical integration tests for the introspection API
+//! Canonical integration tests for the ploke-eval introspection API.
 //!
-//! These tests verify that the RunRecord introspection API works correctly against
-//! real eval run data from the BurntSushi/ripgrep benchmark.
-//!
-//! Test Data Location:
-//! - Record: ~/.ploke-eval/instances/BurntSushi__ripgrep-2209/runs/<run-id>/record.json.gz
-//! - DB: ~/.ploke-eval/instances/BurntSushi__ripgrep-2209/runs/<run-id>/final-snapshot.db
-//! - Source: ~/.ploke-eval/repos/BurntSushi/ripgrep
-//!
-//! Ground Truth Verification:
-//! - GlobSet struct: confirmed in ~/.ploke-eval/repos/BurntSushi/ripgrep/crates/globset/src/lib.rs
-//! - Crate count: 9 (grep, grep-cli, grep-pcre2, globset, grep-searcher, ignore, grep-printer, grep-regex, grep-matcher)
+//! These tests use a source-controlled, hermetic run-record fixture paired with
+//! the registry-backed `fixture_nodes_canonical` database fixture. They exercise
+//! the same replay/introspection APIs that historical real-run tests covered,
+//! without depending on private `~/.ploke-eval` artifacts or external source
+//! checkouts.
 
 use ploke_eval::record::{RunRecord, read_compressed_record};
-use std::path::{Path, PathBuf};
+use ploke_test_utils::fixture_dbs::{FIXTURE_NODES_CANONICAL, fresh_backup_fixture_db};
+use std::path::PathBuf;
 
-const INSTANCE_ID: &str = "BurntSushi__ripgrep-2209";
+const FIXTURE_MANIFEST_ID: &str = "ploke-eval-introspection-fixture";
+const FIXTURE_CRATE_NAME: &str = "fixture_nodes";
+const KNOWN_STRUCT: &str = "SimpleStruct";
+const KNOWN_FUNCTION: &str = "new";
+const KNOWN_TOOL: &str = "request_code_context";
+const MISSING_NODE: &str = "ThisDoesNotExist12345";
 
-fn eval_home() -> PathBuf {
-    std::env::var_os("PLOKE_EVAL_HOME")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .map(|home| home.join(".ploke-eval"))
-        })
-        .unwrap_or_else(|| PathBuf::from("/home/brasides/.ploke-eval"))
+fn fixture_record_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("introspection-fixture")
+        .join("record.json.gz")
 }
 
-fn has_introspection_artifacts(run_dir: &Path) -> bool {
-    run_dir.join("record.json.gz").is_file() && run_dir.join("final-snapshot.db").is_file()
+fn fixture_db_path() -> PathBuf {
+    FIXTURE_NODES_CANONICAL
+        .checked_path()
+        .expect("fixture_nodes_canonical path should validate")
+        .into_path()
 }
 
-fn latest_run_with_introspection_artifacts(runs_dir: &Path) -> Option<PathBuf> {
-    let mut candidates: Vec<PathBuf> = std::fs::read_dir(runs_dir)
-        .ok()?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir() && has_introspection_artifacts(path))
-        .collect();
-    candidates.sort();
-    candidates.pop()
-}
-
-fn test_run_dir() -> PathBuf {
-    if let Some(run_dir) = std::env::var_os("PLOKE_EVAL_INTROSPECTION_RUN_DIR") {
-        return PathBuf::from(run_dir);
-    }
-
-    let home = eval_home();
-    let legacy = home.join("runs").join(INSTANCE_ID);
-    if has_introspection_artifacts(&legacy) {
-        return legacy;
-    }
-
-    latest_run_with_introspection_artifacts(&home.join("instances").join(INSTANCE_ID).join("runs"))
-        .unwrap_or_else(|| {
-            panic!(
-                "No introspection fixture run found for {INSTANCE_ID}. Looked for legacy \
-                 {legacy:?} and current instances/{INSTANCE_ID}/runs/<run-id>. Set \
-                 PLOKE_EVAL_INTROSPECTION_RUN_DIR to a run dir with record.json.gz and \
-                 final-snapshot.db."
-            )
-        })
-}
-
-/// Path to the test run record
-fn test_record_path() -> PathBuf {
-    test_run_dir().join("record.json.gz")
-}
-
-/// Path to the test database
-fn test_db_path() -> PathBuf {
-    test_run_dir().join("final-snapshot.db")
-}
-
-/// Helper to load the test record
 fn load_test_record() -> RunRecord {
-    let path = test_record_path();
+    let path = fixture_record_path();
     assert!(
-        path.exists(),
-        "Test record not found at {:?}. Run an eval to generate it.",
-        path
+        path.is_file(),
+        "introspection run-record fixture missing at {path:?}"
     );
-    read_compressed_record(&path).expect("Failed to read compressed record")
+    read_compressed_record(&path).expect("introspection fixture should deserialize")
 }
 
-/// Helper to open the test database
 async fn open_test_db() -> ploke_db::Database {
-    let path = test_db_path();
+    let path = fixture_db_path();
     assert!(
-        path.exists(),
-        "Test database not found at {:?}. Run an eval to generate it.",
-        path
+        path.is_file(),
+        "fixture_nodes_canonical database fixture missing at {path:?}"
     );
-    ploke_db::Database::create_new_backup_default(&path)
-        .await
-        .expect("Failed to open DB from backup")
+    fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL)
+        .expect("fixture_nodes_canonical should import as a fresh fixture database")
 }
 
 // ====================================================================================
@@ -107,50 +59,29 @@ async fn open_test_db() -> ploke_db::Database {
 fn setup_phase_has_indexed_crates() {
     let record = load_test_record();
 
-    // Verify SetupPhase exists
     let setup = record
         .phases
         .setup
         .as_ref()
         .expect("SetupPhase should be populated");
 
-    // Verify we have 9 crates from ripgrep workspace
     assert_eq!(
         setup.indexed_crates.len(),
-        9,
-        "Expected 9 indexed crates for ripgrep workspace"
+        1,
+        "Expected one indexed crate for the hermetic fixture_nodes fixture"
     );
 
-    // Collect crate names
     let crate_names: Vec<&str> = setup
         .indexed_crates
         .iter()
         .map(|c| c.name.as_str())
         .collect();
 
-    // Verify expected crate names
-    let expected_crates = [
-        "grep",          // Core grep library
-        "grep-cli",      // CLI utilities
-        "grep-pcre2",    // PCRE2 regex support
-        "globset",       // Glob pattern matching - contains GlobSet struct
-        "grep-searcher", // File searching
-        "ignore",        // Gitignore handling
-        "grep-printer",  // Output formatting
-        "grep-regex",    // Regex engine abstraction
-        "grep-matcher",  // Matcher trait definitions
-    ];
+    assert!(
+        crate_names.contains(&FIXTURE_CRATE_NAME),
+        "Expected crate '{FIXTURE_CRATE_NAME}' not found in indexed crates: {crate_names:?}"
+    );
 
-    for expected in &expected_crates {
-        assert!(
-            crate_names.contains(expected),
-            "Expected crate '{}' not found in indexed crates: {:?}",
-            expected,
-            crate_names
-        );
-    }
-
-    // Verify each crate has valid data
     for crate_summary in &setup.indexed_crates {
         assert!(
             !crate_summary.name.is_empty(),
@@ -174,7 +105,6 @@ fn setup_phase_has_valid_db_timestamp() {
         .as_ref()
         .expect("SetupPhase should be populated");
 
-    // DB timestamp should be positive (microseconds since epoch)
     assert!(
         setup.db_timestamp_micros > 0,
         "DB timestamp should be positive, got {}",
@@ -191,7 +121,6 @@ async fn lookup_finds_known_structs() {
     let record = load_test_record();
     let db = open_test_db().await;
 
-    // Get the first turn to get a valid timestamp
     let turn = record
         .phases
         .agent_turns
@@ -200,16 +129,13 @@ async fn lookup_finds_known_structs() {
 
     let db_state = turn.db_state();
 
-    // Test: lookup("GlobSet") should find the struct
-    // Ground truth: grep -r "pub struct GlobSet" in ripgrep source confirms it exists
-    // at ~/.ploke-eval/repos/BurntSushi/ripgrep/crates/globset/src/lib.rs
     let node_info = db_state
-        .lookup(&db, "GlobSet")
-        .expect("lookup('GlobSet') should execute")
-        .expect("lookup('GlobSet') should find the struct");
+        .lookup(&db, KNOWN_STRUCT)
+        .expect("lookup for fixture struct should execute")
+        .expect("lookup should find the fixture struct");
     assert_eq!(
-        node_info.name, "GlobSet",
-        "Found node should have name 'GlobSet'"
+        node_info.name, KNOWN_STRUCT,
+        "Found node should have fixture struct name"
     );
     assert!(
         node_info.node_type.to_lowercase().contains("struct"),
@@ -231,13 +157,14 @@ async fn lookup_finds_known_functions() {
 
     let db_state = turn.db_state();
 
-    // Test: lookup("new") should find constructor functions
-    // Ground truth: Many structs in ripgrep have `new()` constructors
     let node_info = db_state
-        .lookup(&db, "new")
-        .expect("lookup('new') should execute")
-        .expect("lookup('new') should find a function or method");
-    assert_eq!(node_info.name, "new", "Found node should have name 'new'");
+        .lookup(&db, KNOWN_FUNCTION)
+        .expect("lookup for fixture function should execute")
+        .expect("lookup should find the fixture function or method");
+    assert_eq!(
+        node_info.name, KNOWN_FUNCTION,
+        "Found node should have fixture function name"
+    );
     assert!(
         node_info.node_type.to_lowercase().contains("function")
             || node_info.node_type.to_lowercase().contains("method"),
@@ -259,14 +186,12 @@ async fn lookup_returns_none_for_nonexistent() {
 
     let db_state = turn.db_state();
 
-    // Test: lookup("ThisDoesNotExist12345") should return Ok(None)
-    // This tests the bad path - looking up something that definitely doesn't exist
     let result = db_state
-        .lookup(&db, "ThisDoesNotExist12345")
+        .lookup(&db, MISSING_NODE)
         .expect("lookup for missing node should execute");
     assert!(
         result.is_none(),
-        "lookup should not find a node named 'ThisDoesNotExist12345'"
+        "lookup should not find a node named '{MISSING_NODE}'"
     );
 }
 
@@ -279,8 +204,6 @@ async fn replay_query_returns_historical_data() {
     let record = load_test_record();
     let db = open_test_db().await;
 
-    // Test: Query structs at turn 1's timestamp
-    // Query: ?[name] := *struct{name @ 'NOW'}
     let query = "?[name] := *struct{name @ 'NOW'}";
 
     let query_result = record
@@ -288,17 +211,20 @@ async fn replay_query_returns_historical_data() {
         .expect("replay_query for structs should execute");
     assert!(
         !query_result.rows.is_empty(),
-        "Query should return structs from the database"
+        "Query should return structs from the fixture database"
     );
     assert!(
         query_result.headers.iter().any(|h| h == "name"),
         "Query result should have 'name' column"
     );
-    let has_globset = query_result.rows.iter().any(|row| {
+    let has_fixture_struct = query_result.rows.iter().any(|row| {
         row.iter()
-            .any(|val| val.get_str().map(|s| s == "GlobSet").unwrap_or(false))
+            .any(|val| val.get_str().map(|s| s == KNOWN_STRUCT).unwrap_or(false))
     });
-    assert!(has_globset, "Expected 'GlobSet' in struct query results");
+    assert!(
+        has_fixture_struct,
+        "Expected '{KNOWN_STRUCT}' in struct query results"
+    );
 }
 
 #[tokio::test]
@@ -306,7 +232,6 @@ async fn replay_query_functions_at_turn() {
     let record = load_test_record();
     let db = open_test_db().await;
 
-    // Test: Query functions at turn 1's timestamp
     let query = "?[count(id)] := *function{id @ 'NOW'}";
 
     let query_result = record
@@ -331,12 +256,10 @@ async fn replay_query_returns_error_for_nonexistent_turn() {
     let record = load_test_record();
     let db = open_test_db().await;
 
-    // Test: Query at turn 99 (which doesn't exist)
     let query = "?[name] := *struct{name @ 'NOW'}";
 
     let result = record.replay_query(99, &db, query);
 
-    // Should return an error since turn 99 doesn't exist
     assert!(
         result.is_err(),
         "replay_query should error for non-existent turn"
@@ -352,14 +275,13 @@ async fn replay_query_returns_error_for_nonexistent_turn() {
 }
 
 // ====================================================================================
-// 4. Iterator Method Tests (placeholder - will implement later)
+// 4. Iterator Method Tests
 // ====================================================================================
 
 #[test]
 fn conversations_returns_turns() {
     let record = load_test_record();
 
-    // Test: run.conversations() should return an iterator over turns
     let mut count = 0;
     for turn in record.conversations() {
         count += 1;
@@ -382,11 +304,8 @@ fn conversations_returns_turns() {
 fn tool_calls_returns_all_calls() {
     let record = load_test_record();
 
-    // Test: run.tool_calls() should aggregate from all turns
     let aggregated: Vec<_> = record.tool_calls();
 
-    // Manually calculate expected count using the tool_calls() method
-    // (not the raw field, since tool_calls() extracts from artifact events when needed)
     let expected_count: usize = record
         .phases
         .agent_turns
@@ -395,18 +314,26 @@ fn tool_calls_returns_all_calls() {
         .sum();
 
     assert_eq!(
+        expected_count, 1,
+        "fixture should contain exactly one representative tool call"
+    );
+    assert_eq!(
         aggregated.len(),
         expected_count,
         "tool_calls() should return all tool calls from all turns"
     );
 
-    // Verify all returned items are tool execution records
-    for call in &aggregated {
-        assert!(
-            !call.request.tool.is_empty(),
-            "Tool name should not be empty"
-        );
-    }
+    let call = aggregated
+        .first()
+        .expect("fixture should include a representative tool call");
+    assert_eq!(
+        call.request.tool, KNOWN_TOOL,
+        "tool_calls() should expose the fixture tool call name"
+    );
+    assert_eq!(
+        call.latency_ms, 7,
+        "tool_calls() should preserve fixture tool latency"
+    );
 }
 
 // ====================================================================================
@@ -417,22 +344,19 @@ fn tool_calls_returns_all_calls() {
 fn run_record_has_valid_metadata() {
     let record = load_test_record();
 
-    // Verify schema version
     assert_eq!(
         record.schema_version, "run-record.v1",
         "Schema version should be 'run-record.v1'"
     );
 
-    // Verify manifest ID matches expected
     assert_eq!(
-        record.manifest_id, "BurntSushi__ripgrep-2209",
-        "Manifest ID should match the run directory"
+        record.manifest_id, FIXTURE_MANIFEST_ID,
+        "Manifest ID should match the hermetic fixture"
     );
 
-    // Verify benchmark metadata
     assert_eq!(
-        record.metadata.benchmark.instance_id, "BurntSushi__ripgrep-2209",
-        "Benchmark instance ID should match"
+        record.metadata.benchmark.instance_id, FIXTURE_MANIFEST_ID,
+        "Benchmark instance ID should match the hermetic fixture"
     );
 }
 
@@ -440,13 +364,11 @@ fn run_record_has_valid_metadata() {
 fn time_travel_index_matches_turns() {
     let record = load_test_record();
 
-    // Verify db_time_travel_index has entries for turns
     assert!(
         !record.db_time_travel_index.is_empty(),
         "Time travel index should not be empty"
     );
 
-    // Verify each turn has a corresponding timestamp
     for turn in &record.phases.agent_turns {
         let timestamp = record.timestamp_for_turn(turn.turn_number);
         assert!(
@@ -475,7 +397,6 @@ async fn db_state_query_executes_at_timestamp() {
 
     let db_state = turn.db_state();
 
-    // Test: Execute a query at the turn's timestamp
     let query = "?[count(id)] := *struct{id @ 'NOW'}";
     let result = db_state.query(&db, query);
     let query_result = result.expect("db_state.query should execute successfully");

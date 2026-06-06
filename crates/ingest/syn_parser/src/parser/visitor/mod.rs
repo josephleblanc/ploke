@@ -726,11 +726,10 @@ fn analyze_file_phase2_syn1(
     let root_module_pid: PrimaryNodeId = state.code_graph.modules[0].id.into();
     state.current_primary_defn_scope.push(root_module_pid);
 
-    // Create and run syn1 visitor
-    let mut visitor = code_visitor_syn1::CodeVisitor::new(&mut state);
-    syn1::visit::Visit::visit_file(&mut visitor, &file);
-
-    drop(visitor);
+    {
+        let mut visitor = code_visitor_syn1::CodeVisitor::new(&mut state);
+        syn1::visit::Visit::visit_file(&mut visitor, &file);
+    }
 
     Ok(ParsedCodeGraph {
         file_path,
@@ -869,22 +868,20 @@ pub fn analyze_file_phase2(
     // Default parent scope for top-level items visited next.
     state.current_primary_defn_scope.push(root_module_pid);
 
-    // 4. Create and run the visitor
-    let mut visitor = code_visitor::CodeVisitor::new(&mut state);
-    visitor.visit_file(&file);
+    {
+        let mut visitor = code_visitor::CodeVisitor::new(&mut state);
+        visitor.visit_file(&file);
 
-    #[cfg(feature = "temp_target")]
-    debug_relationships(&visitor);
+        #[cfg(feature = "temp_target")]
+        debug_relationships(&visitor);
 
-    #[cfg(not(feature = "validate"))]
-    log::trace!(target: "parse_target", "parsing target: {}
+        #[cfg(not(feature = "validate"))]
+        log::trace!(target: "parse_target", "parsing target: {}
 validate_unique_rels = {}", file_path.display(), &visitor.validate_unique_rels());
-    #[cfg(feature = "validate")]
-    log::trace!(target: "parse_target", "parsing target: {}
+        #[cfg(feature = "validate")]
+        log::trace!(target: "parse_target", "parsing target: {}
 validate_unique_rels = <deferred>", file_path.display());
-    // Release the mutable borrow on `state` held by `visitor` before any validation-time
-    // graph normalization.
-    drop(visitor);
+    }
     #[cfg(feature = "convert_keyword_2015")]
     if let Some(rewrite) = legacy_rewrite {
         traced_normalize_rewritten_graph(
@@ -1091,26 +1088,23 @@ fn debug_file_module_id_gen(
 
     use crate::utils::logging::LOG_TEST_ID_REGEN;
 
-    if let Ok(debug_target_item) = std::env::var("ID_REGEN_TARGET") {
-        if log::log_enabled!(target: LOG_TEST_ID_REGEN, log::Level::Debug)
-            && debug_target_item == item_name
-        // allow for filtering by command env variable
-        {
-            // Check if specific log is enabled
-            debug!(target: LOG_TEST_ID_REGEN, "{:=^60}", " FileBased Id Generation ".log_header());
-            debug!(target: LOG_TEST_ID_REGEN,
-                "  Inputs for '{}' ({}):\n    crate_namespace: {}\n    file_path: {}\n    relative_path: {}\n    item_name: {}\n    item_kind: {}\n    parent_scope_id: {}\n    cfg_bytes: {}\n",
-                item_name.log_name(), // item name being processed by visitor
-                item_kind.log_comment_debug(),
-                crate_namespace,
-                file_path.as_os_str().log_comment_debug(),
-                relative_path.log_path_debug(), // This is the 'relative_path' for the item's ID context
-                item_name.log_name(),
-                item_kind.log_comment_debug(),
-                parent_scope_id.log_id_debug(), // The actual parent_scope_id used by visitor
-                cfg_bytes.log_comment_debug() // The actual cfg_bytes used by visitor
-            );
-        }
+    if let Ok(debug_target_item) = std::env::var("ID_REGEN_TARGET")
+        && log::log_enabled!(target: LOG_TEST_ID_REGEN, log::Level::Debug)
+        && debug_target_item == item_name
+    {
+        debug!(target: LOG_TEST_ID_REGEN, "{:=^60}", " FileBased Id Generation ".log_header());
+        debug!(target: LOG_TEST_ID_REGEN,
+            "  Inputs for '{}' ({}):\n    crate_namespace: {}\n    file_path: {}\n    relative_path: {}\n    item_name: {}\n    item_kind: {}\n    parent_scope_id: {}\n    cfg_bytes: {}\n",
+            item_name.log_name(), // item name being processed by visitor
+            item_kind.log_comment_debug(),
+            crate_namespace,
+            file_path.as_os_str().log_comment_debug(),
+            relative_path.log_path_debug(), // This is the 'relative_path' for the item's ID context
+            item_name.log_name(),
+            item_kind.log_comment_debug(),
+            parent_scope_id.log_id_debug(), // The actual parent_scope_id used by visitor
+            cfg_bytes.log_comment_debug() // The actual cfg_bytes used by visitor
+        );
     }
 }
 

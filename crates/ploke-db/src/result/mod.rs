@@ -658,7 +658,7 @@ impl CozoEncode for String {
     }
 }
 
-impl<'a> CozoEncode for &'a str {
+impl CozoEncode for &str {
     fn encode(self) -> DataValue {
         DataValue::Str(self.into())
     }
@@ -670,7 +670,7 @@ impl CozoEncode for Vec<u8> {
     }
 }
 
-impl<'a> CozoEncode for &'a [u8] {
+impl CozoEncode for &[u8] {
     fn encode(self) -> DataValue {
         DataValue::Bytes(self.to_vec())
     }

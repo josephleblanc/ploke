@@ -33,7 +33,7 @@ use ploke_llm::{
     HasModels as _, Router as _,
     manager::events::{endpoint, models},
     request::ToolChoice,
-    router_only::{RouterVariants, google::Google, openrouter::OpenRouter},
+    router_only::{RouterVariants, google::Google, nebius::Nebius, openrouter::OpenRouter},
 };
 
 use ploke_rag::{TokenCounter as _, context::ApproxCharTokenizer};
@@ -626,6 +626,28 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
 
     if matches!(active_router, RouterVariants::Google(_)) {
         let req = Google::default_chat_completion()
+            .with_core_bundle(ploke_llm::request::ChatCompReqCore::default())
+            .with_model(model_id)
+            .with_messages(messages)
+            .with_param_bundle(llm_params)
+            .with_tools(tools)
+            .with_tool_choice(tool_choice);
+
+        let chat_session = session::ChatSession {
+            client,
+            req,
+            chat_step_source: session::take_recorded_chat_step_source(),
+            parent_id,
+            assistant_message_id,
+            event_bus,
+            state_cmd_tx: cmd_tx.clone(),
+            included_message_ids,
+            chat_policy,
+            cancel_rx,
+        };
+        run_chat_session(chat_session, llm_timeout_secs).await
+    } else if matches!(active_router, RouterVariants::Nebius(_)) {
+        let req = Nebius::default_chat_completion()
             .with_core_bundle(ploke_llm::request::ChatCompReqCore::default())
             .with_model(model_id)
             .with_messages(messages)

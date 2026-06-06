@@ -2,6 +2,7 @@
     dead_code,
     unused_variables,
     unused_imports,
+    clippy::result_large_err,
     reason = "Stubs for later helper functions."
 )]
 

@@ -34,15 +34,49 @@ pub(crate) fn current_provider_for_model(
     model_id: Option<String>,
 ) -> Result<(ModelId, Option<ProviderKey>), PrepareError> {
     let model = resolve_provider_model_id(model_id)?;
-    if registry_route_source(&model)?.is_some_and(|source| source.is_direct_google()) {
-        let provider = ProviderKey::new("google").map_err(|err| PrepareError::DatabaseSetup {
-            phase: "direct_google_provider_key",
-            detail: err.to_string(),
+    if let Some(source) = registry_route_source(&model)?
+        && source.is_direct_provider()
+    {
+        let provider = ProviderKey::new(direct_provider_slug(source)).map_err(|err| {
+            PrepareError::DatabaseSetup {
+                phase: "direct_provider_key",
+                detail: err.to_string(),
+            }
         })?;
         return Ok((model, Some(provider)));
     }
     let provider = load_provider_for_model(&model)?;
     Ok((model, provider))
+}
+
+fn direct_provider_slug(source: ModelRouteSource) -> &'static str {
+    match source {
+        ModelRouteSource::DirectGoogle => "google",
+        ModelRouteSource::DirectNebius => "nebius",
+        ModelRouteSource::OpenRouter => "openrouter",
+    }
+}
+
+fn direct_model_selection(
+    model_id: ModelId,
+    source: ModelRouteSource,
+) -> Result<crate::cli::prototype1_state::edit_surface::tui_adapter::ModelSelection, PrepareError> {
+    match source {
+        ModelRouteSource::DirectGoogle => Ok(
+            crate::cli::prototype1_state::edit_surface::tui_adapter::ModelSelection::direct_google(
+                model_id,
+            ),
+        ),
+        ModelRouteSource::DirectNebius => Ok(
+            crate::cli::prototype1_state::edit_surface::tui_adapter::ModelSelection::direct_nebius(
+                model_id,
+            ),
+        ),
+        ModelRouteSource::OpenRouter => Err(PrepareError::DatabaseSetup {
+            phase: "headless_model_route",
+            detail: "openrouter is not a direct route".to_string(),
+        }),
+    }
 }
 
 pub(crate) fn registry_route_source(
@@ -63,29 +97,31 @@ pub(crate) fn headless_model_selection(
     model_id: ModelId,
     provider: Option<ProviderKey>,
 ) -> Result<crate::cli::prototype1_state::edit_surface::tui_adapter::ModelSelection, PrepareError> {
-    let registry_direct_google =
-        registry_route_source(&model_id)?.is_some_and(|source| source.is_direct_google());
-    let requested_google = provider
-        .as_ref()
-        .is_some_and(|provider| provider.slug.as_str() == "google");
+    let registry_direct_route =
+        registry_route_source(&model_id)?.filter(|source| source.is_direct_provider());
+    let requested_direct_route =
+        provider
+            .as_ref()
+            .and_then(|provider| match provider.slug.as_str() {
+                "google" => Some(ModelRouteSource::DirectGoogle),
+                "nebius" => Some(ModelRouteSource::DirectNebius),
+                _ => None,
+            });
 
-    if registry_direct_google || requested_google {
+    if let Some(source) = registry_direct_route.or(requested_direct_route) {
         if let Some(provider) = provider.as_ref()
-            && provider.slug.as_str() != "google"
+            && provider.slug.as_str() != direct_provider_slug(source)
         {
             return Err(PrepareError::DatabaseSetup {
                 phase: "headless_model_route",
                 detail: format!(
-                    "direct Google model '{model_id}' does not accept OpenRouter provider '{}'",
+                    "direct {} model '{model_id}' does not accept OpenRouter provider '{}'",
+                    direct_provider_slug(source),
                     provider.slug.as_str()
                 ),
             });
         }
-        return Ok(
-            crate::cli::prototype1_state::edit_surface::tui_adapter::ModelSelection::direct_google(
-                model_id,
-            ),
-        );
+        return direct_model_selection(model_id, source);
     }
 
     Ok(
@@ -99,12 +135,10 @@ pub(crate) fn headless_model_selection_from_provider_preference(
     model_id: ModelId,
     provider: Option<ProviderKey>,
 ) -> Result<crate::cli::prototype1_state::edit_surface::tui_adapter::ModelSelection, PrepareError> {
-    if registry_route_source(&model_id)?.is_some_and(|source| source.is_direct_google()) {
-        return Ok(
-            crate::cli::prototype1_state::edit_surface::tui_adapter::ModelSelection::direct_google(
-                model_id,
-            ),
-        );
+    if let Some(source) =
+        registry_route_source(&model_id)?.filter(|source| source.is_direct_provider())
+    {
+        return direct_model_selection(model_id, source);
     }
 
     headless_model_selection(model_id, provider)

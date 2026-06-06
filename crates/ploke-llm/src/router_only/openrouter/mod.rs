@@ -56,6 +56,9 @@ impl TryFrom<RouterVariants> for OpenRouter {
             RouterVariants::Google(_) => Err(LlmError::Conversion(String::from(
                 "Invalid conversion from Google to OpenRouter",
             ))),
+            RouterVariants::Nebius(_) => Err(LlmError::Conversion(String::from(
+                "Invalid conversion from Nebius to OpenRouter",
+            ))),
         }
     }
 }

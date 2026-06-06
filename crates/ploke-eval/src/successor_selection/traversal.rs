@@ -2160,9 +2160,10 @@ mod tests {
             history::{
                 CandidateArtifact, CandidateCoordinate, CandidateLifecycle, HistoryCandidate,
                 HistoryCandidateSource, HistoryCandidates, HistoryHash, LineageId, ProcedureRef,
-                SealedCandidateEvidence, SealedComparedRunEvidence, SealedEvaluationEvidence,
-                SealedEvidenceCitation, SelectionDecisionEntry, SelectionScope, SubjectRef,
-                TraversalEvidence,
+                SealedCandidateEvidence, SealedComparedRunEvidence, SealedEvalSetIdentity,
+                SealedEvaluationEvidence, SealedEvaluatorIdentity, SealedEvidenceCitation,
+                SealedProtocolArtifactEvidence, SealedRunProtocolEvidence, SelectionDecisionEntry,
+                SelectionScope, SubjectRef, TraversalEvidence,
             },
         },
         intervention::{

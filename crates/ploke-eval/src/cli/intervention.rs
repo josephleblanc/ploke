@@ -59,6 +59,12 @@ pub(crate) async fn persist_intervention_synthesis_for_record(
             phase: "intervention_synthesis",
             detail: err.to_string(),
         })?;
+    let artifact = run
+        .artifact_json()
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "intervention_synthesis_artifact",
+            detail: source.to_string(),
+        })?;
     write_protocol_artifact(
         record_path,
         INTERVENTION_SYNTHESIS_PROCEDURE,
@@ -67,7 +73,7 @@ pub(crate) async fn persist_intervention_synthesis_for_record(
         cfg.provider_slug.as_deref(),
         &input,
         &run.output,
-        &run.artifact,
+        &artifact,
     )?;
     Ok(run.output)
 }
