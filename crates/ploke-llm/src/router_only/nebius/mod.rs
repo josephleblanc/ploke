@@ -761,7 +761,7 @@ mod tests {
     #[cfg(feature = "live_api_tests")]
     fn live_nebius_chat_model() -> String {
         env::var("PLOKE_LIVE_NEBIUS_CHAT_MODEL")
-            .unwrap_or_else(|_| "meta-llama/Meta-Llama-3.1-70B-Instruct".to_string())
+            .unwrap_or_else(|_| "meta-llama/Llama-3.3-70B-Instruct".to_string())
     }
 
     #[cfg(feature = "live_api_tests")]
