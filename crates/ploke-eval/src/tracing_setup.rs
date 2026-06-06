@@ -3,6 +3,7 @@ use std::ffi::OsStr;
 use std::fmt as std_fmt;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::time::Instant;
 use std::{env, fs, str::FromStr};
 
 use chrono::Local;
@@ -14,6 +15,7 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::filter;
 use tracing_subscriber::fmt::FmtContext;
 use tracing_subscriber::fmt::format::{FormatEvent, FormatFields, Writer};
+use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, fmt as tracing_fmt, prelude::*};
@@ -31,6 +33,7 @@ pub struct LoggingGuards {
 
 static FULL_RESPONSE_LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
 static PROTOTYPE1_OBSERVATION_LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
+static TRACING_START: OnceLock<Instant> = OnceLock::new();
 
 pub fn current_full_response_log_path() -> Option<&'static Path> {
     FULL_RESPONSE_LOG_PATH.get().map(PathBuf::as_path)
@@ -83,11 +86,12 @@ pub fn init_tracing(debug_tools: bool) -> Option<LoggingGuards> {
         .with_level(true)
         .with_file(true)
         .with_line_number(true)
-        .without_time()
+        .with_timer(WallAndElapsedTimer)
         .with_thread_ids(false)
         .with_ansi(false)
         .with_writer(non_blocking_file);
 
+    // Keep raw response logs parseable as JSONL: readers expect the event body only.
     let full_response_layer = tracing_fmt::layer()
         .with_writer(full_response_non_blocking)
         .with_ansi(false)
@@ -137,6 +141,7 @@ pub fn init_tracing(debug_tools: bool) -> Option<LoggingGuards> {
                     .with_level(true)
                     .with_file(true)
                     .with_line_number(true)
+                    .with_timer(WallAndElapsedTimer)
                     .with_writer(writer)
                     .with_filter(
                         filter::Targets::new()
@@ -179,6 +184,30 @@ pub fn init_tracing(debug_tools: bool) -> Option<LoggingGuards> {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct WallAndElapsedTimer;
+
+impl FormatTime for WallAndElapsedTimer {
+    fn format_time(&self, writer: &mut Writer<'_>) -> std_fmt::Result {
+        write!(
+            writer,
+            "{} elapsed_ms={}",
+            Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z"),
+            tracing_start().elapsed().as_millis()
+        )
+    }
+}
+
+fn tracing_start() -> &'static Instant {
+    TRACING_START.get_or_init(Instant::now)
+}
+
+fn write_timing_prefix(writer: &mut Writer<'_>) -> std_fmt::Result {
+    write!(writer, "[")?;
+    WallAndElapsedTimer.format_time(writer)?;
+    write!(writer, "] ")
+}
+
 struct CompactConsoleFormat;
 
 impl<S, N> FormatEvent<S, N> for CompactConsoleFormat
@@ -196,6 +225,7 @@ where
         if metadata.target() == EXECUTION_DEBUG_TARGET {
             return format_prototype1_console_event(&mut writer, event, metadata.level());
         }
+        write_timing_prefix(&mut writer)?;
         write!(writer, "{:<5}", metadata.level())?;
         if let Some(scope) = ctx.event_scope() {
             let mut first = true;
@@ -230,6 +260,7 @@ fn format_prototype1_console_event(
     let mut fields = EventFields::default();
     event.record(&mut fields);
 
+    write_timing_prefix(writer)?;
     write!(writer, "{:<5} p1", level)?;
     if let Some(phase) = fields.short_phase() {
         write!(writer, " {phase}")?;
