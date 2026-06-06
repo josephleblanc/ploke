@@ -254,6 +254,8 @@ pub(super) async fn start_attempt_runtime(
     {
         let mut cfg = runtime.state.config.write().await;
         cfg.context_management.mode = ploke_tui::user_config::CtxMode::Off;
+        cfg.tooling.cargo_check_timeout_secs = HEADLESS_VALIDATION_CARGO_CHECK_TIMEOUT_SECS;
+        cfg.tooling.cargo_test_timeout_secs = HEADLESS_VALIDATION_CARGO_TEST_TIMEOUT_SECS;
         if let Some(model) = model {
             cfg.active_model = model.model_id.clone();
             cfg.active_router = model.router();
@@ -303,6 +305,15 @@ pub(super) enum AttemptEnd {
 }
 
 const MAX_POLICY_REPAIR_TURNS: u32 = 2;
+
+/// Headless broad-harness slots run request-declared cargo validation against a
+/// cold per-slot `target/` dir. The default 60s `cargo check` budget is too
+/// small for a cold compile of `ploke-eval`, so harness validation was being
+/// killed before it could pass. Give the slot's declared validation a budget
+/// that can absorb a cold compile while still fitting inside the slot
+/// wall-clock timeout.
+const HEADLESS_VALIDATION_CARGO_CHECK_TIMEOUT_SECS: u64 = 300;
+const HEADLESS_VALIDATION_CARGO_TEST_TIMEOUT_SECS: u64 = 600;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AppliedItem {
@@ -550,11 +561,52 @@ pub(super) async fn run_attempt(
                         &applied,
                     )
                     .await?;
+                    let newly_applied = !outcome.applied.is_empty();
                     applied.extend(outcome.applied);
                     push_changed_paths(&mut changed_paths, outcome.changed_paths);
                     policy_feedbacks.extend(outcome.feedbacks);
                     if let Some(feedback) = outcome.retry {
                         pending_retry = Some(feedback);
+                    }
+                    // Validate as soon as this batch produced an allowed applied
+                    // edit. If the candidate already satisfies the declared
+                    // validation, finalize now: waiting for a subsequent
+                    // `completed` chat turn lets a model that keeps issuing tool
+                    // calls burn the whole slot wall-clock and never reach an
+                    // admissible terminal. If validation is not yet satisfied,
+                    // keep the attempt running so the model can repair across
+                    // later turns.
+                    //
+                    // Only short-circuit when the request declares validation:
+                    // without a declared contract there is nothing to satisfy,
+                    // so the model keeps authority over when the candidate is
+                    // complete (this preserves multi-edit / stale-repair flows).
+                    if newly_applied
+                        && !validation_commands.is_empty()
+                        && let Some(terminal) = validate_applied_batch(
+                            runtime,
+                            active_parent_id,
+                            request_id,
+                            turn,
+                            run,
+                            observer,
+                            validation_commands,
+                            &applied,
+                            &changed_paths,
+                        )
+                        .await
+                    {
+                        if matches!(terminal, HeadlessTerminal::Applied { .. }) {
+                            observer.emit(format!(
+                                "attempt {turn} finalize_applied {}",
+                                terminal.live_summary()
+                            ));
+                            return Ok(AttemptEnd::Terminal(terminal));
+                        }
+                        observer.emit(format!(
+                            "attempt {turn} applied_batch_validation_unsatisfied {}",
+                            terminal.live_summary()
+                        ));
                     }
                 }
             }
@@ -795,6 +847,60 @@ fn applied_edit_from_terminal_items(
         proposal_ids,
         changed_paths: changed_paths.to_vec(),
     })
+}
+
+/// Run request-declared validation against the candidate as soon as a tool
+/// batch settles with at least one allowed applied edit, then classify the
+/// applied candidate.
+///
+/// The harness runs the declared validation itself, so admission does not
+/// depend on the model issuing the exact declared cargo commands; those harness
+/// observations are the most recent for each command, so
+/// `classify_applied_terminal` consults the harness run rather than any earlier
+/// model-issued cargo call.
+///
+/// This returns the classified terminal but does not decide whether to stop.
+/// The caller finalizes the attempt only when validation is satisfied
+/// (`HeadlessTerminal::Applied`). When validation is not yet satisfied the
+/// caller keeps the attempt running so the model can repair the candidate
+/// across later turns, which preserves multi-turn repair flows while still
+/// letting a passing candidate stop immediately instead of burning the slot
+/// wall-clock on further tool calls.
+async fn validate_applied_batch(
+    runtime: &crate::runner::WorkspaceTuiRuntime,
+    active_parent_id: Uuid,
+    request_id: Uuid,
+    turn: u32,
+    run: &mut HeadlessRun,
+    observer: &LiveObserver,
+    validation_commands: &[contract::Command],
+    applied: &[AppliedItem],
+    changed_paths: &[PathBuf],
+) -> Option<HeadlessTerminal> {
+    let applied_edit = applied_edit_from_terminal_items(applied, changed_paths)?;
+    observer.emit(format!(
+        "attempt {turn} validate_applied_batch proposals={} changed_paths={}",
+        applied_edit.proposal_ids().len(),
+        changed_paths.len()
+    ));
+    if !validation_commands.is_empty() {
+        run_contract_validations(
+            runtime,
+            active_parent_id,
+            request_id,
+            turn,
+            run,
+            observer,
+            validation_commands,
+        )
+        .await;
+    }
+    Some(classify_applied_terminal(
+        run,
+        validation_commands,
+        request_id,
+        applied_edit,
+    ))
 }
 
 pub(super) fn timeout_terminal_for_run(run: &HeadlessRun, secs: u64) -> HeadlessTerminal {

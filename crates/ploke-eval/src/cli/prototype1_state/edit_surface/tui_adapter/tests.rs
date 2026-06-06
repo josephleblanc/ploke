@@ -2222,6 +2222,69 @@ async fn recorded_replay_runs_declared_validation_after_applied_edit() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn applied_batch_finalizes_before_completed_turn() {
+    let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
+    let fixture = prepare_live_canary(
+        "finalize-on-applied-batch-no-completed-turn",
+        "Use non_semantic_patch to update src/lib.rs, then stop.",
+    )
+    .expect("prepare finalize fixture");
+
+    let call_id = "call_finalize_on_applied_batch";
+    let tape = recorded_allowed_ns_patch_tape(&fixture.artifact_root, call_id);
+    ploke_tui::llm::install_recorded_response_tape(tape);
+    let _clear_tape = ClearRecordedTapeOnDrop;
+    let (mut runtime, parent_id) = start_attempt_runtime(
+        &fixture.workspace,
+        &[],
+        fixture.prompt.clone(),
+        BroadEditPolicy::WorkspaceExceptPlokeEval,
+        None,
+    )
+    .await
+    .expect("start finalize replay runtime");
+
+    let mut run = HeadlessRun::new();
+    let validations = vec![declared_cargo_command("check canary crate", &["check"])];
+    let outcome = run_attempt(
+        &mut runtime,
+        parent_id,
+        &fixture.workspace,
+        BroadEditPolicy::WorkspaceExceptPlokeEval,
+        1,
+        &mut run,
+        &LiveObserver::disabled(),
+        &validations,
+        None,
+    )
+    .await
+    .expect("finalize replay should finish");
+
+    assert!(
+        matches!(
+            outcome,
+            AttemptEnd::Terminal(HeadlessTerminal::Applied { .. })
+        ),
+        "passing applied batch should classify Applied without waiting for a completed turn, got {outcome:?}; validations={:#?}",
+        run.validations()
+    );
+    assert!(
+        !run.events()
+            .iter()
+            .any(|event| matches!(event, Event::Turn { .. })),
+        "finalize must classify at the applied batch, before any completed chat turn is observed; events={:#?}",
+        run.events()
+    );
+    assert!(
+        run.validations()
+            .iter()
+            .any(|validation| validation.display_command == "cargo check" && validation.ok),
+        "expected harness-owned `cargo check` to run at finalize, got {:#?}",
+        run.validations()
+    );
+}
+
 #[test]
 fn response_tap_drain_rebases_session_local_indices_to_run_tape() {
     let assistant_id = Uuid::from_u128(0xaaaaaaaa_aaaa_aaaa_aaaa_aaaaaaaaaaaa);
@@ -2321,7 +2384,11 @@ async fn historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_l
     // This fixture preserves the historical ordering requirement:
     // the first r10 patch introduces `+ nth`, the repair patch changes it to
     // `+ *nth`, and the request-declared `ploke-eval` validation only passes
-    // if the harness waits until the completed stop boundary.
+    // after the repair lands. The harness now validates each applied batch and
+    // finalizes as soon as the declared validation passes, so admission happens
+    // at the repaired batch rather than at a later completed chat turn: the
+    // first patch fails `cargo test edit_surface`, the attempt keeps running
+    // (continue-on-fail), the repair lands, and validation then passes.
     install_historical_r10_selection_score_workspace(&fixture);
     let request_path = write_historical_r10_admission_request(&fixture);
     let tape = historical_r10_completed_tail_tape(&fixture.artifact_root, &turn_live_dir);
@@ -2421,12 +2488,14 @@ async fn historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_l
         "diagnostics should record an applied terminal after post-stop validation, got {:#?}",
         diagnostics.terminal
     );
-    assert!(
-        diagnostics.events.iter().any(|event| matches!(
-            event,
-            evidence::Event::Turn { outcome, .. } if outcome == "completed"
-        )),
-        "historical replay must reach the completed turn boundary before admission"
+    // The harness now finalizes at the validated repair batch instead of
+    // depending on the model emitting a completed chat turn first. Admission
+    // must therefore not require a completed turn; the repaired-content and
+    // passing-declared-validation guarantees below are what gate admission.
+    assert_eq!(
+        completed_turn_count, 0,
+        "post-apply finalize should admit at the validated repair batch, before any completed chat turn; events={:#?}",
+        diagnostics.events
     );
     assert!(
         diagnostics.validations.iter().any(|validation| {
