@@ -1565,6 +1565,56 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
     }
 
     #[cfg(feature = "typed_type_graph")]
+    async fn stale_plain_starting_db() -> Result<Arc<Database>, Error> {
+        use ploke_test_utils::FIXTURE_NODES_CANONICAL;
+        use ploke_test_utils::fixture_dbs::backup_fixture_path_or_seed;
+
+        let path = backup_fixture_path_or_seed(&FIXTURE_NODES_CANONICAL).map_err(Error::from)?;
+        let db = Database::create_new_backup_default(&path)
+            .await
+            .map_err(Error::from)?;
+        Ok(Arc::new(db))
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    #[tokio::test]
+    async fn type_context_disabled_safely_when_relations_absent() -> Result<(), Error> {
+        init_tracing_once();
+
+        let db = stale_plain_starting_db().await?;
+        assert!(
+            !db.has_typed_type_graph_relations().map_err(Error::from)?,
+            "stale plain starting-db restore must lack typed-graph relations for this regression"
+        );
+
+        let rag = {
+            let rag = init_test_rag_with_io(Arc::clone(&db));
+            rag.bm25_rebuild().await.map_err(Error::from)?;
+            rag
+        };
+        assert!(
+            rag.type_context_degraded(),
+            "RagService must record degraded type-context when relations are absent"
+        );
+
+        rag.get_context(
+            "method",
+            4,
+            &TokenBudget {
+                max_total: 512,
+                per_part_max: 128,
+                ..Default::default()
+            },
+            &RetrievalStrategy::Sparse { strict: Some(true) },
+            LOADED_WORKSPACE_SCOPE,
+        )
+        .await
+        .map_err(Error::from)?;
+
+        Ok(())
+    }
+
+    #[cfg(feature = "typed_type_graph")]
     #[tokio::test]
     async fn type_context_expansion_adds_materializable_type_neighbors() -> Result<(), Error> {
         init_tracing_once();

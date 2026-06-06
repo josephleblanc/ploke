@@ -178,20 +178,53 @@ pub struct RagService {
     bm_embedder: mpsc::Sender<Bm25Cmd>,
     cfg: RagConfig,
     io: Option<Arc<IoManagerHandle>>,
+    type_context_degraded: bool,
 }
 
 impl RagService {
-    /// Construct a new RAG service, starting the BM25 service actor.
-    pub fn new(db: Arc<Database>, dense_embedder: Arc<EmbeddingRuntime>) -> Result<Self, RagError> {
-        // ensure_tracer_initialized();
-        let bm_embedder = bm25_service::start_default(db.clone())?;
+    fn assemble(
+        db: Arc<Database>,
+        dense_embedder: Arc<EmbeddingRuntime>,
+        bm_embedder: mpsc::Sender<Bm25Cmd>,
+        mut cfg: RagConfig,
+        io: Option<Arc<IoManagerHandle>>,
+    ) -> Result<Self, RagError> {
+        let type_context_degraded = Self::apply_type_context_gate(&db, &mut cfg)?;
         Ok(Self {
             db,
             dense_embedder,
             bm_embedder,
-            cfg: RagConfig::default(),
-            io: None,
+            cfg,
+            io,
+            type_context_degraded,
         })
+    }
+
+    #[cfg(feature = "typed_type_graph")]
+    fn apply_type_context_gate(db: &Database, cfg: &mut RagConfig) -> Result<bool, RagError> {
+        if !cfg.type_context.enabled {
+            return Ok(false);
+        }
+        if db.has_typed_type_graph_relations()? {
+            return Ok(false);
+        }
+        tracing::warn!(
+            "typed type-context expansion disabled: active database is missing typed-graph relations (type_contains, type_use, type_relation)"
+        );
+        cfg.type_context.enabled = false;
+        Ok(true)
+    }
+
+    #[cfg(not(feature = "typed_type_graph"))]
+    fn apply_type_context_gate(_db: &Database, _cfg: &mut RagConfig) -> Result<bool, RagError> {
+        Ok(false)
+    }
+
+    /// Construct a new RAG service, starting the BM25 service actor.
+    pub fn new(db: Arc<Database>, dense_embedder: Arc<EmbeddingRuntime>) -> Result<Self, RagError> {
+        // ensure_tracer_initialized();
+        let bm_embedder = bm25_service::start_default(db.clone())?;
+        Self::assemble(db, dense_embedder, bm_embedder, RagConfig::default(), None)
     }
 
     /// Construct with explicit configuration (no IoManager).
@@ -201,13 +234,7 @@ impl RagService {
         cfg: RagConfig,
     ) -> Result<Self, RagError> {
         let bm_embedder = bm25_service::start_default(db.clone())?;
-        Ok(Self {
-            db,
-            dense_embedder,
-            bm_embedder,
-            cfg,
-            io: None,
-        })
+        Self::assemble(db, dense_embedder, bm_embedder, cfg, None)
     }
 
     /// Construct with an IoManager and default configuration.
@@ -227,13 +254,7 @@ impl RagService {
         cfg: RagConfig,
     ) -> Result<Self, RagError> {
         let bm_embedder = bm25_service::start_default(db.clone())?;
-        Ok(Self {
-            db,
-            dense_embedder,
-            bm_embedder,
-            cfg,
-            io: Some(Arc::new(io)),
-        })
+        Self::assemble(db, dense_embedder, bm_embedder, cfg, Some(Arc::new(io)))
     }
 
     /// Construct with both IoManager and rebuild avgld from db contents.
@@ -244,13 +265,13 @@ impl RagService {
         cfg: RagConfig,
     ) -> Result<Self, RagError> {
         let bm_embedder = bm25_service::start_rebuilt(db.clone())?;
-        Ok(Self {
-            db,
-            dense_embedder,
-            bm_embedder,
-            cfg,
-            io: Some(Arc::new(io)),
-        })
+        Self::assemble(db, dense_embedder, bm_embedder, cfg, Some(Arc::new(io)))
+    }
+
+    /// Returns true when typed type-context expansion was requested but disabled
+    /// because the active database lacks typed-graph relations.
+    pub fn type_context_degraded(&self) -> bool {
+        self.type_context_degraded
     }
 
     /// Convenience constructor for tests with an in-memory database and mock embedder.
@@ -260,13 +281,8 @@ impl RagService {
             ploke_embed::indexer::EmbeddingProcessor::new_mock(),
         ));
         let bm_embedder = bm25_service::start_default(db.clone()).expect("start bm25");
-        Self {
-            db,
-            dense_embedder,
-            bm_embedder,
-            cfg: RagConfig::default(),
-            io: None,
-        }
+        Self::assemble(db, dense_embedder, bm_embedder, RagConfig::default(), None)
+            .expect("in-memory test database should satisfy type-context gate")
     }
 
     /// Execute a BM25 search against the in-memory sparse index.

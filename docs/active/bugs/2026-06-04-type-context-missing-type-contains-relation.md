@@ -2,9 +2,26 @@
 
 ## Status
 
-Open. The observed error was reported from a live TUI/error log line, but the
-exact command, campaign, and database artifact have not yet been joined to this
-report.
+**Resolved (2026-06-06).** Joined evidence from the live failure, the stale starting-DB
+cache artifact, and the code path below. Fix landed as a runtime capability gate in
+`ploke-rag`/`ploke-db`, a model-visible degrade note in `request_code_context`, and
+starting-DB cache invalidation (`STARTING_DB_CACHE_VERSION` 3 + `typed_type_graph`
+discriminator).
+
+### Joined live failure evidence
+
+| Field | Value |
+|-------|-------|
+| Campaign | `p1-admissionfix-g35flash-p25flash-20260606-053302` |
+| Run | `run-1780751388442-structured-current-policy-c545d2b2` |
+| Stale cache snapshot | `744264bb0078d14a2abe45a9cafda922a677afaf7619206f543bc88e466924c6` (mtime 2026-05-22) |
+| Symptom | `Db(Cozo("Cannot find requested stored relation 'type_contains'"))` |
+
+**Systemic mechanism:** A `typed_type_graph` binary reused a pre-typed-graph starting-DB
+cache snapshot because `starting_db_cache_key` omitted any typed-graph schema
+discriminator. The snapshot was built before typed-graph relations existed in the eval
+cache pipeline, so `type_contains` was never registered. Type-context expansion still
+ran because enablement was compile-time-only (`cfg!(feature = "typed_type_graph")`).
 
 Observed symptom:
 
@@ -15,9 +32,9 @@ ERROR ploke_tui::error: crates/ploke-tui/src/error.rs:86: Error: Db(Cozo("Cannot
 ## Broken Contract
 
 Any TUI/RAG path that enables typed type-context expansion must either run
-against a database that contains the typed type graph stored relations, including
-`type_contains`, or fail preflight before issuing Cozo queries against those
-relations.
+against a database that contains populated typed type graph stored relations, including
+`type_contains`, or degrade preflight with an explicit diagnostic before issuing Cozo
+queries against those relations.
 
 ## Evidence
 
@@ -58,7 +75,7 @@ For example, `expand_hits_with_type_context` calls
 `type_targets_reachable_from_owner` and `expand_type_context`, and those DB
 queries traverse `*type_contains`.
 
-The fixture/import layer has a split that can produce a DB without the typed
+The fixture/import layer has a split that can produce a DB without populated typed
 relations. In `crates/ploke-db/src/database.rs`,
 `prior_rels_for_plain_backup_import` explicitly removes typed type graph
 relations under the `typed_type_graph` feature:
@@ -87,7 +104,8 @@ import_mode: FixtureImportMode::BackupWithEmbeddings
 That means a typed build can legitimately load an otherwise healthy searchable
 fixture DB that does not claim typed type graph coverage. If type-context
 expansion is then enabled, the later query can fail with Cozo's missing stored
-relation error.
+relation error (stale cache) or return BM25/dense-only results without telling
+the model (plain fixture with empty typed-graph relation shells).
 
 ## Source Trace
 
@@ -98,14 +116,14 @@ TUI tool/search path
 -> ploke-rag::core::RagService::expand_hits_with_type_context
 -> Database::type_targets_reachable_from_owner / Database::expand_type_context
 -> Cozo query references *type_contains
--> current DB lacks stored relation type_contains
--> Db(Cozo("Cannot find requested stored relation 'type_contains'"))
--> ploke_tui::error logs Error
+-> current DB lacks stored relation type_contains (stale cache) OR relations are empty shells (plain import)
+-> Db(Cozo("Cannot find requested stored relation 'type_contains'")) OR silent BM25-only results
+-> ploke_tui::error logs Error (stale cache case)
 ```
 
 The bug is not that Cozo rejects the query. The bug is that the typed
 type-context caller reached Cozo without first proving that the active database
-has the relation set required by that feature path.
+has populated typed graph data required by that feature path.
 
 ## Docs/Policy Expectation
 
@@ -129,72 +147,38 @@ support.
 
 ## Current Repro Coverage
 
+Regression tests added with the fix:
+
+```text
+cargo test -p ploke-rag --features typed_type_graph type_context_disabled_safely_when_relations_absent
+cargo test -p ploke-tui request_code_context_degrades_on_non_typed_db
+cargo test -p ploke-eval starting_db_cache_key_differs_by_typed_graph_surface
+cargo test -p ploke-eval --features typed_type_graph doctor_flags_stale_starting_db_missing_typed_graph_relations
+```
+
 Existing tests cover the happy typed graph fixture path:
 
 ```text
 cargo test -p ploke-db --features typed_type_graph unit::type_graph_queries -- --nocapture
-```
-
-Existing RAG tests cover type-context expansion over typed graph corpus fixtures:
-
-```text
 cargo test -p ploke-rag --features typed_type_graph corpus_type_shape_matrix -- --nocapture
 ```
 
-Those tests prove typed graph queries work when the DB contains typed graph
-relations. They do not prove that TUI/RAG refuses or degrades safely when type
-context is enabled over a plain/active local embedding DB.
+## Resolution
 
-## Missing Repro / Validation
+1. **`Database::has_typed_type_graph_relations`** — probes that required relations
+   are registered **and** `type_contains` has rows (plain-import fixtures register
+   empty schema shells but must not count as typed-graph capable).
+2. **`RagService` construction gate** — disables type-context expansion and sets
+   `type_context_degraded` when the probe fails; emits `tracing::warn!`.
+3. **`request_code_context`** — surfaces degraded type-context as a `note`/`next_steps`
+   entry so the model knows results are BM25/dense-only.
+4. **Eval starting-DB cache** — `StartingDbCacheMetadata.typed_type_graph` +
+   `STARTING_DB_CACHE_VERSION` 3 invalidates stale snapshots; optional
+   `prototype1-doctor` check flags cached starting DBs missing typed-graph relations
+   under a typed-graph build.
 
-Add a focused regression that loads a DB through the same path that triggered
-the TUI error, enables type-context expansion, and asserts the boundary behavior.
-
-The smallest likely repro is:
-
-```text
-typed_type_graph build
--> load fixture_nodes_local_embeddings through the normal RAG/headless TUI fixture path
--> run request_code_context or RagService search with type_context enabled
--> assert no raw Cozo missing-relation error reaches the TUI tool result
-```
-
-The test should also print or assert the active relation inventory so the failure
-is unambiguous:
-
-```text
-has type_contains: false
-type_context.enabled: true
-fixture: fixture_nodes_local_embeddings
-```
-
-If the active live run has a campaign artifact or DB path for this error, add it
-here before closing the report.
-
-## Fix Direction
-
-Fix the authority boundary that decides whether type-context expansion is
-available for the active DB.
-
-Acceptable directions:
-
-1. At DB/RAG initialization, detect whether the required typed graph relations
-   exist and disable typed type-context expansion with an explicit degraded
-   diagnostic when they do not.
-2. At fixture/campaign setup, require a typed graph searchable fixture whenever
-   `typed_type_graph` type-context expansion is enabled.
-3. Add a DB preflight method for typed graph relation availability and call it
-   before `expand_hits_with_type_context` can issue typed graph queries.
-
-Non-fixes:
-
-1. Do not make Cozo missing-relation errors disappear by broadly swallowing
-   `DbError::Cozo`.
-2. Do not import plain fixtures as if they have typed graph coverage.
-3. Do not create empty `type_contains` relations as a silent compatibility shim
-   unless the caller also records that type-context evidence is unavailable; an
-   empty typed graph can make retrieval look semantically complete when it is
-   not.
+Stale snapshot `744264bb...` removed from `~/.ploke-eval/cache/starting-dbs/` as
+explicit cleanup (version bump already invalidates by key).
 
 ## Related Reports
 

@@ -47,6 +47,7 @@ qwen_reasoning_fix = ["ploke-llm/qwen_reasoning_fix"]
 demo = ["ploke-tui/demo"]
 live_api_tests = ["ploke-tui/live_api_tests", "ploke-llm/live_api_tests"]
 replay_tests = []
+typed_type_graph = ["ploke-db/typed_type_graph"]
 
 [[bin]]
 name = "ploke-eval"

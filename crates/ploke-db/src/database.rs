@@ -2500,6 +2500,24 @@ desc[id] := parent_of[id, parent], desc[parent], not file_root[id]
         Ok(vector)
     }
 
+    /// Returns whether the active database has the typed type-graph relations
+    /// required for type-context expansion (`type_contains`, `type_use`, `type_relation`).
+    pub fn has_typed_type_graph_relations(&self) -> Result<bool, DbError> {
+        const REQUIRED: [&str; 3] = ["type_contains", "type_use", "type_relation"];
+        let rows = self.raw_query("::relations")?;
+        let registered = rows
+            .rows
+            .iter()
+            .filter_map(|row| row.first().and_then(|value| value.get_str()))
+            .collect::<std::collections::HashSet<_>>();
+        if !REQUIRED.iter().all(|name| registered.contains(name)) {
+            return Ok(false);
+        }
+        // Plain-import fixtures register typed-graph relations from schema but leave them empty.
+        let populated = self.raw_query("?[present] := *type_contains, present = true :limit 1")?;
+        Ok(!populated.rows.is_empty())
+    }
+
     pub fn relations_vec_no_hnsw(&self) -> Result<Vec<String>, PlokeError> {
         let filtered_rels = self
             .iter_relations()?

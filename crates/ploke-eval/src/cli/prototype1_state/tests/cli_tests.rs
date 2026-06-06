@@ -10,6 +10,7 @@ use crate::cli::{
     Prototype1StateStopAfter, Prototype1SuccessorSelection, Prototype1TraversalMetrics,
 };
 use crate::intervention::Prototype1NodeRecord;
+use ploke_llm::request::models::ModelRouteSource;
 use ploke_records::identity::ParentIdentityRecord;
 use std::sync::{Arc, Mutex};
 use std::{
@@ -239,6 +240,13 @@ fn write_test_node(manifest_path: &Path, node: &Prototype1NodeRecord) {
         serde_json::to_vec_pretty(node).expect("node json"),
     )
     .expect("write node");
+}
+
+fn load_test_node_record(manifest_path: &Path, node_id: &str) -> Prototype1NodeRecord {
+    let path = crate::intervention::prototype1_node_record_path(manifest_path, node_id);
+    let bytes = fs::read(&path)
+        .unwrap_or_else(|source| panic!("read node record '{}': {source}", path.display()));
+    serde_json::from_slice(&bytes).expect("decode node record")
 }
 
 fn parent_identity_for(node_id: &str, generation: u32) -> ParentIdentity {
@@ -1134,6 +1142,7 @@ async fn zero_admission_batch_is_persisted() {
                 manifest_path: &manifest_path,
                 repo_root: &repo_root,
                 broad_tui: profile::BroadTui::default(),
+                route_source: ModelRouteSource::DirectGoogle,
             },
             batch,
             Vec::new(),
@@ -1190,6 +1199,7 @@ name = "zero-admission-replay"
         resumed_parent,
         &run_profile,
         budget,
+        ModelRouteSource::DirectGoogle,
     ))
     .await;
     dump_trace_if_requested(&replay_trace);
@@ -1514,6 +1524,7 @@ fn tui_edit_surface_parent_selection_publishes_child_plan() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
         },
         parent,
         budget,
@@ -2185,6 +2196,7 @@ fn broad_harness_rejects_unbound_existing_child_plan() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
         },
         parent,
         budget,
@@ -2286,6 +2298,7 @@ fn broad_harness_multi_file_admission_mints_one_artifact_child() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
         },
         receipt,
         admitted,
@@ -2390,6 +2403,7 @@ fn broad_harness_materialization_accepts_relative_parent_repo_root() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
         },
         receipt,
         admitted,
@@ -2468,6 +2482,7 @@ async fn broad_harness_batch_admits_three_transactions_into_three_children() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
     ))
@@ -2599,6 +2614,7 @@ async fn broad_slots_run_in_parallel() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
     ))
@@ -2709,6 +2725,7 @@ async fn provider_unavailable_after_partial_admissions_persists_failed_child_pla
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
     ))
@@ -2761,6 +2778,7 @@ async fn provider_unavailable_after_partial_admissions_persists_failed_child_pla
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
         },
         resumed_parent,
     )
@@ -2771,6 +2789,481 @@ async fn provider_unavailable_after_partial_admissions_persists_failed_child_pla
         count_broad_requests(&manifest_path),
         request_count_before,
         "retry should reuse persisted failed child plan instead of minting fresh slots"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn provider_unavailable_after_min_admitted_returns_published_plan() {
+    // At or above the child minimum, a later provider-unavailable slot does not
+    // block the batch: it publishes the admitted children and drops the fatal
+    // error (logging it). Uses a non-direct-google route to show the
+    // resumable carve-out only applies below the minimum.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let provider_fixture = tmp.path().join("provider-unavailable.headless-tui.json");
+    write_json_file_pretty(
+        &provider_fixture,
+        &serde_json::json!({
+            "attempts": [],
+            "terminal": {
+                "terminal": "provider_unavailable",
+                "reason": "test provider unavailable"
+            }
+        }),
+    )
+    .expect("write provider fixture");
+    let _env = crate::test_support::env_guard_os(vec![
+        ("PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT", "5".into()),
+        (
+            "PLOKE_EVAL_BROAD_TUI_SUMMARY_FIXTURE",
+            provider_fixture.into_os_string(),
+        ),
+    ]);
+
+    let allowed = write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "broad surface fixture");
+    let parent: Parent<Ready> = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
+    let budget = Prototype1ChildBudget::new(2, 5).with_parallel_targets(1);
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
+    assert_eq!(batch.slots.len(), 5);
+
+    for (index, slot) in batch.slots.iter().take(2).enumerate() {
+        submit_broad_slot_for_test(
+            &repo_root,
+            slot,
+            &[allowed[index].clone()],
+            &format!("slot-{index}"),
+        );
+    }
+
+    let (result, trace) = collect_traces_async(admit_broad_harness_batch(
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::OpenRouter,
+        },
+        batch,
+    ))
+    .await;
+    dump_trace_if_requested(&trace);
+    let receipt = result.expect("batch at/above minimum should publish children");
+    assert_eq!(
+        receipt.plan.body().children().len(),
+        2,
+        "two admitted slots should materialize as children"
+    );
+    assert!(
+        trace_contains(
+            &trace,
+            &["reached child minimum despite a fatal slot error"],
+        ),
+        "dropped fatal-error logging path should be exercised: {trace:#?}"
+    );
+
+    let files = ChildPlanFiles::for_parent(&manifest_path, &parent_identity, Vec::new());
+    let plan_path = files.message_at().path().to_path_buf();
+    let bytes = fs::read(&plan_path).expect("published child plan should persist");
+    let body: ChildPlanFiles = serde_json::from_slice(&bytes).expect("decode child plan");
+    assert_eq!(body.children().len(), 2);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn database_setup_fatal_after_min_admitted_returns_published_plan() {
+    // DatabaseSetup is not subject to the provider-unavailable resumable
+    // carve-out. At or above the minimum it still publishes children and drops
+    // the fatal error (logging it).
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let _env = crate::test_support::env_guard_os(vec![
+        ("PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT", "5".into()),
+        (
+            "PLOKE_EVAL_BROAD_TUI_DATABASE_SETUP_FIXTURE",
+            "test database setup unavailable".into(),
+        ),
+    ]);
+
+    let allowed = write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "broad surface fixture");
+    let parent: Parent<Ready> = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
+    let budget = Prototype1ChildBudget::new(2, 5).with_parallel_targets(1);
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
+    assert_eq!(batch.slots.len(), 5);
+
+    for (index, slot) in batch.slots.iter().take(2).enumerate() {
+        submit_broad_slot_for_test(
+            &repo_root,
+            slot,
+            &[allowed[index].clone()],
+            &format!("slot-{index}"),
+        );
+    }
+
+    let (result, trace) = collect_traces_async(admit_broad_harness_batch(
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::OpenRouter,
+        },
+        batch,
+    ))
+    .await;
+    dump_trace_if_requested(&trace);
+    let receipt = result.expect("database-setup fatal at/above minimum should publish children");
+    assert_eq!(receipt.plan.body().children().len(), 2);
+    assert!(
+        trace_contains(
+            &trace,
+            &[
+                "reached child minimum despite a fatal slot error",
+                "database setup unavailable",
+            ],
+        ),
+        "dropped DatabaseSetup error should be logged: {trace:#?}"
+    );
+
+    let files = ChildPlanFiles::for_parent(&manifest_path, &parent_identity, Vec::new());
+    let plan_path = files.message_at().path().to_path_buf();
+    let bytes = fs::read(&plan_path).expect("published child plan should persist");
+    let body: ChildPlanFiles = serde_json::from_slice(&bytes).expect("decode child plan");
+    assert_eq!(body.children().len(), 2);
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn provider_unavailable_with_parallel_slots_aborts_without_corrupting_plan() {
+    // cap > 1: the first provider-unavailable slot triggers abort_all over the
+    // other in-flight slot. The persisted plan must stay deterministic (zero
+    // children, no partial/orphaned submitted result) and record only the
+    // observed slot as parent-readable evidence.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let probe_dir = tmp.path().join("slot-probe");
+    let provider_fixture = tmp.path().join("provider-unavailable.headless-tui.json");
+    write_json_file_pretty(
+        &provider_fixture,
+        &serde_json::json!({
+            "attempts": [],
+            "terminal": {
+                "terminal": "provider_unavailable",
+                "reason": "test provider unavailable"
+            }
+        }),
+    )
+    .expect("write provider fixture");
+    let _env = crate::test_support::env_guard_os(vec![
+        (
+            "PLOKE_EVAL_BROAD_TUI_SUMMARY_FIXTURE",
+            provider_fixture.into_os_string(),
+        ),
+        ("PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT", "2".into()),
+        (
+            "PLOKE_EVAL_BROAD_TUI_SLOT_PROBE_DIR",
+            probe_dir.clone().into_os_string(),
+        ),
+        ("PLOKE_EVAL_BROAD_TUI_SLOT_PROBE_WAIT_FOR", "2".into()),
+    ]);
+
+    write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "broad surface fixture");
+    let parent: Parent<Ready> = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
+    let budget = Prototype1ChildBudget::new(2, 2).with_parallel_targets(2);
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
+    assert_eq!(batch.patch_generation_parallel_cap, 2);
+    assert_eq!(batch.slots.len(), 2);
+
+    let (result, trace) = collect_traces_async(admit_broad_harness_batch(
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
+        },
+        batch,
+    ))
+    .await;
+    dump_trace_if_requested(&trace);
+    let err = match result {
+        Ok(_) => panic!("provider failure should block child planning"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(err, PrepareError::ProviderUnavailable { .. }),
+        "unexpected error variant: {err:?}"
+    );
+
+    for slot_index in [0, 1] {
+        assert!(
+            probe_dir.join(format!("start-{slot_index}")).exists(),
+            "slot {slot_index} should have started concurrently before the abort"
+        );
+    }
+
+    let files = ChildPlanFiles::for_parent(&manifest_path, &parent_identity, Vec::new());
+    let plan_path = files.message_at().path().to_path_buf();
+    let bytes = fs::read(&plan_path).expect("failed child-plan should be persisted");
+    let body: ChildPlanFiles = serde_json::from_slice(&bytes).expect("decode child plan");
+    assert!(
+        body.children().is_empty(),
+        "aborted parallel batch must not materialize any children"
+    );
+    assert_eq!(
+        body.rejected_surface_attempts().len(),
+        1,
+        "only the observed (non-aborted) slot should appear as parent-readable evidence: {:#?}",
+        body.rejected_surface_attempts()
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn provider_unavailable_with_google_direct_permanently_fails_parent() {
+    // Direct-google + below minimum: keep the terminal-failure contract. The
+    // parent is projected to Failed, a reuse-terminal child-plan is persisted,
+    // and a later resume reuses it WITHOUT minting fresh broad requests.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let provider_fixture = tmp.path().join("provider-unavailable.headless-tui.json");
+    write_json_file_pretty(
+        &provider_fixture,
+        &serde_json::json!({
+            "attempts": [],
+            "terminal": {
+                "terminal": "provider_unavailable",
+                "reason": "test provider unavailable"
+            }
+        }),
+    )
+    .expect("write provider fixture");
+    let _env = crate::test_support::env_guard_os(vec![
+        ("PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT", "5".into()),
+        (
+            "PLOKE_EVAL_BROAD_TUI_SUMMARY_FIXTURE",
+            provider_fixture.into_os_string(),
+        ),
+    ]);
+
+    let allowed = write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "broad surface fixture");
+    let parent: Parent<Ready> = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
+    let budget = Prototype1ChildBudget::new(3, 5).with_parallel_targets(1);
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
+
+    for (index, slot) in batch.slots.iter().take(2).enumerate() {
+        submit_broad_slot_for_test(
+            &repo_root,
+            slot,
+            &[allowed[index].clone()],
+            &format!("slot-{index}"),
+        );
+    }
+
+    let (result, trace) = collect_traces_async(admit_broad_harness_batch(
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
+        },
+        batch,
+    ))
+    .await;
+    dump_trace_if_requested(&trace);
+    let err = match result {
+        Ok(_) => panic!("below-minimum direct-google provider failure should fail the parent"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(err, PrepareError::ProviderUnavailable { .. }),
+        "unexpected error variant: {err:?}"
+    );
+
+    let node_record = load_test_node_record(&manifest_path, parent_identity.node_id());
+    assert_eq!(
+        node_record.status,
+        Prototype1NodeStatus::Failed,
+        "direct-google below-minimum provider failure should project the parent to Failed"
+    );
+
+    let files = ChildPlanFiles::for_parent(&manifest_path, &parent_identity, Vec::new());
+    let plan_path = files.message_at().path().to_path_buf();
+    assert!(
+        plan_path.exists(),
+        "a reuse-terminal failed child-plan should be persisted"
+    );
+
+    let request_count_before = count_broad_requests(&manifest_path);
+    let resumed_parent = ready_parent_for_test(&manifest_path, &repo_root);
+    let receipt = receive_existing_child_plan(
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
+        },
+        resumed_parent,
+    )
+    .expect("failed child plan should be reusable");
+    assert!(receipt.plan.body().children().is_empty());
+    assert_eq!(
+        count_broad_requests(&manifest_path),
+        request_count_before,
+        "resume should reuse the persisted failed plan instead of minting fresh slots"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn provider_unavailable_without_google_direct_keeps_parent_resumable() {
+    // Non-direct-google + below minimum: surface the provider blocker but keep
+    // the parent resumable. No reuse-terminal plan is persisted, the parent is
+    // NOT projected to Failed, already-observed slot evidence is preserved on
+    // disk, and a later resume re-mints fresh broad requests.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let provider_fixture = tmp.path().join("provider-unavailable.headless-tui.json");
+    write_json_file_pretty(
+        &provider_fixture,
+        &serde_json::json!({
+            "attempts": [],
+            "terminal": {
+                "terminal": "provider_unavailable",
+                "reason": "test provider unavailable"
+            }
+        }),
+    )
+    .expect("write provider fixture");
+    let _env = crate::test_support::env_guard_os(vec![
+        ("PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT", "5".into()),
+        (
+            "PLOKE_EVAL_BROAD_TUI_SUMMARY_FIXTURE",
+            provider_fixture.into_os_string(),
+        ),
+    ]);
+
+    let allowed = write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "broad surface fixture");
+    let parent: Parent<Ready> = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
+    let budget = Prototype1ChildBudget::new(3, 5).with_parallel_targets(1);
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
+
+    let mut submitted_result_paths = Vec::new();
+    for (index, slot) in batch.slots.iter().take(2).enumerate() {
+        submit_broad_slot_for_test(
+            &repo_root,
+            slot,
+            &[allowed[index].clone()],
+            &format!("slot-{index}"),
+        );
+        submitted_result_paths.push(slot.published.submitted_result_path().to_path_buf());
+    }
+
+    let (result, trace) = collect_traces_async(admit_broad_harness_batch(
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::OpenRouter,
+        },
+        batch,
+    ))
+    .await;
+    dump_trace_if_requested(&trace);
+    let err = match result {
+        Ok(_) => panic!("provider failure should surface even on a resumable route"),
+        Err(err) => err,
+    };
+    assert!(
+        matches!(err, PrepareError::ProviderUnavailable { .. }),
+        "unexpected error variant: {err:?}"
+    );
+
+    let node_record = load_test_node_record(&manifest_path, parent_identity.node_id());
+    assert_ne!(
+        node_record.status,
+        Prototype1NodeStatus::Failed,
+        "non-direct-google provider failure must not permanently fail the parent"
+    );
+
+    let files = ChildPlanFiles::for_parent(&manifest_path, &parent_identity, Vec::new());
+    let plan_path = files.message_at().path().to_path_buf();
+    assert!(
+        !plan_path.exists(),
+        "resumable path must not persist a reuse-terminal child-plan"
+    );
+
+    // Already-observed slot evidence (submitted results) must not be erased.
+    for path in &submitted_result_paths {
+        assert!(
+            path.exists(),
+            "admitted slot submitted result should be preserved on the resumable path: {}",
+            path.display()
+        );
+    }
+
+    let request_count_before = count_broad_requests(&manifest_path);
+    let resumed_parent = ready_parent_for_test(&manifest_path, &repo_root);
+    let resumed_batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        resumed_parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("resume should re-publish a fresh broad batch");
+    assert!(!resumed_batch.slots.is_empty());
+    assert!(
+        count_broad_requests(&manifest_path) > request_count_before,
+        "resume should re-mint fresh broad requests because no reuse-terminal plan blocks it"
     );
 }
 
@@ -2818,6 +3311,7 @@ async fn child_fanout_is_parallel() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
     )
@@ -2953,6 +3447,7 @@ async fn child_build_promotes_binary_and_cleans_scratch() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
     )
@@ -3058,6 +3553,7 @@ exit 0
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
     )
@@ -3156,6 +3652,7 @@ async fn child_spawn_observes_failed_result() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
     )
@@ -3327,6 +3824,7 @@ fn broad_harness_batch_rejects_below_minimum_admitted_transactions() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
         admitted,
@@ -3396,6 +3894,7 @@ fn broad_harness_materialization_rejects_post_admission_drift() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
         },
         receipt,
         admitted,
@@ -3449,6 +3948,7 @@ fn below_min_rejected_attempts_are_persisted_and_recoverable_from_existing_child
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
         },
         resumed_parent,
     )
@@ -3528,6 +4028,7 @@ fn child_plan_replay_rejects_wrong_parent() {
                 manifest_path: &manifest_path,
                 repo_root: &repo_root,
                 broad_tui: profile::BroadTui::default(),
+                route_source: ModelRouteSource::DirectGoogle,
             },
             parent,
         )
@@ -3591,6 +4092,7 @@ fn child_plan_replay_rejects_malformed_file() {
                 manifest_path: &manifest_path,
                 repo_root: &repo_root,
                 broad_tui: profile::BroadTui::default(),
+                route_source: ModelRouteSource::DirectGoogle,
             },
             parent,
         )

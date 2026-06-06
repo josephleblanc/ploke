@@ -623,6 +623,13 @@ struct ChildPlanEnv<'a> {
     manifest_path: &'a Path,
     repo_root: &'a Path,
     broad_tui: profile::BroadTui,
+    /// Active run-level model route for this campaign. A broad-batch
+    /// provider-unavailable abort only permanently fails the parent when this
+    /// is `DirectGoogle`; other routers keep the parent resumable. This is the
+    /// campaign/run route source, which may differ from the temporary
+    /// parent-patcher split selection the broad TUI call actually uses until
+    /// that plumbing collapses onto run config.
+    route_source: ModelRouteSource,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1418,6 +1425,11 @@ async fn run_broad_headless_tui_attempt(
     broad_tui: profile::BroadTui,
 ) -> Result<Option<transaction::Executor>, PrepareError> {
     #[cfg(test)]
+    if let Some(result) = broad_headless_tui_database_setup_fixture() {
+        return result;
+    }
+
+    #[cfg(test)]
     if broad_headless_tui_fixture_enabled() {
         let options = BroadTuiAttemptOptions {
             model: None,
@@ -1440,6 +1452,22 @@ async fn run_broad_headless_tui_attempt(
 #[cfg(test)]
 fn broad_headless_tui_fixture_enabled() -> bool {
     std::env::var_os("PLOKE_EVAL_BROAD_TUI_SUMMARY_FIXTURE").is_some()
+}
+
+/// Test-only hook to exercise the broad-batch fatal `DatabaseSetup` slot path
+/// without a live provider/workspace failure. Mirrors the `ProviderUnavailable`
+/// summary-fixture hook used by the fatal-abort regression tests; the
+/// `Terminal` enum has no `DatabaseSetup` variant because `DatabaseSetup` is a
+/// `PrepareError` raised by workspace preparation rather than a model terminal.
+#[cfg(test)]
+fn broad_headless_tui_database_setup_fixture()
+-> Option<Result<Option<transaction::Executor>, PrepareError>> {
+    let reason = std::env::var_os("PLOKE_EVAL_BROAD_TUI_DATABASE_SETUP_FIXTURE")?;
+    let reason = reason.to_string_lossy().into_owned();
+    Some(Err(PrepareError::DatabaseSetup {
+        phase: "broad_headless_tui_attempt",
+        detail: format!("headless ploke-tui database setup unavailable: {reason}"),
+    }))
 }
 
 fn broad_headless_tui_env_u32(name: &str) -> Result<Option<u32>, PrepareError> {
@@ -2209,6 +2237,15 @@ fn publish_broad_harness_child_plan_from_admitted_batch(
     batch: HarnessRequestBatch,
     admitted: Vec<AdmittedBroadHarnessResult>,
 ) -> Result<ChildPlanReceipt, PrepareError> {
+    // Task C1: evidence-completeness semantics differ by caller, intentionally.
+    // This batch-completed path ran every slot to exhaustion, so when it falls
+    // below the child minimum it synthesizes the full slot range
+    // `(0..slots.len())` as "attempted" to record evidence for all slots. The
+    // fatal-abort path in `admit_broad_harness_batch` instead passes only the
+    // `BatchLedger::attempted` set (slots actually observed before the abort),
+    // because the remaining slots were cancelled mid-flight and never produced
+    // an outcome to record. Both are deliberate: full-range here, observed-only
+    // there.
     let attempted = if admitted.len() < batch.child_budget.min as usize {
         (0..batch.slots.len()).collect::<BTreeSet<_>>()
     } else {
@@ -2235,6 +2272,12 @@ fn publish_broad_harness_child_plan_from_attempts(
         let rejected_attempts =
             batch_attempt_evidence(&batch, &admitted, attempted, rejections, true);
         let ready_parent = batch.parent.accept_harness_plan();
+        // Task C2: error precedence edge case. If persisting the failed plan
+        // itself errors here, that persistence error is surfaced via `?` and
+        // takes precedence over the original provider/database `source` that
+        // the fatal-abort caller would otherwise re-raise. The failed plan is
+        // the durable record, so a persistence failure is the more urgent
+        // signal to propagate.
         persist_rejected_plan(env.manifest_path, ready_parent, rejected_attempts)?;
         write_node_projection(&failed_parent)?;
         return Err(PrepareError::InvalidBatchSelection {
@@ -4302,6 +4345,7 @@ async fn resolve_child_plan(
     selected_node_id: Option<&str>,
     child_budget: Prototype1ChildBudget,
     broad_tui: profile::BroadTui,
+    route_source: ModelRouteSource,
 ) -> Result<PlannedChildren, PrepareError> {
     let parent_identity = parent.identity().clone();
     let env = ChildPlanEnv {
@@ -4309,6 +4353,7 @@ async fn resolve_child_plan(
         manifest_path,
         repo_root,
         broad_tui,
+        route_source,
     };
     info!(
         target: EXECUTION_DEBUG_TARGET,
@@ -4462,6 +4507,10 @@ async fn admit_broad_harness_batch(
                 configured_max = batch.child_budget.max,
                 "broad headless-tui slot finished after child max was already admitted; ignoring result"
             );
+            // Task C3: a slot that finishes after `max_children` are already
+            // admitted is intentionally NOT recorded as attempted. Its result
+            // is surplus to the batch and recording it would pollute the
+            // surface-attempt evidence with a slot the batch never needed.
             continue;
         }
         ledger.mark_attempted(outcome.slot_index);
@@ -4487,6 +4536,38 @@ async fn admit_broad_harness_batch(
                     .map(|(_, transaction)| transaction)
                     .collect::<Vec<_>>();
                 let below_min = admitted.len() < batch.child_budget.min as usize;
+                // Task A: a below-minimum provider-unavailable abort only
+                // permanently fails the parent when the run routes through
+                // direct Google, where the blocker is a hard config/quota
+                // failure that will recur on resume. On other routers the
+                // provider blocker may be transient, so we surface it without
+                // projecting the parent to `Failed` or persisting a
+                // reuse-terminal child-plan. The parent was already projected
+                // to `Running` (kept on the scheduler frontier) at request
+                // publication and no child-plan file is written here, so a
+                // later resume re-mints and re-attempts the broad batch.
+                //
+                // Tradeoff (flagged): this resumable path does NOT persist the
+                // rolled-up child-plan surface-attempt evidence for the aborted
+                // attempt. Raw per-slot diagnostics and turn-live bundles
+                // written during each attempt are left intact on disk, so
+                // already-observed evidence is not erased; only the plan-level
+                // roll-up is skipped to keep the parent re-attemptable.
+                if below_min
+                    && matches!(source, PrepareError::ProviderUnavailable { .. })
+                    && !env.route_source.is_direct_google()
+                {
+                    warn!(
+                        target: EXECUTION_DEBUG_TARGET,
+                        request_id = %outcome.slot.published.request_id(),
+                        request_hash = %outcome.slot.published.request_hash(),
+                        admitted = admitted.len(),
+                        required_min = batch.child_budget.min,
+                        "broad headless-tui batch hit a provider-unavailable abort below child minimum on a non-direct-google route; keeping parent resumable without persisting a terminal child-plan"
+                    );
+                    return Err(source);
+                }
+                let required_min = batch.child_budget.min;
                 let result = publish_broad_harness_child_plan_from_attempts(
                     env,
                     batch,
@@ -4496,7 +4577,23 @@ async fn admit_broad_harness_batch(
                 );
                 return match result {
                     Err(PrepareError::InvalidBatchSelection { .. }) if below_min => Err(source),
-                    other => other,
+                    // Task B: at or above the child minimum the batch published
+                    // children and the fatal slot error is intentionally not
+                    // propagated. Log the dropped blocker (e.g. a swallowed
+                    // `DatabaseSetup`) so it remains visible in execution logs.
+                    other => {
+                        if other.is_ok() {
+                            warn!(
+                                target: EXECUTION_DEBUG_TARGET,
+                                request_id = %outcome.slot.published.request_id(),
+                                request_hash = %outcome.slot.published.request_hash(),
+                                required_min,
+                                dropped_fatal_error = %source,
+                                "broad headless-tui batch reached child minimum despite a fatal slot error; publishing children and dropping the fatal error"
+                            );
+                        }
+                        other
+                    }
                 };
             }
             Err(source) => {
@@ -4790,6 +4887,7 @@ pub(crate) async fn resolve_profile_child_plan(
     parent: Parent<Ready>,
     run_profile: &profile::Prototype1RunProfile,
     child_budget: Prototype1ChildBudget,
+    route_source: ModelRouteSource,
 ) -> Result<PlannedChildren, PrepareError> {
     resolve_child_plan(
         campaign_id,
@@ -4800,6 +4898,7 @@ pub(crate) async fn resolve_profile_child_plan(
         None,
         child_budget,
         run_profile.execution.broad_tui,
+        route_source,
     )
     .await
 }
@@ -6749,6 +6848,7 @@ pub(crate) async fn run_prototype1_state_turn(
         command.node_id.as_deref(),
         plan_child_budget,
         run_shape.broad_tui,
+        resolved_campaign.route_source,
     )
     .await?;
     let PlannedChildren {

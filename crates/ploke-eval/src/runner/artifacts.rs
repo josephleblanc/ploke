@@ -508,6 +508,8 @@ pub struct StartingDbCacheMetadata {
     pub embedding_model: String,
     pub embedding_dimensions: u32,
     pub embedding_dtype: String,
+    #[serde(default)]
+    pub typed_type_graph: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -2246,16 +2248,13 @@ pub(crate) fn starting_db_cache_metadata(
         embedding_model: embedding.model.to_string(),
         embedding_dimensions: embedding.dims(),
         embedding_dtype: embedding.shape.dtype_tag().to_string(),
+        typed_type_graph: cfg!(feature = "typed_type_graph"),
     }
 }
 
-pub(crate) fn starting_db_cache_key(
-    prepared: &PreparedSingleRun,
-    embedding_selection: &EvalEmbeddingSelection,
-) -> String {
-    let metadata = starting_db_cache_metadata(prepared, embedding_selection);
+pub(crate) fn starting_db_cache_key_for_metadata(metadata: &StartingDbCacheMetadata) -> String {
     let payload = format!(
-        "{version}:{task_id}:{repo_root}:{checkout_sha}:{provider}:{model}:{dims}:{dtype}",
+        "{version}:{task_id}:{repo_root}:{checkout_sha}:{provider}:{model}:{dims}:{dtype}:{typed_type_graph}",
         version = metadata.version,
         task_id = metadata.task_id,
         repo_root = metadata.repo_root.display(),
@@ -2264,8 +2263,16 @@ pub(crate) fn starting_db_cache_key(
         model = metadata.embedding_model,
         dims = metadata.embedding_dimensions,
         dtype = metadata.embedding_dtype,
+        typed_type_graph = metadata.typed_type_graph,
     );
     format!("{:x}", Sha256::digest(payload.as_bytes()))
+}
+
+pub(crate) fn starting_db_cache_key(
+    prepared: &PreparedSingleRun,
+    embedding_selection: &EvalEmbeddingSelection,
+) -> String {
+    starting_db_cache_key_for_metadata(&starting_db_cache_metadata(prepared, embedding_selection))
 }
 
 pub(crate) fn starting_db_cache_paths_at(
