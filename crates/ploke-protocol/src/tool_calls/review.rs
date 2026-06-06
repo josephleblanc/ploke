@@ -90,6 +90,7 @@ pub struct LocalAnalysisContext {
 #[serde(rename_all = "snake_case")]
 pub enum UsefulnessVerdict {
     KeyProgress,
+    #[serde(alias = "helpful_but_non-essential")]
     HelpfulButNonEssential,
     LowValue,
     NoValue,
@@ -1065,4 +1066,25 @@ fn search_terms(input: &str) -> BTreeSet<String> {
 
 fn shared_terms(left: &BTreeSet<String>, right: &BTreeSet<String>) -> usize {
     left.intersection(right).count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usefulness_verdict_accepts_live_hyphenated_alias() {
+        let parsed: UsefulnessAssessment = serde_json::from_str(
+            r#"{
+                "verdict": "helpful_but_non-essential",
+                "confidence": "medium",
+                "rationale": "useful context"
+            }"#,
+        )
+        .expect("hyphenated live-model alias should parse");
+
+        assert_eq!(parsed.verdict, UsefulnessVerdict::HelpfulButNonEssential);
+        assert_eq!(parsed.confidence, Confidence::Medium);
+        assert_eq!(parsed.rationale, "useful context");
+    }
 }
