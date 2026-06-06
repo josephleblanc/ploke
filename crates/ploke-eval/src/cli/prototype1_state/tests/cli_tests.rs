@@ -2654,6 +2654,126 @@ async fn broad_slots_run_in_parallel() {
     );
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn provider_unavailable_after_partial_admissions_persists_failed_child_plan() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let provider_fixture = tmp.path().join("provider-unavailable.headless-tui.json");
+    write_json_file_pretty(
+        &provider_fixture,
+        &serde_json::json!({
+            "attempts": [],
+            "terminal": {
+                "terminal": "provider_unavailable",
+                "reason": "test provider unavailable"
+            }
+        }),
+    )
+    .expect("write provider fixture");
+    let _env = crate::test_support::env_guard_os(vec![
+        ("PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT", "5".into()),
+        (
+            "PLOKE_EVAL_BROAD_TUI_SUMMARY_FIXTURE",
+            provider_fixture.into_os_string(),
+        ),
+    ]);
+
+    let allowed = write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "broad surface fixture");
+    let parent: Parent<Ready> = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
+    let budget = Prototype1ChildBudget::new(5, 5).with_parallel_targets(1);
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
+    assert_eq!(batch.slots.len(), 5);
+
+    for (index, slot) in batch.slots.iter().take(2).enumerate() {
+        submit_broad_slot_for_test(
+            &repo_root,
+            slot,
+            &[allowed[index].clone()],
+            &format!("slot-{index}"),
+        );
+    }
+
+    let (result, trace) = collect_traces_async(admit_broad_harness_batch(
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
+        },
+        batch,
+    ))
+    .await;
+    dump_trace_if_requested(&trace);
+    let err = match result {
+        Ok(_) => panic!("provider failure should still block child planning"),
+        Err(err) => err,
+    };
+    let PrepareError::ProviderUnavailable { detail, .. } = err else {
+        panic!("unexpected error variant: {err:?}");
+    };
+    assert!(detail.contains("test provider unavailable"));
+
+    let files = ChildPlanFiles::for_parent(&manifest_path, &parent_identity, Vec::new());
+    let plan_path = files.message_at().path().to_path_buf();
+    let bytes = fs::read(&plan_path).expect("failed child-plan should be persisted");
+    let body: ChildPlanFiles = serde_json::from_slice(&bytes).expect("decode child plan");
+    assert!(body.children().is_empty());
+    let attempts = body.rejected_surface_attempts();
+    assert_eq!(attempts.len(), 3, "{attempts:#?}");
+    let reasons = attempts
+        .iter()
+        .filter_map(|attempt| match &attempt.outcome {
+            surface_attempt::Outcome::Rejected { reason } => Some(reason.as_str()),
+            surface_attempt::Outcome::Applied => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(reasons.len(), 3);
+    assert!(
+        reasons
+            .iter()
+            .filter(|reason| reason.contains("was admitted, but was not materialized as a child"))
+            .count()
+            >= 2,
+        "{reasons:#?}"
+    );
+    assert!(
+        reasons
+            .iter()
+            .any(|reason| reason.contains("provider unavailable")),
+        "{reasons:#?}"
+    );
+
+    let request_count_before = count_broad_requests(&manifest_path);
+    let resumed_parent = ready_parent_for_test(&manifest_path, &repo_root);
+    let receipt = receive_existing_child_plan(
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
+        },
+        resumed_parent,
+    )
+    .expect("failed child plan should be reusable");
+    assert!(receipt.plan.body().children().is_empty());
+    assert_eq!(receipt.rejected_surface_attempts.len(), 3);
+    assert_eq!(
+        count_broad_requests(&manifest_path),
+        request_count_before,
+        "retry should reuse persisted failed child plan instead of minting fresh slots"
+    );
+}
+
 #[tokio::test]
 async fn child_fanout_is_parallel() {
     let tmp = tempfile::tempdir().expect("tempdir");

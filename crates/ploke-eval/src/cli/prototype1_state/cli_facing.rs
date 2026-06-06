@@ -600,6 +600,23 @@ struct HarnessRequestBatch {
     broad_tui: profile::BroadTui,
 }
 
+#[derive(Default)]
+struct BatchLedger {
+    attempted: BTreeSet<usize>,
+    rejections: BTreeMap<usize, String>,
+}
+
+impl BatchLedger {
+    fn mark_attempted(&mut self, slot_index: usize) {
+        self.attempted.insert(slot_index);
+    }
+
+    fn reject(&mut self, slot_index: usize, reason: impl Into<String>) {
+        self.mark_attempted(slot_index);
+        self.rejections.insert(slot_index, reason.into());
+    }
+}
+
 #[derive(Clone, Copy)]
 struct ChildPlanEnv<'a> {
     campaign_id: &'a str,
@@ -1629,6 +1646,12 @@ fn broad_headless_tui_fixture_attempt(
     }
 
     Some(Err(match summary.terminal {
+        Some(tui_adapter::evidence::Terminal::ProviderUnavailable { reason }) => {
+            PrepareError::ProviderUnavailable {
+                phase: "broad_headless_tui_attempt",
+                detail: format!("headless ploke-tui provider unavailable: {reason}"),
+            }
+        }
         Some(terminal) => PrepareError::InvalidBatchSelection {
             detail: format!(
                 "headless ploke-tui test fixture ended without an admissible edit: {}",
@@ -2186,9 +2209,31 @@ fn publish_broad_harness_child_plan_from_admitted_batch(
     batch: HarnessRequestBatch,
     admitted: Vec<AdmittedBroadHarnessResult>,
 ) -> Result<ChildPlanReceipt, PrepareError> {
+    let attempted = if admitted.len() < batch.child_budget.min as usize {
+        (0..batch.slots.len()).collect::<BTreeSet<_>>()
+    } else {
+        BTreeSet::new()
+    };
+    publish_broad_harness_child_plan_from_attempts(
+        env,
+        batch,
+        admitted,
+        &attempted,
+        &BTreeMap::new(),
+    )
+}
+
+fn publish_broad_harness_child_plan_from_attempts(
+    env: ChildPlanEnv<'_>,
+    batch: HarnessRequestBatch,
+    admitted: Vec<AdmittedBroadHarnessResult>,
+    attempted: &BTreeSet<usize>,
+    rejections: &BTreeMap<usize, String>,
+) -> Result<ChildPlanReceipt, PrepareError> {
     if admitted.len() < batch.child_budget.min as usize {
         let failed_parent = project_node_status(batch.parent.node(), Prototype1NodeStatus::Failed);
-        let rejected_attempts = rejected_attempts(&batch, &admitted);
+        let rejected_attempts =
+            batch_attempt_evidence(&batch, &admitted, attempted, rejections, true);
         let ready_parent = batch.parent.accept_harness_plan();
         persist_rejected_plan(env.manifest_path, ready_parent, rejected_attempts)?;
         write_node_projection(&failed_parent)?;
@@ -2215,7 +2260,9 @@ fn publish_broad_harness_child_plan_from_admitted_batch(
             )
         })
         .collect::<Result<Vec<_>, PrepareError>>()?;
-    let files = ChildPlanFiles::for_parent(env.manifest_path, &parent_identity, children);
+    let attempts = batch_attempt_evidence(&batch, &admitted, attempted, rejections, false);
+    let files = ChildPlanFiles::for_parent(env.manifest_path, &parent_identity, children)
+        .with_rejected_surface_attempts(attempts);
     let at = files.message_at();
     let observed_at = at.clone();
     let ready_parent = batch.parent.accept_harness_plan();
@@ -2265,26 +2312,58 @@ fn rejected_attempts(
     batch: &HarnessRequestBatch,
     admitted: &[AdmittedBroadHarnessResult],
 ) -> Vec<surface_attempt::Evidence> {
-    batch
-        .slots
+    let attempted = (0..batch.slots.len()).collect::<BTreeSet<_>>();
+    batch_attempt_evidence(batch, admitted, &attempted, &BTreeMap::new(), false)
+}
+
+fn batch_attempt_evidence(
+    batch: &HarnessRequestBatch,
+    admitted: &[AdmittedBroadHarnessResult],
+    attempted: &BTreeSet<usize>,
+    rejections: &BTreeMap<usize, String>,
+    include_admitted: bool,
+) -> Vec<surface_attempt::Evidence> {
+    attempted
         .iter()
-        .filter(|slot| {
-            let request_id = slot.published.request_id();
-            !admitted
+        .filter_map(|slot_index| {
+            let slot = batch.slots.get(*slot_index)?;
+            let is_admitted = admitted
                 .iter()
-                .any(|admitted| admitted.request_id() == request_id)
-        })
-        .map(|slot| {
-            surface_attempt::Evidence::rejected(
+                .any(|admitted| admitted.request_id() == slot.published.request_id());
+            if is_admitted && !include_admitted {
+                return None;
+            }
+            let reason = if is_admitted {
+                admitted_below_min_rejection(batch, slot, admitted.len())
+            } else {
+                rejections
+                    .get(slot_index)
+                    .cloned()
+                    .unwrap_or_else(|| slot_rejection(slot))
+            };
+            Some(surface_attempt::Evidence::rejected(
                 BROAD_TUI_PRODUCER,
                 slot.published.request_id().to_string(),
                 slot.published.request_hash().to_string(),
                 serde_name(&slot.published.request().edit_policy),
                 PathBuf::from("."),
-                slot_rejection(slot),
-            )
+                reason,
+            ))
         })
         .collect()
+}
+
+fn admitted_below_min_rejection(
+    batch: &HarnessRequestBatch,
+    slot: &HarnessRequestSlot,
+    admitted_count: usize,
+) -> String {
+    format!(
+        "broad headless-tui slot '{}' wrote submitted result '{}' and was admitted, but was not materialized as a child because broad harness admitted {admitted_count} child transaction(s), fewer than required minimum {}",
+        slot.published.request_id(),
+        slot.published.submitted_result_path().display(),
+        batch.child_budget.min
+    )
 }
 
 fn slot_rejection(slot: &HarnessRequestSlot) -> String {
@@ -4346,6 +4425,7 @@ async fn admit_broad_harness_batch(
     let mut pending = batch.slots.iter().cloned().enumerate();
     let mut running = tokio::task::JoinSet::new();
     let mut admitted = Vec::with_capacity(max_children);
+    let mut ledger = BatchLedger::default();
 
     loop {
         while admitted.len() + running.len() < max_children && running.len() < cap {
@@ -4384,6 +4464,7 @@ async fn admit_broad_harness_batch(
             );
             continue;
         }
+        ledger.mark_attempted(outcome.slot_index);
 
         let executor = match outcome.result {
             Ok(executor) => executor,
@@ -4391,7 +4472,32 @@ async fn admit_broad_harness_batch(
                 source @ (PrepareError::ProviderUnavailable { .. }
                 | PrepareError::DatabaseSetup { .. }),
             ) => {
-                return Err(source);
+                ledger.reject(
+                    outcome.slot_index,
+                    format!(
+                        "broad headless-tui slot '{}' returned fatal admission error: {source}",
+                        outcome.slot.published.request_id()
+                    ),
+                );
+                running.abort_all();
+                while running.join_next().await.is_some() {}
+                admitted.sort_by_key(|(slot_index, _)| *slot_index);
+                let admitted = admitted
+                    .into_iter()
+                    .map(|(_, transaction)| transaction)
+                    .collect::<Vec<_>>();
+                let below_min = admitted.len() < batch.child_budget.min as usize;
+                let result = publish_broad_harness_child_plan_from_attempts(
+                    env,
+                    batch,
+                    admitted,
+                    &ledger.attempted,
+                    &ledger.rejections,
+                );
+                return match result {
+                    Err(PrepareError::InvalidBatchSelection { .. }) if below_min => Err(source),
+                    other => other,
+                };
             }
             Err(source) => {
                 warn_broad_slot_error(
@@ -4416,6 +4522,13 @@ async fn admit_broad_harness_batch(
                 warn_broad_slot_missing_result(&batch, &outcome.slot, admitted.len());
             }
             Err(source) => {
+                ledger.reject(
+                    outcome.slot_index,
+                    format!(
+                        "broad headless-tui slot '{}' submitted result failed admission: {source}",
+                        outcome.slot.published.request_id()
+                    ),
+                );
                 warn_broad_slot_error(
                     &batch,
                     &outcome.slot,
@@ -4432,7 +4545,13 @@ async fn admit_broad_harness_batch(
         .map(|(_, transaction)| transaction)
         .collect::<Vec<_>>();
     drop(pending);
-    publish_broad_harness_child_plan_from_admitted_batch(env, batch, admitted)
+    publish_broad_harness_child_plan_from_attempts(
+        env,
+        batch,
+        admitted,
+        &ledger.attempted,
+        &ledger.rejections,
+    )
 }
 
 struct BroadSlotAttempt {

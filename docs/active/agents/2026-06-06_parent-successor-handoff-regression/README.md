@@ -1,8 +1,14 @@
 # 2026-06-06 Parent Successor Handoff Regression Investigation
 
-Status: investigation/design complete; implementation and regression coverage pending
+Status: local implementation and focused regression coverage complete; live validation pending
 Scope: Prototype 1 runs that stopped before actual child self-evaluation or
 parent/successor handoff after June 2.
+
+Companion docs:
+
+- [`implementation-notes-2026-06-06.md`](implementation-notes-2026-06-06.md)
+  records the local fix, regression test, and verification commands for the
+  broad batch finalization bug.
 
 ## Conclusion
 
