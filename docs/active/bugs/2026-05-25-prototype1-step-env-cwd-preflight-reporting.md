@@ -1,7 +1,8 @@
 # Prototype 1 Step Env-Cwd Preflight Reporting
 
-Status: open
+Status: open; failed-row doctor blocker fix in progress
 Discovered: 2026-05-25
+Updated: 2026-06-05
 
 ## Summary
 
@@ -78,6 +79,94 @@ environment reported Google and OpenRouter credentials present, while the
 fresh worktree command environment reported both absent. No secret values were
 printed.
 
+## 2026-06-05 Recurrence
+
+The same blocker reproduced during a fresh run setup after an auth-poisoned
+attempt was abandoned.
+
+Campaign:
+
+```text
+p1-admissionfix-g35flash-p25flash-20260605-050938
+```
+
+Worktree:
+
+```text
+/home/brasides/.ploke-eval/worktrees/p1-admissionfix-g35flash-p25flash-20260605-050938
+```
+
+Command:
+
+```text
+./target/debug/ploke-eval loop prototype1-step --repo-root . --format json
+```
+
+The worktree-local command environment reported:
+
+```text
+OPENROUTER_API_KEY=missing
+GOOGLE_API_KEY=missing
+```
+
+The source checkout command environment reported:
+
+```text
+OPENROUTER_API_KEY=present
+GOOGLE_API_KEY=present
+```
+
+The bounded step wrote only early baseline eval setup artifacts:
+
+```text
+/home/brasides/.ploke-eval/batches/prototype1/p1-admissionfix-g35flash-p25flash-20260605-050938/ripgrep-burntsushi-ripgrep-2209-eval-slice-20260605121349/batch-run-summary.json
+/home/brasides/.ploke-eval/instances/prototype1/p1-admissionfix-g35flash-p25flash-20260605-050938/BurntSushi__ripgrep-2209/run.json
+/home/brasides/.ploke-eval/campaigns/p1-admissionfix-g35flash-p25flash-20260605-050938/closure-state.json
+```
+
+The batch summary records the concrete failure:
+
+```text
+status = failed
+error = database setup failed during 'embedding_model_preflight':
+        embedding preflight failed for 'mistralai/codestral-embed-2505':
+        Var error: Error from env variable, original: environment variable not found
+```
+
+The closure state records:
+
+```text
+eval.status = partial
+eval.failed_total = 1
+protocol.status = missing
+```
+
+But `prototype1-doctor --format json` still reported:
+
+```text
+phase = baseline_eval
+blockers = []
+allowed_actions = ["doctor", "continue", "step"]
+```
+
+Source trace:
+
+```text
+prototype1-step
+-> run::step
+-> advance_baseline_eval
+-> advance_eval_closure
+-> execute_batch_eval_for_manifest
+-> embedding_model_preflight failure
+-> closure-state eval.failed_total = 1
+-> diagnose
+-> extend_baseline_eval_registration_blockers
+```
+
+The classifier only blocked `row.eval_status == ClosureClass::Partial`, so a
+failed instance row left doctor clean even though the aggregate eval summary was
+partial because `failed_total = 1`.
+
 ## Impact
 
 This is not evidence that direct Google chat/protocol routing is broken. It is
@@ -109,3 +198,19 @@ cargo clean
   summary.
 - Continue the next fresh run by launching the main checkout binary from the
   env-bearing source checkout and passing `--repo-root <fresh-worktree>`.
+
+## Current Source Fix
+
+`crates/ploke-eval/src/cli/prototype1_state/run/core.rs` now treats
+`ClosureClass::Failed` baseline eval rows as doctor blockers in
+`extend_baseline_eval_registration_blockers`, matching the existing partial-row
+guard.
+
+Focused regression:
+
+```text
+failed_baseline_eval_closure_adds_doctor_blocker
+```
+
+The failed campaign remains abandon-and-restart evidence. The fix should be
+verified with a fresh campaign launched from an env-bearing cwd.

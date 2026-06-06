@@ -126,8 +126,8 @@
 //! Here is the live execution path inventory, split by role. This is the path to extract into `prototype1_state/run/core.rs`.
 //!
 //! **Entry / Dispatch**
-//! - [cli.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli.rs:1193): `LoopCommand::run`
-//! - [cli.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli.rs:1203): `Prototype1RunnerCommand::run`
+//! - [prototype1_loop.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli/handlers/prototype1_loop.rs:5): `LoopCommand::run`
+//! - [prototype1_harness.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli/handlers/prototype1_harness.rs:16): `Prototype1RunnerCommand::run`
 //! - [cli_facing.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:7820): `impl Prototype1StateCommand`
 //! - [cli_facing.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:7834): `Prototype1StateCommand::run`
 //! - [cli_facing.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:7848): `Prototype1StateCommand::run_turn`
@@ -173,7 +173,7 @@
 //!
 //! **Child Runtime / Leaf Runner**
 //! - [invocation.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli/prototype1_state/invocation.rs:585): `write_child_invocation`
-//! - [cli.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli.rs:1203): `Prototype1RunnerCommand::run`
+//! - [prototype1_harness.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli/handlers/prototype1_harness.rs:16): `Prototype1RunnerCommand::run`
 //! - [prototype1_process.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli/prototype1_process.rs:1509): `execute_prototype1_runner_invocation`
 //! - [prototype1_process.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli/prototype1_process.rs:1654): `run_prototype1_resolved_branch_treatment`
 //! - [prototype1_process.rs](/home/brasides/code/ploke/crates/ploke-eval/src/cli/prototype1_process.rs:1440): `build_treatment_failed_runner_result`
@@ -209,5 +209,8 @@
 //! The extraction target should probably start with only the bold spine: `run_turn`, `run_child_fanout`, `run_adaptive_child_fanout`, `run_planned_child`, `ParentSelection`, `continuation_disposition_for_selection`, and `spawn_and_handoff_prototype1_successor`.
 
 pub(crate) mod core;
+mod history_cmd;
+mod loop_cmd;
+mod state_cmd;
 
 pub(crate) use core::{doctor, prompt, resume, step};

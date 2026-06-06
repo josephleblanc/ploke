@@ -1466,9 +1466,13 @@ module tree process or run_parse_no_transform"
         // WARN: Half-assed implementation, this should be a recursive function instead of simple
         // collection.
         //  - coercing into ModuleNodeId with the test method escape hatch, do properly
-        let module_uuids = vec_ok.into_iter().filter_map(|f| f.map(|i| i.id));
+        let module_uuids = vec_ok
+            .into_iter()
+            .filter_map(|f| f.map(|i| i.id))
+            .collect::<BTreeSet<_>>();
         let module_ids = module_uuids
-            .clone()
+            .iter()
+            .copied()
             .map(|uid| ModuleNodeId::new_test(NodeId::Synthetic(uid)));
         // let module_ids = vec_ok.into_iter().filter_map(|f| f.map(|id|
         //     ModuleNodeId::new_test(NodeId::Synthetic(id.id))));
@@ -1682,6 +1686,17 @@ module tree process or run_parse_no_transform"
         });
         // filter nodes
         merged.retain_all(filtered_union);
+
+        let retracted = state
+            .db
+            .retract_file_descendants(&module_uuids)
+            .inspect_err(|e| error!("Error retracting changed file descendants: {e}"))?;
+        if !retracted.is_empty() {
+            info!(
+                "Retracted {} stale descendants before partial graph update",
+                retracted.len()
+            );
+        }
 
         transform_parsed_graph(&state.db, merged, &tree).inspect_err(|e| {
             error!("Error transforming partial graph into database:\n{e}");

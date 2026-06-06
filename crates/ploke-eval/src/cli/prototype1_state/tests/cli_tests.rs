@@ -2778,7 +2778,6 @@ async fn child_fanout_is_parallel() {
     }
 }
 
-#[cfg(unix)]
 fn install_fake_cargo(fake_bin: &Path, child_script: &str) -> std::ffi::OsString {
     use std::os::unix::fs::PermissionsExt;
 
@@ -2815,7 +2814,6 @@ exit 0
     path
 }
 
-#[cfg(unix)]
 #[tokio::test]
 async fn child_build_promotes_binary_and_cleans_scratch() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -2893,7 +2891,6 @@ async fn child_build_promotes_binary_and_cleans_scratch() {
     );
 }
 
-#[cfg(unix)]
 #[tokio::test]
 async fn child_spawn_observes_ready() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -3022,7 +3019,6 @@ exit 0
     }));
 }
 
-#[cfg(unix)]
 #[tokio::test]
 async fn child_spawn_observes_failed_result() {
     let tmp = tempfile::tempdir().expect("tempdir");

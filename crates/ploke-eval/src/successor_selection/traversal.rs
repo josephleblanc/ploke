@@ -32,6 +32,12 @@ use crate::{
     metric::{self, Summary},
 };
 
+#[cfg(test)]
+use crate::cli::prototype1_state::history::{
+    SealedEvalSetIdentity, SealedEvaluatorIdentity, SealedProtocolArtifactEvidence,
+    SealedRunProtocolEvidence,
+};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SourceSet {}
 

@@ -1,0 +1,1225 @@
+AGENTCL: Toward Rigorous Evaluation of
+Continual Learning in Language Agents
+
+Yiheng Shu1 , Bernal Jiménez Gutiérrez2 , Saisri Padmaja Jonnalagedda3 , Yuguang Yao3 ,
+Huan Sun1 , Yu Su1
+The Ohio State University 2 Johns Hopkins University 3 Intuit AI Research
+{shu.251, sun.397, su.809}@osu.edu
+
+Abstract
+Language agents spend substantial inference time solving individual tasks, yet the experience acquired in one episode is often underutilized in future episodes. Continual learning expects an agent to accumulate reusable experience across a stream of tasks, improve over time, and avoid interference from irrelevant experiences. Unfortunately, existing benchmarks struggle to evaluate continual learning in language agents rigorously. Most efforts focus on retrieval and reasoning over long-context conversations or documents, while recent lifelong-adaptation benchmarks often rely on naive task streams with limited analysis of cross-task relationships, making it difficult to understand what an agent learns and reuses over time. This paper presents an evaluation framework AGENTCL for continual learning in agents, centered on controlled task streams and metrics for transfer gains. AGENTCL constructs compositional streams where earlier sub-solutions, evidence, or workflows are intentionally reusable in later tasks, and contrasts them with naive streams where such reusability is not guaranteed. We use the benchmark to evaluate non-parametric memory designs for continual learning. To diagnose how memory design choices affect continual learning, we develop MemProbe, a probing method that stores interactions, insights, and skills, while filtering unreliable experiences during consolidation. Empirical analysis across coding, deep research, and language understanding/reasoning tasks shows that naive streams offer limited ability to distinguish memory designs, whereas controlled streams more clearly distinguish their plasticity. Meanwhile, naive and held-out settings often yield limited gains and can expose memory-induced degradation. These results highlight the need for stronger memory designs that balance plasticity and stable reuse.1
+
+Introduction
+
+Language agents [14] powered by large language models (LLMs) spend substantial inference time
+interacting with complex environments, yet the experience acquired in each episode is often underutilized before the next one begins. The fact that intensive inference does not automatically compound into long-term competence motivates the continual learning (CL) problem for language agents: given a stream of tasks, can an agent accumulate reusable experience, successfully transfer it to future environments, and remain robust as its memory scales? However, evaluating this capability challenges the conventional evaluation paradigms of machine learning. Traditionally, LLMs are trained and evaluated in static batches under the i.i.d. assumption. In contrast, agents often operate in a sequential, task-limited regime, where cross-task relationships are essential to measure continual learning. Also, a delicate balance between plasticity (adapting to new tasks) and stability (retaining past knowledge) is required during the learning process. Given 1 Data is available at https://huggingface.co/datasets/osunlp/AgentCL.
+
+Naive Stream
+
+Compositional Stream
+
+Compositional Relationship
+Sequential Relationship
+
+Task 1: Pooled Strings Char Freq
+
+Task 1: String Char Freq
+
+Task 4: Pooled Strings Char Freq
+
+Task 2: Sum Over a Harmonic Wave
+
+Task 2: Wave Component Sum
+
+Task 5: Sum Over a Harmonic Wave
+
+Task 3: Total Cycle Distance
+
+Task 3: Segment Distance
+
+Task 6: Total Cycle Distance
+
+Figure 1: Task-stream construction and its impact on evaluation. Compositional relationship refers to a task pair, where the complex one can reuse the solution to the simpler one. Sequential relationship refers to the sequential order of task execution. Top: naive streams order tasks from the same domain without guaranteeing reuse relationships, while compositional streams place reusable subtasks before related complex tasks. Bottom: boxplots of average accuracy across evaluated methods on CodeEvalPro and BrowseComp+, showing that compositional streams yield larger method separation than naive streams for memory reuse.
+these unique characteristics, we argue that a rigorous benchmark for agentic CL research must satisfy two core desiderata: 1) Control of Task Relationships: how knowledge, sub-solutions, or workflows can be composed across tasks, rather than chaining arbitrary, isolated tasks into a sequence. 2) Agentic CL metrics: Beyond simply reporting average scores, the evaluation protocol must decouple and quantify the properties of plasticity, stability, and generalization within the learning process. While more research touches upon long-term agentic interactions, existing benchmarks fundamentally struggle to satisfy these desiderata simultaneously. First, long-term memory benchmarks such as
+LoCoMo [11], LongMemEval [22], and MemoryAgentBench [7] evaluate whether agents can retrieve
+and reason over extended documents or conversations, yet they rely on static corpora rather than
+dynamic task adaptation. Second, recent lifelong or streaming benchmarks like StreamBench [21],
+LifelongAgentBench [30], and Evo-Memory [20] move closer to sequential adaptation, but they
+treat the task stream as a natural given without strict relationship control between tasks. As a result, observed performance fluctuations become hardly attributable. It remains ambiguous whether an agent genuinely reused an abstracted experience or simply benefited from incidental task overlap or repeated domain exposure. Besides, simply using average accuracy as a metric leaves the trade-offs of plasticity and stability completely unmeasured. To bridge these fundamental gaps, we introduce AGENTCL towards a rigorous evaluation framework for CL in language agents. It instantiates controlled task streams alongside targeted transfer metrics. As illustrated in Figure 1, AGENTCL essentially contrasts naive streams, where tasks are ordered arbitrarily, with our newly proposed compositional streams, where earlier tasks are explicitly designed to expose reusable sub-solutions, evidence, or workflows that subsequent complex tasks can profitably compose. Coupled with a two-pass evaluation protocol, AGENTCL allows us to separate and compute explicit metrics for Plasticity Gain, Stability Gain, and Generalization Gain. Then, we leverage AGENTCL to conduct a comprehensive evaluation of non-parametric memory designs, a paradigm for lightweight, inference-time agent adaptation. We further develop MemProbe, a non-parametric memory probing method to help our evaluation, which investigates the roles of various memory components and the discriminative power of benchmarks. Our empirical analysis across coding, deep research, and language reasoning tasks reveals a critical benchmarking insight: naive streams offer surprisingly weak discriminative power, compressing the performance differences among memory designs. Conversely, our controlled compositional streams successfully amplify and distinguish the varying degrees of plasticity across methods. Moreover, our evaluation uncovers an unresolved stability bottleneck: while existing memory designs achieve notable transfer gains when compositionality is explicit, they frequently induce cognitive interference or performance degradation in naive and held-out settings. These findings underscore the urgent need for memory designs that transcend passive retrieval to achieve robust, balanced consolidation.
+
+Our core contributions are threefold: 1) We formalize AGENTCL, the first evaluation framework that introduces explicit cross-task relationship control alongside targeted metrics for plasticity, stability, and generalization. 2) We construct compositional versus naive task streams spanning coding, deep research, and reasoning domains to control reusable experience. 3) Comprehensive evaluation shows that compositional streams significantly amplify evaluation rigor, while exposing critical stability bottlenecks in existing memory designs.
+
+Related Work to Continual Learning in Language Agents
+
+2.1
+
+Benchmarks
+
+One way to approach CL is through memory design with streaming settings. StreamBench [21] evaluates whether language agents can improve over an input–feedback sequence, while MemoryBench [2] focuses on whether LLM systems can construct useful memories from user feedback during service
+time. LifelongAgentBench [30] and SWE-Bench-CL [8] instantiate this idea in interactive agent
+and software-engineering domains, respectively, by organizing tasks into sequential settings that
+measure knowledge accumulation, transfer, and forgetting. Evo-Memory [20] extends this direction
+by benchmarking self-evolving memory across diverse task streams and comparing multiple memory
+designs. Concurrent to our work, Continual Learning Bench [3] similarly evaluates agents over
+multi-episode environments with task relevance, such as recurring database schemas, debugging patterns, and forecasting dynamics. While these benchmarks adopt online or streaming evaluation protocols, AGENTCL differs by explicitly controlling and contrasting different cross-task relationship structures and by assuming no detailed user feedback for CL. 2.2
+
+Methodology
+
+Non-parametric memory records contexts in an intuitive way, but its applications to long-context
+or streaming tasks have not been rigorously evaluated for CL yet. Systems like Mem0 [5] and
+A-MEM [24] focus on storing and organizing long-term memories for adaptive retrieval. Another
+line emphasizes procedural reuse: Agent Workflow Memory [18] induces reusable workflows from
+prior trajectories, and Dynamic Cheatsheet [15] maintains concise strategies, code snippets, and
+abstractions that can be reused at test time. ExpRAG and ReMem [20] accumulate task experiences
+online and retrieve them in later tasks under streaming evaluation. Our evaluation targets not only how to store and retrieve experience, but also how memory adapts across streams where transfer structure is explicitly controlled versus not intentionally induced. Beyond non-parametric memory, recent work studies CL via parameter or policy updates in agentic settings. Agent-Dice [23] addresses stability–plasticity by disentangling shared and conflicting knowledge during parameter fusion for GUI and tool-use agents. CGL [27] explores continual GUI learning with supervised and reinforcement fine-tuning to balance new-domain adaptation and capability retention. ACuRL [25] autonomously explores environments, synthesizes capability-matched tasks, and updates policies across environments. These training-based methods internalize reusable experience into model parameters, but often require reward models, rollouts, and repeated optimization. We instead focus on non-parametric memory as a lightweight inference-time adaptation, while using AGENTCL to diagnose training-based approaches can be interesting future work.
+
+AGENTCL: Evaluation Framework for Continual Learning in Agents
+
+3.1
+
+Problem Formulation
+
+An agent observes a sequence of tasks T = {τ1 , τ2 , . . . , τT } and solves them sequentially through
+interaction with the environment. In contrast to maintaining long contexts for each task, the agent
+maintains a persistent memory {Mt }Tt=0 shared across the task stream T . For each task τt , the
+agent may first retrieve relevant information ct = R(Mt−1 , τt ) from the current memory, and then interact with the environment conditioned on ct . After completing the task, it updates the memory via Mt = U(Mt−1 , ξt ), where ξt denotes the trajectory collected during τt . Given the sparsity of feedback in real-world online environments, we adopt a strict setting where the evaluated agent operates without any ground-truth guidance during memory construction, leaving the LLM to synthesize memories entirely on its own. In contrast to a memoryless setting, the order of tasks
+
+Held-Out
+Task 1
+
+❌
+
+Task 4
+
+No Memory
+✅
+
+Task 4
+
+❌
+
+Task 1
+
+Two Passes
+❌
+
+Task 2
+
+✅
+
+Task 5
+
+✅
+
+Task 5
+
+✅
+
+Task 2
+
+✅
+
+❌
+
+Task 1
+
+✅
+
+Task 2
+
+✅
+
+Task 2
+
+✅
+
+❌
+
+Task 3
+
+❌
+
+(to memory)
+
+(to memory)
+
+Task 3
+
+Task 1
+(to memory)
+
+(to memory)
+
+❌
+
+Task 6
+
+❌
+
+Task 6
+
+❌
+
+Task 3
+
+❌
+
+Task 3
+(to memory)
+
+(to memory)
+
+Hi
+
+Bi
+
+Bi
+
+Generalization Gain
+
+Plasticity Gain
+
+Fi
+
+Stability Gain
+
+Si
+
+Figure 2: Evaluation protocol and metrics of AGENTCL. Middle: memoryless baseline. Right: two passes are performed on the same stream. The first pass allows both reading from and writing to memory, whereas the second pass (or hold-out) is read-only. Left: held-out samples are not used to build memory. For task i, Bi , Fi , Si , and Hi denote the performance of the memoryless method, the first-pass performance, the second-pass performance, and the performance on the held-out task, respectively. Plasticity Gain measures whether memory built from earlier tasks helps on later tasks.
+Stability Gain measures whether experience gained from solving a task becomes persistently reusable. Generalization Gain measures transfer to held-out tasks after memory construction.
+
+matters because the agent’s accessible experience evolves over time. Thus, we will proceed to discuss two core issues in benchmarking: the design of task streams and metrics. 3.2
+
+Task Streams
+
+Task relationships and ordering determine what can be observed, especially for building memory for CL. When tasks are nearly identical, memory may be explained by repeated exposure rather than by reusable abstraction. When tasks are unrelated and offer few predictable opportunities for direct transfer, memory alone is unlikely to achieve the strong generalization that typically emerges from large-batch training. We therefore construct task streams with explicit cross-task relationships. We mainly consider two stream types. 1) Naive: tasks are drawn from the same environment or domain, but no relationship between their solutions is assumed or enforced. This setting often directly streams tasks from an existing dataset without considering cross-task relationships. 2) Compositional: later tasks can benefit from reusing knowledge, intermediate results, supporting evidence, or helper functions encountered in earlier tasks. Distinguishing and leveraging these stream types helps us evaluate the plasticity and stability of memory methods: we expect agents to transfer useful knowledge in scenarios where it is applicable, while knowledge with little logical relevance should not introduce interference or confusion. 3.3
+
+Metrics
+
+We first report basic metrics, such as accuracy, success rate, or progress rate, depending on the criterion of each environment. Then, we focus on CL properties: plasticity, stability, and generalizability
+[16], as shown in Figure 2. These properties from classical and parametric CL manifest differently
+in agentic settings. Traditionally, stability is often framed as avoiding catastrophic forgetting after new tasks are absorbed into model weights. In contrast, we do not force an agent to learn through training, but mainly focus on non-parametric memory as the approach. In this case, past experiences can be explicitly preserved as trajectories, summaries, skills, or other records. The central stability challenge is therefore not whether past episodes are recorded, but whether they can still be retrieved from memory and utilized correctly after many later updates. This distinction from parametric CL motivates our two-pass evaluation protocol. The agent processes a task stream sequentially. The first pass permits both memory retrieval and updating, as described in §3.1. The second pass is read-only with frozen memory. Let Bi denote the performance on task i under a memoryless setting. Let Fi denote the performance on task i during the first pass, after the agent has processed tasks before i. Let Si denote the performance on the same task i during the
+
+Table 1: The number of tasks in our constructed streams. * denotes our synthesized data.
+Datasets
+
+Compositional Stream
+
+Naive Stream
+
+CodeEval-Pro (BigCodeBench-Lite-Pro) [28]
+BrowseComp+ [4]
+AgentBoard BabyAI [10]
+AgentBoard ScienceWorld [10]
+MMLU-Pro [17]
+
+48 subtasks → 48 complex tasks 308 subtasks* → 100 complex tasks
+28 subtasks → 28 complex tasks – –
+
+48 complex tasks 100 complex tasks 40 tasks 90 tasks 300 tasks
+
+second pass with frozen memory. We define P Gi = Fi − Bi , SGi = Si − Fi .
+
+(1) (2)
+
+Plasticity Gain (PG) measures whether experience accumulated from preceding tasks helps the agent solve the current task. It captures the ability of a memory system to turn earlier episodes into useful context for later tasks. Stability Gain (SG) measures persistent reuse under stream-level memory consolidation. As Fi is observed before the experience from task i is written into memory, SG captures the net effect of writing the current task experience into memory, preserving it through subsequent updates, and retrieving it from the final frozen memory state. Thus, SG measures whether stream-level consolidation turns a task experience into stable support that remains accessible after later episodes are added. Low or negative SG reflects a failure of stable reuse, where the relevant experience is either poorly consolidated, difficult to retrieve, or overwhelmed by memory interference. We further use held-out tasks to evaluate generalizability. Let Hj denote the performance on an unseen task j, evaluated after constructing and freezing memory on a task stream. We define GGj = Hj − Bj .
+
+(3)
+
+Generalization Gain (GG) measures whether the constructed memory generalizes beyond the observed tasks used to build the memory. Together, AGENTCL combines the controlled task streams and metrics, as shown in Figure 2. Both naive and compositional streams are used for two-pass evaluation. Different passes of a stream use the same tasks and sequence.
+
+Benchmark Construction
+
+Given the conceptual framework of AGENTCL, we now introduce the construction of specific benchmarks across various environments as follows. 4.1
+
+Data Collection
+
+Coding. Table 1 summarizes the constructed datasets. We build coding streams from CodeEval-Pro
+self-invoking problem pairs [28], which contain both BigCodeBench-Lite-Pro and HumanEval-Pro.
+Each pair consists of a base problem (subtask) and a self-invoking problem (complex task) whose solution requires the solution to the base problem. Each task pair, from subtask to complex task, is guaranteed to exhibit a function reuse relationship, as shown in Appendix Figure 5. Our filtered dataset includes 96 tasks (48 pairs) from BigCodeBench-Lite-Pro. We construct the naive stream by randomly ordering all complex tasks without any subtasks. Tasks in a naive stream are generally diverse. While their solutions may share a few Python packages, their underlying logic differs without controlled reuse relationships between them. The compositional stream is then constructed by prepending a randomly ordered subtask stream to this same naive stream. This ordering places all subtasks before any complex task that depends on them. We also conduct a held-out evaluation using 120 tasks from HumanEval-Pro in §5.3.
+Deep Research. We build deep research streams based on BrowseComp+ [4]. BrowseComp+
+provides an offline environment with a collected corpus from BrowseComp [19]. We construct the
+streams similarly as above: the naive stream contains 100 randomly sampled BrowseComp+ tasks,
+
+while the compositional stream prepends 308 subtasks. The subtasks are synthesized from these 100
+parent tasks by GPT-5.2 [12]. The synthesis takes the original QA pair and the supporting documents
+as input, and yields subtasks and their answers. Each subtask is guaranteed to share a subset of evidence documents with its parent complex task. We control the reusable relationships between subtasks and their corresponding complex tasks without hinting at the answers, as illustrated by the examples in Appendix B.1 and details in Appendix E. Language Understanding & Reasoning. To analyze streams from existing datasets, we select the single-turn MMLU-Pro and the multi-turn AgentBoard BabyAI and ScienceWorld tasks from
+Evo-Memory [20]. For MMLU-Pro [17], its tested knowledge is widely distributed, and we take it as
+a naive stream. We selected three subsets (economics, engineering, and philosophy) and sampled 100
+tasks from each subset. For AgentBoard ScienceWorld [10], we take all the 90 original tasks as a
+naive stream, and also evaluate a block stream in Appendix B.8. For AgentBoard BabyAI [10], we
+build two streams, detailed in Appendix B.9. The naive stream contains 40 tasks from ten diverse easy subtask families, with four tasks per family. The compositional stream contains 56 tasks, where each task pair links a simpler subtask to a related compositional extension. Similar to the above benchmarks, all subtasks appear before any complex task. 4.2
+
+Quality Control
+
+Most tasks used in our benchmark are directly adopted and restructured from existing resources. For CodeEval-Pro, we apply simple filtering during restructuring. For synthesized BrowseComp+ subtasks, we apply stricter quality control. Each candidate subtask must be evidence-supported, deterministic, and logically relevant to the parent task, and is further checked by a separate verifier for entity specificity, evidence support, determinism, and answer completeness. We also report diagnostics in Appendix E.2 to confirm that the subtasks do not collapse into parent-task paraphrases: the mean token-set Jaccard similarity between subtasks and their parent is 0.10, no pair exceeds 0.30, only 5.8% of subtasks cover the full parent evidence set, and only 1.6% share both the normalized answer and the evidence set with the parent task. These controls enable the compositionality through a chain of evidence documents rather than direct answer exposure.
+
+Experiments
+
+5.1
+
+Setup
+
+Evaluated Methods. We evaluate representative methods from four categories. 1) Memoryless
+agent denoted as ReAct [26]. 2) Adaptive memory methods that flexibly determine storage and
+retrieval: LangMem [9] and Mem0 [5]. 3) Memory methods with procedural knowledge: Agent
+Workflow Memory (AWM) [18] and Dynamic Cheatsheet (DC-RS) [15]. 4) Self-evolving memory:
+ExpRAG, ReMem [20], and MemProbe. These categories span the main non-parametric designs
+that can approach CL in language agents. We provide a detailed discussion of their coverage and differences in Appendix B.2. Implementation Details. We use Qwen3.5-35B-A3B [13] as the default LLM, Qwen3-Embedding8B [29] as the default embedding model, and we use gpt-oss-120b [1] for deep research tasks. When public code was unavailable or not directly applicable to our tasks, we reimplemented the method and matched the original workflow and prompts as closely as possible. We report averages over three runs for coding tasks. For the coding agent, we use the Qwen-Agent code interpreter as the execution environment, while for the deep-research setting, we use the GPT-OSS browser tool as the interface. For all memory methods, we uniformly retrieve the top-2 memory chunks to serve as context for the current task. 5.2
+
+MemProbe: Probing Memory Design in Continual Learning
+
+To diagnose and understand how different components in memory designs affect CL, we implement a non-parametric probing method named MemProbe. It adopts a retrieve–solve–consolidate loop over the task stream. Before solving a task, it retrieves semantically similar prior episodes as the reference context. After solving, it validates the agent responses and consolidates them into three
+
+complementary views: interaction memory for concrete trajectories and final responses, insight memory for task patterns and failure modes, and skill memory for procedure-level abstractions or short reusable snippets. Invalid outputs are discarded by a syntactic checker, and unreliable interaction histories are filtered by an LLM judge before being written into memory. The prompt formats for constructing and using memory contexts are provided in Appendix B.5. The procedure of MemProbe is detailed in Appendix B.6. 5.3
+
+Discussion
+
+Controlled Streams Reveal Specialized Reuse. We show that controlled compositional streams yield substantially clearer separation among memory methods than naive streams. On CodeEval-Pro in Figure 3 and Table 10, the standard deviation of complex-task accuracy across methods is 9.4 and 8.8 in the two compositional passes, compared with only 3.0 and 1.9 in the naive stream. The same pattern is stronger on BrowseComp+, where the corresponding dispersions are 14.9 and 16.0 under the compositional stream, but only 2.3 and 5.7 under the naive stream, as shown in Figure 4 and Table
+11. BabyAI is consistent with this trend in Table 3. By contrast, MMLU-Pro, evaluated as a naive stream in Table 2, shows only modest method separation, with average-accuracy standard deviations of 1.7 and 1.8 across the two passes. These results suggest that controlled task relationships are not merely a detail of stream design, but a key factor of discriminative power. Compositional streams reveal settings in which earlier tasks provide reusable sub-solutions, allowing us to distinguish memory designs by how effectively they transform prior experience into future performance gains. In contrast, when tasks are drawn from the same broad domain without explicit relationships, differences in plasticity are compressed. We further validate this pattern with pairwise bootstrap comparisons in Appendix B.7, where differences between methods are more confident on the compositional stream than on the naive stream. Overall, we observe the gains enabled by existing memory designs primarily reflect specialized reuse rather than strong generalization. Naive Streams Are Useful for Stability Tests. The weak task relationship in naive streams is reflected in the first-pass results: in the naive CodeEval-Pro stream in Figure 3, PGs are compressed and mostly non-positive across memory methods. MMLU-Pro also shows modest method separation across two passes in Table 2. Naive streams provide limited evidence about experience reuse, but they are still informative for stability evaluation: whether accumulated memory remains helpful, or at least harmless, after being updated by a stream with no guaranteed reuse structure. In the naive CodeEval-Pro stream, Appendix Table 10 shows that SG ranges from −3.5 to +4.2, indicating that consolidation helps some methods but hurts others. BrowseComp+ in Appendix Table 11 exposes even larger SG swings in the naive stream, from −11.0 to +11.0. Appendix Table 13 further shows that even grouping ScienceWorld tasks by near-identical goal families produces limited method separation, suggesting that repeated exposure alone is not sufficient to create a diagnostic CL stream. Held-out Tasks Are Necessary for Generalization Test. Validation on data outside the training set is a standard practice in machine learning, yet not all the benchmarks for CL include such held-out evaluation. We set up a held-out evaluation using 120 HumanEval-Pro tasks after the compositional or naive stream from BigCodeBench-Lite-Pro. Held-out tasks are still coding, but they are drawn from a completely different source and are not paired with any previous task. We aim to test whether memory preserves performance on unseen tasks. As shown in Appendix Table 10, GGs are limited for all memory methods, and memoryless ReAct remains strongest overall at 72.5. Most memory methods perform slightly below ReAct, suggesting that memory accumulated from weakly related tasks does not automatically transfer and may introduce mild interference. The compositional and naive streams provide different numbers of learning tasks, but the GGs after these two types are similar, indicating that the structural mismatch between learning and testing tasks is the main challenge, rather than the sheer number of preceding tasks. Among memory methods, MemProbe is closest to ReAct at 70.8, because it filters out irrelevant memory contexts in most cases. Plasticity–Stability Tradeoff. These evaluations expose an unresolved plasticity–stability challenge in non-parametric memory: methods that achieve large gains when reuse is explicit do not necessarily remain stable across passes, stream types, or held-out tasks. On CodeEval-Pro, Appendix
+Table 10 shows that ExpRAG, ReMem, and MemProbe obtain large PG of +17.7, +13.5, and +21.9, respectively, but their SG on the same stream is +0.0, −2.0, and −2.1. Their held-out results also remain below memoryless ReAct, with GG of −4.2, −5.0, and −0.8. DC-RS shows
+
+Accuracy (%)
+
+Transfer gain (pp)
+
+−10 1st
+
+2nd
+
+Held
+
+1st
+
+2nd
+
+LangMem
+
+Mem0
+
+Held
+
+PG
+
+Naive
+
+Compositional
+AWM
+
+DC-RS
+
+SG
+
+GG
+
+PG
+
+ExpRAG
+
+ReMem
+
+MemProbe
+
+SG
+
+GG
+
+Naive
+
+Compositional
+ReAct reference
+
+Self-invoking reference
+
+Figure 3: Performance on CodeEval-Pro complex tasks. The BigCodeBench-Lite-Pro subset is used for naive and compositional task streams. The HumanEval-Pro subset is used for held-out evaluation after the compositional or naive task stream. ReAct denotes a memoryless reference. For self-invoking, each complex task is provided with its corresponding subtask as a reference context, so no retrieval is required. Metrics are shown in Figure 2. Each value is the average over three runs.
+transfer gain refers collectively to PG, SG, and GG, and pp denotes percentage points.
+Accuracy (%)
+
+Transfer gain (pp)
+
+−10
+
+1st
+
+2nd
+
+1st
+
+LangMem
+
+Mem0
+
+2nd
+
+PG
+
+Naive
+
+Compositional
+AWM
+
+DC-RS
+
+SG
+
+Compositional
+ExpRAG
+
+ReMem
+
+MemProbe
+
+PG
+
+SG
+Naive
+
+ReAct reference
+
+Figure 4: Performance on the selected 100 original BrowseComp+ tasks.
+another form of the same issue: it achieves positive compositional-stream PG (+3.8) and the largest naive-stream SG on CodeEval-Pro (+4.2), but suffers the largest GG drop after the compositional stream (−11.7), suggesting that memory useful within a stream can become harmful when the test distribution changes. BrowseComp+ in Appendix Table 11 further separates plasticity from stability. ReMem gets +26.0 on the compositional PG, but drops by −10.0 on the SG, while Mem0 is slightly positive on the naive PG (+3.0) but has the worst naive SG (−11.0). By contrast, MMLU-Pro in
+Table 2 shows much smaller PGs and SGs as a naive stream. These findings indicate that CL in language agents is not solved by storing more trajectories or summaries. The central challenge is deciding which past experience should be abstracted, retrieved, or ignored. Furthermore, the plasticity–stability imbalance is closely tied to distributional imbalance in the data. When reusable task experiences are scarce, an agent may need to go beyond passively solving assigned tasks and
+actively explore its environment to construct a useful memory context [6].
+Insights on Memory Design. Controlled streams help isolate the effects of memory design choices.
+Table 4 reports ablations of MemProbe on BigCodeBench-Lite-Pro. During the memory construction process, we have the syntactic checker and the LLM judge determine whether the output of an interaction is worth recording (§5.2). Replacing this validation step with the oracle boolean feedback yields similar overall performance, suggesting that the memory construction does not require a perfect judge. Removing interaction, insight, or skill memory consistently weakens performance on compositional streams. In contrast, these ablations have smaller and less consistent effects on naive streams. This supports the view that memory representations cannot be fairly diagnosed without task streams that expose opportunities for reuse. The results also suggest that different forms of
+
+Table 2: Accuracy (%) on naive task stream from MMLU-Pro. Eco.: economics. Eng.: engineering.
+Phil.: philosophy. Each domain contains 100 samples. Memory is maintained separately by domain. Std. Dev. denotes the standard deviation of the average metrics across evaluated methods. The highest value in each column is bolded, and the second-highest value is underlined. The same applies to the following tables.
+1st Pass
+
+2nd Pass
+
+Method
+
+Avg (PG)
+
+Eco.
+
+Eng.
+
+Phil.
+
+Avg (SG)
+
+Eco.
+
+Eng.
+
+Phil.
+
+ReAct
+ExpRAG
+ReMem
+MemProbe
+
+78.7 81.3 (+2.6) 79.0 (+0.3) 82.7 (+4.0)
+
+90.0 91.0 86.0 91.0
+
+66.0 73.0 74.0 76.0
+
+80.0 80.0 77.0 81.0
+
+78.7 83.0 (+1.7) 81.7 (+2.7) 83.0 (+0.3)
+
+90.0 91.0 87.0 91.0
+
+66.0 78.0 81.0 76.0
+
+80.0 80.0 77.0 82.0
+
+1.7
+
+2.1
+
+3.8
+
+1.5
+
+1.8
+
+1.6
+
+5.6
+
+1.8
+
+Std. Dev.
+
+Table 3: Performance (%) on AgentBoard BabyAI. SR: success rate. PR: progress rate. The naive stream in AgentBoard BabyAI exhibits a pattern that tasks appear sequentially by task family, with each family comprising four tasks that share the same goal but feature different environmental settings.
+Compositional Stream
+
+Naive Stream
+
+Method
+
+1-SR
+
+1-PR
+
+2-SR
+
+2-PR
+
+1-SR
+
+1-PR
+
+2-SR
+
+2-PR
+
+ReAct [26]
+ExpRAG [20]
+ReMem [20]
+MemProbe
+
+50.0 37.5 51.8 55.4
+
+63.6 53.1 68.6 65.7
+
+50.0 58.9 62.5 53.6
+
+63.6 73.3 75.7 69.0
+
+57.5 67.5 67.5 67.5
+
+72.9 76.7 77.9 80.0
+
+57.5 70.0 70.0 72.5
+
+72.9 78.7 79.2 80.4
+
+Std. Dev.
+
+7.8
+
+6.8
+
+5.5
+
+5.3
+
+5.0
+
+3.0
+
+6.8
+
+3.3
+
+experience serve complementary roles. Interaction memory can preserve concrete solving episodes, insight memory can distill task-specific lessons and failure modes, and skill memory can capture reusable procedural knowledge.
+
+5.4
+
+Case Study
+
+Appendix Table 15 provides two coding cases where retrieved memories help or hurt. In the first case, MemProbe retrieves a single-pair version of the same computation and reuses the correct DataFrame construction inside a loop. In the second case, the retrieved task is topically similar but semantically incompatible: it encourages selecting numeric columns, while the target task requires rejecting any non-numeric column. These cases illustrate that the effect of memory is not only determined by the retrieval step, but the agent must carefully consider how the retrieved memory contexts can help the current task.
+
+Table 4: Accuracy (%) of MemProbe ablations on BigCodeBench-Lite-Pro with two passes. Oracle feedback means we replace the syntactic check and the LLM judge during memory consolidation with oracle feedback.
+Variant
+
+Compositional
+1st 2nd
+
+Naive
+1st 2nd
+
+MemProbe
+w/ oracle feedback w/o skill w/o insight w/o interaction
+
+66.7 64.6 56.3 60.4 52.1
+
+43.1 43.8 43.8 35.4 45.8
+
+64.6 60.4 59.0 64.6 50.0
+
+44.5 43.8 45.8 41.7 41.7
+
+Conclusion
+
+Existing benchmarks either emphasize long-context reasoning or build task streams without explicitly controlling cross-task relationships, which makes rigorous evaluation for AGENTCL difficult. We propose an evaluation framework AGENTCL with controlled task streams and metrics, contrasting naive streams with compositional streams where earlier experience can support later tasks. Across diverse agentic settings, empirical analysis indicates that: 1) Task-stream design is essential for distinguishing CL capabilities. 2) Future CL benchmarks should publish task streams more transparently and discuss the relationships between tasks, rather than simply streaming existing data and focusing solely on average metrics. 3) Plasticity–stability remains a formidable challenge for agent memory, particularly in scenarios where opportunities for cross-task reuse are unclear.
+
+Acknowledgments and Disclosure of Funding The authors would thank colleagues from the OSU NLP group and Intuit AI Research for constructive feedback. This research was sponsored in part by NSF CAREER #1942980, NSF CAREER #2443149, the Alfred P. Sloan Research Fellowship, and gifts from Intuit Inc. The views and conclusions contained herein are those of the authors and should not be interpreted as representing the official policies, either expressed or implied, of the U.S. government. The U.S. Government is authorized to reproduce and distribute reprints for Government purposes notwithstanding any copyright notice herein.
+
+References
+[1] Sandhini Agarwal et al.
+
+gpt-oss-120b & gpt-oss-20b model card.
+
+arXiv preprint
+
+[2] Qingyao Ai, Yichen Tang, Changyue Wang, Jianming Long, Weihang Su, and Yiqun Liu.
+Memorybench: A benchmark for memory and continual learning in LLM systems. CoRR, abs/2510.17281, 2025.
+[3] Parth Asawa, Chris Glaze, Gabe Orlanski, Ramya Ramakrishnan, Benji Xu, Asim Biswal,
+Vincent Sunn Chen, Frederic Sala, Matei Zaharia, and Joseph E. Gonzalez. Continual learning bench. https://continual-learning-bench.com/docs/, 2026. Documentation, accessed 2026-05-04.
+[4] Zijian Chen, Xueguang Ma, Shengyao Zhuang, Ping Nie, Kai Zou, Andrew Liu, Joshua Green,
+Kshama Patel, Ruoxi Meng, Mingyi Su, Sahel Sharifymoghaddam, Yanxi Li, Haoran Hong, Xinyu Shi, Xuye Liu, Nandan Thakur, Crystina Zhang, Luyu Gao, Wenhu Chen, and Jimmy Lin. Browsecomp-plus: A more fair and transparent evaluation benchmark of deep-research agent. CoRR, abs/2508.06600, 2025.
+[5] Prateek Chhikara, Dev Khant, Saket Aryan, Taranjeet Singh, and Deshraj Yadav. Mem0:
+Building production-ready AI agents with scalable long-term memory. In Inês Lynce, Nello Murano, Mauro Vallati, Serena Villata, Federico Chesani, Michela Milano, Andrea Omicini, and Mehdi Dastani, editors, ECAI 2025 - 28th European Conference on Artificial Intelligence, 25-30 October 2025, Bologna, Italy - Including 14th Conference on Prestigious Applications of Intelligent Systems (PAIS 2025), Frontiers in Artificial Intelligence and Applications, pages 2993–3000. IOS Press, 2025.
+[6] Huan-ang Gao, Jiayi Geng, Wenyue Hua, Mengkang Hu, Xinzhe Juan, Hongzhang Liu, Shilong
+Liu, Jiahao Qiu, Xuan Qi, Qihan Ren, Yiran Wu, Hongru Wang, Han Xiao, Yuhang Zhou, Shaokun Zhang, Jiayi Zhang, Jinyu Xiang, Yixiong Fang, Qiwen Zhao, Dongrui Liu, Cheng Qian, Zhenhailong Wang, Minda Hu, Huazheng Wang, Qingyun Wu, Heng Ji, and Mengdi Wang. A survey of self-evolving agents: What, when, how, and where to evolve on the path to artificial super intelligence. Trans. Mach. Learn. Res., 2026, 2026.
+[7] Yuanzhe Hu, Yu Wang, and Julian J. McAuley. Evaluating memory in LLM agents via
+incremental multi-turn interactions. CoRR, abs/2507.05257, 2025.
+
+[8] Thomas Joshi, Shayan Chowdhury, and Fatih Uysal. Swe-bench-cl: Continual learning for
+coding agents. CoRR, abs/2507.00014, 2025.
+[9] LangChain AI. Langmem, 2026. GitHub repository.
+[10] Chang Ma, Junlei Zhang, Zhihao Zhu, Cheng Yang, Yujiu Yang, Yaohui Jin, Zhenzhong Lan,
+Lingpeng Kong, and Junxian He. Agentboard: An analytical evaluation board of multi-turn LLM agents. In Amir Globersons, Lester Mackey, Danielle Belgrave, Angela Fan, Ulrich Paquet, Jakub M. Tomczak, and Cheng Zhang, editors, Advances in Neural Information Processing Systems 38: Annual Conference on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, December 10 - 15, 2024, 2024.
+[11] Adyasha Maharana, Dong-Ho Lee, Sergey Tulyakov, Mohit Bansal, Francesco Barbieri, and
+Yuwei Fang. Evaluating very long-term conversational memory of LLM agents. In Lun-Wei Ku, Andre Martins, and Vivek Srikumar, editors, Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), ACL 2024, Bangkok, Thailand, August 11-16, 2024, pages 13851–13870. Association for Computational Linguistics, 2024.
+[12] OpenAI. Introducing gpt-5.2. https://openai.com/index/introducing-gpt-5-2/, December 2025.
+[13] Qwen Team. Qwen3.5-35b-a3b. Hugging Face model card, March 2026.
+[14] Yu Su, Diyi Yang, Shunyu Yao, and Tao Yu. Language agents: Foundations, prospects, and
+risks. In Junyi Jessy Li and Fei Liu, editors, Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing: EMNLP 2024 - Tutorial Abstracts, Miami, Florida, USA, November 12-16, 2024, pages 17–24. Association for Computational Linguistics, 2024.
+[15] Mirac Suzgun, Mert Yüksekgönül, Federico Bianchi, Dan Jurafsky, and James Zou. Dynamic
+cheatsheet: Test-time learning with adaptive memory. In Vera Demberg, Kentaro Inui, and Lluís Marquez, editors, Proceedings of the 19th Conference of the European Chapter of the Association for Computational Linguistics, EACL 2026 - Volume 1: Long Papers, Rabat, Morocco, March 24-29, 2026, pages 7080–7106. Association for Computational Linguistics, 2026.
+[16] Liyuan Wang, Xingxing Zhang, Hang Su, and Jun Zhu. A comprehensive survey of continual
+learning: Theory, method and application. IEEE Trans. Pattern Anal. Mach. Intell., 46(8):5362– 5383, 2024.
+[17] Yubo Wang, Xueguang Ma, Ge Zhang, Yuansheng Ni, Abhranil Chandra, Shiguang Guo,
+Weiming Ren, Aaran Arulraj, Xuan He, Ziyan Jiang, Tianle Li, Max Ku, Kai Wang, Alex Zhuang, Rongqi Fan, Xiang Yue, and Wenhu Chen. Mmlu-pro: A more robust and challenging multi-task language understanding benchmark. In Amir Globersons, Lester Mackey, Danielle Belgrave, Angela Fan, Ulrich Paquet, Jakub M. Tomczak, and Cheng Zhang, editors, Advances in Neural Information Processing Systems 38: Annual Conference on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, December 10 - 15, 2024, 2024.
+[18] Zora Zhiruo Wang, Jiayuan Mao, Daniel Fried, and Graham Neubig. Agent workflow memory.
+In Aarti Singh, Maryam Fazel, Daniel Hsu, Simon Lacoste-Julien, Felix Berkenkamp, Tegan Maharaj, Kiri Wagstaff, and Jerry Zhu, editors, Forty-second International Conference on Machine Learning, ICML 2025, Vancouver, BC, Canada, July 13-19, 2025, Proceedings of Machine Learning Research. PMLR / OpenReview.net, 2025.
+[19] Jason Wei, Zhiqing Sun, Spencer Papay, Scott McKinney, Jeffrey Han, Isa Fulford, Hyung Won
+Chung, Alex Tachard Passos, William Fedus, and Amelia Glaese. Browsecomp: A simple yet challenging benchmark for browsing agents. CoRR, abs/2504.12516, 2025.
+[20] Tianxin Wei, Noveen Sachdeva, Benjamin Coleman, Zhankui He, Yuanchen Bei, Xuying Ning,
+Mengting Ai, Yunzhe Li, Jingrui He, Ed H. Chi, Chi Wang, Shuo Chen, Fernando Pereira, Wang-Cheng Kang, and Derek Zhiyuan Cheng. Evo-memory: Benchmarking LLM agent test-time learning with self-evolving memory. CoRR, abs/2511.20857, 2025.
+
+[21] Cheng-Kuang Wu, Zhi Rui Tam, Chieh-Yen Lin, Yun-Nung Chen, and Hung-yi Lee. Streambench: Towards benchmarking continuous improvement of language agents. In Amir Globersons, Lester Mackey, Danielle Belgrave, Angela Fan, Ulrich Paquet, Jakub M. Tomczak, and Cheng Zhang, editors, Advances in Neural Information Processing Systems 38: Annual Conference on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, December 10 - 15, 2024, 2024. [22] Di Wu, Hongwei Wang, Wenhao Yu, Yuwei Zhang, Kai-Wei Chang, and Dong Yu. Longmemeval: Benchmarking chat assistants on long-term interactive memory. In The Thirteenth International Conference on Learning Representations, ICLR 2025, Singapore, April 24-28,
+2025. OpenReview.net, 2025.
+[23] Zheng Wu, Xingyu Lou, Xinbei Ma, Yansi Li, Weiwen Liu, Weinan Zhang, Jun Wang, and
+Zhuosheng Zhang. Agent-dice: Disentangling knowledge updates via geometric consensus for agent continual learning. CoRR, abs/2601.03641, 2026.
+[24] Wujiang Xu, Zujie Liang, Kai Mei, Hang Gao, Juntao Tan, and Yongfeng Zhang. A-MEM:
+agentic memory for LLM agents. CoRR, abs/2502.12110, 2025.
+[25] Tianci Xue, Zeyi Liao, Tianneng Shi, Zilu Wang, Kai Zhang, Dawn Song, Yu Su, and Huan
+Sun. Autonomous continual learning of computer-use agents for environment adaptation, 2026.
+[26] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R. Narasimhan, and
+Yuan Cao. React: Synergizing reasoning and acting in language models. In The Eleventh International Conference on Learning Representations, ICLR 2023, Kigali, Rwanda, May 1-5,
+2023. OpenReview.net, 2023.
+[27] Zhenquan Yao, Zitong Huang, Yihan Zeng, Jianhua Han, Hang Xu, Chun-Mei Feng, Jianwei
+Ma, and Wangmeng Zuo. CGL: advancing continual GUI learning via reinforcement fine-tuning. CoRR, abs/2603.02951, 2026.
+[28] Zhaojian Yu, Yilun Zhao, Arman Cohan, and Xiaoping Zhang. Humaneval pro and MBPP pro:
+Evaluating large language models on self-invoking code generation task. In Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and Mohammad Taher Pilehvar, editors, Findings of the Association for Computational Linguistics, ACL 2025, Vienna, Austria, July 27 - August 1, 2025, Findings of ACL, pages 13253–13279. Association for Computational Linguistics, 2025.
+[29] Yanzhao Zhang, Mingxin Li, Dingkun Long, Xin Zhang, Huan Lin, Baosong Yang, Pengjun
+Xie, An Yang, Dayiheng Liu, Junyang Lin, Fei Huang, and Jingren Zhou. Qwen3 embedding: Advancing text embedding and reranking through foundation models. arXiv preprint
+[30] Junhao Zheng, Xidi Cai, Qiuke Li, Duzhen Zhang, Zhong-Zhi Li, Yingying Zhang, Le Song,
+and Qianli Ma. Lifelongagentbench: Evaluating LLM agents as lifelong learners. CoRR, abs/2505.11942, 2025.
+
+Appendix Contents
+A Limitations
+
+B Experimental Setting and Details
+
+B.1 Examples of Compositionality . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+B.2 Evaluated Memory Designs . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+B.3 Reproduction Instructions . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+B.4 Compute Resources . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+B.5 Prompts . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+B.6 Details of MemProbe . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+B.7 Statistical Significance . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+B.8 Detailed Performance . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+B.9 Details in Benchmark Construction . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+B.10 Case Study . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+C Potential Societal Impacts
+
+D License of Existing Assets
+
+E New Assets
+
+E.1 Synthesis of BrowseComp+ Subtasks . . . . . . . . . . . . . . . . . . . . . . . .
+
+E.2 The Statistics of Compositional Streams . . . . . . . . . . . . . . . . . . . . . . .
+
+F Declaration of LLM Usage
+
+A Limitations
+
+This paper focuses primarily on continual learning for language agents through non-parametric memory. This scope is appropriate for isolating how reusable experience can be accumulated and applied across task streams without changing model parameters. However, the current study does not systematically evaluate parametric memory or training-based adaptation methods, which may offer complementary advantages in continual learning. Incorporating such approaches into the evaluation framework would be a valuable direction for future work.
+
+B Experimental Setting and Details
+
+B.1
+
+Examples of Compositionality
+
+Figure 5 illustrates an example task pair from CodeEval-Pro, where the complex task preserves the core solution logic of the subtask while requiring composition over multiple generated strings.
+Figure 6 further shows an example from BrowseComp+, where our synthesized subtasks are not simple decompositions that directly reveal the original answer, but instead share intrinsically related solution logic with the original task. Together, these examples demonstrate how our construction exposes reusable problem-solving patterns across related tasks while avoiding direct answer leakage.
+B.2
+
+Evaluated Memory Designs
+
+Our evaluation is designed to cover the main non-parametric memory design choices that can support continual learning in language agents. We organize representative methods by what they store, how they update memory, and how the memory is reused during later task solving.
+Memoryless reference. We take ReAct [26] as a memoryless reference method. The tools available
+to the agent vary depending on the specific environment. Generally, we employ LLMs equipped with built-in reasoning capabilities, which means these models think before invoking a tool or responding to the user. During each round of interaction with the environment, the preceding reasoning process is preserved. However, this reasoning process cannot be carried over to a subsequent, new task.
+Self-invoking reference. We adopt the self-invoking method as a reference for CodeEval-Pro [28],
+as it provides an intuitive solution to self-invoking tasks that we take as a source for our task stream. Note that self-invoking uses inputs distinct from our default experimental setting. It is not treated as a method for direct comparison, but serves as a reference. Each complex task is accompanied by corresponding subtasks as input without any other memory contexts, thereby assessing the LLM’s capacity for self-invoking the sub-solution rather than its ability for continual learning. A variation of the self-invoking method is to provide a solution to the subtask alongside its description. Although the input configurations differ, the two self-invoking variants constitute a meaningful comparison because memory methods do not uniformly fall above or below these references. Adaptive semantic and episodic memory. LangMem [9] and Mem0 [5] represent adaptive longterm memory systems that decide what information should be extracted, consolidated, and retrieved. This family mainly treats memory as persistent natural-language or structured records that can be searched and injected into future contexts. LangMem provides general primitives for extracting semantic, episodic, and procedural memories from interactions, updating them with an LLM-based memory manager, and retrieving them through an external store. Mem0 similarly builds a scalable memory layer that dynamically extracts salient information from ongoing interactions, compares new candidates with existing memories, and performs memory operations such as adding, updating, deleting, or ignoring entries. These methods cover the design where memory is primarily an adaptive store of facts, events, or prior episodes, and the central question is whether a memory manager can preserve useful information while avoiding redundancy and conflict.
+Procedural memory. AWM [18] and DC-RS [15] represent methods that focus on procedural
+knowledge. AWM induces reusable workflows from successful agent trajectories. A workflow abstracts away instance-specific details and stores a reusable routine that can guide future action generation, making it suitable for long-horizon interactive tasks where similar sub-procedures recur
+
+Figure 5: Example of a CodeEval-Pro task pair. The subtask computes character frequencies for one generated string, while the complex task extends the same logic to aggregate frequencies across multiple random strings of varying lengths.
+
+across tasks. DC-RS maintains an evolving cheatsheet of strategies, heuristics, and code snippets. It retrieves similar past input–output pairs and synthesizes them with the current memory to update the cheatsheet before solving the next task. This family covers the design where memory is not merely episodic records, but a compact representation of how to solve recurring classes of problems.
+Self-evolving memory. ExpRAG, ReMem [20], and MemProbe represent self-evolving memory
+methods that explicitly operate over a task stream. ExpRAG is a simple experience-retrieval method: it stores previous task experiences, retrieves similar ones for the current task, and uses them as in-context demonstrations. This isolates the effect of experience-level retrieval without adding more complex memory reasoning. ReMem goes further by integrating memory refinement into the agent loop, allowing the agent to reason, act, and refine memory as interacting components rather than treating memory as a passive retrieved context. Our MemProbe follows the same broad direction but is designed as a probing method for this benchmark. It separates interaction, insight, and skill memories and applies quality-aware consolidation before writing experiences into memory. Together, these methods cover the design where memory is expected to evolve during deployment and where
+
+Figure 6: Example of a BrowseComp+ task and our synthesized subtasks. The subtasks derived from the original task are distinctly different. The answers are provided solely to aid the reader’s understanding. During the solving process, the agent has access only to the task statement and the corpus. The synthesis of these subtasks ensures that even if the agent reads all the subtask statements, it cannot directly derive the answer to the original task. However, their solution logics are intrinsically related.
+
+the key challenge is not only retrieval, but also deciding which experiences should be abstracted, preserved, or ignored over time.
+B.3
+
+Reproduction Instructions
+
+We deployed the LLM and embedding model using vLLM v0.16.1.2 For the Qwen 3.5 model, we used thinking mode and adopted the sampling parameters recommended in the official documentation for
+precise coding tasks: temperature = 0.6, top_p = 0.95, top_k = 20, min_p = 0.0, presence_penalty
+= 0.0, repetition_penalty= 1.0.3 For the OpenAI gpt-oss model, we set reasoning effort to high and
+other default hyperparameters in the OpenAI client. All deployed LLMs and embedding models are official, non-quantized versions. For hyperparameters, we set the maximum number of tool calls for BrowseComp+ to 100, and the maximum number of action steps for AgentBoard environments to 50. For memory methods, we used a shared top-k retrieval setting with k = 2.
+
+2 https://github.com/vllm-project/vllm 3 https://huggingface.co/Qwen/Qwen3.5-35B-A3B
+
+Table 5: Average execution statistics on complex tasks under naive and compositional streams. Search calls refer to the number of times the document corpus is retrieved, rather than the number of memory retrievals. Search calls are included in tool calls.
+Benchmark
+
+Stream
+
+Time (s)
+
+Tool Calls
+
+Search Calls
+
+LLM Calls
+
+BigCodeBench-Lite-Pro
+
+Naive
+Compositional
+
+26.2 24.4
+
+1.9 1.7
+
+– –
+
+2.9 2.7
+
+BrowseComp+
+
+Naive
+Compositional
+
+109.7 46.2
+
+49.9 30.7
+
+31.4 16.2
+
+52.8 32.8
+
+Table 6: Token usage statistics on the BigCodeBench-Lite-Pro and BrowseComp+ compositional streams (96 tasks and 408 tasks, respectively; subtasks included). Both datasets are evaluated over two passes. All values are reported in millions of tokens. The tokenizers are derived from the corresponding LLMs.
+Method
+LangMem [9]
+Mem0 [5]
+AWM [18]
+DC-RS [15]
+ExpRAG [20]
+ReMem [20]
+MemProbe
+
+B.4
+
+BigCodeBench-Lite-Pro
+
+BrowseComp+
+
+Total
+
+Input
+
+Output
+
+Total
+
+Input
+
+Output
+
+1.8 2.5 3.9 6.2 1.9 1.6 2.5
+
+1.4 2.1 3.4 5.7 1.6 1.2 2.1
+
+0.4 0.4 0.5 0.5 0.3 0.3 0.4
+
+542.5 543.6 375.9 412.7 256.7 357.6 220.9
+
+539.1 540.2 373.3 409.8 254.5 355.0 218.9
+
+3.4 3.4 2.7 2.9 2.2 2.7 2.0
+
+Compute Resources
+
+We use one NVIDIA A100 to deploy Qwen3-Embedding-8B, and at least two NVIDIA A100s to deploy Qwen3.5-35B-A3B or openai/gpt-oss-120b. The required time depends on the number of deployed GPUs, the size of the dataset, and the number of inference steps. We report the time costs of MemProbe in Table 5. In terms of runtime and the number of tool calls, reusing experience reduces the cost of solving complex tasks. We also report the token usage of evaluated methods on compositional streams in Table 6.
+B.5
+
+Prompts
+
+Figure 7 and Figure 8 illustrate the prompting and rendering design used in MemProbe under the coding setting. After each task, the memory update prompt in Figure 7 takes the task, the candidate solution, and the agent’s generated code as input, and asks an LLM to extract the episode into structured insight and skill memories, while the trajectory, i.e., generated code in this task, is retained as interaction memory. At inference time, as shown in Figure 8, retrieved memories from prior tasks are organized into a unified memory context that includes the task description, interaction record, extracted insights, and reusable skills, which are then provided to the agent to support solving the current task.
+B.6
+
+Details of MemProbe
+
+To instantiate AGENTCL, we introduce a non-parametric memory probing method MemProbe for analyzing how agents accumulate and consolidate experience across a task stream. It aims for a balance between plasticity and stability. For plasticity, memory should capture complementary forms of experience, such as raw trajectories, concise summaries, and reusable skills, rather than biasing the agent toward a single representation that may only work in specific domains. For stability, stored experience should improve future decisions more often than it harms them, since past solutions can also bias the agent toward incorrect reasoning paths. Thus, we introduce MemProbe based on a retrieve–solve–consolidate loop.
+
+Figure 7: Memory update prompt in the coding setting. The interactive trajectory is stored as interaction memory, while an LLM extracts the current task episode to insight and skill memories.
+Memory Structure. Rather than storing only raw trajectories or only compact summaries, MemProbe organizes experience into three complementary memory types. 1) Interaction memory: This memory records the concrete solving episode, including the agent’s interaction trajectory and the final response. It is useful when future tasks benefit from recalling how a similar problem was operationally solved. 2) Insight memory: This memory stores extracted information from the episode, including a concise summary of the task-solving pattern, complexity-related observations, potential failure modes, and reusable takeaways. Compared with interaction memory, it is more abstract and compact, making it suitable for transferring task-relevant lessons without replaying the detailed trajectory. 3) Skill memory: This memory stores reusable procedures or workflow-level knowledge in a more explicit form, optionally accompanied by short code snippets. Skill memory is intended to capture higher-level strategies that may generalize across multiple tasks, rather than being tied to one specific instance. This decomposition reflects our view that reusable experience in continual learning is heterogeneous. Comprehensive representation allows the method to represent cross-task experience more flexibly than a single-memory format. Memory Retrieval and Reuse. Given a new task τt , MemProbe first retrieves a small set of relevant past experiences from memory using embedding-based similarity search over previously stored task descriptions. Let Mt−1 denote the current memory state and let R denote retrieval. The retrieved context is ct = R(Mt−1 , τt ), where retrieval returns the top-k most similar prior tasks above a similarity threshold, together with the interaction, insight, and skill entries associated with those tasks. In our implementation, retrieval operates at the task level: the current task is matched against previously stored task descriptions via semantic similarity, and the associated interaction, insight, and skill entries are then rendered into the memory context. The agent then solves τt conditioned on the retrieved context. Importantly, retrieved memory is treated as reference context rather than authoritative guidance, so the model is encouraged
+
+Figure 8: Retrieved memory context in the coding setting. For each retrieved task, the solver is provided with the task description, interaction memory, extracted insights, and reusable skills.
+to ground its response in the current task instead of reproducing superficially similar past solutions or trajectories. A small retrieval budget bounds reuse by exposing only top-k semantically related entries, so that interference from weakly related tasks is reduced. Quality-Aware Memory Consolidation. After completing task τt , the method consolidates the current episode into a new memory record: Mt = U(Mt−1 , τt , ξt ). During consolidation, the episode is converted to the three memory types described above. The updated memory is immediately available to subsequent tasks, enabling online accumulation of experience over the task stream. A central challenge in continual memory is that solved episodes vary in future utility. Poor solutions, malformed outputs, or misleading trajectories may be retrieved later and degrade decision-making. To mitigate this risk, MemProbe incorporates quality-aware controls during consolidation. First, consolidation is gated by basic solution validity. In the coding setting, the system skips consolidation if the extracted solution is not syntactically valid, preventing obviously unusable outputs from entering long-term memory. Second, the consolidation model is prompted to judge whether the candidate solution is correct, incorrect, or uncertain for the current task. This signal is stored in the insight memory and used conservatively during future reuse. In particular, memories judged clearly incorrect are not allowed to contribute full interaction-level traces as reusable context. This preserves compact evidence that a past attempt failed, while reducing the risk of replaying erroneous reasoning in later tasks. Overall, MemProbe provides a conservative continual learning mechanism that steadily accumulates structured experience from multi-turn agent episodes, while carefully restricting how experience is consolidated and reused so that memory is more likely to aid transfer than amplify noise.
+
+Algorithm 1 MemProbe: Online Memory Update and Reuse Require: Task stream T = (τ1 , τ2 , . . . , τT ); retrieval function R; agent policy π; validation function V; extraction function D; memory update function U; retrieval budget k
+Ensure: Final memory MT and task outputs {at }Tt=1
+1: Initialize memory M0 ← ∅ 2: for t = 1, . . . , T do
+3: Retrieve relevant prior experience: ct ← R(Mt−1 , τt , k) 4:
+
+Solve the current task: (at , ξt ) ← π(τt , ct )
+
+5:
+
+Validate the episode, where the quality assessment qt ∈ {correct, unknown, incorrect}:
+qt ← V(τt , at , ξt )
+
+6:
+
+Extract structured memories for interaction, insights, and skills: ins skill (mint t , mt , mt ) ← D(τt , at , ξt , qt )
+
+7:
+
+Update persistent memory: ins skill Mt ← U(Mt−1 , mint t , mt , mt )
+
+8: end for
+9: return MT and {at }T
+t=1
+
+Table 7: Performance on CodeEval-Pro (BigCodeBench-Lite-Pro and HumanEval-Pro) with 95% bootstrap CIs. Each value is the average accuracy over three runs, with CIs shown as superscript and subscript.
+Pass
+
+1st +8.3 −7.6 +8.3 −8.3
+
+Compositional
+2nd
+Held-out
++8.3 −7.6 +8.3 −8.3
+
+Self-invoking [28]
+w/ subtask solution
+
+60.4 59.0
+
+60.4 59.0
+
+ReAct [26]
+LangMem [9]
+Mem0 [5]
+AWM [18]
+DC-RS [15]
+ExpRAG [20]
+ReMem [20]
+MemProbe
+
+44.8+8.3 −7.6 44.4+8.3 −8.3 43.8+8.3 −8.3 39.6+7.6 −7.6 48.6+7.6 −8.3 62.5+7.6 −7.6 58.3+7.7 −8.3 66.7+7.6 −7.6
+
+44.8+8.3 −7.6 45.8+8.3 −8.3 44.4+8.3 −8.3 38.2+8.3 −7.6 50.7+8.3 −8.3 62.5+7.6 −7.6 56.3+8.3 −7.6 64.6+7.6 −8.3
+
+1st
+
+Naive
+2nd
+
+Held-out
+
+– –
+
+– –
+
+– –
+
+79.2+4.2 −4.2 73.3+4.5 −4.7
+
+72.5+4.7 −4.7 70.8+4.7 −4.7 +4.7 70.8−4.7 70.0+4.7 −4.7 60.8+5.0 −5.0 68.3+4.7 −4.7 67.5+5.0 −5.0 71.7+4.7 −4.7
+
+44.8+8.3 −7.6 39.6+8.3 −7.6 +8.3 43.8−7.7 44.5+8.3 −8.3 35.4+7.6 −7.6 39.6+7.6 −7.6 41.7+8.3 −7.7 43.1+7.6 −7.6
+
+44.8+8.3 −7.6 42.4+8.3 −7.6 +8.3 42.4−7.6 41.0+8.3 −7.6 39.6+7.6 −7.6 39.6+7.8 −7.8 43.8+7.7 −8.3 44.5+8.3 −7.6
+
+72.5+4.7 −4.7 66.7+4.7 −5.0 +4.7 69.2−4.7 70.0+4.7 −4.7 65.8+5.0 −5.0 69.2+4.7 −4.7 70.0+4.7 −4.7 70.8+4.7 −4.7
+
+Algorithm. Algorithm 1 summarizes the online memory update and reuse process of MemProbe over a task stream T = (τ1 , τ2 , . . . , τT ), where τt denotes the t-th task, Mt denotes the memory state after finishing τt , and ξt denotes the interaction trajectory collected while solving τt .
+B.7
+
+Statistical Significance
+
+We present mean values with 95% bootstrap confidence intervals (CIs) for the main results in Tables 7 and 8. To further quantify whether different stream designs yield clearer separation among methods, we additionally perform pairwise comparisons on CodeEval-Pro. For each stream setting, we compute the pairwise accuracy difference between evaluated methods under bootstrap resampling and report
+
+Table 8: Performance on BrowseComp+ (308 subtasks and 100 tasks). Sub denotes subtasks, and Q denotes complex tasks.
+Method
+
+1st-Sub
+
+Compositional
+2nd-Sub 1st-Q
+
+2nd-Q
+
+1st-Q
+
+Naive
+2nd-Q
+
+ReAct [26]
+LangMem [9]
+Mem0 [5]
+AWM [18]
+DC-RS [15]
+ExpRAG [20]
+ReMem [20]
+MemProbe
+
+97.4+1.6 −1.9 97.7+1.6 −1.6 97.7+1.6 −1.9 +1.9 96.8−2.3 96.4+1.9 −2.3 97.4+1.6 −1.9 97.1+1.6 −1.9 96.8+1.9 −1.9
+
+97.4+1.6 −1.9 98.4+1.3 −1.6 96.8+1.9 −1.9 +1.6 97.4−1.9 97.7+1.6 −1.6 98.4+1.3 −1.6 96.8+1.9 −2.3 97.4+1.6 −1.9
+
+50.0+10.0 −10.0 44.0+10.0 −9.0 47.0+10.0 −10.0 76.0+8.0 −9.0 67.0+9.0 −10.0 84.0+7.0 −7.0 66.0+9.0 −9.0 89.0+6.0 −6.0
+
+50.0+10.0 −10.0 47.0+10.0 −10.0 53.0+10.0 −10.0 54.0+10.0 −10.0 55.0+10.0 −10.0 +10.0 51.0−10.0 51.0+10.0 −10.0 51.0+10.0 −10.0
+
+50.0+10.0 −10.0 49.0+10.0 −10.0 42.0+10.0 −9.0 53.0+10.0 −10.0 57.0+10.0 −10.0 56.0+10.0 −10.0 55.0+10.0 −10.0 62.0+9.0 −10.0
+
+50.0+10.0 −10.0 49.0+10.0 −10.0 49.0+10.0 −10.0 69.0+9.0 −9.0 64.0+9.0 −9.0 82.0+7.0 −8.0 76.0+8.0 −9.0 90.0+5.0 −6.0
+
+Table 9: Statistical significance of pairwise method comparisons on CodeEval-Pro. The first row denotes the proportion of pairwise comparisons whose 95% CI excludes zero. Higher values indicate that the stream yields clearer pairwise separation among evaluated methods.
+Compositional
+
+Naive
+
+Statistics
+
+1st Pass
+
+2nd Pass
+
+Held-out
+
+1st Pass
+
+2nd Pass
+
+Held-out
+
+Pairwise CI excludes zero (%) Mean absolute delta (pp)
+
+34.1 11.2
+
+31.9 10.3
+
+28.6 4.0
+
+7.1 4.8
+
+6.0 3.7
+
+17.8 4.2
+
+two descriptive statistics: the proportion of pairwise comparisons whose 95% CI excludes zero, and the mean absolute pairwise delta in percentage points. As shown in Table 9, compositional streams yield substantially stronger pairwise separation than naive streams. The same trend appears in the mean absolute delta. The held-out setting remains comparatively weakly separated, consistent with its role as a robustness check rather than a setting with explicit transfer opportunities. These results provide complementary evidence that controlled compositional streams make differences among memory methods more statistically visible than naive streams. For CodeEval-Pro, CIs are computed using bootstrapping across all three-run results. For BrowseComp+, CIs are computed from task-level bootstrap results across 100 tasks.
+B.8
+
+Detailed Performance
+
+We report the detailed results on CodeEval-Pro in Table 10, the accuracy on BrowseComp+ complex tasks in Table 11, and the accuracy on BrowseComp+ subtasks in Table 12. AgentBoard ScienceWorld contains task families in which tasks share the same overall goal but differ in environment configurations. In addition to the original naive stream, we additionally evaluate a block stream that groups tasks from the same family together. This setting tests repeated exposure to near-duplicate goals rather than compositional reuse. As shown in Table 13, the block stream produces limited method separation, similar to the naive stream. This contrasts with the larger dispersion observed in compositional coding and deep-research streams. Since most evaluated memory methods distill memories from one or multiple tasks, and the resulting memory states may be updated over time, directly evaluating the retrieval step is less straightforward. Therefore, we primarily report the retrieval performance of MemProbe on the compositional streams of our two main datasets, as shown in Table 14. We measure Hits@k, defined as the proportion of the top-2 retrieved memory entries that correspond to relevant and reusable experience. The results show that retrieving the memory of the corresponding previous task is not a major bottleneck, suggesting that the more critical challenge lies in how memories are represented and utilized. We also observe that Complex → Sub of the second pass is lower than that of the first pass on both datasets. This is expected because Complex → Self memories in the second pass provide more directly relevant experience and thus compete with subtask memories during retrieval. Importantly, a high hit rate of Complex → Self does not constitute answer leakage: memories must be constructed by the agent itself in our setting, and the previous attempt is only available as memory context, serving as a reference rather than a guaranteed correct solution.
+
+Table 10: Accuracy (%) on CodeEval-Pro complex tasks (BigCodeBench-Lite-Pro and HumanEvalPro). BigCodeBench-Lite-Pro is used for naive and compositional task streams. HumanEval-Pro is used for held-out evaluation after the compositional or naive task stream. In the self-invoking setting, each complex task is provided with its corresponding subtask as reference context, so no retrieval is required. PG denotes the difference from the memoryless agent on the corresponding stream, and SG denotes the difference between the 2nd pass and the 1st pass. Each value is the average over three runs. Bold and underline mark the highest and second-highest values for each metric, respectively.
+Std. Dev. denotes the population standard deviation across available non-self-invoking methods for each column.
+Method
+
+1st (PG)
+
+Compositional Stream
+2nd (SG)
+Held-out
+
+Self-invoking [28]
+60.4 w/ subtask solution 59.0
+
+1st (PG)
+
+Naive Stream
+2nd (SG)
+Held-out
+
+60.4 59.0
+
+– –
+
+– –
+
+– –
+
+79.2 73.3
+
+ReAct [26]
+LangMem [9]
+Mem0 [5]
+AWM [18]
+DC-RS [15]
+ExpRAG [20]
+ReMem [20]
+MemProbe
+
+44.8 44.4 (−0.4) 43.8 (−1.0) 39.6 (−5.2) 48.6 (+3.8) 62.5 (+17.7) 58.3 (+13.5) 66.7 (+21.9)
+
+44.8 45.8 (+1.4) 44.4 (+0.6) 38.2 (−1.4) 50.7 (+2.1) 62.5 (+0.0) 56.3 (−2.0) 64.6 (−2.1)
+
+72.5 70.8 (−1.7) 70.8 (−1.7) 70.0 (−2.5) 60.8 (−11.7) 68.3 (−4.2) 67.5 (−5.0) 71.7 (−0.8)
+
+44.8 39.6 (−5.2) 43.8 (−1.0) 44.5 (−0.3) 35.4 (−9.4) 39.6 (−5.2) 41.7 (−3.1) 43.1 (−1.7)
+
+44.8 42.4 (+2.8) 42.4 (−1.4) 41.0 (−3.5) 39.6 (+4.2) 39.6 (+0.0) 43.8 (+2.1) 44.5 (+1.4)
+
+72.5 66.7 (−5.8) 69.2 (−3.3) 70.0 (−2.5) 65.8 (−6.7) 69.2 (−3.3) 70.0 (−2.5) 70.8 (−1.7)
+
+Std. Dev.
+
+9.4
+
+8.8
+
+3.5
+
+3.0
+
+1.9
+
+2.0
+
+Table 11: Accuracy (%) of 100 tasks sampled from the original BrowseComp+ dataset, evaluated with two passes.
+Method
+
+Compositional Stream
+1st-Q (PG)
+2nd-Q (SG)
+
+Naive Stream
+1st-Q (PG) 2nd-Q (SG)
+
+ReAct [26]
+50.0 50.0 50.0 50.0 44.0 (−5.0) 47.0 (−3.0) 49.0 (+2.0)
+LangMem [9] 49.0 (−1.0)
+Mem0 [5]
+49.0 (−1.0) 47.0 (−2.0) 53.0 (+3.0) 42.0 (−11.0)
+AWM [18]
+69.0 (+19.0) 76.0 (+7.0) 54.0 (+4.0) 53.0 (−1.0)
+DC-RS [15]
+64.0 (+14.0) 67.0 (+3.0) 55.0 (+5.0) 57.0 (+2.0) 56.0 (+5.0)
+ExpRAG [20] 82.0 (+32.0) 84.0 (+2.0) 51.0 (+1.0)
+ReMem [20]
+76.0 (+26.0) 66.0 (−10.0) 51.0 (+1.0) 55.0 (+4.0) MemProbe 90.0 (+40.0) 89.0 (−1.0) 51.0 (+1.0) 62.0 (+11.0) Std. Dev.
+
+14.9
+
+16.0
+
+2.3
+
+5.7
+
+Table 12: Accuracy (%) of 308 subtasks synthesized on BrowseComp+, evaluated with two passes.
+Method
+
+Compositional
+1st-Sub (PG) 2nd-Sub (SG)
+
+ReAct [26]
+LangMem [9]
+Mem0 [5]
+AWM [18]
+DC-RS [15]
+ExpRAG [20]
+ReMem [20]
+MemProbe
+
+97.4 97.7 (+0.3) 97.7 (+0.3) 96.8 (−0.6) 96.4 (−1.0) 97.4 (+0.0) 97.1 (−0.3) 96.8 (−0.6)
+
+97.4 98.4 (+0.7) 96.8 (−0.9) 97.4 (+0.6) 97.7 (+1.3) 98.4 (+1.0) 96.8 (−0.3) 97.4 (+0.6)
+
+0.4
+
+0.6
+
+Std. Dev.
+
+Table 13: Performance (%) on AgentBoard ScienceWorld. SR: success rate. PR: progress rate.
+Naive Stream
+
+Block Stream
+
+Method
+
+1-SR
+
+1-PR
+
+2-SR
+
+2-PR
+
+1-SR
+
+1-PR
+
+2-SR
+
+2-PR
+
+ReAct [26]
+ExpRAG [20]
+ReMem [20]
+MemProbe
+
+64.4 58.9 59.3 66.7
+
+87.1 86.0 83.3 88.6
+
+64.4 67.8 62.9 66.7
+
+87.1 87.3 87.1 88.1
+
+64.4 64.4 64.4 60.0
+
+87.1 87.8 85.7 85.2
+
+64.4 65.6 62.2 62.2
+
+87.1 86.9 85.0 87.2
+
+Std. Dev.
+
+3.3
+
+1.9
+
+1.9
+
+0.4
+
+1.9
+
+1.0
+
+1.5
+
+0.9
+
+Table 14: Hits@k retrieval performance on compositional streams. Complex → Sub denotes retrieving the corresponding subtask memory given a complex task query, while Complex → Self denotes retrieving the memory of the same complex task from the previous pass.
+Dataset
+BigCodeBench-Lite-Pro
+BrowseComp+
+
+B.9
+
+Pass 1 Complex → Sub
+
+Pass 2 Complex → Sub
+
+Pass 2 Complex → Self
+
+95.8 87.0
+
+91.7 77.0
+
+98.8 98.0
+
+Details in Benchmark Construction
+
+We provide details on the construction of the AgentBoard BabyAI dataset. We constructed two task streams from this dataset. It originally had 112 tasks, organized into 28 BabyAI families, with four tasks per family. Tasks in each family share the same overall goal but in different environments. For the compositional stream, we selected seven high-confidence source-to-target task-family relations. Each relation maps a simpler source family to a target family that requires an additional or composed skill, such as single-object navigation to sequential navigation, navigation to pickup, single-door opening to ordered two-door opening, or pickup to unlock-then-pickup. For each selected pair, we kept all four source tasks and all four target tasks. The 28 source tasks and 28 target tasks were shuffled independently and randomly, then concatenated as a source half followed by a target half. This yields a deterministic 56-task bipartite stream designed to test whether earlier experience with simpler task families can transfer to later, compositionally related target families. Given that a special property of AgentBoard BabyAI is that its task families exhibit clear relationships, which have already been exploited in constructing the compositional stream, we aim to exclude the influence of such relationships when constructing the naive stream. We selected ten easy-only BabyAI families covering diverse atomic skills, including navigation, target disambiguation, door opening, pickup, obstacleaware pickup, location-grounded pickup, unlocking, and unlock-then-pickup. Each selected family was required to contain exactly 4 tasks. Families were ordered according to their first appearance in the original split, and within-family order was preserved, which yields a 40-task stream.
+B.10
+
+Case Study
+
+We show two coding cases in Table 15, as discussed in §5.4.
+
+C Potential Societal Impacts
+
+Better continual learning benchmarks may help identify when deployed agents accumulate unreliable or harmful memories, and may therefore support safer evaluation of long-running assistants. The primary risk lies in malicious use. Our continual learning method could potentially be exploited to develop harmful agents with progressively stronger capabilities. We believe that mitigating this risk mainly depends on the LLM’s ability to reject harmful requests.
+
+D License of Existing Assets
+
+We list the utilized assets and their licenses. The released dataset artifacts of CodeEval-Pro are labeled MIT. The BrowseComp-Plus dataset release is labeled MIT. The MMLU-Pro dataset is labeled MIT,
+
+Table 15: Case study on coding tasks. Retrieved memory context helps when it captures the reusable subtask structure, but hurts when a topically similar task has incompatible semantics.
+Positive transfer: correct compositional relation (BigCodeBench/516; MemProbe pass, ReAct fail) Target decisive condition. The target function receives multiple pairs of numeric lists and must return three lists: Euclidean distances, DataFrames, and Axes objects. The decisive test checks that each DataFrame has
+shape (n, 2) with columns A and B, e.g., pd.DataFrame({’A’: [1,2,3], ’B’: [4,5,6]}).
+Baseline behavior. The baseline misinterprets the DataFrame format and creates a one-column DataFrame with repeated row indices A and B, yielding shape (2n, 1) instead of (n, 2). The test fails with a shape mismatch: predicted (6, 1) vs. expected (3, 2). Retrieved memory. The retrieved task is the single-pair version of the same computation: given two lists a
+and b, compute distance.euclidean(a,b), construct pd.DataFrame({’A’: a, ’B’: b}), plot the two
+series, and return (distance, df, ax). Inter-task relation. The target is a list-level composition of the retrieved task: the same single-pair operation should be applied independently to each pair, and the corresponding outputs should be collected. MemProbe behavior. The memory agent reuses the retrieved DataFrame construction, pd.DataFrame({’A’: a, ’B’: b}), inside a loop over pairs. This preserves the required (n, 2) structure and produces the expected output lists. Negative transfer: superficial task similarity (BigCodeBench/877; MemProbe fail, ReAct pass) Target decisive condition. The target function must combine numeric DataFrames, return a covariance matrix and a Seaborn pair plot, and reject invalid inputs. The decisive test specifically passes a DataFrame
+with one non-numeric column, {’A’: [’a’,’b’], ’B’: [3,4]}, and expects a TypeError.
+Baseline behavior. The baseline checks every column with is_numeric_dtype. It detects the non-numeric
+column A and raises TypeError, matching the target requirement. Retrieved memory. The retrieved task also processes a list of DataFrames, but its goal is different: fill missing numeric values, standardize numeric columns, compute correlation matrices, and draw heatmaps. Inter-task relation. The memory is topically similar but semantically mismatched. In the retrieved task, nonnumeric columns can be ignored by selecting numeric columns. In the target task, any non-numeric column makes the input invalid. MemProbe behavior. The memory agent follows the retrieved pattern and uses select_dtypes(include=[np.number]). For the mixed DataFrame, it keeps column B, drops nonnumeric column A, and continues to compute covariance and pair plots instead of raising TypeError.
+
+while its official GitHub repository is Apache-2.0. ScienceWorld is Apache-2.0. These releases are usable for our academic research.
+
+E New Assets
+
+The only newly generated tasks are the synthesized BrowseComp+ subtasks. We also release derived benchmark artifacts, including stream orders and evaluation splits constructed from existing datasets.
+E.1
+
+Synthesis of BrowseComp+ Subtasks
+
+BrowseComp+ is a challenging deep research benchmark with complex, artificially constructed multi-hop information-seeking tasks. Because independently sampled complex tasks may share little reusable structure, directly streaming them provides limited control over when prior experience should help later tasks. We therefore construct a compositional stream whose purpose is to create known transfer opportunities for evaluation. Concretely, we use the original BrowseComp+ annotations only during offline benchmark construction to identify localized, evidence-supported intermediate questions for each parent task. We use GPT-5.2 as an LLM generator. It is given the parent task together with its final answer and supporting gold/evidence documents, and is asked to propose self-contained intermediate subtasks only when it believes a faithful decomposition is possible. This privileged information is never exposed to the evaluated agents or memory methods at test time. Each generated subtask is paired with a concise reference answer and supporting document identifiers solely for dataset verification and automatic evaluation. We retain a candidate only if its answer is evidence-supported, deterministic, and logically relevant to the parent task. Although the generation prompt encourages decompositions of 2–5 steps, this cardinality is not hard-enforced. The final stream keeps only the verified subset that survives filtering.
+
+Table 16: The statistics of subtasks and tasks on BigCodeBench-Lite-Pro. Each cell contains the mean and standard deviation.
+Statistics
+Query tokens
+Solution tokens
+Solution Lines
+Function Calls in Solution
+
+Subtask
+
+Task
+
+304.8 ± 118.1 100.7 ± 46.2 11.9 ± 5.7 7.4 ± 3.3
+
+121.3 ± 34.4 87.2 ± 53.6 10.7 ± 5.2 5.9 ± 4.0
+
+Table 17: The statistics of subtasks and tasks on BrowseComp+. Each cell contains the mean and standard deviation.
+Statistics
+Query Tokens
+Number of evidence documents Tokens in evidence documents Query-token recall in evidence documents Answer-token recall in evidence documents
+
+Subtask
+
+Task
+
+29.7 ± 9.9 1.8 ± 0.8 6.3k ± 24.0k 83.3% ± 12.4% 99.9% ± 1.9%
+
+72.5 ± 12.0 5.0 ± 2.1 22.7k ± 52.0k 73.5% ± 14.8% 99.2% ± 6.0%
+
+We enforce quality control of generated subtasks in two stages. First, we apply deterministic filtering to remove malformed candidates. A candidate subtask is retained only if both the subtask and its answer are non-empty, all cited document identifiers come from the original gold/evidence pools, both gold documents and evidence documents are non-empty, and the cited gold documents are a subset of the cited evidence documents. By default, we further require the proposed answer to appear verbatim in the supporting documents, which suppresses unsupported paraphrases and hallucinated answers. Second, each surviving candidate is re-verified by the model with a separate verification prompt conditioned on the original task and the cited supporting documents. The verifier checks five properties: explicit entity specification, logical relevance to the original task, evidence support for the required reasoning step, determinism of the answer, and answer completeness. Only candidates that pass all verifications are retained as final subtasks. Tasks for which the model declines decomposition, returns an invalid response, or yields no valid candidate after filtering are skipped. Our focus is on evidence sharing within multi-hop logical chains, rather than on using subtasks to directly prompt the original task. Entities, timestamps, and other information mentioned in the original task are not required to appear in the subtasks.
+E.2
+
+The Statistics of Compositional Streams
+
+Both Table 16 and Table 17 compare the statistics of subtasks and complex tasks, revealing a shared compositional pattern in which task-level instances aggregate more information or complexity than their constituent subtasks. In BigCodeBench-Lite-Pro, subtasks are more verbose than full tasks in terms of query length, and they also involve slightly longer solutions and more function calls. This suggests that the subtasks have a smaller problem scope but include more implementation details, whereas the complex tasks are often wrappers around these smaller problems. In contrast, BrowseComp+ exhibits the opposite trend for query length, where complex tasks are longer and require more evidence documents and many more supporting tokens than subtasks, indicating that composition primarily increases retrieval breadth and evidence integration demands. Across both coding and deep-research tasks, the transition from subtasks to tasks is associated with a change in information organization rather than a simple uniform scaling of all statistics. We further examine whether the synthesized BrowseComp+ subtasks collapse into paraphrases of their parent task. The token-set Jaccard similarity between subtasks and their parent task is low, with a mean of 0.10, and no pair exceeds 0.30. Only 5.8% of individual subtasks cover the full parent evidence document set, and only 1.6% simultaneously have the same normalized answer and the same evidence set as the parent task. These diagnostics suggest that BrowseComp+ subtasks are semantically related localized evidence steps rather than full-task paraphrases or near-duplicate restatements of the complex tasks.
+
+F Declaration of LLM Usage
+
+LLMs were primarily used for evaluating memory methods (§5) and generating synthetic data (Appendix E). They were also used for language polishing and limited coding assistance. The research ideas and methodological development did not originate from LLMs.

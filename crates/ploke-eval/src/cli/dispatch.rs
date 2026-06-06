@@ -1,6 +1,7 @@
 use std::process::ExitCode;
 
-use super::{Cli, Command, run_doctor};
+use super::handlers::doctor::run_doctor;
+use super::{Cli, Command};
 
 pub async fn run(cli: Cli) -> ExitCode {
     match cli.command {
@@ -88,6 +89,13 @@ pub async fn run(cli: Cli) -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Command::Mbe(cmd) => match cmd.run() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("{err}");
+                ExitCode::FAILURE
+            }
+        },
         Command::Closure(cmd) => match cmd.run().await {
             Ok(()) => ExitCode::SUCCESS,
             Err(err) => {
@@ -104,4 +112,3 @@ pub async fn run(cli: Cli) -> ExitCode {
         },
     }
 }
-

@@ -39,6 +39,8 @@ impl Record for AgentTurnSummaryRecord {
 pub struct AgentTurnArtifactRecord {
     pub task_id: String,
     pub selected_model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_route: Option<ModelRouteRecord>,
     pub issue_prompt: String,
     pub user_message_id: String,
     pub events: Vec<ObservedTurnEventRecord>,
@@ -50,6 +52,17 @@ pub struct AgentTurnArtifactRecord {
     pub llm_prompt: Vec<RequestMessageRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub llm_response: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModelRouteRecord {
+    pub route_source: String,
+    pub router: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_slug: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint_host: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -506,6 +519,7 @@ mod tests {
 
         assert_eq!(trace.0.events.len(), 7);
         assert_eq!(trace.0.llm_prompt.len(), 2);
+        assert!(trace.0.model_route.is_none());
         let ObservedTurnEventRecord::ToolRequested(request) = &trace.0.events[2] else {
             panic!("expected tool request event");
         };
@@ -517,6 +531,12 @@ mod tests {
         let artifact = AgentTurnArtifactRecord {
             task_id: "task-1".to_string(),
             selected_model: "openai/gpt-5".to_string(),
+            model_route: Some(ModelRouteRecord {
+                route_source: "openrouter".to_string(),
+                router: "openrouter".to_string(),
+                provider_slug: Some("openai".to_string()),
+                endpoint_host: Some("openrouter.ai".to_string()),
+            }),
             issue_prompt: "Fix the bug.".to_string(),
             user_message_id: "user-1".to_string(),
             events: Vec::new(),
@@ -542,6 +562,14 @@ mod tests {
             serde_json::from_str(&encoded).expect("deserialize summary");
 
         assert_eq!(decoded.0.task_id, "task-1");
+        assert_eq!(
+            decoded
+                .0
+                .model_route
+                .as_ref()
+                .map(|route| route.router.as_str()),
+            Some("openrouter")
+        );
     }
 
     #[test]

@@ -85,7 +85,7 @@ use ploke_core::ItemKind;
 use std::collections::HashMap;
 use syn_parser::parser::graph::GraphAccess;
 use syn_parser::parser::nodes::{Attribute, ExpectedTraitNode, PrimaryNodeIdTrait};
-use syn_parser::parser::types::{GenericParamKind, VisibilityKind};
+use syn_parser::parser::types::VisibilityKind;
 
 pub const LOG_TEST_TRAIT: &str = "log_test_trait";
 
@@ -1216,7 +1216,7 @@ fn test_other_trait_nodes() {
     let super_trait_type = find_type_node(graph, super_trait_id);
     assert!(
         matches!(&super_trait_type.kind, TypeKind::TraitBound { path, .. } if path == &["SimpleTrait"]),
-        "\nExpected path: '&[\"SimpleTrait\"]' for TypeKind::TraitBound in TypeNode, found: 
+        "\nExpected path: '&[\"SimpleTrait\"]' for TypeKind::TraitBound in TypeNode, found:
     TypeKind path:{:?}
     Complete super_trait TypeNode:
 {:#?}",

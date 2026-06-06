@@ -523,6 +523,7 @@ mod tests {
                         patch_artifact,
                         llm_prompt: Vec::new(),
                         llm_response: None,
+                        model_route: None,
                     }),
                 }],
                 ..RunPhases::default()

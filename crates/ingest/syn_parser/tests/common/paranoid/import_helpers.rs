@@ -2,8 +2,8 @@ use ploke_common::fixtures_crates_dir;
 use ploke_core::{ItemKind, NodeId};
 use syn_parser::TestIds;
 use syn_parser::parser::{
-    ParsedCodeGraph,                                    // Import calculate_cfg_hash_bytes
-    nodes::{GraphNode, ImportNode, PrimaryNodeIdTrait}, // Added ImportNode
+    ParsedCodeGraph,                // Import calculate_cfg_hash_bytes
+    nodes::{GraphNode, ImportNode}, // Added ImportNode
     visitor::calculate_cfg_hash_bytes,
 };
 

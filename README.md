@@ -446,7 +446,21 @@ Make sure the chosen `INSTALL_DIR` is in your `PATH` so the `ploke` command can 
 > See the [Rust documentation](https://www.rust-lang.org/tools/install) for troubleshooting.
 
 ## Docs
-Under construction, mdbook soon!
+
+The project mdBook lives in [`docs/book`](docs/book/). It is separate from the Evalnomicon under `docs/workflow/evalnomicon`.
+
+Build it locally with:
+
+```bash
+cargo install mdbook --locked
+mdbook build docs/book
+```
+
+Serve it locally with:
+
+```bash
+mdbook serve docs/book --open
+```
 
 ## Troubleshooting
 

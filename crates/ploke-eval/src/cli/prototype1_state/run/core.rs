@@ -29,6 +29,9 @@ use crate::{
     spec::PrepareError,
 };
 
+use crate::cli::handlers::closure::{
+    advance_eval_closure, advance_protocol_or_block, protocol_llm_config,
+};
 use crate::cli::prototype1_process::{
     SuccessorHandoffMode, persist_prototype1_buildable_child_artifact,
     spawn_and_handoff_prototype1_successor,
@@ -638,7 +641,7 @@ async fn run_protocol_live_preflight(context: &RuntimeContext) -> ProtocolLivePr
     let model_id = policy.model_id_for(&context.resolved_campaign.model_id);
     let route_source = policy.route_source_for(context.resolved_campaign.route_source);
     let provider = policy.provider_slug_for(context.resolved_campaign.provider_slug.as_deref());
-    let cfg = match crate::cli::protocol_llm_config(
+    let cfg = match protocol_llm_config(
         Some(model_id.clone()),
         route_source,
         provider.clone(),
@@ -1180,6 +1183,18 @@ fn extend_baseline_eval_registration_blockers(
             blockers.push(format!(
                 "baseline eval for instance '{}' is partial in closure state; refusing to \
                  rerun over partial evidence without explicit classification",
+                row.instance_id
+            ));
+        }
+        if row.eval_status == ClosureClass::Failed {
+            let detail = row
+                .eval_failure
+                .as_deref()
+                .map(|failure| format!(": {failure}"))
+                .unwrap_or_default();
+            blockers.push(format!(
+                "baseline eval for instance '{}' failed in closure state{detail}; refusing to \
+                 rerun over failed evidence without explicit classification",
                 row.instance_id
             ));
         }
@@ -1836,7 +1851,7 @@ async fn advance(diagnosis: Diagnosis, mode: ExecuteMode) -> Result<(), PrepareE
 }
 
 async fn advance_baseline_eval(context: &RuntimeContext) -> Result<(), PrepareError> {
-    crate::cli::advance_eval_closure(
+    advance_eval_closure(
         &context.resolved_campaign,
         &context.resolved_campaign.eval,
         false,
@@ -1848,7 +1863,7 @@ async fn advance_baseline_eval(context: &RuntimeContext) -> Result<(), PrepareEr
 
 async fn advance_baseline_protocol(context: &RuntimeContext) -> Result<(), PrepareError> {
     let protocol_policy = context.admitted_profile.profile.protocol_policy();
-    crate::cli::advance_protocol_or_block(&context.resolved_campaign, &protocol_policy).await
+    advance_protocol_or_block(&context.resolved_campaign, &protocol_policy).await
 }
 
 fn active_parent_ready(context: &RuntimeContext) -> Result<Parent<Ready>, PrepareError> {
@@ -3488,7 +3503,7 @@ Suggested validation after editing: run `cargo test`.
     }
 
     fn write_protected_core(repo: &Path) {
-        let path = repo.join("crates/ploke-eval/src/cli/prototype1_state/backend.rs");
+        let path = repo.join("crates/ploke-eval/src/cli/prototype1_state/backend/mod.rs");
         fs::create_dir_all(path.parent().expect("backend parent")).expect("create backend parent");
         fs::write(path, "pub const EVAL_CORE_SURFACE_ROOT: &[&str] = &[];\n")
             .expect("write backend");
@@ -3963,6 +3978,22 @@ Suggested validation after editing: run `cargo test`.
 
         assert_eq!(blockers.len(), 1);
         assert!(blockers[0].contains("partial in closure state"));
+    }
+
+    #[test]
+    fn failed_baseline_eval_closure_adds_doctor_blocker() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let instances_root = temp.path().join("instances/prototype1/campaign");
+        let instance_id = "BurntSushi__ripgrep-2209";
+        let closure = closure_state_for_test(instances_root, instance_id, ClosureClass::Failed);
+        let mut blockers = Vec::new();
+
+        extend_baseline_eval_registration_blockers(&closure, &mut blockers)
+            .expect("extend blockers");
+
+        assert_eq!(blockers.len(), 1);
+        assert!(blockers[0].contains("failed in closure state"));
+        assert!(blockers[0].contains("failed evidence"));
     }
 
     #[test]

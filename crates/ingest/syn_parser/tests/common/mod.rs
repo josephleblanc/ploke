@@ -1,6 +1,8 @@
 #![cfg(test)]
 use itertools::Itertools;
-use ploke_core::{ItemKind, NodeId, TypeId, TypeKind};
+use ploke_core::{ItemKind, NodeId};
+#[cfg(not(feature = "typed_type_graph"))]
+use ploke_core::{TypeId, TypeKind};
 use std::fs::File;
 use std::io::{Read, Seek};
 use std::path::{self, Path};
@@ -432,7 +434,7 @@ pub enum SmokeTestError {
     NotFoundByName(String),
 }
 
-/// Helper to assert a condition with a descriptive error             
+/// Helper to assert a condition with a descriptive error
 pub fn assert_fixture<T>(condition: bool, message: &str, ok_value: T) -> Result<T, FixtureError> {
     if condition {
         Ok(ok_value)

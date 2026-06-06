@@ -669,7 +669,7 @@ mod tests {
             SubmissionAuthorityBoundary::submitted_evidence_only()
         );
         assert_eq!(decoded_submitted.contract, published.request().contract);
-        assert_eq!(decoded_submitted.contract.validation.commands.len(), 2);
+        assert_eq!(decoded_submitted.contract.validation.commands.len(), 1);
         assert_eq!(
             decoded_submitted
                 .return_evidence
