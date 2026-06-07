@@ -20,6 +20,8 @@ pub struct HistoryCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum HistorySubcommand {
+    /// Print a read-only History-shaped preview from current campaign records.
+    Preview(Prototype1HistoryPreviewCommand),
     /// Print read-only child evidence grouped from current campaign records.
     ChildEvidence(Prototype1ChildEvidenceCommand),
     /// Print read-only metric projections from current evidence.
@@ -31,6 +33,8 @@ pub enum HistorySubcommand {
     ScoreSelectionReview(Prototype1ScoreCommand),
     /// Print one sealed successor-selection decision and optional traversal replay.
     SelectionShow(Prototype1SelectionShowCommand),
+    /// Print the canonical Prototype 1 evidence surface inventory.
+    EvidenceInventory(Prototype1EvidenceInventoryCommand),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
@@ -71,7 +75,19 @@ fn parse_metric_rows(raw: &str) -> Result<usize, String> {
 }
 
 #[derive(Debug, Parser)]
+pub struct Prototype1HistoryPreviewCommand {
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
 pub struct Prototype1ChildEvidenceCommand {
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+pub struct Prototype1EvidenceInventoryCommand {
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
 }
