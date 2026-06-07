@@ -945,7 +945,9 @@ fn collect_selection_decision_rows(
             continue;
         };
 
-        let recomputed_decision = selection.decision_hash()?;
+        let recomputed_decision = entry
+            .decision_observation_hash()?
+            .expect("selection decision entry has an observation hash");
         let recomputed_decision_hex = recomputed_decision.as_str().to_string();
         let sealed_hash = entry.payload_hash().as_str().to_string();
         let decision_observation_ok = entry

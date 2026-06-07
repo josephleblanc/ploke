@@ -405,9 +405,12 @@ impl StoredSealedBlock {
         self,
         path: PathBuf,
         line_index: u64,
-        stored_entry_hashes: Vec<HistoryHash>,
+        stored_hashes: StoredHashes,
     ) -> Result<Block<block::Sealed>, BlockStoreError> {
-        if self.entries.len() != self.state.header.entry_count {
+        if self.entries.len() != self.state.header.entry_count
+            || self.entries.len() != stored_hashes.entry_hashes.len()
+            || self.entries.len() != stored_hashes.selection_hashes.len()
+        {
             return Err(BlockStoreError::UnsupportedStoredEntries {
                 path,
                 line_index,
@@ -416,8 +419,12 @@ impl StoredSealedBlock {
         }
 
         let mut entries = Vec::with_capacity(self.entries.len());
-        for stored in self.entries {
-            entries.push(stored.into_entry());
+        for (stored, selection_hash) in self
+            .entries
+            .into_iter()
+            .zip(stored_hashes.selection_hashes)
+        {
+            entries.push(stored.into_entry(selection_hash));
         }
 
         let block = Block {
@@ -426,11 +433,17 @@ impl StoredSealedBlock {
                 _private: Private,
             },
             entries,
-            stored_entry_hashes: Some(stored_entry_hashes),
+            stored_entry_hashes: Some(stored_hashes.entry_hashes),
         };
         block.verify_hash()?;
         Ok(block)
     }
+}
+
+#[derive(Debug)]
+struct StoredHashes {
+    entry_hashes: Vec<HistoryHash>,
+    selection_hashes: Vec<Option<HistoryHash>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -439,18 +452,41 @@ struct StoredRawEntries<'a> {
     entries: Vec<&'a serde_json::value::RawValue>,
 }
 
+#[derive(Debug, Deserialize)]
+struct StoredRawEntry<'a> {
+    #[serde(borrow)]
+    core: StoredRawEntryCore<'a>,
+}
+
+#[derive(Debug, Deserialize)]
+struct StoredRawEntryCore<'a> {
+    #[serde(borrow)]
+    payload: &'a serde_json::value::RawValue,
+}
+
+#[derive(Debug, Deserialize)]
+struct StoredRawPayloadKind {
+    kind: String,
+}
+
 fn stored_entry_hashes_from_line(
     line: &str,
     _path: &Path,
     _line_index: u64,
-) -> Result<Vec<HistoryHash>, BlockStoreError> {
+) -> Result<StoredHashes, BlockStoreError> {
     let raw: StoredRawEntries<'_> =
         serde_json::from_str(line).map_err(BlockStoreError::Deserialize)?;
-    Ok(raw
-        .entries
-        .into_iter()
-        .map(|entry| entry_hash_from_raw_json(entry.get()))
-        .collect())
+    let mut entry_hashes = Vec::with_capacity(raw.entries.len());
+    let mut selection_hashes = Vec::with_capacity(raw.entries.len());
+    for entry in raw.entries {
+        let raw_entry = entry.get();
+        entry_hashes.push(entry_hash_from_raw_json(raw_entry));
+        selection_hashes.push(selection_hash_from_raw_entry(raw_entry)?);
+    }
+    Ok(StoredHashes {
+        entry_hashes,
+        selection_hashes,
+    })
 }
 
 fn entry_hash_from_raw_json(raw_entry: &str) -> HistoryHash {
@@ -459,6 +495,59 @@ fn entry_hash_from_raw_json(raw_entry: &str) -> HistoryHash {
     preimage.extend_from_slice(raw_entry.as_bytes());
     preimage.extend_from_slice(b"}");
     HistoryHash::of_bytes(&preimage)
+}
+
+fn selection_hash_from_raw_entry(raw_entry: &str) -> Result<Option<HistoryHash>, BlockStoreError> {
+    let raw: StoredRawEntry<'_> =
+        serde_json::from_str(raw_entry).map_err(BlockStoreError::Deserialize)?;
+    let kind: StoredRawPayloadKind =
+        serde_json::from_str(raw.core.payload.get()).map_err(BlockStoreError::Deserialize)?;
+    if kind.kind != "selection_decision" {
+        return Ok(None);
+    }
+
+    let selection = selection_json_without_kind(raw.core.payload.get())?;
+    Ok(Some(selection_hash_from_raw_json(&selection)))
+}
+
+fn selection_hash_from_raw_json(selection: &str) -> HistoryHash {
+    let mut preimage = Vec::with_capacity(selection.len() + 68);
+    preimage.extend_from_slice(
+        b"{\"domain\":\"prototype1.history.selection_decision_entry.v1\",\"value\":",
+    );
+    preimage.extend_from_slice(selection.as_bytes());
+    preimage.extend_from_slice(b"}");
+    HistoryHash::of_bytes(&preimage)
+}
+
+fn selection_json_without_kind(raw_payload: &str) -> Result<String, BlockStoreError> {
+    let raw_payload = raw_payload.trim();
+    let Some(rest) = raw_payload.strip_prefix("{\"kind\":\"selection_decision\"") else {
+        return Err(invalid_selection_shape(
+            "stored selection decision payload is not the compact internally-tagged shape emitted at seal time",
+        ));
+    };
+    let Some(rest) = rest.strip_suffix('}') else {
+        return Err(invalid_selection_shape(
+            "stored selection decision payload is missing its closing object delimiter",
+        ));
+    };
+    if rest.is_empty() {
+        return Ok("{}".to_string());
+    }
+    let Some(rest) = rest.strip_prefix(',') else {
+        return Err(invalid_selection_shape(
+            "stored selection decision payload has unexpected bytes after its kind tag",
+        ));
+    };
+    Ok(format!("{{{rest}}}"))
+}
+
+fn invalid_selection_shape(detail: impl Into<String>) -> BlockStoreError {
+    HistoryError::InvalidSelectionDecision {
+        detail: detail.into(),
+    }
+    .into()
 }
 
 /// Stored DTOs for verified disk loading.
@@ -477,10 +566,10 @@ mod stored {
     }
 
     impl StoredEntryAdmitted {
-        pub(super) fn into_entry(self) -> Entry<Admitted> {
+        pub(super) fn into_entry(self, selection_hash: Option<HistoryHash>) -> Entry<Admitted> {
             Entry {
                 core: self.core.into_core(),
-                state: self.state.into_state(),
+                state: self.state.into_state(selection_hash),
             }
         }
     }
@@ -545,7 +634,7 @@ mod stored {
     }
 
     impl StoredAdmitted {
-        fn into_state(self) -> Admitted {
+        fn into_state(self, selection_hash: Option<HistoryHash>) -> Admitted {
             Admitted {
                 observed: self.observed.into_state(),
                 proposer: self.proposer,
@@ -555,6 +644,7 @@ mod stored {
                 lineage_id: self.lineage_id,
                 block_id: self.block_id,
                 block_height: self.block_height,
+                selection_hash,
             }
         }
     }

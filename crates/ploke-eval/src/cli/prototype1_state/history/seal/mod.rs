@@ -97,6 +97,12 @@ pub(crate) struct Admitted {
     lineage_id: LineageId,
     block_id: BlockId,
     block_height: u64,
+
+    /// Loaded-only digest recovered from the exact selection-decision payload JSON
+    /// committed in the stored entry. Skipped so re-serializing entries and
+    /// blocks preserves the sealed wire shape and hash preimages.
+    #[serde(skip)]
+    selection_hash: Option<HistoryHash>,
 }
 
 /// A provenance-bearing fact in one typed History state.
@@ -207,15 +213,29 @@ impl Entry<Admitted> {
         &self.state.observed.payload_ref
     }
 
-    /// When this entry carries a selection decision payload, checks that
-    /// [`Self::payload_hash`] matches [`SelectionDecisionEntry::decision_hash`].
-    pub(crate) fn verify_selection_decision_observation(
-        &self,
-    ) -> Result<Option<bool>, HistoryError> {
+    /// Hash used to verify an observed inline selection decision payload.
+    ///
+    /// Loaded entries prefer the seal-time digest recovered from the raw stored
+    /// payload JSON. Fresh in-memory entries fall back to the current typed
+    /// serializer because no stored bytes exist yet.
+    pub(crate) fn decision_observation_hash(&self) -> Result<Option<HistoryHash>, HistoryError> {
         let Some(selection) = self.selection_decision() else {
             return Ok(None);
         };
-        let expected = selection.decision_hash()?;
+        if let Some(hash) = &self.state.selection_hash {
+            return Ok(Some(hash.clone()));
+        }
+        Ok(Some(selection.decision_hash()?))
+    }
+
+    /// When this entry carries a selection decision payload, checks that
+    /// [`Self::payload_hash`] matches the seal-time decision payload hash.
+    pub(crate) fn verify_selection_decision_observation(
+        &self,
+    ) -> Result<Option<bool>, HistoryError> {
+        let Some(expected) = self.decision_observation_hash()? else {
+            return Ok(None);
+        };
         Ok(Some(*self.payload_hash() == expected))
     }
 }
@@ -666,6 +686,7 @@ impl Block<block::Open> {
                 lineage_id: self.state.common.lineage_id.clone(),
                 block_id: self.state.common.block_id,
                 block_height: self.state.common.block_height,
+                selection_hash: None,
             },
         });
         Ok(entry_id)
@@ -2435,6 +2456,149 @@ mod tests {
             .1
             .verify_expected_hash(&block_hash)
             .expect("loaded block verifies against rewritten block hash");
+    }
+
+    #[test]
+    fn history_candidates_verify_selection_payloads_with_stored_json_order() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = FsBlockStore::new(tmp.path().join("history"));
+        let lineage = LineageId::new("lineage:a");
+        let state = store.lineage_state(&lineage).expect("read state");
+        let mut block = open_block_from_state(&state, 0, Vec::new());
+        let selection = selection_entry_for_scope(
+            SelectionScope::all_admitted_candidates(),
+            "child-a",
+            "branch-a",
+            vec![evaluation_payload("child-a", "branch-a", 0)],
+        );
+        block
+            .admit(proposed_selection_entry(selection), actor("admitter"))
+            .expect("admit selection entry");
+        let sealed = seal(block);
+        let original_payload_hash = sealed.entries()[0].payload_hash().clone();
+        store.append(&state, &sealed).expect("append block");
+
+        let segment_path = store.segment_path();
+        let segment_text = fs::read_to_string(&segment_path).expect("read segment");
+        let mut stored: serde_json::Value =
+            serde_json::from_str(segment_text.trim()).expect("parse stored block");
+        let entry = stored["entries"][0].clone();
+        let payload = entry["core"]["payload"]
+            .as_object()
+            .expect("selection payload object");
+        let field_order = [
+            "decision",
+            "formula",
+            "metrics",
+            "candidate_set",
+            "considered_order_hash",
+            "considered",
+            "selected_candidate",
+            "scope",
+            "procedure_or_policy",
+            "schema_version",
+            "selected_occurrence_id",
+            "selected_membership_id",
+            "considered_sources",
+            "projection_failures",
+            "traversal",
+        ];
+        let mut payload_fields = vec![r#""kind":"selection_decision""#.to_string()];
+        let mut decision_fields = Vec::new();
+        for field in field_order {
+            let Some(value) = payload.get(field) else {
+                continue;
+            };
+            let field_json = format!(
+                r#""{field}":{}"#,
+                serde_json::to_string(value).expect("selection field json")
+            );
+            payload_fields.push(field_json.clone());
+            decision_fields.push(field_json);
+        }
+        assert_eq!(
+            decision_fields.len(),
+            payload.len() - 1,
+            "test field order must cover every persisted selection field except the enum tag"
+        );
+        let reordered_payload_json = format!("{{{}}}", payload_fields.join(","));
+        let reordered_decision_json = format!("{{{}}}", decision_fields.join(","));
+        let reordered_payload_hash = selection_hash_from_raw_json(&reordered_decision_json);
+        assert_ne!(
+            reordered_payload_hash, original_payload_hash,
+            "reordered stored selection payload must differ from current in-memory decision_hash"
+        );
+
+        let mut entry_state = entry["state"].clone();
+        entry_state["observed"]["payload_hash"] =
+            serde_json::to_value(&reordered_payload_hash).expect("payload hash json");
+        let core = &entry["core"];
+        let core_json = format!(
+            r#"{{"entry_id":{},"entry_kind":{},"subject":{},"executor":{},"input_refs":{},"output_refs":{},"occurred_at":{},"payload":{}}}"#,
+            serde_json::to_string(&core["entry_id"]).expect("entry id json"),
+            serde_json::to_string(&core["entry_kind"]).expect("entry kind json"),
+            serde_json::to_string(&core["subject"]).expect("subject json"),
+            serde_json::to_string(&core["executor"]).expect("executor json"),
+            serde_json::to_string(&core["input_refs"]).expect("input refs json"),
+            serde_json::to_string(&core["output_refs"]).expect("output refs json"),
+            serde_json::to_string(&core["occurred_at"]).expect("occurred at json"),
+            reordered_payload_json,
+        );
+        let entry_state_json = serde_json::to_string(&entry_state).expect("entry state json");
+        let rewritten_entry = format!(r#"{{"core":{core_json},"state":{entry_state_json}}}"#);
+        let entry_hash = entry_hash_from_raw_json(&rewritten_entry);
+        let entries_root =
+            legacy_domain_json_hash("prototype1.history.entries_root.v1", &vec![entry_hash])
+                .expect("entries root");
+        let header = sealed.header();
+        let block_preimage = SealedBlockPreimage {
+            common: header.common.clone(),
+            crown_lock_transition: header.crown_lock_transition.clone(),
+            selected_successor: header.selected_successor.clone(),
+            selected_parent_identity: header.selected_parent_identity.clone(),
+            active_artifact: header.active_artifact.clone(),
+            claims: header.claims.clone(),
+            sealed_at: header.sealed_at,
+            entry_count: header.entry_count,
+            entries_root: entries_root.clone(),
+        };
+        let block_hash = BlockHash::from(
+            legacy_domain_json_hash("prototype1.history.block.v1", &block_preimage)
+                .expect("block hash"),
+        );
+        stored["state"]["header"]["entries_root"] =
+            serde_json::to_value(entries_root).expect("entries root value");
+        stored["state"]["header"]["block_hash"] =
+            serde_json::to_value(block_hash).expect("block hash value");
+        let stored_state_json = serde_json::to_string(&stored["state"]).expect("state json");
+        let rewritten = format!(
+            r#"{{"state":{stored_state_json},"entries":[{rewritten_entry}]}}
+"#
+        );
+        fs::write(&segment_path, rewritten).expect("rewrite segment with stored payload order");
+
+        let loaded = store
+            .load_segment_verified_blocks()
+            .expect("load segment block using stored entry JSON hashes");
+        assert_eq!(loaded.len(), 1);
+        let loaded_entry = &loaded[0].1.entries()[0];
+        assert_eq!(
+            loaded_entry
+                .decision_observation_hash()
+                .expect("selection observation hash"),
+            Some(reordered_payload_hash.clone())
+        );
+        assert_eq!(
+            loaded_entry
+                .verify_selection_decision_observation()
+                .expect("selection observation verifies"),
+            Some(true)
+        );
+
+        let candidates = History::new(store)
+            .candidates(&SelectionScope::all_admitted_candidates())
+            .expect("history candidates use stored selection payload hash");
+        assert_eq!(candidates.candidates.len(), 1);
     }
 
     #[test]
