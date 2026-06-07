@@ -417,7 +417,7 @@ pub const FIXTURE_NODES_CANONICAL: FixtureDb = FixtureDb {
     bm25_index_expected: false,
     embedding: None,
     last_updated: "2026-05-17",
-    notes: "Canonical current-schema fixture_nodes backup for the normal type-resolution profile. It is imported as a plain active fixture; typed_type_graph workspace builds import the same code graph without claiming typed graph fixture coverage. Regeneration intentionally uses setup_db_full_multi_embedding so the saved snapshot includes the current multi-embedding schema relations expected by downstream tests without seeding local vectors.",
+    notes: "Canonical current-schema fixture_nodes backup for the normal type-resolution profile. It is imported as a plain active fixture without typed graph relations. Regeneration intentionally uses setup_db_full_multi_embedding so the saved snapshot includes the current multi-embedding schema relations expected by downstream tests without seeding local vectors.",
 };
 
 pub const FIXTURE_NODES_LOCAL_EMBEDDINGS: FixtureDb = FixtureDb {
@@ -549,7 +549,7 @@ pub const CORPUS_SEMVER_TYPE_GRAPH: FixtureDb = FixtureDb {
     bm25_index_expected: false,
     embedding: None,
     last_updated: "2026-05-17",
-    notes: "Corpus-backed type graph contract fixture for graphRAG traversal tests over semver's VersionReq/Version/Comparator type surface. Recreate with `cargo run -p xtask --features ploke-db/typed_type_graph,ploke-transform/typed_type_graph,syn_parser/typed_type_graph -- recreate-backup-db --fixture corpus_semver_type_graph`.",
+    notes: "Corpus-backed type graph contract fixture for graphRAG traversal tests over semver's VersionReq/Version/Comparator type surface. Recreate with `cargo run -p xtask -- recreate-backup-db --fixture corpus_semver_type_graph`.",
 };
 
 pub const CORPUS_SEMVER_OPENROUTER_EMBEDDINGS: FixtureDb = FixtureDb {
