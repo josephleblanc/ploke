@@ -23,7 +23,7 @@
 
 ## Public API
 
-- `transform_parsed_graph(db, parsed_graph, tree)` — main single-crate graph transform. Under `typed_type_graph`, it calls `resolve_type_relations_after_tree`; otherwise it calls `resolve_type_uses_after_tree`.
+- `transform_parsed_graph(db, parsed_graph, tree)` — main single-crate graph transform. It calls `resolve_type_relations_after_tree` to produce the v2 typed type graph relations.
 - `transform_parsed_workspace` — workspace-level transform re-exported from `workspace`.
 - `transform_code_graph` — deprecated legacy transform for raw `CodeGraph`.
 - `insert_structural_compilation_unit_slice` and `transform_union_crate_and_structural_masks` — special-case structural compilation-unit helpers.
@@ -41,4 +41,4 @@
 
 - The code assumes every `ParsedCodeGraph` reaching transform has a `CrateContext`; missing context is an invariant violation.
 - Imports are now graph facts, not optional metadata. When relation handling changes, import nodes and import-bearing relations must stay in lockstep.
-- The `typed_type_graph` feature materially changes which type-resolution report is produced and inserted.
+- Transform always inserts the v2 typed type graph relations (`type_use`, `type_contains`, and `type_relation`) produced by `resolve_type_relations_after_tree`.

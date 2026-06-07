@@ -43,4 +43,4 @@ Discovery is deliberately single-threaded: it reads `Cargo.toml`, resolves works
 
 - `ParseWorkspaceConfig.selected_crates` is normalized against the workspace root and rejects members that are not in the manifest.
 - Discovery treats invalid crate paths, missing manifests, and missing source roots as critical errors; some walkdir failures are collected as non-fatal warnings.
-- `typed_type_graph` changes downstream transform/type-resolution behavior, so parser outputs must preserve enough slot/type data for that feature path.
+- Parser outputs must preserve enough slot/type data for the always-on v2 typed type graph resolution path used by `ploke-transform`.

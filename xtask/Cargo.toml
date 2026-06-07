@@ -7,11 +7,6 @@ edition = "2024"
 # Unstable/paused commands and tests. Enable only when resuming PRIMARY_TASK_SPEC work
 # that is intentionally incomplete in the default build.
 xtask_unstable = []
-typed_type_graph = [
-    "ploke-db/typed_type_graph",
-    "ploke-transform/typed_type_graph",
-    "syn_parser/typed_type_graph",
-]
 
 [dependencies]
 clap = { version = "4.5", features = ["derive", "env", "cargo"] }

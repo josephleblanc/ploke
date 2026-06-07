@@ -74,9 +74,7 @@ mod modules;
 mod statics;
 mod structs;
 mod traits;
-#[cfg(not(feature = "typed_type_graph"))]
 mod type_alias;
-#[cfg(not(feature = "typed_type_graph"))]
 mod unions;
 
 // -- Files that have yet to be updated are gated behind the cfgs below:

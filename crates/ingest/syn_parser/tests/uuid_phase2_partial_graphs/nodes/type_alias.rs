@@ -1,14 +1,17 @@
 #![allow(non_snake_case)]
 
 use crate::common::ParanoidArgs;
+use crate::common::find_trait_type_node;
 use crate::common::find_type_node;
+use crate::common::typed_type_graph::{
+    assert_named_path, assert_named_path_suffix, assert_ordinary_argument_count,
+    assert_trait_bound_path_contains, ordinary_argument,
+};
 use crate::paranoid_test_fields_and_values;
 use crate::paranoid_test_setup;
 use crate::run_paranoid_test;
 use lazy_static::lazy_static;
 use ploke_core::ItemKind;
-use ploke_core::TypeId;
-use ploke_core::TypeKind;
 use std::collections::HashMap;
 use syn_parser::error::SynParserError;
 use syn_parser::parser::ParsedCodeGraph;
@@ -17,10 +20,6 @@ use syn_parser::parser::nodes::ExpectedTypeAliasNode;
 use syn_parser::parser::nodes::PrimaryNodeIdTrait;
 use syn_parser::parser::nodes::TypeAliasNode;
 use syn_parser::parser::types::GenericParamKind;
-
-// Keep old imports for existing tests
-// Import TypeKind from ploke_core
-// Import TypeAliasNode specifically
 use syn_parser::parser::types::VisibilityKind;
 
 pub const LOG_TEST_TYPE_ALIAS: &str = "log_test_type_alias";
@@ -182,34 +181,20 @@ fn check_generic_params_mapping(
             generic_param_v
         ),
     }
-    // 2. Check the aliased TypeId: resolves to Vec<T>
+    // 2. Check the aliased type: resolves to std::collections::HashMap<K, V>
     let aliased_type_id = type_alias_node.type_id;
-    assert!(
-        matches!(aliased_type_id, TypeId::Synthetic(_)),
-        "Aliased TypeId should be Synthetic"
-    );
     let aliased_type_node = find_type_node(&graph_data.graph, aliased_type_id);
 
-    // Check the related types K and V for std::collections::HashMap<K, V>
-    assert_eq!(
-        aliased_type_node.related_types.len(),
-        2,
-        "std::collections::HashMap<K, V> should have two related types (K, V)"
-    );
-    let related_type_id_for_vec_k = aliased_type_node.related_types[0];
-    let related_type_node_for_vec_k = find_type_node(&graph_data.graph, related_type_id_for_vec_k);
-    assert!(
-        matches!(&related_type_node_for_vec_k.kind, TypeKind::Named { path, .. } if path == &["K".to_string()]),
-        "Expected related type 'K' for HashMap, found {:?}",
-        related_type_node_for_vec_k.kind
-    );
-    let related_type_id_for_vec_v = aliased_type_node.related_types[1];
-    let related_type_node_for_vec_v = find_type_node(&graph_data.graph, related_type_id_for_vec_v);
-    assert!(
-        matches!(&related_type_node_for_vec_v.kind, TypeKind::Named { path, .. } if path == &["V".to_string()]),
-        "Expected related type 'T' for Vec, found {:?}",
-        related_type_node_for_vec_v.kind
-    );
+    assert_named_path_suffix(&aliased_type_node, &["HashMap"]);
+    assert_ordinary_argument_count(&aliased_type_node, 2);
+
+    let related_type_node_for_vec_k =
+        find_type_node(&graph_data.graph, ordinary_argument(&aliased_type_node, 0));
+    assert_named_path(related_type_node_for_vec_k, &["K"]);
+
+    let related_type_node_for_vec_v =
+        find_type_node(&graph_data.graph, ordinary_argument(&aliased_type_node, 1));
+    assert_named_path(related_type_node_for_vec_v, &["V"]);
 
     Ok(())
 }
@@ -246,17 +231,10 @@ fn check_generic_params(
             assert_eq!(bounds.len(), 1, "Expected one trait bound (Display)");
             assert!(default.is_none());
 
-            // Check the bound TypeId corresponds to Display
+            // Check the bound type corresponds to Display
             let bound_type_id = bounds[0];
-            let bound_type_node = find_type_node(&graph_data.graph, bound_type_id);
-            // Path might be fully qualified or just "Display" depending on resolution context
-            // For Phase 2, it's often the simple name or a partially resolved path.
-            // A more robust check might involve checking ends_with or specific segments.
-            assert!(
-                matches!(&bound_type_node.kind, TypeKind::TraitBound { path, .. } if path.iter().any(|seg| seg == "Display")),
-                "Expected bound type 'Display', found {:?}",
-                bound_type_node.kind
-            );
+            let bound_type_node = find_trait_type_node(&graph_data.graph, bound_type_id);
+            assert_trait_bound_path_contains(bound_type_node, "Display");
         }
         _ => panic!(
             "Expected GenericParamKind::Type for T, found {:?}",
@@ -264,37 +242,12 @@ fn check_generic_params(
         ),
     }
 
-    // 2. Check the aliased TypeId: resolves to Vec<T>
+    // 2. Check the aliased type: resolves to Vec<T>
     let aliased_type_id = type_alias_node.type_id;
-    assert!(
-        matches!(aliased_type_id, TypeId::Synthetic(_)),
-        "Aliased TypeId should be Synthetic"
-    );
     let aliased_type_node = find_type_node(&graph_data.graph, aliased_type_id);
 
-    // Check the Vec part
-    assert!(
-        matches!(&aliased_type_node.kind, TypeKind::Named { path, .. } if path == &["Vec".to_string()]),
-        "Expected aliased type 'Vec<T>', found outer type {:?}",
-        aliased_type_node.kind
-    );
-
-    // Check the related type (T) for Vec<T>
-    assert_eq!(
-        aliased_type_node.related_types.len(),
-        1,
-        "Vec<T> should have one related type (T)"
-    );
-
-    // Ensure the 'T' from Vec<T> is the same TypeId as the 'T' from the generic_params
-    // This requires TypeId to be comparable and correctly generated.
-    // The TypeId for the generic parameter `T` itself is not directly stored on GenericParamNode.
-    // Instead, the `TypeId` for `T` as used in `Vec<T>` (related_type_id_for_vec_t)
-    // should correspond to a `TypeNode` whose name is "T".
-    // The `GenericParamNode` for `T` also has `name: "T"`.
-    // A deeper check would involve ensuring that within the scope of this type alias,
-    // these two "T"s refer to the same conceptual type parameter.
-    // For now, matching by name is a good indicator.
+    assert_named_path(&aliased_type_node, &["Vec"]);
+    assert_ordinary_argument_count(&aliased_type_node, 1);
 
     Ok(())
 }

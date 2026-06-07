@@ -9,7 +9,7 @@
 
 ## Description
 
-The `typed_type_graph` pipeline currently resolves ordinary type-use surfaces
+The typed type graph pipeline currently resolves ordinary type-use surfaces
 well when they are represented as roots in `type_use` and terminal nodes in
 `type_relation`. Real-corpus backup contracts now pass for function params and
 returns, method params and returns, fields, type aliases, impl self/trait roots,
@@ -86,7 +86,7 @@ than by a precise associated type item node.
 
 ## Relationship to other work
 
-This limitation is specific to the `typed_type_graph` v2 relation model. It does
+This limitation is specific to the v2 typed type graph relation model. It does
 not invalidate the ordinary `type_use`, `type_contains`, and `type_relation`
 paths that already pass over real backup fixtures.
 
@@ -110,7 +110,7 @@ The current restart context is tracked in
 Current focused command:
 
 ```text
-cargo test -p ploke-db --features typed_type_graph type_graph_queries::corpus_contracts -- --nocapture
+cargo test -p ploke-db type_graph_queries::corpus_contracts -- --nocapture
 ```
 
 Expected current result: the ordinary, generic-bound, qualified-projection, and
