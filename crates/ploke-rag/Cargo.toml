@@ -28,4 +28,3 @@ criterion = { version = "0.7", features = ["async_tokio"] }
 
 [features]
 default = []
-typed_type_graph = ["ploke-db/typed_type_graph"]
