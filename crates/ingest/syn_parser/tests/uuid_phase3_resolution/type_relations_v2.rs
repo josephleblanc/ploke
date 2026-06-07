@@ -1,5 +1,3 @@
-#![cfg(feature = "typed_type_graph")]
-
 //! Integration tests for the typed type-resolution v2 relation surface.
 //!
 //! These cases assert exact typed relation endpoints rather than legacy
@@ -667,6 +665,18 @@ type_relation_cases!(
             ),
             ordinary_item(item(&["crate"], "Point", ItemKind::TypeAlias))
         ),
+        fixture_types_v2_nested_imported_math_operation_function_return => ordinary_relation(
+            ordinary_source(
+                item(
+                    &["crate", "func", "return_types", "restricted_duplicate"],
+                    "math_operation_producer",
+                    ItemKind::Function
+                ),
+                TypeUseSourceSlot::FunctionReturn,
+                root()
+            ),
+            ordinary_item(item(&["crate"], "MathOperation", ItemKind::TypeAlias))
+        ),
     ]
 );
 
@@ -693,6 +703,17 @@ type_relation_cases!(
                 root()
             ),
             trait_item(item(&["crate", "impls"], "SimpleTrait", ItemKind::Trait))
+        ),
+        fixture_nodes_v2_simple_struct_new_self_return => ordinary_relation(
+            ordinary_source(
+                method(
+                    impl_selector(&["crate", "impls"], &["SimpleStruct"], None),
+                    "new"
+                ),
+                TypeUseSourceSlot::MethodReturn,
+                root()
+            ),
+            ordinary_item(item(&["crate", "impls"], "SimpleStruct", ItemKind::Struct))
         ),
         fixture_nodes_v2_local_simple_trait_impl_self => ordinary_relation(
             ordinary_source(
@@ -1394,6 +1415,45 @@ type_relation_cases!(
                 root()
             ),
             ordinary_item(item(&["crate", "inner_mod"], "InnerStruct", ItemKind::Struct))
+        ),
+    ]
+);
+
+type_relations_exact_sources_case!(
+    fixture_conflation_v2_imported_top_level_trait_impl_trait_complete_slot,
+    graph: &FIXTURE_CONFLATION.0,
+    report: &FIXTURE_CONFLATION_REPORT,
+    expected: [
+        trait_relation(
+            trait_source(
+                impl_block(
+                    &["crate", "inner_mod"],
+                    &["InnerStruct"],
+                    Some(&["TopLevelTrait"])
+                ),
+                TypeUseSourceSlot::ImplTrait,
+                root()
+            ),
+            trait_item(item(&["crate"], "TopLevelTrait", ItemKind::Trait))
+        ),
+        ordinary_relation(
+            ordinary_source(
+                impl_block(
+                    &["crate", "inner_mod"],
+                    &["InnerStruct"],
+                    Some(&["TopLevelTrait"])
+                ),
+                TypeUseSourceSlot::ImplTrait,
+                named(&["T"])
+            ),
+            ordinary_type_param(
+                impl_block(
+                    &["crate", "inner_mod"],
+                    &["InnerStruct"],
+                    Some(&["TopLevelTrait"])
+                ),
+                "T"
+            )
         ),
     ]
 );

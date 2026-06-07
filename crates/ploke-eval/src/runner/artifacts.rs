@@ -2248,7 +2248,7 @@ pub(crate) fn starting_db_cache_metadata(
         embedding_model: embedding.model.to_string(),
         embedding_dimensions: embedding.dims(),
         embedding_dtype: embedding.shape.dtype_tag().to_string(),
-        typed_type_graph: cfg!(feature = "typed_type_graph"),
+        typed_type_graph: true,
     }
 }
 

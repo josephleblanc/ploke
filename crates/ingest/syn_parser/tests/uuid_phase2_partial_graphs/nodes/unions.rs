@@ -1,11 +1,11 @@
 use crate::common::ParanoidArgs;
 use crate::common::find_type_node;
 use crate::common::run_phase1_phase2;
+use crate::common::typed_type_graph::assert_named_path;
 use anyhow::Ok;
 use anyhow::Result;
 use lazy_static::lazy_static;
 use ploke_core::ItemKind;
-use ploke_core::TypeKind;
 use std::collections::HashMap;
 use syn_parser::parser::graph::GraphAccess;
 use syn_parser::parser::nodes::GraphNode;
@@ -201,7 +201,7 @@ fn test_union_node_int_or_float_paranoid() -> Result<()> {
     );
     assert!(field_i.attributes.is_empty());
     let type_i = find_type_node(graph, field_i.type_id);
-    assert!(matches!(&type_i.kind, TypeKind::Named { path, .. } if path == &["i32"]));
+    assert_named_path(type_i, &["i32"]);
     field_count += 1;
 
     // Field f
@@ -214,7 +214,7 @@ fn test_union_node_int_or_float_paranoid() -> Result<()> {
     assert_eq!(field_f.visibility, VisibilityKind::Public);
     assert!(field_f.attributes.is_empty());
     let type_f = find_type_node(graph, field_f.type_id);
-    assert!(matches!(&type_f.kind, TypeKind::Named { path, .. } if path == &["f32"]));
+    assert_named_path(type_f, &["f32"]);
 
     // --- Paranoid Relation Checks ---
     let module_id = graph

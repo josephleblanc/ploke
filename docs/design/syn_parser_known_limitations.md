@@ -113,7 +113,7 @@ handling, or an explicit feature-aware corpus parse mode.
 
 **KL index:** [KL-008](known_limitations/KL-008-typed-type-graph-constraint-surfaces.md).
 
-**Symptom:** Real-corpus `typed_type_graph` DB contracts can select both the
+**Symptom:** Real-corpus typed type graph DB contracts can select both the
 owner and target rows, but `type_targets_reachable_from_owner` still lacks
 complete real-corpus coverage for where-clause predicates and some associated
 item details.
@@ -129,6 +129,6 @@ type_relation` surfaces.
 predicates, and parse associated type/const items as precise owners for
 associated defaults and impl associated type definitions.
 
-**Repro tests / fixtures** (`ploke-db`, with `typed_type_graph`):
+**Repro tests / fixtures** (`ploke-db`):
 
 - `type_graph_queries::corpus_contracts::associated_type_bounds::chrono_backup_timezone_associated_offset_bound_reaches_offset_trait`

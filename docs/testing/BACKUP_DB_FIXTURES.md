@@ -1,7 +1,7 @@
 # Backup DB Fixtures
 
-Last reviewed: 2026-05-25
-Last updated: 2026-05-25
+Last reviewed: 2026-06-07
+Last updated: 2026-06-07
 
 This document is the current inventory for backup database fixtures under
 the shared DB snapshot fixture directory. It records which source targets
@@ -130,9 +130,8 @@ Registry status note:
   default verification set until promoted to `Active`.
 - `TypedTypeGraph` fixtures are current-schema typed type graph backups. They
   are intentionally excluded from default backup verification because the
-  default import path still exercises the legacy type-resolution schema. Verify
-  them with `cargo run -p xtask --features typed_type_graph --
-  verify-backup-dbs --fixture <id>`.
+  default import path strips typed-graph relations for plain active fixtures. Verify
+  them with `cargo run -p xtask -- verify-backup-dbs --fixture <id>`.
 - `Legacy` and `Orphaned` fixtures remain outside the default active validation
   set unless explicitly selected.
 
@@ -222,10 +221,9 @@ impl Drop for FixtureRestoreGuard {
 - Parsed target(s): `tests/fixture_crates/fixture_nodes`
 - Expected DB config:
   - plain backup import
-  - normal type-resolution profile fixture; under `typed_type_graph` workspace
-    builds, active fixture loaders import the same code graph while leaving
-    typed graph relations empty rather than treating this as typed graph corpus
-    coverage
+  - plain code-graph fixture; active fixture loaders import the same code graph
+    while leaving typed graph relations empty rather than treating this as typed
+    graph corpus coverage
   - primary HNSW index must be created after import by the caller
   - no embedding model contract is assumed by default
   - used as the canonical parsed graph fixture for `fixture_nodes`
@@ -345,9 +343,9 @@ contracts. The checkout identity, backup stem, and test intent live in one
 registry-backed place instead of in local symlinks under
 `tests/fixture_github_clones/corpus`.
 
-Run `cargo run -p xtask --features typed_type_graph -- recreate-backup-db
---fixture <id>` to clone or reuse the pinned checkout, check out the recorded
-commit, parse and transform the crate with typed type graph relations enabled,
+Run `cargo run -p xtask -- recreate-backup-db --fixture <id>` to clone or reuse
+the pinned checkout, check out the recorded commit, parse and transform the crate
+with typed type graph relations,
 write the dated backup under the fixture's configured shared-snapshot path, and
 verify that the generated backup imports with the current schema. Copy a
 reviewed snapshot into `tests/backup_dbs/` only when it should become a

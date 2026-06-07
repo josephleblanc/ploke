@@ -767,54 +767,6 @@ macro_rules! paranoid_imported_by_case {
 }
 
 #[macro_export]
-macro_rules! type_use_resolution_case {
-    (
-        $test_name:ident,
-        graph: $graph:expr,
-        report: $report:expr,
-        expected: $expected:expr
-    ) => {
-        #[test]
-        fn $test_name() -> Result<(), syn_parser::error::SynParserError> {
-            let _ = env_logger::builder()
-                .is_test(true)
-                .format_timestamp(None)
-                .try_init();
-
-            $crate::common::type_use_resolution::assert_type_use_resolution_once(
-                $graph, $report, &$expected,
-            )?;
-
-            Ok(())
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! type_use_slot_resolution_case {
-    (
-        $test_name:ident,
-        graph: $graph:expr,
-        report: $report:expr,
-        expected: $expected:expr
-    ) => {
-        #[test]
-        fn $test_name() -> Result<(), syn_parser::error::SynParserError> {
-            let _ = env_logger::builder()
-                .is_test(true)
-                .format_timestamp(None)
-                .try_init();
-
-            $crate::common::type_use_resolution::assert_type_use_slot_resolutions_exact(
-                $graph, $report, &$expected,
-            )?;
-
-            Ok(())
-        }
-    };
-}
-
-#[macro_export]
 macro_rules! type_relation_case {
     (
         $test_name:ident,
