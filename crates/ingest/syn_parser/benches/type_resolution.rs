@@ -3,9 +3,6 @@ use std::path::PathBuf;
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use syn_parser::{ModuleTree, ParsedCodeGraph, try_run_phases_and_merge};
 
-#[cfg(not(feature = "typed_type_graph"))]
-const RESOLVER_NAME: &str = "legacy_type_use_resolution";
-#[cfg(feature = "typed_type_graph")]
 const RESOLVER_NAME: &str = "typed_type_graph_v2";
 
 const FIXTURES: &[&str] = &[
@@ -37,17 +34,6 @@ fn parsed_fixture(fixture: &str) -> (ParsedCodeGraph, ModuleTree) {
     (graph, tree)
 }
 
-#[cfg(not(feature = "typed_type_graph"))]
-fn resolved_count(graph: &ParsedCodeGraph, tree: &ModuleTree) -> usize {
-    let report = syn_parser::resolve::type_resolution::resolve_type_uses_after_tree(
-        black_box(graph),
-        black_box(tree),
-    )
-    .expect("legacy type-use resolution");
-    black_box(report.resolutions.len())
-}
-
-#[cfg(feature = "typed_type_graph")]
 fn resolved_count(graph: &ParsedCodeGraph, tree: &ModuleTree) -> usize {
     let report = syn_parser::resolve::type_resolution_v2::resolve_type_relations_after_tree(
         black_box(graph),

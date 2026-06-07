@@ -10,9 +10,6 @@ use syn_parser::{
     try_run_phases_and_merge,
 };
 
-#[cfg(not(feature = "typed_type_graph"))]
-const RESOLVER_NAME: &str = "legacy_type_use_resolution";
-#[cfg(feature = "typed_type_graph")]
 const RESOLVER_NAME: &str = "typed_type_graph_v2";
 
 fn corpus_root() -> PathBuf {
@@ -71,19 +68,6 @@ fn parsed_target(
     Ok((graph, tree))
 }
 
-#[cfg(not(feature = "typed_type_graph"))]
-fn resolved_count_result(
-    graph: &ParsedCodeGraph,
-    tree: &ModuleTree,
-) -> Result<usize, SynParserError> {
-    syn_parser::resolve::type_resolution::resolve_type_uses_after_tree(
-        black_box(graph),
-        black_box(tree),
-    )
-    .map(|report| black_box(report.resolutions.len()))
-}
-
-#[cfg(feature = "typed_type_graph")]
 fn resolved_count_result(
     graph: &ParsedCodeGraph,
     tree: &ModuleTree,

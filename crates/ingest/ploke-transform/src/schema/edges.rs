@@ -12,11 +12,8 @@ use itertools::Itertools;
 use std::collections::BTreeMap;
 use syn_parser::parser::nodes::ToCozoUuid;
 use syn_parser::parser::relations::SyntacticRelation;
-#[cfg(feature = "typed_type_graph")]
 use syn_parser::parser::relations::TypeRelation;
 use syn_parser::resolve::Colorize;
-#[cfg(not(feature = "typed_type_graph"))]
-use syn_parser::resolve::type_resolution::TypeUseResolution;
 use syn_parser::utils::{LogStyle, LogStyleDebug};
 
 define_schema!(SyntacticRelationSchema {
@@ -28,18 +25,6 @@ define_schema!(SyntacticRelationSchema {
     target_kind: "String"
 });
 
-#[cfg(not(feature = "typed_type_graph"))]
-define_schema!(ResolvedTypeUseSchema {
-    "resolved_type_use",
-    owner_id: "Uuid",
-    type_id: "Uuid",
-    target_id: "Uuid",
-    resolved_type_id: "Uuid?",
-    role: "String",
-    target_kind: "String"
-});
-
-#[cfg(feature = "typed_type_graph")]
 define_schema!(TypeRelationSchema {
     "type_relation",
     source_id: "Uuid",
@@ -49,10 +34,8 @@ define_schema!(TypeRelationSchema {
     target_kind: "String"
 });
 
-#[cfg(feature = "typed_type_graph")]
 pub struct TypeUseSchema;
 
-#[cfg(feature = "typed_type_graph")]
 impl TypeUseSchema {
     pub const RELATION: &'static str = "type_use";
 
@@ -272,7 +255,6 @@ impl TypeUseSchema {
     }
 }
 
-#[cfg(feature = "typed_type_graph")]
 fn create_type_use_coordinate_schema(db: &Db<MemStorage>) -> Result<(), TransformError> {
     for script in [
         r#":create type_use_param_slot {
@@ -334,7 +316,6 @@ fn create_type_use_coordinate_schema(db: &Db<MemStorage>) -> Result<(), Transfor
     Ok(())
 }
 
-#[cfg(feature = "typed_type_graph")]
 fn insert_coordinate_relation(
     db: &Db<MemStorage>,
     relation: &str,
@@ -362,15 +343,12 @@ fn insert_coordinate_relation(
     Ok(())
 }
 
-#[cfg(feature = "typed_type_graph")]
 fn int(value: usize) -> cozo::DataValue {
     cozo::DataValue::from(value as i64)
 }
 
-#[cfg(feature = "typed_type_graph")]
 pub struct TypeContainsSchema;
 
-#[cfg(feature = "typed_type_graph")]
 impl TypeContainsSchema {
     pub const RELATION: &'static str = "type_contains";
 
@@ -494,7 +472,6 @@ impl SyntacticRelationSchema {
     }
 }
 
-#[cfg(feature = "typed_type_graph")]
 impl TypeRelationSchema {
     pub fn insert_relation(
         &self,
@@ -543,57 +520,6 @@ impl TypeRelationSchema {
             ]),
         };
 
-        let script = schema.script_put(&params);
-        db.run_script(&script, params, cozo::ScriptMutability::Mutable)?;
-
-        Ok(())
-    }
-}
-
-#[cfg(not(feature = "typed_type_graph"))]
-impl ResolvedTypeUseSchema {
-    pub fn insert_resolution(
-        &self,
-        db: &Db<MemStorage>,
-        resolution: &TypeUseResolution,
-    ) -> Result<(), TransformError> {
-        let Some(target_id) = resolution.item_target() else {
-            return Ok(());
-        };
-
-        let schema = &ResolvedTypeUseSchema::SCHEMA;
-        let params = BTreeMap::from([
-            (
-                schema.owner_id().to_string(),
-                resolution.owner.to_cozo_uuid(),
-            ),
-            (
-                schema.type_id().to_string(),
-                resolution.source_type_id.to_cozo_uuid(),
-            ),
-            (schema.target_id().to_string(), target_id.to_cozo_uuid()),
-            (
-                schema.resolved_type_id().to_string(),
-                resolution
-                    .resolved_type_id
-                    .map(|type_id| type_id.to_cozo_uuid())
-                    .unwrap_or(cozo::DataValue::Null),
-            ),
-            (
-                schema.role().to_string(),
-                cozo::DataValue::from(resolution.role.as_str()),
-            ),
-            (
-                schema.target_kind().to_string(),
-                cozo::DataValue::from(
-                    resolution
-                        .resolved_ref
-                        .resolved_target_kind()
-                        .map(|kind| kind.as_str())
-                        .unwrap_or("unknown"),
-                ),
-            ),
-        ]);
         let script = schema.script_put(&params);
         db.run_script(&script, params, cozo::ScriptMutability::Mutable)?;
 

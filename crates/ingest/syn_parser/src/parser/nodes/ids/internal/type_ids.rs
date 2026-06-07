@@ -5,8 +5,6 @@
 //! let later code express admissible source kinds at the type level instead of
 //! relying on conventions over a bare `TypeId`.
 
-#[cfg(not(feature = "typed_type_graph"))]
-use crate::parser::types::TypeNode;
 use ploke_core::{IdTrait, TypeId, TypeKind};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -126,24 +124,6 @@ macro_rules! define_structural_type_id {
             }
         }
 
-        #[cfg(not(feature = "typed_type_graph"))]
-        impl From<$Name> for TypeId {
-            #[inline]
-            fn from(id: $Name) -> Self {
-                id.0
-            }
-        }
-
-        #[cfg(not(feature = "typed_type_graph"))]
-        impl TryFrom<&TypeNode> for $Name {
-            type Error = TypeIdRefinementError;
-
-            #[inline]
-            fn try_from(node: &TypeNode) -> Result<Self, Self::Error> {
-                Self::try_refine(node.id, &node.kind)
-            }
-        }
-
         impl fmt::Display for $Name {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 write!(f, "{}({})", stringify!($Name), self.0)
@@ -217,24 +197,6 @@ macro_rules! define_structural_type_id {
             }
         }
 
-        #[cfg(not(feature = "typed_type_graph"))]
-        impl From<$Name> for TypeId {
-            #[inline]
-            fn from(id: $Name) -> Self {
-                id.0
-            }
-        }
-
-        #[cfg(not(feature = "typed_type_graph"))]
-        impl TryFrom<&TypeNode> for $Name {
-            type Error = TypeIdRefinementError;
-
-            #[inline]
-            fn try_from(node: &TypeNode) -> Result<Self, Self::Error> {
-                Self::try_refine(node.id, &node.kind)
-            }
-        }
-
         impl fmt::Display for $Name {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 write!(f, "{}({})", stringify!($Name), self.0)
@@ -258,39 +220,3 @@ define_structural_type_id!(TraitBoundTypeId, TraitBound { .. });
 define_structural_type_id!(ParenTypeId, Paren { .. });
 define_structural_type_id!(MacroTypeId, Macro { .. });
 define_structural_type_id!(UnknownTypeId, Unknown { .. });
-
-#[cfg(all(test, not(feature = "typed_type_graph")))]
-mod tests {
-    use super::*;
-
-    fn named_node() -> TypeNode {
-        TypeNode {
-            id: TypeId::Synthetic(uuid::Uuid::nil()),
-            kind: TypeKind::Named {
-                path: vec!["Example".to_string()],
-                is_fully_qualified: false,
-            },
-            related_types: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn refines_named_type_ids() {
-        let node = named_node();
-        let named = NamedTypeId::try_from(&node).expect("named type should refine");
-        assert_eq!(named.base_id(), node.id);
-    }
-
-    #[test]
-    fn rejects_mismatched_type_kinds() {
-        let node = TypeNode {
-            id: TypeId::Synthetic(uuid::Uuid::nil()),
-            kind: TypeKind::Tuple {},
-            related_types: Vec::new(),
-        };
-
-        let err = NamedTypeId::try_from(&node).expect_err("tuple type should not refine to named");
-        assert!(err.to_string().contains("NamedTypeId"));
-        assert!(err.to_string().contains("Tuple"));
-    }
-}
