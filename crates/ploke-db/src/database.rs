@@ -1530,49 +1530,6 @@ target[id] := input[id_str], id = to_uuid(id_str)
         ret.try_into_file_data()
     }
 
-    // pub fn retract_embedded_files(
-    //     &self,
-    //     file_mod: Uuid,
-    //     ty: NodeType,
-    // ) -> Result<QueryResult, PlokeError> {
-    //     let rel_name = ty.relation_str();
-    //     let keys = ty.keys().join(", ");
-    //     let vals = ty.vals().join(", ");
-    //     debug!(%rel_name, %keys, %vals);
-    //     let embedding_set = &self.active_embedding_set;
-    //     let set_id = embedding_set.hash_id;
-    //     let vector_set_name = embedding_set.vector_relation_name();
-    //     let script = format!(
-    //         "parent_of[child, parent] := *syntax_edge{{
-    //             source_id: parent,
-    //             target_id: child,
-    //             relation_kind: \"Contains\"
-    //         }}
-    //
-    //         ancestor[desc, asc] := parent_of[desc, asc]
-    //         ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
-    //
-    //         to_retract[{keys}, at, {vals}] := *{rel_name} {{ {keys}, {vals}  @ 'NOW'}},
-    //             *file_mod {{ owner_id: file_mod }},
-    //             ancestor[id, file_mod],
-    //             file_mod = \"{file_mod}\",
-    //             set_id = {set_id},
-    //             not *{vector_set_name} {{ node_id: id, embedding_set_id: set_id @ 'NOW' }},
-    //             at = 'RETRACT'
-    //
-    //         ?[{keys}, at, {vals}] := to_retract[{keys}, at, {vals}]
-    //             :put {rel_name} {{ {keys}, at => {vals} }}
-    //             :returning
-    //         "
-    //     );
-    //
-    //     self.raw_query_mut(&script)
-    //         .inspect_err(|_| {
-    //             tracing::error!("using script:\n {}", script);
-    //         })
-    //         .map_err(PlokeError::from)
-    // }
-
     pub fn retract_embedded_files(
         &self,
         file_mod: Uuid,
