@@ -110,9 +110,18 @@ full protocol advance:
 ./target/debug/ploke-eval loop prototype1-doctor --repo-root . --live-protocol-preflight --format json
 ```
 
-Treat this as paid live-provider work. It should report the model, provider,
-route source, reasoning policy, bounded outcome, and an error class without
-printing credentials.
+If the suspected blocker is broad-harness headless TUI sparse/BM25 setup, run
+the no-model-call doctor extra before publishing or advancing broad slots:
+
+```bash
+./target/debug/ploke-eval loop prototype1-doctor --repo-root . --headless-tui-setup-preflight --format json
+```
+
+Treat the live protocol preflight as paid live-provider work. It should report
+the model, provider, route source, reasoning policy, bounded outcome, and an
+error class without printing credentials. Treat the headless TUI setup preflight
+as local setup work; if it reports `headless_tui_setup_preflight.outcome =
+failed`, stop and debug that setup blocker before spending broad-headless slots.
 
 When the live behavior belongs in test coverage, use the existing live-test
 pattern:

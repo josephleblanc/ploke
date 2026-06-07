@@ -125,3 +125,5 @@ file and current code before treating a report as still open.
   Fixed in source: broad-harness protected-core metadata and doctor prompt preflight now point at `backend/mod.rs` after the backend module split instead of stale `backend.rs`.
 - [`2026-06-06-code-item-lookup-impl-relation-missing-name-field.md`](./2026-06-06-code-item-lookup-impl-relation-missing-name-field.md)
   `code_item_lookup` with `node_kind: impl` issues a Cozo query against a `name` field the stored `impl` relation does not have; protocol marked call `[36]` recoverability-blocked in `p1-admissionfix-g35flash-p25flash-20260606-053302` treatment run.
+- [`2026-06-06-prototype1-broad-headless-request-only-no-diagnostics.md`](./2026-06-06-prototype1-broad-headless-request-only-no-diagnostics.md)
+  Fixed in source: broad headless-TUI setup failures now persist typed setup diagnostics and doctor exposes a no-model-call sparse/BM25 setup preflight before spending broad slots.

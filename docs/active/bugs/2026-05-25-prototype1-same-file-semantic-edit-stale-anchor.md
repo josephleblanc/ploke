@@ -246,6 +246,29 @@ This is the same stale post-mutation contract as the 2026-05-24 repro, but
 observed after an auto-applied semantic edit plus a legitimate failing test
 verification step rather than only a staged-then-failed follow-up edit.
 
+## 2026-06-06 Recurrence
+
+The same stale same-file boundary recurred in the latest 090815 baseline/protocol run.
+
+Campaign `p1-admissionfix-g35flash-p25flash-20260606-090815`, run `run-1780762798969-structured-current-policy-b8dc71f0`.
+
+Source report:
+`docs/active/agents/run-reviews/2026-06-06-p1-admissionfix-g35flash-p25flash-20260606-090815-baseline-protocol-tool-correlation.md`
+
+Run root:
+`/home/brasides/.ploke-eval/instances/prototype1/p1-admissionfix-g35flash-p25flash-20260606-090815/BurntSushi__ripgrep-2209/runs/run-1780762798969-structured-current-policy-b8dc71f0`
+
+| Call | Tool | Outcome | Error / note |
+|------|------|---------|--------------|
+| 23 | `apply_code_edit` | applied | `applied=1` to `crates/printer/src/util.rs` |
+| 24 | `cargo check --package grep-printer` | completed, compile failed | `ok=false`, `status_reason=compile_failed`, private-field errors |
+| 25 | `apply_code_edit` | failed | content changed; refresh/re-resolve target |
+| 26 | `code_item_lookup` | failed | internal read-side failure: `failed to read snippet: Content changed` |
+| 27 | `read_file` | recovered context | direct file read over `util.rs:40-115` |
+| 28-33 | `non_semantic_patch` + cargo | recovered | direct patch repaired compile failures and package check/test later passed |
+
+This 090815 instance recovered through direct reads and patches, so it did not block the whole run the way the 053302 chain did. It still confirms the same underlying contract: after an applied semantic edit mutates a file, same-file semantic lookup/edit paths can encounter stale content until the model refreshes or the system exposes a first-class `stale_file_version` / `refresh_required` result.
+
 ## Fix Direction
 
 - Keep the new stale-anchor regression as fixed-contract coverage:

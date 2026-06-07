@@ -1040,6 +1040,74 @@ fn provider_unavailable_headless_tui_terminal_is_typed_prepare_error() {
 }
 
 #[tokio::test]
+async fn rag_unavailable_headless_tui_setup_writes_typed_diagnostics() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let _env = crate::test_support::env_guard_os(vec![(
+        "PLOKE_EVAL_FORCE_HEADLESS_TUI_RAG_UNAVAILABLE",
+        "1".into(),
+    )]);
+    init_indexed_repo(&repo_root);
+    write_surface_target(
+        &repo_root,
+        Path::new("Cargo.toml"),
+        "[package]\nname = \"rag-unavailable-fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n",
+    );
+    write_surface_target(&repo_root, Path::new("src/lib.rs"), "pub fn canary() {}\n");
+    index_repo(&repo_root);
+    commit_indexed_repo(&repo_root, "rag unavailable fixture");
+
+    let publication = publish_broad_edit_harness_request(
+        &manifest_path,
+        &repo_root,
+        &test_parent_identity(),
+        Prototype1ChildBudget::new(1, 1),
+        test_broad_request_admission_binding(),
+    )
+    .expect("published broad harness request");
+    let slot = HarnessRequestSlot {
+        request_path: publication.request_path,
+        published: publication.published,
+    };
+    let options = BroadTuiAttemptOptions {
+        model: None,
+        max_attempts: Some(1),
+        timeout_secs: Some(60),
+    };
+
+    let err = run_broad_headless_tui_attempt_with_options(&slot, &options)
+        .await
+        .expect_err("RAG/BM25 setup failure must stop child planning");
+
+    let PrepareError::DatabaseSetup { phase, detail } = err else {
+        panic!("expected typed setup blocker, got {err:?}");
+    };
+    assert_eq!(phase, "bm25_ready");
+    assert_eq!(detail, "RAG service is unavailable");
+
+    let diagnostics_path =
+        broad_headless_tui_diagnostics_path(slot.published.submitted_result_path());
+    let diagnostics = fs::read_to_string(&diagnostics_path).expect("diagnostics persisted");
+    let summary: tui_adapter::evidence::Summary =
+        serde_json::from_str(&diagnostics).expect("typed diagnostics decode");
+    assert!(matches!(
+        summary.terminal,
+        Some(tui_adapter::evidence::Terminal::SetupUnavailable { phase, reason })
+            if phase == "bm25_ready" && reason == "RAG service is unavailable"
+    ));
+    let rejection = slot_rejection(&slot);
+    assert!(
+        rejection.contains("setup unavailable during bm25_ready: RAG service is unavailable"),
+        "slot rejection should join typed diagnostics, got: {rejection}"
+    );
+    assert!(
+        !rejection.contains("produced no submitted result or diagnostics"),
+        "slot rejection must not degrade to missing diagnostics: {rejection}"
+    );
+}
+
+#[tokio::test]
 async fn broad_tui_prep_failure_is_setup_blocker() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");

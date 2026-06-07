@@ -33,7 +33,7 @@ use super::evidence::{
 };
 pub(crate) use super::evidence_class::EvidenceClass;
 use super::evidence_inventory::{
-    HistoryCommitmentLane, InventoryRow, prototype1_evidence_inventory_rows,
+    InventoryRow, evidence_inventory_lane_counts, prototype1_evidence_inventory_rows,
 };
 use crate::cli::prototype1_state::cli_facing::Prototype1BranchEvaluationReport;
 use crate::intervention::{
@@ -1792,18 +1792,23 @@ impl Document {
         })
     }
 
+    // Catalog accessors for monitor/history slice callers not yet wired.
+    #[allow(dead_code)]
     pub(crate) fn class(&self) -> EvidenceClass {
         self.class
     }
 
+    #[allow(dead_code)]
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 
+    #[allow(dead_code)]
     pub(crate) fn pointer(&self) -> &EvidencePointer {
         &self.pointer
     }
 
+    #[allow(dead_code)]
     pub(crate) fn value(&self) -> Option<&Value> {
         self.value.as_ref()
     }
@@ -2930,14 +2935,6 @@ fn provisional_blocks(entries: &[PreviewEntry]) -> Vec<PreviewBlock> {
             }
         })
         .collect()
-}
-
-fn evidence_inventory_lane_counts(rows: &[InventoryRow]) -> BTreeMap<HistoryCommitmentLane, usize> {
-    let mut counts = BTreeMap::new();
-    for row in rows {
-        *counts.entry(row.history_commitment).or_insert(0) += 1;
-    }
-    counts
 }
 
 fn source_summary(journal: &[Stored<JournalEntry>], documents: &[Document]) -> Vec<SourceSummary> {

@@ -9,7 +9,9 @@ use std::path::{self, Path};
 use syn_parser::TestIds;
 use syn_parser::error::SynParserError; // Import directly from ploke_core
 use syn_parser::parser::graph::{CodeGraph, GraphAccess}; // Added GraphNode
-use syn_parser::parser::types::{GenericParamKind, GenericParamNode, TypeNode}; // Remove TypeKind from here
+#[cfg(not(feature = "typed_type_graph"))]
+use syn_parser::parser::types::TypeNode;
+use syn_parser::parser::types::{GenericParamKind, GenericParamNode};
 use syn_parser::parser::visitor::calculate_cfg_hash_bytes;
 use syn_parser::parser::{ExtractSpan, ParsedCodeGraph, nodes::*};
 use syn_parser::utils::LogStyle; // Added LogStyle imports

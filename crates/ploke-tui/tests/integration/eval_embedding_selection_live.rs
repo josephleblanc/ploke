@@ -25,7 +25,6 @@ use ploke_llm::embeddings::EmbClientConfig;
 use ploke_llm::router_only::openrouter::embed::ResolvedLiveEmbeddingModel;
 use ploke_rag::TokenBudget;
 use ploke_test_utils::{PLOKE_DB_SNAPSHOT_FIXTURE_DIR_ENV, workspace_root};
-use ploke_tui::AppEvent;
 use ploke_tui::app::commands::harness::TestRuntime;
 use ploke_tui::app_state::handlers::indexing::index_workspace;
 use ploke_tui::app_state::{

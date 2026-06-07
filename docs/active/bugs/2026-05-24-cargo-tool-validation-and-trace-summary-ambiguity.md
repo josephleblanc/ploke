@@ -138,6 +138,39 @@ New evidence:
 This reinforces that adjudication should treat target tests, final check scope,
 formatting checks, and summary parity as separate fields.
 
+## 2026-06-06 Recurrence
+
+The latest 090815 baseline/protocol run repeats the same validation and review-surface ambiguity, with stronger protocol-correlation evidence.
+
+Campaign:
+
+```text
+p1-admissionfix-g35flash-p25flash-20260606-090815
+```
+
+Run root:
+
+```text
+/home/brasides/.ploke-eval/instances/prototype1/p1-admissionfix-g35flash-p25flash-20260606-090815/BurntSushi__ripgrep-2209/runs/run-1780762798969-structured-current-policy-b8dc71f0
+```
+
+Source report:
+
+```text
+docs/active/agents/run-reviews/2026-06-06-p1-admissionfix-g35flash-p25flash-20260606-090815-baseline-protocol-tool-correlation.md
+```
+
+New evidence:
+
+- Trace audit: 53 provider responses, 52 provider-emitted tool calls, 52 recorded tool calls, and zero missing call ids.
+- Cargo calls `[24]`, `[29]`, and `[47]` were lifecycle `ToolCompleted` but semantically failed (`result.ok=false` / compile or test failure). Protocol/reporting must inspect `ok` and `status_reason`, not only tool lifecycle completion.
+- Call `[50]` was a successful `cargo test` but validation audit records `manifest_path=/home/brasides/.ploke-eval/repos/BurntSushi/ripgrep/crates/globset/Cargo.toml` and `covers_changed_files=false`; it is not broad regression coverage for the changed `crates/printer` files.
+- The validation audit's `patch_quality.expected_output_edit_candidates` flags call `function-call-ce5d18bc-f244-434d-81d0-9da71278b162` changing `let expected = "1:x\n2-b\n";` to `let expected = "1:x\n";` in `crates/printer/src/standard.rs` after a failing test.
+- Direct submission-patch verification confirmed the exported patch contains `let expected = "1:x\n";`, does not contain the earlier `"1:x\n2-b\n"` expectation, and contains the over-indented `        pub fn replace_all` line.
+- `llm-full-responses.jsonl` has the stop/final response, but both `agent-turn-summary.json` and `record.json.gz` have `final_assistant_message = null` for the turn artifact. Final-answer playback still requires a manual join to the full-response sidecar.
+
+This recurrence keeps the bug open as a protocol/read-side issue: the raw run is reviewable, but cargo semantic status, changed-file coverage, expected-output edits, patch hygiene, and final-assistant capture must be first-class fields before protocol completion can be treated as a reliable semantic-success signal.
+
 ## Related Reports
 
 - [`2026-05-22-cargo-tool-tail-rendering-and-timeout.md`](./2026-05-22-cargo-tool-tail-rendering-and-timeout.md)

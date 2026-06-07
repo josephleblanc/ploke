@@ -171,3 +171,34 @@ state without checking newer code, History records, and run artifacts.
   request slots have no headless result/submission/trace, and one materialized
   `node-69dd9bb1de784313` workspace contains an unsubmitted dirty
   `ploke-io/src/write.rs` diff.
+- [`2026-06-06-p1-admissionfix-g35flash-p25flash-20260606-090815-coverage-status.md`](2026-06-06-p1-admissionfix-g35flash-p25flash-20260606-090815-coverage-status.md)
+  Coverage/status review for the 090815 campaign, separating mechanically
+  complete baseline eval/protocol artifacts from broad-harness child admission
+  failure and flagging inventory false negatives plus stale metadata.
+- [`2026-06-06-p1-admissionfix-g35flash-p25flash-20260606-090815-baseline-protocol-tool-correlation.md`](2026-06-06-p1-admissionfix-g35flash-p25flash-20260606-090815-baseline-protocol-tool-correlation.md)
+  Trace-bearing baseline/protocol review for `BurntSushi__ripgrep-2209`,
+  reconciling 52 provider tool calls with 52 recorded calls while downgrading the
+  exported patch to candidate-only because of expected-output, validation-scope,
+  and final-message playback gaps.
+- [`2026-06-06-p1-admissionfix-g35flash-p25flash-20260606-090815-parent-request-only-rca.md`](2026-06-06-p1-admissionfix-g35flash-p25flash-20260606-090815-parent-request-only-rca.md)
+  Incomplete-state RCA, not a trace-bearing run review: parent broad-harness
+  publication created 10 requests and workspaces but no submitted results or
+  headless diagnostics, so the earliest provable gap is after publication and
+  before per-slot diagnostic persistence.
+- [`2026-06-06-p1-admissionfix-g35flash-p25flash-20260606-090815-slots-base-r5-incomplete.md`](2026-06-06-p1-admissionfix-g35flash-p25flash-20260606-090815-slots-base-r5-incomplete.md)
+  Incomplete-state evidence for slots base through r5: request JSON/Markdown and
+  clean candidate workspaces are present, but result/diagnostic/model-tool
+  records are absent; do not cite these slots as timeouts.
+- [`2026-06-06-p1-admissionfix-g35flash-p25flash-20260606-090815-slots-r6-r10-incomplete.md`](2026-06-06-p1-admissionfix-g35flash-p25flash-20260606-090815-slots-r6-r10-incomplete.md)
+  Incomplete-state evidence for r6-r10 with the same request-only/no-diagnostics
+  pattern, preserving the distinction between child-plan negative accounting and
+  unproven provider, timeout, or model failures.
+- [`2026-06-06-p1-admissionfix-g35flash-p25flash-20260606-090815-bug-synthesis.md`](2026-06-06-p1-admissionfix-g35flash-p25flash-20260606-090815-bug-synthesis.md)
+  RCA/bug-doc synthesis for the 090815 review board, creating the broad
+  request-only/no-diagnostics bug and updating impl lookup, stale same-file
+  edit, and cargo/protocol validation bug docs without filing unproven timeout or
+  provider failures.
+- [`2026-06-06-p1-admissionfix-g35flash-p25flash-20260606-090815-fan-in.md`](2026-06-06-p1-admissionfix-g35flash-p25flash-20260606-090815-fan-in.md)
+  Final fan-in synthesis for the 090815 board, quality-gating child reports,
+  indexing incomplete evidence separately from durable trace-bearing review, and
+  setting the repair-before-rerun gate for broad-headless diagnostics.

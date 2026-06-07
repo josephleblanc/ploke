@@ -2,7 +2,7 @@
 
 - date: 2026-05-22 local / 2026-05-22 UTC
 - campaign: `p1-google-live-run-20260521-4`
-- status: patched in worktree; fresh live-run validation pending
+- status: open; raw-entry-order fix landed earlier, but a fresh 2026-06-06 loop hit a newer sealed selection-payload verification variant
 
 ## Summary
 
@@ -118,6 +118,37 @@ sidecars showed many valid Google/Gemini tool calls, no malformed raw JSON
 tool-call records, and multiple applied parent patches before the successor
 History failure.
 
+## 2026-06-06 Fresh Loop Recurrence: 053302
+
+Campaign/worktree:
+
+```text
+p1-admissionfix-g35flash-p25flash-20260606-053302
+/home/brasides/.ploke-eval/campaigns/p1-admissionfix-g35flash-p25flash-20260606-053302
+/home/brasides/.ploke-eval/worktrees/p1-admissionfix-g35flash-p25flash-20260606-053302
+```
+
+This run made it past the initial parent/child handoff twice:
+
+- generation-0 parent `node-9fdcd8a6ac7efefc` wrote a child plan with
+  `children = 3`, `rejected_surface_attempts = 7`;
+- successor parent `node-c1819b8d95dccfdc` wrote a child plan with
+  `children = 5`, `rejected_surface_attempts = 4`;
+- transition journal window: 2026-06-06T06:09:47-07:00 to
+  2026-06-06T08:30:52-07:00;
+- child spawn/observe evidence exists for eight children.
+
+The run still failed at successor traversal/storage. The final successor event
+records:
+
+```text
+prototype1-state successor failed: batch selection is invalid: failed to load History traversal candidates: sealed block failed verification before storage: invalid selection decision entry: selection entry 49163719-0445-43dc-a694-c730c4ff7d26 payload hash does not match decision payload
+```
+
+This is not the same symptom as the latest `090815` broad-headless/RAG startup
+failure, but it is the prior loop worktree's terminal failure and keeps the
+successor History bug open as a current live-loop blocker.
+
 ## Fix Direction
 
 1. Done in worktree: added focused storage regression coverage using a minimal
@@ -126,11 +157,14 @@ History failure.
 2. Done in worktree: stored-block verification now hashes the exact raw entry
    JSON values committed in the segment line, then verifies the `entries_root`
    and block hash from those seal-time entry hashes.
-3. Add a run doctor or hard resume guard for campaigns left with a selected
+3. New recurrence gate: add coverage for selection-decision payload hashing
+   itself, using the 053302 failure shape where an entry id is present but the
+   stored payload hash does not match the loaded decision payload.
+4. Add a run doctor or hard resume guard for campaigns left with a selected
    child checkout but stale generation-0 parent identity.
-4. After the History fix, run a fresh short live Google loop from a clean parent
-   worktree and confirm successor startup writes ready/completion evidence
-   without `prototype1_history_store` failure.
+5. After the History fix, run a fresh short live Google/OpenRouter loop from a
+   clean parent worktree and confirm successor startup writes ready/completion
+   evidence without `prototype1_history_store` or History traversal failure.
 
 ## Next Run Watchpoints
 

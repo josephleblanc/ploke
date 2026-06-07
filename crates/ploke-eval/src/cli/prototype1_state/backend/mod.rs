@@ -1184,10 +1184,6 @@ pub(crate) fn repo_entry_bytes(
     }
 }
 
-fn artifact_id_from_git_commit(commit: &GitCommit) -> ArtifactId {
-    ArtifactId::new(format!("artifact:git-commit:{}", commit.0))
-}
-
 mod git_worktree;
 mod harness_ingestion;
 mod surface_admission;

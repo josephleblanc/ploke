@@ -66,112 +66,24 @@ use crate::registry::builtin_dataset_registry_entries;
 use crate::spec::PrepareError;
 
 #[cfg(test)]
-use crate::campaign::{
-    CampaignManifest, CampaignValidationCheck, EvalCampaignPolicy, ProtocolCampaignPolicy,
-    ResolvedCampaignConfig, adopt_campaign_manifest_from_closure_state,
-    adopt_campaign_manifest_from_registry, apply_campaign_overrides, campaign_closure_state_path,
-    dataset_files_from_sources, dataset_keys_from_sources, default_protocol_max_tokens,
-    list_campaigns, render_resolved_campaign_config, save_campaign_manifest,
-    validate_campaign_config,
-};
+use crate::campaign::{EvalCampaignPolicy, ProtocolCampaignPolicy, ResolvedCampaignConfig};
 #[cfg(test)]
-use crate::closure::{
-    ClosureClass, ClosureRecomputeRequest, closure_state_path, recompute_closure_state,
-    render_closure_status,
-};
+use crate::closure::ClosureClass;
 #[cfg(test)]
-use crate::inner::registry::RunRegistration;
+use crate::spec::EvalBudget;
 #[cfg(test)]
-use crate::intervention::{
-    INTERVENTION_APPLY_PROCEDURE, INTERVENTION_ISSUE_DETECTION_PROCEDURE,
-    INTERVENTION_SYNTHESIS_PROCEDURE, InterventionApplyInput, InterventionApplyOutput,
-    InterventionSynthesisInput, IssueCase, IssueDetectionInput, IssueDetectionOutput,
-    detect_issue_cases, execute_intervention_apply, issue_detection_artifact_input,
-    operation_target_artifact_id, select_primary_issue, synthesize_intervention_with_llm,
-};
-#[cfg(test)]
-use crate::intervention_issue_aggregate::{
-    IssueDetectionAggregate, IssueDetectionAggregateError, load_issue_detection_aggregate,
-};
-#[cfg(test)]
-use crate::model_registry::load_active_model;
-#[cfg(test)]
-use crate::msb::{PrepareMsbBatchRequest, PrepareMsbSingleRunRequest};
-#[cfg(test)]
-use crate::projection::OperatorProjectionRead;
-#[cfg(test)]
-use crate::protocol::protocol_aggregate::{
-    ProtocolAggregate, ProtocolAggregateError, ProtocolCallReviewRow, load_protocol_aggregate,
-};
-#[cfg(test)]
-use crate::protocol_artifacts::{
-    StoredProtocolArtifactFile, list_protocol_artifact_load_results, list_protocol_artifacts,
-    load_protocol_artifact, protocol_artifact_preview, protocol_artifact_summary,
-    write_protocol_artifact,
-};
-#[cfg(test)]
-use crate::protocol_report::{
-    ProtocolAggregateCallIssueRow, ProtocolAggregateCoverage, ProtocolAggregateReport,
-    ProtocolAggregateSegmentRow, ProtocolColorProfile, ProtocolReportRenderOptions,
-    render_protocol_aggregate_report_with_options,
-};
-#[cfg(test)]
-use crate::protocol_triage_report::{
-    ProtocolCampaignCountRow, ProtocolCampaignEvidence, ProtocolCampaignExemplarRow,
-    ProtocolCampaignFamilyRow, ProtocolCampaignSummary, ProtocolCampaignTriageReport,
-    render_protocol_campaign_triage_report, sort_count_rows,
-};
-#[cfg(test)]
-use crate::provider_prefs::{
-    clear_provider_for_model, load_provider_for_model, set_provider_for_model,
-};
-#[cfg(test)]
-use crate::record::read_compressed_record;
-#[cfg(test)]
-use crate::registry::builtin_dataset_registry_entry;
-#[cfg(test)]
-use crate::run_history::{
-    RunDirPreference, list_finished_record_paths_in_instances_root, preferred_run_dir_for_instance,
-    print_assistant_messages_from_record_path,
-};
-#[cfg(test)]
-use crate::run_registry::list_registrations_for_instance;
-#[cfg(test)]
-use crate::runner::{
-    BatchRunArtifactPaths, BatchRunSummary, MultiSweBenchSubmissionRecord, ReplayMsbBatchRequest,
-    RunMsbAgentBatchRequest, RunMsbAgentSingleRequest, RunMsbBatchRequest, RunMsbSingleRequest,
-    resolve_route_for_model,
-};
-#[cfg(test)]
-use crate::selection::{
-    ActiveSelection, ActiveSelectionSlot, clear_active_selection, load_active_selection,
-    load_active_selection_at, render_selection_warnings, save_active_selection,
-    unset_active_selection_slot,
-};
-#[cfg(test)]
-use crate::spec::{
-    EvalBudget, IssueInput, OutputMode, PrepareSingleRunRequest, PrepareWrite,
-    PreparedCampaignContext,
-};
-#[cfg(test)]
-use crate::target_registry::{
-    BenchmarkFamily, RegistryEntry, RegistryRecomputeRequest, TargetRegistry, load_target_registry,
-    recompute_target_registry, render_target_registry_status, target_registry_path,
-};
+use crate::target_registry::{BenchmarkFamily, RegistryEntry, TargetRegistry};
 
 #[cfg(test)]
-pub(crate) use format::{
-    display_context_length, display_price_per_million, extract_model_size, model_size_string,
-};
+pub(crate) use format::{display_price_per_million, extract_model_size};
 #[cfg(test)]
 pub(crate) use handlers::campaign::default_campaign_submission_export_path;
 #[cfg(test)]
 pub(crate) use handlers::closure::{
-    ClosureAdvanceProtocolReport, ProtocolRunPlan, advance_protocol_or_block,
-    ensure_prepared_runs_under_repo_cache, ensure_repo_cache_clone_preflight,
-    format_protocol_selected_runs, format_remaining_protocol_work,
-    is_retryable_local_analysis_review_error, protocol_report_allows_continue,
-    protocol_report_made_progress, protocol_run_plan,
+    ClosureAdvanceProtocolReport, ProtocolRunPlan, ensure_prepared_runs_under_repo_cache,
+    ensure_repo_cache_clone_preflight, format_protocol_selected_runs,
+    format_remaining_protocol_work, is_retryable_local_analysis_review_error,
+    protocol_report_allows_continue, protocol_report_made_progress,
 };
 #[cfg(test)]
 pub(crate) use handlers::inspect::{
@@ -185,12 +97,10 @@ pub(crate) use handlers::registry::registry_dataset_view;
 pub(crate) use handlers::run::default_batch_id;
 #[cfg(test)]
 pub(crate) use provider::{
-    current_provider_for_model, headless_model_selection,
-    headless_model_selection_from_provider_preference, load_parent_patcher_model_selection,
-    parse_provider_key, registry_route_source, resolve_provider_model_id,
+    current_provider_for_model, headless_model_selection, load_parent_patcher_model_selection,
 };
 #[cfg(test)]
-pub(crate) use record::{RecordResolution, resolve_record_path_from_eval_home};
+pub(crate) use record::resolve_record_path_from_eval_home;
 
 #[cfg(test)]
 use clap::Parser;
@@ -208,8 +118,6 @@ use ploke_records::tool_contracts::ToolArgumentsJson;
 use serde::Deserialize;
 #[cfg(test)]
 use std::collections::BTreeMap;
-#[cfg(test)]
-use std::sync::Mutex;
 
 impl Cli {
     pub async fn run(self) -> ExitCode {

@@ -81,6 +81,7 @@ impl Artifact {
         &self.artifact_surface
     }
 
+    #[cfg(test)]
     pub(crate) fn branch_id(&self) -> &str {
         &self.resolved.branch.branch_id
     }
