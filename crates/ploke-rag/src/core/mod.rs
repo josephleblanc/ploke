@@ -14,7 +14,6 @@ use ploke_embed::indexer::EmbeddingProcessor;
 use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_io::IoManagerHandle;
 use std::collections::HashMap;
-#[cfg(feature = "typed_type_graph")]
 use std::collections::HashSet;
 use std::future::Future;
 use std::pin::Pin;
@@ -85,7 +84,7 @@ pub struct TypeContextConfig {
 impl Default for TypeContextConfig {
     fn default() -> Self {
         Self {
-            enabled: cfg!(feature = "typed_type_graph"),
+            enabled: true,
             max_seed_hits: 12,
             max_expanded_hits: 48,
             score_factor: 0.6,
@@ -144,7 +143,6 @@ impl Reranker for NoopReranker {
     }
 }
 
-#[cfg(feature = "typed_type_graph")]
 fn type_context_kind(relation: TypeContextRelation) -> TypeContextKind {
     match relation {
         TypeContextRelation::SameResolvedType => TypeContextKind::SameResolvedType,
@@ -200,7 +198,6 @@ impl RagService {
         })
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn apply_type_context_gate(db: &Database, cfg: &mut RagConfig) -> Result<bool, RagError> {
         if !cfg.type_context.enabled {
             return Ok(false);
@@ -213,11 +210,6 @@ impl RagService {
         );
         cfg.type_context.enabled = false;
         Ok(true)
-    }
-
-    #[cfg(not(feature = "typed_type_graph"))]
-    fn apply_type_context_gate(_db: &Database, _cfg: &mut RagConfig) -> Result<bool, RagError> {
-        Ok(false)
     }
 
     /// Construct a new RAG service, starting the BM25 service actor.
@@ -619,7 +611,6 @@ impl RagService {
         Ok(all_results)
     }
 
-    #[cfg(feature = "typed_type_graph")]
     fn expand_hits_with_type_context(
         &self,
         hits: &[(Uuid, f32)],
@@ -724,14 +715,6 @@ impl RagService {
         );
         expanded_context.retain(|id, _| materialized_ids.contains(id));
         Ok((merged, expanded_context))
-    }
-
-    #[cfg(not(feature = "typed_type_graph"))]
-    fn expand_hits_with_type_context(
-        &self,
-        hits: &[(Uuid, f32)],
-    ) -> Result<(Vec<(Uuid, f32)>, HashMap<Uuid, TypeContextInfo>), RagError> {
-        Ok((hits.to_vec(), HashMap::new()))
     }
 
     /// High-level API: retrieve and assemble a context using the chosen strategy and budget.
