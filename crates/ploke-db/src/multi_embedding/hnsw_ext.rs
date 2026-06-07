@@ -15,6 +15,7 @@ use crate::{
         db_ext::EmbeddingExt,
         schema::{EmbeddingSetExt, EmbeddingVector},
     },
+    query::builder::NodeTypeRelation as _,
 };
 
 pub(crate) const HNSW_TARGET: &str = "hnsw-index";

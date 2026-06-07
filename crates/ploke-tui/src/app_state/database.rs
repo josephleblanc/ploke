@@ -11,8 +11,9 @@ use ploke_core::{
 };
 use ploke_db::{
     CrateContextRow, EmbedDataVerbose, NamespaceImportConflictReport, NamespaceImportError,
-    NamespaceImportResult, NamespaceRemovalResult, NodeType, RestoredEmbeddingSet, SimilarArgs,
-    multi_embedding::schema::EmbeddingSetExt, search_similar_args,
+    NamespaceImportResult, NamespaceRemovalResult, NodeType, NodeTypeExt, NodeTypeRelation as _,
+    RestoredEmbeddingSet, SimilarArgs, multi_embedding::schema::EmbeddingSetExt,
+    search_similar_args,
 };
 use ploke_embed::config::OpenRouterConfig;
 use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource};

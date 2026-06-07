@@ -2,7 +2,6 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 use std::{ops::Deref, panic::Location, path::Path};
 
-use crate::NodeType;
 use crate::QueryResult;
 use crate::bm25_index::{DocMeta, TOKENIZER_VERSION};
 use crate::error::DbError;
@@ -14,7 +13,9 @@ use crate::result::{get_byte_offsets, get_pos};
 use cozo::{DataValue, Db, MemStorage, NamedRows, ScriptMutability, UuidWrapper, Vector};
 use itertools::Itertools;
 use lazy_static::lazy_static;
-use ploke_core::{EmbeddingData, FileData, TrackingHash};
+
+use crate::query::builder::{NodeTypeExt, NodeTypeRelation as _};
+use ploke_core::{EmbeddingData, FileData, NodeType, TrackingHash};
 use ploke_error::Error as PlokeError;
 use ploke_transform::schema::assoc_nodes::MethodNodeSchema;
 use ploke_transform::schema::meta::Bm25MetaSchema;
@@ -1517,7 +1518,7 @@ target[id] := input[id_str], id = to_uuid(id_str)
     pub fn get_crate_files(&self, crate_name: &str) -> Result<Vec<FileData>, PlokeError> {
         let script = format!(
             "{} \"{}\"",
-            r#"?[id, tracking_hash, namespace, file_path] := 
+            r#"?[id, tracking_hash, namespace, file_path] :=
     *module { id, tracking_hash @ 'NOW' },
     *file_mod { file_path, namespace, owner_id: id @ 'NOW' },
     *crate_context { name: crate_name, namespace @ 'NOW' },
@@ -1588,18 +1589,18 @@ target[id] := input[id_str], id = to_uuid(id_str)
             "
             {{
             parent_of[child, parent] := *syntax_edge{{
-                source_id: parent, 
-                target_id: child, 
+                source_id: parent,
+                target_id: child,
                 relation_kind: \"Contains\"
             }}
 
             ancestor[desc, asc] := parent_of[desc, asc]
             ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
 
-            embedded_vec[node_id, embedding_set_id, vector] := *{vector_set_name} {{ 
-                    node_id, 
-                    embedding_set_id, 
-                    vector @ 'NOW' 
+            embedded_vec[node_id, embedding_set_id, vector] := *{vector_set_name} {{
+                    node_id,
+                    embedding_set_id,
+                    vector @ 'NOW'
                 }},
                 embedding_set_id == {set_id}
 
@@ -1620,8 +1621,8 @@ target[id] := input[id_str], id = to_uuid(id_str)
             "
             {{
             parent_of[child, parent] := *syntax_edge{{
-                source_id: parent, 
-                target_id: child, 
+                source_id: parent,
+                target_id: child,
                 relation_kind: \"Contains\"
             }}
 
@@ -1633,9 +1634,9 @@ target[id] := input[id_str], id = to_uuid(id_str)
                 *module {{ id: mod_id}},
                 ancestor[node_id, mod_id]
 
-            embedded_vec[node_id, embedding_set_id, vector, at] := *{vector_set_name} {{ 
-                    node_id, 
-                    embedding_set_id, 
+            embedded_vec[node_id, embedding_set_id, vector, at] := *{vector_set_name} {{
+                    node_id,
+                    embedding_set_id,
                     vector @ 'NOW'
                 }},
                 embedding_set_id == to_int({set_id}),
@@ -1745,16 +1746,16 @@ target[id] := input[id_str], id = to_uuid(id_str)
     /// # tokio_test::block_on(async {
     ///     use ploke_db::Database;
     ///     use cozo::ScriptMutability;
-    ///     
+    ///
     ///     // Initialize database with schema
     ///     let mut db = Database::init_with_schema().expect("Could not init database with schema");
-    ///     
+    ///
     ///     // Create some HNSW indices for testing
     ///     // WARN: This doesn't actually work because we don't have anything to index yet, we
     ///     // need a better test that uses a lazily loaded database that already contains embeddings.
     ///     db.index_embeddings(ploke_db::NodeType::Function, 384).await
     ///         .expect("Error indexing embeddings");
-    ///     
+    ///
     ///     // Count initial relations (including indices)
     ///     let initial_relations = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
     ///     let hnsw_indices: Vec<_> = initial_relations.rows
@@ -1767,13 +1768,13 @@ target[id] := input[id_str], id = to_uuid(id_str)
     ///             }
     ///         })
     ///         .collect();
-    ///     
+    ///
     ///     // Should have some HNSW indices after creating them
     ///     assert!(hnsw_indices.len() > 0, "Should have HNSW indices after creation");
-    ///     
+    ///
     ///     // Clear all HNSW indices
     ///     db.clear_hnsw_idx().await.expect("Error clearing hnsw indicies from database");
-    ///     
+    ///
     ///     // Verify no HNSW indices remain
     ///     let remaining_relations = db.run_script("::relations", Default::default(), ScriptMutability::Immutable).unwrap();
     ///     let remaining_hnsw: Vec<_> = remaining_relations.rows
@@ -1786,7 +1787,7 @@ target[id] := input[id_str], id = to_uuid(id_str)
     ///             }
     ///         })
     ///         .collect();
-    ///     
+    ///
     ///     assert_eq!(remaining_hnsw.len(), 0, "Should have no HNSW indices after clearing");
     /// # })
     /// ```
@@ -3068,7 +3069,7 @@ desc[id] := parent_of[id, parent], desc[parent]
     // Most likely this will involve repalcing the Vec<EmbeddingData> with a hashmap.
     pub fn get_file_data(&self) -> Result<Vec<FileData>, PlokeError> {
         let script = r#"
-            ?[id, tracking_hash, namespace, file_path] := 
+            ?[id, tracking_hash, namespace, file_path] :=
                 *module { id, tracking_hash },
                 *file_mod { owner_id: id, namespace, file_path },
                 *crate_context { namespace }
@@ -3239,14 +3240,14 @@ batch[id, name, file_path, file_hash, hash, span, namespace, canon_path, orderin
 
     is_root_module[id] := *module{id}, *file_mod {owner_id: id}
 
-    batch[id, name, file_path, file_hash, hash, span, namespace] := 
+    batch[id, name, file_path, file_hash, hash, span, namespace] :=
         has_embedding[id, name, hash, span],
         ancestor[id, mod_id],
         is_root_module[mod_id],
         *module{id: mod_id, tracking_hash: file_hash},
         *file_mod { owner_id: mod_id, file_path, namespace },
 
-    ?[id, name, file_path, file_hash, hash, span, namespace] := 
+    ?[id, name, file_path, file_hash, hash, span, namespace] :=
         batch[id, name, file_path, file_hash, hash, span, namespace]
         :sort id
         :limit $limit
@@ -3500,7 +3501,7 @@ batch[id, name, target_file, file_hash, hash, span, namespace, string_id] :=
         let script = r#"
             # Upsert document metadata
             docs_data[id, tracking_hash, tokenizer_version, token_length] <- $docs
-            ?[id, tracking_hash, tokenizer_version, token_length, at] := 
+            ?[id, tracking_hash, tokenizer_version, token_length, at] :=
                 docs_data[id, tracking_hash, tokenizer_version, token_length],
                 at = 'ASSERT'
 

@@ -150,29 +150,6 @@ pub use ploke_core::tool_contracts::{
     CargoToolParamsOwned, CargoToolResult,
 };
 
-impl CargoCommand {
-    fn as_str(self) -> &'static str {
-        match self {
-            CargoCommand::Test => "test",
-            CargoCommand::Check => "check",
-        }
-    }
-}
-
-impl CargoScope {
-    fn as_str(self) -> &'static str {
-        match self {
-            CargoScope::Focused => "focused",
-            CargoScope::Workspace => "workspace",
-        }
-    }
-}
-impl Default for CargoScope {
-    fn default() -> Self {
-        CargoScope::Focused
-    }
-}
-
 /// Parameters accepted by the cargo tool.
 ///
 /// These map to a constrained set of cargo flags and are validated before execution.
@@ -219,20 +196,6 @@ pub struct CargoToolParams<'a> {
     pub test_args: Option<Vec<Cow<'a, str>>>,
     #[serde(default)]
     pub include_warnings: bool,
-}
-
-impl CargoStatusReason {
-    fn as_str(self) -> &'static str {
-        match self {
-            CargoStatusReason::Success => "success",
-            CargoStatusReason::CompileFailed => "compile_failed",
-            CargoStatusReason::TestsFailedOrRuntime => "tests_failed_or_runtime",
-            CargoStatusReason::CargoFailedOrInvalidArgs => "cargo_failed_or_invalid_args",
-            CargoStatusReason::Timeout => "timeout",
-            CargoStatusReason::Canceled => "canceled",
-            CargoStatusReason::Killed => "killed",
-        }
-    }
 }
 
 #[derive(Default)]

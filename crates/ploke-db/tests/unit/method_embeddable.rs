@@ -376,8 +376,11 @@ fn method_fixture_count_nonzero() {
 // Phase 1: METHOD_NODE_ANCESTOR_RULE + embeddable set union tests
 // ============================================================================
 
-use ploke_db::multi_embedding::{
-    db_ext::METHOD_NODE_ANCESTOR_RULE, hnsw_ext::HnswExt, schema::EmbeddingSetExt,
+use ploke_db::{
+    NodeTypeExt, NodeTypeRelation as _,
+    multi_embedding::{
+        db_ext::METHOD_NODE_ANCESTOR_RULE, hnsw_ext::HnswExt, schema::EmbeddingSetExt,
+    },
 };
 
 /// Phase 1 validation test: Verify METHOD_NODE_ANCESTOR_RULE is well-formed CozoScript.

@@ -15,6 +15,7 @@ use tokio::fs;
 use tracing::{debug, error, info, instrument};
 use uuid::Uuid;
 
+use crate::query::builder::{NodeTypeExt, NodeTypeRelation as _};
 use crate::{
     Database, DbError, EmbedDataVerbose, NodeType, QueryResult, TypedEmbedData,
     create_index_for_set,

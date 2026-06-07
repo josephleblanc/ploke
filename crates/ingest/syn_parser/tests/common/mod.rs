@@ -1,6 +1,6 @@
 #![cfg(test)]
 use itertools::Itertools;
-use ploke_core::{ItemKind, NodeId, TypeId, TypeKind};
+use ploke_core::{ItemKind, NodeId};
 use std::fs::File;
 use std::io::{Read, Seek};
 use std::path::{self, Path};
@@ -273,16 +273,6 @@ pub fn new_path_attribute(value: &str) -> Attribute {
     }
 }
 
-/// Helper to find a TypeNode by its ID. Panics if not found.
-#[cfg(not(feature = "typed_type_graph"))]
-pub fn find_type_node(graph: &CodeGraph, type_id: TypeId) -> &TypeNode {
-    graph
-        .type_graph
-        .iter()
-        .find(|tn| tn.id == type_id)
-        .unwrap_or_else(|| panic!("TypeNode not found for TypeId: {}", type_id))
-}
-
 #[derive(Debug, Clone)]
 pub struct TestInfo<'a> {
     args: &'a ParanoidArgs<'a>,
@@ -432,7 +422,7 @@ pub enum SmokeTestError {
     NotFoundByName(String),
 }
 
-/// Helper to assert a condition with a descriptive error             
+/// Helper to assert a condition with a descriptive error
 pub fn assert_fixture<T>(condition: bool, message: &str, ok_value: T) -> Result<T, FixtureError> {
     if condition {
         Ok(ok_value)
@@ -555,27 +545,5 @@ pub fn find_generic_param_by_name<'a>(
             name: param_name, ..
         } => param_name == name,
         _ => false,
-    })
-}
-
-/// Helper to create module path for tests
-#[cfg(not(feature = "type_bearing_ids"))]
-pub fn test_module_path(segments: &[&str]) -> Vec<String> {
-    segments.iter().map(|s| s.to_string()).collect()
-}
-
-#[cfg(not(feature = "typed_type_graph"))]
-pub fn find_impl_for_type<'a>(graph: &'a CodeGraph, type_name: &str) -> Option<&'a ImplNode> {
-    graph.impls.iter().find(|i| {
-        if let Some(self_type) = graph
-            .type_graph
-            .iter()
-            .find(|t| t.id == i.self_type && i.trait_type.is_none())
-        {
-            if let TypeKind::Named { path, .. } = &self_type.kind {
-                return path.last().map(|s| s == type_name).unwrap_or(false);
-            }
-        }
-        false
     })
 }

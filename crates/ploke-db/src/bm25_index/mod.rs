@@ -6,6 +6,7 @@
 // - Adds Cozo client trait + an index_batch_with_cozo method that upserts doc metadata into Cozo
 // - Adds `new_from_corpus` constructor that consumes a Vec<(Uuid, String)> to compute avgdl
 
+use crate::query::builder::{NodeTypeExt, NodeTypeRelation as _};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -13,10 +14,10 @@ use std::{
 
 use bm25::{EmbedderBuilder, Scorer, Tokenizer};
 use cozo::{DataValue, UuidWrapper};
-use ploke_core::{CrateId, EmbeddingData, RetrievalScope, TrackingHash};
+use ploke_core::{CrateId, EmbeddingData, NodeType, RetrievalScope, TrackingHash};
 use uuid::Uuid;
 
-use crate::{Database, DbError, NodeType};
+use crate::{Database, DbError};
 
 pub mod bm25_service;
 

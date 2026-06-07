@@ -210,6 +210,7 @@ async fn run_fixture_tracking_hash_index(
     let fixture = "fixture_tracking_hash";
 
     let cozo_db = ploke_test_utils::setup_db_full_multi_embedding(fixture)?;
+    // #[allow(unused_mut)]
     let mut db = Database::new(cozo_db);
 
     // TODO:active-embedding-set 2025-12-15

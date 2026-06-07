@@ -16,6 +16,8 @@ pub struct RequestCodeContextParamsOwned {
     pub search_term: Option<String>,
 }
 
+pub use crate::NodeType;
+
 /// Graph node type label carried on semantic code-edit tool arguments.
 ///
 /// Wire-compatible with `ploke_db::NodeType` without pulling database crates into wasm builds.
@@ -57,6 +59,90 @@ pub enum GraphNodeType {
     MacroType,
     UnknownType,
     SyntaxEdge,
+}
+
+impl From<crate::NodeType> for GraphNodeType {
+    fn from(value: crate::NodeType) -> Self {
+        match value {
+            crate::NodeType::Function => Self::Function,
+            crate::NodeType::Struct => Self::Struct,
+            crate::NodeType::Enum => Self::Enum,
+            crate::NodeType::Trait => Self::Trait,
+            crate::NodeType::Module => Self::Module,
+            crate::NodeType::Const => Self::Const,
+            crate::NodeType::Impl => Self::Impl,
+            crate::NodeType::Import => Self::Import,
+            crate::NodeType::Macro => Self::Macro,
+            crate::NodeType::Static => Self::Static,
+            crate::NodeType::TypeAlias => Self::TypeAlias,
+            crate::NodeType::Union => Self::Union,
+            crate::NodeType::Method => Self::Method,
+            crate::NodeType::Param => Self::Param,
+            crate::NodeType::Variant => Self::Variant,
+            crate::NodeType::Field => Self::Field,
+            crate::NodeType::Attribute => Self::Attribute,
+            crate::NodeType::GenericType => Self::GenericType,
+            crate::NodeType::GenericLifetime => Self::GenericLifetime,
+            crate::NodeType::GenericConst => Self::GenericConst,
+            crate::NodeType::NamedType => Self::NamedType,
+            crate::NodeType::ReferenceType => Self::ReferenceType,
+            crate::NodeType::SliceType => Self::SliceType,
+            crate::NodeType::ArrayType => Self::ArrayType,
+            crate::NodeType::TupleType => Self::TupleType,
+            crate::NodeType::FunctionType => Self::FunctionType,
+            crate::NodeType::NeverType => Self::NeverType,
+            crate::NodeType::InferredType => Self::InferredType,
+            crate::NodeType::RawPointerType => Self::RawPointerType,
+            crate::NodeType::TraitObjectType => Self::TraitObjectType,
+            crate::NodeType::ImplTraitType => Self::ImplTraitType,
+            crate::NodeType::ParenType => Self::ParenType,
+            crate::NodeType::MacroType => Self::MacroType,
+            crate::NodeType::UnknownType => Self::UnknownType,
+            crate::NodeType::SyntaxEdge => Self::SyntaxEdge,
+        }
+    }
+}
+
+impl From<GraphNodeType> for crate::NodeType {
+    fn from(value: GraphNodeType) -> Self {
+        match value {
+            GraphNodeType::Function => Self::Function,
+            GraphNodeType::Struct => Self::Struct,
+            GraphNodeType::Enum => Self::Enum,
+            GraphNodeType::Trait => Self::Trait,
+            GraphNodeType::Module => Self::Module,
+            GraphNodeType::Const => Self::Const,
+            GraphNodeType::Impl => Self::Impl,
+            GraphNodeType::Import => Self::Import,
+            GraphNodeType::Macro => Self::Macro,
+            GraphNodeType::Static => Self::Static,
+            GraphNodeType::TypeAlias => Self::TypeAlias,
+            GraphNodeType::Union => Self::Union,
+            GraphNodeType::Method => Self::Method,
+            GraphNodeType::Param => Self::Param,
+            GraphNodeType::Variant => Self::Variant,
+            GraphNodeType::Field => Self::Field,
+            GraphNodeType::Attribute => Self::Attribute,
+            GraphNodeType::GenericType => Self::GenericType,
+            GraphNodeType::GenericLifetime => Self::GenericLifetime,
+            GraphNodeType::GenericConst => Self::GenericConst,
+            GraphNodeType::NamedType => Self::NamedType,
+            GraphNodeType::ReferenceType => Self::ReferenceType,
+            GraphNodeType::SliceType => Self::SliceType,
+            GraphNodeType::ArrayType => Self::ArrayType,
+            GraphNodeType::TupleType => Self::TupleType,
+            GraphNodeType::FunctionType => Self::FunctionType,
+            GraphNodeType::NeverType => Self::NeverType,
+            GraphNodeType::InferredType => Self::InferredType,
+            GraphNodeType::RawPointerType => Self::RawPointerType,
+            GraphNodeType::TraitObjectType => Self::TraitObjectType,
+            GraphNodeType::ImplTraitType => Self::ImplTraitType,
+            GraphNodeType::ParenType => Self::ParenType,
+            GraphNodeType::MacroType => Self::MacroType,
+            GraphNodeType::UnknownType => Self::UnknownType,
+            GraphNodeType::SyntaxEdge => Self::SyntaxEdge,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -268,6 +354,43 @@ pub enum CargoStatusReason {
     Timeout,
     Canceled,
     Killed,
+}
+
+impl CargoStatusReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CargoStatusReason::Success => "success",
+            CargoStatusReason::CompileFailed => "compile_failed",
+            CargoStatusReason::TestsFailedOrRuntime => "tests_failed_or_runtime",
+            CargoStatusReason::CargoFailedOrInvalidArgs => "cargo_failed_or_invalid_args",
+            CargoStatusReason::Timeout => "timeout",
+            CargoStatusReason::Canceled => "canceled",
+            CargoStatusReason::Killed => "killed",
+        }
+    }
+}
+
+impl CargoCommand {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CargoCommand::Test => "test",
+            CargoCommand::Check => "check",
+        }
+    }
+}
+
+impl CargoScope {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CargoScope::Focused => "focused",
+            CargoScope::Workspace => "workspace",
+        }
+    }
+}
+impl Default for CargoScope {
+    fn default() -> Self {
+        CargoScope::Focused
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,3 +1,4 @@
+use crate::query::builder::{NodeTypeExt, NodeTypeRelation as _};
 use crate::{
     Database, DbError, NodeType,
     database::to_string,

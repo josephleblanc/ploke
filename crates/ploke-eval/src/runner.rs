@@ -8,9 +8,9 @@ use std::time::Duration;
 use ploke_core::embeddings::{
     EmbeddingModelId, EmbeddingProviderSlug, EmbeddingSet, EmbeddingShape,
 };
-use ploke_db::Database;
 use ploke_db::bm25_index::bm25_service::Bm25Status;
 use ploke_db::multi_embedding::db_ext::EmbeddingExt;
+use ploke_db::{Database, NodeTypeRelation as _};
 use ploke_embed::config::{OpenRouterConfig, TruncatePolicy};
 use ploke_embed::indexer::{EmbeddingProcessor, EmbeddingSource, IndexStatus, IndexingStatus};
 use ploke_embed::providers::openrouter::OpenRouterBackend;

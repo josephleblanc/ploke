@@ -1,7 +1,6 @@
 #![allow(non_snake_case)]
 
 use crate::common::ParanoidArgs;
-use crate::common::find_type_node;
 use crate::paranoid_test_fields_and_values;
 use crate::paranoid_test_setup;
 use crate::run_paranoid_test;

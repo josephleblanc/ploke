@@ -11,6 +11,7 @@
 use std::path::{Path, PathBuf};
 
 use ploke_core::{EmbeddingData, TrackingHash, WriteSnippetData};
+use ploke_db::NodeTypeRelation as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;

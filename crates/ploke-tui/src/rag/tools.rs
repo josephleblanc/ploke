@@ -9,7 +9,7 @@ use ploke_core::rag_types::{
     ApplyCodeEditResult, GetFileMetadataResult, RequestCodeContextArgs, RequestCodeContextResult,
 };
 use ploke_core::{ArcStr, FileData, PROJECT_NAMESPACE_UUID, TrackingHash, WriteSnippetData};
-use ploke_db::NodeType;
+use ploke_db::{NodeType, NodeTypeExt, NodeTypeRelation as _};
 use ploke_error::{DomainError, InternalError};
 use ploke_io::read::{FileHashData, read_and_compute_filehash};
 use ploke_io::{Diff, NsWriteSnippetData, ReadStrategy};

@@ -38,6 +38,9 @@ pub mod rag_types;
 pub mod workspace;
 pub mod workspace_glob;
 
+mod node_type;
+pub use node_type::NodeType;
+
 #[cfg(feature = "tool-contracts")]
 pub mod tool_contracts;
 #[cfg(feature = "json")]

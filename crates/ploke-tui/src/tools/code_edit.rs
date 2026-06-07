@@ -1,7 +1,7 @@
 use super::*;
 use crate::{EventBus, app_state::core::PreviewMode};
 use ploke_core::rag_types::ApplyCodeEditResult;
-use ploke_db::NodeType;
+use ploke_db::{NodeType, NodeTypeExt, NodeTypeRelation as _};
 
 /// CodeEdit tool: applies one or more canonical edits to source files.
 ///
@@ -37,90 +37,6 @@ pub struct CanonicalEditBorrowed<'a> {
 }
 
 pub use ploke_core::tool_contracts::{CanonicalEditOwned, CodeEditParamsOwned, GraphNodeType};
-
-impl From<NodeType> for GraphNodeType {
-    fn from(value: NodeType) -> Self {
-        match value {
-            NodeType::Function => Self::Function,
-            NodeType::Struct => Self::Struct,
-            NodeType::Enum => Self::Enum,
-            NodeType::Trait => Self::Trait,
-            NodeType::Module => Self::Module,
-            NodeType::Const => Self::Const,
-            NodeType::Impl => Self::Impl,
-            NodeType::Import => Self::Import,
-            NodeType::Macro => Self::Macro,
-            NodeType::Static => Self::Static,
-            NodeType::TypeAlias => Self::TypeAlias,
-            NodeType::Union => Self::Union,
-            NodeType::Method => Self::Method,
-            NodeType::Param => Self::Param,
-            NodeType::Variant => Self::Variant,
-            NodeType::Field => Self::Field,
-            NodeType::Attribute => Self::Attribute,
-            NodeType::GenericType => Self::GenericType,
-            NodeType::GenericLifetime => Self::GenericLifetime,
-            NodeType::GenericConst => Self::GenericConst,
-            NodeType::NamedType => Self::NamedType,
-            NodeType::ReferenceType => Self::ReferenceType,
-            NodeType::SliceType => Self::SliceType,
-            NodeType::ArrayType => Self::ArrayType,
-            NodeType::TupleType => Self::TupleType,
-            NodeType::FunctionType => Self::FunctionType,
-            NodeType::NeverType => Self::NeverType,
-            NodeType::InferredType => Self::InferredType,
-            NodeType::RawPointerType => Self::RawPointerType,
-            NodeType::TraitObjectType => Self::TraitObjectType,
-            NodeType::ImplTraitType => Self::ImplTraitType,
-            NodeType::ParenType => Self::ParenType,
-            NodeType::MacroType => Self::MacroType,
-            NodeType::UnknownType => Self::UnknownType,
-            NodeType::SyntaxEdge => Self::SyntaxEdge,
-        }
-    }
-}
-
-impl From<GraphNodeType> for NodeType {
-    fn from(value: GraphNodeType) -> Self {
-        match value {
-            GraphNodeType::Function => Self::Function,
-            GraphNodeType::Struct => Self::Struct,
-            GraphNodeType::Enum => Self::Enum,
-            GraphNodeType::Trait => Self::Trait,
-            GraphNodeType::Module => Self::Module,
-            GraphNodeType::Const => Self::Const,
-            GraphNodeType::Impl => Self::Impl,
-            GraphNodeType::Import => Self::Import,
-            GraphNodeType::Macro => Self::Macro,
-            GraphNodeType::Static => Self::Static,
-            GraphNodeType::TypeAlias => Self::TypeAlias,
-            GraphNodeType::Union => Self::Union,
-            GraphNodeType::Method => Self::Method,
-            GraphNodeType::Param => Self::Param,
-            GraphNodeType::Variant => Self::Variant,
-            GraphNodeType::Field => Self::Field,
-            GraphNodeType::Attribute => Self::Attribute,
-            GraphNodeType::GenericType => Self::GenericType,
-            GraphNodeType::GenericLifetime => Self::GenericLifetime,
-            GraphNodeType::GenericConst => Self::GenericConst,
-            GraphNodeType::NamedType => Self::NamedType,
-            GraphNodeType::ReferenceType => Self::ReferenceType,
-            GraphNodeType::SliceType => Self::SliceType,
-            GraphNodeType::ArrayType => Self::ArrayType,
-            GraphNodeType::TupleType => Self::TupleType,
-            GraphNodeType::FunctionType => Self::FunctionType,
-            GraphNodeType::NeverType => Self::NeverType,
-            GraphNodeType::InferredType => Self::InferredType,
-            GraphNodeType::RawPointerType => Self::RawPointerType,
-            GraphNodeType::TraitObjectType => Self::TraitObjectType,
-            GraphNodeType::ImplTraitType => Self::ImplTraitType,
-            GraphNodeType::ParenType => Self::ParenType,
-            GraphNodeType::MacroType => Self::MacroType,
-            GraphNodeType::UnknownType => Self::UnknownType,
-            GraphNodeType::SyntaxEdge => Self::SyntaxEdge,
-        }
-    }
-}
 
 impl super::Tool for GatCodeEdit {
     type Output = ApplyCodeEditResult;

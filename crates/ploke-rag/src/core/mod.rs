@@ -10,6 +10,7 @@
 mod unit_tests;
 use super::*;
 use ploke_core::rag_types::AssembledContext;
+use ploke_db::NodeTypeExt;
 use ploke_embed::indexer::EmbeddingProcessor;
 use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_io::IoManagerHandle;

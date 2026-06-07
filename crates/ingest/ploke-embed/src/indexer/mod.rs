@@ -1,4 +1,5 @@
 #![allow(unused_mut)]
+use ploke_db::{NodeTypeExt, NodeTypeRelation as _};
 mod unit_tests;
 
 use crate::local::{EmbeddingConfig, LocalEmbedder};

@@ -5,8 +5,8 @@ use crate::rag::tools::{apply_code_edit_tool, apply_ns_code_edit_tool, resolve_c
 use crate::rag::utils::{ApplyCodeEditRequest, Edit, ToolCallParams};
 use crate::test_utils::new_test_harness::AppHarness;
 use ploke_core::{PROJECT_NAMESPACE_UUID, TrackingHash, rag_types::ApplyCodeEditResult};
-use ploke_db::NodeType;
 use ploke_db::helpers::graph_resolve_exact;
+use ploke_db::{NodeType, NodeTypeRelation as _};
 use ploke_io::read::generate_hash_for_file;
 use ploke_llm::response::FunctionCall;
 use ploke_test_utils::workspace_root;

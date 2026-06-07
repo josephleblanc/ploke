@@ -5,6 +5,8 @@ use ploke_core::{TrackingHash, rag_types::ContextPart};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::query::builder::{NodeTypeExt, NodeTypeRelation as _};
+
 use crate::{
     Database, DbError, NodeType, QueryResult,
     database::{ImmutQuery, to_string, to_uuid},
@@ -137,7 +139,7 @@ pub trait GetNodeInfo: ImmutQuery {
         containing_file[file_path, target_id] := ancestor[target_id, containing_id],
             is_file_module[containing_id, file_path]
 
-        new_data[name, canon_path, file_path] := 
+        new_data[name, canon_path, file_path] :=
             *module{{ id: module_node_id, path: canon_path @ 'NOW' }},
             ancestor[node_id, module_node_id],
             has_embedding[node_id, name, hash, span],

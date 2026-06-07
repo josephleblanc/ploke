@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use ploke_core::{EmbeddingData, TrackingHash};
-use ploke_db::NodeType;
+use ploke_db::{NodeType, NodeTypeRelation as _};
 use ploke_test_utils::{FIXTURE_NODES_CANONICAL, fresh_backup_fixture_db, workspace_root};
 use tokio::sync::oneshot;
 use tokio::time::{Duration, Instant, sleep, timeout};

@@ -1,3 +1,4 @@
+use crate::query::builder::NodeTypeExt;
 use crate::{Database, DbError, NodeType, QueryResult, TypedEmbedData};
 use std::collections::BTreeMap;
 
@@ -158,18 +159,18 @@ pub fn search_similar_test(
 
     let hnsw_script = [
         r#"
-            ?[id, name, distance] := 
+            ?[id, name, distance] :=
                 *function{
-                    id, 
-                    name, 
+                    id,
+                    name,
                     embedding: v
                     @ 'NOW'
                 },
                 ~function"#,
         HNSW_SUFFIX,
-        r#"{id, name| 
-                    query: v, 
-                    k: $k, 
+        r#"{id, name|
+                    query: v,
+                    k: $k,
                     ef: $ef,
                     bind_distance: distance
                 }

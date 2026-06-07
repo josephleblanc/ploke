@@ -35,11 +35,11 @@ pub use observability::{
     CodeEditProposal, ConversationTurn, ObservabilityStore, ToolCallDone, ToolCallReq, ToolStatus,
     Validity,
 };
+pub use ploke_core::NodeType;
 pub use ploke_error::PrettyDebug;
 pub use query::{
     QueryBuilder,
-    builder::FieldValue,
-    builder::NodeType,
+    builder::{FieldValue, NodeTypeExt, NodeTypeRelation},
     callbacks::{Callback, CallbackManager},
 };
 

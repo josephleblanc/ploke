@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use ploke_db::{Database, NodeType};
+use ploke_db::{Database, NodeType, NodeTypeExt as _, NodeTypeRelation as _};
 use ploke_records::agent_turn::{AgentTurnTraceRecord, ObservedTurnEventRecord};
 use ploke_tui::{
     AppEvent, EventBus, EventBusCaps, EventPriority,

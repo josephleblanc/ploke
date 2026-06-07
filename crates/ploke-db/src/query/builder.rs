@@ -2,6 +2,7 @@
 #![allow(dead_code)]
 
 use itertools::Itertools;
+pub use ploke_core::NodeType;
 use ploke_error::Error;
 use ploke_transform::schema::edges::SyntacticRelationSchema;
 
@@ -73,48 +74,10 @@ pub struct RhsRelation {
     pub node_type_index: i8,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum NodeType {
-    Function,
-    Struct,
-    Enum,
-    Trait,
-    Module,
-    Const,
-    Impl,
-    Import,
-    Macro,
-    Static,
-    TypeAlias,
-    Union,
-    Method,
-    Param,
-    Variant,
-    Field,
-    Attribute,
-    GenericType,
-    GenericLifetime,
-    GenericConst,
-    NamedType,
-    ReferenceType,
-    SliceType,
-    ArrayType,
-    TupleType,
-    FunctionType,
-    NeverType,
-    InferredType,
-    RawPointerType,
-    TraitObjectType,
-    ImplTraitType,
-    ParenType,
-    MacroType,
-    UnknownType,
-    SyntaxEdge,
-}
+impl NodeTypeExt for NodeType {}
 
-impl NodeType {
-    pub fn all_variants() -> [Self; 35] {
+pub trait NodeTypeExt {
+    fn all_variants() -> [NodeType; 35] {
         use NodeType::*;
         [
             Function,
@@ -155,7 +118,7 @@ impl NodeType {
         ]
     }
 
-    pub fn primary_nodes() -> [Self; 10] {
+    fn primary_nodes() -> [NodeType; 10] {
         use NodeType::*;
         [
             Function, Const, Enum,
@@ -166,13 +129,13 @@ impl NodeType {
             Macro, Module, Static, Struct, Trait, TypeAlias, Union,
         ]
     }
-    pub fn is_primary(type_name: &str) -> bool {
+    fn is_primary(type_name: &str) -> bool {
         Self::primary_nodes()
             .iter()
             .any(|pn| pn.relation_str() == type_name)
     }
 
-    pub fn primary_and_assoc_nodes() -> [Self; 11] {
+    fn primary_and_assoc_nodes() -> [NodeType; 11] {
         use NodeType::*;
         [
             Function, Const, Enum,
@@ -184,13 +147,13 @@ impl NodeType {
         ]
     }
 
-    pub fn is_primary_or_assoc(type_name: &str) -> bool {
+    fn is_primary_or_assoc(type_name: &str) -> bool {
         Self::primary_and_assoc_nodes()
             .iter()
             .any(|pn| pn.relation_str() == type_name)
     }
 
-    pub fn embeddable_nodes() -> String {
+    fn embeddable_nodes() -> String {
         let star: &'static str = " *";
         let left: &'static str = " {";
         let right: &'static str = " }";
@@ -209,17 +172,17 @@ impl NodeType {
         rhs
     }
 
-    pub const LEGACY_EMBEDDABLE_NODE_FIELDS: [&'static str; 5] =
+    const LEGACY_EMBEDDABLE_NODE_FIELDS: [&'static str; 5] =
         ["id", "name", "tracking_hash", "span", "embedding"];
 
-    pub const EMBEDDABLE_NODE_FIELDS: [&'static str; 4] = ["id", "name", "tracking_hash", "span"];
+    const EMBEDDABLE_NODE_FIELDS: [&'static str; 4] = ["id", "name", "tracking_hash", "span"];
 
-    pub fn embeddable_nodes_now() -> String {
+    fn embeddable_nodes_now() -> String {
         let star: &'static str = " *";
         let left: &'static str = " {";
         let right: &'static str = " @ 'NOW' }";
         let hash: &'static str = "hash";
-        let rhs = NodeType::primary_nodes()
+        let rhs = Self::primary_nodes()
             .iter()
             .map(|n| {
                 [star]
@@ -246,9 +209,134 @@ impl NodeType {
     }
 }
 
+pub trait NodeTypeRelation: Into<NodeType> {
+    fn identity(self) -> String;
+    fn to_base_query(self) -> &'static str;
+    fn fields(self) -> &'static [&'static str];
+    fn relation_str(self) -> &'static str;
+
+    /// Fields on the key side of the Cozo relation schema (`id`, `owner_id`, etc.).
+    fn keys(self) -> impl Iterator<Item = &'static str>
+    where
+        Self: Sized,
+    {
+        self.fields()
+            .iter()
+            .filter(|field| ID_KEYWORDS.contains(field))
+            .copied()
+    }
+
+    /// Fields on the value side of the Cozo relation schema.
+    fn vals(self) -> impl Iterator<Item = &'static str>
+    where
+        Self: Sized,
+    {
+        self.fields()
+            .iter()
+            .filter(|field| !ID_KEYWORDS.contains(field))
+            .copied()
+    }
+}
+
+macro_rules! define_type_relation {
+    (
+        $(($name:ident, $schema:ty, $node_type:ident)),+
+    ) => {
+        lazy_static::lazy_static! {
+            $(
+                static ref $name: String = format!("*{} {{ {} }}", <$schema>::SCHEMA.relation, <$schema>::SCHEMA_FIELDS.join(",\n\t "));
+            )+
+        }
+        impl NodeTypeRelation for NodeType {
+            fn identity(self) -> String {
+                let node_ty: NodeType = self.into();
+                match node_ty {
+                    $(
+                        NodeType::$node_type => <$schema>::SCHEMA.script_identity()
+                    ),+
+                }
+            }
+            fn to_base_query(self) -> &'static str{
+                let node_ty: NodeType = self.into();
+                match self {
+                    $(
+                        NodeType::$node_type => &$name
+                    ),+
+                }
+            }
+            fn fields(self) -> &'static [&'static str] {
+                let node_ty: NodeType = self.into();
+                match self {
+                    $(
+                        NodeType::$node_type => <$schema>::SCHEMA_FIELDS
+                    ),+
+                }
+            }
+            fn relation_str(self) -> &'static str {
+                let node_ty: NodeType = self.into();
+                match self {
+                    $(
+                        NodeType::$node_type => <$schema>::SCHEMA.relation
+                    ),+
+                }
+            }
+        }
+     }
+}
+
+define_type_relation!(
+    (FUNCTION_FIELDS, FunctionNodeSchema, Function),
+    (STRUCT_FIELDS, StructNodeSchema, Struct),
+    (ENUM_FIELDS, EnumNodeSchema, Enum),
+    (TRAIT_FIELDS, TraitNodeSchema, Trait),
+    (MODULE_FIELDS, ModuleNodeSchema, Module),
+    (CONST_FIELDS, ConstNodeSchema, Const),
+    (IMPL_FIELDS, ImplNodeSchema, Impl),
+    (IMPORT_FIELDS, ImportNodeSchema, Import),
+    (MACRO_FIELDS, MacroNodeSchema, Macro),
+    (STATIC_FIELDS, StaticNodeSchema, Static),
+    (TYPE_ALIAS_FIELDS, TypeAliasNodeSchema, TypeAlias),
+    (UNION_FIELDS, UnionNodeSchema, Union),
+    (METHOD_FIELDS, MethodNodeSchema, Method),
+    (PARAM_FIELDS, ParamNodeSchema, Param),
+    (VARIANT_FIELDS, VariantNodeSchema, Variant),
+    (FIELD_FIELDS, FieldNodeSchema, Field),
+    (ATTRIBUTE_FIELDS, AttributeNodeSchema, Attribute),
+    (GENERIC_TYPE_FIELDS, GenericTypeNodeSchema, GenericType),
+    (
+        GENERIC_LIFETIME_FIELDS,
+        GenericLifetimeNodeSchema,
+        GenericLifetime
+    ),
+    (GENERIC_CONST_FIELDS, GenericConstNodeSchema, GenericConst),
+    (NAMED_TYPE_FIELDS, NamedTypeSchema, NamedType),
+    (REFERENCE_TYPE_FIELDS, ReferenceTypeSchema, ReferenceType),
+    (SLICE_TYPE_FIELDS, SliceTypeSchema, SliceType),
+    (ARRAY_TYPE_FIELDS, ArrayTypeSchema, ArrayType),
+    (TUPLE_TYPE_FIELDS, TupleTypeSchema, TupleType),
+    (FUNCTION_TYPE_FIELDS, FunctionTypeSchema, FunctionType),
+    (NEVER_TYPE_FIELDS, NeverTypeSchema, NeverType),
+    (INFERRED_TYPE_FIELDS, InferredTypeSchema, InferredType),
+    (
+        RAW_POINTER_TYPE_FIELDS,
+        RawPointerTypeSchema,
+        RawPointerType
+    ),
+    (
+        TRAIT_OBJECT_TYPE_FIELDS,
+        TraitObjectTypeSchema,
+        TraitObjectType
+    ),
+    (IMPL_TRAIT_TYPE_FIELDS, ImplTraitTypeSchema, ImplTraitType),
+    (PAREN_TYPE_FIELDS, ParenTypeSchema, ParenType),
+    (MACRO_TYPE_FIELDS, MacroTypeSchema, MacroType),
+    (UNKNOWN_TYPE_FIELDS, UnknownTypeSchema, UnknownType),
+    (SYNTAX_EDGE_FIELDS, SyntacticRelationSchema, SyntaxEdge)
+);
+
 lazy_static::lazy_static! {
     pub static ref EMBEDDABLE_NODES: String = {
-        NodeType::embeddable_nodes()
+        <NodeType as NodeTypeExt>::embeddable_nodes()
     };
     pub static ref EMBEDDABLE_NODES_NOW: String = {
         NodeType::embeddable_nodes_now()
@@ -546,118 +634,118 @@ impl Default for QueryBuilder {
 }
 use ploke_transform::schema::ID_KEYWORDS;
 
-macro_rules! define_static_fields {
-    (
-        $(($name:ident, $schema:ty, $node_type:ident)),+
-    ) => {
-        lazy_static::lazy_static! {
-            $(
-                static ref $name: String = format!("*{} {{ {} }}", <$schema>::SCHEMA.relation, <$schema>::SCHEMA_FIELDS.join(",\n\t "));
-            )+
-        }
-        impl NodeType {
-            pub fn to_base_query(self) -> &'static str{
-                match self {
-                    $(
-                        NodeType::$node_type => &$name
-                    ),+
-                }
-            }
-            pub fn fields(self) -> &'static [&'static str] {
-                match self {
-                    $(
-                        NodeType::$node_type => <$schema>::SCHEMA_FIELDS
-                    ),+
-                }
-            }
-            pub fn relation_str(self) -> &'static str {
-                match self {
-                    $(
-                        NodeType::$node_type => <$schema>::SCHEMA.relation
-                    ),+
-                }
-            }
-            /// Re-implementation of original in macro found in ploke-transform/src/schema/mod.rs
-            pub fn keys(self) -> impl Iterator<Item = &'static str > {
-                self.fields().iter().filter(|f| ID_KEYWORDS.contains(f)).copied()
-            }
-            /// Re-implementation of original in macro found in ploke-transform/src/schema/mod.rs
-            pub fn vals(self) -> impl Iterator<Item = &'static str > {
-                self.fields().iter().filter(|f| !ID_KEYWORDS.contains(f)).copied()
-            }
-            // NOTE: Seems like there should be a way to make this a &'static str, look into it.
-            pub fn identity(self) -> String {
-                match self {
-                    $(
-                        NodeType::$node_type => <$schema>::SCHEMA.script_identity()
-                    ),+
-                }
-            }
-        }
-    };
-}
-
-define_static_fields!(
-    (FUNCTION_FIELDS, FunctionNodeSchema, Function),
-    (STRUCT_FIELDS, StructNodeSchema, Struct),
-    (ENUM_FIELDS, EnumNodeSchema, Enum),
-    (TRAIT_FIELDS, TraitNodeSchema, Trait),
-    (MODULE_FIELDS, ModuleNodeSchema, Module),
-    (CONST_FIELDS, ConstNodeSchema, Const),
-    (IMPL_FIELDS, ImplNodeSchema, Impl),
-    (IMPORT_FIELDS, ImportNodeSchema, Import),
-    (MACRO_FIELDS, MacroNodeSchema, Macro),
-    (STATIC_FIELDS, StaticNodeSchema, Static),
-    (TYPE_ALIAS_FIELDS, TypeAliasNodeSchema, TypeAlias),
-    (UNION_FIELDS, UnionNodeSchema, Union),
-    (METHOD_FIELDS, MethodNodeSchema, Method),
-    (PARAM_FIELDS, ParamNodeSchema, Param),
-    (VARIANT_FIELDS, VariantNodeSchema, Variant),
-    (FIELD_FIELDS, FieldNodeSchema, Field),
-    (ATTRIBUTE_FIELDS, AttributeNodeSchema, Attribute),
-    (GENERIC_TYPE_FIELDS, GenericTypeNodeSchema, GenericType),
-    (
-        GENERIC_LIFETIME_FIELDS,
-        GenericLifetimeNodeSchema,
-        GenericLifetime
-    ),
-    (GENERIC_CONST_FIELDS, GenericConstNodeSchema, GenericConst),
-    (NAMED_TYPE_FIELDS, NamedTypeSchema, NamedType),
-    (REFERENCE_TYPE_FIELDS, ReferenceTypeSchema, ReferenceType),
-    (SLICE_TYPE_FIELDS, SliceTypeSchema, SliceType),
-    (ARRAY_TYPE_FIELDS, ArrayTypeSchema, ArrayType),
-    (TUPLE_TYPE_FIELDS, TupleTypeSchema, TupleType),
-    (FUNCTION_TYPE_FIELDS, FunctionTypeSchema, FunctionType),
-    (NEVER_TYPE_FIELDS, NeverTypeSchema, NeverType),
-    (INFERRED_TYPE_FIELDS, InferredTypeSchema, InferredType),
-    (
-        RAW_POINTER_TYPE_FIELDS,
-        RawPointerTypeSchema,
-        RawPointerType
-    ),
-    (
-        TRAIT_OBJECT_TYPE_FIELDS,
-        TraitObjectTypeSchema,
-        TraitObjectType
-    ),
-    (IMPL_TRAIT_TYPE_FIELDS, ImplTraitTypeSchema, ImplTraitType),
-    (PAREN_TYPE_FIELDS, ParenTypeSchema, ParenType),
-    (MACRO_TYPE_FIELDS, MacroTypeSchema, MacroType),
-    (UNKNOWN_TYPE_FIELDS, UnknownTypeSchema, UnknownType),
-    (SYNTAX_EDGE_FIELDS, SyntacticRelationSchema, SyntaxEdge)
-);
-
-// impl NodeType {
-//     pub fn to_base_query(self) -> String {
-//         match self {
-//             NodeType::Function => ,
-//             NodeType::Struct => todo!(),
-//             NodeType::Enum => todo!(),
-//             NodeType::Trait => todo!(),
-//             NodeType::Module => todo!(),
+// macro_rules! define_static_fields {
+//     (
+//         $(($name:ident, $schema:ty, $node_type:ident)),+
+//     ) => {
+//         lazy_static::lazy_static! {
+//             $(
+//                 static ref $name: String = format!("*{} {{ {} }}", <$schema>::SCHEMA.relation, <$schema>::SCHEMA_FIELDS.join(",\n\t "));
+//             )+
 //         }
+//         impl NodeType {
+//             pub fn to_base_query(self) -> &'static str{
+//                 match self {
+//                     $(
+//                         NodeType::$node_type => &$name
+//                     ),+
+//                 }
+//             }
+//             pub fn fields(self) -> &'static [&'static str] {
+//                 match self {
+//                     $(
+//                         NodeType::$node_type => <$schema>::SCHEMA_FIELDS
+//                     ),+
+//                 }
+//             }
+//             pub fn relation_str(self) -> &'static str {
+//                 match self {
+//                     $(
+//                         NodeType::$node_type => <$schema>::SCHEMA.relation
+//                     ),+
+//                 }
+//             }
+//             /// Re-implementation of original in macro found in ploke-transform/src/schema/mod.rs
+//             pub fn keys(self) -> impl Iterator<Item = &'static str > {
+//                 self.fields().iter().filter(|f| ID_KEYWORDS.contains(f)).copied()
+//             }
+//             /// Re-implementation of original in macro found in ploke-transform/src/schema/mod.rs
+//             pub fn vals(self) -> impl Iterator<Item = &'static str > {
+//                 self.fields().iter().filter(|f| !ID_KEYWORDS.contains(f)).copied()
+//             }
+//             // NOTE: Seems like there should be a way to make this a &'static str, look into it.
+//             pub fn identity(self) -> String {
+//                 match self {
+//                     $(
+//                         NodeType::$node_type => <$schema>::SCHEMA.script_identity()
+//                     ),+
+//                 }
+//             }
+//         }
+//     };
 // }
-// }
+
+// define_static_fields!(
+//     (FUNCTION_FIELDS, FunctionNodeSchema, Function),
+//     (STRUCT_FIELDS, StructNodeSchema, Struct),
+//     (ENUM_FIELDS, EnumNodeSchema, Enum),
+//     (TRAIT_FIELDS, TraitNodeSchema, Trait),
+//     (MODULE_FIELDS, ModuleNodeSchema, Module),
+//     (CONST_FIELDS, ConstNodeSchema, Const),
+//     (IMPL_FIELDS, ImplNodeSchema, Impl),
+//     (IMPORT_FIELDS, ImportNodeSchema, Import),
+//     (MACRO_FIELDS, MacroNodeSchema, Macro),
+//     (STATIC_FIELDS, StaticNodeSchema, Static),
+//     (TYPE_ALIAS_FIELDS, TypeAliasNodeSchema, TypeAlias),
+//     (UNION_FIELDS, UnionNodeSchema, Union),
+//     (METHOD_FIELDS, MethodNodeSchema, Method),
+//     (PARAM_FIELDS, ParamNodeSchema, Param),
+//     (VARIANT_FIELDS, VariantNodeSchema, Variant),
+//     (FIELD_FIELDS, FieldNodeSchema, Field),
+//     (ATTRIBUTE_FIELDS, AttributeNodeSchema, Attribute),
+//     (GENERIC_TYPE_FIELDS, GenericTypeNodeSchema, GenericType),
+//     (
+//         GENERIC_LIFETIME_FIELDS,
+//         GenericLifetimeNodeSchema,
+//         GenericLifetime
+//     ),
+//     (GENERIC_CONST_FIELDS, GenericConstNodeSchema, GenericConst),
+//     (NAMED_TYPE_FIELDS, NamedTypeSchema, NamedType),
+//     (REFERENCE_TYPE_FIELDS, ReferenceTypeSchema, ReferenceType),
+//     (SLICE_TYPE_FIELDS, SliceTypeSchema, SliceType),
+//     (ARRAY_TYPE_FIELDS, ArrayTypeSchema, ArrayType),
+//     (TUPLE_TYPE_FIELDS, TupleTypeSchema, TupleType),
+//     (FUNCTION_TYPE_FIELDS, FunctionTypeSchema, FunctionType),
+//     (NEVER_TYPE_FIELDS, NeverTypeSchema, NeverType),
+//     (INFERRED_TYPE_FIELDS, InferredTypeSchema, InferredType),
+//     (
+//         RAW_POINTER_TYPE_FIELDS,
+//         RawPointerTypeSchema,
+//         RawPointerType
+//     ),
+//     (
+//         TRAIT_OBJECT_TYPE_FIELDS,
+//         TraitObjectTypeSchema,
+//         TraitObjectType
+//     ),
+//     (IMPL_TRAIT_TYPE_FIELDS, ImplTraitTypeSchema, ImplTraitType),
+//     (PAREN_TYPE_FIELDS, ParenTypeSchema, ParenType),
+//     (MACRO_TYPE_FIELDS, MacroTypeSchema, MacroType),
+//     (UNKNOWN_TYPE_FIELDS, UnknownTypeSchema, UnknownType),
+//     (SYNTAX_EDGE_FIELDS, SyntacticRelationSchema, SyntaxEdge)
+// );
+
+// // impl NodeType {
+// //     pub fn to_base_query(self) -> String {
+// //         match self {
+// //             NodeType::Function => ,
+// //             NodeType::Struct => todo!(),
+// //             NodeType::Enum => todo!(),
+// //             NodeType::Trait => todo!(),
+// //             NodeType::Module => todo!(),
+// //         }
+// // }
+// // }
 #[cfg(test)]
 mod test {
     use ploke_transform::schema::primary_nodes::StructNodeSchema;

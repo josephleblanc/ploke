@@ -1,5 +1,4 @@
 use crate::common::ParanoidArgs;
-use crate::common::find_type_node;
 use crate::common::run_phase1_phase2;
 use anyhow::Ok;
 use anyhow::Result;

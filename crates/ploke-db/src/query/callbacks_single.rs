@@ -7,7 +7,10 @@ use cozo::{CallbackOp, NamedRows};
 use crossbeam_channel::{Receiver, RecvError, SendError, Sender};
 use tracing_subscriber::registry::Data;
 
-use crate::{Database, DbError, NodeType};
+use crate::{
+    Database, DbError, NodeType,
+    query::builder::{NodeTypeExt, NodeTypeRelation as _},
+};
 
 pub struct CallbackManager {
     s: Sender<Result<Call, DbError>>,

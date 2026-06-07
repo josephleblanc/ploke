@@ -1,4 +1,4 @@
-use ploke_db::NodeType;
+use ploke_db::{NodeType, NodeTypeExt as _, NodeTypeRelation as _};
 use ploke_tui::{
     rag::utils::NodeKind,
     tools::{
