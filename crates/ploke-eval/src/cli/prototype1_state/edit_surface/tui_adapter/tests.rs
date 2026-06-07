@@ -2305,6 +2305,11 @@ async fn historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_l
     const FINAL_EVENT_INDEX: usize = 95;
     const HISTORICAL_STOP_RESPONSE_INDEX: usize = 34;
 
+    let _env = crate::test_support::env_guard_os(vec![]);
+    assert!(
+        std::env::var_os("PLOKE_EVAL_BROAD_TUI_SUMMARY_FIXTURE").is_none(),
+        "historical r10 replay must not run with the broad TUI summary fixture hook enabled"
+    );
     let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
     let turn_live_dir = historical_r10_turn_live_dir();
     assert!(

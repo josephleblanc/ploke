@@ -4181,9 +4181,10 @@ Suggested validation after editing: run `cargo test`.
             allowed_actions_for_phase(DiagnosedPhase::Observe),
             vec!["doctor", "continue", "step"]
         );
-        assert_eq!(commands.len(), 2);
-        assert!(commands[0].contains("prototype1-continue"));
-        assert!(commands[1].contains("prototype1-step"));
+        assert_eq!(commands.len(), 3);
+        assert!(commands[0].contains("prototype1-doctor"));
+        assert!(commands[1].contains("prototype1-continue"));
+        assert!(commands[2].contains("prototype1-step"));
     }
 
     #[test]
