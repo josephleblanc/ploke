@@ -1,6 +1,4 @@
 use ploke_core::TypeId;
-#[cfg(not(feature = "typed_type_graph"))]
-use ploke_core::TypeKind;
 
 use serde::{Deserialize, Serialize};
 
@@ -11,15 +9,6 @@ use super::type_slots::{OrdinaryTypeUseId, TraitTypeUseId, ordinary_type_use_bas
 
 // ANCHOR: TypeNode
 // Represents a type reference with full metadata
-#[cfg(not(feature = "typed_type_graph"))]
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
-pub struct TypeNode {
-    pub id: TypeId,
-    pub kind: TypeKind,
-    // Reference to related types (e.g., generic arguments)
-    pub related_types: Vec<TypeId>,
-}
-#[cfg(feature = "typed_type_graph")]
 pub use super::type_nodes::TypeNode;
 //ANCHOR_END: TypeNode
 
