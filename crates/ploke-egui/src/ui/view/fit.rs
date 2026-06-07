@@ -1,5 +1,6 @@
-//! Graph fit: layout relayout targets ~80–85% fill on width and height at zoom 1;
-//! screen fit uses cover-style zoom on the tighter axis.
+//! Graph fit: initial load scales lineage spacing to the pane; the Layout action
+//! relayouts at the current spacing and reuses screen fit. Screen fit zooms to the
+//! visible node hull so edge arcs cannot under-fill the pane.
 
 use eframe::egui::{Pos2, Rect, Ui, Vec2};
 use egui_graphs::DisplayEdge;
@@ -20,12 +21,33 @@ pub(super) fn fit_zoom(viewport: Vec2, graph_size: Vec2, padding: f32) -> f32 {
     );
     let zoom_x = viewport.x / padded.x;
     let zoom_y = viewport.y / padded.y;
-    zoom_x.max(zoom_y)
+    let graph_aspect = padded.x / padded.y;
+    let viewport_aspect = viewport.x / viewport.y;
+    if graph_aspect <= viewport_aspect {
+        // Depth-heavy trees in a landscape pane: fill width instead of letterboxing.
+        zoom_x
+    } else {
+        zoom_x.max(zoom_y)
+    }
 }
+
+const SCREEN_FIT_TOP_MARGIN: f32 = 24.0;
 
 pub(super) fn fit_pan(bounds: Rect, viewport: Vec2, zoom: f32) -> Vec2 {
     let viewport = Rect::from_min_size(Pos2::ZERO, viewport);
     viewport.center().to_vec2() - bounds.center().to_vec2() * zoom
+}
+
+pub(super) fn fit_pan_screen(bounds: Rect, viewport: Vec2, zoom: f32) -> Vec2 {
+    let viewport = Rect::from_min_size(Pos2::ZERO, viewport);
+    let pan_x = viewport.center().x - bounds.center().x * zoom;
+    let fitted_height = bounds.height() * zoom;
+    let pan_y = if fitted_height > viewport.height() {
+        SCREEN_FIT_TOP_MARGIN - bounds.min.y * zoom
+    } else {
+        viewport.center().y - bounds.center().y * zoom
+    };
+    Vec2::new(pan_x, pan_y)
 }
 
 pub(super) fn fitted_screen_rect(bounds: Rect, viewport: Vec2, zoom: f32) -> Rect {
@@ -36,7 +58,9 @@ pub(super) fn fitted_screen_rect(bounds: Rect, viewport: Vec2, zoom: f32) -> Rec
     )
 }
 
-pub(super) fn graph_fit_bounds(graph: &WidgetGraph, style: ViewStyle) -> Option<Rect> {
+/// Visible node hull only. Screen-fit zoom/pan uses this so curved edge extents do not
+/// under-fill narrow trees inside a wide pane.
+pub(super) fn graph_node_fit_bounds(graph: &WidgetGraph, style: ViewStyle) -> Option<Rect> {
     let mut min = Pos2::new(f32::MAX, f32::MAX);
     let mut max = Pos2::new(f32::MIN, f32::MIN);
     let mut any = false;
@@ -58,6 +82,14 @@ pub(super) fn graph_fit_bounds(graph: &WidgetGraph, style: ViewStyle) -> Option<
     if !any {
         return None;
     }
+
+    Some(Rect::from_min_max(min, max))
+}
+
+pub(super) fn graph_fit_bounds(graph: &WidgetGraph, style: ViewStyle) -> Option<Rect> {
+    let node_bounds = graph_node_fit_bounds(graph, style)?;
+    let mut min = node_bounds.min;
+    let mut max = node_bounds.max;
 
     for (_, edge) in graph.edges_iter() {
         let payload = edge.payload();
@@ -97,17 +129,6 @@ pub(super) fn layout_fit_axis_scales(viewport: Vec2, bounds: Rect) -> Vec2 {
     Vec2::new(target.x / graph_size.x, target.y / graph_size.y)
 }
 
-pub(super) fn scaled_layout_state(base: LayoutState, viewport: Vec2, bounds: Rect) -> LayoutState {
-    let scales = layout_fit_axis_scales(viewport, bounds);
-    LayoutState {
-        triggered: false,
-        row_dist: base.row_dist * scales.y,
-        col_dist: base.col_dist * scales.x,
-        lane_dist: base.lane_dist * scales.x,
-        ..base
-    }
-}
-
 /// Fit fill and center offset for the graph bounds at the given zoom (matches on-screen framing).
 pub(super) fn viewport_fit_metrics(bounds: Rect, viewport: Vec2, zoom: f32) -> (Vec2, Vec2, Vec2) {
     let viewport = Vec2::new(viewport.x.max(1.0), viewport.y.max(1.0));
@@ -119,68 +140,38 @@ pub(super) fn viewport_fit_metrics(bounds: Rect, viewport: Vec2, zoom: f32) -> (
     (fitted_size, fitted_fill, center_offset)
 }
 
-/// Expands node positions around the graph center when lineage spacing alone cannot
-/// reach the target viewport fill (for example depth-heavy trees with little leaf span).
-pub(super) fn stretch_graph_to_viewport_fill(
+/// Re-run lineage at the current row/column distances without rescaling spacing.
+pub(super) fn relayout_at_spacing(
     graph: &mut WidgetGraph,
-    bounds: Rect,
-    viewport: Vec2,
+    layout_state: &LayoutState,
     style: ViewStyle,
-) -> Rect {
-    let viewport = Vec2::new(viewport.x.max(1.0), viewport.y.max(1.0));
-    let target = viewport * TARGET_VIEWPORT_FILL;
-    let size = bounds.size();
-    let size = Vec2::new(size.x.max(1.0), size.y.max(1.0));
-    let scale_x = (target.x / size.x).max(1.0);
-    let scale_y = (target.y / size.y).max(1.0);
-    if scale_x <= 1.0 + f32::EPSILON && scale_y <= 1.0 + f32::EPSILON {
-        return bounds;
-    }
-
-    let center = bounds.center();
-    for node in graph.g_mut().node_weights_mut() {
-        if !node.payload().visible() {
-            continue;
-        }
-        let location = node.location();
-        node.set_location(Pos2::new(
-            center.x + (location.x - center.x) * scale_x,
-            center.y + (location.y - center.y) * scale_y,
-        ));
-    }
-
-    graph_fit_bounds(graph, style).unwrap_or(bounds)
+) -> Option<()> {
+    let mut state = layout_state.clone();
+    state.triggered = false;
+    layout::apply_lineage(graph, &state);
+    graph_node_fit_bounds(graph, style)?;
+    Some(())
 }
 
-pub(super) fn apply_graph_layout_fit(
+/// Relayout at base spacing, scale row/column distances to the pane, then relayout again.
+pub(super) fn prepare_viewport_layout(
     graph: &mut WidgetGraph,
     base_state: LayoutState,
-    viewport: Vec2,
     style: ViewStyle,
-) -> Option<(LayoutState, Rect)> {
-    let bounds = graph_fit_bounds(graph, style)?;
-    let mut scaled_state = scaled_layout_state(base_state, viewport, bounds);
-    layout::apply_lineage(graph, &scaled_state);
-    scaled_state.triggered = true;
-    let post_layout_bounds = graph_fit_bounds(graph, style)?;
-    let fitted_bounds = stretch_graph_to_viewport_fill(graph, post_layout_bounds, viewport, style);
-    Some((scaled_state, fitted_bounds))
-}
-
-pub(super) fn apply_graph_layout_viewport_fit(
-    ui: &mut Ui,
-    custom_id: &Option<String>,
     viewport: Vec2,
-    bounds: Rect,
-) {
-    let zoom = 1.0;
-    let pan = fit_pan(bounds, viewport, zoom);
-
-    let mut meta = egui_graphs::MetadataFrame::new(custom_id.clone()).load(ui);
-    meta.zoom = zoom;
-    meta.pan = pan;
-    meta.save(ui);
-    ui.ctx().request_repaint();
+) -> Option<LayoutState> {
+    let mut layout_state = base_state;
+    layout_state.triggered = false;
+    layout::apply_lineage(graph, &layout_state);
+    let bounds = graph_node_fit_bounds(graph, style)?;
+    let scales = layout_fit_axis_scales(viewport, bounds);
+    layout_state.col_dist *= scales.x;
+    layout_state.row_dist *= scales.y;
+    layout_state.triggered = false;
+    layout::apply_lineage(graph, &layout_state);
+    layout_state.triggered = true;
+    graph_node_fit_bounds(graph, style)?;
+    Some(layout_state)
 }
 
 pub(super) fn apply_graph_screen_fit(
@@ -192,13 +183,13 @@ pub(super) fn apply_graph_screen_fit(
     graph: &WidgetGraph,
     style: ViewStyle,
 ) {
-    let Some(bounds) = graph_fit_bounds(graph, style) else {
+    let Some(bounds) = graph_node_fit_bounds(graph, style) else {
         return;
     };
 
     let padding = style.layout.fit_padding;
     let zoom = fit_zoom(viewport, bounds.size(), padding);
-    let pan = fit_pan(bounds, viewport, zoom);
+    let pan = fit_pan_screen(bounds, viewport, zoom);
 
     let _ = (widget_id, custom_id, top_left);
 
@@ -245,14 +236,22 @@ mod tests {
             fitted_screen_rect(Rect::from_min_size(Pos2::ZERO, graph_size), viewport, zoom);
         let fill = Vec2::new(fitted.width() / viewport.x, fitted.height() / viewport.y);
         assert!(
-            (fill.x - TARGET_VIEWPORT_FILL).abs() < 0.02
-                || (fill.y - TARGET_VIEWPORT_FILL).abs() < 0.02,
-            "expected one axis near {TARGET_VIEWPORT_FILL}, got {fill:?}"
+            (fill.y - 1.0 / (1.0 + padding)).abs() < 0.02,
+            "wide graph in portrait pane should fill height, got {fill:?}"
         );
-        assert!(
-            fill.x.min(fill.y) >= TARGET_VIEWPORT_FILL - 0.02,
-            "under-filled axis should reach target band, got {fill:?}"
-        );
+    }
+
+    #[test]
+    fn tall_narrow_graph_in_landscape_pane_fills_width() {
+        let viewport = Vec2::new(900.0, 600.0);
+        let graph_size = Vec2::new(120.0, 1800.0);
+        let padding = 0.22;
+        let zoom = fit_zoom(viewport, graph_size, padding);
+        let fitted =
+            fitted_screen_rect(Rect::from_min_size(Pos2::ZERO, graph_size), viewport, zoom);
+        let fill = Vec2::new(fitted.width() / viewport.x, fitted.height() / viewport.y);
+        assert!((fill.x - 1.0 / (1.0 + padding)).abs() < 0.02, "width fill {fill:?}");
+        assert!(fill.y > 1.0, "height may extend beyond pane for depth-heavy trees");
     }
 
     #[test]
@@ -324,16 +323,6 @@ mod tests {
                 .distance(Rect::from_min_size(Pos2::ZERO, viewport).center())
                 < 0.5
         );
-    }
-
-    #[test]
-    fn stretch_scale_expands_underfilled_width_to_target_band() {
-        let viewport = Vec2::new(526.0, 960.0);
-        let bounds = Rect::from_min_max(Pos2::new(248.0, 0.0), Pos2::new(278.0, 886.0));
-        let target = viewport * TARGET_VIEWPORT_FILL;
-        let scale_x = (target.x / bounds.width().max(1.0)).max(1.0);
-        let stretched_width = bounds.width() * scale_x;
-        assert!((stretched_width / viewport.x - TARGET_VIEWPORT_FILL).abs() < 0.02);
     }
 
     #[test]

@@ -38,9 +38,8 @@ pub struct GraphView {
     view_style: ViewStyle,
     last_viewport: Option<egui::Vec2>,
     fit_next_frame: bool,
-    layout_viewport_fit_remaining: u8,
-    layout_viewport_fit_viewport: Option<Vec2>,
     layout_state_pending: bool,
+    viewport_layout_pending: bool,
     diagnostics: Option<GraphViewDiagnostics>,
     mode: GraphViewMode,
     artifact_tree_filters: ArtifactTreeFilters,
@@ -62,9 +61,8 @@ impl Default for GraphView {
             view_style,
             last_viewport: None,
             fit_next_frame: true,
-            layout_viewport_fit_remaining: 0,
-            layout_viewport_fit_viewport: None,
             layout_state_pending: false,
+            viewport_layout_pending: false,
             diagnostics: None,
             mode: GraphViewMode::ArtifactTree,
             artifact_tree_filters: ArtifactTreeFilters::default(),
@@ -96,44 +94,23 @@ impl GraphView {
         self.fit_next_frame = true;
     }
 
-    /// Recomputes lineage spacing from the graph pane size and centers at zoom 1.
-    pub(crate) fn request_graph_layout_fit(&mut self, ui: &mut egui::Ui, viewport: Vec2) {
+    /// Re-runs lineage at the current spacing, then screen-fits on the next frame.
+    pub(crate) fn request_graph_layout_fit(&mut self, ui: &mut egui::Ui) -> bool {
         let view_style = self.view_style;
-        let base_state = self.cache.layout_state(view_style);
-        let Some((scaled_state, _post_layout_bounds)) =
-            fit::apply_graph_layout_fit(self.cache.graph_mut(), base_state, viewport, view_style)
-        else {
-            return;
-        };
+        let mut layout_state = self.cache.layout_state(view_style);
+        let persisted = egui_graphs::get_layout_state::<layout::State>(ui, Some(self.id.clone()));
+        layout_state.row_dist = persisted.row_dist;
+        layout_state.col_dist = persisted.col_dist;
+        layout_state.lane_dist = persisted.lane_dist;
+        layout_state.max_columns = persisted.max_columns;
+        if fit::relayout_at_spacing(self.cache.graph_mut(), &layout_state, view_style).is_none() {
+            return false;
+        }
+        layout_state.triggered = true;
         self.cache.invalidate_layout_diagnostics();
-        egui_graphs::set_layout_state(ui, scaled_state, Some(self.id.clone()));
-        self.layout_viewport_fit_viewport = Some(viewport);
-        // Re-apply after widget draw so egui_graphs pan/top-left compensation cannot leave a stale offset.
-        self.layout_viewport_fit_remaining = 2;
-        ui.ctx().request_repaint();
-    }
-
-    fn apply_pending_graph_layout_viewport_fit(
-        &mut self,
-        ui: &mut egui::Ui,
-        custom_id: &Option<String>,
-        viewport: Vec2,
-    ) {
-        if self.layout_viewport_fit_remaining == 0 {
-            return;
-        }
-
-        let view_style = self.view_style;
-        let Some(bounds) = fit::graph_fit_bounds(self.cache.graph_mut(), view_style) else {
-            self.layout_viewport_fit_remaining = 0;
-            self.layout_viewport_fit_viewport = None;
-            return;
-        };
-        fit::apply_graph_layout_viewport_fit(ui, custom_id, viewport, bounds);
-        self.layout_viewport_fit_remaining -= 1;
-        if self.layout_viewport_fit_remaining == 0 {
-            self.layout_viewport_fit_viewport = None;
-        }
+        self.fit_next_frame = true;
+        egui_graphs::set_layout_state(ui, layout_state, Some(self.id.clone()));
+        true
     }
 
     pub fn diagnostics(&self) -> Option<GraphViewDiagnostics> {
@@ -268,11 +245,13 @@ impl GraphView {
         self.sync_projection(graph);
         if std::mem::take(&mut self.layout_state_pending) {
             let _span = tracing::trace_span!(scope::CENTRAL_GRAPH_LAYOUT_STATE_RESTORE).entered();
+            egui_graphs::reset_metadata(ui, Some(self.id.clone()));
             egui_graphs::set_layout_state(
                 ui,
                 self.cache.layout_state(self.view_style),
                 Some(self.id.clone()),
             );
+            self.viewport_layout_pending = true;
         }
 
         let fit_now = std::mem::take(&mut self.fit_next_frame);
@@ -283,18 +262,6 @@ impl GraphView {
 
         label::reset_edge_label_diagnostics(ui.ctx());
         let custom_id = Some(self.id.clone());
-        if fit_now {
-            fit::apply_graph_screen_fit(
-                ui,
-                ui.auto_id_with("graph-fit-prep"),
-                &custom_id,
-                ui.max_rect().min,
-                viewport,
-                self.cache.graph_mut(),
-                self.view_style,
-            );
-        }
-
         let mut widget = {
             let _span = tracing::trace_span!(scope::CENTRAL_GRAPH_WIDGET_BUILD).entered();
             egui_graphs::GraphView::<_, _, _, _, _, _, layout::State, layout::Lineage>::new(
@@ -310,8 +277,20 @@ impl GraphView {
             let _span = tracing::trace_span!(scope::CENTRAL_GRAPH_WIDGET_ADD).entered();
             ui.add(&mut widget)
         };
-        if fit_now {
-            // egui_graphs first-frame fit can overwrite pre-add metadata; re-apply after draw.
+        if std::mem::take(&mut self.viewport_layout_pending) {
+            let view_style = self.view_style;
+            let base_state = self.cache.layout_state(view_style);
+            if let Some(layout_state) = fit::prepare_viewport_layout(
+                self.cache.graph_mut(),
+                base_state,
+                view_style,
+                response.rect.size(),
+            ) {
+                self.cache.invalidate_layout_diagnostics();
+                egui_graphs::set_layout_state(ui, layout_state, Some(self.id.clone()));
+                self.fit_next_frame = true;
+            }
+        } else if fit_now {
             fit::apply_graph_screen_fit(
                 ui,
                 response.id,
@@ -322,17 +301,12 @@ impl GraphView {
                 self.view_style,
             );
         }
-        if let Some(viewport) = self.layout_viewport_fit_viewport {
-            self.apply_pending_graph_layout_viewport_fit(ui, &custom_id, viewport);
-        }
         let graph_rect = response.rect;
         let view_style = self.view_style;
         let relayout_available =
             fit::graph_fit_bounds(self.cache.graph_mut(), view_style).is_some();
         if show_graph_layout_fit_button(ui, graph_rect, relayout_available) {
-            let viewport = graph_rect.size();
-            self.request_graph_layout_fit(ui, viewport);
-            self.apply_pending_graph_layout_viewport_fit(ui, &custom_id, viewport);
+            let _ = self.request_graph_layout_fit(ui);
         }
         let edge_labels = label::edge_label_diagnostics(ui.ctx());
         {

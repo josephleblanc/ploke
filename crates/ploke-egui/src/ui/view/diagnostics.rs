@@ -4,7 +4,7 @@ use petgraph::{
     visit::{EdgeRef, IntoEdgeReferences},
 };
 
-use super::fit::{graph_fit_bounds, viewport_fit_metrics};
+use super::fit::{graph_fit_bounds, graph_node_fit_bounds, viewport_fit_metrics};
 use super::geometry::{cubic_point, curve_points, segments_intersect, self_loop_points};
 use super::projection::{GraphEdgePayload, ViewEdgeKind, WidgetGraph};
 use super::style::ViewStyle;
@@ -28,12 +28,13 @@ pub(super) fn graph_diagnostics(
     readability: GraphReadabilityDiagnostics,
 ) -> Option<GraphViewDiagnostics> {
     let bounds = graph_fit_bounds(graph, style)?;
+    let fit_bounds = graph_node_fit_bounds(graph, style)?;
     let graph_size = bounds.size();
     let viewport_size = Vec2::new(viewport_size.x.max(1.0), viewport_size.y.max(1.0));
     let graph_size = Vec2::new(graph_size.x.max(1.0), graph_size.y.max(1.0));
     let zoom = viewport_zoom.max(0.01);
     let (fitted_size, fitted_fill, center_offset) =
-        viewport_fit_metrics(bounds, viewport_size, zoom);
+        viewport_fit_metrics(fit_bounds, viewport_size, zoom);
 
     Some(GraphViewDiagnostics {
         mode,
