@@ -1,4 +1,3 @@
-#![cfg(feature = "typed_type_graph")]
 //! Type graph query contracts for graphRAG-oriented Rust code traversal.
 //!
 //! This directory is intentionally a capability map, not just a regression

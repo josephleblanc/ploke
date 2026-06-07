@@ -1539,39 +1539,20 @@ desc[id] := parent_of[id, parent], desc[parent], not file_root[id]
             .collect())
     }
 
-    /// Relation names for active plain fixtures that are shared between the legacy and typed
-    /// type-resolution build profiles.
+    /// Relation names for active plain fixtures that omit typed type graph relations
+    /// on import so legacy backup rows for `resolved_type_use` are ignored.
     ///
-    /// In the normal profile this includes `resolved_type_use`. In the `typed_type_graph`
-    /// profile, active non-typed fixtures intentionally do not claim typed type graph coverage, so
-    /// typed type graph relations remain empty after import. Typed graph corpus fixtures must use
+    /// Typed graph corpus fixtures must use
     /// [`Self::prior_rels_for_typed_type_graph_backup_import`] instead.
     pub fn prior_rels_for_plain_backup_import(&self) -> Result<Vec<String>, PlokeError> {
-        #[cfg(not(feature = "typed_type_graph"))]
-        {
-            self.prior_rels_for_current_schema_backup_import()
-        }
-
-        #[cfg(feature = "typed_type_graph")]
-        {
-            let mut relations = self.prior_rels_for_current_schema_backup_import()?;
-            relations.retain(|r| !is_typed_type_graph_relation(r));
-            Ok(relations)
-        }
+        let mut relations = self.prior_rels_for_current_schema_backup_import()?;
+        relations.retain(|r| !is_typed_type_graph_relation(r));
+        Ok(relations)
     }
 
     /// Relation names for source-pinned typed type graph backup fixtures.
     pub fn prior_rels_for_typed_type_graph_backup_import(&self) -> Result<Vec<String>, PlokeError> {
-        #[cfg(feature = "typed_type_graph")]
-        {
-            self.prior_rels_for_current_schema_backup_import()
-        }
-        #[cfg(not(feature = "typed_type_graph"))]
-        {
-            Err(PlokeError::from(DbError::Cozo(
-                "typed type graph backup import requires the typed_type_graph feature".to_string(),
-            )))
-        }
+        self.prior_rels_for_current_schema_backup_import()
     }
 
     // Gets all the file data in the same namespace as the crate name given as argument.
