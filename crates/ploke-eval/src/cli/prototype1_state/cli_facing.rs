@@ -36,12 +36,13 @@ use crate::{
     cli::{
         HistoryCommand, InspectOutputFormat, Prototype1CandidateGenerator,
         Prototype1ChildEvidenceCommand, Prototype1ChildScheduleMode as CliChildScheduleMode,
-        Prototype1EditSurface, Prototype1LoopCommand, Prototype1LoopStopAfter,
-        Prototype1MetricsCommand, Prototype1ScoreCommand, Prototype1SelectionShowCommand,
-        Prototype1StateCommand, Prototype1StateStopAfter, Prototype1SuccessorSelection,
-        Prototype1TraversalMetrics, TimingTrace, pending_prototype1_stages,
-        persist_intervention_apply_for_record, persist_intervention_synthesis_for_record,
-        persist_issue_detection_for_record, print_issue_case_block,
+        Prototype1EditSurface, Prototype1EvidenceInventoryCommand, Prototype1HistoryPreviewCommand,
+        Prototype1LoopCommand, Prototype1LoopStopAfter, Prototype1MetricsCommand,
+        Prototype1ScoreCommand, Prototype1SelectionShowCommand, Prototype1StateCommand,
+        Prototype1StateStopAfter, Prototype1SuccessorSelection, Prototype1TraversalMetrics,
+        TimingTrace, pending_prototype1_stages, persist_intervention_apply_for_record,
+        persist_intervention_synthesis_for_record, persist_issue_detection_for_record,
+        print_issue_case_block,
         prototype1_process::{
             SuccessorHandoffMode, cleanup_prototype1_child_build_products,
             persist_prototype1_buildable_child_artifact, record_prototype1_successor_completion,
@@ -578,6 +579,7 @@ struct ChildPlanReceipt {
     rejected_surface_attempts: Vec<surface_attempt::Evidence>,
 }
 
+#[cfg_attr(not(test), allow(dead_code))] // Single-slot harness receipt; exercised in broad-harness cli_tests.
 struct HarnessRequestReceipt {
     parent: Parent<AwaitingHarnessPlan>,
     request_path: PathBuf,
@@ -2261,6 +2263,7 @@ fn broad_harness_child_from_admitted(
     )
 }
 
+#[cfg_attr(not(test), allow(dead_code))] // Batch-completed child-plan publisher; live path uses from_attempts; exercised in cli_tests.
 fn publish_broad_harness_child_plan_from_admitted_batch(
     env: ChildPlanEnv<'_>,
     batch: HarnessRequestBatch,
@@ -2380,6 +2383,7 @@ fn persist_rejected_plan(
     Ok(())
 }
 
+#[allow(dead_code)] // Rejected-attempt roll-up helper; exercised in below-min cli_tests.
 fn rejected_attempts(
     batch: &HarnessRequestBatch,
     admitted: &[AdmittedBroadHarnessResult],
@@ -2553,6 +2557,7 @@ fn terminal_reason(terminal: &tui_adapter::evidence::Terminal) -> String {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))] // Single-admission child-plan publisher; exercised in cli_tests.
 fn publish_broad_harness_child_plan_from_admitted(
     env: ChildPlanEnv<'_>,
     receipt: HarnessRequestReceipt,
@@ -4111,6 +4116,7 @@ fn prepare_or_load_prototype1_batch(
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Monitor snapshot scaffolding; pending prototype1 monitor CLI.
 struct Prototype1MonitorLocation {
     label: &'static str,
     path: PathBuf,
@@ -4119,6 +4125,7 @@ struct Prototype1MonitorLocation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // Monitor snapshot scaffolding; pending prototype1 monitor CLI.
 struct Prototype1MonitorSnapshotEntry {
     is_dir: bool,
     len: u64,
@@ -4142,6 +4149,14 @@ pub(crate) fn run_metric_slice(
     )
 }
 
+pub(crate) fn run_history_preview(
+    campaign_id: &str,
+    manifest_path: &Path,
+    command: &Prototype1HistoryPreviewCommand,
+) -> Result<(), PrepareError> {
+    crate::cli::prototype1_state::history_preview::run(campaign_id, manifest_path, command.format)
+}
+
 pub(crate) fn run_child_evidence(
     campaign_id: &str,
     manifest_path: &Path,
@@ -4152,6 +4167,12 @@ pub(crate) fn run_child_evidence(
         manifest_path,
         command.format,
     )
+}
+
+pub(crate) fn run_evidence_inventory(
+    command: &Prototype1EvidenceInventoryCommand,
+) -> Result<(), PrepareError> {
+    crate::cli::prototype1_state::evidence_inventory::run(command.format)
 }
 
 pub(crate) fn run_score_report(

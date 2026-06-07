@@ -1,10 +1,12 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
-    process::Command,
     sync::Arc,
     time::Duration,
 };
+
+#[cfg(feature = "replay_tests")]
+use std::process::Command;
 
 use ploke_db::{Database, NodeType};
 use ploke_records::{
@@ -25,7 +27,6 @@ use ploke_tui::{
     },
     tools::{
         Ctx, Tool, ToolErrorCode, ToolErrorWire, ToolName,
-        ns_patch::NsPatch,
         ns_read::{NsRead, NsReadResult},
     },
     user_config::{ChatPolicy, ChatTimeoutStrategy},
@@ -38,12 +39,17 @@ use uuid::Uuid;
 use crate::{
     PreparedSingleRun,
     replay::llm::LoadedResponseTape,
-    runner::{
-        AgentTurnArtifact, IndexingStatusArtifact, ObservedTurnEvent, RepoStateArtifact,
-        RunMsbSingleRequest, ToolRequestRecord,
-    },
+    runner::{IndexingStatusArtifact, RepoStateArtifact, RunMsbSingleRequest},
     spec::PrepareError,
 };
+
+#[cfg(feature = "replay_tests")]
+use crate::runner::{
+    AgentTurnArtifact, ObservedTurnEvent, ToolRequestRecord, setup_replay_runtime,
+};
+
+#[cfg(feature = "replay_tests")]
+use ploke_tui::{app_state::core::derive_edit_proposal_id, tools::ns_patch::NsPatch};
 
 const READ_FIX_TRACE: &str = "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-par2-20260601-173956/prototype1/messages/edit-harness-result/node-552c19a55f53dbe6-r2.headless-tui.json";
 const READ_FIX_WORKSPACE: &str = "/home/brasides/.ploke-eval/campaigns/p1-gemini35-flash-direct-15g2x3-par2-20260601-173956/prototype1/workspaces/edit-harness/node-552c19a55f53dbe6-r2";
@@ -135,6 +141,7 @@ fn load_prepared_single_run(path: &Path) -> PreparedSingleRun {
     serde_json::from_str(&text).expect("historical run manifest must parse")
 }
 
+#[cfg(feature = "replay_tests")]
 fn load_agent_turn_artifact(path: &Path) -> AgentTurnArtifact {
     let text = std::fs::read_to_string(path).expect("read historical agent turn artifact");
     serde_json::from_str(&text).expect("historical agent turn artifact must parse")
@@ -199,6 +206,7 @@ fn output_artifact_path(output_dir: &Path, artifact: &str) -> PathBuf {
     candidates.pop().unwrap_or(flat)
 }
 
+#[cfg(feature = "replay_tests")]
 fn historical_run_dir_with_tool_calls(instance_id: &str, call_ids: &[&str]) -> PathBuf {
     let instance_root = historical_instance_root(instance_id);
     let mut candidates = vec![instance_root.clone()];
@@ -244,6 +252,7 @@ fn historical_run_dir_with_tool_calls(instance_id: &str, call_ids: &[&str]) -> P
     );
 }
 
+#[cfg(feature = "replay_tests")]
 fn find_tool_request(artifact: &AgentTurnArtifact, call_id: &str) -> ToolRequestRecord {
     artifact
         .events
@@ -341,6 +350,7 @@ fn test_real_run_full_response_sidecar_exposes_missing_malformed_tool_arg_respon
     );
 }
 
+#[cfg(feature = "replay_tests")]
 fn run_git(repo_root: &Path, args: &[&str], label: &str) {
     let status = Command::new("git")
         .current_dir(repo_root)
@@ -354,6 +364,7 @@ fn run_git(repo_root: &Path, args: &[&str], label: &str) {
     );
 }
 
+#[cfg(feature = "replay_tests")]
 fn git_stdout(repo_root: &Path, args: &[&str], label: &str) -> String {
     let output = Command::new("git")
         .current_dir(repo_root)
@@ -368,6 +379,7 @@ fn git_stdout(repo_root: &Path, args: &[&str], label: &str) -> String {
     String::from_utf8(output.stdout).expect("git stdout should be utf-8")
 }
 
+#[cfg(feature = "replay_tests")]
 fn clone_repo_for_replay(source_repo: &Path, dest_repo: &Path) {
     let source = source_repo
         .to_str()
@@ -386,6 +398,7 @@ fn clone_repo_for_replay(source_repo: &Path, dest_repo: &Path) {
     );
 }
 
+#[cfg(feature = "replay_tests")]
 async fn replay_ns_patch_request(
     state: Arc<AppState>,
     event_bus: Arc<EventBus>,
@@ -606,6 +619,7 @@ async fn read_fix() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(feature = "replay_tests")]
 async fn wait_for_terminal_proposal_status(
     state: &Arc<AppState>,
     proposal_id: Uuid,

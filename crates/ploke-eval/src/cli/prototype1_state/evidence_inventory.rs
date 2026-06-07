@@ -10,7 +10,12 @@
 //! material can be **replayed from sealed History** versus **projection-only**
 //! filesystem state.
 
+use std::collections::BTreeMap;
+
 use serde::Serialize;
+
+use crate::cli::InspectOutputFormat;
+use crate::spec::PrepareError;
 
 use super::evidence_class::EvidenceClass;
 
@@ -99,6 +104,7 @@ pub(crate) struct InventoryLocation {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[allow(dead_code)] // v1 catalog rows do not cover every root yet.
 pub(crate) enum InventoryRoot {
     /// `~/.ploke-eval/campaigns/<campaign-id>/prototype1/`
     CampaignPrototype1,
@@ -114,6 +120,7 @@ pub(crate) enum InventoryRoot {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[allow(dead_code)] // v1 catalog rows do not cover every format yet.
 pub(crate) enum RecordFormat {
     Json,
     Jsonl,
@@ -141,6 +148,7 @@ pub(crate) enum AuthorityTreatment {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+#[allow(dead_code)] // v1 catalog rows do not cover every discovery method yet.
 pub(crate) enum DiscoveryMethod {
     /// A single explicit path.
     ExplicitPath,
@@ -420,6 +428,40 @@ pub(crate) fn prototype1_evidence_inventory_rows() -> Vec<InventoryRow> {
             ],
         },
     ]
+}
+
+pub(crate) fn evidence_inventory_lane_counts(
+    rows: &[InventoryRow],
+) -> BTreeMap<HistoryCommitmentLane, usize> {
+    let mut counts = BTreeMap::new();
+    for row in rows {
+        *counts.entry(row.history_commitment).or_insert(0) += 1;
+    }
+    counts
+}
+
+/// Print the canonical evidence surface catalog for operator inspection.
+pub(crate) fn run(format: InspectOutputFormat) -> Result<(), PrepareError> {
+    let rows = prototype1_evidence_inventory_rows();
+    match format {
+        InspectOutputFormat::Table => {
+            println!("prototype1 evidence inventory");
+            println!("{}", "-".repeat(40));
+            println!("rows: {}", rows.len());
+            println!("commitment lanes (replay axis):");
+            for (lane, count) in evidence_inventory_lane_counts(&rows) {
+                println!("  {}: {count}", lane.as_str());
+            }
+            println!("(full inventory: use --format json)");
+        }
+        InspectOutputFormat::Json => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&rows).map_err(PrepareError::Serialize)?
+            );
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

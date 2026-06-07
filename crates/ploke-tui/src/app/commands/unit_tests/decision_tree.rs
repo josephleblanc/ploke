@@ -259,7 +259,7 @@ impl TestCase {
         expected_msg_contains: Option<&'static str>,
         expected_todo_test_name: Option<&'static str>,
     ) -> Self {
-        let mut case = Self {
+        let case = Self {
             name,
             db_setup,
             pwd,
@@ -357,7 +357,7 @@ impl TestCase {
         self
     }
 
-    fn with_error(mut self, expected: ExpectedUiError) -> Self {
+    fn with_error(self, expected: ExpectedUiError) -> Self {
         self.with_resolve_ui_error(expected)
     }
 

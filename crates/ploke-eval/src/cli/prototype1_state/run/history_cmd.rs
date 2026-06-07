@@ -2,8 +2,9 @@ use crate::cli::{HistoryCommand, HistorySubcommand};
 use crate::{campaign_manifest_path, spec::PrepareError};
 
 use crate::cli::prototype1_state::cli_facing::{
-    current_dir_as_repo_root, resolve_history_campaign, run_child_evidence, run_metric_slice,
-    run_score_report, run_score_selection_review, run_selection_show,
+    current_dir_as_repo_root, resolve_history_campaign, run_child_evidence, run_evidence_inventory,
+    run_history_preview, run_metric_slice, run_score_report, run_score_selection_review,
+    run_selection_show,
 };
 
 impl HistoryCommand {
@@ -16,6 +17,9 @@ impl HistoryCommand {
         let manifest_path = campaign_manifest_path(&campaign_id)?;
 
         match self.command {
+            HistorySubcommand::Preview(command) => {
+                run_history_preview(&campaign_id, &manifest_path, &command)
+            }
             HistorySubcommand::ChildEvidence(command) => {
                 run_child_evidence(&campaign_id, &manifest_path, &command)
             }
@@ -31,6 +35,7 @@ impl HistoryCommand {
             HistorySubcommand::SelectionShow(command) => {
                 run_selection_show(&campaign_id, &manifest_path, &command)
             }
+            HistorySubcommand::EvidenceInventory(command) => run_evidence_inventory(&command),
         }
     }
 }

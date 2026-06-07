@@ -1,20 +1,8 @@
 #![cfg(test)]
 
-use ploke_llm::{
-    ModelId, ProviderKey,
-    manager::RecordedResponse,
-    router_only::{RouterVariants, google::Google, openrouter::OpenRouter},
-};
-use ploke_records::{
-    agent_turn::{
-        AgentTurnArtifactRecord, MessageSnapshotRecord, ModelRouteRecord, ObservedTurnEventRecord,
-        PatchArtifactRecord, ToolCompletedRecord, ToolFailedRecord, ToolRequestRecord,
-        TurnFinishedRecord,
-    },
-    llm_response::RawFullResponseRecord,
-};
-use ploke_tui::app::commands::harness::TestAppAccessor;
-use serde::{Deserialize, Serialize};
+use ploke_llm::{ProviderKey, router_only::RouterVariants};
+use ploke_records::agent_turn::{ModelRouteRecord, ObservedTurnEventRecord};
+use serde::Serialize;
 use std::{
     borrow::Cow,
     fs,
@@ -27,14 +15,14 @@ use uuid::Uuid;
 use super::*;
 use super::{
     LiveObserver, ModelSelection, next_event, run_attempt, run_headless, run_headless_with_model,
-    run_headless_with_model_capture_responses, submit_prompt, validation_command_display,
+    submit_prompt, validation_command_display,
 };
 use crate::cli::prototype1_state::{
     backend::EditSurfaceAdmission,
     edit_surface::{
         harness_request::{
             AttachedReport, BroadEditPolicy, EvidenceRole, HarnessChildBudget,
-            PublishedBroadHarnessRequest, RequestAdmissionBinding, contract, request,
+            PublishedBroadHarnessRequest, RequestAdmissionBinding, contract,
         },
         harness_result::SubmittedBroadHarnessResult,
         surface,
