@@ -40,7 +40,6 @@ use crate::{
     PreparedSingleRun,
     replay::llm::LoadedResponseTape,
     runner::{IndexingStatusArtifact, RepoStateArtifact, RunMsbSingleRequest},
-    spec::PrepareError,
 };
 
 #[cfg(feature = "replay_tests")]
@@ -1088,11 +1087,11 @@ async fn test_apply_code_edit_historical_failure_path() {
     assert_eq!(ui_payload.error_code, Some(ToolErrorCode::WrongType));
 }
 
+// Regression for the historical BurntSushi/ripgrep setup failure (edition-2015 mixed
+// workspace). Edition-2015 members route through the dual-syn syn1 path unconditionally,
+// so indexing succeeds even when `convert_keyword_2015` is disabled.
 #[tokio::test(flavor = "multi_thread")]
-#[ignore = "historical diagnostic replay of ripgrep setup failure"]
-#[cfg(not(feature = "convert_keyword_2015"))]
-async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_status_artifact_without_convert_keyword_2015()
- {
+async fn regression_ripgrep_setup_indexes_without_convert_keyword_2015() {
     init_tracing();
     const SOURCE_MANIFEST: &str =
         "/home/brasides/.ploke-eval/instances/BurntSushi__ripgrep-1642/run.json";
@@ -1104,7 +1103,7 @@ async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_statu
 
     let temp = tempdir().expect("tempdir");
     let mut prepared = load_prepared_single_run(Path::new(SOURCE_MANIFEST));
-    prepared.task_id = format!("{}-without-convert-keyword-2015", prepared.task_id);
+    prepared.task_id = format!("{}-regression-dual-syn", prepared.task_id);
     prepared.output_dir = temp.path().join("out");
     std::fs::create_dir_all(&prepared.output_dir).expect("create replay output dir");
 
@@ -1115,10 +1114,7 @@ async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_statu
     )
     .expect("write replay manifest");
 
-    // WARN: keep this negative-path replay while `convert_keyword_2015` remains
-    // feature-gated. It documents the original historical failure without the
-    // fallback enabled.
-    let err = RunMsbSingleRequest {
+    let artifacts = RunMsbSingleRequest {
         run_manifest: replay_manifest,
         batch_id: None,
         index_debug_snapshots: false,
@@ -1128,51 +1124,48 @@ async fn test_historical_ripgrep_setup_failure_reports_indexing_failed_and_statu
     }
     .run()
     .await
-    .expect_err("historical ripgrep setup replay should fail during indexing");
+    .expect("ripgrep setup should index successfully via dual-syn syn1 path without convert_keyword_2015");
 
-    match err {
-        PrepareError::IndexingFailed { detail } => {
-            assert!(
-                detail.contains("Parse failed for crate"),
-                "unexpected indexing failure detail: {detail}"
-            );
-        }
-        other => panic!("expected indexing failure, got {other}"),
-    }
-
-    let indexing_status_path = output_artifact_path(&prepared.output_dir, "indexing-status.json");
     assert!(
-        indexing_status_path.exists(),
+        artifacts.indexing_status.exists(),
         "expected indexing status artifact at {}",
-        indexing_status_path.display()
+        artifacts.indexing_status.display()
     );
-    let artifact: IndexingStatusArtifact = serde_json::from_str(
-        &std::fs::read_to_string(&indexing_status_path).expect("read indexing status artifact"),
+    let indexing_status: IndexingStatusArtifact = serde_json::from_str(
+        &std::fs::read_to_string(&artifacts.indexing_status)
+            .expect("read indexing status artifact"),
     )
     .expect("parse indexing status artifact");
-    assert_eq!(artifact.status, "failed");
-    assert!(artifact.detail.contains("Parse failed for crate"));
+    assert_eq!(
+        indexing_status.status, "completed",
+        "expected completed indexing status, got {indexing_status:?}"
+    );
+
+    assert!(
+        artifacts.indexing_checkpoint_db.exists(),
+        "expected starting db checkpoint at {}",
+        artifacts.indexing_checkpoint_db.display()
+    );
+
+    assert!(
+        artifacts.repo_state.exists(),
+        "expected repo state artifact at {}",
+        artifacts.repo_state.display()
+    );
+    let repo_state: RepoStateArtifact = serde_json::from_str(
+        &std::fs::read_to_string(&artifacts.repo_state).expect("read repo state artifact"),
+    )
+    .expect("parse repo state artifact");
+    assert!(
+        repo_state.checked_out_head_sha.is_some(),
+        "expected checked-out head sha in repo state: {repo_state:?}"
+    );
 
     let parse_failure_path = output_artifact_path(&prepared.output_dir, "parse-failure.json");
     assert!(
-        parse_failure_path.exists(),
-        "expected parse failure artifact at {}",
+        !parse_failure_path.exists(),
+        "parse failure artifact should not exist after successful indexing: {}",
         parse_failure_path.display()
-    );
-    let parse_failure: crate::runner::ParseFailureArtifact = serde_json::from_str(
-        &std::fs::read_to_string(&parse_failure_path).expect("read parse failure artifact"),
-    )
-    .expect("parse parse failure artifact");
-    let concrete_source_path = parse_failure
-        .diagnostics
-        .iter()
-        .filter_map(|diag| diag.source_path.as_ref())
-        .find(|path| path.extension().is_some_and(|ext| ext == "rs"))
-        .cloned()
-        .expect("historical ripgrep replay should surface a concrete failing rust source path");
-    eprintln!(
-        "REPLAY_DIAG: ripgrep historical setup concrete failing source path={}",
-        concrete_source_path.display()
     );
 }
 
@@ -1292,65 +1285,5 @@ async fn test_replay_historical_fd_1121_partial_non_semantic_patch_runtime_flow(
     assert!(
         !diff.contains("diff --git a/src/walk.rs b/src/walk.rs"),
         "replayed repo diff should exclude src/walk.rs after failed apply:\n{diff}"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-#[ignore = "historical diagnostic replay of ripgrep setup success with convert_keyword_2015"]
-#[cfg(feature = "convert_keyword_2015")]
-async fn test_historical_ripgrep_setup_replay_gets_past_indexing_with_convert_keyword_2015() {
-    init_tracing();
-    const SOURCE_MANIFEST: &str =
-        "/home/brasides/.ploke-eval/instances/BurntSushi__ripgrep-1642/run.json";
-
-    assert!(
-        PathBuf::from(SOURCE_MANIFEST).exists(),
-        "expected historical run manifest at {SOURCE_MANIFEST}"
-    );
-
-    let temp = tempdir().expect("tempdir");
-    let mut prepared = load_prepared_single_run(Path::new(SOURCE_MANIFEST));
-    prepared.task_id = format!("{}-with-convert-keyword-2015", prepared.task_id);
-    prepared.output_dir = temp.path().join("out");
-    std::fs::create_dir_all(&prepared.output_dir).expect("create replay output dir");
-
-    let replay_manifest = temp.path().join("run.json");
-    std::fs::write(
-        &replay_manifest,
-        serde_json::to_string_pretty(&prepared).expect("serialize replay manifest"),
-    )
-    .expect("write replay manifest");
-
-    // WARN: this replay exists to prove why `convert_keyword_2015` exists.
-    // The only stable contract here is that setup no longer stops at indexing.
-    let result = RunMsbSingleRequest {
-        run_manifest: replay_manifest,
-        batch_id: None,
-        index_debug_snapshots: false,
-        use_default_model: true,
-        model_id: None,
-        provider: None,
-    }
-    .run()
-    .await;
-
-    assert!(
-        !matches!(result, Err(PrepareError::IndexingFailed { .. })),
-        "convert_keyword_2015 should get the historical replay past indexing, got: {result:?}"
-    );
-
-    let indexing_status_path = output_artifact_path(&prepared.output_dir, "indexing-status.json");
-    assert!(
-        indexing_status_path.exists(),
-        "expected indexing status artifact at {}",
-        indexing_status_path.display()
-    );
-    let artifact: IndexingStatusArtifact = serde_json::from_str(
-        &std::fs::read_to_string(&indexing_status_path).expect("read indexing status artifact"),
-    )
-    .expect("parse indexing status artifact");
-    assert_ne!(
-        artifact.status, "failed",
-        "historical replay should not stop at indexing failure with convert_keyword_2015"
     );
 }
