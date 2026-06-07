@@ -54,24 +54,6 @@ fn require_live_gate() {
     }
 }
 
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
-    assert_eq!(a.len(), b.len(), "cosine_similarity requires equal lengths");
-    let mut dot = 0.0f64;
-    let mut na = 0.0f64;
-    let mut nb = 0.0f64;
-    for (&x, &y) in a.iter().zip(b.iter()) {
-        let xf = x as f64;
-        let yf = y as f64;
-        dot += xf * yf;
-        na += xf * xf;
-        nb += yf * yf;
-    }
-    if na == 0.0 || nb == 0.0 {
-        return 0.0;
-    }
-    (dot / (na.sqrt() * nb.sqrt())) as f32
-}
-
 fn ts_slug() -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -126,16 +108,6 @@ struct SmokeArtifact {
     dims: usize,
     batch_size: usize,
     vectors_head8: Vec<Vec<f32>>,
-}
-
-#[derive(Debug, Serialize)]
-struct ParityCosineArtifact {
-    local_model: String,
-    remote_model: String,
-    dims: usize,
-    sims: Vec<(String, f32)>,
-    p50: f32,
-    min: f32,
 }
 
 #[tokio::test]

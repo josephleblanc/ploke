@@ -41,7 +41,6 @@ use crate::ui::provenance::{
     render_evidence_lane_chip_with_inspect, render_provenance_inspect_button,
     tool_failure_headline,
 };
-use crate::ui::text::style::inspector_error_text_color;
 
 /// archaeology:run-record-branch-output
 /// proof:docs/active/archaeology/ploke-tree-graph/run-record-branch-output.md

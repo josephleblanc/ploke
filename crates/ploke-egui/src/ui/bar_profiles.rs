@@ -40,19 +40,6 @@ pub fn add_pane_list_trailing_inset(ui: &mut egui::Ui) {
     ui.add_space(PANE_LIST_TRAILING_INSET);
 }
 
-/// Lane layout profile; drives [`paint_bar_profile`] and standalone helpers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BarProfile {
-    /// Multi-segment normalized timeline lane.
-    SegmentLane,
-    /// Single proportional fill from the left (metrics, verdict distribution).
-    MetricFill,
-    /// Two-segment succeeded / failed stack.
-    StackedOutcome,
-    /// Faint track background and stroke only.
-    EmptyTrack,
-}
-
 /// One normalized segment in a multi-segment lane (`start`/`end` in \[0, 1\]).
 #[derive(Debug, Clone)]
 pub struct BarPaintSegment {
@@ -223,15 +210,6 @@ pub fn paint_metric_fill_segment(
 }
 
 /// Faint lane track only ([`BarProfile::EmptyTrack`]).
-pub fn paint_empty_track(ui: &Ui, track_rect: Rect) {
-    let painter = ui.painter().with_clip_rect(track_rect);
-    paint_track_background(
-        &painter,
-        track_rect,
-        ui.visuals().faint_bg_color,
-        ui.visuals().widgets.noninteractive.bg_stroke.color,
-    );
-}
 
 /// Multi-segment timeline lane with hover tooltips.
 pub fn paint_segment_lane(

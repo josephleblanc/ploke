@@ -234,18 +234,6 @@ pub(super) fn cached_kv_artifact_file(
     });
 }
 
-pub(super) fn cached_kv_run_name(
-    ui: &mut egui::Ui,
-    render_cache: &mut InspectorRenderCache,
-    key: &str,
-    value: &str,
-) {
-    ui.horizontal(|ui| {
-        cached_label(ui, render_cache, key);
-        cached_run_name_value(ui, render_cache, ("run-name", key, value), value);
-    });
-}
-
 pub(super) fn cached_kv_usize(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,
@@ -436,14 +424,4 @@ pub(super) fn cached_wrapped_monospace_label(
     text: &str,
 ) -> egui::Response {
     render_inspector_wrapped_prose(ui, render_cache, text)
-}
-
-pub(super) fn cached_wrapped_monospace_label_with_wrap_width(
-    ui: &mut egui::Ui,
-    render_cache: &mut InspectorRenderCache,
-    text: &str,
-    wrap_width_points: u32,
-) -> egui::Response {
-    let galley = render_cache.wrapped_monospace_galley_with_wrap_width(ui, text, wrap_width_points);
-    add_cached_theme_galley(ui, galley, egui::Sense::hover())
 }

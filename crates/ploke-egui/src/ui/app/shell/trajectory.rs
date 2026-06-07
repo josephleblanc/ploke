@@ -87,11 +87,6 @@ impl TrajectoryCache {
             .as_ref()
             .expect("trajectory snapshot populated")
     }
-
-    #[cfg(test)]
-    fn rebuilds(&self) -> usize {
-        self.rebuilds
-    }
 }
 
 #[derive(Debug, Default)]
@@ -509,18 +504,6 @@ fn candidate_source_label(source: CandidateSource) -> &'static str {
     }
 }
 
-pub(crate) fn selection_detail_for_entry(
-    graph: &Graph,
-    entry_id: &str,
-) -> Option<GraphSelectionDetail> {
-    selection_detail_for_reference(
-        graph,
-        &GraphSelectionRef::Selection {
-            entry_id: entry_id.to_owned(),
-        },
-    )
-}
-
 pub(crate) fn selection_detail_for_reference(
     graph: &Graph,
     reference: &GraphSelectionRef,
@@ -542,12 +525,4 @@ pub(crate) fn selection_detail_for_reference(
         detail: selection.procedure_or_policy.value.clone(),
         reference: reference.clone(),
     })
-}
-
-pub(crate) fn preferred_trajectory_entry_id(graph: &Graph) -> Option<String> {
-    let rows = graph.trajectory_generations();
-    if rows.is_empty() {
-        return None;
-    }
-    Some(rows[rows.len() / 2].selection_entry_id.0.clone())
 }

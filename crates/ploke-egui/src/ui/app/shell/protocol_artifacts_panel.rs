@@ -294,25 +294,6 @@ pub(crate) fn ordered_protocol_verdict_rows<'a>(
     rows
 }
 
-pub(crate) fn ordered_protocol_counts<'a>(
-    counts: &'a BTreeMap<String, usize>,
-    preferred_order: &[&'a str],
-) -> Vec<(&'a str, usize)> {
-    let mut rows = Vec::new();
-    for &key in preferred_order {
-        if let Some(&count) = counts.get(key) {
-            rows.push((key, count));
-        }
-    }
-    for (key, &count) in counts {
-        if preferred_order.contains(&key.as_str()) {
-            continue;
-        }
-        rows.push((key.as_str(), count));
-    }
-    rows
-}
-
 pub(crate) fn humanize_snake_case_key(key: &str) -> String {
     key.split('_')
         .filter(|segment| !segment.is_empty())
@@ -333,31 +314,6 @@ mod tests {
         assert_eq!(rows.len(), OVERALL_VERDICT_ORDER.len());
         assert_eq!(rows[0], ("focused_progress", 3));
         assert_eq!(rows[1], ("useful_exploration", 0));
-    }
-
-    #[test]
-    fn ordered_protocol_counts_respects_preferred_order() {
-        let mut counts = BTreeMap::new();
-        counts.insert("mixed".to_string(), 2);
-        counts.insert("focused_progress".to_string(), 26);
-        counts.insert("unclear".to_string(), 1);
-        let rows = ordered_protocol_counts(&counts, OVERALL_VERDICT_ORDER);
-        assert_eq!(rows.len(), 3);
-        assert_eq!(rows[0].0, "focused_progress");
-        assert_eq!(rows[0].1, 26);
-        assert_eq!(rows[1].0, "mixed");
-        assert_eq!(rows[2].0, "unclear");
-    }
-
-    #[test]
-    fn ordered_protocol_counts_appends_unknown_keys_last() {
-        let mut counts = BTreeMap::new();
-        counts.insert("custom_verdict".to_string(), 4);
-        counts.insert("focused_progress".to_string(), 1);
-        let rows = ordered_protocol_counts(&counts, OVERALL_VERDICT_ORDER);
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].0, "focused_progress");
-        assert_eq!(rows[1].0, "custom_verdict");
     }
 
     #[test]

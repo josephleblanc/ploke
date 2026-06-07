@@ -872,25 +872,6 @@ fn render_protocol_judgment_block(
     render_eval_pane_labeled_wrapped_prose(ui, render_cache, "rationale", rationale);
 }
 
-fn render_protocol_judgment(
-    ui: &mut egui::Ui,
-    render_cache: &mut InspectorRenderCache,
-    label: &str,
-    verdict: impl std::fmt::Debug,
-    confidence: impl std::fmt::Debug,
-    rationale: &str,
-) {
-    render_protocol_judgment_block(
-        ui,
-        render_cache,
-        label,
-        label,
-        verdict,
-        confidence,
-        rationale,
-    );
-}
-
 fn render_segmentation_coverage(
     ui: &mut egui::Ui,
     render_cache: &mut InspectorRenderCache,

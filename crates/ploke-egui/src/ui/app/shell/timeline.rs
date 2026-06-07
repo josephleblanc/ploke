@@ -9,7 +9,7 @@ use crate::ui::bar_profiles::{
 use crate::ui::inspector::{tool_execution_name, tool_execution_status_label, turn_outcome_label};
 use crate::ui::theme::{PaletteTokens, tokens_from_ui};
 use crate::ui::view::GraphViewDiagnostics;
-use eframe::egui::{self, Color32, Rect, Sense, Stroke, Ui};
+use eframe::egui::{self, Color32, Sense, Stroke, Ui};
 use ploke_records::run_record::{RunRecord, ToolResult, TurnOutcome, TurnRecord};
 use ploke_tree::graph::Graph;
 use ploke_tree::{ComparedRunArm, RunRecordStats};

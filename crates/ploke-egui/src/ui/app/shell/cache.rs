@@ -1,5 +1,5 @@
 use crate::allocation::scope;
-use crate::ui::bar_profiles::{self, METRIC_TRACK_X_PADDING};
+use crate::ui::bar_profiles::{self};
 use crate::ui::id_display::ShortId;
 use crate::ui::render::text::*;
 use crate::ui::text::style as text_style;
@@ -208,15 +208,6 @@ impl InspectorRenderCache {
         });
         self.text_galley_rebuilds += 1;
         galley
-    }
-
-    pub(super) fn wrapped_monospace_galley(
-        &mut self,
-        ui: &egui::Ui,
-        text: &str,
-    ) -> Arc<egui::Galley> {
-        let wrap_width_points = cached_wrap_width_points(effective_inspector_content_width(ui));
-        self.wrapped_monospace_galley_with_wrap_width(ui, text, wrap_width_points)
     }
 
     pub(super) fn wrapped_monospace_galley_with_wrap_width(
@@ -484,9 +475,6 @@ fn layout_cached_text(ui: &egui::Ui, text: &str, kind: CachedTextKind) -> Arc<eg
 
 /// Inset from the visible clip edge so labels and chips are not cut mid-glyph.
 pub(super) const PANE_CONTENT_EDGE_INSET: f32 = 2.0;
-
-/// Right gutter for row action buttons (copy, inspect, popout); matches eval tile / metric bar inset.
-pub(crate) const PANE_LIST_TRAILING_INSET: f32 = bar_profiles::PANE_LIST_TRAILING_INSET;
 
 pub(crate) use bar_profiles::add_pane_list_trailing_inset;
 

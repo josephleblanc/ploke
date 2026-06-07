@@ -509,15 +509,6 @@ fn looks_like_local_filesystem_path(value: &str) -> bool {
         || (value.len() > 2 && value.as_bytes()[1] == b':' && value.as_bytes()[2] == b'\\')
 }
 
-fn looks_like_json_snapshot(bytes: &[u8]) -> bool {
-    bytes
-        .iter()
-        .copied()
-        .skip_while(|byte| byte.is_ascii_whitespace())
-        .next()
-        == Some(b'{')
-}
-
 /// When set, startup should surface this instead of fetching.
 pub fn graph_fetch_rejection_message(query_value: &str) -> Option<String> {
     if looks_like_local_filesystem_path(query_value) {

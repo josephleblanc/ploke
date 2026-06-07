@@ -44,7 +44,6 @@ pub(crate) use cache::{
     refresh_eval_pane_column_width,
 };
 pub(crate) use chrome::{add_inspector_scroll_end_padding, render_top_strip};
-pub(crate) use context_strip::render_snapshot_load_banner;
 pub(crate) use eval_protocol::{render_eval_protocol_for_graph, render_eval_protocol_pane};
 pub(crate) use identity::{
     render_artifact_ids_for_inspector, render_diagnostics_detail, render_diagnostics_sidebar,
@@ -67,8 +66,8 @@ pub(super) use protocol_detail::{
 pub(crate) use run_records::render_run_records_for_inspector;
 pub(crate) use timeline::render_bottom_timeline;
 pub(crate) use trajectory::{
-    preferred_trajectory_entry_id, render_selection_drilldown_for_inspector,
-    render_trajectory_pane, selection_detail_for_reference,
+    render_selection_drilldown_for_inspector, render_trajectory_pane,
+    selection_detail_for_reference,
 };
 #[cfg(test)]
 mod render_cache_tests;

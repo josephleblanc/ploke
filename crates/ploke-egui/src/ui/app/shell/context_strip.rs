@@ -51,24 +51,3 @@ pub(crate) fn render_run_evidence_context_strip(
     }
     ui.separator();
 }
-
-pub(crate) fn render_snapshot_load_banner(ui: &mut egui::Ui, catalog_error: &str) {
-    egui::Frame::group(ui.style())
-        .fill(egui::Color32::from_rgba_unmultiplied(80, 20, 20, 40))
-        .inner_margin(egui::Margin::same(8))
-        .show(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                let detail = detail_for_snapshot_load(catalog_error, None);
-                render_evidence_lane_chip_with_inspect(
-                    ui,
-                    EvidenceLane::UiSnapshotLoad,
-                    detail,
-                    ("snapshot-load-banner", catalog_error),
-                );
-                ui.colored_label(
-                    egui::Color32::LIGHT_RED,
-                    format!("UI snapshot load failed: {catalog_error}"),
-                );
-            });
-        });
-}

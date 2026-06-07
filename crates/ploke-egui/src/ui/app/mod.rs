@@ -52,9 +52,8 @@ use crate::import::graph_from_run_root;
 use crate::import::graph_from_snapshot_bytes;
 #[cfg(all(not(target_arch = "wasm32"), feature = "profile-with-puffin"))]
 use crate::perf::{PuffinCapture, PuffinCaptureStatus};
-use crate::run_catalog::RunCatalog;
 #[cfg(not(target_arch = "wasm32"))]
-use crate::run_catalog::{NativeBenchmarkCatalog, native_run_label};
+use crate::run_catalog::native_run_label;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::run_picker::RunPicker;
 use crate::ui::diff::PatchDiffCache;
@@ -122,7 +121,6 @@ pub struct OperatorApp {
     ))]
     benchmark_graph_catalog_visible: bool,
     graph_catalog: GraphCatalog,
-    benchmark_eval_protocol_render_mode: shell::EvalProtocolRenderMode,
     theme: AppTheme,
 }
 
@@ -182,7 +180,6 @@ impl OperatorApp {
             ))]
             benchmark_graph_catalog_visible: false,
             graph_catalog: GraphCatalog::new(),
-            benchmark_eval_protocol_render_mode: shell::EvalProtocolRenderMode::Full,
             theme: AppTheme::default(),
         }
     }
@@ -266,7 +263,6 @@ impl OperatorApp {
             ))]
             benchmark_graph_catalog_visible: false,
             graph_catalog: GraphCatalog::new(),
-            benchmark_eval_protocol_render_mode: shell::EvalProtocolRenderMode::Full,
             theme: AppTheme::default(),
         }
     }
@@ -364,7 +360,7 @@ impl OperatorApp {
                     self.render_run_picker(ui);
                     self.render_graph_snapshot_controls(ui);
                 }
-                self.show_run_catalog(ui);
+                self.show_run_catalog();
                 ui.separator();
                 render_mode_picker(ui, &mut self.view);
                 render_quick_filters(ui, &mut self.view);
@@ -410,7 +406,7 @@ impl OperatorApp {
             });
     }
 
-    fn show_run_catalog(&mut self, ui: &mut egui::Ui) {
+    fn show_run_catalog(&mut self, #[cfg(target_arch = "wasm32")] ui: &mut egui::Ui) {
         #[cfg(target_arch = "wasm32")]
         {
             if let Some(graph) = self.graph_catalog.show(ui, false) {
