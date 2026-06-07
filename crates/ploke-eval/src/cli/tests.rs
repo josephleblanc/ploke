@@ -1678,6 +1678,7 @@ fn loop_prototype1_doctor_command_parses() {
             assert_eq!(cmd.control.repo_root, Some(PathBuf::from("/tmp/repo")));
             assert_eq!(cmd.control.format, InspectOutputFormat::Json);
             assert!(!cmd.live_protocol_preflight);
+            assert!(!cmd.headless_tui_setup_preflight);
         }
         other => panic!("unexpected command shape: {:?}", other),
     }
@@ -1702,6 +1703,32 @@ fn loop_prototype1_doctor_live_protocol_preflight_command_parses() {
             assert_eq!(cmd.control.repo_root, Some(PathBuf::from("/tmp/repo")));
             assert_eq!(cmd.control.format, InspectOutputFormat::Table);
             assert!(cmd.live_protocol_preflight);
+            assert!(!cmd.headless_tui_setup_preflight);
+        }
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
+fn loop_prototype1_doctor_headless_tui_setup_preflight_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "prototype1-doctor",
+        "--repo-root",
+        "/tmp/repo",
+        "--headless-tui-setup-preflight",
+    ])
+    .expect("loop prototype1-doctor headless setup preflight should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1Doctor(cmd),
+        }) => {
+            assert_eq!(cmd.control.repo_root, Some(PathBuf::from("/tmp/repo")));
+            assert_eq!(cmd.control.format, InspectOutputFormat::Table);
+            assert!(!cmd.live_protocol_preflight);
+            assert!(cmd.headless_tui_setup_preflight);
         }
         other => panic!("unexpected command shape: {:?}", other),
     }

@@ -570,6 +570,14 @@ pub(crate) async fn wait_for_bm25_ready(
     app: &mut App,
     state: Arc<AppState>,
 ) -> Result<(), PrepareError> {
+    #[cfg(test)]
+    if std::env::var_os("PLOKE_EVAL_FORCE_HEADLESS_TUI_RAG_UNAVAILABLE").is_some() {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "bm25_ready",
+            detail: "RAG service is unavailable".to_string(),
+        });
+    }
+
     let Some(rag) = state.rag.as_ref().cloned() else {
         return Err(PrepareError::DatabaseSetup {
             phase: "bm25_ready",

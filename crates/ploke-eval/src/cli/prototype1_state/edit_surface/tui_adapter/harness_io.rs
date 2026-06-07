@@ -17,6 +17,8 @@ use ploke_records::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::spec::PrepareError;
+
 use super::super::{
     ArtifactDelta,
     harness_request::{EvidenceRoot, request},
@@ -76,6 +78,15 @@ impl HeadlessRun {
 
     pub(crate) fn terminal(&self) -> Option<&HeadlessTerminal> {
         self.terminal.as_ref()
+    }
+
+    pub(crate) fn setup_unavailable(phase: &'static str, reason: impl Into<String>) -> Self {
+        let mut run = Self::new();
+        run.terminal = Some(HeadlessTerminal::SetupUnavailable {
+            phase,
+            reason: reason.into(),
+        });
+        run
     }
 
     pub(crate) fn debug_relay(&self) -> &DebugRelay {
@@ -882,6 +893,10 @@ pub(crate) enum HeadlessTerminal {
     ProviderUnavailable {
         reason: String,
     },
+    SetupUnavailable {
+        phase: &'static str,
+        reason: String,
+    },
     AppliedValidationFailed {
         applied: AppliedEdit,
         feedback: String,
@@ -940,6 +955,13 @@ impl HeadlessTerminal {
             Self::ProviderUnavailable { reason } => {
                 format!(
                     "provider_unavailable reason={}",
+                    truncate_chars(reason, 240)
+                )
+            }
+            Self::SetupUnavailable { phase, reason } => {
+                format!(
+                    "setup_unavailable phase={} reason={}",
+                    phase,
                     truncate_chars(reason, 240)
                 )
             }
@@ -1182,6 +1204,10 @@ pub(crate) mod evidence {
             reason: String,
         },
         ProviderUnavailable {
+            reason: String,
+        },
+        SetupUnavailable {
+            phase: String,
             reason: String,
         },
         AppliedValidationFailed {
@@ -1481,6 +1507,10 @@ pub(crate) mod evidence {
                     reason: reason.clone(),
                 },
                 HeadlessTerminal::ProviderUnavailable { reason } => Self::ProviderUnavailable {
+                    reason: reason.clone(),
+                },
+                HeadlessTerminal::SetupUnavailable { phase, reason } => Self::SetupUnavailable {
+                    phase: phase.to_string(),
                     reason: reason.clone(),
                 },
                 HeadlessTerminal::AppliedValidationFailed { applied, feedback } => {
@@ -2036,10 +2066,36 @@ pub(crate) enum Error {
     EmptyTimeout,
     #[error("failed to start headless ploke-tui harness: {0}")]
     HeadlessStart(String),
+    #[error(
+        "failed to start headless ploke-tui harness: database setup failed during '{phase}': {detail}"
+    )]
+    HeadlessSetup { phase: &'static str, detail: String },
     #[error("headless ploke-tui event stream failed: {0}")]
     HeadlessEvent(String),
     #[error("proposal failed surface check: {0}")]
     Surface(#[from] surface::Error),
+}
+
+impl Error {
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn from_headless_start(
+        source: PrepareError,
+    ) -> Self {
+        match source {
+            PrepareError::DatabaseSetup { phase, detail } => Self::HeadlessSetup { phase, detail },
+            PrepareError::Timeout { phase, secs } => Self::HeadlessSetup {
+                phase,
+                detail: format!("timed out after {secs} seconds"),
+            },
+            other => Self::HeadlessStart(other.to_string()),
+        }
+    }
+
+    pub(crate) fn setup_failure(&self) -> Option<(&'static str, &str)> {
+        match self {
+            Self::HeadlessSetup { phase, detail } => Some((*phase, detail.as_str())),
+            _ => None,
+        }
+    }
 }
 
 pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn join_paths(

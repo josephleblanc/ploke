@@ -117,6 +117,8 @@ pub(crate) struct ActiveParentStatus {
     pub(crate) prompt_preflight: PromptPreflight,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) protocol_preflight: Option<ProtocolLivePreflight>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) headless_tui_setup_preflight: Option<HeadlessTuiSetupPreflight>,
     pub(crate) phase: DiagnosedPhase,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) current_child: Option<CurrentChildStatus>,
@@ -172,6 +174,24 @@ pub(crate) struct ProtocolLivePreflight {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ProtocolLivePreflightOutcome {
+    Passed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct HeadlessTuiSetupPreflight {
+    pub(crate) outcome: HeadlessTuiSetupPreflightOutcome,
+    pub(crate) workspace: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) phase: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum HeadlessTuiSetupPreflightOutcome {
+    Skipped,
     Passed,
     Failed,
 }
@@ -235,9 +255,14 @@ pub(crate) async fn doctor(command: Prototype1DoctorCommand) -> Result<(), Prepa
     let mut status = diagnose_command(&command.control)?;
     let repo_root = status.repo_root.clone();
     attach_typed_graph_starting_db_check(&repo_root, &mut status).await;
-    if command.live_protocol_preflight {
+    if command.live_protocol_preflight || command.headless_tui_setup_preflight {
         let context = resolve_context(command.control.repo_root.as_deref())?;
-        attach_protocol_live_preflight(&context, &mut status).await;
+        if command.headless_tui_setup_preflight {
+            attach_headless_tui_setup_preflight(&context, &mut status).await;
+        }
+        if command.live_protocol_preflight {
+            attach_protocol_live_preflight(&context, &mut status).await;
+        }
     }
     render_status(command.control.format, &status)
 }
@@ -367,6 +392,19 @@ fn render_status(
                     preflight.reasoning,
                     preflight.max_tokens
                 );
+                if let Some(detail) = preflight.detail.as_deref() {
+                    println!("  detail: {detail}");
+                }
+            }
+            if let Some(preflight) = status.headless_tui_setup_preflight.as_ref() {
+                println!(
+                    "headless_tui_setup_preflight: {} workspace={}",
+                    headless_tui_setup_preflight_label(preflight.outcome),
+                    preflight.workspace.display()
+                );
+                if let Some(phase) = preflight.phase.as_deref() {
+                    println!("  phase: {phase}");
+                }
                 if let Some(detail) = preflight.detail.as_deref() {
                     println!("  detail: {detail}");
                 }
@@ -586,6 +624,7 @@ fn into_status(diagnosis: Diagnosis) -> ActiveParentStatus {
         effective_control: diagnosis.context.effective_control,
         prompt_preflight: diagnosis.prompt_preflight,
         protocol_preflight: None,
+        headless_tui_setup_preflight: None,
         phase: diagnosis.phase,
         current_child: diagnosis.current_child,
         blockers: diagnosis.blockers,
@@ -610,6 +649,74 @@ async fn attach_protocol_live_preflight(context: &RuntimeContext, status: &mut A
         status.suggested_commands = suggested_commands(status.phase, &status.repo_root);
     }
     status.protocol_preflight = Some(preflight);
+}
+
+async fn attach_headless_tui_setup_preflight(
+    context: &RuntimeContext,
+    status: &mut ActiveParentStatus,
+) {
+    let preflight = run_headless_tui_setup_preflight(context).await;
+    if preflight.outcome == HeadlessTuiSetupPreflightOutcome::Failed {
+        let phase = preflight.phase.as_deref().unwrap_or("headless_tui_setup");
+        let detail = preflight
+            .detail
+            .clone()
+            .unwrap_or_else(|| "headless TUI setup preflight failed".to_string());
+        status.blockers.push(format!(
+            "headless TUI setup preflight failed during '{phase}': {detail}"
+        ));
+        status.phase = DiagnosedPhase::Blocked;
+        status.allowed_actions = allowed_actions_for_phase(status.phase);
+        status.suggested_commands = suggested_commands(status.phase, &status.repo_root);
+    }
+    status.headless_tui_setup_preflight = Some(preflight);
+}
+
+async fn run_headless_tui_setup_preflight(context: &RuntimeContext) -> HeadlessTuiSetupPreflight {
+    let workspace = context.repo_root.clone();
+    if context
+        .admitted_profile
+        .profile
+        .generation
+        .candidate_generator()
+        != Prototype1CandidateGenerator::BroadHarnessRequest
+    {
+        return HeadlessTuiSetupPreflight {
+            outcome: HeadlessTuiSetupPreflightOutcome::Skipped,
+            workspace,
+            phase: None,
+            detail: Some(
+                "run profile does not use broad-harness headless TUI generation".to_string(),
+            ),
+        };
+    }
+
+    match crate::runner::setup_workspace_tui_runtime_with_read_roots(&workspace, &[]).await {
+        Ok(_runtime) => HeadlessTuiSetupPreflight {
+            outcome: HeadlessTuiSetupPreflightOutcome::Passed,
+            workspace,
+            phase: None,
+            detail: None,
+        },
+        Err(PrepareError::DatabaseSetup { phase, detail }) => HeadlessTuiSetupPreflight {
+            outcome: HeadlessTuiSetupPreflightOutcome::Failed,
+            workspace,
+            phase: Some(phase.to_string()),
+            detail: Some(detail),
+        },
+        Err(PrepareError::Timeout { phase, secs }) => HeadlessTuiSetupPreflight {
+            outcome: HeadlessTuiSetupPreflightOutcome::Failed,
+            workspace,
+            phase: Some(phase.to_string()),
+            detail: Some(format!("timed out after {secs} seconds")),
+        },
+        Err(error) => HeadlessTuiSetupPreflight {
+            outcome: HeadlessTuiSetupPreflightOutcome::Failed,
+            workspace,
+            phase: Some("headless_tui_setup".to_string()),
+            detail: Some(error.to_string()),
+        },
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -721,6 +828,14 @@ fn protocol_live_preflight_label(outcome: ProtocolLivePreflightOutcome) -> &'sta
     }
 }
 
+fn headless_tui_setup_preflight_label(outcome: HeadlessTuiSetupPreflightOutcome) -> &'static str {
+    match outcome {
+        HeadlessTuiSetupPreflightOutcome::Skipped => "skipped",
+        HeadlessTuiSetupPreflightOutcome::Passed => "passed",
+        HeadlessTuiSetupPreflightOutcome::Failed => "failed",
+    }
+}
+
 fn classify_protocol_preflight_error(error: &ploke_protocol::ProtocolLlmError) -> String {
     match error {
         ploke_protocol::ProtocolLlmError::Request(message) => {
@@ -804,6 +919,10 @@ fn suggested_commands(phase: DiagnosedPhase, repo_root: &Path) -> Vec<String> {
     match phase {
         DiagnosedPhase::Blocked | DiagnosedPhase::Complete => Vec::new(),
         _ => vec![
+            format!(
+                "cd {} && ./target/debug/ploke-eval loop prototype1-doctor --repo-root . --headless-tui-setup-preflight",
+                repo_root.display()
+            ),
             format!(
                 "cd {} && ./target/debug/ploke-eval loop prototype1-continue --repo-root .",
                 repo_root.display()
@@ -2571,6 +2690,60 @@ mod tests {
                 .map(|(key, value)| (*key, value.clone().into_os_string()))
                 .collect(),
         )
+    }
+
+    #[test]
+    fn prototype1_doctor_suggests_headless_tui_setup_preflight_extra_command() {
+        let repo_root = PathBuf::from("/prototype1-parent");
+        let commands = suggested_commands(DiagnosedPhase::ChildPlan, &repo_root);
+        assert!(
+            commands
+                .iter()
+                .any(|command| command.contains("--headless-tui-setup-preflight")),
+            "doctor should advertise the extra setup preflight before broad headless fanout: {commands:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn prototype1_doctor_headless_setup_preflight_blocks_on_rag_unavailable() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let eval_home = temp.path().join("eval-home");
+        let _env = crate::test_support::env_guard_os(vec![
+            ("PLOKE_EVAL_HOME", eval_home.clone().into_os_string()),
+            (
+                "PLOKE_EVAL_FORCE_HEADLESS_TUI_RAG_UNAVAILABLE",
+                OsString::from("1"),
+            ),
+        ]);
+        let world = ChildPlanWorld::mint_at_child_plan_phase(&eval_home);
+        write_parent_workspace_fixture(&world.repo_root);
+        let context = resolve_context(Some(&world.repo_root)).expect("context");
+        let mut status = into_status(diagnose(&context).expect("diagnosis"));
+
+        attach_headless_tui_setup_preflight(&context, &mut status).await;
+
+        let preflight = status
+            .headless_tui_setup_preflight
+            .as_ref()
+            .expect("preflight report attached");
+        assert_eq!(preflight.outcome, HeadlessTuiSetupPreflightOutcome::Failed);
+        assert_eq!(preflight.phase.as_deref(), Some("bm25_ready"));
+        assert!(
+            preflight
+                .detail
+                .as_deref()
+                .is_some_and(|detail| detail.contains("RAG service is unavailable")),
+            "detail should preserve the typed RAG/BM25 setup failure: {preflight:?}"
+        );
+        assert_eq!(status.phase, DiagnosedPhase::Blocked);
+        assert!(
+            status.blockers.iter().any(|blocker| {
+                blocker.contains("headless TUI setup preflight failed during 'bm25_ready'")
+                    && blocker.contains("RAG service is unavailable")
+            }),
+            "doctor should surface the setup blocker: {:?}",
+            status.blockers
+        );
     }
 
     struct ChildPlanWorld {

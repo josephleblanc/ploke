@@ -237,7 +237,7 @@ pub(super) async fn start_attempt_runtime(
         extra_read_roots,
     )
     .await
-    .map_err(|source| Error::HeadlessStart(source.to_string()))?;
+    .map_err(Error::from_headless_start)?;
 
     let write_scope = write_scope_for_policy(edit_policy);
     runtime

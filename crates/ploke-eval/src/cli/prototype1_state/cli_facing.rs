@@ -1607,7 +1607,7 @@ async fn run_broad_headless_tui_attempt_with_options(
     let selected_model = options
         .model_label()
         .unwrap_or_else(|| "unknown-headless-model".to_string());
-    let run = tui_adapter::run_headless_with_model_capture_responses(
+    let run = match tui_adapter::run_headless_with_model_capture_responses(
         tui_workspace,
         &prompt,
         budget,
@@ -1617,9 +1617,22 @@ async fn run_broad_headless_tui_attempt_with_options(
         options.model().cloned(),
     )
     .await
-    .map_err(|source| PrepareError::InvalidBatchSelection {
-        detail: format!("broad headless-tui attempt failed: {source}"),
-    })?;
+    {
+        Ok(run) => run,
+        Err(source) => {
+            if let Some((phase, detail)) = source.setup_failure() {
+                let run = tui_adapter::HeadlessRun::setup_unavailable(phase, detail.to_string());
+                write_broad_headless_tui_diagnostics(slot, &run)?;
+                return Err(PrepareError::DatabaseSetup {
+                    phase,
+                    detail: detail.to_string(),
+                });
+            }
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!("broad headless-tui attempt failed: {source}"),
+            });
+        }
+    };
 
     let terminal = run
         .terminal()
@@ -1678,6 +1691,16 @@ fn broad_headless_tui_fixture_attempt(
             PrepareError::ProviderUnavailable {
                 phase: "broad_headless_tui_attempt",
                 detail: format!("headless ploke-tui provider unavailable: {reason}"),
+            }
+        }
+        Some(tui_adapter::evidence::Terminal::SetupUnavailable { phase, reason }) => {
+            PrepareError::DatabaseSetup {
+                phase: if phase == "bm25_ready" {
+                    "bm25_ready"
+                } else {
+                    "broad_headless_tui_attempt"
+                },
+                detail: reason,
             }
         }
         Some(terminal) => PrepareError::InvalidBatchSelection {
@@ -1755,6 +1778,12 @@ fn finish_broad_headless_tui_attempt(
             Err(PrepareError::ProviderUnavailable {
                 phase: "broad_headless_tui_attempt",
                 detail: format!("headless ploke-tui provider unavailable: {reason}"),
+            })
+        }
+        tui_adapter::HeadlessTerminal::SetupUnavailable { phase, reason } => {
+            Err(PrepareError::DatabaseSetup {
+                phase,
+                detail: reason.clone(),
             })
         }
         tui_adapter::HeadlessTerminal::AppliedValidationFailed { applied, feedback } => {
@@ -2482,6 +2511,9 @@ fn terminal_reason(terminal: &tui_adapter::evidence::Terminal) -> String {
         }
         tui_adapter::evidence::Terminal::ProviderUnavailable { reason } => {
             format!("provider unavailable: {reason}")
+        }
+        tui_adapter::evidence::Terminal::SetupUnavailable { phase, reason } => {
+            format!("setup unavailable during {phase}: {reason}")
         }
         tui_adapter::evidence::Terminal::AppliedValidationFailed {
             proposal_id,

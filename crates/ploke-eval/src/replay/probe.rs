@@ -254,6 +254,9 @@ impl ProbeRun {
             Some(tui_adapter::evidence::Terminal::ProviderUnavailable { .. }) => {
                 "provider_unavailable".to_string()
             }
+            Some(tui_adapter::evidence::Terminal::SetupUnavailable { .. }) => {
+                "setup_unavailable".to_string()
+            }
             Some(tui_adapter::evidence::Terminal::AppliedValidationFailed { .. }) => {
                 "applied_validation_failed".to_string()
             }

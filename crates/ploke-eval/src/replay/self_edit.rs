@@ -602,6 +602,13 @@ fn terminal_label(terminal: &tui_adapter::HeadlessTerminal) -> String {
                 truncate_chars(reason, 160)
             )
         }
+        tui_adapter::HeadlessTerminal::SetupUnavailable { phase, reason } => {
+            format!(
+                "setup_unavailable phase={} reason={}",
+                phase,
+                truncate_chars(reason, 160)
+            )
+        }
         tui_adapter::HeadlessTerminal::AppliedValidationFailed { feedback, .. } => {
             format!(
                 "applied_validation_failed feedback={}",

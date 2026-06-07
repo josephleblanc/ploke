@@ -558,3 +558,122 @@ changes.
 Saved the detailed source/artifact walkthrough at:
 
 `docs/active/agents/2026-06-02_prototype1-state-loop-walkthrough/edit-surface-persistence-walkthrough-2026-06-06.md`
+
+## 2026-06-06 Latest Two Loop Worktrees: Handoff, Timing, Failure
+
+Evidence roots checked 2026-06-06T13:18:25-07:00:
+
+- latest campaign/worktree:
+  `p1-admissionfix-g35flash-p25flash-20260606-090815`
+  - campaign root:
+    `/home/brasides/.ploke-eval/campaigns/p1-admissionfix-g35flash-p25flash-20260606-090815`
+  - worktree:
+    `/home/brasides/.ploke-eval/worktrees/p1-admissionfix-g35flash-p25flash-20260606-090815`
+  - parent node: `node-0cdf3741b09283fe`
+  - outcome: failed before any child was spawned; the initial parent/child
+    handoff did **not** get past child-plan admission
+  - child plan:
+    `prototype1/messages/child-plan/node-0cdf3741b09283fe.json`
+    records `children = 0`, `rejected_surface_attempts = 10`
+  - broad slot failure evidence in
+    `/home/brasides/.ploke-eval/logs/ploke_eval_20260606_091957_2593254.log`:
+    all ten slots failed with
+    `failed to start headless ploke-tui harness: database setup failed during
+    'bm25_ready': RAG service is unavailable`
+
+- previous campaign/worktree:
+  `p1-admissionfix-g35flash-p25flash-20260606-053302`
+  - campaign root:
+    `/home/brasides/.ploke-eval/campaigns/p1-admissionfix-g35flash-p25flash-20260606-053302`
+  - worktree:
+    `/home/brasides/.ploke-eval/worktrees/p1-admissionfix-g35flash-p25flash-20260606-053302`
+  - initial parent node: `node-9fdcd8a6ac7efefc`
+  - successor parent node: `node-c1819b8d95dccfdc`
+  - outcome: made it past the initial parent/child handoff twice; first
+    child plan admitted 3 children and second child plan admitted 5 children
+  - final failure: successor handoff failed while loading History traversal
+    candidates:
+    `sealed block failed verification before storage: invalid selection decision
+    entry: selection entry 49163719-0445-43dc-a694-c730c4ff7d26 payload hash
+    does not match decision payload`
+
+Loop timing:
+
+- `053302` journal window: 2026-06-06T06:09:47-07:00 to
+  2026-06-06T08:30:52-07:00.
+- `090815` parent start: 2026-06-06T09:19:57-07:00; broad failures finished
+  at 2026-06-06T09:35:04-07:00.
+- The two loop runs were sequential, not parallel. Using the last `053302`
+  successor event and the `090815` parent start, there was about a 49 minute
+  gap between runs.
+- Within `090815`, the broad harness attempted the ten slots in two waves under
+  the effective broad parallel cap of 5:
+  - first wave ended at 2026-06-06T09:32:59-07:00 for base/r2/r3/r4/r5;
+  - second wave ended at 2026-06-06T09:35:04-07:00 for r6/r7/r8/r9/r10.
+
+Current live-run check:
+
+- No live `ploke-eval`, Prototype 1, or headless-TUI process was running at the
+  time of the check. The only matching processes were Hermes/session commands,
+  not a live loop worker.
+
+Durable fix direction for the latest failure:
+
+- Treat `state.rag == None` in headless/broad setup as a preflight failure, not
+  as ten per-slot no-diagnostic rejections.
+- Stop swallowing `RagService::new_full(...)` initialization errors in the test
+  harness path used by eval/headless runs; propagate the exact initialization
+  error into `PrepareError` and the slot/campaign artifact.
+- Persist a minimal per-slot fallback diagnostic before or around
+  `run_headless_with_model_capture_responses`, so early setup failures such as
+  `bm25_ready: RAG service is unavailable` are joined into child-plan rejection
+  evidence instead of surfacing only as missing `.headless-tui.json` files.
+- Add regression coverage that forces absent/failed RAG service construction and
+  asserts both fail-fast preflight behavior and durable fallback diagnostics.
+
+Implemented in the worktree on 2026-06-06T14:05:15-07:00:
+
+- Added `prototype1-doctor --headless-tui-setup-preflight` as an explicit
+  setup/preflight extra command. It initializes the headless TUI sparse/BM25
+  runtime for the active parent checkout without making model calls and reports
+  `headless_tui_setup_preflight` in the doctor JSON/table output.
+- Added doctor suggested-command coverage so nonterminal parent states include
+  both live protocol preflight and headless TUI setup preflight commands.
+- Added a typed `setup_unavailable` headless terminal diagnostic and joined that
+  diagnostic into broad-slot rejection text instead of degrading to missing
+  `.headless-tui.json` evidence when the adapter exits at setup.
+- Classified headless startup `PrepareError::DatabaseSetup` failures from the TUI
+  bridge as setup failures, preserving the setup `phase` and `detail`.
+- Added a test-only RAG-unavailable hook at `wait_for_bm25_ready` for regression
+  coverage and verified persisted `.headless-tui.json` contains
+  `terminal = setup_unavailable`, `phase = bm25_ready`, and
+  `reason = RAG service is unavailable`.
+
+Validation:
+
+- `cargo fmt --check` -> passed.
+- `cargo test -p ploke-db typed_type_graph_presence_probe_handles_empty_schema_relations -- --nocapture` -> passed.
+- `cargo test -p ploke-tui test_runtime_headless_sparse_constructor_provides_rag_service -- --nocapture` -> passed.
+- `cargo test -p ploke-eval prototype1_doctor -- --nocapture` -> passed
+  5 tests, including the new headless setup preflight parse/doctor regressions.
+- `cargo test -p ploke-eval headless_tui -- --nocapture` -> passed 7 tests, 2
+  ignored live tests, including
+  `rag_unavailable_headless_tui_setup_writes_typed_diagnostics`.
+- `cargo build -p ploke-eval` -> passed.
+
+Follow-up root-cause fix on 2026-06-06T14:30:46-07:00:
+
+- Fixed `Database::has_typed_type_graph_relations()`, whose non-empty relation
+  probe used malformed Cozo syntax (`?[present] := *type_contains, present = true
+  :limit 1`).
+- The malformed query made `RagService::new_full(...)` return
+  `RagError::Db(Cozo(...))`; the eval/headless `TestRuntime` converted that to
+  `state.rag = None`, producing the observed `bm25_ready: RAG service is
+  unavailable` setup blocker.
+- Added a direct DB regression for empty registered typed-graph relations and a
+  TUI harness regression asserting sparse/headless `TestRuntime` exposes
+  `state.rag`.
+- Rebuilt `ploke-eval` and reran the fresh campaign doctor setup extra for
+  `p1-admissionfix-g35flash-p25flash-20260606-140827`:
+  `headless_tui_setup_preflight.outcome = passed`, `doctor.phase = baseline_eval`,
+  `blocker_count = 0`.

@@ -204,6 +204,16 @@ Then run doctor from inside the worktree:
 ./target/debug/ploke-eval loop prototype1-doctor --repo-root . --format json
 ```
 
+Before any run expected to publish broad headless-TUI slots, run the setup extra
+that initializes sparse/BM25 headless runtime without making a model call:
+
+```bash
+./target/debug/ploke-eval loop prototype1-doctor --repo-root . --headless-tui-setup-preflight --format json
+```
+
+If `headless_tui_setup_preflight.outcome = failed`, stop and fix that setup
+blocker before spending a live step.
+
 Verify:
 
 - phase is the expected next phase, usually `baseline_eval`

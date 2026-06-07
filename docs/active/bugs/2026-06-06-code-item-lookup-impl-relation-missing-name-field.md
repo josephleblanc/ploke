@@ -38,6 +38,21 @@ lookup for the same file.
 Instance trace:
 `/home/brasides/.ploke-eval/instances/prototype1/p1-admissionfix-g35flash-p25flash-20260606-053302/treatments/branch-38f8c2eeb85c5e3f/instances/BurntSushi__ripgrep-2209/runs/run-1780754942323-structured-current-policy-7261887d/agent-turn-trace.json`
 
+## 2026-06-06 Recurrence: 090815 Baseline
+
+The same impl-relation schema failure recurred in the latest 090815 baseline/protocol run.
+
+| Field | Value |
+|-------|-------|
+| Campaign | `p1-admissionfix-g35flash-p25flash-20260606-090815` |
+| Run | `run-1780762798969-structured-current-policy-b8dc71f0` |
+| Run root | `/home/brasides/.ploke-eval/instances/prototype1/p1-admissionfix-g35flash-p25flash-20260606-090815/BurntSushi__ripgrep-2209/runs/run-1780762798969-structured-current-policy-b8dc71f0` |
+| Source report | `docs/active/agents/run-reviews/2026-06-06-p1-admissionfix-g35flash-p25flash-20260606-090815-baseline-protocol-tool-correlation.md` |
+| Blocked tool call | `[11] code_item_lookup` |
+| Args | `file_path=crates/printer/src/util.rs`, `item_name=Replacer`, `module_path=crate::util`, `node_kind=impl` |
+
+Trace audit over the run root reported 52 provider-emitted tool calls and 52 recorded calls. Call `[10]` resolved the `struct` `crate::util::Replacer`; call `[11]` then tried the impl lookup and failed with the same internal schema shape, `stored relation 'impl' does not have field 'name'`; call `[15]` later recovered by looking up the `replace_all` method directly. This recurrence confirms the issue is not isolated to the earlier 053302 treatment run.
+
 ## Source Trace
 
 `code_item_lookup` maps `node_kind: impl` to relation `"impl"` via

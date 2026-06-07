@@ -2514,7 +2514,11 @@ desc[id] := parent_of[id, parent], desc[parent], not file_root[id]
             return Ok(false);
         }
         // Plain-import fixtures register typed-graph relations from schema but leave them empty.
-        let populated = self.raw_query("?[present] := *type_contains, present = true :limit 1")?;
+        let populated = self.raw_query(
+            r#"?[parent_type_id, child_type_id] :=
+                *type_contains { parent_type_id, child_type_id @ 'NOW' }
+            :limit 1"#,
+        )?;
         Ok(!populated.rows.is_empty())
     }
 
@@ -3726,6 +3730,21 @@ mod tests {
         let db = setup_db();
         db.update_embeddings_batch(vec![])?;
         // Should not panic/error with empty input
+        Ok(())
+    }
+
+    #[test]
+    fn typed_type_graph_presence_probe_handles_empty_schema_relations() -> Result<(), PlokeError> {
+        let db = Database::init_with_schema()?;
+
+        let has_typed_graph = db
+            .has_typed_type_graph_relations()
+            .expect("typed graph presence probe should be syntactically valid");
+
+        assert!(
+            !has_typed_graph,
+            "fresh schema may register typed graph relations, but empty relations should not enable type-context expansion"
+        );
         Ok(())
     }
 

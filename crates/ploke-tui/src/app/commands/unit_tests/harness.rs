@@ -1470,6 +1470,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_runtime_headless_sparse_constructor_provides_rag_service() {
+        let fixture_db =
+            Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL).expect("load fixture db"));
+        let runtime = TestRuntime::new_with_embedding_processor_and_bm25_timeout(
+            &fixture_db,
+            EmbeddingProcessor::new_mock(),
+            250,
+        );
+        let state = runtime.state_arc();
+
+        assert!(
+            state.rag.is_some(),
+            "headless sparse TestRuntime must expose RagService; eval setup depends on bm25_ready"
+        );
+    }
+
+    #[tokio::test]
     async fn test_relay_intercepts_and_proxies_oneshot() {
         use crate::chat_history::MessageKind;
         use tokio::time::{Duration, timeout};

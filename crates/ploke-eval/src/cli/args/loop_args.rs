@@ -153,6 +153,10 @@ pub struct Prototype1DoctorCommand {
     /// Run a tiny live protocol JSON request using the admitted model/provider/reasoning policy.
     #[arg(long)]
     pub live_protocol_preflight: bool,
+
+    /// Extra setup check: initialize the headless TUI sparse/BM25 runtime for this parent checkout without making model calls.
+    #[arg(long)]
+    pub headless_tui_setup_preflight: bool,
 }
 
 #[derive(Debug, Clone, Parser)]
