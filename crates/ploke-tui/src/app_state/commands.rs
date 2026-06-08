@@ -1001,6 +1001,7 @@ pub enum StateCommand {
     },
     DenyEdits {
         proposal_id: Uuid,
+        reason: Option<String>,
     },
     /// Approve all pending edit proposals (newest wins when overlaps exist).
     ApprovePendingEdits,

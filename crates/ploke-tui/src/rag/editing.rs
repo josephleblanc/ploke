@@ -570,7 +570,12 @@ async fn rescan_for_changes(state: &Arc<AppState>, event_bus: &Arc<EventBus>, re
     }
 }
 
-pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, proposal_id: Uuid) {
+pub async fn deny_edits(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    proposal_id: Uuid,
+    reason: Option<String>,
+) {
     use crate::app_state::core::EditProposalStatus;
     let add_msg_imm = async move |msg: String| {
         chat::add_msg_immediate_background(
@@ -613,7 +618,7 @@ pub async fn deny_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>, propos
             drop(reg);
 
             // Bridge: mark tool call failed with denial
-            let err_msg = "Edit proposal denied by user".to_string();
+            let err_msg = reason.unwrap_or_else(|| "Edit proposal denied by user".to_string());
             let err = ToolError::new(tool_name, ToolErrorCode::Internal, err_msg.clone());
             let ui_payload = ToolUiPayload::from_error(call_id_val.clone(), &err)
                 .with_proposal_id(proposal_id)
@@ -767,7 +772,7 @@ pub async fn deny_pending_edits(state: &Arc<AppState>, event_bus: &Arc<EventBus>
     }
 
     for proposal_id in pending_ids {
-        deny_edits(state, event_bus, proposal_id).await;
+        deny_edits(state, event_bus, proposal_id, None).await;
     }
 }
 

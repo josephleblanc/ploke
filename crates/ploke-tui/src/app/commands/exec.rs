@@ -300,7 +300,10 @@ pub fn execute(app: &mut App, command: Command) {
             app.send_cmd(StateCommand::ApproveEdits { proposal_id: id });
         }
         Command::EditDeny(id) => {
-            app.send_cmd(StateCommand::DenyEdits { proposal_id: id });
+            app.send_cmd(StateCommand::DenyEdits {
+                proposal_id: id,
+                reason: None,
+            });
         }
         Command::CreateApprove(id) => {
             app.send_cmd(StateCommand::ApproveCreations { request_id: id });

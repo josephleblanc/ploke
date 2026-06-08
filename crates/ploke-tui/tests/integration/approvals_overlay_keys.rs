@@ -208,7 +208,7 @@ async fn approvals_overlay_approve_and_deny_send_commands() {
         .expect("deny command timed out")
         .expect("expected a command");
     match cmd {
-        ploke_tui::app_state::StateCommand::DenyEdits { proposal_id } => {
+        ploke_tui::app_state::StateCommand::DenyEdits { proposal_id, .. } => {
             assert_eq!(proposal_id, req_id);
         }
         other => panic!("unexpected command: {:?}", other),

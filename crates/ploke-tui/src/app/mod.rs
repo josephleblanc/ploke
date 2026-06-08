@@ -1540,7 +1540,10 @@ impl App {
                         if is_yes {
                             self.send_cmd(StateCommand::ApproveEdits { proposal_id });
                         } else {
-                            self.send_cmd(StateCommand::DenyEdits { proposal_id });
+                            self.send_cmd(StateCommand::DenyEdits {
+                                proposal_id,
+                                reason: None,
+                            });
                         }
                     }
                 }
@@ -1599,9 +1602,10 @@ impl App {
                     (true, ProposalKind::Create) => {
                         cmd_tx.try_send(StateCommand::ApproveCreations { request_id: id })
                     }
-                    (false, ProposalKind::Edit) => {
-                        cmd_tx.try_send(StateCommand::DenyEdits { proposal_id: id })
-                    }
+                    (false, ProposalKind::Edit) => cmd_tx.try_send(StateCommand::DenyEdits {
+                        proposal_id: id,
+                        reason: None,
+                    }),
                     (false, ProposalKind::Create) => {
                         cmd_tx.try_send(StateCommand::DenyCreations { request_id: id })
                     }

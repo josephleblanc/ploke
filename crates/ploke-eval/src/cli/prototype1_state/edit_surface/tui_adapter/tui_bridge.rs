@@ -19,8 +19,7 @@ use super::super::harness_request::{
     BroadEditPolicy, EvidenceRoot, EvidenceRootKind, EvidenceRootLocation, contract,
 };
 use super::{
-    Budget, Error, LIVE_TRACE_ENV, ModelSelection, POST_APPLY_INDEX_START_GRACE_MS,
-    POST_APPLY_INDEX_TIMEOUT_SECS, POST_APPLY_STATUS_TIMEOUT_SECS,
+    Budget, Error, LIVE_TRACE_ENV, ModelSelection, SessionSpec, Timeouts, TuiHarness,
     harness_io::{
         AppliedEdit, CargoValidationObservation, Event, Feedback, HeadlessAttempt,
         HeadlessAttemptResult, HeadlessRun, HeadlessTerminal, Outcome, PromptDiagnostic, Reject,
@@ -78,7 +77,7 @@ pub(crate) async fn run_headless_with_model_capture_responses(
     model: Option<ModelSelection>,
 ) -> Result<HeadlessRun, Error> {
     let (response_tx, response_rx) = std::sync::mpsc::channel();
-    let response_rx = Mutex::new(response_rx);
+    let response_rx = Arc::new(Mutex::new(response_rx));
     let _response_tap_guard = ploke_tui::llm::install_response_tap(response_tx);
     run_headless_with_model_inner(
         workspace_path,
@@ -88,7 +87,7 @@ pub(crate) async fn run_headless_with_model_capture_responses(
         evidence_roots,
         validation_commands,
         model,
-        Some(&response_rx),
+        Some(Arc::clone(&response_rx)),
     )
     .await
 }
@@ -101,7 +100,7 @@ async fn run_headless_with_model_inner(
     evidence_roots: &[EvidenceRoot],
     validation_commands: &[contract::Command],
     model: Option<ModelSelection>,
-    response_rx: Option<&Mutex<Receiver<RecordedResponse>>>,
+    response_rx: Option<Arc<Mutex<Receiver<RecordedResponse>>>>,
 ) -> Result<HeadlessRun, Error> {
     let mut run = HeadlessRun::new();
     run.model_route = model.as_ref().map(ModelSelection::model_route_record);
@@ -118,21 +117,21 @@ async fn run_headless_with_model_inner(
     ));
     observer.emit_workspace_size("workspace_start", workspace_path);
 
-    let outcome = tokio::time::timeout(Duration::from_secs(budget.timeout_secs()), async {
+    let timeouts = Timeouts::from_budget(budget);
+    let outcome = tokio::time::timeout(Duration::from_secs(timeouts.attempt_secs), async {
         loop {
             observer.emit(format!("attempt {turn} start"));
-            let (mut runtime, parent_id) = start_attempt_runtime(
+            let (runtime, parent_id) = start_attempt_runtime(
                 workspace_path,
                 &extra_read_roots,
                 next_prompt.clone(),
                 edit_policy,
                 model.as_ref(),
+                &timeouts,
             )
             .await?;
-            // TODO: This doesn't need to take &mut runtime, since it drops it
-            // right after anyways.
-            let end = run_attempt(
-                &mut runtime,
+            let (end, _runtime) = run_attempt(
+                runtime,
                 parent_id,
                 workspace_path,
                 edit_policy,
@@ -140,13 +139,10 @@ async fn run_headless_with_model_inner(
                 &mut run,
                 &observer,
                 validation_commands,
-                response_rx,
+                response_rx.as_ref().map(Arc::clone),
+                timeouts,
             )
             .await?;
-            // TODO: Should happen inside `run_attempt`
-            runtime.app.pump_pending_events().await;
-            drain_debug(&mut runtime.debug_rx, &mut run);
-            drop(runtime);
 
             match end {
                 AttemptEnd::Terminal(terminal) => {
@@ -231,6 +227,7 @@ pub(super) async fn start_attempt_runtime(
     prompt: String,
     edit_policy: BroadEditPolicy,
     model: Option<&ModelSelection>,
+    timeouts: &Timeouts,
 ) -> Result<(crate::runner::WorkspaceTuiRuntime, Uuid), Error> {
     let runtime = crate::runner::setup_workspace_tui_runtime_with_read_roots(
         workspace_path,
@@ -254,8 +251,8 @@ pub(super) async fn start_attempt_runtime(
     {
         let mut cfg = runtime.state.config.write().await;
         cfg.context_management.mode = ploke_tui::user_config::CtxMode::Off;
-        cfg.tooling.cargo_check_timeout_secs = HEADLESS_VALIDATION_CARGO_CHECK_TIMEOUT_SECS;
-        cfg.tooling.cargo_test_timeout_secs = HEADLESS_VALIDATION_CARGO_TEST_TIMEOUT_SECS;
+        cfg.tooling.cargo_check_timeout_secs = timeouts.validation_cargo_check_secs;
+        cfg.tooling.cargo_test_timeout_secs = timeouts.validation_cargo_test_secs;
         if let Some(model) = model {
             cfg.active_model = model.model_id.clone();
             cfg.active_router = model.router();
@@ -312,9 +309,6 @@ const MAX_POLICY_REPAIR_TURNS: u32 = 2;
 /// killed before it could pass. Give the slot's declared validation a budget
 /// that can absorb a cold compile while still fitting inside the slot
 /// wall-clock timeout.
-const HEADLESS_VALIDATION_CARGO_CHECK_TIMEOUT_SECS: u64 = 300;
-const HEADLESS_VALIDATION_CARGO_TEST_TIMEOUT_SECS: u64 = 600;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum AppliedItem {
     Edit(Uuid),
@@ -342,7 +336,7 @@ impl StagedItem {
         }
     }
 
-    fn applied(self) -> AppliedItem {
+    pub(super) fn applied(self) -> AppliedItem {
         match self {
             Self::Edit(id) => AppliedItem::Edit(id),
             Self::Create(id) => AppliedItem::Create(id),
@@ -392,17 +386,17 @@ pub(super) struct Candidate {
 }
 
 #[derive(Debug, Default)]
-struct BatchOutcome {
-    applied: Vec<AppliedItem>,
-    changed_paths: Vec<PathBuf>,
-    mutated: bool,
-    feedbacks: Vec<String>,
-    retry: Option<String>,
+pub(super) struct BatchOutcome {
+    pub(super) applied: Vec<AppliedItem>,
+    pub(super) changed_paths: Vec<PathBuf>,
+    pub(super) mutated: bool,
+    pub(super) feedbacks: Vec<String>,
+    pub(super) retry: Option<String>,
 }
 
 // TODO: I think this actually wants to be a method of `HeadlessRun`
 pub(super) async fn run_attempt(
-    runtime: &mut crate::runner::WorkspaceTuiRuntime,
+    runtime: crate::runner::WorkspaceTuiRuntime,
     active_parent_id: Uuid,
     workspace_path: &Path,
     edit_policy: BroadEditPolicy,
@@ -410,423 +404,29 @@ pub(super) async fn run_attempt(
     run: &mut HeadlessRun,
     observer: &LiveObserver,
     validation_commands: &[contract::Command],
-    response_rx: Option<&Mutex<Receiver<RecordedResponse>>>,
-) -> Result<AttemptEnd, Error> {
-    use ploke_tui::{AppEvent, app_state::events::SystemEvent};
-
-    let mut pending_retry = None::<String>;
-    let mut provider_failure = None::<String>;
-    let mut applied = Vec::<AppliedItem>::new();
-    let mut changed_paths = Vec::<PathBuf>::new();
-    let mut policy_feedbacks = Vec::<String>::new();
-    let _policy_repair_turns = 0_u32;
-    let mut batches = HashMap::<Uuid, ToolBatch>::new();
-    let mut tool_requests = HashMap::<String, (String, String)>::new();
-    let mut pending_events = VecDeque::<ploke_tui::AppEvent>::new();
-
-    loop {
-        runtime.app.pump_pending_events().await;
-        drain_debug_observed(&mut runtime.debug_rx, run, observer, turn);
-
-        let event = if let Some(event) = pending_events.pop_front() {
-            event
-        } else {
-            next_event(runtime).await?
-        };
-
-        match event {
-            AppEvent::Llm(ploke_tui::llm::LlmEvent::ChatCompletion(
-                ploke_tui::llm::ChatEvt::PromptConstructed {
-                    parent_id,
-                    formatted_prompt,
-                    context_plan,
-                },
-            )) if parent_id == active_parent_id => {
-                let diagnostic = PromptDiagnostic::capture(
-                    &runtime.state,
-                    parent_id,
-                    &formatted_prompt,
-                    &context_plan,
-                )
-                .await;
-                let context_unavailable = diagnostic.context_unavailable_reason();
-                observer.emit(format!(
-                    "attempt {turn} prompt parent={} messages={} estimated_tokens={} rag_parts={} bm25={}",
-                    diagnostic.parent_id,
-                    diagnostic.message_count,
-                    diagnostic.estimated_total_tokens,
-                    diagnostic.included_rag_parts,
-                    diagnostic
-                        .bm25
-                        .as_ref()
-                        .map(|bm25| bm25.status.as_str())
-                        .unwrap_or("none")
-                ));
-                run.prompt_diagnostics.push(diagnostic);
-                if let Some(reason) = context_unavailable {
-                    observer.emit(format!(
-                        "attempt {turn} context_unavailable {}",
-                        truncate_chars(&reason, 240)
-                    ));
-                    return Ok(AttemptEnd::Terminal(HeadlessTerminal::ContextUnavailable {
-                        reason,
-                    }));
-                }
-            }
-            AppEvent::System(SystemEvent::ToolCallRequested {
-                request_id,
-                parent_id,
-                tool_call,
-            }) if parent_id == active_parent_id => {
-                run.events.push(Event::ToolRequest {
-                    request_id: request_id.to_string(),
-                    parent_id: parent_id.to_string(),
-                    call_id: tool_call.call_id.to_string(),
-                    tool: tool_call.function.name.as_str().to_string(),
-                    arguments: tool_call.function.arguments.clone(),
-                });
-                tool_requests.insert(
-                    tool_call.call_id.to_string(),
-                    (
-                        tool_call.function.name.as_str().to_string(),
-                        tool_call.function.arguments.clone(),
-                    ),
-                );
-                observer.emit(format!(
-                    "attempt {turn} tool_request call_id={} tool={} args={}",
-                    tool_call.call_id,
-                    tool_call.function.name.as_str(),
-                    truncate_chars(&tool_call.function.arguments, 240)
-                ));
-                batches
-                    .entry(request_id)
-                    .or_default()
-                    .request(tool_call.call_id.clone());
-            }
-            AppEvent::System(SystemEvent::ToolCallCompleted {
-                request_id,
-                parent_id,
-                call_id,
-                content,
-                ui_payload,
-                ..
-            }) if parent_id == active_parent_id => {
-                run.events.push(Event::Tool {
-                    call_id: call_id.to_string(),
-                    result: Tool::Completed {
-                        content: content.clone(),
-                    },
-                });
-                let call_id_text = call_id.to_string();
-                if let Some((tool, arguments)) = tool_requests.get(&call_id_text)
-                    && tool == "cargo"
-                    && let Some(validation) =
-                        observe_cargo_validation(run, &call_id_text, arguments, &content)
-                {
-                    observer.emit(format!(
-                        "attempt {turn} cargo_validation call_id={} ok={} status={} command={}",
-                        call_id,
-                        validation.ok,
-                        validation.status_reason,
-                        validation.display_command
-                    ));
-                }
-                observer.emit(format!(
-                    "attempt {turn} tool_completed call_id={} content={}",
-                    call_id,
-                    truncate_chars(&content, 240)
-                ));
-                let staged = observe_staged_item(
-                    runtime,
-                    ui_payload.as_ref(),
-                    request_id,
-                    &applied,
-                    turn,
-                    run,
-                    observer,
-                )
-                .await;
-                let batch_ready =
-                    record_batch_terminal(&mut batches, request_id, call_id.clone(), staged);
-                if let Some(items) = batch_ready {
-                    let outcome = settle_staged_batch(
-                        runtime,
-                        &mut pending_events,
-                        workspace_path,
-                        edit_policy,
-                        turn,
-                        run,
-                        observer,
-                        items,
-                        &applied,
-                    )
-                    .await?;
-                    let newly_applied = !outcome.applied.is_empty();
-                    applied.extend(outcome.applied);
-                    push_changed_paths(&mut changed_paths, outcome.changed_paths);
-                    policy_feedbacks.extend(outcome.feedbacks);
-                    if let Some(feedback) = outcome.retry {
-                        pending_retry = Some(feedback);
-                    }
-                    // Validate as soon as this batch produced an allowed applied
-                    // edit. If the candidate already satisfies the declared
-                    // validation, finalize now: waiting for a subsequent
-                    // `completed` chat turn lets a model that keeps issuing tool
-                    // calls burn the whole slot wall-clock and never reach an
-                    // admissible terminal. If validation is not yet satisfied,
-                    // keep the attempt running so the model can repair across
-                    // later turns.
-                    //
-                    // Only short-circuit when the request declares validation:
-                    // without a declared contract there is nothing to satisfy,
-                    // so the model keeps authority over when the candidate is
-                    // complete (this preserves multi-edit / stale-repair flows).
-                    if newly_applied
-                        && !validation_commands.is_empty()
-                        && let Some(terminal) = validate_applied_batch(
-                            runtime,
-                            active_parent_id,
-                            request_id,
-                            turn,
-                            run,
-                            observer,
-                            validation_commands,
-                            &applied,
-                            &changed_paths,
-                        )
-                        .await
-                    {
-                        if matches!(terminal, HeadlessTerminal::Applied { .. }) {
-                            observer.emit(format!(
-                                "attempt {turn} finalize_applied {}",
-                                terminal.live_summary()
-                            ));
-                            return Ok(AttemptEnd::Terminal(terminal));
-                        }
-                        observer.emit(format!(
-                            "attempt {turn} applied_batch_validation_unsatisfied {}",
-                            terminal.live_summary()
-                        ));
-                    }
-                }
-            }
-            AppEvent::System(SystemEvent::ToolCallFailed {
-                request_id,
-                parent_id,
-                call_id,
-                error,
-                ..
-            }) if parent_id == active_parent_id => {
-                run.events.push(Event::Tool {
-                    call_id: call_id.to_string(),
-                    result: Tool::Failed {
-                        error: error.clone(),
-                    },
-                });
-                observer.emit(format!(
-                    "attempt {turn} tool_failed call_id={} error={}",
-                    call_id,
-                    truncate_chars(&error, 240)
-                ));
-                run.attempts.push(HeadlessAttempt {
-                    turn,
-                    proposal_id: None,
-                    result: HeadlessAttemptResult::ToolFailed {
-                        error: error.clone(),
-                    },
-                });
-                pending_retry = Some(error);
-                let batch_ready =
-                    record_batch_terminal(&mut batches, request_id, call_id.clone(), None);
-                if let Some(items) = batch_ready {
-                    let outcome = settle_staged_batch(
-                        runtime,
-                        &mut pending_events,
-                        workspace_path,
-                        edit_policy,
-                        turn,
-                        run,
-                        observer,
-                        items,
-                        &applied,
-                    )
-                    .await?;
-                    applied.extend(outcome.applied);
-                    push_changed_paths(&mut changed_paths, outcome.changed_paths);
-                    policy_feedbacks.extend(outcome.feedbacks);
-                    if let Some(feedback) = outcome.retry {
-                        pending_retry = Some(feedback);
-                    }
-                }
-            }
-            AppEvent::MessageUpdated(message) => {
-                let error_message = {
-                    let chat = runtime.state.chat.0.read().await;
-                    chat.messages.get(&message.0).and_then(|message| {
-                        if !matches!(
-                            message.status,
-                            ploke_tui::chat_history::MessageStatus::Error { .. }
-                        ) {
-                            return None;
-                        }
-                        let provider_reason = provider_failure_from_message(
-                            message.kind,
-                            &message.status,
-                            &message.content,
-                        );
-                        Some((
-                            message.id,
-                            message.kind,
-                            message.content.clone(),
-                            provider_reason,
-                        ))
-                    })
-                };
-                let Some((message_id, kind, content, message_provider_failure)) = error_message
-                else {
-                    continue;
-                };
-                if matches!(kind, ploke_tui::chat_history::MessageKind::Assistant) {
-                    run.events.push(Event::AssistantMessage {
-                        id: message_id.to_string(),
-                        status: "error".to_string(),
-                        content: content.clone(),
-                    });
-                    observer.emit(format!(
-                        "attempt {turn} assistant_error id={} content={}",
-                        message_id,
-                        truncate_chars(&content, 240)
-                    ));
-                } else {
-                    observer.emit(format!(
-                        "attempt {turn} message_error kind={} id={} content={}",
-                        kind,
-                        message_id,
-                        truncate_chars(&content, 240)
-                    ));
-                }
-                if provider_failure.is_none() {
-                    provider_failure = message_provider_failure;
-                }
-            }
-            AppEvent::System(SystemEvent::ChatTurnFinished {
-                session_id,
-                request_id,
-                parent_id,
-                assistant_message_id,
-                outcome,
-                error_id,
-                attempts,
-                summary,
-            }) if parent_id == active_parent_id => {
-                run.events.push(Event::Turn {
-                    session_id: session_id.to_string(),
-                    request_id: request_id.to_string(),
-                    parent_id: parent_id.to_string(),
-                    assistant_message_id: assistant_message_id.to_string(),
-                    outcome: outcome.clone(),
-                    error_id: error_id.map(|id| id.to_string()),
-                    attempts,
-                    summary: summary.clone(),
-                });
-                drain_response_records(run, assistant_message_id, response_rx);
-                observer.emit(format!(
-                    "attempt {turn} turn_finished outcome={} attempts={} summary={}",
-                    outcome,
-                    attempts,
-                    truncate_chars(&summary, 240)
-                ));
-                if provider_failure.is_none() {
-                    provider_failure = provider_failure_from_chat(runtime).await;
-                }
-                if provider_failure.is_none() {
-                    provider_failure = provider_unavailable_reason(&summary);
-                }
-                if let Some(reason) = provider_failure.take() {
-                    return Ok(AttemptEnd::Terminal(
-                        HeadlessTerminal::ProviderUnavailable { reason },
-                    ));
-                }
-                let repaired_failure = pending_retry.take();
-
-                if outcome != "completed" {
-                    if let Some(applied_edit) =
-                        applied_edit_from_terminal_items(&applied, &changed_paths)
-                    {
-                        return Ok(AttemptEnd::Terminal(turn_aborted_after_apply_terminal(
-                            applied_edit,
-                            outcome,
-                            summary,
-                        )));
-                    }
-                    let feedback = if let Some(feedback) = repaired_failure {
-                        feedback
-                    } else if summary.trim().is_empty() {
-                        format!(
-                            "The model turn ended with outcome `{outcome}` before completing the candidate."
-                        )
-                    } else {
-                        summary.clone()
-                    };
-                    return Ok(AttemptEnd::RetryFailure(feedback));
-                }
-
-                if applied.is_empty() {
-                    let feedback = if let Some(feedback) = repaired_failure {
-                        feedback
-                    } else if !policy_feedbacks.is_empty() {
-                        policy_feedbacks.join("\n")
-                    } else if summary.trim().is_empty() {
-                        "The model returned without staging an edit; make a concrete bounded edit."
-                            .to_string()
-                    } else {
-                        summary.clone()
-                    };
-                    run.attempts.push(HeadlessAttempt {
-                        turn,
-                        proposal_id: None,
-                        result: HeadlessAttemptResult::NoEdit {
-                            summary: feedback.clone(),
-                        },
-                    });
-                    return Ok(AttemptEnd::RetryNoEdit {
-                        feedback,
-                        outcome,
-                        summary,
-                    });
-                }
-
-                if let Some(feedback) = repaired_failure {
-                    observer.emit(format!(
-                        "attempt {turn} recovered_tool_failure_after_apply {}",
-                        truncate_chars(&feedback, 240)
-                    ));
-                }
-
-                let applied_edit = applied_edit_from_terminal_items(&applied, &changed_paths)
-                    .expect("applied is not empty");
-                if !validation_commands.is_empty() {
-                    run_contract_validations(
-                        runtime,
-                        active_parent_id,
-                        request_id,
-                        turn,
-                        run,
-                        observer,
-                        validation_commands,
-                    )
-                    .await;
-                }
-                return Ok(AttemptEnd::Terminal(classify_applied_terminal(
-                    run,
-                    validation_commands,
-                    request_id,
-                    applied_edit,
-                )));
-            }
-            _ => {}
-        }
-    }
+    response_rx: Option<Arc<Mutex<Receiver<RecordedResponse>>>>,
+    timeouts: Timeouts,
+) -> Result<(AttemptEnd, crate::runner::WorkspaceTuiRuntime), Error> {
+    let spec = SessionSpec {
+        workspace_path: workspace_path.to_path_buf(),
+        timeouts,
+    };
+    let owned_run = std::mem::replace(run, HeadlessRun::new());
+    let mut harness = TuiHarness::attach(
+        runtime,
+        owned_run,
+        spec,
+        active_parent_id,
+        turn,
+        validation_commands.to_vec(),
+        response_rx,
+        *observer,
+    );
+    let end = harness.drive_to_attempt_end(edit_policy).await;
+    harness.finalize().await;
+    let (restored_run, runtime) = harness.into_parts();
+    *run = restored_run;
+    end.map(|end| (end, runtime))
 }
 
 pub(super) fn terminal_ids(applied: &[AppliedItem]) -> Option<(Uuid, Vec<Uuid>)> {
@@ -837,7 +437,7 @@ pub(super) fn terminal_ids(applied: &[AppliedItem]) -> Option<(Uuid, Vec<Uuid>)>
         .map(|primary| (primary, proposal_ids))
 }
 
-fn applied_edit_from_terminal_items(
+pub(super) fn applied_edit_from_terminal_items(
     applied: &[AppliedItem],
     changed_paths: &[PathBuf],
 ) -> Option<AppliedEdit> {
@@ -866,7 +466,7 @@ fn applied_edit_from_terminal_items(
 /// across later turns, which preserves multi-turn repair flows while still
 /// letting a passing candidate stop immediately instead of burning the slot
 /// wall-clock on further tool calls.
-async fn validate_applied_batch(
+pub(super) async fn validate_applied_batch(
     runtime: &crate::runner::WorkspaceTuiRuntime,
     active_parent_id: Uuid,
     request_id: Uuid,
@@ -1006,7 +606,7 @@ pub(super) fn validation_command_display(command: &contract::Command) -> String 
         .join(" ")
 }
 
-async fn run_contract_validations(
+pub(super) async fn run_contract_validations(
     runtime: &crate::runner::WorkspaceTuiRuntime,
     parent_id: Uuid,
     request_id: Uuid,
@@ -1285,7 +885,7 @@ pub(super) fn record_batch_terminal(
     }
 }
 
-async fn observe_staged_item(
+pub(super) async fn observe_staged_item(
     runtime: &crate::runner::WorkspaceTuiRuntime,
     ui_payload: Option<&ploke_tui::tools::ToolUiPayload>,
     request_id: Uuid,
@@ -1431,14 +1031,22 @@ async fn settle_staged_batch(
         return Ok(outcome);
     }
 
+    let timeouts = Timeouts::default();
     approve_selected(runtime, turn, observer, &selected).await?;
-    let applied_outcome = match wait_for_selected(runtime, turn, run, observer, &selected).await {
-        Ok(outcome) => outcome,
-        Err(error) => {
-            record_post_approval_indeterminate(run, turn, observer, &selected, &error.to_string());
-            return Err(error);
-        }
-    };
+    let applied_outcome =
+        match wait_for_selected(runtime, turn, run, observer, &selected, &timeouts).await {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                record_post_approval_indeterminate(
+                    run,
+                    turn,
+                    observer,
+                    &selected,
+                    &error.to_string(),
+                );
+                return Err(error);
+            }
+        };
     outcome.applied.extend(applied_outcome.applied);
     outcome.changed_paths.extend(applied_outcome.changed_paths);
     outcome.mutated |= applied_outcome.mutated;
@@ -1446,7 +1054,17 @@ async fn settle_staged_batch(
         outcome.retry = applied_outcome.retry;
     }
     if !outcome.applied.is_empty() || outcome.mutated {
-        if let Err(error) = wait_for_refresh(runtime, pending_events, turn, observer).await {
+        let refresh_deadline = Instant::now() + timeouts.post_apply_index_duration();
+        if let Err(error) = wait_for_refresh(
+            runtime,
+            pending_events,
+            turn,
+            observer,
+            refresh_deadline,
+            &timeouts,
+        )
+        .await
+        {
             record_post_approval_indeterminate(run, turn, observer, &selected, &error.to_string());
             return Err(error);
         }
@@ -1493,7 +1111,7 @@ fn has_recorded_apply_outcome(run: &HeadlessRun, item: StagedItem) -> bool {
     })
 }
 
-async fn candidate_for_item(
+pub(super) async fn candidate_for_item(
     runtime: &crate::runner::WorkspaceTuiRuntime,
     item: StagedItem,
 ) -> Option<Candidate> {
@@ -1568,7 +1186,7 @@ fn path_key(workspace_path: &Path, path: &Path) -> PathBuf {
     }
 }
 
-async fn reject_item(
+pub(super) async fn reject_item(
     runtime: &crate::runner::WorkspaceTuiRuntime,
     item: StagedItem,
     turn: u32,
@@ -1576,7 +1194,7 @@ async fn reject_item(
     observer: &LiveObserver,
     reason: String,
 ) -> Result<(), Error> {
-    deny_item(runtime, item).await?;
+    deny_item(runtime, item, Some(reason.clone())).await?;
     run.attempts.push(HeadlessAttempt {
         turn,
         proposal_id: Some(item.id()),
@@ -1595,13 +1213,21 @@ async fn reject_item(
 async fn deny_item(
     runtime: &crate::runner::WorkspaceTuiRuntime,
     item: StagedItem,
+    reason: Option<String>,
 ) -> Result<(), Error> {
     use ploke_tui::app_state::StateCommand;
 
     let cmd_tx = runtime.app.state_cmd_tx();
     match item {
         StagedItem::Edit(proposal_id) => {
-            send_state(&cmd_tx, StateCommand::DenyEdits { proposal_id }).await
+            send_state(
+                &cmd_tx,
+                StateCommand::DenyEdits {
+                    proposal_id,
+                    reason,
+                },
+            )
+            .await
         }
         StagedItem::Create(request_id) => {
             send_state(&cmd_tx, StateCommand::DenyCreations { request_id }).await
@@ -1609,7 +1235,7 @@ async fn deny_item(
     }
 }
 
-async fn approve_selected(
+pub(super) async fn approve_selected(
     runtime: &crate::runner::WorkspaceTuiRuntime,
     turn: u32,
     observer: &LiveObserver,
@@ -1633,16 +1259,18 @@ async fn approve_selected(
     Ok(())
 }
 
-async fn wait_for_selected(
+pub(super) async fn wait_for_selected(
     runtime: &mut crate::runner::WorkspaceTuiRuntime,
     turn: u32,
     run: &mut HeadlessRun,
     observer: &LiveObserver,
     selected: &[Candidate],
+    timeouts: &Timeouts,
 ) -> Result<BatchOutcome, Error> {
     use ploke_tui::app_state::core::EditProposalStatus;
 
-    let deadline = Instant::now() + Duration::from_secs(POST_APPLY_STATUS_TIMEOUT_SECS);
+    let status_timeout = timeouts.post_apply_status_duration();
+    let deadline = Instant::now() + status_timeout;
     let mut pending = selected
         .iter()
         .map(|candidate| candidate.item)
@@ -1652,7 +1280,8 @@ async fn wait_for_selected(
     while !pending.is_empty() {
         if Instant::now() >= deadline {
             return Err(Error::HeadlessEvent(format!(
-                "timed out waiting for proposal batch apply after {POST_APPLY_STATUS_TIMEOUT_SECS}s"
+                "timed out waiting for proposal batch apply after {}s",
+                status_timeout.as_secs()
             )));
         }
 
@@ -1776,6 +1405,8 @@ pub(super) async fn wait_for_refresh(
     pending_events: &mut VecDeque<ploke_tui::AppEvent>,
     turn: u32,
     observer: &LiveObserver,
+    deadline: Instant,
+    timeouts: &Timeouts,
 ) -> Result<(), Error> {
     use ploke_tui::app_state::StateCommand;
 
@@ -1796,10 +1427,28 @@ pub(super) async fn wait_for_refresh(
             .map(|paths| join_paths(paths))
             .unwrap_or_else(|| "none".to_string())
     ));
-    if wait_for_sparse_search_refresh(runtime, changed.is_some(), turn, observer).await? {
+    if wait_for_sparse_search_refresh(
+        runtime,
+        changed.is_some(),
+        turn,
+        observer,
+        deadline,
+        timeouts,
+    )
+    .await?
+    {
         return Ok(());
     }
-    wait_for_index_output(runtime, pending_events, changed.is_some(), turn, observer).await
+    wait_for_index_output(
+        runtime,
+        pending_events,
+        changed.is_some(),
+        turn,
+        observer,
+        deadline,
+        timeouts,
+    )
+    .await
 }
 
 async fn wait_for_sparse_search_refresh(
@@ -1807,6 +1456,8 @@ async fn wait_for_sparse_search_refresh(
     changed: bool,
     turn: u32,
     observer: &LiveObserver,
+    deadline: Instant,
+    timeouts: &Timeouts,
 ) -> Result<bool, Error> {
     use ploke_db::bm25_index::bm25_service::Bm25Status;
 
@@ -1833,13 +1484,13 @@ async fn wait_for_sparse_search_refresh(
         observer.emit(format!("attempt {turn} sparse_refresh bm25_status"));
     }
 
-    let deadline = Instant::now() + Duration::from_secs(POST_APPLY_INDEX_TIMEOUT_SECS);
     loop {
         runtime.app.pump_pending_events().await;
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             return Err(Error::HeadlessEvent(format!(
-                "timed out waiting for BM25 readiness after applying proposal batch after {POST_APPLY_INDEX_TIMEOUT_SECS}s"
+                "timed out waiting for BM25 readiness after applying proposal batch after {}s",
+                timeouts.post_apply_index_secs
             )));
         }
 
@@ -1896,11 +1547,13 @@ async fn wait_for_index_output(
     require_index: bool,
     turn: u32,
     observer: &LiveObserver,
+    deadline: Instant,
+    timeouts: &Timeouts,
 ) -> Result<(), Error> {
     use ploke_tui::{AppEvent, app_state::events::SystemEvent};
 
-    let full_deadline = Instant::now() + Duration::from_secs(POST_APPLY_INDEX_TIMEOUT_SECS);
-    let start_grace = Instant::now() + Duration::from_millis(POST_APPLY_INDEX_START_GRACE_MS);
+    let full_deadline = deadline;
+    let start_grace = Instant::now() + timeouts.post_apply_index_start_grace();
     let mut saw_index = require_index;
 
     loop {
@@ -1908,7 +1561,8 @@ async fn wait_for_index_output(
         let now = Instant::now();
         if now >= full_deadline {
             return Err(Error::HeadlessEvent(format!(
-                "timed out waiting for indexing completion after {POST_APPLY_INDEX_TIMEOUT_SECS}s"
+                "timed out waiting for indexing completion after {}s",
+                timeouts.post_apply_index_secs
             )));
         }
         if !saw_index && now >= start_grace {
@@ -1999,7 +1653,7 @@ pub(super) fn provider_failure_from_message(
     provider_unavailable_reason(content).or_else(|| provider_unavailable_reason(description))
 }
 
-async fn provider_failure_from_chat(
+pub(super) async fn provider_failure_from_chat(
     runtime: &crate::runner::WorkspaceTuiRuntime,
 ) -> Option<String> {
     let chat = runtime.state.chat.0.read().await;
@@ -2132,7 +1786,7 @@ impl LiveObserver {
         }
     }
 
-    fn emit(&self, message: impl AsRef<str>) {
+    pub(super) fn emit(&self, message: impl AsRef<str>) {
         if self.enabled {
             if self.resources {
                 match current_rss_kb() {
@@ -2275,6 +1929,67 @@ async fn send_state(
         .map_err(|source| Error::HeadlessEvent(format!("state command send failed: {source}")))
 }
 
+pub(super) async fn next_event_with_deadline(
+    runtime: &mut crate::runner::WorkspaceTuiRuntime,
+    deadline: Instant,
+    run: &mut HeadlessRun,
+    observer: &LiveObserver,
+    turn: u32,
+) -> Result<ploke_tui::AppEvent, Error> {
+    use tokio::sync::broadcast::error::RecvError;
+
+    loop {
+        if Instant::now() >= deadline {
+            return Err(Error::HeadlessEvent(
+                "event wait deadline exceeded".to_string(),
+            ));
+        }
+        let sleep = tokio::time::sleep_until(deadline.into());
+        tokio::pin!(sleep);
+        tokio::select! {
+            realtime = runtime.realtime_rx.recv() => {
+                match realtime {
+                    Ok(event) => return Ok(event),
+                    Err(RecvError::Lagged(dropped)) => {
+                        record_event_lag(run, observer, turn, "realtime", dropped);
+                        continue;
+                    }
+                    Err(source) => return Err(Error::HeadlessEvent(source.to_string())),
+                }
+            }
+            background = runtime.background_rx.recv() => {
+                match background {
+                    Ok(event) => return Ok(event),
+                    Err(RecvError::Lagged(dropped)) => {
+                        record_event_lag(run, observer, turn, "background", dropped);
+                        continue;
+                    }
+                    Err(source) => return Err(Error::HeadlessEvent(source.to_string())),
+                }
+            }
+            _ = &mut sleep => {
+                return Err(Error::HeadlessEvent(
+                    "event wait deadline exceeded".to_string(),
+                ));
+            }
+        }
+    }
+}
+
+/// Record a broadcast lag so a lag-induced hang-until-deadline is diagnosable
+/// after the fact, on both the live trace and the persisted debug relay.
+fn record_event_lag(
+    run: &mut HeadlessRun,
+    observer: &LiveObserver,
+    turn: u32,
+    channel: &str,
+    dropped: u64,
+) {
+    let message = format!("attempt {turn} event_lag channel={channel} dropped={dropped}");
+    observer.emit(&message);
+    run.debug_relay.push(&message);
+}
+
 pub(super) async fn next_event(
     runtime: &mut crate::runner::WorkspaceTuiRuntime,
 ) -> Result<ploke_tui::AppEvent, Error> {
@@ -2303,7 +2018,7 @@ fn drain_debug(
     }
 }
 
-fn drain_debug_observed(
+pub(super) fn drain_debug_observed(
     debug_rx: &mut tokio::sync::mpsc::Receiver<
         ploke_tui::app::commands::harness::DebugStateCommand,
     >,
@@ -2384,7 +2099,7 @@ pub(super) fn classify_paths(
     }
 }
 
-fn repair_prompt_feedback(feedback: &str) -> String {
+pub(super) fn repair_prompt_feedback(feedback: &str) -> String {
     format!("The headless harness rejected a staged edit before applying it: {feedback}.")
 }
 

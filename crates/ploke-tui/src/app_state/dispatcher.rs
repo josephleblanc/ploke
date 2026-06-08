@@ -388,8 +388,11 @@ pub async fn state_manager(
             StateCommand::ApproveEdits { proposal_id } => {
                 rag::editing::approve_edits(&state, &event_bus, proposal_id).await;
             }
-            StateCommand::DenyEdits { proposal_id } => {
-                rag::editing::deny_edits(&state, &event_bus, proposal_id).await;
+            StateCommand::DenyEdits {
+                proposal_id,
+                reason,
+            } => {
+                rag::editing::deny_edits(&state, &event_bus, proposal_id, reason).await;
             }
             StateCommand::ApprovePendingEdits => {
                 rag::editing::approve_pending_edits(&state, &event_bus).await;

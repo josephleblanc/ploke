@@ -680,6 +680,8 @@ async fn sparse_post_apply_refresh_returns_on_bm25_without_dense_index_completio
     .expect("write changed source before refresh");
 
     let mut pending_events = VecDeque::new();
+    let refresh_timeouts = Timeouts::default();
+    let refresh_deadline = std::time::Instant::now() + refresh_timeouts.post_apply_index_duration();
     tokio::time::timeout(
         Duration::from_secs(10),
         wait_for_refresh(
@@ -687,6 +689,8 @@ async fn sparse_post_apply_refresh_returns_on_bm25_without_dense_index_completio
             &mut pending_events,
             1,
             &LiveObserver::disabled(),
+            refresh_deadline,
+            &refresh_timeouts,
         ),
     )
     .await
@@ -1407,6 +1411,7 @@ async fn recorded_replay_rejects_protected_ns_patch_before_staged_success_reache
         fixture.prompt.clone(),
         BroadEditPolicy::WorkspaceExceptPlokeEval,
         None,
+        &Timeouts::default(),
     )
     .await
     .expect("start recorded replay runtime");
@@ -1529,6 +1534,7 @@ async fn historical_trace_replay_marks_repeated_protected_ns_patch_before_stagin
         fixture.prompt.clone(),
         BroadEditPolicy::WorkspaceExceptPlokeEval,
         None,
+        &Timeouts::default(),
     )
     .await
     .expect("start recorded replay runtime");
@@ -1693,13 +1699,14 @@ async fn recorded_replay_rejects_stale_same_file_repair_after_first_apply() {
         fixture.prompt.clone(),
         BroadEditPolicy::WorkspaceExceptPlokeEval,
         None,
+        &Timeouts::default(),
     )
     .await
     .expect("start same-file recorded replay runtime");
 
     let mut run = HeadlessRun::new();
-    let outcome = run_attempt(
-        &mut runtime,
+    let (outcome, runtime) = run_attempt(
+        runtime,
         parent_id,
         &fixture.workspace,
         BroadEditPolicy::WorkspaceExceptPlokeEval,
@@ -1708,6 +1715,7 @@ async fn recorded_replay_rejects_stale_same_file_repair_after_first_apply() {
         &LiveObserver::disabled(),
         &[],
         None,
+        Timeouts::default(),
     )
     .await
     .expect("same-file recorded replay should finish");
@@ -1866,6 +1874,7 @@ async fn recorded_replay_truncating_patch_removes_stale_snippet_rows() {
         fixture.prompt.clone(),
         BroadEditPolicy::WorkspaceExceptPlokeEval,
         None,
+        &Timeouts::default(),
     )
     .await
     .expect("start stale snippet replay runtime");
@@ -1881,8 +1890,8 @@ async fn recorded_replay_truncating_patch_removes_stale_snippet_rows() {
     // parent patch generation: consume model output, stage the tool edit,
     // apply it, and wait for the post-apply refresh barrier.
     let mut run = HeadlessRun::new();
-    let outcome = run_attempt(
-        &mut runtime,
+    let (outcome, runtime) = run_attempt(
+        runtime,
         parent_id,
         &fixture.workspace,
         BroadEditPolicy::WorkspaceExceptPlokeEval,
@@ -1891,6 +1900,7 @@ async fn recorded_replay_truncating_patch_removes_stale_snippet_rows() {
         &LiveObserver::disabled(),
         &[],
         None,
+        Timeouts::default(),
     )
     .await
     .expect("truncating recorded replay should finish");
@@ -2000,6 +2010,7 @@ async fn recorded_replay_actual_ploke_tree_target_refreshes_assemble_run_forest_
         fixture.prompt.clone(),
         BroadEditPolicy::WorkspaceExceptPlokeEval,
         None,
+        &Timeouts::default(),
     )
     .await
     .expect("start ploke-tree target replay runtime");
@@ -2017,8 +2028,8 @@ async fn recorded_replay_actual_ploke_tree_target_refreshes_assemble_run_forest_
     );
 
     let mut run = HeadlessRun::new();
-    let outcome = run_attempt(
-        &mut runtime,
+    let (outcome, runtime) = run_attempt(
+        runtime,
         parent_id,
         &fixture.workspace,
         BroadEditPolicy::WorkspaceExceptPlokeEval,
@@ -2027,6 +2038,7 @@ async fn recorded_replay_actual_ploke_tree_target_refreshes_assemble_run_forest_
         &LiveObserver::disabled(),
         &[],
         None,
+        Timeouts::default(),
     )
     .await
     .expect("ploke-tree target recorded replay should finish");
@@ -2098,13 +2110,14 @@ async fn gated_replay_sends_applied_ns_patch_instead_of_staged_success() {
         fixture.prompt.clone(),
         BroadEditPolicy::WorkspaceExceptPlokeEval,
         None,
+        &Timeouts::default(),
     )
     .await
     .expect("start gated recorded replay runtime");
 
     let mut run = HeadlessRun::new();
-    let outcome = run_attempt(
-        &mut runtime,
+    let (outcome, runtime) = run_attempt(
+        runtime,
         parent_id,
         &fixture.workspace,
         BroadEditPolicy::WorkspaceExceptPlokeEval,
@@ -2113,6 +2126,7 @@ async fn gated_replay_sends_applied_ns_patch_instead_of_staged_success() {
         &LiveObserver::disabled(),
         &[],
         None,
+        Timeouts::default(),
     )
     .await
     .expect("gated recorded replay should finish");
@@ -2166,14 +2180,15 @@ async fn recorded_replay_runs_declared_validation_after_applied_edit() {
         fixture.prompt.clone(),
         BroadEditPolicy::WorkspaceExceptPlokeEval,
         None,
+        &Timeouts::default(),
     )
     .await
     .expect("start declared validation replay runtime");
 
     let mut run = HeadlessRun::new();
     let validations = vec![declared_cargo_command("check canary crate", &["check"])];
-    let outcome = run_attempt(
-        &mut runtime,
+    let (outcome, runtime) = run_attempt(
+        runtime,
         parent_id,
         &fixture.workspace,
         BroadEditPolicy::WorkspaceExceptPlokeEval,
@@ -2182,6 +2197,7 @@ async fn recorded_replay_runs_declared_validation_after_applied_edit() {
         &LiveObserver::disabled(),
         &validations,
         None,
+        Timeouts::default(),
     )
     .await
     .expect("declared validation replay should finish");
@@ -2229,14 +2245,15 @@ async fn applied_batch_finalizes_before_completed_turn() {
         fixture.prompt.clone(),
         BroadEditPolicy::WorkspaceExceptPlokeEval,
         None,
+        &Timeouts::default(),
     )
     .await
     .expect("start finalize replay runtime");
 
     let mut run = HeadlessRun::new();
     let validations = vec![declared_cargo_command("check canary crate", &["check"])];
-    let outcome = run_attempt(
-        &mut runtime,
+    let (outcome, runtime) = run_attempt(
+        runtime,
         parent_id,
         &fixture.workspace,
         BroadEditPolicy::WorkspaceExceptPlokeEval,
@@ -2245,6 +2262,7 @@ async fn applied_batch_finalizes_before_completed_turn() {
         &LiveObserver::disabled(),
         &validations,
         None,
+        Timeouts::default(),
     )
     .await
     .expect("finalize replay should finish");

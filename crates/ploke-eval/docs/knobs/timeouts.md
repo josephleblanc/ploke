@@ -64,14 +64,18 @@ Relevant files:
 | Published per-tool timeout | `180s` | In the published broad-harness request contract | Recorded in the contract, but this pass found no separate `ploke-eval` enforcement of `tool_seconds` |
 | Minimum implicit attempt timeout | `60s` | Hard-coded floor when no CLI override is given | `effective_broad_tui_timeout_secs` uses `contract.attempt.timeout.turn_seconds.max(60)` |
 | CLI attempt override | none | `prototype1-harness attempt --timeout-secs` and `prototype1-harness sweep --timeout-secs` | Overrides the published default directly; `0` is rejected by `tui_adapter::Budget::new` |
-| Headless TUI outer timeout | effective attempt timeout | Derived from published contract or CLI override | `tui_adapter::run_headless_with_model` wraps the whole attempt loop in `tokio::time::timeout` |
+| Headless TUI outer timeout | effective attempt timeout | Derived from published contract or CLI override | `tui_adapter::Timeouts::attempt_secs`; `run_headless_with_model` wraps the whole attempt loop in `tokio::time::timeout` |
+| Headless TUI validation cargo check | `300s` | Hard-coded default in `Timeouts` | `Timeouts::validation_cargo_check_secs`; copied into `RuntimeConfig.tooling.cargo_check_timeout_secs` at attempt start |
+| Headless TUI validation cargo test | `600s` | Hard-coded default in `Timeouts` | `Timeouts::validation_cargo_test_secs`; copied into `RuntimeConfig.tooling.cargo_test_timeout_secs` at attempt start |
 | Headless TUI LLM/tool timeout | `180s` | Hard-coded for sparse strict headless runtime | `runner.rs::configure_sparse_strict_rag` sets `llm_timeout_secs`, `tool_call_timeout_secs`, and timeout backoff base to `180s` |
 | Headless TUI timeout retries | attempts `10`, base `180s` | Hard-coded | `configure_sparse_strict_rag` sets `ChatTimeoutStrategy::Backoff { attempts: Some(10) }` |
-| Post-apply proposal status wait | `120s` | Hard-coded | `tui_adapter.rs::wait_for_selected` waits for selected proposals/creations to become terminal |
+| Post-apply proposal status wait | `120s` | Hard-coded default in `Timeouts` | `Timeouts::post_apply_status_secs`; `decide()` threads `Timeouts::post_apply_status_duration()` into `wait_for_selected`, which polls for selected proposals/creations to become terminal |
 | Post-apply proposal poll | `100ms` | Hard-coded | Sleep between proposal status checks |
-| Post-apply index completion wait | `180s` | Hard-coded | `tui_adapter.rs::wait_for_index_output` waits for indexing output after applying a proposal |
-| Post-apply index start grace | `2_000ms` | Hard-coded | If no index output appears and indexing is not required, the adapter continues after this grace period |
+| Post-apply index completion wait | `180s` | Hard-coded default in `Timeouts` | `Timeouts::post_apply_index_secs`; `settle()` builds the refresh deadline via `phase_deadline(deadline, Timeouts::post_apply_index_duration())` and threads it into `wait_for_refresh`/`wait_for_index_output` |
+| Post-apply index start grace | `2_000ms` | Hard-coded default in `Timeouts` | `Timeouts::post_apply_index_start_grace_ms`; threaded via `Timeouts::post_apply_index_start_grace()` into `wait_for_index_output`. If no index output appears and indexing is not required, the adapter continues after this grace period |
 | Post-apply index event poll cap | `250ms` | Hard-coded | Per-event timeout while waiting for indexing output |
+| Harness event stream wait | attempt wall clock | `Timeouts::attempt_deadline` | `Harness::next(deadline)` uses `next_event_with_deadline`; broadcast `Lagged` is treated as recoverable but recorded (live trace + `run.debug_relay` `event_lag` marker) |
+| Inner phase deadline composition | min(outer, inner) | `Timeouts::phase_deadline` | `settle()` caps the post-apply index budget by the remaining attempt deadline; `wait_for_refresh` honors that composed deadline |
 
 Relevant files:
 
@@ -81,8 +85,10 @@ Relevant files:
 - `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`
   Resolves effective broad TUI attempt timeouts and builds
   `tui_adapter::Budget`.
-- `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter.rs`
+- `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter/mod.rs`
   Enforces the outer timeout and post-apply waits.
+- `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter/harness/timeouts.rs`
+  Defines the consolidated `Timeouts` struct and additive deadline helpers.
 - `crates/ploke-eval/src/runner.rs`
   Configures the sparse strict headless TUI runtime.
 

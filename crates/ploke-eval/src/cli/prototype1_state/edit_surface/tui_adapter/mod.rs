@@ -28,6 +28,14 @@ pub(super) const POST_APPLY_STATUS_TIMEOUT_SECS: u64 = 120;
 pub(super) const POST_APPLY_INDEX_TIMEOUT_SECS: u64 = 180;
 pub(super) const POST_APPLY_INDEX_START_GRACE_MS: u64 = 2_000;
 
+mod harness;
+mod harness_io;
+mod tui_bridge;
+
+pub(super) use harness::timeouts::{
+    HEADLESS_VALIDATION_CARGO_CHECK_TIMEOUT_SECS, HEADLESS_VALIDATION_CARGO_TEST_TIMEOUT_SECS,
+    Timeouts,
+};
 pub(crate) mod state {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub(crate) enum Ready {}
@@ -108,9 +116,9 @@ impl ModelSelection {
     }
 }
 
-mod harness_io;
-mod tui_bridge;
-
+pub(crate) use harness::{
+    Batch, Decision, DenyItem, Harness, Progress, SessionSpec, Staged, TuiHarness,
+};
 pub(crate) use harness_io::*;
 pub(crate) use tui_bridge::{run_headless_with_model, run_headless_with_model_capture_responses};
 
@@ -128,12 +136,12 @@ use super::harness_request::{EvidenceRoot, EvidenceRootKind, EvidenceRootLocatio
 pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) use tui_bridge::{
     AppliedItem, AttemptEnd, Candidate, LiveObserver, StagedItem, ToolBatch, attempt_prompt,
     classify_applied_terminal, classify_paths, command_display_matches, contract_cargo_args,
-    drain_response_records, evidence_read_roots, next_event, policy_repair_prompt,
-    provider_failure_from_message, provider_unavailable_reason, record_batch_terminal,
-    record_post_approval_indeterminate, retry_feedback, run_attempt, run_headless, select_disjoint,
-    sparse_search_refresh_enabled, start_attempt_runtime, submit_prompt, terminal_ids,
-    timeout_terminal_for_run, turn_aborted_after_apply_terminal, validation_command_display,
-    wait_for_refresh,
+    drain_response_records, evidence_read_roots, next_event, next_event_with_deadline,
+    policy_repair_prompt, provider_failure_from_message, provider_unavailable_reason,
+    record_batch_terminal, record_post_approval_indeterminate, retry_feedback, run_attempt,
+    run_headless, select_disjoint, sparse_search_refresh_enabled, start_attempt_runtime,
+    submit_prompt, terminal_ids, timeout_terminal_for_run, turn_aborted_after_apply_terminal,
+    validation_command_display, wait_for_refresh,
 };
 
 #[cfg(test)]
