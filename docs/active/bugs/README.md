@@ -131,3 +131,5 @@ file and current code before treating a report as still open.
   Prototype 1 baseline eval dropped setup embedding overrides at campaign/closure/batch boundaries and fell back to the default Codestral embedding route.
 - [`2026-06-08-prototype1-successor-handoff-stale-parent-identity.md`](./2026-06-08-prototype1-successor-handoff-stale-parent-identity.md)
   Fixed in source: Prototype 1 successor handoff now commits the selected parent identity into the successor Artifact before measuring and spawning it; the live campaign that exposed this was stopped after stale gen1 identity evidence.
+- [`2026-06-08-prototype1-direct-google-g35flash-quota-empty-baseline.md`](./2026-06-08-prototype1-direct-google-g35flash-quota-empty-baseline.md)
+  External provider blocker: a fresh direct-Google `google/gemini-3.5-flash` baseline turn aborted with HTTP 429 resource exhaustion and persisted an empty patch, so the campaign is stop-use for loop progress.
