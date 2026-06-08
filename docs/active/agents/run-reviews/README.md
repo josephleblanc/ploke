@@ -206,3 +206,8 @@ state without checking newer code, History records, and run artifacts.
   Live/incomplete scout report for the active selectfix replay campaign,
   covering successor handoff, selected rejected-branch trace evidence, protocol
   usefulness versus operational rejection, and the current request-only boundary.
+- [`2026-06-08-p1-selectfix-replay-5g1x2-a2-20260607-224502/`](2026-06-08-p1-selectfix-replay-5g1x2-a2-20260607-224502/)
+  Terminal status and scout reports for the completed selectfix replay campaign:
+  clean configured stop after generation-4 children under `max_generations=5`,
+  repeated parent/successor handoff, broad/eval surface, protocol warnings, and
+  follow-up review targets.

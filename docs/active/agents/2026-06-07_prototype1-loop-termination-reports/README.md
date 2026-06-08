@@ -27,3 +27,7 @@ Reports:
 - [`handofffix-embed-budget-stop.md`](handofffix-embed-budget-stop.md) —
   `p1-handofffix-embed-5g1x2-a2-20260607-192954` ended cleanly at the
   configured historical-traversal budget stop.
+- [`../run-reviews/2026-06-08-p1-selectfix-replay-5g1x2-a2-20260607-224502/terminal-status.md`](../run-reviews/2026-06-08-p1-selectfix-replay-5g1x2-a2-20260607-224502/terminal-status.md)
+  — `p1-selectfix-replay-5g1x2-a2-20260607-224502` ended cleanly at
+  `stop_historical_traversal_budget` after generation-4 children completed
+  under the `max_generations=5` profile.

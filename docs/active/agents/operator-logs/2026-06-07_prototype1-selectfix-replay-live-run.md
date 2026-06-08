@@ -213,7 +213,36 @@ and the run-summary helper:
   result-channel completion, or `observe_child after` record existed for those
   generation 4 children at this checkpoint.
 
+2026-06-08 01:22:05 to 01:23:45 -0700:
+
+- Both generation 4 children from parent `node-86b020f1dfdcf8af` completed:
+  `node-72b640e0a78cafcc` / `branch-4fa5078a62ae685e` wrote
+  `runner-result.json` with `status="succeeded"` and `exit_code=0` at
+  `01:15:26 -0700`, and `node-eb38c0cf2ab7b58c` /
+  `branch-0b3c3b943489e60b` wrote the same terminal status at
+  `01:22:04 -0700`.
+- The branch registry evaluated the final two children as
+  `branch-4fa5078a62ae685e=keep` and `branch-0b3c3b943489e60b=reject`.
+- The transition journal then recorded successor selection for
+  `node-d245f3418c712226` with
+  `disposition=stop_historical_traversal_budget`, followed by
+  `resource parent_complete` for `node-86b020f1dfdcf8af`.
+- The parent channel
+  `prototype1/nodes/node-86b020f1dfdcf8af/channels/f17b3fb3-3701-4725-b7e3-855df00143e2/child-to-parent.jsonl`
+  contains final `successor_completion.status="succeeded"` at
+  `2026-06-08T08:22:05.591309616+00:00`.
+- A self-filtered process probe at `01:23:45 -0700` found no live
+  `ploke-eval loop`, `prototype1-state`, `prototype1-step`,
+  `prototype1-continue`, or `prototype1-runner` processes for this campaign.
+- Final classification: clean configured stop after generation 4 children
+  completed under the `max_generations=5` profile. This run demonstrated
+  repeated parent-to-successor handoff, including continuation from rejected
+  historical parents, and did not hit the previous successor artifact/hash
+  blockers.
+
 ## Related Reports
 
 - [`../2026-06-07_prototype1-loop-termination-reports/README.md`](../2026-06-07_prototype1-loop-termination-reports/README.md)
   collects termination reports for earlier loop campaigns.
+- [`../run-reviews/2026-06-08-p1-selectfix-replay-5g1x2-a2-20260607-224502/`](../run-reviews/2026-06-08-p1-selectfix-replay-5g1x2-a2-20260607-224502/)
+  contains the terminal status and scout reports for this completed run.
