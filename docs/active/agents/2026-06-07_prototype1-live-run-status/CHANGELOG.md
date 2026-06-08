@@ -55,3 +55,10 @@
   `node-8167e33daa3b9bc6` using handoff invocation
   `637883b5-2843-45ad-9f63-ba2ec73c2cbf`, demonstrating the second
   parent-to-successor handoff on the fresh source path.
+- Observed generation 2 broad generation recover from transient
+  `INVALID_MODEL_RESPONSE` warnings and materialize two generation-3 child
+  candidates at `2026-06-07T20:41:14-07:00`.
+- Confirmed generation 2 built and spawned both generation-3 child runners at
+  `2026-06-07T20:43:40-07:00`: `node-7815b0481a271a5e`
+  (`branch-feabca86774c57a6`, PID `988607`) and
+  `node-d05350cdb42e3185` (`branch-9ded1d142d60298a`, PID `988624`).
