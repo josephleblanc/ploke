@@ -165,3 +165,11 @@ The 2026-06-08 source repair passed the new process-group regression, the
 existing dead-child doctor regression, and the full `ploke-eval` lib suite.
 Fresh-campaign live verification is still required before treating this blocker
 as cleared for new loop evidence.
+
+Fresh live verification was attempted with campaign
+`p1-guided-surface-g35flash-p25flash-5g1x2-a2-pr1-spawnfix-20260608-081204`
+from source commit `fc8a463c`. Setup, doctor, headless TUI preflight, live
+protocol preflight, and baseline eval passed, but the run stopped in
+`baseline_protocol` before child planning or spawn. The blocking evidence is a
+direct-Google protocol 429 after a partial segmentation-only protocol artifact;
+see `2026-05-22-prototype1-continue-protocol-quota-no-progress-loop.md`.

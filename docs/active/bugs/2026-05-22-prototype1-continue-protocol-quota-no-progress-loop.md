@@ -422,6 +422,48 @@ live-verified. The `tool_review_parallelism = 1` mitigation is live-verified
 for this single direct-Google PR1 campaign. `prototype1-continue` remains
 pending live verification.
 
+### Spawn-Fix Verification Campaign
+
+After fixing leaf-child process-group isolation in source commit `fc8a463c`, a
+fresh campaign
+`p1-guided-surface-g35flash-p25flash-5g1x2-a2-pr1-spawnfix-20260608-081204`
+was started from the repaired checkout with the same lower-fanout direct-Google
+profile. Setup, headless TUI preflight, and live protocol preflight passed.
+Baseline eval completed and advanced to `baseline_protocol`.
+
+The first protocol step received malformed direct-Google JSON during
+tool-call-intent segmentation and admitted no protocol artifact. Because doctor
+still reported no blockers and closure remained cleanly missing, the step was
+retried. The retry admitted the segmentation artifact:
+
+```text
+/home/brasides/.ploke-eval/protocol/prototype1/p1-guided-surface-g35flash-p25flash-5g1x2-a2-pr1-spawnfix-20260608-081204/BurntSushi__ripgrep-2209/runs/run-1780931708759-structured-current-policy-948dcd18/1780932323433_tool_call_intent_segmentation_BurntSushi__ripgrep-2209.json
+```
+
+Closure after that retry:
+
+```text
+eval.status = complete
+protocol.status = partial
+tool-call-intent-segments = complete
+tool-call-review = missing
+tool-call-segment-review = missing
+protocol_counts.total_calls = 45
+protocol_counts.reviewed_calls = 0
+protocol_counts.total_segments = 7
+protocol_counts.usable_segments = 0
+```
+
+A follow-up bounded protocol step spent the remaining review pass on
+`tool_review_parallelism = 1` but eventually hit direct-Google HTTP 429
+`RESOURCE_EXHAUSTED`. That step admitted no call-review or segment-review
+artifacts, and closure remained partial with the same missing review counts.
+
+Disposition: this campaign remains structurally resumable, but is blocked on
+direct-Google protocol quota/output quality before it can reach child planning
+or the leaf-child spawn verification point. It is not evidence against the
+process-group spawn fix.
+
 ## Verification Targets
 
 - Unit test: a mocked `advance_protocol_closure` report with nonempty failures
