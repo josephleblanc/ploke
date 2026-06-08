@@ -111,6 +111,24 @@ and the run-summary helper:
   successor handoff twice in this run, including a successor selected from a
   rejected-parent continuation path.
 
+2026-06-08 00:18:37 to 00:21:20 -0700:
+
+- Generation 2 parent `node-e0215ac6e2825a28` completed two broad attempts:
+  `node-e0215ac6e2825a28-r2` wrote result sidecars at `00:18:37 -0700`, and
+  `node-e0215ac6e2825a28` wrote result sidecars at `00:18:46 -0700`.
+- The loop wrote child plan
+  `prototype1/messages/child-plan/node-e0215ac6e2825a28.json` at
+  `00:18:49 -0700`.
+- It materialized and built two generation 3 children:
+  `node-666e03c70c944722` / `branch-c17c4cda5764dbb7` and
+  `node-d245f3418c712226` / `branch-0e230b45dab588be`.
+- The transition journal recorded `build_child after`, `child_artifact_committed`,
+  `spawn_child spawned`, `child ready`, `child evaluating`, and
+  `observe_child before` for both children by `00:21:20 -0700`.
+- Live process evidence at `00:22:17 -0700`: PID `1585253` remained the active
+  parent, with runner PIDs `1667583` and `1667637` evaluating the two
+  generation 3 children.
+
 ## Related Reports
 
 - [`../2026-06-07_prototype1-loop-termination-reports/README.md`](../2026-06-07_prototype1-loop-termination-reports/README.md)
