@@ -129,6 +129,29 @@ and the run-summary helper:
   parent, with runner PIDs `1667583` and `1667637` evaluating the two
   generation 3 children.
 
+2026-06-08 00:33:20 -0700:
+
+- Both generation 3 children from parent `node-e0215ac6e2825a28` completed
+  treatment self-eval:
+  `node-666e03c70c944722` / `branch-c17c4cda5764dbb7` wrote a `keep`
+  evaluation at `00:27:30 -0700`, and `node-d245f3418c712226` /
+  `branch-0e230b45dab588be` wrote a `keep` evaluation at `00:32:59 -0700`.
+- The sealed successor-selection row sampled historical rejected
+  `node-7d41954c057f3002` / `branch-a21b6ff8dee21a03` under
+  `continue_explore_from_rejected`, even though the two fresh generation 3
+  candidates were both `keep`.
+- The transition journal recorded checkout of installed commit
+  `e931bd482782248fc86db59d81bc9a115752a882`, `successor_handoff`,
+  `parent_started`, `resource parent_start` for `node-7d41954c057f3002`, and
+  `resource parent_complete` / `successor completed status=succeeded` for
+  `node-e0215ac6e2825a28`.
+- Live process evidence after the handoff: PID `1676219` is running
+  `ploke-eval loop prototype1-state` with `--handoff-invocation` under
+  `prototype1/nodes/node-7d41954c057f3002/invocations/910f2e3e-a907-4667-aec4-3b1efaa99dfd.json`.
+- This is the third successful parent-to-successor handoff in this run, and it
+  shows the current state path can continue through selection from the
+  historical rejected frontier after fresh kept children have completed.
+
 ## Related Reports
 
 - [`../2026-06-07_prototype1-loop-termination-reports/README.md`](../2026-06-07_prototype1-loop-termination-reports/README.md)
