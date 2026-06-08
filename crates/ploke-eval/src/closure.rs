@@ -750,6 +750,13 @@ fn classify_eval_status(
     artifacts: &mut ClosureArtifactRefs,
 ) -> Result<(ClosureClass, Option<String>, Option<String>), PrepareError> {
     if record_path.exists() {
+        if let Some(failure) = record_terminal_failure(record_path)? {
+            return Ok((
+                ClosureClass::Failed,
+                Some(failure),
+                file_timestamp_string(record_path)?,
+            ));
+        }
         return Ok((
             ClosureClass::Complete,
             None,
@@ -867,6 +874,13 @@ fn classify_eval_status_from_registration(
     match registration.lifecycle.execution_status {
         RunExecutionStatus::Completed => {
             if record_path.exists() {
+                if let Some(failure) = record_terminal_failure(record_path)? {
+                    return Ok((
+                        ClosureClass::Failed,
+                        Some(failure),
+                        registration.lifecycle.finished_at.clone(),
+                    ));
+                }
                 return Ok((
                     ClosureClass::Complete,
                     None,
@@ -911,6 +925,38 @@ fn classify_eval_status_from_registration(
         batch_failure,
         artifacts,
     )
+}
+
+fn record_terminal_failure(record_path: &Path) -> Result<Option<String>, PrepareError> {
+    let record =
+        read_compressed_record(record_path).map_err(|source| PrepareError::ReadManifest {
+            path: record_path.to_path_buf(),
+            source,
+        })?;
+    let metrics = record.operational_metrics();
+    if !metrics.aborted {
+        return Ok(None);
+    }
+
+    let terminal = record
+        .conversations()
+        .last()
+        .map(|turn| match &turn.outcome {
+            crate::record::TurnOutcome::Error { message } => {
+                format!("terminal turn error: {message}")
+            }
+            crate::record::TurnOutcome::Timeout { elapsed_secs } => {
+                format!("terminal turn timed out after {elapsed_secs}s")
+            }
+            other => format!("terminal turn outcome was {other:?}"),
+        })
+        .unwrap_or_else(|| "record metrics indicate aborted terminal outcome".to_string());
+
+    Ok(Some(format!(
+        "{terminal}; submission_artifact_state={}; patch_projection_check_state={:?}",
+        metrics.submission_artifact_state.as_str(),
+        metrics.patch_projection_check_state
+    )))
 }
 
 fn assess_protocol_state(
@@ -1504,6 +1550,112 @@ fn format_closure_class(value: ClosureClass) -> &'static str {
 mod tests {
     use super::*;
 
+    fn run_record_with_terminal(
+        outcome: crate::record::TurnOutcome,
+        submission: crate::record::SubmissionArtifactState,
+    ) -> crate::record::RunRecord {
+        use crate::record::{
+            AgentMetadata, BenchmarkMetadata, PackagingPhase, RunMetadata, RunPhases, RunRecord,
+            RuntimeMetadata, TurnRecord,
+        };
+
+        let mut phases = RunPhases::default();
+        phases.agent_turns.push(TurnRecord {
+            turn_number: 1,
+            started_at: "2026-06-08T00:00:00Z".to_string(),
+            ended_at: "2026-06-08T00:00:01Z".to_string(),
+            db_timestamp_micros: 0,
+            issue_prompt: "fix it".to_string(),
+            llm_request: None,
+            llm_response: None,
+            tool_calls: Vec::new(),
+            outcome,
+            agent_turn_artifact: None,
+        });
+        phases.packaging = Some(PackagingPhase {
+            started_at: "2026-06-08T00:00:01Z".to_string(),
+            ended_at: "2026-06-08T00:00:02Z".to_string(),
+            submission_artifact_state: submission,
+            msb_submission_path: None,
+            patch_projection_path: None,
+            patch_projection_check_state:
+                ploke_records::evaluation::PatchProjectionCheckState::Passed,
+        });
+
+        RunRecord {
+            schema_version: crate::record::RUN_RECORD_SCHEMA_VERSION.to_string(),
+            manifest_id: "case-1".to_string(),
+            metadata: RunMetadata {
+                run_arm: crate::runner::RunArm::shell_only_control(),
+                benchmark: BenchmarkMetadata {
+                    instance_id: "case-1".to_string(),
+                    repo_root: PathBuf::from("/tmp/repo"),
+                    base_sha: Some("abc123".to_string()),
+                    issue: None,
+                },
+                agent: AgentMetadata::default(),
+                runtime: RuntimeMetadata::default(),
+                budget: crate::spec::EvalBudget::default(),
+            },
+            phases,
+            db_time_travel_index: Vec::new(),
+            conversation: Vec::new(),
+            timing: None,
+        }
+    }
+
+    fn classify_eval_status_for_record(
+        record: crate::record::RunRecord,
+    ) -> (ClosureClass, Option<String>, Option<String>) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let run_dir = temp.path();
+        let record_path = run_dir.join("record.json.gz");
+        crate::record::write_compressed_record(&record_path, &record).expect("write record");
+        let mut artifacts = ClosureArtifactRefs::default();
+
+        classify_eval_status(
+            run_dir,
+            &record_path,
+            &run_dir.join("indexing-status.json"),
+            &run_dir.join("parse-failure.json"),
+            &run_dir.join("execution-log.json"),
+            &run_dir.join("snapshot-status.json"),
+            None,
+            &mut artifacts,
+        )
+        .expect("classify eval status")
+    }
+
+    fn completed_registration_at(
+        root: &Path,
+        record: crate::record::RunRecord,
+    ) -> crate::inner::registry::RunRegistration {
+        use crate::inner::core::{RegisteredRunRole, RunIntent, RunStorageRoots};
+        use crate::inner::registry::RunRegistration;
+
+        let storage_roots = RunStorageRoots::new(root.join("registries"), root.join("runs"));
+        let intent = RunIntent {
+            task_id: "case-1".to_string(),
+            repo_root: root.join("repo"),
+            storage_roots,
+            base_sha: Some("abc123".to_string()),
+            budget: crate::spec::EvalBudget::default(),
+            model_id: Some("google/gemini-3.5-flash".to_string()),
+            provider_slug: Some("google".to_string()),
+            campaign_id: Some("campaign".to_string()),
+            batch_id: Some("batch".to_string()),
+            run_arm_id: "structured-current-policy".to_string(),
+            run_role: RegisteredRunRole::Treatment,
+        };
+        let mut registration =
+            RunRegistration::register_with_run_id(intent, "run-aborted").expect("registration");
+        fs::create_dir_all(&registration.artifacts.run_root).expect("create run root");
+        crate::record::write_compressed_record(&registration.artifacts.record_path, &record)
+            .expect("write record");
+        registration.mark_completed();
+        registration
+    }
+
     fn sample_protocol_row(protocol_status: ClosureClass) -> ClosureInstanceRow {
         ClosureInstanceRow {
             instance_id: "sample".to_string(),
@@ -1527,6 +1679,66 @@ mod tests {
     #[test]
     fn classify_fraction_marks_zero_total_as_ineligible() {
         assert_eq!(classify_fraction(0, 0), ClosureClass::Ineligible);
+    }
+
+    #[test]
+    fn classify_eval_status_marks_aborted_record_failed() {
+        let (status, failure, _) = classify_eval_status_for_record(run_record_with_terminal(
+            crate::record::TurnOutcome::Error {
+                message: "HTTP_429 RESOURCE_EXHAUSTED".to_string(),
+            },
+            crate::record::SubmissionArtifactState::Empty,
+        ));
+
+        assert_eq!(status, ClosureClass::Failed);
+        let failure = failure.expect("failure detail");
+        assert!(failure.contains("terminal turn error"));
+        assert!(failure.contains("RESOURCE_EXHAUSTED"));
+        assert!(failure.contains("submission_artifact_state=empty"));
+    }
+
+    #[test]
+    fn classify_eval_status_keeps_completed_empty_submission_complete() {
+        let (status, failure, _) = classify_eval_status_for_record(run_record_with_terminal(
+            crate::record::TurnOutcome::Content,
+            crate::record::SubmissionArtifactState::Empty,
+        ));
+
+        assert_eq!(status, ClosureClass::Complete);
+        assert_eq!(failure, None);
+    }
+
+    #[test]
+    fn classify_completed_registration_with_aborted_record_as_failed() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let registration = completed_registration_at(
+            temp.path(),
+            run_record_with_terminal(
+                crate::record::TurnOutcome::Error {
+                    message: "HTTP_429 RESOURCE_EXHAUSTED".to_string(),
+                },
+                crate::record::SubmissionArtifactState::Empty,
+            ),
+        );
+        let mut artifacts = ClosureArtifactRefs::default();
+
+        let (status, failure, _) = classify_eval_status_from_registration(
+            &registration,
+            &registration.artifacts.run_root,
+            &registration.artifacts.record_path,
+            &registration.artifacts.indexing_status,
+            &registration.artifacts.parse_failure,
+            &registration.artifacts.execution_log,
+            &registration.artifacts.snapshot_status,
+            None,
+            &mut artifacts,
+        )
+        .expect("classify registration");
+
+        assert_eq!(status, ClosureClass::Failed);
+        let failure = failure.expect("failure detail");
+        assert!(failure.contains("terminal turn error"));
+        assert!(failure.contains("RESOURCE_EXHAUSTED"));
     }
 
     #[test]

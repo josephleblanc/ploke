@@ -1,6 +1,7 @@
 # Prototype 1 Direct Google Quota Produces Empty Baseline
 
-Status: external provider blocker; current campaign stop-use for loop progress.
+Status: external provider blocker with downstream closure guard fixed; current
+campaign stop-use for loop progress.
 
 Campaign:
 
@@ -22,9 +23,10 @@ Run root:
 
 ## Broken Contract
 
-A fresh Prototype 1 validation run needs a successful baseline patch-producing
-eval before protocol and successor evidence can be trusted. This campaign's
-baseline turn aborted on a provider quota error and persisted an empty patch.
+A fresh Prototype 1 validation run must not advance baseline eval closure from a
+record whose terminal model turn aborted. This campaign's baseline turn aborted
+on a provider quota error, persisted an empty patch, and was initially projected
+as `eval_status = complete`.
 
 ## Evidence
 
@@ -96,15 +98,26 @@ check.status = passed
 
 ## Source Trace
 
-No repo source fix is claimed here. The upstream cause is an external direct
-Google quota/resource-exhaustion response for `google/gemini-3.5-flash`.
+The upstream cause remains an external direct Google quota/resource-exhaustion
+response for `google/gemini-3.5-flash`.
 
-The downstream artifact path that made the run unsafe to continue is the
-baseline eval export:
+The downstream repo bug was the closure classifier treating record existence as
+eval completion:
 
 ```text
-agent turn abort -> empty multi-swe-bench submission -> closure eval complete -> doctor baseline_protocol
+agent turn abort
+  -> record.json.gz exists with OperationalRunMetrics.aborted = true
+  -> closure.rs classify_eval_status treated record existence as complete
+  -> closure-state eval_status = complete
+  -> doctor baseline_protocol
 ```
+
+The fixed source boundary is `crates/ploke-eval/src/closure.rs`:
+`classify_eval_status` and `classify_eval_status_from_registration` now read the
+compressed record through `record_terminal_failure` and classify aborted/timeout
+terminal records as failed instead of complete. This preserves the existing
+behavior for completed records whose submission artifact is empty but whose
+terminal turn did not abort.
 
 ## Docs/Policy Expectation
 
@@ -119,9 +132,26 @@ The live run itself is the evidence. It proves current direct-Google auth reache
 the Vertex endpoint, but quota for the patch-generation route was exhausted
 during the benchmark turn.
 
-Existing source regressions for the prior observe/selection and successor
-identity bugs still pass, and the fixed binary built successfully in both the
-main checkout and the fresh campaign worktree.
+Added focused source regressions:
+
+```text
+cargo test -p ploke-eval classify_ -- --nocapture
+```
+
+This passed with the new closure checks:
+
+```text
+closure::tests::classify_eval_status_marks_aborted_record_failed
+closure::tests::classify_completed_registration_with_aborted_record_as_failed
+closure::tests::classify_eval_status_keeps_completed_empty_submission_complete
+```
+
+The full workspace gate also passed after this classifier fix:
+
+```text
+cargo test --workspace 2>&1 | rg -A 8 E0
+cargo exited 0; rg exited 1 because no E0 lines matched
+```
 
 ## Missing Repro / Validation
 
@@ -130,8 +160,9 @@ Fresh handoff validation remains missing. A useful replacement run needs either:
 1. the same direct-Google route after quota recovers; or
 2. an explicit operator-approved profile/model/provider change.
 
-Do not continue this campaign into protocol as handoff-validation evidence,
-because protocol would review an empty patch caused by provider quota failure.
+Do not continue this campaign into protocol as handoff-validation evidence. Its
+persisted closure was produced before the classifier fix and the patch evidence
+is empty because of provider quota failure.
 
 ## Fix Direction
 
@@ -139,9 +170,9 @@ For this campaign, abandon-and-restart after provider quota recovers or after an
 approved route/profile change. Do not patch readers or protocol admission to
 treat the empty baseline as success.
 
-Separately, it may be worth adding a future guard that distinguishes mechanical
-baseline eval completion from a patch-producing, non-aborted benchmark turn, but
-that is not the source fix for this provider blocker.
+The source-side fix is to reject aborted terminal records at the closure
+classification authority. Do not make protocol readers or successor selection
+silently tolerate aborted/empty baselines.
 
 ## Related Bugs
 

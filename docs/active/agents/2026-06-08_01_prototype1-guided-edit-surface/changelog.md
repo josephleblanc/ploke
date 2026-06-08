@@ -67,6 +67,23 @@ Date: 2026-06-08.
 - Full workspace verification passed after the lock: `cargo test --workspace`
   exited `0`. The previous Cozo SQLite lock failure did not recur, and the
   Google direct live tests that ran in the workspace pass were successful.
+- Fresh handoff validation campaign
+  `p1-handofffix2-g35flash-p25flash-5g1x2-a2-20260608-102457` reached direct
+  Google but stopped on provider quota during baseline eval:
+  `agent-turn-summary.json` recorded `TurnFinished.outcome = aborted` with
+  `HTTP_429` / `RESOURCE_EXHAUSTED`, while
+  `multi-swe-bench-submission.jsonl` contained an empty `fix_patch`.
+- Fixed the downstream closure classifier in `crates/ploke-eval/src/closure.rs`:
+  `classify_eval_status` and `classify_eval_status_from_registration` now
+  classify aborted/timeout terminal records as failed instead of treating
+  `record.json.gz` existence as eval completion. Completed records with an empty
+  submission but no aborted terminal turn remain complete.
+- Verification for the closure classifier guard:
+  - `cargo test -p ploke-eval classify_ -- --nocapture` passed and covered the
+    aborted-record, completed-registration, and completed-empty-submission
+    regressions.
+  - `cargo test --workspace 2>&1 | rg -A 8 E0` passed after this classifier
+    guard: cargo exited `0`; `rg` exited `1` because no `E0` lines matched.
 - Current graph-policy boundary: the new graph-neighborhood policy is
   persisted, prompt-visible, and planner-visible, but final broad harness
   admission still rejects only against the existing
