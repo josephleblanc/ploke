@@ -211,3 +211,7 @@ state without checking newer code, History records, and run artifacts.
   clean configured stop after generation-4 children under `max_generations=5`,
   repeated parent/successor handoff, broad/eval surface, protocol warnings, and
   follow-up review targets.
+- [`2026-06-08-recent-prototype1-node-coverage.md`](2026-06-08-recent-prototype1-node-coverage.md)
+  Coverage/backlog note for nodes in recent Prototype 1 campaigns, separating
+  terminal/scout coverage from full run-review coverage and listing artifact
+  roots for follow-up reviews.
