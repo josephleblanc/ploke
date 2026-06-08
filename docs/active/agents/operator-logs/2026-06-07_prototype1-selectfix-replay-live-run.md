@@ -169,6 +169,28 @@ and the run-summary helper:
   active, with runner PIDs `1746105` and `1746106` evaluating the two child
   branches.
 
+2026-06-08 00:57:16 -0700:
+
+- Both generation 3 children from historical rejected parent
+  `node-7d41954c057f3002` completed treatment self-eval:
+  `node-44b3f97965446494` / `branch-e21d8f841040888f` wrote a `keep`
+  evaluation at `00:54:36 -0700`, and `node-86b020f1dfdcf8af` /
+  `branch-564844dfd9b65469` wrote a `keep` evaluation at `00:57:01 -0700`.
+- The successor selector chose kept child `node-86b020f1dfdcf8af` with
+  `disposition=continue_ready`; the sealed row lists performance `19120`,
+  `child_count=2`, and selected weight `0.249817374`.
+- The transition journal recorded checkout of installed commit
+  `a7272f6706c85d1a4b1b3e0b37c70fbb586b4424`, `successor_handoff`,
+  `parent_started`, `resource parent_start` for `node-86b020f1dfdcf8af`, and
+  `resource parent_complete` / `successor completed status=succeeded` for
+  `node-7d41954c057f3002`.
+- Live process evidence after the handoff: PID `1753984` is running
+  `ploke-eval loop prototype1-state` with `--handoff-invocation` under
+  `prototype1/nodes/node-86b020f1dfdcf8af/invocations/f17b3fb3-3701-4725-b7e3-855df00143e2.json`.
+- This is the fourth successful parent-to-successor handoff observed in this
+  live run after disabling the keep gate, and it follows a historical rejected
+  parent that produced fresh kept children.
+
 ## Related Reports
 
 - [`../2026-06-07_prototype1-loop-termination-reports/README.md`](../2026-06-07_prototype1-loop-termination-reports/README.md)
