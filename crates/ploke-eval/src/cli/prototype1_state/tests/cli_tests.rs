@@ -2029,6 +2029,62 @@ fn broad_batch_publication_allocates_request_slots() {
     }
 }
 
+#[tokio::test]
+async fn pre_child_planning_review_writes_prompt_and_artifact_before_admission() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let _env =
+        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT", "2".into())]);
+    write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "broad surface fixture");
+    let parent = ready_parent_for_test(&manifest_path, &repo_root);
+    let budget = Prototype1ChildBudget::new(1, 2);
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
+    let first = &batch.slots[0].published;
+    let artifact_path = first
+        .request()
+        .planning
+        .artifact_path
+        .clone()
+        .expect("request carries planner artifact path");
+
+    run_pre_child_planning_review(
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
+        },
+        &batch,
+    )
+    .await
+    .expect("test planner stub writes artifact");
+
+    let prompt_path = pre_child_planning_prompt_path(&artifact_path);
+    assert!(prompt_path.exists());
+    assert!(artifact_path.exists());
+    let artifact: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&artifact_path).expect("artifact text"))
+            .expect("artifact json");
+    assert_eq!(artifact["schema_version"], PRE_CHILD_PLANNING_SCHEMA);
+    assert_eq!(artifact["status"], "test_stub");
+    assert_eq!(artifact["request_id"], first.request_id());
+    assert_eq!(artifact["request_hash"], first.request_hash());
+    assert_eq!(
+        artifact["structured_response"]["target_pipeline"],
+        "test-stub broad harness pipeline"
+    );
+}
+
 #[test]
 fn broad_batch_default_cap_respects_small_max() {
     let tmp = tempfile::tempdir().expect("tempdir");

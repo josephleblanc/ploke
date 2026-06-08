@@ -18,9 +18,13 @@ pub(crate) struct BroadHarnessRequest {
     pub(crate) parent_node_id: ParentNodeRef,
     pub(crate) workspace: HarnessWorkspace,
     pub(crate) edit_policy: BroadEditPolicy,
+    #[serde(default)]
+    pub(crate) graph_restriction: GraphRestriction,
     pub(crate) child_budget: HarnessChildBudget,
     pub(crate) protected_core: ProtectedCorePointer,
     pub(crate) evaluation: EvaluationBrief,
+    #[serde(default)]
+    pub(crate) planning: PlanningGuidance,
     #[serde(default = "contract::Bundle::empty")]
     pub(crate) contract: contract::Bundle,
     pub(crate) evidence_roots: Vec<EvidenceRoot>,
@@ -869,6 +873,133 @@ impl BroadEditPolicy {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct GraphRestriction {
+    pub(crate) mode: GraphRestrictionMode,
+    pub(crate) nearest_items: usize,
+    pub(crate) seed_modules: Vec<PathBuf>,
+    pub(crate) source: GraphRestrictionSource,
+}
+
+impl GraphRestriction {
+    fn tool_neighborhood(nearest_items: usize) -> Self {
+        Self {
+            mode: GraphRestrictionMode::ToolNeighborhood,
+            nearest_items,
+            seed_modules: vec![PathBuf::from("crates/ploke-tui/src/tools/mod.rs")],
+            source: GraphRestrictionSource::CodeGraphCozo,
+        }
+    }
+}
+
+impl Default for GraphRestriction {
+    fn default() -> Self {
+        Self::tool_neighborhood(DEFAULT_GRAPH_NEAREST_ITEMS)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GraphRestrictionMode {
+    ToolNeighborhood,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GraphRestrictionSource {
+    CodeGraphCozo,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct PlanningGuidance {
+    pub(crate) schema_version: String,
+    pub(crate) planner: PlannerProfile,
+    pub(crate) target_pipeline: String,
+    pub(crate) cited_evidence: Vec<PlanningEvidence>,
+    pub(crate) pipeline_scope: String,
+    pub(crate) edit_intent: String,
+    pub(crate) response_contract: Vec<PlanResponseField>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) artifact_path: Option<PathBuf>,
+}
+
+impl PlanningGuidance {
+    fn prototype1(evidence_roots: &[EvidenceRoot]) -> Self {
+        Self {
+            schema_version: "prototype1-guided-planning.v1".to_string(),
+            planner: PlannerProfile {
+                role: PlannerRole::HighCapacityReview,
+                route: PlannerRoute::DirectGoogle,
+            },
+            target_pipeline: "Prototype 1 tool-use and edit-surface pipeline".to_string(),
+            cited_evidence: evidence_roots.iter().map(PlanningEvidence::from_root).collect(),
+            pipeline_scope:
+                "Protocol diagnostics, recent child evidence, tool-call failures, and the ploke-tui tool modules seeded into the code graph."
+                    .to_string(),
+            edit_intent:
+                "Choose a bounded code change inside the graph-restricted tool neighborhood that is likely to improve future descendant evaluation."
+                    .to_string(),
+            response_contract: vec![
+                PlanResponseField::TargetPipeline,
+                PlanResponseField::EvidenceCitations,
+                PlanResponseField::PipelineScope,
+                PlanResponseField::EditIntent,
+            ],
+            artifact_path: None,
+        }
+    }
+}
+
+impl Default for PlanningGuidance {
+    fn default() -> Self {
+        Self::prototype1(&[])
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct PlannerProfile {
+    pub(crate) role: PlannerRole,
+    pub(crate) route: PlannerRoute,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PlannerRole {
+    HighCapacityReview,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum PlannerRoute {
+    DirectGoogle,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct PlanningEvidence {
+    pub(crate) kind: EvidenceRootKind,
+    pub(crate) role: EvidenceRole,
+    pub(crate) location: EvidenceRootLocation,
+}
+
+impl PlanningEvidence {
+    fn from_root(root: &EvidenceRoot) -> Self {
+        Self {
+            kind: root.kind,
+            role: root.role,
+            location: root.location.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PlanResponseField {
+    TargetPipeline,
+    EvidenceCitations,
+    PipelineScope,
+    EditIntent,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ProtectedCorePointer {
     pub(crate) anchor: ProtectedCoreAnchor,
     pub(crate) policy: ProtectedCorePolicy,
@@ -972,7 +1103,7 @@ pub(crate) enum EvidenceRootLocation {
 }
 
 impl EvidenceRootLocation {
-    fn render(&self) -> String {
+    pub(crate) fn render(&self) -> String {
         match self {
             Self::Directory { path } => path.display().to_string(),
             Self::File { path } => path.display().to_string(),
@@ -1072,6 +1203,26 @@ impl BroadHarnessRequest {
         prototype_root: &Path,
         submitted_result_path: &Path,
     ) -> Self {
+        Self::prototype1_workspace_with_graph_limit(
+            parent_node_id,
+            source_repository,
+            child_budget,
+            candidate_workspace_path,
+            prototype_root,
+            submitted_result_path,
+            DEFAULT_GRAPH_NEAREST_ITEMS,
+        )
+    }
+
+    pub(crate) fn prototype1_workspace_with_graph_limit(
+        parent_node_id: String,
+        source_repository: PathBuf,
+        child_budget: HarnessChildBudget,
+        candidate_workspace_path: PathBuf,
+        prototype_root: &Path,
+        submitted_result_path: &Path,
+        nearest_items: usize,
+    ) -> Self {
         let evaluations_root = prototype_root.join("evaluations");
         let nodes_root = prototype_root.join("nodes");
         let mut evidence_roots = vec![
@@ -1128,6 +1279,7 @@ impl BroadHarnessRequest {
             parent_node_id: ParentNodeRef::new(parent_node_id),
             workspace: HarnessWorkspace::new(source_repository, candidate_workspace_path),
             edit_policy: BroadEditPolicy::WorkspaceExceptPlokeEval,
+            graph_restriction: GraphRestriction::tool_neighborhood(nearest_items),
             child_budget,
             protected_core: ProtectedCorePointer {
                 anchor: ProtectedCoreAnchor::AuthorityConstant {
@@ -1144,6 +1296,7 @@ impl BroadHarnessRequest {
                 selection: SelectionAuthority::HistoryBackedSuccessorSelection,
                 guidance: GuidancePolicy::ProtocolDiagnosticsAreContext,
             },
+            planning: PlanningGuidance::prototype1(&evidence_roots),
             contract: contract::Bundle::prototype1(prototype_root),
             evidence_roots,
             return_evidence: ReturnEvidenceContract {
@@ -1199,6 +1352,26 @@ impl BroadHarnessRequest {
                 protected_core
             ));
         }
+        prompt.push_str(&format!(
+            "Before editing, produce and follow a structured planning review with target_pipeline, evidence_citations, pipeline_scope, and edit_intent. Use the `{}` planner route for that review.\n",
+            self.planning.planner.route.render()
+        ));
+        if let Some(path) = self.planning.artifact_path.as_ref() {
+            prompt.push_str(&format!(
+                "A parent-side pre-child planning review is expected at `{}` before this request is executed; read it as guidance, but do not treat it as submitted child evidence.\n",
+                path.display()
+            ));
+        }
+        prompt.push_str(&format!(
+            "Mutable target policy: use the code graph Cozo DB to restrict edits to the {} nearest code items seeded from {}. Treat protocol output and detected tool failures as ranking guidance inside that neighborhood.\n",
+            self.graph_restriction.nearest_items,
+            self.graph_restriction
+                .seed_modules
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
         prompt.push_str(
             "Inspect the repository and evidence. Choose the change you think is most likely to improve future evaluated descendants. The provided evaluations are guidance, not hard edit targets.\n",
         );
@@ -1216,6 +1389,16 @@ impl BroadHarnessRequest {
                 code_path.display(),
                 symbol_name = symbol.render()
             )),
+        }
+    }
+}
+
+const DEFAULT_GRAPH_NEAREST_ITEMS: usize = 24;
+
+impl PlannerRoute {
+    fn render(self) -> &'static str {
+        match self {
+            Self::DirectGoogle => "direct-google",
         }
     }
 }
@@ -1245,6 +1428,30 @@ impl request::Request<request::Broad, request::Published> {
         submitted_result_path: PathBuf,
         admission_binding: request::Binding<surface::SurfacePolicyId>,
     ) -> Self {
+        Self::prototype1_workspace_with_graph_limit(
+            parent_node_id,
+            source_repository,
+            child_budget,
+            prototype_root,
+            request_path,
+            prompt_path,
+            submitted_result_path,
+            admission_binding,
+            DEFAULT_GRAPH_NEAREST_ITEMS,
+        )
+    }
+
+    pub(crate) fn prototype1_workspace_with_graph_limit(
+        parent_node_id: String,
+        source_repository: PathBuf,
+        child_budget: HarnessChildBudget,
+        prototype_root: &Path,
+        request_path: PathBuf,
+        prompt_path: PathBuf,
+        submitted_result_path: PathBuf,
+        admission_binding: request::Binding<surface::SurfacePolicyId>,
+        nearest_items: usize,
+    ) -> Self {
         let workspace_path = prototype_root
             .join("workspaces/edit-harness")
             .join(&parent_node_id);
@@ -1259,13 +1466,14 @@ impl request::Request<request::Broad, request::Published> {
         let submitted_result_path =
             publication.submitted_result_path(submitted_result_path.as_path());
         let candidate_workspace_path = publication.workspace_path(workspace_path.as_path());
-        let request = BroadHarnessRequest::prototype1_workspace(
+        let request = BroadHarnessRequest::prototype1_workspace_with_graph_limit(
             parent_node_id.clone(),
             source_repository,
             child_budget,
             candidate_workspace_path,
             prototype_root,
             &submitted_result_path,
+            nearest_items,
         );
         let mut published = Self::new_published(
             RequestSchema::V1,
@@ -1322,6 +1530,12 @@ impl request::Request<request::Broad, request::Published> {
         admission_binding: request::Binding<surface::SurfacePolicyId>,
     ) -> Self {
         self.admission_binding = admission_binding;
+        self.request_hash = request::Hash::new(self.compute_request_hash());
+        self
+    }
+
+    pub(crate) fn with_planning_artifact_path(mut self, path: PathBuf) -> Self {
+        self.request.planning.artifact_path = Some(path);
         self.request_hash = request::Hash::new(self.compute_request_hash());
         self
     }
@@ -1477,6 +1691,39 @@ mod tests {
                 ReturnEvidenceField::SuggestedChecks,
             ]
         );
+        assert_eq!(
+            decoded.request.graph_restriction.mode,
+            GraphRestrictionMode::ToolNeighborhood
+        );
+        assert_eq!(
+            decoded.request.graph_restriction.source,
+            GraphRestrictionSource::CodeGraphCozo
+        );
+        assert_eq!(
+            decoded.request.graph_restriction.nearest_items,
+            DEFAULT_GRAPH_NEAREST_ITEMS
+        );
+        assert_eq!(
+            decoded.request.graph_restriction.seed_modules,
+            vec![PathBuf::from("crates/ploke-tui/src/tools/mod.rs")]
+        );
+        assert_eq!(
+            decoded.request.planning.planner.role,
+            PlannerRole::HighCapacityReview
+        );
+        assert_eq!(
+            decoded.request.planning.planner.route,
+            PlannerRoute::DirectGoogle
+        );
+        assert_eq!(
+            decoded.request.planning.response_contract,
+            vec![
+                PlanResponseField::TargetPipeline,
+                PlanResponseField::EvidenceCitations,
+                PlanResponseField::PipelineScope,
+                PlanResponseField::EditIntent,
+            ]
+        );
         assert_eq!(decoded.request.contract.attempt.max_attempts, 4);
         assert_eq!(decoded.request.contract.validation.commands.len(), 1);
         assert_eq!(
@@ -1504,6 +1751,39 @@ mod tests {
             decoded.admission_binding().policy_id().as_str(),
             "workspace except ploke-eval"
         );
+    }
+
+    #[test]
+    fn graph_limited_publication_carries_planning_prompt_contract() {
+        let fixture = Fixture::new();
+        let admission_binding = fixture
+            .request_admission_binding("artifact:/repo/live-parent", "workspace except ploke-eval");
+        let published = PublishedBroadHarnessRequest::prototype1_workspace_with_graph_limit(
+            "parent-node-7".to_string(),
+            PathBuf::from("/repo/live-parent"),
+            HarnessChildBudget {
+                min_children: 1,
+                max_children: 3,
+            },
+            &fixture.prototype_root,
+            fixture.request_path.clone(),
+            fixture.prompt_path.clone(),
+            fixture.submitted_result_path.clone(),
+            admission_binding,
+            7,
+        );
+
+        let prompt = published.request.render_prompt();
+
+        assert_eq!(published.request.graph_restriction.nearest_items, 7);
+        assert!(prompt.contains("structured planning review"));
+        assert!(
+            prompt.contains("target_pipeline, evidence_citations, pipeline_scope, and edit_intent")
+        );
+        assert!(prompt.contains("direct-google"));
+        assert!(prompt.contains("7 nearest code items"));
+        assert!(prompt.contains("crates/ploke-tui/src/tools/mod.rs"));
+        assert!(prompt.contains("protocol output and detected tool failures"));
     }
 
     #[test]

@@ -3,12 +3,21 @@
 //! `ploke-records` defines inert schemas. This module owns the filesystem write
 //! capability used by Prototype 1 producers.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
+use chrono::Utc;
+use cozo::{DataValue, DbInstance, ScriptMutability};
 use ploke_records::record::{Record, RecordFamily, RecordFormat};
+use sha2::{Digest, Sha256};
 
+use crate::layout::record_mirror_file;
 use crate::spec::PrepareError;
+
+const MIRROR_SCHEMA: &str = "prototype1-record-mirror.v1";
+const RECORD_RELATION: &str = "prototype1_record";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct EmittedRecord {
@@ -50,15 +59,280 @@ where
             })?;
         }
         let bytes = serde_json::to_vec_pretty(record).map_err(PrepareError::Serialize)?;
-        fs::write(self.path, bytes).map_err(|source| PrepareError::WriteManifest {
+        fs::write(self.path, &bytes).map_err(|source| PrepareError::WriteManifest {
             path: self.path.to_path_buf(),
             source,
         })?;
+        mirror_record::<R>(self.path, &bytes)?;
         Ok(EmittedRecord {
             path: self.path.to_path_buf(),
             family: R::FAMILY,
             schema: R::SCHEMA,
             format: R::FORMAT,
         })
+    }
+}
+
+fn mirror_record<R: Record>(path: &Path, bytes: &[u8]) -> Result<(), PrepareError> {
+    let _guard = mirror_write_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let db_path = record_mirror_file()?;
+    if let Some(parent) = db_path.parent() {
+        fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    let db =
+        DbInstance::new("sqlite", &db_path, "").map_err(|source| PrepareError::DatabaseSetup {
+            phase: "record_mirror_open",
+            detail: format!(
+                "failed to open Prototype 1 record mirror '{}': {source}",
+                db_path.display()
+            ),
+        })?;
+    ensure_mirror_schema(&db)?;
+
+    let payload =
+        String::from_utf8(bytes.to_vec()).map_err(|source| PrepareError::DatabaseSetup {
+            phase: "record_mirror_payload",
+            detail: format!(
+                "record '{}' was not valid UTF-8 JSON for mirror persistence: {source}",
+                path.display()
+            ),
+        })?;
+    let hash = format!("{:x}", Sha256::digest(bytes));
+    let mut params = BTreeMap::new();
+    params.insert(
+        "family".to_string(),
+        DataValue::from(record_family(R::FAMILY)),
+    );
+    params.insert(
+        "record_path".to_string(),
+        DataValue::from(path.display().to_string()),
+    );
+    params.insert("content_sha256".to_string(), DataValue::from(hash));
+    params.insert("schema_version".to_string(), DataValue::from(R::SCHEMA));
+    params.insert(
+        "record_format".to_string(),
+        DataValue::from(record_format(R::FORMAT)),
+    );
+    params.insert("mirror_schema".to_string(), DataValue::from(MIRROR_SCHEMA));
+    params.insert(
+        "recorded_at".to_string(),
+        DataValue::from(Utc::now().to_rfc3339()),
+    );
+    params.insert("payload_json".to_string(), DataValue::from(payload));
+    db.run_script(
+        r#"
+        ?[
+            family,
+            record_path,
+            content_sha256,
+            schema_version,
+            record_format,
+            mirror_schema,
+            recorded_at,
+            payload_json
+        ] :=
+            family = $family,
+            record_path = $record_path,
+            content_sha256 = $content_sha256,
+            schema_version = $schema_version,
+            record_format = $record_format,
+            mirror_schema = $mirror_schema,
+            recorded_at = $recorded_at,
+            payload_json = $payload_json
+        :put prototype1_record {
+            family,
+            record_path,
+            content_sha256 =>
+            schema_version,
+            record_format,
+            mirror_schema,
+            recorded_at,
+            payload_json
+        }
+        "#,
+        params,
+        ScriptMutability::Mutable,
+    )
+    .map_err(|source| PrepareError::DatabaseSetup {
+        phase: "record_mirror_put",
+        detail: format!("failed to mirror record '{}': {source}", path.display()),
+    })?;
+    Ok(())
+}
+
+fn mirror_write_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn ensure_mirror_schema(db: &DbInstance) -> Result<(), PrepareError> {
+    if relation_exists(db, RECORD_RELATION)? {
+        return Ok(());
+    }
+    db.run_script(
+        r#"
+        :create prototype1_record {
+            family: String,
+            record_path: String,
+            content_sha256: String =>
+            schema_version: String,
+            record_format: String,
+            mirror_schema: String,
+            recorded_at: String,
+            payload_json: String
+        }
+        "#,
+        BTreeMap::new(),
+        ScriptMutability::Mutable,
+    )
+    .map_err(|source| PrepareError::DatabaseSetup {
+        phase: "record_mirror_schema",
+        detail: format!("failed to create Prototype 1 record mirror schema: {source}"),
+    })?;
+    Ok(())
+}
+
+fn relation_exists(db: &DbInstance, relation: &str) -> Result<bool, PrepareError> {
+    let rows = db
+        .run_script("::relations", BTreeMap::new(), ScriptMutability::Immutable)
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "record_mirror_relations",
+            detail: format!("failed to inspect Prototype 1 record mirror schema: {source}"),
+        })?
+        .rows;
+    Ok(rows.iter().any(|row| {
+        row.first().and_then(|value| match value {
+            DataValue::Str(value) => Some(value.as_str()),
+            _ => None,
+        }) == Some(relation)
+    }))
+}
+
+fn record_family(family: RecordFamily) -> &'static str {
+    match family {
+        RecordFamily::ChildPlan => "child_plan",
+        RecordFamily::SchedulerState => "scheduler_state",
+        RecordFamily::SchedulerNode => "scheduler_node",
+        RecordFamily::RunnerRequest => "runner_request",
+        RecordFamily::RunnerResult => "runner_result",
+        RecordFamily::ClosureState => "closure_state",
+        RecordFamily::EvaluationArtifact => "evaluation_artifact",
+        RecordFamily::ProtocolArtifact => "protocol_artifact",
+        RecordFamily::RunProfile => "run_profile",
+        RecordFamily::RunProfileCommitment => "run_profile_commitment",
+        RecordFamily::AgentTurnTrace => "agent_turn_trace",
+        RecordFamily::AgentTurnSummary => "agent_turn_summary",
+        RecordFamily::LlmFullResponseTrace => "llm_full_response_trace",
+        RecordFamily::RunRecord => "run_record",
+    }
+}
+
+fn record_format(format: RecordFormat) -> &'static str {
+    match format {
+        RecordFormat::Json => "json",
+        RecordFormat::JsonLines => "jsonl",
+        RecordFormat::Toml => "toml",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(serde::Serialize)]
+    struct MirrorTestRecord {
+        schema_version: &'static str,
+        value: &'static str,
+    }
+
+    impl Record for MirrorTestRecord {
+        const FAMILY: RecordFamily = RecordFamily::SchedulerState;
+        const SCHEMA: &'static str = "mirror-test-record.v1";
+        const FORMAT: RecordFormat = RecordFormat::Json;
+    }
+
+    #[test]
+    fn json_record_emission_writes_parallel_cozo_mirror() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            temp.path().as_os_str().to_os_string(),
+        )]);
+        let record_path = temp.path().join("records/test-record.json");
+        let record = MirrorTestRecord {
+            schema_version: "mirror-test-record.v1",
+            value: "ok",
+        };
+
+        let receipt = JsonRecordFile::new(&record_path)
+            .emit(&record)
+            .expect("record emits");
+
+        assert_eq!(receipt.path, record_path);
+        assert_eq!(receipt.family, RecordFamily::SchedulerState);
+        assert_eq!(receipt.schema, "mirror-test-record.v1");
+        assert_eq!(receipt.format, RecordFormat::Json);
+        let mirror_path = record_mirror_file().expect("mirror path");
+        assert!(mirror_path.exists());
+
+        let db = DbInstance::new("sqlite", &mirror_path, "").expect("open mirror");
+        let rows = db
+            .run_script(
+                r#"
+                ?[
+                    family,
+                    record_path,
+                    content_sha256,
+                    schema_version,
+                    record_format,
+                    mirror_schema,
+                    recorded_at,
+                    payload_json
+                ] :=
+                    *prototype1_record {
+                        family,
+                        record_path,
+                        content_sha256,
+                        schema_version,
+                        record_format,
+                        mirror_schema,
+                        recorded_at,
+                        payload_json
+                    }
+                "#,
+                BTreeMap::new(),
+                ScriptMutability::Immutable,
+            )
+            .expect("query mirror")
+            .rows;
+
+        assert_eq!(rows.len(), 1);
+        let row = &rows[0];
+        assert_eq!(data_str(row, 0), "scheduler_state");
+        assert_eq!(data_str(row, 1), record_path.display().to_string());
+        assert_eq!(
+            data_str(row, 2),
+            format!(
+                "{:x}",
+                Sha256::digest(fs::read(&record_path).expect("record bytes"))
+            )
+        );
+        assert_eq!(data_str(row, 3), "mirror-test-record.v1");
+        assert_eq!(data_str(row, 4), "json");
+        assert_eq!(data_str(row, 5), MIRROR_SCHEMA);
+        assert!(!data_str(row, 6).is_empty());
+        assert!(data_str(row, 7).contains("\"value\": \"ok\""));
+    }
+
+    fn data_str(row: &[DataValue], index: usize) -> String {
+        match &row[index] {
+            DataValue::Str(value) => value.as_str().to_string(),
+            other => panic!("expected string at {index}, got {other:?}"),
+        }
     }
 }

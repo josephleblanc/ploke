@@ -602,6 +602,31 @@ struct HarnessRequestBatch {
     broad_tui: profile::BroadTui,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum PreChildPlanningStatus {
+    Completed,
+    Failed,
+    TestStub,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PreChildPlanningReviewArtifact {
+    schema_version: String,
+    generated_at: String,
+    request_id: String,
+    request_hash: String,
+    parent_node_id: String,
+    planner_route: String,
+    planner_model_id: String,
+    prompt_path: PathBuf,
+    prompt_sha256: String,
+    status: PreChildPlanningStatus,
+    structured_response: Option<serde_json::Value>,
+    response_text: Option<String>,
+    error: Option<String>,
+}
+
 #[derive(Default)]
 struct BatchLedger {
     attempted: BTreeSet<usize>,
@@ -758,6 +783,9 @@ pub(crate) struct PlannedChildOutcome {
 
 const BROAD_TUI_ATTEMPT_LIMIT: usize = 3;
 const BROAD_TUI_FRESH_ATTEMPTS_PER_CHILD: usize = 3;
+const DEFAULT_GRAPH_NEAREST_ITEMS: usize = 24;
+const PRE_CHILD_PLANNING_SCHEMA: &str = "prototype1-pre-child-planning-review.v1";
+const PRE_CHILD_PLANNER_MODEL: &str = "google/gemini-3.5-flash";
 const BROAD_TUI_STASH_TRANSFER_ENV: &str = "PLOKE_EVAL_HEADLESS_TUI_STASH_TRANSFER";
 const BROAD_TUI_PRODUCER: &str = "prototype1:broad-headless-tui-adapter-v1";
 
@@ -1123,14 +1151,17 @@ async fn run_parent_target_selection(
         CandidateGenerationConfig::Legacy => run_legacy_parent_target_selection(env, parent)
             .await
             .map(ParentTargetSelection::ChildPlan),
-        CandidateGenerationConfig::BroadHarnessRequest => publish_broad_harness_child_plan_request(
-            env.manifest_path,
-            env.repo_root,
-            parent,
-            child_budget,
-            env.broad_tui,
-        )
-        .map(ParentTargetSelection::AwaitingHarnessBatch),
+        CandidateGenerationConfig::BroadHarnessRequest => {
+            let batch = publish_broad_harness_child_plan_request(
+                env.manifest_path,
+                env.repo_root,
+                parent,
+                child_budget,
+                env.broad_tui,
+            )?;
+            run_pre_child_planning_review(env, &batch).await?;
+            Ok(ParentTargetSelection::AwaitingHarnessBatch(batch))
+        }
         CandidateGenerationConfig::DeterministicTuiTools => {
             publish_deterministic_tui_tools_child_plan(env, parent, child_budget)
                 .map(ParentTargetSelection::ChildPlan)
@@ -1269,12 +1300,15 @@ fn publish_broad_harness_child_plan_request(
         .unwrap_or(slot_count);
     let mut slots = Vec::with_capacity(slot_count);
     for _ in 0..slot_count {
-        let publication = publish_broad_edit_harness_request(
+        let publication = publish_broad_edit_harness_request_with_graph_limit(
             manifest_path,
             repo_root,
             &parent_identity,
             slot_budget,
             admission_binding.clone(),
+            broad_tui
+                .graph_nearest
+                .unwrap_or(DEFAULT_GRAPH_NEAREST_ITEMS),
         )?;
         slots.push(HarnessRequestSlot {
             request_path: publication.request_path,
@@ -1302,6 +1336,340 @@ fn publish_broad_harness_child_plan_request(
         patch_generation_parallel_cap: child_budget.parallel_targets(),
         broad_tui,
     })
+}
+
+async fn run_pre_child_planning_review(
+    env: ChildPlanEnv<'_>,
+    batch: &HarnessRequestBatch,
+) -> Result<(), PrepareError> {
+    let first_slot = batch
+        .slots
+        .first()
+        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+            detail: "pre-child planning requires at least one broad harness request slot"
+                .to_string(),
+        })?;
+    let request = first_slot.published.request();
+    let artifact_path = request.planning.artifact_path.clone().ok_or_else(|| {
+        PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "broad harness request '{}' has no pre-child planning artifact path",
+                first_slot.published.request_id()
+            ),
+        }
+    })?;
+    let prompt_path = pre_child_planning_prompt_path(&artifact_path);
+    let prompt = render_pre_child_planning_prompt(env, batch, first_slot);
+    write_text_file(&prompt_path, &prompt)?;
+    let prompt_sha256 = sha256_hex(prompt.as_bytes());
+
+    #[cfg(test)]
+    {
+        let structured = serde_json::json!({
+            "target_pipeline": "test-stub broad harness pipeline",
+            "evidence_citations": [first_slot.published.request_path().display().to_string()],
+            "pipeline_scope": "test-only planner stub",
+            "edit_intent": "exercise planner artifact persistence without a live provider"
+        });
+        let artifact = pre_child_planning_artifact(
+            batch,
+            first_slot,
+            prompt_path,
+            prompt_sha256,
+            PreChildPlanningStatus::TestStub,
+            Some(structured),
+            Some("test planner stub".to_string()),
+            None,
+        );
+        write_json_file_pretty(&artifact_path, &artifact)?;
+        return Ok(());
+    }
+
+    #[cfg(not(test))]
+    {
+        let result = run_direct_google_pre_child_planner(&prompt).await;
+        match result {
+            Ok((response_text, structured)) => {
+                let artifact = pre_child_planning_artifact(
+                    batch,
+                    first_slot,
+                    prompt_path,
+                    prompt_sha256,
+                    PreChildPlanningStatus::Completed,
+                    Some(structured),
+                    Some(response_text),
+                    None,
+                );
+                write_json_file_pretty(&artifact_path, &artifact)?;
+                Ok(())
+            }
+            Err(error) => {
+                let detail = error.to_string();
+                let artifact = pre_child_planning_artifact(
+                    batch,
+                    first_slot,
+                    prompt_path,
+                    prompt_sha256,
+                    PreChildPlanningStatus::Failed,
+                    None,
+                    None,
+                    Some(detail.clone()),
+                );
+                let _ = write_json_file_pretty(&artifact_path, &artifact);
+                Err(PrepareError::DatabaseSetup {
+                    phase: "prototype1_pre_child_planning",
+                    detail,
+                })
+            }
+        }
+    }
+}
+
+fn pre_child_planning_artifact(
+    batch: &HarnessRequestBatch,
+    slot: &HarnessRequestSlot,
+    prompt_path: PathBuf,
+    prompt_sha256: String,
+    status: PreChildPlanningStatus,
+    structured_response: Option<serde_json::Value>,
+    response_text: Option<String>,
+    error: Option<String>,
+) -> PreChildPlanningReviewArtifact {
+    PreChildPlanningReviewArtifact {
+        schema_version: PRE_CHILD_PLANNING_SCHEMA.to_string(),
+        generated_at: Utc::now().to_rfc3339(),
+        request_id: slot.published.request_id().to_string(),
+        request_hash: slot.published.request_hash().to_string(),
+        parent_node_id: batch.parent.identity().node_id().to_string(),
+        planner_route: "direct-google".to_string(),
+        planner_model_id: PRE_CHILD_PLANNER_MODEL.to_string(),
+        prompt_path,
+        prompt_sha256,
+        status,
+        structured_response,
+        response_text,
+        error,
+    }
+}
+
+fn render_pre_child_planning_prompt(
+    env: ChildPlanEnv<'_>,
+    batch: &HarnessRequestBatch,
+    first_slot: &HarnessRequestSlot,
+) -> String {
+    let request = first_slot.published.request();
+    let evidence = request
+        .planning
+        .cited_evidence
+        .iter()
+        .map(|evidence| {
+            format!(
+                "- kind={:?} role={:?} location={}",
+                evidence.kind,
+                evidence.role,
+                evidence.location.render()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let seeds = request
+        .graph_restriction
+        .seed_modules
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        r#"You are the Prototype 1 pre-child planner. Review recent protocol output, runtime traces, and the repository surface before patch generation starts.
+
+Return exactly one JSON object with these top-level fields:
+- target_pipeline: string
+- evidence_citations: array of strings naming concrete files, directories, or trace records
+- pipeline_scope: string
+- edit_intent: string
+
+Request:
+- request_id: {request_id}
+- request_hash: {request_hash}
+- parent_node_id: {parent_node_id}
+- campaign_id: {campaign_id}
+- repo_root: {repo_root}
+- active_route_source: {route_source:?}
+- child_budget_min: {child_min}
+- child_budget_max: {child_max}
+
+Graph-restricted mutable surface:
+- source: {graph_source:?}
+- mode: {graph_mode:?}
+- nearest_items: {nearest}
+- seed_modules: {seeds}
+
+Evidence roots:
+{evidence}
+
+Harness prompt that the patching model will receive:
+```text
+{harness_prompt}
+```
+"#,
+        request_id = first_slot.published.request_id(),
+        request_hash = first_slot.published.request_hash(),
+        parent_node_id = batch.parent.identity().node_id(),
+        campaign_id = env.campaign_id,
+        repo_root = env.repo_root.display(),
+        route_source = env.route_source,
+        child_min = batch.child_budget.min,
+        child_max = batch.child_budget.max,
+        graph_source = request.graph_restriction.source,
+        graph_mode = request.graph_restriction.mode,
+        nearest = request.graph_restriction.nearest_items,
+        seeds = seeds,
+        evidence = evidence,
+        harness_prompt = request.render_prompt(),
+    )
+}
+
+#[cfg(not(test))]
+async fn run_direct_google_pre_child_planner(
+    prompt: &str,
+) -> Result<(String, serde_json::Value), PrepareError> {
+    use ploke_llm::router_only::google::Google;
+    use ploke_llm::{ChatStepOutcome, RequestMessage, Router};
+
+    let model = ModelId::from_str(PRE_CHILD_PLANNER_MODEL).map_err(|source| {
+        PrepareError::DatabaseSetup {
+            phase: "prototype1_pre_child_planning_model",
+            detail: source.to_string(),
+        }
+    })?;
+    let request = Google::default_chat_completion()
+        .with_model(model)
+        .with_messages(vec![
+            RequestMessage::new_system(
+                "You are a strict JSON planner for Prototype 1 child patch generation.".to_string(),
+            ),
+            RequestMessage::new_user(prompt.to_string()),
+        ])
+        .with_json_response()
+        .with_max_tokens(2048)
+        .with_temperature(0.0);
+    let client = reqwest::Client::new();
+    let cfg = ploke_llm::ChatHttpConfig::default();
+    let step = ploke_llm::chat_step(&client, &request, &cfg)
+        .await
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_pre_child_planning_google",
+            detail: source.to_string(),
+        })?;
+    let content = match step.outcome {
+        ChatStepOutcome::Content {
+            content: Some(content),
+            ..
+        } => content.to_string(),
+        ChatStepOutcome::Content { content: None, .. } => {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_pre_child_planning_google",
+                detail: "direct Google planner returned no content".to_string(),
+            });
+        }
+        ChatStepOutcome::ToolCalls { .. } => {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_pre_child_planning_google",
+                detail: "direct Google planner returned tool calls instead of JSON content"
+                    .to_string(),
+            });
+        }
+    };
+    let structured = parse_pre_child_planning_json(&content)?;
+    Ok((content, structured))
+}
+
+fn parse_pre_child_planning_json(content: &str) -> Result<serde_json::Value, PrepareError> {
+    let value = serde_json::from_str::<serde_json::Value>(content)
+        .or_else(|_| extract_json_object(content))
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_pre_child_planning_parse",
+            detail: format!("planner response was not valid JSON: {source}"),
+        })?;
+    validate_pre_child_planning_json(&value)?;
+    Ok(value)
+}
+
+fn extract_json_object(content: &str) -> Result<serde_json::Value, serde_json::Error> {
+    let Some(start) = content.find('{') else {
+        return serde_json::from_str(content);
+    };
+    let Some(end) = content.rfind('}') else {
+        return serde_json::from_str(content);
+    };
+    serde_json::from_str(&content[start..=end])
+}
+
+fn validate_pre_child_planning_json(value: &serde_json::Value) -> Result<(), PrepareError> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| PrepareError::DatabaseSetup {
+            phase: "prototype1_pre_child_planning_parse",
+            detail: "planner response root must be a JSON object".to_string(),
+        })?;
+    for field in ["target_pipeline", "pipeline_scope", "edit_intent"] {
+        let valid = object
+            .get(field)
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty());
+        if !valid {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_pre_child_planning_parse",
+                detail: format!("planner response field '{field}' must be a non-empty string"),
+            });
+        }
+    }
+    let valid_citations = object
+        .get("evidence_citations")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|items| {
+            !items.is_empty()
+                && items
+                    .iter()
+                    .all(|item| item.as_str().is_some_and(|value| !value.trim().is_empty()))
+        });
+    if !valid_citations {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "prototype1_pre_child_planning_parse",
+            detail: "planner response field 'evidence_citations' must be a non-empty string array"
+                .to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn pre_child_planning_artifact_path(prototype_root: &Path, request_id: &str) -> PathBuf {
+    prototype_root
+        .join("messages/pre-child-planning")
+        .join(format!("{}.json", request_id.replace(':', "__")))
+}
+
+fn pre_child_planning_prompt_path(artifact_path: &Path) -> PathBuf {
+    let mut prompt_path = artifact_path.to_path_buf();
+    prompt_path.set_extension("prompt.md");
+    prompt_path
+}
+
+fn write_text_file(path: &Path, text: &str) -> Result<(), PrepareError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    fs::write(path, text).map_err(|source| PrepareError::WriteManifest {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
 }
 
 fn broad_harness_admission_for_parent<S>(
@@ -2690,6 +3058,24 @@ fn publish_broad_edit_harness_request(
     child_budget: Prototype1ChildBudget,
     admission_binding: crate::cli::prototype1_state::edit_surface::harness_request::RequestAdmissionBinding,
 ) -> Result<BroadHarnessRequestPublication, PrepareError> {
+    publish_broad_edit_harness_request_with_graph_limit(
+        manifest_path,
+        repo_root,
+        parent,
+        child_budget,
+        admission_binding,
+        DEFAULT_GRAPH_NEAREST_ITEMS,
+    )
+}
+
+fn publish_broad_edit_harness_request_with_graph_limit(
+    manifest_path: &Path,
+    repo_root: &Path,
+    parent: &ParentIdentity,
+    child_budget: Prototype1ChildBudget,
+    admission_binding: crate::cli::prototype1_state::edit_surface::harness_request::RequestAdmissionBinding,
+    nearest_items: usize,
+) -> Result<BroadHarnessRequestPublication, PrepareError> {
     let prototype_root = prototype1_campaign_root(manifest_path);
     let request_dir = prototype_root.join("messages/edit-harness-request");
     let request_path = request_dir.join(format!("{}.json", parent.node_id()));
@@ -2698,7 +3084,7 @@ fn publish_broad_edit_harness_request(
         .join("messages/edit-harness-result")
         .join(format!("{}.json", parent.node_id()));
     let published =
-        crate::cli::prototype1_state::edit_surface::harness_request::PublishedBroadHarnessRequest::prototype1_workspace(
+        crate::cli::prototype1_state::edit_surface::harness_request::PublishedBroadHarnessRequest::prototype1_workspace_with_graph_limit(
             parent.node_id().to_string(),
             repo_root.to_path_buf(),
             crate::cli::prototype1_state::edit_surface::harness_request::HarnessChildBudget {
@@ -2710,7 +3096,11 @@ fn publish_broad_edit_harness_request(
             prompt_path.clone(),
             submitted_result_path,
             admission_binding,
+            nearest_items,
         );
+    let planning_artifact_path =
+        pre_child_planning_artifact_path(&prototype_root, parent.node_id());
+    let published = published.with_planning_artifact_path(planning_artifact_path);
     let request_path = published.request_path().to_path_buf();
     if let Some(parent) = request_path.parent() {
         fs::create_dir_all(parent).map_err(|source| PrepareError::CreateOutputDir {

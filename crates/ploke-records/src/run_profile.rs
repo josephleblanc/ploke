@@ -357,6 +357,8 @@ pub struct BroadTui {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fresh_slots_per_child: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph_nearest: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_secs: Option<u64>,
 }
 
@@ -511,6 +513,7 @@ mbe = { enabled = true, python = "python3", workers = 2 }
 [execution.broad_tui]
 max_attempts = 2
 fresh_slots_per_child = 2
+graph_nearest = 13
 "#;
 
     #[test]
@@ -535,6 +538,7 @@ fresh_slots_per_child = 2
         assert_eq!(profile.execution.trace_jsonl, TraceJsonl::Auto);
         assert_eq!(profile.execution.broad_tui.max_attempts, Some(2));
         assert_eq!(profile.execution.broad_tui.fresh_slots_per_child, Some(2));
+        assert_eq!(profile.execution.broad_tui.graph_nearest, Some(13));
         assert_eq!(profile.selection.oracle.mode, OracleMode::RecordOnly);
         assert!(profile.selection.oracle.require_evidence);
         assert!(profile.selection.metrics.persist);

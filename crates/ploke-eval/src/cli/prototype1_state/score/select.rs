@@ -46,6 +46,7 @@ impl ScoreSelectionSnapshot {
             total_rows: self.review.rows.len(),
             total_matching_rows,
             row_count: rows.len(),
+            missing_data: MissingDataSummary::from_rows(&rows),
             diagnostics: self.review.diagnostics.clone(),
             generation_filter: request.generation,
             rows,
@@ -66,6 +67,19 @@ impl ScoreSelectionSnapshot {
         println!("rows: {}", report.row_count);
         println!("total_rows: {}", report.total_rows);
         println!("matching_rows: {}", report.total_matching_rows);
+        println!("missing_data_total: {}", report.missing_data.total);
+        println!(
+            "missing_data_rows: {}",
+            report.missing_data.rows_with_missing
+        );
+        println!(
+            "missing_selection_rows: {}",
+            report.missing_data.missing_selection_rows
+        );
+        println!(
+            "projection_failures: {}",
+            report.missing_data.projection_failures
+        );
         if let Some(generation) = report.generation_filter {
             println!("generation_filter: {generation}");
         }
@@ -146,9 +160,59 @@ pub(super) struct ScoreSelectionReport {
     total_rows: usize,
     total_matching_rows: usize,
     row_count: usize,
+    missing_data: MissingDataSummary,
     diagnostics: Vec<ScoreSelectionDiagnostic>,
     generation_filter: Option<u32>,
     rows: Vec<ScoreSelectionRow>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct MissingDataSummary {
+    pub(crate) total: usize,
+    pub(crate) rows_with_missing: usize,
+    pub(crate) missing_selection_rows: usize,
+    pub(crate) projection_failures: usize,
+    pub(crate) by_field: BTreeMap<String, usize>,
+}
+
+impl MissingDataSummary {
+    fn from_rows(rows: &[ScoreSelectionRow]) -> Self {
+        let mut by_field = BTreeMap::new();
+        let mut total = 0;
+        let mut rows_with_missing = 0;
+        let mut missing_selection_rows = 0;
+        let mut projection_failures = 0;
+
+        for row in rows {
+            if row.selection_status == ScoreSelectionStatus::MissingSelection {
+                missing_selection_rows += 1;
+            }
+            if row.selection_status == ScoreSelectionStatus::FailedProjection {
+                projection_failures += 1;
+            }
+
+            let row_missing = row
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.severity == "missing")
+                .inspect(|diagnostic| {
+                    total += 1;
+                    *by_field.entry(diagnostic.field.clone()).or_default() += 1;
+                })
+                .count();
+            if row_missing > 0 {
+                rows_with_missing += 1;
+            }
+        }
+
+        Self {
+            total,
+            rows_with_missing,
+            missing_selection_rows,
+            projection_failures,
+            by_field,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -441,5 +505,97 @@ impl ScoreSelectionDiagnostic {
             field: diagnostic.field,
             message: diagnostic.message,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::InspectOutputFormat;
+
+    #[test]
+    fn score_selection_report_summarizes_missing_runtime_data() {
+        let mut missing_selection = ScoreSelectionRow::base(
+            "node-a".to_string(),
+            Some("branch-a".to_string()),
+            Some(2),
+            ScoreSelectionStatus::MissingSelection,
+        );
+        missing_selection
+            .diagnostics
+            .push(ScoreSelectionDiagnostic::missing(
+                "selection_input",
+                "score row has no joined selection input",
+            ));
+
+        let mut projected_without_score = ScoreSelectionRow::base(
+            "node-b".to_string(),
+            Some("branch-b".to_string()),
+            Some(2),
+            ScoreSelectionStatus::Projected,
+        );
+        projected_without_score
+            .diagnostics
+            .push(ScoreSelectionDiagnostic::missing(
+                "score_row",
+                "selection input has no joined child score row",
+            ));
+        projected_without_score
+            .diagnostics
+            .push(ScoreSelectionDiagnostic::invalid(
+                "child_score",
+                "invalid score rows are not missing data",
+            ));
+
+        let mut failed_projection = ScoreSelectionRow::base(
+            "node-c".to_string(),
+            None,
+            None,
+            ScoreSelectionStatus::FailedProjection,
+        );
+        failed_projection
+            .diagnostics
+            .push(ScoreSelectionDiagnostic {
+                severity: "selection_failure".to_string(),
+                field: "selection_projection".to_string(),
+                message: "projection failed before a selection row was available".to_string(),
+            });
+
+        let snapshot = ScoreSelectionSnapshot {
+            schema_version: "prototype1-score-selection-review.v1".to_string(),
+            generated_at: "2026-06-08T00:00:00Z".to_string(),
+            campaign_id: "campaign-a".to_string(),
+            manifest_path: PathBuf::from("/tmp/campaign/manifest.json"),
+            prototype_root: PathBuf::from("/tmp/campaign/prototype1"),
+            review: ScoreSelectionReview {
+                schema_version: "prototype1-score-selection-review.v1".to_string(),
+                score_schema_version: "prototype1-score-projection.v1".to_string(),
+                score_procedure_id: "prototype1.score.operational_metrics.v1".to_string(),
+                selection_procedure_id: "prototype1.successor_selection.v1".to_string(),
+                rows: vec![
+                    missing_selection,
+                    projected_without_score,
+                    failed_projection,
+                ],
+                diagnostics: Vec::new(),
+            },
+        };
+
+        let report = snapshot.report(&ScoreSelectionReviewRequest {
+            rows: 10,
+            generation: None,
+            format: InspectOutputFormat::Json,
+        });
+
+        assert_eq!(report.missing_data.total, 2);
+        assert_eq!(report.missing_data.rows_with_missing, 2);
+        assert_eq!(report.missing_data.missing_selection_rows, 1);
+        assert_eq!(report.missing_data.projection_failures, 1);
+        assert_eq!(
+            report.missing_data.by_field.get("selection_input"),
+            Some(&1)
+        );
+        assert_eq!(report.missing_data.by_field.get("score_row"), Some(&1));
+        assert_eq!(report.missing_data.by_field.get("child_score"), None);
     }
 }

@@ -3627,6 +3627,7 @@ Suggested validation after editing: run `cargo test`.
                     max_attempts: Some(1),
                     fresh_slots_per_child: Some(1),
                     timeout_secs: Some(120),
+                    ..profile::BroadTui::default()
                 };
             });
         write_live_step_evidence(&world.manifest_path);

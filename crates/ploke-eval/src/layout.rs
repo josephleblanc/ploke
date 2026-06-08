@@ -155,6 +155,12 @@ pub fn cache_dir() -> Result<PathBuf, PrepareError> {
     Ok(ploke_eval_home()?.join("cache"))
 }
 
+pub fn record_mirror_file() -> Result<PathBuf, PrepareError> {
+    Ok(ploke_eval_home()?
+        .join("records")
+        .join("mirror.cozo.sqlite"))
+}
+
 pub fn last_run_file() -> Result<PathBuf, PrepareError> {
     Ok(ploke_eval_home()?.join("last-run.json"))
 }

@@ -708,6 +708,8 @@ pub(crate) struct BroadTui {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) fresh_slots_per_child: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) graph_nearest: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) timeout_secs: Option<u64>,
 }
 
@@ -721,6 +723,11 @@ impl BroadTui {
         if self.fresh_slots_per_child == Some(0) {
             return Err(profile_error(
                 "execution.broad_tui.fresh_slots_per_child must be greater than zero",
+            ));
+        }
+        if self.graph_nearest == Some(0) {
+            return Err(profile_error(
+                "execution.broad_tui.graph_nearest must be greater than zero",
             ));
         }
         if self.timeout_secs == Some(0) {
@@ -1106,6 +1113,7 @@ mbe = { enabled = true, python = "python3", workers = 2 }
 [execution.broad_tui]
 max_attempts = 2
 fresh_slots_per_child = 2
+graph_nearest = 13
 "#;
 
     #[test]
@@ -1154,6 +1162,7 @@ fresh_slots_per_child = 2
         );
         assert_eq!(profile.execution.broad_tui.max_attempts, Some(2));
         assert_eq!(profile.execution.broad_tui.fresh_slots_per_child, Some(2));
+        assert_eq!(profile.execution.broad_tui.graph_nearest, Some(13));
         assert!(profile.execution.mbe.enabled);
         assert_eq!(profile.execution.mbe.python, "python3");
         assert_eq!(profile.execution.mbe.workers, 2);
@@ -1199,6 +1208,20 @@ fresh_slots_per_child = 2
         .expect_err("zero broad TUI max attempts should be rejected");
 
         assert!(err.to_string().contains("execution.broad_tui.max_attempts"));
+    }
+
+    #[test]
+    fn run_profile_execution_rejects_zero_broad_tui_graph_nearest() {
+        let err = parse_profile(
+            Path::new("profile.toml"),
+            &PROFILE.replace("graph_nearest = 13", "graph_nearest = 0"),
+        )
+        .expect_err("zero graph-neighborhood limit should be rejected");
+
+        assert!(
+            err.to_string()
+                .contains("execution.broad_tui.graph_nearest")
+        );
     }
 
     #[test]
