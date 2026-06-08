@@ -62,3 +62,14 @@
   `2026-06-07T20:43:40-07:00`: `node-7815b0481a271a5e`
   (`branch-feabca86774c57a6`, PID `988607`) and
   `node-d05350cdb42e3185` (`branch-9ded1d142d60298a`, PID `988624`).
+- Observed both generation-3 children reject:
+  `node-d05350cdb42e3185` / `branch-9ded1d142d60298a` at
+  `2026-06-07T20:50:59-07:00`, and `node-7815b0481a271a5e` /
+  `branch-feabca86774c57a6` at `2026-06-07T20:55:39-07:00`.
+- Confirmed `require_keep_for_continuation = false` plus
+  `explore_from_rejected = true` allowed continuation after the all-rejected
+  generation: successor selection recorded disposition
+  `continue_explore_from_rejected`, selected rejected
+  `node-b56d3539fe294ed3` / `branch-afdcff78a2bf6e87`, advanced the active
+  checkout, spawned successor PID `1005288`, and acknowledged handoff at
+  `2026-06-07T20:56:04-07:00`.
