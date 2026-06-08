@@ -191,6 +191,28 @@ and the run-summary helper:
   live run after disabling the keep gate, and it follows a historical rejected
   parent that produced fresh kept children.
 
+2026-06-08 01:13:26 to 01:14:27 -0700:
+
+- The current parent `node-86b020f1dfdcf8af` completed both broad attempts:
+  `node-86b020f1dfdcf8af-r2` wrote result sidecars at `01:04:55 -0700`, and
+  `node-86b020f1dfdcf8af` wrote result sidecars at `01:07:06 -0700`.
+- The loop wrote child plan
+  `prototype1/messages/child-plan/node-86b020f1dfdcf8af.json` at
+  `01:07:10 -0700`.
+- It materialized and spawned two generation 4 child runners:
+  `node-eb38c0cf2ab7b58c` / `branch-0b3c3b943489e60b`, targeting
+  `crates/ploke-db/src/database.rs`, and `node-72b640e0a78cafcc` /
+  `branch-4fa5078a62ae685e`, targeting
+  `crates/ploke-tui/src/app_state/database.rs`.
+- The transition journal recorded `build_child after`, `child_artifact_committed`,
+  `spawn_child spawned`, `child ready`, `child evaluating`, and
+  `observe_child before` for both generation 4 children by `01:09:29 -0700`.
+- Live process evidence at `01:13:26 -0700`: parent PID `1753984` remained the
+  active `prototype1-state` process, with runner PIDs `1849597` and `1849654`
+  evaluating the two generation 4 child branches. No `runner-result.json`,
+  result-channel completion, or `observe_child after` record existed for those
+  generation 4 children at this checkpoint.
+
 ## Related Reports
 
 - [`../2026-06-07_prototype1-loop-termination-reports/README.md`](../2026-06-07_prototype1-loop-termination-reports/README.md)
