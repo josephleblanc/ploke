@@ -113,7 +113,7 @@ Follow-up live evidence:
 
 ## E4: Historical traversal duplicate and expanded-candidate policy
 
-Status: open, source trace recorded, minimal repro not yet written
+Status: source fix added, focused verification passed
 
 Hypothesis: all-history traversal should not treat a previously expanded
 parent, or the same node/branch admitted through both History and current
@@ -131,22 +131,25 @@ Rerun evidence:
 
 Source boundary:
 
-- `ParentSelection::select_successor` filters the exact active parent but not
-  already-expanded historical parents.
-- `Candidates::with_current_generation` appends current-generation payloads
-  without deduping against all-history payloads.
-- `score_child_prop_calculation_with_set` uses only the candidate node's own
-  child count for its exploration term, while the frontier scoring path also
-  considers the parent node's child count.
+- `Candidates::with_current_generation` now removes all-history payloads with
+  the same node/branch coordinate before adding a decision-grade
+  current-generation payload.
+- `Candidates::traverse_with_policy` now excludes candidates that already have
+  successful children before invoking the traversal strategy.
+- `TraversalEvidence.child_counts` now persists the pre-pruning expansion counts
+  used during live scoring, so formula/replay does not recompute different
+  weights from the pruned `considered` list.
+- `score_child_prop_calculation_with_set` now uses the same candidate-plus-parent
+  child count helper used by the frontier path.
 
-Missing repro / validation:
+Regressions:
 
-- Add a focused test that constructs an all-history candidate set plus
-  current-generation payloads for the same node/branch and proves the expected
-  deduplication behavior.
-- Add a focused test for the chosen expansion policy: either hard-exclude
-  already-expanded coordinates, or document and verify the exact
-  `score_child_prop` penalty semantics for expanded parents.
+- `traversal_replaces_matching_history_candidate_with_current_generation_payload`
+- `traversal_does_not_replace_history_with_ineligible_current_duplicate`
+- `traversal_excludes_already_expanded_candidates`
+- `score_child_prop_weights_include_parent_expansion_penalty`
+- `score_child_prop_formula_uses_persisted_expansion_counts_after_pruning`
+- `imp_at_k_score_does_not_resurrect_expanded_parent`
 
 ## Verification commands
 
@@ -161,5 +164,8 @@ RUSTFLAGS=-Awarnings cargo test -p ploke-eval agent_batch_request_preserves_embe
 RUSTFLAGS=-Awarnings cargo test -p ploke-eval loop_prototype1_setup_command_parses -- --nocapture
 RUSTFLAGS=-Awarnings cargo test -p ploke-eval prototype1_setup_campaign_manifest_preserves_embedding_overrides -- --nocapture
 RUSTFLAGS=-Awarnings cargo test -p ploke-eval prototype1_eval_set_id_includes_embedding_overrides -- --nocapture
+RUSTFLAGS=-Awarnings cargo test -p ploke-eval traversal_does_not_replace_history_with_ineligible_current_duplicate -- --nocapture
+RUSTFLAGS=-Awarnings cargo test -p ploke-eval score_child_prop_formula_uses_persisted_expansion_counts_after_pruning -- --nocapture
+RUSTFLAGS=-Awarnings cargo test -p ploke-eval successor_selection::traversal -- --nocapture
 RUSTFLAGS=-Awarnings cargo check -p ploke-eval
 ```

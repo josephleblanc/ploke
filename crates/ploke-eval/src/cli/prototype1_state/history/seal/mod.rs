@@ -2294,6 +2294,7 @@ mod tests {
                 seed: 7,
                 strategy: StrategyKind::default(),
                 selected_source: Some(TraversalCandidateSource::CurrentGeneration),
+                child_counts: BTreeMap::new(),
             }),
             selection_decision("child-a", "branch-a"),
         )
@@ -2718,6 +2719,7 @@ mod tests {
                 seed: 7,
                 strategy: StrategyKind::default(),
                 selected_source: None,
+                child_counts: traversal.child_counts,
             }),
             traversal.decision,
         )
@@ -2803,6 +2805,7 @@ mod tests {
                 seed: 7,
                 strategy: StrategyKind::default(),
                 selected_source: None,
+                child_counts: first_traversal.child_counts.clone(),
             }),
             first_traversal.decision.clone(),
         )
@@ -2847,6 +2850,7 @@ mod tests {
                 seed: 7,
                 strategy: StrategyKind::default(),
                 selected_source: None,
+                child_counts: second_traversal.child_counts,
             }),
             second_traversal.decision,
         )

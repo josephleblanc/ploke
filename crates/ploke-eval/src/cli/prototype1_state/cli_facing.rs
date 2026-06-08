@@ -6200,6 +6200,7 @@ impl<'a> ParentSelection<'a> {
                 } else {
                     TraversalCandidateSource::History
                 }),
+                child_counts: selection.child_counts,
             }),
             metrics: selection.metrics,
             selected_from_generation_outcomes: selection.selected_from_current_generation,

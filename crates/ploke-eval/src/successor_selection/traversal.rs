@@ -27,7 +27,7 @@ use crate::{
         HistoryCandidateSource, HistoryCandidates, HistoryError, HistoryHash,
         SealedCandidateEvidence, SealedComparedRunEvidence, SealedRunEvidence,
         SelectionDecisionEntry, SelectionProjectionFailure, SelectionProjectionFailureKind,
-        SelectionScope, SubjectRef, TraversalCandidateSource,
+        SelectionScope, SubjectRef, TraversalCandidateSource, TraversalEvidence,
     },
     metric::{self, Summary},
 };
@@ -306,6 +306,7 @@ pub(crate) struct Selection {
     pub(crate) considered: Vec<EvaluationPayload>,
     pub(crate) considered_sources: Vec<TraversalCandidateSource>,
     pub(crate) projection_failures: Vec<SelectionProjectionFailure>,
+    pub(crate) child_counts: BTreeMap<String, usize>,
     pub(crate) metrics: selection_metrics::Set,
     pub(crate) selected_from_current_generation: bool,
 }
@@ -541,7 +542,7 @@ pub(crate) fn replay_score_child_prop(
             candidate_set_membership: None,
         })
         .collect::<Vec<_>>();
-    let child_counts = successful_child_counts(&entry.considered);
+    let child_counts = traversal_child_counts(traversal, &entry.considered);
     let weights = score_child_prop_weights_with_set(
         &items,
         &child_counts,
@@ -630,7 +631,7 @@ pub(crate) fn score_child_prop_formula(
             candidate_set_membership: None,
         })
         .collect::<Vec<_>>();
-    let child_counts = successful_child_counts(&entry.considered);
+    let child_counts = traversal_child_counts(traversal, &entry.considered);
     let calculation = score_child_prop_calculation_with_set(
         &items,
         &child_counts,
@@ -793,6 +794,15 @@ impl Candidates {
             }
         }
 
+        let all_decision_payloads = items
+            .iter()
+            .map(|item| item.payload.clone())
+            .collect::<Vec<_>>();
+        let child_counts = successful_child_counts(&all_decision_payloads);
+        let items = items
+            .into_iter()
+            .filter(|item| !candidate_has_successful_children(item, &child_counts))
+            .collect::<Vec<_>>();
         let considered = items
             .iter()
             .map(|item| item.payload.clone())
@@ -801,7 +811,6 @@ impl Candidates {
             .iter()
             .map(|item| item.source.traversal_candidate_source())
             .collect::<Vec<_>>();
-        let child_counts = successful_child_counts(&considered);
         let evidence_summary = CandidateCaseEvidenceSummary::from_considered(&considered);
         let metric_set = selection_metrics::Set::from_considered(
             metrics_policy,
@@ -831,6 +840,7 @@ impl Candidates {
             considered,
             considered_sources,
             projection_failures: failures,
+            child_counts,
             metrics: metric_set,
             selected_from_current_generation: selection.chosen.source.is_current_generation(),
         }))
@@ -882,6 +892,7 @@ impl Candidates {
         let candidate_set =
             CandidateSetCommitment::from_payloads_with_sources(&payloads, &sources)?;
         let root = candidate_set.root.clone();
+        let mut current_candidates = Vec::with_capacity(payloads.len());
         for payload in payloads {
             let payload_hash = payload.payload_hash()?;
             let membership = candidate_set
@@ -890,7 +901,7 @@ impl Candidates {
                     TraversalCandidateSource::CurrentGeneration.candidate_source_class(),
                 )?
                 .cloned();
-            self.candidates.push(Candidate {
+            current_candidates.push(Candidate {
                 source: Source::CurrentGeneration {
                     scope: scope.clone(),
                 },
@@ -902,6 +913,21 @@ impl Candidates {
                 candidate_set_membership: membership.map(SourceMembership::new),
             });
         }
+
+        let current_coordinates = current_candidates
+            .iter()
+            .map(decision_grade_candidate_coordinate)
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect::<BTreeSet<_>>();
+        if !current_coordinates.is_empty() {
+            self.candidates.retain(|candidate| {
+                candidate_coordinate(&candidate.payload)
+                    .is_none_or(|coordinate| !current_coordinates.contains(&coordinate))
+            });
+        }
+        self.candidates.extend(current_candidates);
         Ok(self)
     }
 }
@@ -1544,6 +1570,58 @@ fn successful_child_counts(considered: &[EvaluationPayload]) -> BTreeMap<String,
     counts
 }
 
+fn traversal_child_counts(
+    traversal: &TraversalEvidence,
+    considered: &[EvaluationPayload],
+) -> BTreeMap<String, usize> {
+    if traversal.child_counts.is_empty() {
+        successful_child_counts(considered)
+    } else {
+        traversal.child_counts.clone()
+    }
+}
+
+fn candidate_coordinate(payload: &EvaluationPayload) -> Option<(String, String)> {
+    let input = payload.selection_input.as_ref()?;
+    Some((
+        input.candidate.node_id.clone(),
+        input.candidate.branch_id.clone(),
+    ))
+}
+
+fn decision_grade_candidate_coordinate(
+    candidate: &Candidate,
+) -> Result<Option<(String, String)>, HistoryError> {
+    match decision_grade(candidate.clone())? {
+        CandidateGrade::Eligible(item) => Ok(candidate_coordinate(&item.payload)),
+        CandidateGrade::Excluded(_) => Ok(None),
+    }
+}
+
+fn candidate_has_successful_children(item: &Item, child_counts: &BTreeMap<String, usize>) -> bool {
+    let case = CandidateCase::from_payload(&item.payload);
+    let Some(input) = case.selection_input() else {
+        return false;
+    };
+    child_counts
+        .get(&input.candidate.node_id)
+        .copied()
+        .unwrap_or_default()
+        > 0
+}
+
+fn selection_child_count(case: CandidateCase<'_>, child_counts: &BTreeMap<String, usize>) -> usize {
+    let own_child_count = case
+        .selection_input()
+        .and_then(|input| child_counts.get(&input.candidate.node_id).copied())
+        .unwrap_or_default();
+    let parent_child_count = case
+        .parent_node_id()
+        .and_then(|parent_node_id| child_counts.get(parent_node_id).copied())
+        .unwrap_or_default();
+    own_child_count.saturating_add(parent_child_count)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct TraversalScore {
     oracle: Option<OracleScore>,
@@ -1574,15 +1652,7 @@ impl TraversalScore {
         let frontier_delta = max_performance
             .map(|max| performance.0 - max.0)
             .unwrap_or_default();
-        let own_child_count = child_counts
-            .get(&input.candidate.node_id)
-            .copied()
-            .unwrap_or_default();
-        let parent_child_count = case
-            .parent_node_id()
-            .and_then(|parent_node_id| child_counts.get(parent_node_id).copied())
-            .unwrap_or_default();
-        let child_count = own_child_count.saturating_add(parent_child_count);
+        let child_count = selection_child_count(*case, child_counts);
         Ok(Some(Self {
             oracle: oracle_score(case, oracle, require_evidence)?,
             performance,
@@ -1848,13 +1918,10 @@ fn score_child_prop_calculation_with_set(
         let Some(performance) = performance_score_with_set(index, case, metrics, metric_set) else {
             continue;
         };
-        let Some(input) = case.selection_input() else {
+        if case.selection_input().is_none() {
             continue;
-        };
-        let child_count = child_counts
-            .get(&input.candidate.node_id)
-            .copied()
-            .unwrap_or_default();
+        }
+        let child_count = selection_child_count(case, child_counts);
         let oracle_score = oracle_score(&case, oracle, require_evidence)?;
         selectable.push((index, performance, oracle_score, child_count, decision));
     }
@@ -2349,6 +2416,106 @@ mod tests {
     }
 
     #[test]
+    fn traversal_replaces_matching_history_candidate_with_current_generation_payload() {
+        let history = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![candidate_from_payload(decision_grade_payload(
+                "duplicate",
+                "branch-duplicate",
+                None,
+                0,
+                BranchDisposition::Reject,
+                metrics(false, false, 5),
+            ))],
+        };
+        let current = decision_grade_payload(
+            "duplicate",
+            "branch-duplicate",
+            None,
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        );
+
+        let candidates = Candidates::from_history(history)
+            .with_current_generation(
+                SelectionScope::new("generation_local:current"),
+                vec![current],
+            )
+            .expect("current generation candidates");
+
+        assert_eq!(candidates.candidates.len(), 1);
+        assert!(matches!(
+            candidates.candidates[0].source,
+            Source::CurrentGeneration { .. }
+        ));
+        let selection = select(candidates, 0, StrategyKind::score_child_prop())
+            .expect("traversal")
+            .expect("selection");
+
+        assert_eq!(selection.considered.len(), 1);
+        assert_eq!(selection.considered_sources.len(), 1);
+        assert_eq!(
+            selection.considered_sources[0],
+            TraversalCandidateSource::CurrentGeneration
+        );
+        assert_eq!(selection.decision.candidate_node_id, "duplicate");
+        assert_eq!(selection.decision.branch_disposition, "keep");
+        assert!(selection.selected_from_current_generation);
+    }
+
+    #[test]
+    fn traversal_does_not_replace_history_with_ineligible_current_duplicate() {
+        let history = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![candidate_from_payload(decision_grade_payload(
+                "duplicate",
+                "branch-duplicate",
+                None,
+                0,
+                BranchDisposition::Reject,
+                metrics(false, false, 5),
+            ))],
+        };
+        let current = payload_without_sealed_evaluation(
+            "duplicate",
+            "branch-duplicate",
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        );
+
+        let candidates = Candidates::from_history(history)
+            .with_current_generation(
+                SelectionScope::new("generation_local:current"),
+                vec![current],
+            )
+            .expect("current generation candidates");
+
+        assert_eq!(candidates.candidates.len(), 2);
+        let selection = select(candidates, 0, StrategyKind::score_child_prop())
+            .expect("traversal")
+            .expect("selection");
+
+        assert_eq!(selection.considered.len(), 1);
+        assert_eq!(
+            selection.considered_sources[0],
+            TraversalCandidateSource::History
+        );
+        assert_eq!(selection.decision.candidate_node_id, "duplicate");
+        assert_eq!(selection.decision.branch_disposition, "reject");
+        assert!(!selection.selected_from_current_generation);
+        assert!(
+            selection
+                .projection_failures
+                .iter()
+                .any(|failure| failure.kind
+                    == SelectionProjectionFailureKind::DecisionGradeIneligible),
+            "ineligible current duplicate should be reported as a projection failure"
+        );
+    }
+
+    #[test]
     fn traversal_seals_membership_from_final_decision_set() {
         let historical = candidate_from_payload(decision_grade_payload(
             "history-strong",
@@ -2679,7 +2846,7 @@ mod tests {
     }
 
     #[test]
-    fn traversal_downweights_over_expanded_candidates() {
+    fn traversal_excludes_already_expanded_candidates() {
         let expanded = candidate_from_payload(decision_grade_payload(
             "expanded",
             "branch-expanded",
@@ -2717,6 +2884,15 @@ mod tests {
         .expect("selection");
 
         assert_eq!(selection.decision.candidate_node_id, "frontier");
+        assert!(
+            selection.considered.iter().all(|payload| {
+                payload
+                    .selection_input
+                    .as_ref()
+                    .is_some_and(|input| input.candidate.node_id != "expanded")
+            }),
+            "expanded parent must not remain in the decision set"
+        );
     }
 
     #[test]
@@ -2796,6 +2972,48 @@ mod tests {
         assert_eq!(expanded.exploration, 0.5);
         assert_eq!(frontier.exploration, 1.0);
         assert!(frontier.weight > expanded.weight);
+    }
+
+    #[test]
+    fn score_child_prop_weights_include_parent_expansion_penalty() {
+        let child_of_expanded = decision_grade_payload(
+            "expanded-child",
+            "branch-expanded-child",
+            Some("expanded"),
+            0,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        );
+        let frontier = decision_grade_payload(
+            "frontier",
+            "branch-frontier",
+            None,
+            1,
+            BranchDisposition::Keep,
+            metrics(true, true, 0),
+        );
+        let items = vec![traversal_item(child_of_expanded), traversal_item(frontier)];
+        let mut child_counts = BTreeMap::new();
+        child_counts.insert("expanded".to_string(), 2);
+
+        let weights = score_child_prop_weights(
+            &items,
+            &child_counts,
+            3,
+            10_000,
+            metric::Inputs::default(),
+            OracleMode::RecordOnly,
+            true,
+        )
+        .expect("weights");
+
+        let expanded_child = weights.iter().find(|weight| weight.index == 0).unwrap();
+        let frontier = weights.iter().find(|weight| weight.index == 1).unwrap();
+        assert_eq!(expanded_child.child_count, 2);
+        assert_eq!(expanded_child.exploration, 1.0 / 3.0);
+        assert_eq!(frontier.child_count, 0);
+        assert_eq!(frontier.exploration, 1.0);
+        assert!(frontier.weight > expanded_child.weight);
     }
 
     #[test]
@@ -2881,6 +3099,7 @@ mod tests {
                 seed: 99,
                 strategy,
                 selected_source: None,
+                child_counts: selection.child_counts,
             }),
             selection.metrics,
             selection.decision,
@@ -2903,6 +3122,94 @@ mod tests {
         assert!(selected.weight.is_some());
         assert!(selected.cumulative_lower.is_some());
         assert!(selected.cumulative_upper.is_some());
+    }
+
+    #[test]
+    fn score_child_prop_formula_uses_persisted_expansion_counts_after_pruning() {
+        let strategy = StrategyKind::score_child_prop();
+        let candidates = HistoryCandidates {
+            scope: SelectionScope::all_admitted_candidates(),
+            candidates: vec![
+                candidate_from_payload(decision_grade_payload(
+                    "expanded",
+                    "branch-expanded",
+                    None,
+                    0,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                )),
+                candidate_from_payload(decision_grade_payload(
+                    "expanded-child",
+                    "branch-expanded-child",
+                    Some("expanded"),
+                    1,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                )),
+                candidate_from_payload(decision_grade_payload(
+                    "frontier",
+                    "branch-frontier",
+                    None,
+                    2,
+                    BranchDisposition::Keep,
+                    metrics(true, true, 0),
+                )),
+            ],
+        };
+        let selection = select_from_history(candidates, 99, strategy.clone())
+            .expect("selection")
+            .expect("selected");
+
+        assert_eq!(selection.considered.len(), 2);
+        assert!(
+            selection.considered.iter().all(|payload| {
+                payload
+                    .selection_input
+                    .as_ref()
+                    .is_some_and(|input| input.candidate.node_id != "expanded")
+            }),
+            "expanded parent should be pruned before sealing considered"
+        );
+        assert_eq!(selection.child_counts.get("expanded"), Some(&1));
+
+        let entry = SelectionDecisionEntry::new_with_traversal_identity_metrics(
+            ProcedureRef::new(HISTORY_TRAVERSAL_PROCEDURE_ID),
+            SelectionScope::all_admitted_candidates(),
+            Some(selection.selected_payload.candidate.clone()),
+            selection.selected_occurrence_id(),
+            selection.selected_membership_id(),
+            selection.considered,
+            selection.considered_sources,
+            selection.projection_failures,
+            Some(TraversalEvidence {
+                seed: 99,
+                strategy,
+                selected_source: None,
+                child_counts: selection.child_counts,
+            }),
+            selection.metrics,
+            selection.decision,
+        )
+        .expect("selection entry with formula");
+
+        let formula = entry.formula.as_ref().expect("formula persisted");
+        let Formula::ScoreChildProp(score) = &formula.formula;
+        let formula_child = score
+            .rows
+            .iter()
+            .find(|row| row.node_id.as_deref() == Some("expanded-child"))
+            .expect("expanded child formula row");
+        assert_eq!(formula_child.child_count, Some(1));
+
+        let replay = replay_score_child_prop(&entry)
+            .expect("replay")
+            .expect("score-child-prop replay");
+        let replay_child = replay
+            .rows
+            .iter()
+            .find(|row| row.node_id.as_deref() == Some("expanded-child"))
+            .expect("expanded child replay row");
+        assert_eq!(replay_child.child_count, 1);
     }
 
     #[test]
@@ -2938,15 +3245,19 @@ mod tests {
             selection.metrics.policy.imp_at_k.score_points_per_imp_point,
             0
         );
-        assert_eq!(selection.metrics.candidates.len(), 2);
-        let parent_row = selection.metrics.candidates.first().expect("parent metric");
-        let imp = parent_row.imp_at_k.as_ref().expect("imp@k row");
-        assert_eq!(imp.descendant_count, 1);
-        assert!(imp.improvement.expect("improvement") > 0);
+        assert_eq!(selection.metrics.candidates.len(), 1);
+        assert!(
+            selection
+                .metrics
+                .candidates
+                .iter()
+                .all(|candidate| !candidate.candidate.contains("imp-parent")),
+            "expanded parent must not remain in persisted metric rows"
+        );
     }
 
     #[test]
-    fn imp_at_k_score_enabled_can_change_frontier_selection() {
+    fn imp_at_k_score_does_not_resurrect_expanded_parent() {
         let candidates = HistoryCandidates {
             scope: SelectionScope::all_admitted_candidates(),
             candidates: vec![
@@ -2989,7 +3300,15 @@ mod tests {
         .expect("scored selection");
 
         assert_eq!(base.decision.candidate_node_id, "imp-score-child");
-        assert_eq!(scored.decision.candidate_node_id, "imp-score-parent");
+        assert_eq!(scored.decision.candidate_node_id, "imp-score-child");
+        assert!(
+            scored
+                .metrics
+                .candidates
+                .iter()
+                .all(|candidate| !candidate.candidate.contains("imp-score-parent")),
+            "imp@k scoring must not make an expanded parent selectable again"
+        );
     }
 
     #[test]

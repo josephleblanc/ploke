@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -680,6 +680,8 @@ pub struct TraversalEvidenceRecord {
     pub strategy: TraversalStrategyRecord,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_source: Option<TraversalCandidateSourceRecord>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub child_counts: BTreeMap<String, usize>,
 }
 
 /// Selection decision entry sealed in a History entry payload.
@@ -771,11 +773,14 @@ mod tests {
                 "lambda_millis": 10000,
                 "metrics": "operational_and_protocol"
             },
-            "selected_source": "current_generation"
+            "selected_source": "current_generation",
+            "child_counts": {
+                "expanded": 1
+            }
         });
 
         let parsed: TraversalEvidenceRecord =
-            serde_json::from_value(value).expect("parse traversal evidence");
+            serde_json::from_value(value.clone()).expect("parse traversal evidence");
         assert_eq!(parsed.seed, 0);
         assert_eq!(
             parsed.strategy,
@@ -791,6 +796,9 @@ mod tests {
             parsed.selected_source,
             Some(TraversalCandidateSourceRecord::CurrentGeneration)
         );
+        assert_eq!(parsed.child_counts.get("expanded"), Some(&1));
+        let roundtrip = serde_json::to_value(&parsed).expect("roundtrip traversal evidence");
+        assert_eq!(roundtrip["child_counts"], value["child_counts"]);
     }
 
     #[test]

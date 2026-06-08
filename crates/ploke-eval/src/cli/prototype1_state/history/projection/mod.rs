@@ -3482,6 +3482,12 @@ pub(crate) struct TraversalEvidence {
     pub(crate) strategy: crate::successor_selection::traversal::StrategyKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) selected_source: Option<TraversalCandidateSource>,
+    /// Successful child counts used by traversal scoring before pruning expanded candidates.
+    ///
+    /// Older entries omit this and replay falls back to recomputing from the
+    /// persisted considered set.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) child_counts: BTreeMap<String, usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,6 +1,6 @@
 # Prototype 1 Selection: Current Approach
 
-Status: current as of 2026-05-21 by code inspection. Older selection
+Status: current as of 2026-06-07 by code inspection. Older selection
 identity, fanout, and impact-audit drafts were archived under
 [`docs/archive/workflow/evalnomicon/drafts/selection-2026-05-21/`](../../../../archive/workflow/evalnomicon/drafts/selection-2026-05-21/).
 
@@ -54,25 +54,32 @@ draft intent.
 
 2. `ParentSelection::select_successor` builds the candidate universe.
 
-   It loads History candidates for the requested scope, projects current
-   generation child outcomes into candidate payloads, appends those current
-   generation candidates to the traversal set, then calls
+   It loads History candidates for the requested scope, removes the exact active
+   parent, projects current-generation child outcomes into candidate payloads,
+   replaces matching History payloads for the same node/branch coordinate only
+   when the current-generation payload is decision-grade, then calls
    `successor_selection::traversal::select_with_policy`.
 
 3. `Candidates::traverse_with_policy` filters to decision-grade candidates.
 
    The traversal layer records projection failures separately from the ordered
-   considered list, computes a selection metric set from the considered payloads
-   and source classes, and asks the selected strategy to choose a candidate.
-   The chosen candidate is then bound back to a candidate-set membership.
+   considered list, excludes candidates that have already produced successful
+   children, computes a selection metric set from the remaining considered
+   payloads and source classes, and asks the selected strategy to choose a
+   candidate. The chosen candidate is then bound back to a candidate-set
+   membership.
 
 4. `score_child_prop` is the main stochastic strategy.
 
    It computes per-candidate weights from decision outcome, operational or
-   operational-plus-protocol metric inputs, optional oracle policy, child count,
-   and `imp@k` score deltas. It samples with a deterministic seed and records
-   rationale fields such as total weight, sample, selected weight, performance,
-   child count, alpha, exploitation, and exploration.
+   operational-plus-protocol metric inputs, optional oracle policy, expansion
+   count, and `imp@k` score deltas. Expansion count is the candidate's own
+   successful-child count plus the successful-child count of its parent
+   coordinate. Candidates with successful children are excluded before sampling;
+   their descendants remain eligible but carry the parent-expansion penalty. The
+   strategy samples with a deterministic seed and records rationale fields such
+   as total weight, sample, selected weight, performance, child count, alpha,
+   exploitation, and exploration.
 
 5. `SelectionSealMaterial` carries the selected result to History sealing.
 
@@ -83,8 +90,13 @@ draft intent.
    - selected occurrence and membership ids when available
    - ordered considered payloads and their source classes
    - projection failures
-   - traversal replay parameters
+   - traversal replay parameters, including pre-pruning child counts
    - selection metrics
+
+   Pre-pruning child counts are carried in `TraversalEvidence` so debugger
+   formula and replay views use the same expansion context that live
+   `score_child_prop` used before expanded candidates were removed from the
+   final considered set.
 
    Payload lookup prefers selected membership id, then selected occurrence id,
    then legacy selected candidate label. The label is compatibility data, not

@@ -239,10 +239,9 @@ Key confirmations:
 - No `ploke-eval loop`, `prototype1-state`, or `prototype1-runner` host
   processes remained after the terminal budget stop.
 
-Open follow-up from the rerun: History traversal can revisit already-expanded
-parents and can include duplicate formula rows for the same node/branch. This
-did not block the fixed-source rerun, but it is a selection-policy/design issue
-to address before streamlining the loop.
+Follow-up from the rerun: History traversal could revisit already-expanded
+parents and include duplicate formula rows for the same node/branch. This did
+not block the fixed-source rerun, but it was fixed before the next loop run.
 
 ### Rerun Selection-Policy Trace
 
@@ -265,38 +264,43 @@ Rerun evidence:
 
 Source trace:
 
-- `ParentSelection::select_successor` removes only the exact active parent via
-  `without_active_parent_candidate`, then unconditionally appends current
-  generation payloads through `Candidates::with_current_generation`
-  (`crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:6140` and
-  `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:6161`).
+- `ParentSelection::select_successor` removes the exact active parent via
+  `without_active_parent_candidate`, then appends current-generation payloads
+  through `Candidates::with_current_generation`
+  (`crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:6161` and
+  `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:6164`).
 - `History::candidates` includes all admitted candidate payloads when the scope
   is `SelectionScope::all_admitted_candidates`; for traversal entries it keeps
   payloads whose `considered_sources` are `CurrentGeneration`
   (`crates/ploke-eval/src/cli/prototype1_state/history/projection/mod.rs:21`
   and `crates/ploke-eval/src/cli/prototype1_state/history/projection/mod.rs:69`).
-- `Candidates::with_current_generation` appends the live current-generation
-  payloads without checking whether the same node/branch payload already came
-  from History
-  (`crates/ploke-eval/src/successor_selection/traversal.rs:876`).
+- `Candidates::with_current_generation` now removes matching History payloads
+  for the same node/branch coordinate before adding decision-grade live
+  current-generation payloads
+  (`crates/ploke-eval/src/successor_selection/traversal.rs:886`).
 - `successful_child_counts` records how many successful children each node has
   in the considered set
-  (`crates/ploke-eval/src/successor_selection/traversal.rs:1532`).
+  (`crates/ploke-eval/src/successor_selection/traversal.rs:1558`).
+- `Candidates::traverse_with_policy` now excludes decision-grade candidates
+  that already have successful children before strategy sampling
+  (`crates/ploke-eval/src/successor_selection/traversal.rs:776`).
+- `TraversalEvidence.child_counts` persists the pre-pruning expansion count
+  context so formula/replay math does not reconstruct different weights from the
+  pruned considered list
+  (`crates/ploke-eval/src/cli/prototype1_state/history/projection/mod.rs:3479`
+  and `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:6203`).
 - `TraversalScore::for_case` uses both the candidate node's own child count and
   its parent node's child count for frontier-style exploration pressure
-  (`crates/ploke-eval/src/successor_selection/traversal.rs:1577`).
-- `score_child_prop_calculation_with_set` uses only the candidate node's own
-  child count in its exploration term
-  (`crates/ploke-eval/src/successor_selection/traversal.rs:1854`). This leaves
-  expanded historical parents selectable, merely down-weighted, and does not
-  account for parent expansion in the same way as `TraversalScore`.
+  (`crates/ploke-eval/src/successor_selection/traversal.rs:1635`).
+- `score_child_prop_calculation_with_set` now uses the same candidate-plus-parent
+  child count helper for its exploration term
+  (`crates/ploke-eval/src/successor_selection/traversal.rs:1902`).
 
-Current repro coverage is partial. Existing tests cover the exact active-parent
-cycle and the missing broad-harness successor workspace fallback. Missing
-coverage: a compact `score_child_prop` or `ParentSelection` test that constructs
-history plus current-generation duplicates and asserts the intended policy,
-either deduplication, hard exclusion of expanded coordinates, or a documented
-penalty rule.
+Current repro coverage includes the exact active-parent cycle, missing
+broad-harness successor workspace fallback, decision-grade duplicate
+History/current-generation replacement, ineligible-current duplicate
+preservation, expanded-parent exclusion, and parent-expansion weighting for
+`score_child_prop`, including persisted formula/replay parity after pruning.
 
 ## Protocol Adjudication
 
