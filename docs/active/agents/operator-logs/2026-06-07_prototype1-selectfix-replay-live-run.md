@@ -91,6 +91,26 @@ and the run-summary helper:
   historical rejected parent advanced through broad generation into child
   materialization/build.
 
+2026-06-08 00:09:57 -0700:
+
+- Both children materialized from the historical rejected parent
+  `node-f21de5ba2e927ab0` completed treatment self-eval:
+  `node-655e9397c9273545` wrote result
+  `results/ae02174b-adc0-4768-91a4-2d3e47d85a41.json` at
+  `00:03:54 -0700`, and `node-e0215ac6e2825a28` wrote result
+  `results/73f6dc16-de0d-4a05-b7e5-fdab442ee3d5.json` at
+  `00:09:38 -0700`.
+- The successor selector chose `node-e0215ac6e2825a28`; the transition journal
+  then recorded `successor_handoff`, `parent_started`, and
+  `resource parent_start` for generation 2 at `00:09:57 -0700`.
+- Live process evidence after handoff: PID `1585253` is running
+  `ploke-eval loop prototype1-state` for the same campaign with
+  `--handoff-invocation` under
+  `prototype1/nodes/node-e0215ac6e2825a28/invocations/a720628b-478f-45df-8838-9e76dd838388.json`.
+- This proves the current `prototype1-state` path has crossed parent to
+  successor handoff twice in this run, including a successor selected from a
+  rejected-parent continuation path.
+
 ## Related Reports
 
 - [`../2026-06-07_prototype1-loop-termination-reports/README.md`](../2026-06-07_prototype1-loop-termination-reports/README.md)
