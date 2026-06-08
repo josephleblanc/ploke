@@ -45,3 +45,13 @@
   `node-84b583594e201ee2` under the same campaign/worktree with
   `--handoff-invocation`, demonstrating the first parent-to-successor handoff
   on the fresh source path.
+- Observed generation 1 complete successfully at
+  `2026-06-07T20:30:10-07:00`: both generation-2 children completed, the
+  selection row included the historical rejected child
+  `node-4f5ce42174cc01d6`, current kept child `node-8167e33daa3b9bc6`, and
+  current rejected child `node-b56d3539fe294ed3`; stochastic selection chose
+  `node-8167e33daa3b9bc6` with disposition `Keep`.
+- Confirmed the generation-1 parent spawned successor PID `894411` from
+  `node-8167e33daa3b9bc6` using handoff invocation
+  `637883b5-2843-45ad-9f63-ba2ec73c2cbf`, demonstrating the second
+  parent-to-successor handoff on the fresh source path.
