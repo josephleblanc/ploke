@@ -152,6 +152,23 @@ and the run-summary helper:
   shows the current state path can continue through selection from the
   historical rejected frontier after fresh kept children have completed.
 
+2026-06-08 00:39:38 to 00:43:50 -0700:
+
+- Historical rejected parent `node-7d41954c057f3002` completed both broad
+  attempts: `node-7d41954c057f3002` wrote result sidecars at
+  `00:39:38 -0700`, and `node-7d41954c057f3002-r2` wrote result sidecars at
+  `00:41:20 -0700`.
+- The loop wrote child plan
+  `prototype1/messages/child-plan/node-7d41954c057f3002.json` at
+  `00:41:23 -0700`.
+- It materialized and spawned two generation 3 child runners:
+  `node-86b020f1dfdcf8af` / `branch-564844dfd9b65469` and
+  `node-44b3f97965446494` / `branch-e21d8f841040888f`; both target
+  `crates/ploke-protocol/src/tool_calls/review.rs`.
+- Live process evidence at `00:44:11 -0700`: parent PID `1676219` remained
+  active, with runner PIDs `1746105` and `1746106` evaluating the two child
+  branches.
+
 ## Related Reports
 
 - [`../2026-06-07_prototype1-loop-termination-reports/README.md`](../2026-06-07_prototype1-loop-termination-reports/README.md)
