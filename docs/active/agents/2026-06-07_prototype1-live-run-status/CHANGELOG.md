@@ -91,3 +91,11 @@
   `node-8167e33daa3b9bc6` with weight `0.19720776365189244`; successor PID
   `1088814` started from handoff invocation
   `6d5ffaef-ad28-4e17-9432-4754fc12e70c`.
+- Observed the revisited `node-8167e33daa3b9bc6` parent re-run its historical
+  generation-3 children and then select `node-1c4fb95839e61fcc` at
+  `2026-06-07T21:29:39-07:00`. The sealed selection row included duplicate
+  formula entries for `node-d05350cdb42e3185` and
+  `node-7815b0481a271a5e`, then chose `node-1c4fb95839e61fcc` with weight
+  `0.900159374025396`; successor PID `1134836` spawned at
+  `2026-06-07T21:29:58-07:00` and reported ready at
+  `2026-06-07T21:30:01-07:00`.
