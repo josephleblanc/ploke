@@ -59,6 +59,25 @@ impl Selection<Artifact> {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn artifact_for_test(
+        node: Prototype1NodeRecord,
+        candidate: SubjectRef,
+        resolved: ResolvedTreatmentBranch,
+        artifact_surface: ArtifactSurface,
+        source: Source,
+        primary_runtime_id: Option<String>,
+    ) -> Result<Self, ArtifactMismatch> {
+        Self::artifact(
+            node,
+            candidate,
+            resolved,
+            artifact_surface,
+            source,
+            primary_runtime_id,
+        )
+    }
+
     pub(crate) fn selected(&self) -> &Artifact {
         &self.selected
     }

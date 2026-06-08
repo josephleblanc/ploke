@@ -112,7 +112,7 @@ file and current code before treating a report as still open.
 - [`2026-05-26-prototype1-treatment-closure-misses-live-child-run.md`](./2026-05-26-prototype1-treatment-closure-misses-live-child-run.md)
   Focused live child runner can produce a valid patch and artifacts while treatment closure rejects the completed run registration due to lexical path mismatch.
 - [`2026-05-26-prototype1-foreground-child-recovery-misses-parent-comparison.md`](./2026-05-26-prototype1-foreground-child-recovery-misses-parent-comparison.md)
-  Foreground recovery of a vanished Prototype 1 child can produce a terminal treatment result while the parent campaign reaches complete without the comparison artifact needed for successor selection.
+  Fixed in source: Prototype 1 now re-enters observe, or blocks loudly before selection, when a succeeded child has terminal treatment evidence but lacks the parent comparison artifact needed for successor selection.
 - [`2026-06-04-prototype1-headless-timeout-after-apply.md`](./2026-06-04-prototype1-headless-timeout-after-apply.md)
   Fixed in source: Prototype 1 broad headless-TUI slots now preserve typed post-apply timeout/abort/validation terminals instead of collapsing applied candidates into plain `timed_out`; direct-Google missing-validation canary passed, while same-target post-apply timeout validation remains pending.
 - [`2026-06-04-prototype1-headless-tui-runtime-actor-leak.md`](./2026-06-04-prototype1-headless-tui-runtime-actor-leak.md)
@@ -129,3 +129,5 @@ file and current code before treating a report as still open.
   Fixed in source: broad headless-TUI setup failures now persist typed setup diagnostics and doctor exposes a no-model-call sparse/BM25 setup preflight before spending broad slots.
 - [`2026-06-07-prototype1-baseline-embedding-overrides-dropped.md`](./2026-06-07-prototype1-baseline-embedding-overrides-dropped.md)
   Prototype 1 baseline eval dropped setup embedding overrides at campaign/closure/batch boundaries and fell back to the default Codestral embedding route.
+- [`2026-06-08-prototype1-successor-handoff-stale-parent-identity.md`](./2026-06-08-prototype1-successor-handoff-stale-parent-identity.md)
+  Fixed in source: Prototype 1 successor handoff now commits the selected parent identity into the successor Artifact before measuring and spawning it; the live campaign that exposed this was stopped after stale gen1 identity evidence.

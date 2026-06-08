@@ -1576,6 +1576,27 @@ fn diagnose(context: &RuntimeContext) -> Result<Diagnosis, PrepareError> {
         });
     }
 
+    if let Some(snapshot) = child_snapshots
+        .iter()
+        .find(|snapshot| needs_terminal_observe(snapshot))
+    {
+        return Ok(Diagnosis {
+            context: context.clone(),
+            phase: DiagnosedPhase::Observe,
+            current_child: Some(CurrentChildStatus {
+                plan_index: snapshot.plan_index,
+                node_id: snapshot.node.node_id.clone(),
+                branch_id: snapshot.node.branch_id.clone(),
+                status: snapshot.node.status,
+            }),
+            blockers,
+            notes,
+            prompt_preflight,
+            child_plan,
+            child_snapshots,
+        });
+    }
+
     let phase = if let Some(marker) = successor_marker.as_ref() {
         terminal_phase_from_marker(marker.state)
     } else if selection_available(
@@ -2021,6 +2042,10 @@ fn is_terminal_status(status: Prototype1NodeStatus) -> bool {
     )
 }
 
+fn needs_terminal_observe(snapshot: &ChildSnapshot) -> bool {
+    snapshot.node.status == Prototype1NodeStatus::Succeeded && snapshot.evaluation_report.is_none()
+}
+
 async fn advance(diagnosis: Diagnosis, mode: ExecuteMode) -> Result<(), PrepareError> {
     match diagnosis.phase {
         DiagnosedPhase::BaselineEval => advance_baseline_eval(&diagnosis.context).await,
@@ -2123,7 +2148,7 @@ async fn advance_child_phase(diagnosis: Diagnosis, mode: ExecuteMode) -> Result<
     let targets = diagnosis
         .child_snapshots
         .iter()
-        .filter(|snapshot| matches_phase(snapshot.node.status, phase))
+        .filter(|snapshot| matches_phase(snapshot, phase))
         .take(cap)
         .cloned()
         .collect::<Vec<_>>();
@@ -2154,14 +2179,14 @@ async fn advance_child_phase(diagnosis: Diagnosis, mode: ExecuteMode) -> Result<
     Ok(())
 }
 
-fn matches_phase(status: Prototype1NodeStatus, phase: DiagnosedPhase) -> bool {
+fn matches_phase(snapshot: &ChildSnapshot, phase: DiagnosedPhase) -> bool {
     matches!(
-        (status, phase),
+        (snapshot.node.status, phase),
         (Prototype1NodeStatus::Planned, DiagnosedPhase::Materialize)
             | (Prototype1NodeStatus::WorkspaceStaged, DiagnosedPhase::Build)
             | (Prototype1NodeStatus::BinaryBuilt, DiagnosedPhase::Spawn)
             | (Prototype1NodeStatus::Running, DiagnosedPhase::Observe)
-    )
+    ) || (phase == DiagnosedPhase::Observe && needs_terminal_observe(snapshot))
 }
 
 fn advance_one_child(
@@ -2372,10 +2397,10 @@ fn resume_c3(context: &RuntimeContext, snapshot: &ChildSnapshot) -> Result<C3, P
 }
 
 fn resume_c4(context: &RuntimeContext, snapshot: &ChildSnapshot) -> Result<C4, PrepareError> {
-    if snapshot.node.status != Prototype1NodeStatus::Running {
+    if snapshot.node.status != Prototype1NodeStatus::Running && !needs_terminal_observe(snapshot) {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
-                "expected running for node '{}', found {:?}",
+                "expected running or succeeded without branch evaluation for node '{}', found {:?}",
                 snapshot.node.node_id, snapshot.node.status
             ),
         });
@@ -2437,11 +2462,15 @@ fn reconstruct_terminal_outcomes(
         .map(|snapshot| {
             let outcome = match snapshot.node.status {
                 Prototype1NodeStatus::Succeeded => {
-                    let disposition = snapshot
-                        .evaluation_report
-                        .as_ref()
-                        .map(|report| format!("{:?}", report.overall_disposition))
-                        .unwrap_or_else(|| "Reject".to_string());
+                    let report = snapshot.evaluation_report.as_ref().ok_or_else(|| {
+                        PrepareError::InvalidBatchSelection {
+                            detail: format!(
+                                "succeeded node '{}' is missing branch evaluation report; observe terminal treatment evidence before selection",
+                                snapshot.node.node_id
+                            ),
+                        }
+                    })?;
+                    let disposition = format!("{:?}", report.overall_disposition);
                     format!("completed:{disposition}")
                 }
                 Prototype1NodeStatus::Failed => "completed:Reject".to_string(),
@@ -2690,6 +2719,125 @@ mod tests {
                 .map(|(key, value)| (*key, value.clone().into_os_string()))
                 .collect(),
         )
+    }
+
+    fn phase_test_snapshot(
+        status: Prototype1NodeStatus,
+        evaluation_report: Option<Prototype1BranchEvaluationReport>,
+    ) -> ChildSnapshot {
+        let node_dir = PathBuf::from("/tmp/prototype1/nodes/node-child");
+        let node = Prototype1NodeRecord {
+            schema_version: crate::intervention::PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION
+                .to_string(),
+            node_id: "node-child".to_string(),
+            parent_node_id: Some("node-parent".to_string()),
+            generation: 1,
+            instance_id: "BurntSushi__ripgrep-2209".to_string(),
+            source_state_id: "parent-state".to_string(),
+            operation_target: None,
+            base_artifact_id: None,
+            patch_id: None,
+            derived_artifact_id: None,
+            parent_branch_id: Some("branch-parent".to_string()),
+            branch_id: "branch-child".to_string(),
+            candidate_id: "candidate-child".to_string(),
+            target_relpath: PathBuf::from("src/lib.rs"),
+            node_dir: node_dir.clone(),
+            workspace_root: PathBuf::from("/tmp/prototype1/workspace"),
+            binary_path: node_dir.join("bin/ploke-eval"),
+            runner_request_path: node_dir.join("runner-request.json"),
+            runner_result_path: node_dir.join("runner-result.json"),
+            status,
+            created_at: "2026-06-08T00:00:00Z".to_string(),
+            updated_at: "2026-06-08T00:00:00Z".to_string(),
+        };
+        let resolved = crate::intervention::ResolvedTreatmentBranch {
+            instance_id: node.instance_id.clone(),
+            source_state_id: node.source_state_id.clone(),
+            parent_branch_id: node.parent_branch_id.clone(),
+            target_relpath: node.target_relpath.clone(),
+            source_content: "old".to_string(),
+            source_content_hash: "old-hash".to_string(),
+            selected_branch_id: Some(node.branch_id.clone()),
+            branch: crate::intervention::TreatmentBranchNode {
+                branch_id: node.branch_id.clone(),
+                candidate_id: node.candidate_id.clone(),
+                patch_id: None,
+                branch_label: "candidate child".to_string(),
+                synthesized_spec_id: "spec".to_string(),
+                proposed_content: "new".to_string(),
+                proposed_content_hash: "new-hash".to_string(),
+                generation_target: None,
+                generation_coordinate: None,
+                status: crate::intervention::TreatmentBranchStatus::Applied,
+                apply_id: None,
+                applied_content_hash: None,
+                derived_artifact_id: None,
+            },
+        };
+        let plan_child = ChildFiles::from_resolved("campaign", node.clone(), resolved, false);
+        let request = plan_child.runner_request().clone();
+        ChildSnapshot {
+            plan_index: 0,
+            plan_child,
+            node,
+            request,
+            evaluation_report,
+            runtime_id: Some(RuntimeId::new()),
+            artifact_surface: None,
+        }
+    }
+
+    fn phase_test_evaluation_report() -> Prototype1BranchEvaluationReport {
+        Prototype1BranchEvaluationReport {
+            baseline_campaign_id: "campaign".to_string(),
+            branch_id: "branch-child".to_string(),
+            treatment_campaign_id: "treatment".to_string(),
+            evaluation_procedure_id: None,
+            evaluator_identity: None,
+            eval_set_identity: None,
+            branch_registry_path: PathBuf::from("/tmp/prototype1/branches.json"),
+            evaluation_artifact_path: PathBuf::from(
+                "/tmp/prototype1/evaluations/branch-child.json",
+            ),
+            treatment_campaign_manifest: PathBuf::from("/tmp/treatment/campaign.json"),
+            treatment_closure_state_path: PathBuf::from("/tmp/treatment/closure-state.json"),
+            overall_disposition: crate::branch_evaluation::BranchDisposition::Keep,
+            reasons: Vec::new(),
+            compared_instances: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn succeeded_child_without_evaluation_stays_in_observe() {
+        let snapshot = phase_test_snapshot(Prototype1NodeStatus::Succeeded, None);
+
+        assert!(needs_terminal_observe(&snapshot));
+        assert!(matches_phase(&snapshot, DiagnosedPhase::Observe));
+
+        let err = reconstruct_terminal_outcomes(&[snapshot])
+            .expect_err("succeeded child without evaluation must not enter selection");
+        match err {
+            PrepareError::InvalidBatchSelection { detail } => {
+                assert!(detail.contains("missing branch evaluation report"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn succeeded_child_with_evaluation_can_enter_selection() {
+        let snapshot = phase_test_snapshot(
+            Prototype1NodeStatus::Succeeded,
+            Some(phase_test_evaluation_report()),
+        );
+
+        assert!(!needs_terminal_observe(&snapshot));
+        assert!(!matches_phase(&snapshot, DiagnosedPhase::Observe));
+        let outcomes = reconstruct_terminal_outcomes(&[snapshot])
+            .expect("succeeded child with evaluation should reconstruct");
+        assert_eq!(outcomes[0].outcome, "completed:Keep");
+        assert!(outcomes[0].selection_input.is_some());
     }
 
     #[test]
