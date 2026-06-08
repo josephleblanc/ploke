@@ -73,3 +73,8 @@
   `node-b56d3539fe294ed3` / `branch-afdcff78a2bf6e87`, advanced the active
   checkout, spawned successor PID `1005288`, and acknowledged handoff at
   `2026-06-07T20:56:04-07:00`.
+- Confirmed the rejected successor parent continued through normal broad-child
+  generation: it materialized children `node-c7ea8d834c87f9f6`
+  (`branch-ed47a449ae5a187a`) and `node-1c4fb95839e61fcc`
+  (`branch-1fec33b974df7b88`) at `2026-06-07T21:03:13-07:00`, then built
+  and spawned both runners at `2026-06-07T21:05:42-07:00`.
