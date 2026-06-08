@@ -319,6 +319,109 @@ Still pending: rerun the live Google `prototype1-continue` path and confirm the
 current partial `baseline_protocol` campaign stops with the bounded blocking
 diagnostic instead of the 256-advance guard.
 
+## Live Re-observation: 2026-06-08 Guided Surface Run
+
+Campaign:
+
+```text
+p1-guided-surface-g35flash-p25flash-5g1x2-a2-20260608-062245
+```
+
+Worktree:
+
+```text
+/home/brasides/.ploke-eval/worktrees/p1-guided-surface-g35flash-p25flash-5g1x2-a2-20260608-062245
+```
+
+Baseline eval completed after the run was relaunched from the main checkout
+environment, which had the required OpenRouter embedding key. The earlier
+campaign
+`p1-guided-surface-g35flash-p25flash-5g1x2-a2-20260608-061650`
+failed at `embedding_model_preflight` only because the fresh worktree shell did
+not inherit provider environment variables.
+
+The replacement campaign reached `baseline_protocol` with:
+
+```text
+eval.status = complete
+protocol.status = partial
+tool-call-intent-segments = complete
+tool-call-review = missing
+tool-call-segment-review = missing
+protocol_counts.total_calls = 47
+protocol_counts.total_segments = 23
+```
+
+The only persisted protocol artifact was:
+
+```text
+/home/brasides/.ploke-eval/protocol/prototype1/p1-guided-surface-g35flash-p25flash-5g1x2-a2-20260608-062245/BurntSushi__ripgrep-2209/runs/run-1780925154317-structured-current-policy-0c4b4b4c/1780925623686_tool_call_intent_segmentation_BurntSushi__ripgrep-2209.json
+```
+
+Two bounded retry attempts against the same `baseline_protocol` phase created
+no call-review or segment-review artifacts. The terminal command was:
+
+```text
+./target/debug/ploke-eval loop prototype1-step \
+  --repo-root /home/brasides/.ploke-eval/worktrees/p1-guided-surface-g35flash-p25flash-5g1x2-a2-20260608-062245 \
+  --format json
+```
+
+It exited nonzero with the expected no-progress diagnostic:
+
+```text
+batch selection is invalid: baseline_protocol blocked: campaign
+p1-guided-surface-g35flash-p25flash-5g1x2-a2-20260608-062245 made no protocol progress;
+model google/gemini-2.5-flash; route DirectGoogle;
+selected_runs=BurntSushi__ripgrep-2209(segmentation_needed=false, missing_calls=47, missing_segments=23);
+remaining=tool-call-review(...), tool-call-segment-review(...);
+created={segmentations:0, call_reviews:0, segment_reviews:0}
+```
+
+This re-verifies the bounded `prototype1-step` stop condition on current source.
+It is still not a `prototype1-continue` live verification, because the campaign
+was intentionally frozen after the no-progress step to avoid repeatedly hitting
+the direct-Google quota path.
+
+Secondary observation: before the 429, protocol local-analysis retry reported
+two malformed adjudication responses using the hyphenated verdict
+`helpful_but_non-essential` instead of the accepted
+`helpful_but_non_essential`. Those parse failures were retried by the existing
+malformed-JSON retry path and were not persisted as protocol evidence. Do not
+fix this by accepting invalid enum spellings without an explicit validation
+policy decision.
+
+Disposition for this campaign: stop-use for loop progress under the admitted
+profile. If continuing the guided-surface validation, start a fresh campaign
+with lower `protocol.tool_review_parallelism` so the run exercises the same
+protocol contract with a smaller direct-Google request burst.
+
+A lower-fanout campaign,
+`p1-guided-surface-g35flash-p25flash-5g1x2-a2-pr1-20260608-064108`, used the
+same eval/protocol models with `protocol.tool_review_parallelism = 1` and
+completed the baseline protocol phase:
+
+```text
+eval.status = complete
+protocol.status = complete
+protocol_counts.total_calls = 50
+protocol_counts.reviewed_calls = 50
+protocol_counts.total_segments = 20
+protocol_counts.usable_segments = 20
+```
+
+That run still produced repeated strict JSON enum retries for
+`helpful_but_non-essential`, but valid retry responses were eventually
+accepted. It later advanced through `child_plan`, `materialize`, `build`, and
+`spawn` before stopping on the separate `observe_child` stale/dead-child
+blocker recorded in
+`2026-05-25-prototype1-observe-child-stale-hang.md`.
+
+Disposition after the lower-fanout run: the step-path no-progress guard remains
+live-verified. The `tool_review_parallelism = 1` mitigation is live-verified
+for this single direct-Google PR1 campaign. `prototype1-continue` remains
+pending live verification.
+
 ## Verification Targets
 
 - Unit test: a mocked `advance_protocol_closure` report with nonempty failures

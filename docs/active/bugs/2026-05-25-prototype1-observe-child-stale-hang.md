@@ -1,7 +1,8 @@
 # 2026-05-25 Prototype 1 `observe_child` Stale Hang
 
-Status: fixed in source with regression coverage. Follow-up coverage now also
-blocks acknowledged-but-dead children before the parent starts `observe_child`.
+Status: fixed in source with local regression coverage after 2026-06-08 live
+re-observation. Existing source detected the acknowledged-but-dead child as a
+blocker, but the fresh campaign still produced the invalid child state.
 
 ## Symptom
 
@@ -77,6 +78,76 @@ Disposition for this campaign: stop advancing it for loop evidence. The child
 did not produce treatment evidence, protocol evidence, or a runner result, so
 there is no trustworthy child result to compare or select.
 
+## 2026-06-08 Live Re-observation
+
+Campaign
+`p1-guided-surface-g35flash-p25flash-5g1x2-a2-pr1-20260608-064108`
+reproduced the same blocked state after a successful guided-surface baseline,
+full protocol closure, child planning, materialization, build, and spawn.
+
+Evidence:
+
+- Step command:
+  `/home/brasides/code/ploke/target/debug/ploke-eval loop prototype1-step --repo-root /home/brasides/.ploke-eval/worktrees/p1-guided-surface-g35flash-p25flash-5g1x2-a2-pr1-20260608-064108 --format json`
+- Child node:
+  `prototype1/nodes/node-5f465d71ca469dde/node.json`
+- Runtime:
+  `427f5715-3b7d-4fe9-a1a2-627d899288ac`
+- Child PID:
+  `586539`
+- Treatment campaign:
+  `p1-guided-surface-g35flash-p25flash-5g1x2-a2-pr1-20260608-064108-treatment-branch-f5c8c69ddaf21b32-1780930712647`
+- Child channel:
+  `prototype1/nodes/node-5f465d71ca469dde/channels/427f5715-3b7d-4fe9-a1a2-627d899288ac/child-to-parent.jsonl`
+- Missing attempt result:
+  `prototype1/nodes/node-5f465d71ca469dde/results/427f5715-3b7d-4fe9-a1a2-627d899288ac.json`
+
+Observed state:
+
+- `child-to-parent.jsonl` contains only `ready` and `evaluating`.
+- No `runner-result.json` and no attempt-scoped result exist.
+- `ps -fp 586539` shows no live child process.
+- The treatment campaign `closure-state.json` reports `eval.status = missing`
+  and `protocol.status = missing/ineligible`.
+- The child stream logs stop during treatment eval setup after branch checkout
+  and ripgrep workspace parsing; there is no terminal child `Result`.
+- `prototype1-doctor` now reports `phase=blocked`, allowed action `doctor`
+  only, with the blocker:
+
+```text
+node 'node-5f465d71ca469dde' is running for runtime
+'427f5715-3b7d-4fe9-a1a2-627d899288ac', but child pid 586539 is not visible
+and no runner result exists at
+.../nodes/node-5f465d71ca469dde/results/427f5715-3b7d-4fe9-a1a2-627d899288ac.json
+```
+
+Additional related evidence: the build step printed `WorkspacePathMismatch`
+before still advancing to `spawn`. The expected workspace was
+`prototype1/nodes/node-5f465d71ca469dde/worktree`, while the observed workspace
+was the broad edit-harness workspace:
+`prototype1/workspaces/edit-harness/node-50fe903bf027a783`.
+The transition journal also records `materialize_branch:after` and
+`build_child:*` with `repo_root`/`workspace_root` set to that edit-harness
+workspace.
+
+Root-cause update: the leaf child launch path in
+`crates/ploke-eval/src/cli/prototype1_state/c3.rs` spawned the child in the
+same process group as the bounded `prototype1-step` parent command. The
+successor launch path already isolated successor processes with
+`process_group(0)`, but `SpawnChild` did not. In the live run, the child wrote
+`ready` and `evaluating`, then its process disappeared without stderr, a runner
+result, or a terminal channel message. That matches process-group cleanup after
+the parent command returned, not a child-auth or protocol failure.
+
+Source repair: `SpawnChild` now applies the same Unix process-group isolation
+before spawning the leaf child. A focused Unix regression probes that the
+spawned child gets its own process group.
+
+Disposition for this campaign: stop advancing it for loop evidence. The current
+persisted child state is not trustworthy: the parent has a `running` child, the
+child process is dead, and the required treatment/runner/channel terminal
+evidence is absent.
+
 ## Verification
 
 Focused tests:
@@ -86,4 +157,11 @@ cargo test -p ploke-eval replay_marks_missing_runner_result_as_stale_or_hung -- 
 cargo test -p ploke-eval replay_observe_child_uses_default_stale_threshold -- --nocapture
 cargo test -p ploke-eval stale_observe_before_adds_doctor_blocker -- --nocapture
 cargo test -p ploke-eval dead_acknowledged_running_child_adds_doctor_blocker_before_observe -- --nocapture
+cargo test -p ploke-eval isolate_process_group_gives_child_own_group -- --nocapture
+cargo test -p ploke-eval --lib
 ```
+
+The 2026-06-08 source repair passed the new process-group regression, the
+existing dead-child doctor regression, and the full `ploke-eval` lib suite.
+Fresh-campaign live verification is still required before treating this blocker
+as cleared for new loop evidence.

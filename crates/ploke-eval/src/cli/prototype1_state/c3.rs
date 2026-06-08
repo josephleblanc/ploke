@@ -168,6 +168,14 @@ fn open_streams(streams: &Streams) -> Result<(fs::File, fs::File), SpawnChildErr
     Ok((stdout, stderr))
 }
 
+fn isolate_process_group(command: &mut ProcessCommand) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+}
+
 /// Shared journal-backed handoff view.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Handoff {
@@ -482,7 +490,8 @@ impl Intervention<C3, C4> for SpawnChild {
                 source,
             })?;
         let (stdout, stderr) = open_streams(&streams).map_err(CommitError::Transition)?;
-        let mut child = ProcessCommand::new(&binary_path)
+        let mut command = ProcessCommand::new(&binary_path);
+        command
             .args(&child_argv)
             .current_dir(&from.artifact.repo_root)
             .env(CAMPAIGN_ID_ENV, &from.campaign_id)
@@ -493,14 +502,14 @@ impl Intervention<C3, C4> for SpawnChild {
             .env(GENERATION_ENV, from.node.generation.to_string())
             .stdin(Stdio::null())
             .stdout(Stdio::from(stdout))
-            .stderr(Stdio::from(stderr))
-            .spawn()
-            .map_err(|source| {
-                CommitError::Transition(SpawnChildError::SpawnInvoke {
-                    path: binary_path.clone(),
-                    source,
-                })
-            })?;
+            .stderr(Stdio::from(stderr));
+        isolate_process_group(&mut command);
+        let mut child = command.spawn().map_err(|source| {
+            CommitError::Transition(SpawnChildError::SpawnInvoke {
+                path: binary_path.clone(),
+                source,
+            })
+        })?;
         let child_pid = child.id();
         debug!(
             target: ploke_core::EXECUTION_DEBUG_TARGET,
@@ -697,5 +706,32 @@ fn wait_for_ready(
         }
 
         thread::sleep(READY_POLL);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn isolate_process_group_gives_child_own_group() {
+        let mut command = ProcessCommand::new("sh");
+        command
+            .arg("-c")
+            .arg("printf '%s %s\\n' \"$$\" \"$(ps -o pgid= -p $$)\"");
+        isolate_process_group(&mut command);
+
+        let output = command.output().expect("spawn process-group probe");
+
+        assert!(
+            output.status.success(),
+            "probe failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).expect("utf8 probe stdout");
+        let mut parts = stdout.split_whitespace();
+        let pid = parts.next().expect("pid");
+        let pgid = parts.next().expect("pgid");
+        assert_eq!(pid, pgid);
     }
 }
