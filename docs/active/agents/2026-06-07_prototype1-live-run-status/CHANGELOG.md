@@ -78,3 +78,16 @@
   (`branch-ed47a449ae5a187a`) and `node-1c4fb95839e61fcc`
   (`branch-1fec33b974df7b88`) at `2026-06-07T21:03:13-07:00`, then built
   and spawned both runners at `2026-06-07T21:05:42-07:00`.
+- Observed the rejected-parent children complete at
+  `2026-06-07T21:17:58-07:00`: `node-1c4fb95839e61fcc` /
+  `branch-1fec33b974df7b88` was admitted as `Keep` with performance `15240`,
+  while `node-c7ea8d834c87f9f6` / `branch-ed47a449ae5a187a` was rejected
+  with performance `8345`.
+- Confirmed the next successor handoff completed at
+  `2026-06-07T21:18:21-07:00`, but selection did not choose the newest
+  highest-weight kept child. The sealed formula row assigned weight
+  `0.8360382571135474` to `node-1c4fb95839e61fcc`, but stochastic sample
+  `0.20872616581425532` selected the older kept parent
+  `node-8167e33daa3b9bc6` with weight `0.19720776365189244`; successor PID
+  `1088814` started from handoff invocation
+  `6d5ffaef-ad28-4e17-9432-4754fc12e70c`.
