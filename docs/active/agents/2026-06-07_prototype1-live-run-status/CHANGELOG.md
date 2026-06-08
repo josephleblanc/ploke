@@ -35,3 +35,13 @@
   `2026-06-07T19:36:06-07:00`; early baseline indexing used
   `perplexity/pplx-embed-v1-4b`, so the previous missing override failure did
   not recur at embedding preflight.
+- Observed generation 0 complete successfully at
+  `2026-06-07T20:06:47-07:00`: two children ran, `node-84b583594e201ee2`
+  was selected with `Keep`, `node-4f5ce42174cc01d6` was rejected, History
+  selection sealed the accepted candidate, active checkout advanced to commit
+  `38915de79025e2f8cca9c60984441ee4729990ba`, and successor handoff was
+  acknowledged for runtime `1bdf24b7-34ed-46d6-9a15-03113415f5a4`.
+- Confirmed the detached successor process started generation 1 from
+  `node-84b583594e201ee2` under the same campaign/worktree with
+  `--handoff-invocation`, demonstrating the first parent-to-successor handoff
+  on the fresh source path.
