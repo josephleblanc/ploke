@@ -202,3 +202,7 @@ state without checking newer code, History records, and run artifacts.
   Final fan-in synthesis for the 090815 board, quality-gating child reports,
   indexing incomplete evidence separately from durable trace-bearing review, and
   setting the repair-before-rerun gate for broad-headless diagnostics.
+- [`2026-06-08-p1-selectfix-replay-5g1x2-a2-20260607-224502-live-scout.md`](2026-06-08-p1-selectfix-replay-5g1x2-a2-20260607-224502-live-scout.md)
+  Live/incomplete scout report for the active selectfix replay campaign,
+  covering successor handoff, selected rejected-branch trace evidence, protocol
+  usefulness versus operational rejection, and the current request-only boundary.
