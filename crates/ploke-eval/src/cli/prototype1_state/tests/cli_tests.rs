@@ -396,6 +396,80 @@ fn historical_selection_allows_archive_parent_revisit() {
 }
 
 #[test]
+fn historical_selection_rejects_already_active_parent_cycle() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = test_manifest_path(tmp.path());
+    let parent = parent_identity_for("node-current", 1);
+    append_parent_started(&manifest_path, parent.clone());
+    let mut node = test_node(
+        tmp.path(),
+        parent.node_id(),
+        parent.branch_id(),
+        "candidate-current",
+    );
+    node.generation = parent.generation();
+    node.parent_node_id = Some("node-root".to_string());
+    write_test_node(&manifest_path, &node);
+
+    let policy = Prototype1SearchPolicy {
+        max_generations: 15,
+        max_total_nodes: 96,
+        ..Prototype1SearchPolicy::default()
+    };
+
+    let decision = live_successor_continuation_decision(
+        &manifest_path,
+        &parent,
+        &policy,
+        &successor_decision_for(&node),
+        &selection_material_from_history(),
+        &node,
+    )
+    .expect("continuation decision");
+
+    assert_eq!(
+        decision.disposition,
+        Prototype1ContinuationDisposition::StopHistoricalTraversalCycle
+    );
+    assert!(!decision.disposition.allows_successor());
+}
+
+#[test]
+fn history_candidate_filter_excludes_active_parent_before_sampling() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let parent = parent_identity_for("node-current", 2);
+    let mut active = test_node(
+        tmp.path(),
+        parent.node_id(),
+        parent.branch_id(),
+        "candidate-current",
+    );
+    active.generation = parent.generation();
+    let other = test_node(tmp.path(), "node-other", "branch-other", "candidate-other");
+    let candidates = HistoryCandidates {
+        scope: SelectionScope::all_admitted_candidates(),
+        candidates: vec![
+            test_history_candidate(&active, "active"),
+            test_history_candidate(&other, "other"),
+        ],
+    };
+
+    let filtered = without_active_parent_candidate(candidates, &parent);
+
+    assert_eq!(filtered.candidates.len(), 1);
+    assert_eq!(
+        filtered.candidates[0]
+            .payload
+            .selection_input
+            .as_ref()
+            .expect("selection input")
+            .candidate
+            .node_id,
+        "node-other"
+    );
+}
+
+#[test]
 fn historical_selection_rejects_exhausted_parent_turn_budget() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = test_manifest_path(tmp.path());
@@ -426,6 +500,45 @@ fn historical_selection_rejects_exhausted_parent_turn_budget() {
         Prototype1ContinuationDisposition::StopHistoricalTraversalBudget
     );
     assert!(!decision.disposition.allows_successor());
+}
+
+fn test_history_candidate(
+    node: &Prototype1NodeRecord,
+    label: &str,
+) -> crate::cli::prototype1_state::history::HistoryCandidate {
+    let payload = EvaluationPayload::builder(
+        SubjectRef::new(format!("candidate:{}:plan_index=0", node.node_id)),
+        ProcedureRef::new(crate::successor_selection::PROCEDURE_ID),
+    )
+    .selection_input(crate::successor_selection::SelectionInput::new(
+        crate::successor_selection::CandidateRef {
+            node_id: node.node_id.clone(),
+            branch_id: node.branch_id.clone(),
+            generation: node.generation,
+        },
+        crate::BranchDisposition::Reject,
+        PathBuf::from(format!("evaluations/{}.json", node.branch_id)),
+        Vec::new(),
+    ))
+    .expect("selection input")
+    .build();
+    let payload_hash = payload.payload_hash().expect("payload hash");
+    crate::cli::prototype1_state::history::HistoryCandidate {
+        source: crate::cli::prototype1_state::history::HistoryCandidateSource {
+            block_hash: crate::cli::prototype1_state::history::BlockHash::from(
+                HistoryHash::of_bytes(label.as_bytes()),
+            ),
+            block_height: 1,
+            lineage_id: crate::cli::prototype1_state::history::LineageId::new("lineage:test"),
+            entry_id: crate::cli::prototype1_state::history::EntryId::new(),
+        },
+        decision_scope: SelectionScope::all_admitted_candidates(),
+        selected_by_decision: false,
+        payload,
+        payload_hash,
+        candidate_set_root: None,
+        candidate_set_membership: None,
+    }
 }
 
 #[test]

@@ -71,13 +71,13 @@ use crate::{
             history::{
                 ArtifactSurface, CandidateArtifact, CandidateCoordinate, CandidateLifecycle,
                 CandidateMembershipId, CandidateOccurrenceId, CandidateSetCommitment,
-                EvaluationPayload, Generation, History, HistoryHash, ProcedureRef, Scope, ScopeFor,
-                SealedBranchEvidence, SealedCandidateEvidence, SealedComparedRunEvidence,
-                SealedEvalSetIdentity, SealedEvaluationEvidence, SealedEvaluatorIdentity,
-                SealedEvidenceCitation, SealedRuntimeEvidence, SelectionDecisionEntry,
-                SelectionProjectionFailure, SelectionProjectionFailureKind, SelectionScope,
-                SubjectRef, SurfaceEvidence, TraversalCandidateSource, TraversalEvidence,
-                surface_attempt,
+                EvaluationPayload, Generation, History, HistoryCandidates, HistoryHash,
+                ProcedureRef, Scope, ScopeFor, SealedBranchEvidence, SealedCandidateEvidence,
+                SealedComparedRunEvidence, SealedEvalSetIdentity, SealedEvaluationEvidence,
+                SealedEvaluatorIdentity, SealedEvidenceCitation, SealedRuntimeEvidence,
+                SelectionDecisionEntry, SelectionProjectionFailure, SelectionProjectionFailureKind,
+                SelectionScope, SubjectRef, SurfaceEvidence, TraversalCandidateSource,
+                TraversalEvidence, surface_attempt,
             },
             identity::{
                 ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
@@ -5544,12 +5544,16 @@ pub(crate) fn live_successor_continuation_decision(
         .is_some_and(|value| value != "keep");
     let explore_from_rejected = policy.explore_from_rejected && selected_rejected;
     let expected_generation = parent_identity.generation().saturating_add(1);
+    let already_active_parent = selected_node.node_id == parent_identity.node_id()
+        && selected_node.branch_id == parent_identity.branch_id();
     let direct_child = material.selected_from_generation_outcomes
         && selected_node.parent_node_id.as_deref() == Some(parent_identity.node_id())
         && selected_node.generation == expected_generation;
 
     let disposition = if decision.selected_branch_id.is_none() {
         Prototype1ContinuationDisposition::StopNoSelectedBranch
+    } else if already_active_parent {
+        Prototype1ContinuationDisposition::StopHistoricalTraversalCycle
     } else if !material.selected_from_generation_outcomes {
         if traversal.parent_turns_started >= policy.max_generations.saturating_add(1) {
             Prototype1ContinuationDisposition::StopHistoricalTraversalBudget
@@ -6154,6 +6158,7 @@ impl<'a> ParentSelection<'a> {
                 .map_err(|err| PrepareError::InvalidBatchSelection {
                     detail: format!("failed to load History traversal candidates: {err}"),
                 })?;
+        let candidates = without_active_parent_candidate(candidates, self.parent_identity);
         let current = self.current_generation_candidates()?;
         let traversal_candidates = traversal_selection::Candidates::from_history(candidates)
             .with_current_generation(current_scope, current.considered)
@@ -6201,6 +6206,20 @@ impl<'a> ParentSelection<'a> {
         };
         Ok(Some((selection.decision, material)))
     }
+}
+
+fn without_active_parent_candidate(
+    mut candidates: HistoryCandidates,
+    parent_identity: &ParentIdentity,
+) -> HistoryCandidates {
+    candidates.candidates.retain(|candidate| {
+        let Some(input) = candidate.payload.selection_input.as_ref() else {
+            return true;
+        };
+        input.candidate.node_id != parent_identity.node_id()
+            || input.candidate.branch_id != parent_identity.branch_id()
+    });
+    candidates
 }
 
 fn surface_attempt_from_surface(surface: &SurfaceEvidence) -> surface_attempt::Evidence {

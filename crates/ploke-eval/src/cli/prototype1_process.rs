@@ -127,7 +127,9 @@ use std::process::Command as ProcessCommand;
 use tracing::debug;
 
 use super::*;
-use crate::cli::prototype1_state::backend::{BackendError, GitWorktreeBackend, WorkspaceBackend};
+use crate::cli::prototype1_state::backend::{
+    BackendError, GitBranch, GitWorktreeBackend, WorkspaceBackend,
+};
 use crate::cli::prototype1_state::channel::{Channel, Cursor, FileTransport, ToParent};
 use crate::cli::prototype1_state::child::Child;
 use crate::cli::prototype1_state::cli_facing::{
@@ -1067,6 +1069,87 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
     }
 
     #[test]
+    fn successor_artifact_workspace_recovers_missing_broad_harness_checkout_from_branch() {
+        let tmp = tempdir().expect("tempdir");
+        let repo_root = tmp.path().join("repo");
+        fs::create_dir_all(&repo_root).expect("repo root");
+        run_git_test(&repo_root, &["init", "-b", "main"]);
+        run_git_test(
+            &repo_root,
+            &["config", "user.email", "prototype1-test@example.invalid"],
+        );
+        run_git_test(&repo_root, &["config", "user.name", "Prototype1 Test"]);
+        write_text(
+            &repo_root.join("src/lib.rs"),
+            "pub fn value() -> u8 { 1 }\n",
+        );
+        run_git_test(&repo_root, &["add", "."]);
+        run_git_test(&repo_root, &["commit", "--no-gpg-sign", "-m", "base"]);
+
+        let request_id = "broad-harness-request:node-1";
+        let branch = GitWorktreeBackend.broad_harness_branch_name(request_id);
+        run_git_test(&repo_root, &["switch", "-c", &branch.0]);
+        write_text(
+            &repo_root.join("src/lib.rs"),
+            "pub fn value() -> u8 { 2 }\n",
+        );
+        run_git_test(&repo_root, &["add", "."]);
+        run_git_test(
+            &repo_root,
+            &[
+                "commit",
+                "--no-gpg-sign",
+                "-m",
+                "prototype1 broad harness result broad-harness-request:node-1",
+            ],
+        );
+        run_git_test(&repo_root, &["switch", "main"]);
+
+        let campaign_root = tmp.path().join("campaign");
+        let manifest_path = campaign_root.join("campaign.json");
+        let mut node = test_node(&campaign_root);
+        node.workspace_root = campaign_root
+            .join("prototype1")
+            .join("workspaces")
+            .join("edit-harness")
+            .join("node-1");
+
+        let (workspace, artifact_branch) =
+            successor_artifact_checkout(&GitWorktreeBackend, &manifest_path, &node)
+                .expect("committed broad harness artifact branch");
+
+        assert!(!node.workspace_root.exists());
+        assert!(workspace.is_none());
+        assert_eq!(artifact_branch, branch);
+        GitWorktreeBackend
+            .verify_artifact_target(
+                &repo_root,
+                &artifact_branch,
+                &node.target_relpath,
+                "pub fn value() -> u8 { 2 }\n",
+            )
+            .expect("branch carries proposed target");
+    }
+
+    #[test]
+    fn broad_harness_request_id_projection_preserves_retry_suffix() {
+        assert_eq!(
+            broad_harness_request_id_from_workspace_root(Path::new(
+                "/tmp/prototype1/workspaces/edit-harness/node-abc"
+            ))
+            .as_deref(),
+            Some("broad-harness-request:node-abc")
+        );
+        assert_eq!(
+            broad_harness_request_id_from_workspace_root(Path::new(
+                "/tmp/prototype1/workspaces/edit-harness/node-abc-r2"
+            ))
+            .as_deref(),
+            Some("broad-harness-request:node-abc:r2")
+        );
+    }
+
+    #[test]
     fn child_projection_gate_rejects_shared_checkout_cwd() {
         let tmp = tempdir().expect("tempdir");
         let node = test_node(tmp.path());
@@ -1420,20 +1503,19 @@ fn install_prototype1_successor_artifact(
     let node = artifact.node();
     let resolved = artifact.resolved();
     let manifest_path = campaign_manifest_path(campaign_id)?;
-    let workspace = child_artifact_workspace(&backend, &manifest_path, node).map_err(|source| {
-        PrepareError::DatabaseSetup {
+    let (workspace, artifact_branch) = successor_artifact_checkout(&backend, &manifest_path, node)
+        .map_err(|source| PrepareError::DatabaseSetup {
             phase: "prototype1_successor_artifact_prepare",
             detail: source.to_string(),
-        }
-    })?;
+        })?;
     let selected_parent_identity = ParentIdentity::from_node(
         campaign_id.to_string(),
         node,
         Some(current_parent),
-        Some(workspace.branch.0.clone()),
+        Some(artifact_branch.0.clone()),
     );
 
-    if node.workspace_root.exists() {
+    if let Some(workspace) = workspace.filter(|_| node.workspace_root.exists()) {
         let message = format!(
             "prototype1: persist successor artifact for node {}",
             node.node_id
@@ -1455,7 +1537,7 @@ fn install_prototype1_successor_artifact(
             campaign_id,
             active_parent_root,
             selected,
-            workspace,
+            artifact_branch,
             current_surface,
             selected_parent_identity,
             Some(current_parent.clone()),
@@ -1465,12 +1547,62 @@ fn install_prototype1_successor_artifact(
             campaign_id,
             active_parent_root,
             selected,
-            workspace,
+            artifact_branch,
             current_surface,
             selected_parent_identity,
             Some(current_parent.clone()),
         )
     }
+}
+
+fn successor_artifact_checkout(
+    backend: &GitWorktreeBackend,
+    campaign_manifest_path: &Path,
+    node: &crate::intervention::Prototype1NodeRecord,
+) -> Result<
+    (
+        Option<crate::cli::prototype1_state::backend::Workspace>,
+        GitBranch,
+    ),
+    BackendError,
+> {
+    match child_artifact_workspace(backend, campaign_manifest_path, node) {
+        Ok(workspace) => {
+            let artifact_branch = workspace.branch.clone();
+            Ok((Some(workspace), artifact_branch))
+        }
+        Err(BackendError::MissingPath { path })
+            if path == node.workspace_root
+                && is_broad_harness_workspace(campaign_manifest_path, &node.workspace_root) =>
+        {
+            committed_broad_harness_artifact_branch(backend, &node.workspace_root)
+                .map(|branch| (None, branch))
+        }
+        Err(err) => Err(err),
+    }
+}
+
+fn committed_broad_harness_artifact_branch(
+    backend: &GitWorktreeBackend,
+    workspace_root: &Path,
+) -> Result<GitBranch, BackendError> {
+    let Some(request_id) = broad_harness_request_id_from_workspace_root(workspace_root) else {
+        return Err(BackendError::MissingPath {
+            path: workspace_root.to_path_buf(),
+        });
+    };
+    Ok(backend.broad_harness_branch_name(&request_id))
+}
+
+fn broad_harness_request_id_from_workspace_root(workspace_root: &Path) -> Option<String> {
+    let workspace_name = workspace_root.file_name()?.to_str()?;
+    if let Some((node_id, retry)) = workspace_name.rsplit_once("-r")
+        && !node_id.is_empty()
+        && retry.parse::<u32>().is_ok_and(|sequence| sequence > 1)
+    {
+        return Some(format!("broad-harness-request:{node_id}:r{retry}"));
+    }
+    Some(format!("broad-harness-request:{workspace_name}"))
 }
 
 fn child_artifact_workspace(
@@ -1506,7 +1638,7 @@ fn install_committed_successor_artifact(
     campaign_id: &str,
     active_parent_root: &Path,
     selected: &selection::Selection<selection::Artifact>,
-    workspace: crate::cli::prototype1_state::backend::Workspace,
+    artifact_branch: GitBranch,
     current_surface: ArtifactSurface,
     selected_parent_identity: ParentIdentity,
     previous_parent: Option<ParentIdentity>,
@@ -1519,7 +1651,7 @@ fn install_committed_successor_artifact(
     backend
         .verify_artifact_target(
             active_parent_root,
-            &workspace.branch,
+            &artifact_branch,
             &resolved.target_relpath,
             &resolved.branch.proposed_content,
         )
@@ -1534,7 +1666,7 @@ fn install_committed_successor_artifact(
             node.node_id.clone(),
             CommitPhase::Before,
             active_parent_root.to_path_buf(),
-            workspace.branch.0.clone(),
+            artifact_branch.0.clone(),
             None,
         )),
         "prototype1_successor_checkout_before_journal",
@@ -1545,11 +1677,11 @@ fn install_committed_successor_artifact(
         node_id = %node.node_id,
         generation = node.generation,
         active_parent_root = %active_parent_root.display(),
-        selected_branch = %workspace.branch.0,
+        selected_branch = %artifact_branch.0,
         target_relpath = %resolved.target_relpath.display(),
     ));
     let installed_commit =
-        match backend.install_artifact_in_active_checkout(active_parent_root, &workspace.branch) {
+        match backend.install_artifact_in_active_checkout(active_parent_root, &artifact_branch) {
             Ok(installed_commit) => {
                 checkout_step.success();
                 installed_commit
@@ -1571,7 +1703,7 @@ fn install_committed_successor_artifact(
             node.node_id.clone(),
             CommitPhase::After,
             active_parent_root.to_path_buf(),
-            workspace.branch.0.clone(),
+            artifact_branch.0.clone(),
             Some(installed_commit.0.clone()),
         )),
         "prototype1_successor_checkout_after_journal",
@@ -1584,7 +1716,7 @@ fn install_committed_successor_artifact(
             previous_parent_identity: previous_parent,
             selected_parent_identity: selected_parent_identity.clone(),
             active_parent_root: active_parent_root.to_path_buf(),
-            selected_branch: workspace.branch.0.clone(),
+            selected_branch: artifact_branch.0.clone(),
             installed_commit: installed_commit.0.clone(),
         }),
         "prototype1_successor_checkout_journal",
@@ -1595,7 +1727,7 @@ fn install_committed_successor_artifact(
         selected_parent_id = %selected_parent_identity.parent_id(),
         selected_node_id = %selected_parent_identity.node_id(),
         selected_generation = selected_parent_identity.generation(),
-        selected_branch = %workspace.branch.0,
+        selected_branch = %artifact_branch.0,
         installed_commit = %installed_commit.0,
         active_parent_root = %active_parent_root.display(),
     ))
@@ -1610,7 +1742,7 @@ fn install_committed_successor_artifact(
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
                 "selected successor Artifact surface mismatch after install: node={} branch={}",
-                node.node_id, workspace.branch.0
+                node.node_id, artifact_branch.0
             ),
         });
     }

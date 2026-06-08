@@ -4,6 +4,13 @@ Date: 2026-06-07
 
 Campaign: `p1-historyfix-handoff-5g1x2-a2-20260607-155010`
 
+Companion files:
+
+- [`experiments.md`](experiments.md) - regressions and validation commands for
+  the stale broad-harness handoff fix.
+- [`CHANGELOG.md`](CHANGELOG.md) - dated changes to this investigation packet
+  and the associated code fix.
+
 Parent worktree observed:
 `/home/brasides/.ploke-eval/worktrees/p1-historyfix-handoff-5g1x2-a2-20260607-155010`
 
@@ -412,31 +419,18 @@ It summarizes:
 
 The script does not open sqlite/db files.
 
-## Skill Update Note
+## Skill Update
 
-The repo-local skill directory
-`.codex/skills/prototype1-loop-run-status/` was not writable under the current
-no-escalation constraint, so this update could not be applied directly to
-`SKILL.md` or copied into that skill's `scripts/` directory.
+The repo-local skill at `.codex/skills/prototype1-loop-run-status/SKILL.md` now
+includes the run-status lessons from this incident:
 
-When that directory is writable, add this lesson to the skill:
+- prefer the stable record inventory under `crates/ploke-eval/docs/`;
+- compare `branches.json` dispositions against successor-selection records;
+- report missing final History score rows explicitly;
+- inspect parent stderr for successor failures before blaming provider,
+  protocol, admissibility, or child-observe timeouts;
+- treat `WorkspacePathMismatch` and missing edit-harness workspaces as
+  artifact-prep evidence.
 
-- Prefer the stable inventory at
-  `crates/ploke-eval/docs/prototype1-child-plan-authority/prototype1-record-inventory.md`
-  and the copied skill reference only as a local convenience.
-- After child fanout completes, always compare `branches.json` dispositions
-  against the successor-selection record; a kept child may still be bypassed by
-  stochastic `score_child_prop`.
-- Check whether the final selection was sealed into
-  `prototype1/history/blocks/segment-*.jsonl`. If not, report that the final
-  row-level candidate weights are unavailable, and fall back to transition
-  journal selected components plus branch/evaluation metrics.
-- For successor failures, inspect
-  `prototype1/nodes/<parent>/streams/<runtime>/stderr.log` before blaming
-  provider, protocol, or admissibility. `WorkspacePathMismatch` and missing
-  edit-harness workspaces are terminal artifact-prep evidence.
-- Default to the helper command above for the first read-only pass.
-
-When skill writes are available, copy
-`prototype1_run_summary.py` into
-`.codex/skills/prototype1-loop-run-status/scripts/`.
+The read-only helper script is installed at
+`.codex/skills/prototype1-loop-run-status/scripts/prototype1_run_summary.py`.
