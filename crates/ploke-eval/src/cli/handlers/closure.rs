@@ -50,6 +50,8 @@ async fn execute_batch_eval_for_manifest(
     use_default_model: bool,
     model_id: Option<String>,
     provider: Option<ProviderKey>,
+    embedding_model_id: Option<String>,
+    embedding_provider: Option<ProviderKey>,
     stop_on_error: bool,
 ) -> Result<BatchRunArtifactPaths, PrepareError> {
     RunMsbAgentBatchRequest {
@@ -58,6 +60,8 @@ async fn execute_batch_eval_for_manifest(
         use_default_model,
         model_id,
         provider,
+        embedding_model_id,
+        embedding_provider,
         stop_on_error,
     }
     .run()
@@ -738,6 +742,8 @@ pub(crate) async fn advance_eval_closure(
                 false,
                 Some(config.model_id.clone()),
                 provider.clone(),
+                policy.embedding_model_id.clone(),
+                parse_provider_key(policy.embedding_provider_slug.clone())?,
                 policy.stop_on_error,
             )
             .await?;

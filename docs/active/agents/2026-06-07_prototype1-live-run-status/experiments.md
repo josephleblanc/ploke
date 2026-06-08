@@ -69,6 +69,38 @@ Fix direction:
   invariant check if an already-active parent slips through another projection
   path.
 
+## E3: Prototype 1 setup embedding overrides dropped before baseline eval
+
+Status: source fix added, focused verification passed, fresh live loop pending
+
+Hypothesis: `prototype1-setup --embedding-model-id ... --embedding-provider ...`
+must persist those values into campaign eval policy and the closure/batch runner
+must forward them into the single-agent eval run that performs baseline
+indexing.
+
+Failure evidence:
+
+- Campaign `p1-handofffix-5g1x2-a2-20260607-190702` failed before child
+  planning.
+- The baseline batch summary recorded an embedding preflight failure for
+  `mistralai/codestral-embed-2505`.
+- Source inspection showed `EvalCampaignPolicy` had no embedding fields and
+  `RunMsbAgentBatchRequest` constructed `RunMsbAgentSingleRequest` with
+  `embedding_model_id: None` and `embedding_provider: None`.
+
+Regressions:
+
+- `agent_batch_request_preserves_embedding_overrides`
+- `loop_prototype1_setup_command_parses`
+- `prototype1_setup_campaign_manifest_preserves_embedding_overrides`
+- `prototype1_eval_set_id_includes_embedding_overrides`
+
+Fix direction:
+
+- Carry embedding model/provider through setup admission, campaign eval policy,
+  closure eval execution, agent batch request execution, and eval-set identity.
+- Keep the default embedding route unchanged when no override is provided.
+
 ## Verification commands
 
 Focused tests:
@@ -78,5 +110,9 @@ RUSTFLAGS=-Awarnings cargo test -p ploke-eval historical_selection_rejects_alrea
 RUSTFLAGS=-Awarnings cargo test -p ploke-eval history_candidate_filter_excludes_active_parent_before_sampling -- --nocapture
 RUSTFLAGS=-Awarnings cargo test -p ploke-eval successor_artifact_workspace_recovers_missing_broad_harness_checkout_from_branch -- --nocapture
 RUSTFLAGS=-Awarnings cargo test -p ploke-eval broad_harness_request_id_projection_preserves_retry_suffix -- --nocapture
+RUSTFLAGS=-Awarnings cargo test -p ploke-eval agent_batch_request_preserves_embedding_overrides -- --nocapture
+RUSTFLAGS=-Awarnings cargo test -p ploke-eval loop_prototype1_setup_command_parses -- --nocapture
+RUSTFLAGS=-Awarnings cargo test -p ploke-eval prototype1_setup_campaign_manifest_preserves_embedding_overrides -- --nocapture
+RUSTFLAGS=-Awarnings cargo test -p ploke-eval prototype1_eval_set_id_includes_embedding_overrides -- --nocapture
 RUSTFLAGS=-Awarnings cargo check -p ploke-eval
 ```

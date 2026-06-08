@@ -127,3 +127,5 @@ file and current code before treating a report as still open.
   `code_item_lookup` with `node_kind: impl` issues a Cozo query against a `name` field the stored `impl` relation does not have; protocol marked call `[36]` recoverability-blocked in `p1-admissionfix-g35flash-p25flash-20260606-053302` treatment run.
 - [`2026-06-06-prototype1-broad-headless-request-only-no-diagnostics.md`](./2026-06-06-prototype1-broad-headless-request-only-no-diagnostics.md)
   Fixed in source: broad headless-TUI setup failures now persist typed setup diagnostics and doctor exposes a no-model-call sparse/BM25 setup preflight before spending broad slots.
+- [`2026-06-07-prototype1-baseline-embedding-overrides-dropped.md`](./2026-06-07-prototype1-baseline-embedding-overrides-dropped.md)
+  Prototype 1 baseline eval dropped setup embedding overrides at campaign/closure/batch boundaries and fell back to the default Codestral embedding route.

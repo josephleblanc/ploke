@@ -68,6 +68,10 @@ pub struct EvalCampaignPolicy {
     pub budget: EvalBudget,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch_prefix: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding_model_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding_provider_slug: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

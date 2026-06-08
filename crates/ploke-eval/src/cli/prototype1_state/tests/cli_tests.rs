@@ -6,8 +6,10 @@ use crate::cli::prototype1_state::edit_surface::harness_request::{
 };
 use crate::cli::prototype1_state::edit_surface::surface::SurfacePolicyId;
 use crate::cli::{
-    InspectOutputFormat, Prototype1CandidateGenerator, Prototype1StateCommand,
-    Prototype1StateStopAfter, Prototype1SuccessorSelection, Prototype1TraversalMetrics,
+    InspectOutputFormat, Prototype1CandidateGenerator,
+    Prototype1ChildScheduleMode as CliPrototype1ChildScheduleMode, Prototype1LoopCommand,
+    Prototype1LoopStopAfter, Prototype1StateCommand, Prototype1StateStopAfter,
+    Prototype1SuccessorSelection, Prototype1TraversalMetrics,
 };
 use crate::intervention::Prototype1NodeRecord;
 use ploke_llm::request::models::ModelRouteSource;
@@ -616,6 +618,166 @@ observe_child_stale_after_secs = 17
         crate::successor_selection::OracleMode::RecordOnly
     );
     assert!(shape.successor_oracle_require_evidence);
+}
+
+#[test]
+fn prototype1_setup_campaign_manifest_preserves_embedding_overrides() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _guard =
+        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_HOME", tmp.path().as_os_str().into())]);
+    let models_dir = tmp.path().join("models");
+    fs::create_dir_all(&models_dir).expect("models dir");
+    fs::write(
+        models_dir.join("registry.json"),
+        serde_json::to_string_pretty(&serde_json::json!({
+            "data": [{
+                "id": "google/gemini-3.5-flash",
+                "name": "gemini-3.5-flash",
+                "created": 0,
+                "description": "Direct Google test row",
+                "architecture": {
+                    "input_modalities": ["text"],
+                    "modality": "text->text",
+                    "output_modalities": ["text"],
+                    "tokenizer": "Gemini"
+                },
+                "top_provider": {
+                    "is_moderated": false,
+                    "context_length": null,
+                    "max_completion_tokens": null
+                },
+                "pricing": {
+                    "prompt": 0.0,
+                    "completion": 0.0
+                },
+                "canonical_slug": "google/gemini-3.5-flash",
+                "context_length": 1048576,
+                "hugging_face_id": null,
+                "per_request_limits": null,
+                "supported_parameters": ["tools"],
+                "route_source": "direct_google"
+            }]
+        }))
+        .expect("registry json"),
+    )
+    .expect("write registry");
+
+    let dataset_file = tmp.path().join("dataset.jsonl");
+    fs::write(
+        &dataset_file,
+        r#"{"instance_id":"BurntSushi__ripgrep-2209"}"#,
+    )
+    .expect("write dataset");
+    let prepared_batch = crate::spec::PreparedMsbBatch {
+        batch_id: "embedding-override-batch".to_string(),
+        dataset_file: dataset_file.clone(),
+        dataset_url: None,
+        repo_cache: tmp.path().join("repo-cache"),
+        instances_root: tmp.path().join("instances"),
+        output_dir: tmp.path().join("batches").join("embedding-override-batch"),
+        budget: crate::spec::EvalBudget::default(),
+        instances: vec!["BurntSushi__ripgrep-2209".to_string()],
+        campaign: None,
+    };
+    let command = Prototype1LoopCommand {
+        batch: None,
+        batch_id: None,
+        dataset: None,
+        dataset_key: None,
+        all: false,
+        instance: Vec::new(),
+        specific: Vec::new(),
+        limit: None,
+        prepare_batch_id: None,
+        campaign: Some("embedding-override-campaign".to_string()),
+        profile: None,
+        repo_cache: None,
+        instances_root: None,
+        batches_root: None,
+        max_turns: 40,
+        max_tool_calls: 200,
+        wall_clock_secs: 1800,
+        index_debug_snapshots: true,
+        use_default_model: false,
+        model_id: Some("google/gemini-3.5-flash".to_string()),
+        provider: Some("google".to_string()),
+        route_source: Some(ModelRouteSource::DirectGoogle),
+        embedding_model_id: Some("perplexity/pplx-embed-v1-4b".to_string()),
+        embedding_provider: Some("perplexity".to_string()),
+        stop_on_error: false,
+        protocol_model_id: None,
+        protocol_provider: None,
+        protocol_route_source: None,
+        source_campaign: None,
+        source_branch_id: None,
+        max_generations: 1,
+        max_total_nodes: 32,
+        min_children: 2,
+        max_children: 6,
+        child_schedule_mode: CliPrototype1ChildScheduleMode::FullBatch,
+        stop_on_first_keep: false,
+        require_keep_for_continuation: true,
+        explore_from_rejected: true,
+        stop_after: Prototype1LoopStopAfter::BaselineEval,
+        dry_run: false,
+        format: InspectOutputFormat::Json,
+    };
+
+    let campaign = prepare_prototype1_loop_campaign(&command, &prepared_batch, None)
+        .expect("campaign prepares");
+    let manifest =
+        crate::campaign::load_campaign_manifest("embedding-override-campaign").expect("manifest");
+
+    assert_eq!(
+        manifest.eval.embedding_model_id.as_deref(),
+        Some("perplexity/pplx-embed-v1-4b")
+    );
+    assert_eq!(
+        manifest.eval.embedding_provider_slug.as_deref(),
+        Some("perplexity")
+    );
+    assert_eq!(
+        campaign.resolved.eval.embedding_model_id.as_deref(),
+        Some("perplexity/pplx-embed-v1-4b")
+    );
+    assert_eq!(
+        campaign.resolved.eval.embedding_provider_slug.as_deref(),
+        Some("perplexity")
+    );
+}
+
+#[test]
+fn prototype1_eval_set_id_includes_embedding_overrides() {
+    let sources = vec![crate::target_registry::RegistryDatasetSource {
+        key: None,
+        path: PathBuf::from("slice.jsonl"),
+        label: "prototype1/test-batch".to_string(),
+        url: None,
+    }];
+    let instance_ids = vec!["BurntSushi__ripgrep-2209".to_string()];
+    let base_policy = test_eval_policy();
+    let base_id = prototype1_eval_set_id(
+        "baseline",
+        "treatment",
+        crate::target_registry::BenchmarkFamily::MultiSweBenchRust,
+        &sources,
+        &base_policy,
+        &instance_ids,
+    );
+
+    let mut embedding_policy = base_policy.clone();
+    embedding_policy.embedding_model_id = Some("perplexity/pplx-embed-v1-4b".to_string());
+    embedding_policy.embedding_provider_slug = Some("perplexity".to_string());
+    let embedding_id = prototype1_eval_set_id(
+        "baseline",
+        "treatment",
+        crate::target_registry::BenchmarkFamily::MultiSweBenchRust,
+        &sources,
+        &embedding_policy,
+        &instance_ids,
+    );
+
+    assert_ne!(base_id, embedding_id);
 }
 
 #[test]
@@ -4523,6 +4685,8 @@ fn test_evaluation_report(node: &Prototype1NodeRecord) -> Prototype1BranchEvalua
                 exclude_dataset_labels: Vec::new(),
                 budget: EvalBudget::default(),
                 batch_prefix: Some("test-batch".to_string()),
+                embedding_model_id: None,
+                embedding_provider_slug: None,
             },
             instance_ids: vec![node.instance_id.clone()],
             missing_treatment_instance_ids: Vec::new(),
@@ -4579,6 +4743,8 @@ fn test_eval_policy() -> EvalCampaignPolicy {
         exclude_dataset_labels: Vec::new(),
         budget: EvalBudget::default(),
         batch_prefix: Some("test-batch".to_string()),
+        embedding_model_id: None,
+        embedding_provider_slug: None,
     }
 }
 

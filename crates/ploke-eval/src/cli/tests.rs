@@ -1597,6 +1597,10 @@ fn loop_prototype1_setup_command_parses() {
         "x-ai/grok-4-fast",
         "--provider",
         "xai",
+        "--embedding-model-id",
+        "perplexity/pplx-embed-v1-4b",
+        "--embedding-provider",
+        "perplexity",
         "--campaign",
         "p1-clap",
         "--profile",
@@ -1612,6 +1616,11 @@ fn loop_prototype1_setup_command_parses() {
             assert_eq!(cmd.instance, vec!["clap-rs__clap-3670".to_string()]);
             assert_eq!(cmd.model_id.as_deref(), Some("x-ai/grok-4-fast"));
             assert_eq!(cmd.provider.as_deref(), Some("xai"));
+            assert_eq!(
+                cmd.embedding_model_id.as_deref(),
+                Some("perplexity/pplx-embed-v1-4b")
+            );
+            assert_eq!(cmd.embedding_provider.as_deref(), Some("perplexity"));
             assert_eq!(cmd.campaign.as_deref(), Some("p1-clap"));
             assert_eq!(cmd.profile.as_deref(), Some("overnight-edit-surface"));
         }

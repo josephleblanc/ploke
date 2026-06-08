@@ -15,3 +15,10 @@
   broad-harness workspaces that preserves strict child artifact validation.
 - Updated the repo-local `prototype1-loop-run-status` skill with successor
   failure checks and installed the read-only run summary helper.
+- Abandoned `p1-handofffix-5g1x2-a2-20260607-190702` for loop progress after
+  its baseline eval persisted a failed embedding preflight on the default
+  `mistralai/codestral-embed-2505` route.
+- Fixed the source path that dropped `prototype1-setup` embedding model/provider
+  overrides before baseline agent-batch execution.
+- Added focused coverage for setup manifest persistence, batch-to-single
+  embedding forwarding, setup CLI parsing, and eval-set identity separation.

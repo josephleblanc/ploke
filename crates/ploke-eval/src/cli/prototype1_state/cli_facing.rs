@@ -7680,6 +7680,14 @@ fn prototype1_eval_set_id(
         hasher.update(batch_prefix.as_bytes());
     }
     hasher.update(b"\0");
+    if let Some(embedding_model_id) = eval_policy.embedding_model_id.as_deref() {
+        hasher.update(embedding_model_id.as_bytes());
+    }
+    hasher.update(b"\0");
+    if let Some(embedding_provider_slug) = eval_policy.embedding_provider_slug.as_deref() {
+        hasher.update(embedding_provider_slug.as_bytes());
+    }
+    hasher.update(b"\0");
     for instance_id in instance_ids {
         hasher.update(instance_id.as_bytes());
         hasher.update(b"\0");
@@ -7913,6 +7921,8 @@ fn prepare_prototype1_loop_campaign(
         exclude_dataset_labels: Vec::new(),
         budget: prepared_batch.budget.clone(),
         batch_prefix: Some(prepared_batch.batch_id.clone()),
+        embedding_model_id: command.embedding_model_id.clone(),
+        embedding_provider_slug: command.embedding_provider.clone(),
     };
     manifest.protocol = ProtocolCampaignPolicy {
         stop_on_error: command.stop_on_error,

@@ -221,6 +221,8 @@ impl RunMsbAgentBatchCommand {
             use_default_model: self.use_default_model,
             model_id: self.model_id,
             provider: parse_provider_key(self.provider)?,
+            embedding_model_id: None,
+            embedding_provider: None,
             stop_on_error: self.stop_on_error,
         }
         .run()

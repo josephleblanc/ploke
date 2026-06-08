@@ -17,6 +17,8 @@ impl RunMsbBatchRequest {
             self.use_default_model,
             self.model_id,
             self.provider,
+            None,
+            None,
             self.stop_on_error,
             false,
         )
@@ -32,6 +34,8 @@ impl RunMsbAgentBatchRequest {
             self.use_default_model,
             self.model_id,
             self.provider,
+            self.embedding_model_id,
+            self.embedding_provider,
             self.stop_on_error,
             true,
         )
@@ -45,6 +49,8 @@ pub(crate) async fn run_batch(
     use_default_model: bool,
     model_id: Option<String>,
     provider: Option<ProviderKey>,
+    embedding_model_id: Option<String>,
+    embedding_provider: Option<ProviderKey>,
     stop_on_error: bool,
     agent_mode: bool,
 ) -> Result<BatchRunArtifactPaths, PrepareError> {
@@ -81,16 +87,16 @@ pub(crate) async fn run_batch(
     for task_id in &prepared.instances {
         let run_manifest = prepared.instances_root.join(task_id).join("run.json");
         if agent_mode {
-            match (RunMsbAgentSingleRequest {
-                run_manifest: run_manifest.clone(),
-                batch_id: Some(prepared.batch_id.clone()),
+            match agent_single_request_for_batch(
+                run_manifest.clone(),
                 index_debug_snapshots,
                 use_default_model,
-                model_id: model_id.clone(),
-                provider: provider.clone(),
-                embedding_model_id: None,
-                embedding_provider: None,
-            })
+                model_id.clone(),
+                provider.clone(),
+                embedding_model_id.clone(),
+                embedding_provider.clone(),
+                &prepared.batch_id,
+            )
             .run()
             .await
             {
@@ -236,4 +242,56 @@ pub(crate) async fn run_batch(
         summary: summary_path,
         msb_submission,
     })
+}
+
+fn agent_single_request_for_batch(
+    run_manifest: PathBuf,
+    index_debug_snapshots: bool,
+    use_default_model: bool,
+    model_id: Option<String>,
+    provider: Option<ProviderKey>,
+    embedding_model_id: Option<String>,
+    embedding_provider: Option<ProviderKey>,
+    batch_id: &str,
+) -> RunMsbAgentSingleRequest {
+    RunMsbAgentSingleRequest {
+        run_manifest,
+        batch_id: Some(batch_id.to_string()),
+        index_debug_snapshots,
+        use_default_model,
+        model_id,
+        provider,
+        embedding_model_id,
+        embedding_provider,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_batch_request_preserves_embedding_overrides() {
+        let provider = ProviderKey::new("google").expect("provider key");
+        let embedding_provider = ProviderKey::new("perplexity").expect("embedding provider key");
+
+        let request = agent_single_request_for_batch(
+            PathBuf::from("run.json"),
+            true,
+            false,
+            Some("google/gemini-3.5-flash".to_string()),
+            Some(provider.clone()),
+            Some("perplexity/pplx-embed-v1-4b".to_string()),
+            Some(embedding_provider.clone()),
+            "batch-1",
+        );
+
+        assert_eq!(request.batch_id.as_deref(), Some("batch-1"));
+        assert_eq!(
+            request.embedding_model_id.as_deref(),
+            Some("perplexity/pplx-embed-v1-4b")
+        );
+        assert_eq!(request.embedding_provider, Some(embedding_provider));
+        assert_eq!(request.provider, Some(provider));
+    }
 }

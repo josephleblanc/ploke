@@ -121,6 +121,10 @@ pub struct RunMsbAgentBatchRequest {
     #[serde(default)]
     pub provider: Option<ProviderKey>,
     #[serde(default)]
+    pub embedding_model_id: Option<String>,
+    #[serde(default)]
+    pub embedding_provider: Option<ProviderKey>,
+    #[serde(default)]
     pub stop_on_error: bool,
 }
 
