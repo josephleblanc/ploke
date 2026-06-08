@@ -210,6 +210,40 @@ both children. Those model-response warnings are not the terminal blocker.
 The terminal blocker is the missing workspace path during
 `prototype1_successor_artifact_prepare`.
 
+## Fixed-Source Rerun
+
+Follow-up campaign `p1-handofffix-embed-5g1x2-a2-20260607-192954` was run from
+the fixed source after the successor-artifact and embedding-override fixes. It
+completed the intended parent-to-successor stability probe and stopped cleanly
+at the historical traversal budget on `2026-06-07T21:58:24-07:00`.
+
+Key confirmations:
+
+- The rerun used `max_generations = 5`, `parallel_targets = 2`,
+  `max_attempts = 2`, `fresh_slots_per_child = 2`,
+  `require_keep_for_continuation = false`, and
+  `explore_from_rejected = true`.
+- The all-rejected generation under `node-8167e33daa3b9bc6` continued from a
+  rejected historical candidate, `node-b56d3539fe294ed3`, proving the disabled
+  keep gate in the live path.
+- Successor handoffs were acknowledged for kept and rejected parents, including
+  runtimes `1bdf24b7-34ed-46d6-9a15-03113415f5a4`,
+  `637883b5-2843-45ad-9f63-ba2ec73c2cbf`,
+  `f5ff0efd-bb58-4255-87f2-6a6b2e7e3000`,
+  `6d5ffaef-ad28-4e17-9432-4754fc12e70c`, and
+  `7efc6b1e-e943-403c-b52f-7d428b2b2971`.
+- The final generation-4 children both completed mechanically with runner
+  `exit_code = 0`, then were semantically rejected. The loop selected rejected
+  `node-7815b0481a271a5e` as the final coordinate but stopped with
+  `stop_historical_traversal_budget` instead of launching another successor.
+- No `ploke-eval loop`, `prototype1-state`, or `prototype1-runner` host
+  processes remained after the terminal budget stop.
+
+Open follow-up from the rerun: History traversal can revisit already-expanded
+parents and can include duplicate formula rows for the same node/branch. This
+did not block the fixed-source rerun, but it is a selection-policy/design issue
+to address before streamlining the loop.
+
 ## Protocol Adjudication
 
 Protocol adjudication is doing useful work on both automatically failed tool

@@ -107,3 +107,20 @@
   `branch-2780bedd6071e108` materialized at
   `2026-06-07T21:43:37-07:00`, built successfully, and spawned runner PIDs
   `1233618` and `1233617` at `2026-06-07T21:45:57-07:00`.
+- Observed the generation-4 children complete cleanly at
+  `2026-06-07T21:58:18-07:00` and `2026-06-07T21:58:23-07:00`; both runner
+  result records had `status = "succeeded"`, `exit_code = 0`, and wrote their
+  treatment campaign IDs.
+- Recorded the semantic outcomes for the generation-4 branches: both
+  `branch-2780bedd6071e108` (`crates/ploke-io/src/actor.rs`) and
+  `branch-8a4fc1767af20136` (`crates/ploke-tui/src/rag/editing.rs`) were
+  rejected with `base_failed=1`, `treat_failed=1`, `base_retry=0`,
+  `treat_retry=0`, `base_streak=0`, and `treat_streak=1`.
+- Confirmed the continuous run reached a clean terminal budget stop at
+  `2026-06-07T21:58:24-07:00`: History traversal selected rejected
+  `node-7815b0481a271a5e` / `branch-feabca86774c57a6`, but recorded
+  disposition `stop_historical_traversal_budget` and did not spawn another
+  successor.
+- Verified no `ploke-eval loop`, `prototype1-state`, or `prototype1-runner`
+  processes remained after the final budget stop. The run therefore ended as a
+  successful loop-runtime stability probe rather than as a live/stalled run.

@@ -71,7 +71,7 @@ Fix direction:
 
 ## E3: Prototype 1 setup embedding overrides dropped before baseline eval
 
-Status: source fix added, focused verification passed, fresh live loop pending
+Status: source fix added, focused verification passed, fresh live loop completed
 
 Hypothesis: `prototype1-setup --embedding-model-id ... --embedding-provider ...`
 must persist those values into campaign eval policy and the closure/batch runner
@@ -100,6 +100,16 @@ Fix direction:
 - Carry embedding model/provider through setup admission, campaign eval policy,
   closure eval execution, agent batch request execution, and eval-set identity.
 - Keep the default embedding route unchanged when no override is provided.
+
+Follow-up live evidence:
+
+- Campaign `p1-handofffix-embed-5g1x2-a2-20260607-192954` persisted
+  `perplexity/pplx-embed-v1-4b` / `perplexity` in the setup manifest and used
+  that route during baseline and child indexing.
+- The fresh continuous `prototype1-state` run advanced through several
+  parent-to-successor handoffs, including continuation from a rejected parent,
+  and stopped cleanly at `stop_historical_traversal_budget` after generation-4
+  children completed.
 
 ## Verification commands
 
