@@ -135,19 +135,9 @@ fn insert_any(out: &mut HashSet<Uuid>, id: AnyNodeId) {
 fn collect_type_nodes(types: &[TypeNode], out: &mut HashSet<Uuid>) {
     let mut stack: Vec<&TypeNode> = types.iter().collect();
     while let Some(t) = stack.pop() {
-        #[cfg(feature = "typed_type_graph")]
-        {
-            out.insert(t.id().uuid());
-            for rt in t.child_type_ids() {
-                out.insert(rt.uuid());
-            }
-        }
-        #[cfg(not(feature = "typed_type_graph"))]
-        {
-            out.insert(t.id.uuid());
-            for rt in &t.related_types {
-                out.insert(rt.uuid());
-            }
+        out.insert(t.id().uuid());
+        for rt in t.child_type_ids() {
+            out.insert(rt.uuid());
         }
     }
 }

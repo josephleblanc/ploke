@@ -16,7 +16,6 @@ mod unresolved;
 mod ids;
 // ----- ids public re-exports -----
 // Does not directly expose any direct access to NodeId
-#[cfg(feature = "typed_type_graph")]
 pub(in crate::parser) use ids::StructuralTypeId;
 pub use ids::*;
 // -----------------------------
