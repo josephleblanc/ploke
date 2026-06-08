@@ -244,6 +244,60 @@ parents and can include duplicate formula rows for the same node/branch. This
 did not block the fixed-source rerun, but it is a selection-policy/design issue
 to address before streamlining the loop.
 
+### Rerun Selection-Policy Trace
+
+Broken contract: if History traversal is meant to prefer unexplored or
+least-expanded successor coordinates, previously expanded parents and duplicate
+node/branch candidates should not remain equivalent decision-grade entries in
+the candidate set.
+
+Rerun evidence:
+
+- At `2026-06-07T21:18:21-07:00`, stochastic `score_child_prop` selected
+  already-expanded `node-8167e33daa3b9bc6` with `child_count=2` even though
+  newer kept `node-1c4fb95839e61fcc` had a higher weight.
+- At `2026-06-07T21:29:39-07:00`, the sealed formula rows included duplicate
+  entries for `node-d05350cdb42e3185` and `node-7815b0481a271a5e`.
+- At `2026-06-07T21:58:24-07:00`, the terminal selection again selected an
+  older rejected coordinate, `node-7815b0481a271a5e` /
+  `branch-feabca86774c57a6`, but stopped with
+  `stop_historical_traversal_budget`.
+
+Source trace:
+
+- `ParentSelection::select_successor` removes only the exact active parent via
+  `without_active_parent_candidate`, then unconditionally appends current
+  generation payloads through `Candidates::with_current_generation`
+  (`crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:6140` and
+  `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs:6161`).
+- `History::candidates` includes all admitted candidate payloads when the scope
+  is `SelectionScope::all_admitted_candidates`; for traversal entries it keeps
+  payloads whose `considered_sources` are `CurrentGeneration`
+  (`crates/ploke-eval/src/cli/prototype1_state/history/projection/mod.rs:21`
+  and `crates/ploke-eval/src/cli/prototype1_state/history/projection/mod.rs:69`).
+- `Candidates::with_current_generation` appends the live current-generation
+  payloads without checking whether the same node/branch payload already came
+  from History
+  (`crates/ploke-eval/src/successor_selection/traversal.rs:876`).
+- `successful_child_counts` records how many successful children each node has
+  in the considered set
+  (`crates/ploke-eval/src/successor_selection/traversal.rs:1532`).
+- `TraversalScore::for_case` uses both the candidate node's own child count and
+  its parent node's child count for frontier-style exploration pressure
+  (`crates/ploke-eval/src/successor_selection/traversal.rs:1577`).
+- `score_child_prop_calculation_with_set` uses only the candidate node's own
+  child count in its exploration term
+  (`crates/ploke-eval/src/successor_selection/traversal.rs:1854`). This leaves
+  expanded historical parents selectable, merely down-weighted, and does not
+  account for parent expansion in the same way as `TraversalScore`.
+
+Current repro coverage is partial. Existing tests cover the exact active-parent
+cycle and the missing broad-harness successor workspace fallback. Missing
+coverage: a compact `score_child_prop` or `ParentSelection` test that constructs
+history plus current-generation duplicates and asserts the intended policy,
+either deduplication, hard exclusion of expanded coordinates, or a documented
+penalty rule.
+
 ## Protocol Adjudication
 
 Protocol adjudication is doing useful work on both automatically failed tool

@@ -111,6 +111,43 @@ Follow-up live evidence:
   and stopped cleanly at `stop_historical_traversal_budget` after generation-4
   children completed.
 
+## E4: Historical traversal duplicate and expanded-candidate policy
+
+Status: open, source trace recorded, minimal repro not yet written
+
+Hypothesis: all-history traversal should not treat a previously expanded
+parent, or the same node/branch admitted through both History and current
+generation payloads, as a fresh equivalent successor coordinate.
+
+Rerun evidence:
+
+- Campaign `p1-handofffix-embed-5g1x2-a2-20260607-192954` completed without a
+  runtime blocker, but stochastic `score_child_prop` revisited
+  `node-8167e33daa3b9bc6` after it already had two children.
+- The later sealed formula row contained duplicate rows for
+  `node-d05350cdb42e3185` and `node-7815b0481a271a5e`.
+- The terminal selection chose rejected `node-7815b0481a271a5e` as the final
+  coordinate before stopping at `stop_historical_traversal_budget`.
+
+Source boundary:
+
+- `ParentSelection::select_successor` filters the exact active parent but not
+  already-expanded historical parents.
+- `Candidates::with_current_generation` appends current-generation payloads
+  without deduping against all-history payloads.
+- `score_child_prop_calculation_with_set` uses only the candidate node's own
+  child count for its exploration term, while the frontier scoring path also
+  considers the parent node's child count.
+
+Missing repro / validation:
+
+- Add a focused test that constructs an all-history candidate set plus
+  current-generation payloads for the same node/branch and proves the expected
+  deduplication behavior.
+- Add a focused test for the chosen expansion policy: either hard-exclude
+  already-expanded coordinates, or document and verify the exact
+  `score_child_prop` penalty semantics for expanded parents.
+
 ## Verification commands
 
 Focused tests:
