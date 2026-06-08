@@ -66,6 +66,31 @@ and the run-summary helper:
   not run `prototype1-state`, `prototype1-step`, or `prototype1-continue`
   against this campaign while PID `1489538` is active.
 
+2026-06-07 23:55:28 -0700:
+
+- The `node-f21de5ba2e927ab0-r2` broad attempt produced result sidecars:
+  `node-f21de5ba2e927ab0-r2.json` and
+  `node-f21de5ba2e927ab0-r2.headless-tui.json`.
+- The attempt had modified
+  `crates/ploke-tui/src/rag/utils.rs`,
+  `crates/ploke-tui/src/tools/code_item_lookup.rs`, and
+  `crates/ploke-tui/src/tools/get_code_edges.rs` in the candidate workspace.
+- The stream stdout recorded another `INVALID_MODEL_RESPONSE` warning at
+  `23:55:28`, but the result sidecars were still written.
+
+2026-06-07 23:55:31 to 23:55:36 -0700:
+
+- The loop wrote child plan
+  `prototype1/messages/child-plan/node-f21de5ba2e927ab0.json`.
+- It materialized two gen-2 child nodes from the rejected parent:
+  `node-e0215ac6e2825a28` / `branch-01ade840a0a918b6` and
+  `node-655e9397c9273545` / `branch-e304e47deb78395e`.
+- Both nodes reached `status=workspace_staged`, and the transition journal has
+  `build_child before` records for both.
+- This is the first fresh evidence in this run that continuation from a
+  historical rejected parent advanced through broad generation into child
+  materialization/build.
+
 ## Related Reports
 
 - [`../2026-06-07_prototype1-loop-termination-reports/README.md`](../2026-06-07_prototype1-loop-termination-reports/README.md)
