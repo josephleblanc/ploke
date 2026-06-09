@@ -625,6 +625,7 @@ impl Harness for TuiHarness {
             &self.observer,
             deadline,
             &self.spec.timeouts,
+            &self.changed_paths,
         )
         .await?;
         Ok(Settled {

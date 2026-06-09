@@ -13,7 +13,7 @@ use cozo::{DataValue, DbInstance, ScriptMutability};
 use ploke_records::record::{Record, RecordFamily, RecordFormat};
 use sha2::{Digest, Sha256};
 
-use crate::layout::record_mirror_file;
+use crate::layout::record_mirror_file_for_record;
 use crate::spec::PrepareError;
 
 const MIRROR_SCHEMA: &str = "prototype1-record-mirror.v1";
@@ -77,7 +77,7 @@ fn mirror_record<R: Record>(path: &Path, bytes: &[u8]) -> Result<(), PrepareErro
     let _guard = mirror_write_lock()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let db_path = record_mirror_file()?;
+    let db_path = record_mirror_file_for_record(path)?;
     if let Some(parent) = db_path.parent() {
         fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
             path: parent.to_path_buf(),
@@ -259,11 +259,11 @@ mod tests {
     #[test]
     fn json_record_emission_writes_parallel_cozo_mirror() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let _env = crate::test_support::env_guard_os(vec![(
-            "PLOKE_EVAL_HOME",
-            temp.path().as_os_str().to_os_string(),
-        )]);
-        let record_path = temp.path().join("records/test-record.json");
+        let record_path = temp
+            .path()
+            .join("prototype1")
+            .join("scheduler")
+            .join("test-record.json");
         let record = MirrorTestRecord {
             schema_version: "mirror-test-record.v1",
             value: "ok",
@@ -277,7 +277,7 @@ mod tests {
         assert_eq!(receipt.family, RecordFamily::SchedulerState);
         assert_eq!(receipt.schema, "mirror-test-record.v1");
         assert_eq!(receipt.format, RecordFormat::Json);
-        let mirror_path = record_mirror_file().expect("mirror path");
+        let mirror_path = temp.path().join("records").join("mirror.cozo.sqlite");
         assert!(mirror_path.exists());
 
         let db = DbInstance::new("sqlite", &mirror_path, "").expect("open mirror");
@@ -327,6 +327,58 @@ mod tests {
         assert_eq!(data_str(row, 5), MIRROR_SCHEMA);
         assert!(!data_str(row, 6).is_empty());
         assert!(data_str(row, 7).contains("\"value\": \"ok\""));
+    }
+
+    #[test]
+    fn prototype1_record_emission_uses_local_campaign_mirror() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let record_path = temp
+            .path()
+            .join("prototype1")
+            .join("nodes")
+            .join("node-a")
+            .join("node.json");
+        let record = MirrorTestRecord {
+            schema_version: "mirror-test-record.v1",
+            value: "local",
+        };
+
+        JsonRecordFile::new(&record_path)
+            .emit(&record)
+            .expect("record emits");
+
+        let local_mirror = temp.path().join("records").join("mirror.cozo.sqlite");
+        assert!(
+            local_mirror.exists(),
+            "prototype1 temp records should mirror locally at {}",
+            local_mirror.display()
+        );
+
+        let db = DbInstance::new("sqlite", &local_mirror, "").expect("open local mirror");
+        let rows = db
+            .run_script(
+                r#"
+                ?[record_path, payload_json] :=
+                    *prototype1_record {
+                        family,
+                        record_path,
+                        content_sha256,
+                        schema_version,
+                        record_format,
+                        mirror_schema,
+                        recorded_at,
+                        payload_json
+                    }
+                "#,
+                BTreeMap::new(),
+                ScriptMutability::Immutable,
+            )
+            .expect("query local mirror")
+            .rows;
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(data_str(&rows[0], 0), record_path.display().to_string());
+        assert!(data_str(&rows[0], 1).contains("\"value\": \"local\""));
     }
 
     fn data_str(row: &[DataValue], index: usize) -> String {

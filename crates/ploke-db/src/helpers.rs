@@ -50,8 +50,9 @@ file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module
 ?[id, name, file_path, file_hash, hash, span, namespace, mod_path] :=
   *{rel}{{ id, name, tracking_hash: hash, span @ 'NOW' }},
   ancestor[id, mod_id],
-  *module{{ id: mod_id, path: mod_path, tracking_hash: file_hash @ 'NOW' }},
+  *module{{ id: mod_id, path: mod_path @ 'NOW' }},
   file_owner_for_module[mod_id, file_owner_id],
+  *module{{ id: file_owner_id, tracking_hash: file_hash @ 'NOW' }},
   *file_mod{{ owner_id: file_owner_id, file_path, namespace @ 'NOW' }},
   name == {item_name_lit},
   file_path == {file_path_lit},
@@ -110,8 +111,9 @@ file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module
 resolve_item[id, name, file_path, file_hash, hash, span, namespace, mod_path] :=
   *{rel}{{ id, name, tracking_hash: hash, span @ 'NOW' }},
   ancestor[id, mod_id],
-  *module{{ id: mod_id, path: mod_path, tracking_hash: file_hash @ 'NOW' }},
+  *module{{ id: mod_id, path: mod_path @ 'NOW' }},
   file_owner_for_module[mod_id, file_owner_id],
+  *module{{ id: file_owner_id, tracking_hash: file_hash @ 'NOW' }},
   *file_mod{{ owner_id: file_owner_id, file_path, namespace @ 'NOW' }},
   name == {item_name_lit},
   file_path == {file_path_lit},
@@ -179,7 +181,7 @@ pub fn list_primary_nodes(db: &Database) -> Result<Vec<PrimaryNodeRow>, DbError>
 rel_{rel}[relation, name, file_path, mod_path] :=
   has_embedding[id, name, hash, span],
   ancestor[id, mod_id],
-  *module{{ id: mod_id, path: mod_path, tracking_hash: file_hash @ 'NOW' }},
+  *module{{ id: mod_id, path: mod_path @ 'NOW' }},
   file_owner_for_module[mod_id, file_owner_id],
   *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }},
   relation = "{rel}"
@@ -326,8 +328,9 @@ file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module
 ?[id, name, file_path, file_hash, hash, span, namespace, mod_path] :=
   *{rel}{{ id, name, tracking_hash: hash, span @ 'NOW' }},
   ancestor[id, mod_id],
-  *module{{ id: mod_id, path: mod_path, tracking_hash: file_hash @ 'NOW' }},
+  *module{{ id: mod_id, path: mod_path @ 'NOW' }},
   file_owner_for_module[mod_id, file_owner_id],
+  *module{{ id: file_owner_id, tracking_hash: file_hash @ 'NOW' }},
   *file_mod{{ owner_id: file_owner_id, file_path, namespace @ 'NOW' }},
   name == {item_name_lit},
   mod_path == {mod_path_lit}

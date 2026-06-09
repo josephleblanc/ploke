@@ -358,6 +358,9 @@ pub async fn state_manager(
             StateCommand::ScanForChange { scan_tx } => {
                 handlers::db::scan_for_change(&state, &event_bus, scan_tx).await;
             }
+            StateCommand::ScanPathsForChange { paths, scan_tx } => {
+                handlers::db::scan_paths_for_change(&state, &event_bus, paths, scan_tx).await;
+            }
 
             // NEW: Grouped workspace commands with validation
             StateCommand::Bm25Rebuild => rag::search::bm25_rebuild(&state, &event_bus).await,

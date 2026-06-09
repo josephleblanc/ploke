@@ -161,6 +161,35 @@ pub fn record_mirror_file() -> Result<PathBuf, PrepareError> {
         .join("mirror.cozo.sqlite"))
 }
 
+pub fn record_mirror_file_for_record(record_path: &Path) -> Result<PathBuf, PrepareError> {
+    let root =
+        record_mirror_root_for_record(record_path).ok_or_else(|| PrepareError::DatabaseSetup {
+            phase: "record_mirror_path",
+            detail: format!(
+                "record '{}' is not under a Prototype 1 record layout",
+                record_path.display()
+            ),
+        })?;
+    Ok(root.join("records").join("mirror.cozo.sqlite"))
+}
+
+fn record_mirror_root_for_record(record_path: &Path) -> Option<PathBuf> {
+    record_path.ancestors().find_map(|ancestor| {
+        if ancestor.file_name().and_then(|name| name.to_str()) != Some("prototype1") {
+            return None;
+        }
+        let root = ancestor.parent()?;
+        match root.parent() {
+            Some(campaigns)
+                if campaigns.file_name().and_then(|name| name.to_str()) == Some("campaigns") =>
+            {
+                campaigns.parent().map(Path::to_path_buf)
+            }
+            _ => Some(root.to_path_buf()),
+        }
+    })
+}
+
 pub fn last_run_file() -> Result<PathBuf, PrepareError> {
     Ok(ploke_eval_home()?.join("last-run.json"))
 }
@@ -209,6 +238,51 @@ mod tests {
                 .join("runs")
                 .join("run-123")
         );
+    }
+
+    #[test]
+    fn record_mirror_for_eval_home_campaign_uses_eval_home_records() {
+        let record_path = Path::new("/tmp/eval-home")
+            .join("campaigns")
+            .join("campaign-a")
+            .join("prototype1")
+            .join("nodes")
+            .join("node-a")
+            .join("node.json");
+
+        assert_eq!(
+            record_mirror_file_for_record(&record_path).expect("mirror file"),
+            Path::new("/tmp/eval-home")
+                .join("records")
+                .join("mirror.cozo.sqlite")
+        );
+    }
+
+    #[test]
+    fn record_mirror_for_local_campaign_stays_under_campaign_root() {
+        let record_path = Path::new("/tmp/local-campaign")
+            .join("prototype1")
+            .join("nodes")
+            .join("node-a")
+            .join("node.json");
+
+        assert_eq!(
+            record_mirror_file_for_record(&record_path).expect("mirror file"),
+            Path::new("/tmp/local-campaign")
+                .join("records")
+                .join("mirror.cozo.sqlite")
+        );
+    }
+
+    #[test]
+    fn record_mirror_rejects_non_prototype1_record_path() {
+        let record_path = Path::new("/tmp/local-campaign")
+            .join("records")
+            .join("test-record.json");
+
+        let error = record_mirror_file_for_record(&record_path)
+            .expect_err("non-Prototype 1 records should not fall back to eval home");
+        assert!(error.to_string().contains("not under a Prototype 1"));
     }
 
     #[test]

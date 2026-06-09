@@ -94,6 +94,10 @@ pub struct RunMsbSingleRequest {
     pub model_id: Option<String>,
     #[serde(default)]
     pub provider: Option<ProviderKey>,
+    #[serde(default)]
+    pub embedding_model_id: Option<String>,
+    #[serde(default)]
+    pub embedding_provider: Option<ProviderKey>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

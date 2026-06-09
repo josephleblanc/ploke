@@ -139,6 +139,8 @@ impl RunMsbSingleCommand {
             use_default_model: self.use_default_model,
             model_id: self.model_id,
             provider: parse_provider_key(self.provider)?,
+            embedding_model_id: self.embedding_model_id,
+            embedding_provider: parse_provider_key(self.embedding_provider)?,
         }
         .run()
         .await?;

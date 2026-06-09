@@ -880,6 +880,11 @@ pub enum StateCommand {
     ScanForChange {
         scan_tx: oneshot::Sender<Option<Vec<PathBuf>>>,
     },
+    /// Scan for file changes in the loaded crate(s) that own these paths.
+    ScanPathsForChange {
+        paths: Vec<PathBuf>,
+        scan_tx: oneshot::Sender<Option<Vec<PathBuf>>>,
+    },
     /// Set working directory.
     ///
     /// **Migration Note**: Use `StateCommand::Workspace(WorkspaceCmd::SetPwd { new_pwd })`
@@ -1089,6 +1094,7 @@ impl StateCommand {
             RagDenseSearch { .. } => "RagDenseSearch",
             RagAssembleContext { .. } => "RagAssembleContext",
             ScanForChange { .. } => "ScanForChange",
+            ScanPathsForChange { .. } => "ScanPathsForChange",
             ProcessWithRag { .. } => "ProcessWithRag",
             SetEditingPreviewMode { .. } => "SetEditingPreviewMode",
             SetEditingMaxPreviewLines { .. } => "SetEditingMaxPreviewLines",

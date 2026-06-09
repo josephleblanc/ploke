@@ -181,6 +181,11 @@ async fn apply_ns_edit(
                 .filter(|r| r.is_ok())
                 .count();
             let file_count = file_paths.len();
+            let applied_paths = results
+                .iter()
+                .zip(file_paths.iter())
+                .filter_map(|(res, path)| res.as_ref().ok().map(|_| path.clone()))
+                .collect::<Vec<_>>();
             tracing::debug!(
                 target: DEBUG_TOOLS,
                 request_id = %request_id,
@@ -191,7 +196,7 @@ async fn apply_ns_edit(
             );
             let results_json: Vec<serde_json::Value> = results
                 .into_iter()
-                .zip(file_paths.into_iter())
+                .zip(file_paths.iter())
                 .map(|(res, path)| match res {
                     Ok(write_res) => serde_json::json!({
                         "file_path": path.display().to_string(),
@@ -247,7 +252,7 @@ async fn apply_ns_edit(
             // Non-semantic patch application changes live file content immediately, so the
             // loaded index must be refreshed before follow-up tool calls rely on stale anchors.
             if applied_any {
-                rescan_for_changes(state, event_bus, request_id).await;
+                rescan_for_changes(state, event_bus, request_id, &applied_paths).await;
             }
 
             let summary = if applied_ok {
@@ -389,9 +394,14 @@ async fn apply_semantic_edit(
         Ok(results) => {
             let applied = results.iter().filter(|r| r.is_ok()).count();
             let file_count = file_paths.len();
+            let applied_paths = results
+                .iter()
+                .zip(file_paths.iter())
+                .filter_map(|(res, path)| res.as_ref().ok().map(|_| path.clone()))
+                .collect::<Vec<_>>();
             let results_json: Vec<serde_json::Value> = results
                 .into_iter()
-                .zip(file_paths.into_iter())
+                .zip(file_paths.iter())
                 .map(|(res, path)| match res {
                     Ok(write_res) => serde_json::json!({
                         "file_path": path.display().to_string(),
@@ -431,7 +441,7 @@ async fn apply_semantic_edit(
             // Post-apply: trigger a rescan to refresh indexes after semantic edits only,
             // e.g. not after `NsPatch`
             if applied_ok {
-                rescan_for_changes(state, event_bus, request_id).await;
+                rescan_for_changes(state, event_bus, request_id, &applied_paths).await;
             }
 
             let ui_payload = ToolUiPayload::new(
@@ -525,12 +535,23 @@ async fn apply_semantic_edit(
     }
 }
 
-async fn rescan_for_changes(state: &Arc<AppState>, event_bus: &Arc<EventBus>, request_id: Uuid) {
+async fn rescan_for_changes(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    request_id: Uuid,
+    changed_paths: &[PathBuf],
+) {
     #[cfg(feature = "test_harness")]
     RESCAN_FOR_CHANGES_CALLS.fetch_add(1, Ordering::SeqCst);
 
     let (scan_tx, scan_rx) = tokio::sync::oneshot::channel();
-    crate::app_state::handlers::db::scan_for_change(state, event_bus, scan_tx).await;
+    crate::app_state::handlers::db::scan_paths_for_change(
+        state,
+        event_bus,
+        changed_paths.to_vec(),
+        scan_tx,
+    )
+    .await;
     let add_chat_message = |msg: String| {
         chat::add_msg_immediate_background(
             state,
@@ -995,11 +1016,18 @@ pub async fn approve_creations(state: &Arc<AppState>, event_bus: &Arc<EventBus>,
 
     // Post-apply: trigger a rescan to refresh indexes
     let (scan_tx, scan_rx) = tokio::sync::oneshot::channel();
+    let changed_paths = file_paths.clone();
     tokio::spawn({
         let state = Arc::clone(state);
         let event_bus = Arc::clone(event_bus);
         async move {
-            crate::app_state::handlers::db::scan_for_change(&state, &event_bus, scan_tx).await;
+            crate::app_state::handlers::db::scan_paths_for_change(
+                &state,
+                &event_bus,
+                changed_paths,
+                scan_tx,
+            )
+            .await;
             let _ = scan_rx
                 .await
                 .inspect_err(|e| tracing::error!(scan_error = ?e));

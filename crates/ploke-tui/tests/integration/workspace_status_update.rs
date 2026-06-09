@@ -17,8 +17,8 @@ use tokio::sync::{Mutex, RwLock};
 
 use tui::app_state::handlers::indexing::index_workspace;
 use tui::app_state::{
-    AppState, ChatState, ConfigState, RuntimeConfig, SystemState, workspace_status_for_test,
-    workspace_update_for_test,
+    AppState, ChatState, ConfigState, RuntimeConfig, SystemState, scan_paths_for_change_for_test,
+    workspace_status_for_test, workspace_update_for_test,
 };
 use tui::chat_history::ChatHistory;
 use tui::event_bus::{EventBus, EventBusCaps};
@@ -106,6 +106,14 @@ fn function_node_id(db: &Database, function_name: &str) -> uuid::Uuid {
         DataValue::Uuid(wrapper) => wrapper.0,
         other => panic!("expected uuid for function id, got {other:?}"),
     }
+}
+
+fn function_exists(db: &Database, function_name: &str) -> bool {
+    let script = format!(r#"?[id] := *function {{ id, name @ 'NOW' }}, name = "{function_name}""#);
+    !db.raw_query(&script)
+        .expect("query function")
+        .rows
+        .is_empty()
 }
 
 /// A pass here proves workspace status computes freshness over all loaded
@@ -197,6 +205,71 @@ async fn workspace_status_and_update_operate_per_loaded_crate() {
     assert!(
         function_has_embedding(&state.db, &active_set, "nested_value"),
         "workspace update must preserve embeddings for unchanged member crates"
+    );
+}
+
+/// A pass here proves post-apply refresh can target the crate that owns the
+/// changed file instead of scanning whichever crate is currently focused.
+#[tokio::test]
+async fn targeted_scan_refreshes_changed_member_independent_of_focus() {
+    let _lock = fixture_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let repo_root = workspace_root();
+    let workspace_root = repo_root.join("tests/fixture_workspace/ws_fixture_01");
+    let focused_member = workspace_root.join("member_root");
+    let changed_member_file = workspace_root.join("nested/member_nested/src/lib.rs");
+    let _restore_guard = FileRestoreGuard::new(changed_member_file.clone());
+
+    let state = build_state();
+    let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+
+    index_workspace(
+        &state,
+        &event_bus,
+        Some(IndexTargetDir::new(workspace_root.clone())),
+        true,
+    )
+    .await;
+    state.system.set_crate_focus_for_test(focused_member).await;
+
+    assert!(
+        function_exists(&state.db, "nested_value"),
+        "nested member function should be indexed before mutation"
+    );
+    assert!(
+        !function_exists(&state.db, "nested_value_after_targeted_scan"),
+        "renamed function should not be indexed before mutation"
+    );
+
+    let changed = std::fs::read_to_string(&changed_member_file)
+        .expect("read nested member file")
+        .replace("nested_value", "nested_value_after_targeted_scan");
+    std::fs::write(&changed_member_file, changed).expect("write nested member file");
+
+    let (scan_tx, scan_rx) = tokio::sync::oneshot::channel();
+    scan_paths_for_change_for_test(
+        &state,
+        &event_bus,
+        vec![changed_member_file.clone()],
+        scan_tx,
+    )
+    .await
+    .expect("targeted scan");
+    let changed_paths = scan_rx
+        .await
+        .expect("targeted scan sender")
+        .expect("targeted scan should detect the nested member file");
+
+    assert!(
+        changed_paths.contains(&changed_member_file),
+        "targeted scan should report the touched nested member file; got {changed_paths:?}"
+    );
+    assert!(
+        !function_exists(&state.db, "nested_value"),
+        "old nested member function row should be retracted after targeted scan"
+    );
+    assert!(
+        function_exists(&state.db, "nested_value_after_targeted_scan"),
+        "renamed nested member function should be indexed after targeted scan"
     );
 }
 

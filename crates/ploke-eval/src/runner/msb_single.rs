@@ -40,7 +40,11 @@ impl RunMsbSingleRequest {
         let setup_start_time = chrono::Utc::now();
         let run_start_instant = Instant::now();
         let (manifest_path, prepared) = load_prepared_run(self.run_manifest)?;
-        let embedding_selection = resolve_eval_embedding_selection(None, None).await?;
+        let embedding_selection = resolve_eval_embedding_selection(
+            self.embedding_model_id.as_deref(),
+            self.embedding_provider.as_ref(),
+        )
+        .await?;
         let requested_model = parse_requested_model_id(self.model_id.as_deref())?;
         let selected_model =
             resolve_model_for_run(requested_model.as_ref(), self.use_default_model)?;

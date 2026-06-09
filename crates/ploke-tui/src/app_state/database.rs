@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeSet, HashMap, HashSet, VecDeque},
     ops::ControlFlow,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use cozo::DataValue;
@@ -522,6 +522,64 @@ async fn primary_scan_target(
         crate_name,
         root_path,
     })
+}
+
+fn owning_loaded_target_for_path<'a>(
+    targets: &'a [LoadedCrateScanTarget],
+    path: &Path,
+) -> Option<&'a LoadedCrateScanTarget> {
+    targets
+        .iter()
+        .filter(|target| path.starts_with(&target.root_path))
+        .max_by_key(|target| target.root_path.components().count())
+}
+
+async fn scan_targets_for_paths(
+    state: &Arc<AppState>,
+    paths: &[PathBuf],
+) -> Result<Vec<LoadedCrateScanTarget>, ploke_error::Error> {
+    if paths.is_empty() {
+        return Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: "Targeted scan requires at least one changed path".to_string(),
+        }));
+    }
+
+    let (_, loaded_targets) = loaded_crate_targets(state).await?;
+    if loaded_targets.is_empty() {
+        return Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: "No loaded crates are available for targeted scan".to_string(),
+        }));
+    }
+
+    let mut selected = Vec::new();
+    for path in paths {
+        if !path.is_absolute() {
+            return Err(ploke_error::Error::Domain(DomainError::Ui {
+                message: format!(
+                    "Targeted scan requires absolute changed paths; got '{}'",
+                    path.display()
+                ),
+            }));
+        }
+
+        let Some(target) = owning_loaded_target_for_path(&loaded_targets, path) else {
+            return Err(ploke_error::Error::Domain(DomainError::Ui {
+                message: format!(
+                    "Changed path '{}' is not under any loaded crate root",
+                    path.display()
+                ),
+            }));
+        };
+
+        if !selected
+            .iter()
+            .any(|existing: &LoadedCrateScanTarget| existing.crate_id == target.crate_id)
+        {
+            selected.push(target.clone());
+        }
+    }
+
+    Ok(selected)
 }
 
 async fn freshness_for_target(
@@ -1290,6 +1348,16 @@ pub async fn workspace_update_for_test(
 }
 
 #[cfg(feature = "test_harness")]
+pub async fn scan_paths_for_change_for_test(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    paths: Vec<PathBuf>,
+    scan_tx: oneshot::Sender<Option<Vec<PathBuf>>>,
+) -> Result<(), ploke_error::Error> {
+    scan_paths_for_change(state, event_bus, paths, scan_tx).await
+}
+
+#[cfg(feature = "test_harness")]
 pub async fn workspace_remove_for_test(
     state: &Arc<AppState>,
     event_bus: &Arc<EventBus>,
@@ -1740,6 +1808,44 @@ pub(super) async fn scan_for_change(
 ) -> Result<(), ploke_error::Error> {
     let target = primary_scan_target(state).await?;
     scan_for_change_target(state, event_bus, &target, scan_tx, true).await
+}
+
+pub(super) async fn scan_paths_for_change(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    paths: Vec<std::path::PathBuf>,
+    scan_tx: oneshot::Sender<Option<Vec<std::path::PathBuf>>>,
+) -> Result<(), ploke_error::Error> {
+    let targets = scan_targets_for_paths(state, &paths).await?;
+    let mut changed_paths = Vec::new();
+
+    for target in targets {
+        let (target_tx, target_rx) = oneshot::channel();
+        scan_for_change_target(state, event_bus, &target, target_tx, true).await?;
+        match target_rx.await {
+            Ok(Some(paths)) => {
+                for path in paths {
+                    if !changed_paths.contains(&path) {
+                        changed_paths.push(path);
+                    }
+                }
+            }
+            Ok(None) => {}
+            Err(source) => {
+                return Err(ploke_error::Error::Domain(DomainError::Ui {
+                    message: format!("Targeted scan barrier failed: {source}"),
+                }));
+            }
+        }
+    }
+
+    let result = if changed_paths.is_empty() {
+        None
+    } else {
+        Some(changed_paths)
+    };
+    let _ = scan_tx.send(result);
+    Ok(())
 }
 
 pub(super) async fn workspace_status(

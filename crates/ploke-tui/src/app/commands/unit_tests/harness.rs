@@ -277,6 +277,14 @@ impl RelayStateCmd {
                     tokio::spawn(relay_oneshot(scan_tx, proxy_rx));
                     StateCommand::ScanForChange { scan_tx: proxy_tx }
                 }
+                StateCommand::ScanPathsForChange { paths, scan_tx } => {
+                    let (proxy_tx, proxy_rx) = oneshot::channel();
+                    tokio::spawn(relay_oneshot(scan_tx, proxy_rx));
+                    StateCommand::ScanPathsForChange {
+                        paths,
+                        scan_tx: proxy_tx,
+                    }
+                }
                 // EmbedMessage carries Receivers; we cannot proxy those because
                 // the corresponding Senders live in the code that created the command.
                 other => other,

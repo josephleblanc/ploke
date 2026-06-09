@@ -11,8 +11,7 @@ Principles
 
 Env Gating Patterns
 - Long running (embedding/indexing) tests: require PLOKE_EMBED_RUN_<TEST_NAME>=1.
-- Live LLM tests (OpenRouter): require OPENROUTER_API_KEY and an explicit gate. By default, these are skipped unless one of the following is set:
-  - `PLOKE_RUN_LIVE_TESTS=1` (top-level E2E live tests)
+- Live LLM tests (OpenRouter): require `OPENROUTER_API_KEY`. Default to skip/ignore when the key is missing; individual long or expensive tests may define narrower env gates.
   - `PLOKE_RUN_EXEC_LIVE_TESTS=1` (in-crate exec_live_tests diagnostics)
   - `PLOKE_RUN_EXEC_REAL_TOOLS_LIVE_TESTS=1` (real tools roundtrip smoke)
   Choose low‑cost models/providers when enabled.
@@ -165,5 +164,5 @@ Live API Endpoint Tests (OpenRouter)
   - If you exhaust the budget (3 failed runs) while trying to reach desired behavior without weakening test integrity, write a report:
     - What you tried, what failed/succeeded, and open questions.
     - Ask for guidance before continuing.
-- Gating: require `OPENROUTER_API_KEY` and an explicit gate (e.g., `PLOKE_RUN_LIVE_TESTS=1`). Default to skip in CI.
+- Gating: require `OPENROUTER_API_KEY`. Default to skip in CI unless a test-specific live gate is documented.
 - Capture useful metadata (endpoint chosen, prices, rate-limits) in logs/artifacts under `target/test-output/` when helpful.

@@ -440,6 +440,14 @@ pub struct RunMsbSingleCommand {
     /// Explicit provider slug to pin for the selected model.
     #[arg(long, value_name = "PROVIDER")]
     pub provider: Option<String>,
+
+    /// Explicit embedding model id to use for eval indexing/retrieval on this run.
+    #[arg(long)]
+    pub embedding_model_id: Option<String>,
+
+    /// Explicit provider slug to pin for the embedding model on this run.
+    #[arg(long, value_name = "PROVIDER")]
+    pub embedding_provider: Option<String>,
 }
 
 #[derive(Debug, Parser)]

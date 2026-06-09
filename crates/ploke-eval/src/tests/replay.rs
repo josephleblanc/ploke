@@ -21,17 +21,20 @@ use ploke_tui::{
     AppEvent, EventBus, EventBusCaps, EventPriority,
     app::commands::harness::TestRuntime,
     app_state::{AppState, events::SystemEvent},
+    parser::{IndexTargetKind, resolve_index_target},
     rag::{
         tools::apply_code_edit_tool,
         utils::{ApplyCodeEditRequest, Edit, ToolCallParams},
     },
     tools::{
         Ctx, Tool, ToolErrorCode, ToolErrorWire, ToolName,
+        insert_rust_item::InsertRustItem,
         ns_read::{NsRead, NsReadResult},
     },
     user_config::{ChatPolicy, ChatTimeoutStrategy},
 };
 use serde::Deserialize;
+#[cfg(feature = "replay_tests")]
 use tempfile::tempdir;
 use tracing_subscriber::fmt::SubscriberBuilder;
 use uuid::Uuid;
@@ -39,7 +42,10 @@ use uuid::Uuid;
 use crate::{
     PreparedSingleRun,
     replay::llm::LoadedResponseTape,
-    runner::{IndexingStatusArtifact, RepoStateArtifact, RunMsbSingleRequest},
+    runner::{
+        RepoStateArtifact, checkout_repo_to_base, init_runtime_db, prepare_sparse_workspace,
+        sparse_headless_embedding_processor,
+    },
 };
 
 #[cfg(feature = "replay_tests")]
@@ -184,25 +190,6 @@ fn historical_run_dir_with(instance_id: &str, required_artifacts: &[&str]) -> Pa
             instance_root.display()
         )
     })
-}
-
-fn output_artifact_path(output_dir: &Path, artifact: &str) -> PathBuf {
-    let flat = output_dir.join(artifact);
-    if flat.exists() {
-        return flat;
-    }
-
-    let runs_dir = output_dir.join("runs");
-    let mut candidates = match std::fs::read_dir(&runs_dir) {
-        Ok(entries) => entries
-            .filter_map(Result::ok)
-            .map(|entry| entry.path().join(artifact))
-            .filter(|path| path.exists())
-            .collect::<Vec<_>>(),
-        Err(_) => Vec::new(),
-    };
-    candidates.sort();
-    candidates.pop().unwrap_or(flat)
 }
 
 #[cfg(feature = "replay_tests")]
@@ -421,6 +408,216 @@ async fn replay_ns_patch_request(
     } = NsPatch::execute(params, ctx.clone()).await?;
     NsPatch::emit_completed(&ctx, content, ui_payload);
     Ok(())
+}
+
+#[cfg(feature = "replay_tests")]
+fn request_ids(request: &ToolRequestRecord) -> (Uuid, Uuid, ploke_core::ArcStr) {
+    let request_id = Uuid::parse_str(&request.request_id).expect("request_id should be a uuid");
+    let parent_id = Uuid::parse_str(&request.parent_id).expect("parent_id should be a uuid");
+    let call_id = ploke_core::ArcStr::from(request.call_id.clone());
+    (request_id, parent_id, call_id)
+}
+
+#[cfg(feature = "replay_tests")]
+fn edit_params(
+    state: Arc<AppState>,
+    event_bus: Arc<EventBus>,
+    request: &ToolRequestRecord,
+) -> ToolCallParams {
+    assert_eq!(request.tool, "apply_code_edit");
+    let arguments: RecordedApplyCodeEditArguments =
+        serde_json::from_str(request.arguments.as_str())
+            .expect("historical apply_code_edit payload should deserialize");
+    let (request_id, parent_id, call_id) = request_ids(request);
+    ToolCallParams {
+        state,
+        event_bus,
+        request_id,
+        parent_id,
+        name: ToolName::ApplyCodeEdit,
+        typed_req: ApplyCodeEditRequest {
+            confidence: arguments.confidence,
+            edits: arguments
+                .edits
+                .into_iter()
+                .map(|edit| Edit::Canonical {
+                    file: edit.file,
+                    canon: edit.canon,
+                    node_type: edit.node_type,
+                    code: edit.code,
+                })
+                .collect(),
+        },
+        call_id,
+    }
+}
+
+#[cfg(feature = "replay_tests")]
+async fn replay_apply(
+    state: Arc<AppState>,
+    event_bus: Arc<EventBus>,
+    request: &ToolRequestRecord,
+) -> Option<Uuid> {
+    let params = edit_params(state, event_bus, request);
+    apply_code_edit_tool(params).await
+}
+
+#[cfg(feature = "replay_tests")]
+async fn wait_tool_applied(
+    event_rx: &mut tokio::sync::broadcast::Receiver<AppEvent>,
+    request: &ToolRequestRecord,
+    context: &str,
+) -> Option<ploke_core::TrackingHash> {
+    let (request_id, _, call_id) = request_ids(request);
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            let event = match event_rx.recv().await {
+                Ok(event) => event,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(err) => panic!("{context}: event bus failed while waiting for apply: {err}"),
+            };
+            match event {
+                AppEvent::System(SystemEvent::ToolCallCompleted {
+                    request_id: observed_id,
+                    call_id: observed_call,
+                    content,
+                    ..
+                }) if observed_id == request_id && observed_call == call_id => {
+                    let value = serde_json::from_str::<serde_json::Value>(&content).ok();
+                    let applied = value
+                        .as_ref()
+                        .and_then(|value| value.get("applied").and_then(|count| count.as_u64()))
+                        .unwrap_or(0);
+                    if applied > 0 {
+                        return value
+                            .as_ref()
+                            .and_then(|value| value.get("results"))
+                            .and_then(|results| results.as_array())
+                            .and_then(|results| results.first())
+                            .and_then(|result| result.get("new_file_hash"))
+                            .and_then(|hash| hash.as_str())
+                            .and_then(|hash| uuid::Uuid::parse_str(hash).ok())
+                            .map(ploke_core::TrackingHash);
+                    }
+                }
+                AppEvent::System(SystemEvent::ToolCallFailed {
+                    request_id: observed_id,
+                    call_id: observed_call,
+                    error,
+                    ..
+                }) if observed_id == request_id && observed_call == call_id => {
+                    panic!("{context}: tool failed before applied completion: {error}");
+                }
+                _ => {}
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("{context}: timed out waiting for applied ToolCallCompleted"))
+}
+
+#[cfg(feature = "replay_tests")]
+async fn expect_apply_applied(
+    state: Arc<AppState>,
+    event_bus: Arc<EventBus>,
+    request: &ToolRequestRecord,
+    context: &str,
+) -> Uuid {
+    let (request_id, _, call_id) = request_ids(request);
+    let mut event_rx = event_bus.subscribe(EventPriority::Realtime);
+    if let Some(proposal_id) = replay_apply(state, Arc::clone(&event_bus), request).await {
+        let _ = wait_tool_applied(&mut event_rx, request, context).await;
+        return proposal_id;
+    }
+
+    let error = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let AppEvent::System(SystemEvent::ToolCallFailed {
+                request_id: observed_id,
+                call_id: observed_call,
+                error,
+                ..
+            }) = event_rx.recv().await.expect("event bus dropped")
+                && observed_id == request_id
+                && observed_call == call_id
+            {
+                return error;
+            }
+        }
+    })
+    .await
+    .unwrap_or_else(|_| "timed out waiting for ToolCallFailed".to_string());
+    panic!("{context}: apply_code_edit failed before staging: {error}");
+}
+
+#[cfg(feature = "replay_tests")]
+async fn expect_insert_applied(
+    state: Arc<AppState>,
+    event_bus: Arc<EventBus>,
+    request: &ToolRequestRecord,
+    context: &str,
+) -> Result<(Uuid, Option<ploke_core::TrackingHash>), ploke_error::Error> {
+    let mut event_rx = event_bus.subscribe(EventPriority::Realtime);
+    let proposal_id = replay_insert(state, Arc::clone(&event_bus), request).await?;
+    let file_hash = wait_tool_applied(&mut event_rx, request, context).await;
+    Ok((proposal_id, file_hash))
+}
+
+#[cfg(feature = "replay_tests")]
+async fn assert_target_readable_after_refresh(
+    state: &Arc<AppState>,
+    file: &Path,
+    node_type: NodeType,
+    module_path: &[String],
+    item_name: &str,
+) {
+    let rows = ploke_db::helpers::graph_resolve_exact(
+        &state.db,
+        node_type.relation_str(),
+        file,
+        module_path,
+        item_name,
+    )
+    .expect("resolve replay target after refresh");
+    assert!(
+        !rows.is_empty(),
+        "target {module_path:?}::{item_name} should resolve after refresh"
+    );
+    let snippets = state
+        .io_handle
+        .get_snippets_batch(rows)
+        .await
+        .expect("read snippets through refreshed semantic anchors");
+    assert!(
+        snippets.iter().all(Result::is_ok),
+        "target {module_path:?}::{item_name} should be readable after refresh, got {snippets:?}"
+    );
+}
+
+#[cfg(feature = "replay_tests")]
+async fn replay_insert(
+    state: Arc<AppState>,
+    event_bus: Arc<EventBus>,
+    request: &ToolRequestRecord,
+) -> Result<Uuid, ploke_error::Error> {
+    assert_eq!(request.tool, "insert_rust_item");
+    let (request_id, parent_id, call_id) = request_ids(request);
+    let ctx = Ctx {
+        state,
+        event_bus,
+        request_id,
+        parent_id,
+        call_id,
+    };
+
+    let params = InsertRustItem::deserialize_params(request.arguments.as_str())
+        .expect("historical insert_rust_item payload should deserialize");
+    let ploke_tui::tools::ToolResult {
+        content,
+        ui_payload,
+    } = InsertRustItem::execute(params, ctx.clone()).await?;
+    InsertRustItem::emit_completed(&ctx, content, ui_payload);
+    Ok(derive_edit_proposal_id(ctx.request_id, &ctx.call_id))
 }
 
 fn compact_headless_tool_request(path: &Path, event_index: usize) -> PersistedToolRequestRecord {
@@ -1101,72 +1298,47 @@ async fn regression_ripgrep_setup_indexes_without_convert_keyword_2015() {
         "expected historical run manifest at {SOURCE_MANIFEST}"
     );
 
-    let temp = tempdir().expect("tempdir");
     let mut prepared = load_prepared_single_run(Path::new(SOURCE_MANIFEST));
     prepared.task_id = format!("{}-regression-dual-syn", prepared.task_id);
-    prepared.output_dir = temp.path().join("out");
-    std::fs::create_dir_all(&prepared.output_dir).expect("create replay output dir");
+    checkout_repo_to_base(&prepared.repo_root, prepared.base_sha.as_deref())
+        .expect("historical ripgrep repo should checkout base sha");
+    let resolved = resolve_index_target(Some(prepared.repo_root.clone()), &prepared.repo_root)
+        .expect("historical ripgrep root should resolve");
+    assert_eq!(resolved.kind, IndexTargetKind::Workspace);
+    assert!(
+        resolved
+            .member_roots
+            .iter()
+            .any(|root| root.ends_with("crates/printer")),
+        "expected ripgrep workspace members to include target crate: {:?}",
+        resolved.member_roots
+    );
 
-    let replay_manifest = temp.path().join("run.json");
-    std::fs::write(
-        &replay_manifest,
-        serde_json::to_string_pretty(&prepared).expect("serialize replay manifest"),
-    )
-    .expect("write replay manifest");
+    let runtime_db = init_runtime_db().expect("init runtime db");
+    let runtime = TestRuntime::new_with_embedding_processor(
+        &runtime_db,
+        sparse_headless_embedding_processor(),
+    );
+    let state = runtime.state_arc();
 
-    let artifacts = RunMsbSingleRequest {
-        run_manifest: replay_manifest,
-        batch_id: None,
-        index_debug_snapshots: false,
-        use_default_model: true,
-        model_id: None,
-        provider: None,
+    prepare_sparse_workspace(&state, &prepared.repo_root, &[])
+        .await
+        .expect("ripgrep setup should index successfully via dual-syn syn1 path without convert_keyword_2015");
+
+    let crate_rows = state
+        .db
+        .list_crate_context_rows()
+        .expect("crate context rows after sparse workspace parse");
+    let crate_names = crate_rows
+        .iter()
+        .map(|row| row.name.as_str())
+        .collect::<BTreeSet<_>>();
+    for expected in ["grep-printer", "ignore", "globset"] {
+        assert!(
+            crate_names.contains(expected),
+            "expected ripgrep workspace member '{expected}' after indexing, got {crate_rows:?}"
+        );
     }
-    .run()
-    .await
-    .expect("ripgrep setup should index successfully via dual-syn syn1 path without convert_keyword_2015");
-
-    assert!(
-        artifacts.indexing_status.exists(),
-        "expected indexing status artifact at {}",
-        artifacts.indexing_status.display()
-    );
-    let indexing_status: IndexingStatusArtifact = serde_json::from_str(
-        &std::fs::read_to_string(&artifacts.indexing_status)
-            .expect("read indexing status artifact"),
-    )
-    .expect("parse indexing status artifact");
-    assert_eq!(
-        indexing_status.status, "completed",
-        "expected completed indexing status, got {indexing_status:?}"
-    );
-
-    assert!(
-        artifacts.indexing_checkpoint_db.exists(),
-        "expected starting db checkpoint at {}",
-        artifacts.indexing_checkpoint_db.display()
-    );
-
-    assert!(
-        artifacts.repo_state.exists(),
-        "expected repo state artifact at {}",
-        artifacts.repo_state.display()
-    );
-    let repo_state: RepoStateArtifact = serde_json::from_str(
-        &std::fs::read_to_string(&artifacts.repo_state).expect("read repo state artifact"),
-    )
-    .expect("parse repo state artifact");
-    assert!(
-        repo_state.checked_out_head_sha.is_some(),
-        "expected checked-out head sha in repo state: {repo_state:?}"
-    );
-
-    let parse_failure_path = output_artifact_path(&prepared.output_dir, "parse-failure.json");
-    assert!(
-        !parse_failure_path.exists(),
-        "parse failure artifact should not exist after successful indexing: {}",
-        parse_failure_path.display()
-    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1285,5 +1457,136 @@ async fn test_replay_historical_fd_1121_partial_non_semantic_patch_runtime_flow(
     assert!(
         !diff.contains("diff --git a/src/walk.rs b/src/walk.rs"),
         "replayed repo diff should exclude src/walk.rs after failed apply:\n{diff}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+#[cfg(feature = "replay_tests")]
+async fn historical_ripgrep_ignore_post_apply_refresh_replays_stale_anchor_recovery() {
+    init_tracing();
+    const RUN_MANIFEST: &str = "/home/brasides/.ploke-eval/instances/prototype1/p1-g35f-direct-protocol-2target-g0g2-1x3-state-20260608-234216/BurntSushi__ripgrep-2295/run.json";
+    const RUN_DIR: &str = "/home/brasides/.ploke-eval/instances/prototype1/p1-g35f-direct-protocol-2target-g0g2-1x3-state-20260608-234216/BurntSushi__ripgrep-2295/runs/run-1780987402061-structured-current-policy-27d5f4ae";
+    const APPLY_MATCHED_IGNORE_CALL_ID: &str = "function-call-39b4339b-483c-4548-9482-1c596bf61158";
+    const INSERT_STRIP_OVERLAP_CALL_ID: &str = "function-call-54859f90-0820-4835-8cb5-d780d43e1935";
+    const APPLY_LINKED_WORKTREE_TEST_CALL_ID: &str =
+        "function-call-d0de1cd9-b0d9-4f40-a10c-6e09ac022af5";
+
+    let run_manifest = PathBuf::from(RUN_MANIFEST);
+    let turn_trace = PathBuf::from(RUN_DIR).join("agent-turn-trace.json");
+    assert!(
+        run_manifest.exists(),
+        "expected historical run manifest at {}",
+        run_manifest.display()
+    );
+    assert!(
+        turn_trace.exists(),
+        "expected historical turn trace at {}",
+        turn_trace.display()
+    );
+
+    let historical = load_prepared_single_run(&run_manifest);
+    let trace = load_agent_turn_artifact(&turn_trace);
+    let first_request = find_tool_request(&trace, APPLY_MATCHED_IGNORE_CALL_ID);
+    let insert_request = find_tool_request(&trace, INSERT_STRIP_OVERLAP_CALL_ID);
+    let later_request = find_tool_request(&trace, APPLY_LINKED_WORKTREE_TEST_CALL_ID);
+
+    let temp = tempdir().expect("tempdir");
+    let replay_repo_root = temp.path().join("ripgrep-ignore-refresh-replay");
+    let replay_output_dir = temp.path().join("replay-output");
+    clone_repo_for_replay(&historical.repo_root, &replay_repo_root);
+
+    let mut prepared = historical.clone();
+    prepared.repo_root = replay_repo_root.clone();
+    prepared.output_dir = replay_output_dir.clone();
+
+    run_git(
+        &prepared.repo_root,
+        &["reset", "--hard"],
+        "git reset --hard",
+    );
+    if let Some(base_sha) = prepared.base_sha.as_deref() {
+        run_git(
+            &prepared.repo_root,
+            &["checkout", "--detach", base_sha],
+            "git checkout --detach base sha",
+        );
+    }
+
+    let (_app, state, _config_guard) = setup_replay_runtime(&prepared)
+        .await
+        .expect("setup replay runtime for ripgrep ignore refresh");
+    {
+        let mut cfg = state.config.write().await;
+        cfg.editing.auto_confirm_edits = true;
+        cfg.chat_policy = benchmark_chat_policy();
+    }
+    let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+
+    let first_id = expect_apply_applied(
+        Arc::clone(&state),
+        Arc::clone(&event_bus),
+        &first_request,
+        "historical first apply_code_edit",
+    )
+    .await;
+    let first_status = wait_for_terminal_proposal_status(&state, first_id).await;
+    assert_eq!(
+        first_status,
+        ploke_tui::app_state::core::EditProposalStatus::Applied
+    );
+
+    let (insert_id, _insert_hash) = expect_insert_applied(
+        Arc::clone(&state),
+        Arc::clone(&event_bus),
+        &insert_request,
+        "historical insert_rust_item",
+    )
+    .await
+    .expect("historical insert_rust_item should apply");
+    let insert_status = wait_for_terminal_proposal_status(&state, insert_id).await;
+    assert_eq!(
+        insert_status,
+        ploke_tui::app_state::core::EditProposalStatus::Applied
+    );
+
+    let target_file = prepared.repo_root.join("crates/ignore/src/dir.rs");
+    assert_target_readable_after_refresh(
+        &state,
+        &target_file,
+        NodeType::Function,
+        &["crate".to_string(), "dir".to_string(), "tests".to_string()],
+        "git_info_exclude_in_linked_worktree",
+    )
+    .await;
+
+    let later_id = expect_apply_applied(
+        Arc::clone(&state),
+        Arc::clone(&event_bus),
+        &later_request,
+        "historical later apply_code_edit",
+    )
+    .await;
+    let later_status = wait_for_terminal_proposal_status(&state, later_id).await;
+    assert_eq!(
+        later_status,
+        ploke_tui::app_state::core::EditProposalStatus::Applied
+    );
+
+    let diff = git_stdout(
+        &prepared.repo_root,
+        &["diff", "--no-ext-diff"],
+        "git diff after replay",
+    );
+    assert!(
+        diff.contains("diff --git a/crates/ignore/src/dir.rs b/crates/ignore/src/dir.rs"),
+        "replayed repo diff should include crates/ignore/src/dir.rs:\n{diff}"
+    );
+    assert!(
+        diff.contains("fn strip_overlap"),
+        "replayed insert_rust_item diff should include strip_overlap:\n{diff}"
+    );
+    assert!(
+        diff.contains("fn regression_1757"),
+        "replayed later apply_code_edit diff should include regression_1757:\n{diff}"
     );
 }

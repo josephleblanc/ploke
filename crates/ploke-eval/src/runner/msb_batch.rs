@@ -150,6 +150,8 @@ pub(crate) async fn run_batch(
                 use_default_model,
                 model_id: model_id.clone(),
                 provider: provider.clone(),
+                embedding_model_id: embedding_model_id.clone(),
+                embedding_provider: embedding_provider.clone(),
             })
             .run()
             .await

@@ -2,7 +2,7 @@
 
 Status: open; failed-row doctor blocker fix in progress
 Discovered: 2026-05-25
-Updated: 2026-06-05
+Updated: 2026-06-08
 
 ## Summary
 
@@ -214,3 +214,55 @@ failed_baseline_eval_closure_adds_doctor_blocker
 
 The failed campaign remains abandon-and-restart evidence. The fix should be
 verified with a fresh campaign launched from an env-bearing cwd.
+
+## 2026-06-08 Child Treatment Recurrence
+
+The same launch-cwd environment split recurred during child treatment
+evaluation, after the parent campaign had already produced and admitted broad
+harness child candidates.
+
+Campaign:
+
+```text
+p1-g35f-direct-protocol-2target-g0g2-1x3-20260608-204113
+```
+
+Worktree:
+
+```text
+/home/brasides/.ploke-eval/worktrees/p1-g35f-direct-protocol-2target-g0g2-1x3-20260608-204113
+```
+
+Affected child runner sidecars:
+
+```text
+/home/brasides/.ploke-eval/campaigns/p1-g35f-direct-protocol-2target-g0g2-1x3-20260608-204113/prototype1/nodes/node-7b23e180945c96ef/runner-result.json
+/home/brasides/.ploke-eval/campaigns/p1-g35f-direct-protocol-2target-g0g2-1x3-20260608-204113/prototype1/nodes/node-e7f2f7430e7ca64b/runner-result.json
+```
+
+Both children failed treatment before any direct-Google chat turn because their
+treatment evals failed during `embedding_model_preflight`:
+
+```text
+embedding preflight failed for 'mistralai/codestral-embed-2505':
+Var error: Error from env variable, original: environment variable not found
+```
+
+The source checkout command environment still had `OPENROUTER_API_KEY`
+available, while the campaign worktree command environment did not. Running the
+main checkout binary from `/home/brasides/code/ploke` and passing
+`--repo-root <campaign-worktree>` allowed the next child to proceed past
+embedding setup and reach the direct-Google request path.
+
+Recovery command shape:
+
+```text
+/home/brasides/code/ploke/target/debug/ploke-eval loop prototype1-step \
+  --repo-root /home/brasides/.ploke-eval/worktrees/p1-g35f-direct-protocol-2target-g0g2-1x3-20260608-204113 \
+  --format json
+```
+
+This recurrence expands the original bug from baseline eval setup to child
+treatment setup: every helper that launches eval work must preserve the
+operator-approved credential environment or run an equivalent preflight from the
+same process environment that will spawn paid work.

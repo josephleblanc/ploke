@@ -691,6 +691,7 @@ async fn sparse_post_apply_refresh_returns_on_bm25_without_dense_index_completio
             &LiveObserver::disabled(),
             refresh_deadline,
             &refresh_timeouts,
+            std::slice::from_ref(&fixture.src_file),
         ),
     )
     .await

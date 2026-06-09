@@ -185,3 +185,17 @@ pub async fn scan_for_change(
             tracing::error!("Error in ScanForChange:\n{e}");
         });
 }
+
+pub async fn scan_paths_for_change(
+    state: &Arc<AppState>,
+    event_bus: &Arc<EventBus>,
+    paths: Vec<std::path::PathBuf>,
+    scan_tx: oneshot::Sender<Option<Vec<std::path::PathBuf>>>,
+) {
+    let _ = database::scan_paths_for_change(state, event_bus, paths, scan_tx)
+        .await
+        .inspect_err(|e| {
+            e.emit_error();
+            tracing::error!("Error in ScanPathsForChange:\n{e}");
+        });
+}

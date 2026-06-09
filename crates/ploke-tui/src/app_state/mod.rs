@@ -30,8 +30,8 @@ pub use events::SystemMutation;
 pub use database::test_set_crate_focus_from_db;
 #[cfg(feature = "test_harness")]
 pub use database::{
-    load_workspace_crates_for_test, workspace_remove_for_test, workspace_status_for_test,
-    workspace_update_for_test,
+    load_workspace_crates_for_test, scan_paths_for_change_for_test, workspace_remove_for_test,
+    workspace_status_for_test, workspace_update_for_test,
 };
 #[cfg(feature = "test_harness")]
 pub use handlers::indexing::set_indexing_test_delay_ms;

@@ -1031,6 +1031,10 @@ async fn settle_staged_batch(
         return Ok(outcome);
     }
 
+    let refresh_paths = selected
+        .iter()
+        .flat_map(|candidate| candidate.paths.iter().cloned())
+        .collect::<Vec<_>>();
     let timeouts = Timeouts::default();
     approve_selected(runtime, turn, observer, &selected).await?;
     let applied_outcome =
@@ -1062,6 +1066,7 @@ async fn settle_staged_batch(
             observer,
             refresh_deadline,
             &timeouts,
+            &refresh_paths,
         )
         .await
         {
@@ -1407,13 +1412,23 @@ pub(super) async fn wait_for_refresh(
     observer: &LiveObserver,
     deadline: Instant,
     timeouts: &Timeouts,
+    changed_paths: &[PathBuf],
 ) -> Result<(), Error> {
     use ploke_tui::app_state::StateCommand;
+
+    if changed_paths.is_empty() {
+        return Err(Error::HeadlessEvent(
+            "post-apply refresh requires at least one changed path".to_string(),
+        ));
+    }
 
     let (scan_tx, scan_rx) = oneshot::channel();
     send_state(
         &runtime.app.state_cmd_tx(),
-        StateCommand::ScanForChange { scan_tx },
+        StateCommand::ScanPathsForChange {
+            paths: changed_paths.to_vec(),
+            scan_tx,
+        },
     )
     .await?;
     let changed = scan_rx
