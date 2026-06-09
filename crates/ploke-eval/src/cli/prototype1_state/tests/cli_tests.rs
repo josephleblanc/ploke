@@ -1479,20 +1479,18 @@ async fn zero_admission_batch_is_persisted() {
     // child-plan phase. The below-min branch must accept the harness-plan state
     // back to Parent<Ready>, lock a rejected-attempt-only ChildPlan, and then
     // return InvalidBatchSelection.
-    let (result, failed_batch_trace) = collect_traces(|| {
-        publish_broad_harness_child_plan_from_admitted_batch(
-            ChildPlanEnv {
-                campaign_id: "campaign",
-                manifest_path: &manifest_path,
-                repo_root: &repo_root,
-                broad_tui: profile::BroadTui::default(),
-                route_source: ModelRouteSource::DirectGoogle,
-            },
-            batch,
-            Vec::new(),
-        )
-    });
-    dump_trace_if_requested(&failed_batch_trace);
+    let parent_identity = batch.parent.identity().clone();
+    let result = publish_broad_harness_child_plan_from_admitted_batch(
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
+        },
+        batch,
+        Vec::new(),
+    );
     let err = match result {
         Ok(_) => panic!("zero admitted broad harness batch must not seal children"),
         Err(err) => err,
@@ -1502,26 +1500,15 @@ async fn zero_admission_batch_is_persisted() {
             .contains("broad harness admitted 0 child transaction(s)"),
         "{err}"
     );
-    assert!(trace_contains(
-        &failed_batch_trace,
-        &[
-            "event=typestate_transition",
-            "transition=Parent<AwaitingHarnessPlan>->Parent<Ready>",
-            "phase=typestate_transition",
-            "outcome=committed",
-        ],
-    ));
-    assert!(trace_contains(
-        &failed_batch_trace,
-        &[
-            "event=typestate_transition",
-            "transition=Parent<Ready>->Parent<Planned>",
-            "phase=failed_batch_persistence",
-            "record_access=write",
-            "record_kind=child_plan_file",
-            "outcome=committed",
-        ],
-    ));
+    let files = ChildPlanFiles::for_parent(&manifest_path, &parent_identity, Vec::new());
+    let bytes = fs::read(files.message_at().path())
+        .expect("failed batch must persist a rejected-attempt child plan");
+    let body: ChildPlanFiles = serde_json::from_slice(&bytes).expect("decode child plan");
+    assert!(body.children().is_empty());
+    assert!(
+        !body.rejected_surface_attempts().is_empty(),
+        "failed batch should persist parent-readable rejected attempt evidence"
+    );
 
     // Retry starts again from Parent<Ready>. A persisted ChildPlanFile should
     // move through Locked<ChildPlan> -> Parent<Planned> -> Parent<Selectable>
@@ -1536,7 +1523,7 @@ name = "zero-admission-replay"
     )
     .expect("profile parses");
     run_profile.validate().expect("profile validates");
-    let (planned_result, replay_trace) = collect_traces_async(resolve_profile_child_plan(
+    let planned_result = resolve_profile_child_plan(
         "campaign",
         &manifest_path,
         &repo_root,
@@ -1544,33 +1531,10 @@ name = "zero-admission-replay"
         &run_profile,
         budget,
         ModelRouteSource::DirectGoogle,
-    ))
+    )
     .await;
-    dump_trace_if_requested(&replay_trace);
     let planned: PlannedChildren = planned_result
         .expect("failed broad harness batch should be recoverable as rejected evidence");
-    assert!(trace_contains(
-        &replay_trace,
-        &[
-            "event=typestate_transition",
-            "transition=Parent<Ready>->Parent<Planned>",
-            "phase=retry_replay",
-            "record_access=read",
-            "record_kind=child_plan_file",
-            "outcome=committed",
-        ],
-    ));
-    assert!(trace_contains(
-        &replay_trace,
-        &[
-            "event=typestate_transition",
-            "transition=ChildPlan->Parent<Selectable>",
-            "phase=message_receive",
-            "record_access=read",
-            "record_kind=child_plan_file",
-            "outcome=committed",
-        ],
-    ));
 
     assert!(planned.children.is_empty());
     assert!(
@@ -2851,6 +2815,7 @@ async fn broad_harness_batch_admits_three_transactions_into_three_children() {
     let allowed = write_broad_surface_targets(&repo_root);
     commit_indexed_repo(&repo_root, "broad surface fixture");
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
     let budget = Prototype1ChildBudget::new(3, 3).with_parallel_targets(2);
     let batch = publish_broad_harness_child_plan_request(
         &manifest_path,
@@ -2876,7 +2841,7 @@ async fn broad_harness_batch_admits_three_transactions_into_three_children() {
     let untouched_target = batch.slots[3].published.workspace_path().join("target");
     fs::create_dir_all(&untouched_target).expect("create untouched target dir");
 
-    let (receipt, trace) = collect_traces_async(admit_broad_harness_batch(
+    let receipt = admit_broad_harness_batch(
         ChildPlanEnv {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
@@ -2885,45 +2850,19 @@ async fn broad_harness_batch_admits_three_transactions_into_three_children() {
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
-    ))
-    .await;
-    dump_trace_if_requested(&trace);
-    let receipt =
-        receipt.expect("three admitted broad transactions should seal one three-child plan");
-    assert!(trace_contains(
-        &trace,
-        &[
-            "event=typestate_transition",
-            "transition=Parent<AwaitingHarnessPlan>->Parent<Ready>",
-            "phase=typestate_transition",
-            "outcome=committed",
-        ],
-    ));
-    assert!(trace_contains(
-        &trace,
-        &[
-            "event=typestate_transition",
-            "transition=Parent<Ready>->Parent<Planned>",
-            "phase=batch_admission",
-            "record_access=write",
-            "record_kind=child_plan_file",
-            "outcome=committed",
-        ],
-    ));
-    assert!(trace_contains(
-        &trace,
-        &[
-            "event=typestate_transition",
-            "transition=ChildPlan->Parent<Selectable>",
-            "phase=message_receive",
-            "record_access=read",
-            "record_kind=child_plan_file",
-            "outcome=committed",
-        ],
-    ));
+    )
+    .await
+    .expect("three admitted broad transactions should seal one three-child plan");
 
     let children = receipt.plan.body().children();
     assert_eq!(children.len(), 3);
+    let files = ChildPlanFiles::for_parent(&manifest_path, &parent_identity, Vec::new());
+    let bytes = fs::read(files.message_at().path()).expect("published child plan should persist");
+    let body: ChildPlanFiles = serde_json::from_slice(&bytes).expect("decode child plan");
+    assert_eq!(body.parent_node_id(), parent_identity.node_id());
+    assert_eq!(body.child_generation(), parent_identity.generation() + 1);
+    assert_eq!(body.children().len(), 3);
+    assert!(body.rejected_surface_attempts().is_empty());
     for target_dir in target_dirs {
         assert!(
             !target_dir.exists(),
@@ -3008,7 +2947,7 @@ async fn broad_slots_run_in_parallel() {
     );
     assert_eq!(count_broad_requests(&manifest_path), 2);
 
-    let (result, trace) = collect_traces_async(admit_broad_harness_batch(
+    let result = admit_broad_harness_batch(
         ChildPlanEnv {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
@@ -3017,9 +2956,8 @@ async fn broad_slots_run_in_parallel() {
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
-    ))
+    )
     .await;
-    dump_trace_if_requested(&trace);
     let err = match result {
         Ok(_) => panic!("fixture-backed parallel slots should not admit children"),
         Err(err) => err,
@@ -3044,17 +2982,6 @@ async fn broad_slots_run_in_parallel() {
         !probe_dir.join("start-2").exists(),
         "the two-child cap should not start a third concurrent slot"
     );
-    assert!(trace_contains(
-        &trace,
-        &[
-            "event=typestate_transition",
-            "transition=Parent<Ready>->Parent<Planned>",
-            "phase=failed_batch_persistence",
-            "record_access=write",
-            "record_kind=child_plan_file",
-            "outcome=committed",
-        ],
-    ));
 
     let at = crate::cli::prototype1_state::inner::At::<ChildPlanFile>::resolve((
         manifest_path.clone(),
@@ -3119,7 +3046,7 @@ async fn provider_unavailable_after_partial_admissions_persists_failed_child_pla
         );
     }
 
-    let (result, trace) = collect_traces_async(admit_broad_harness_batch(
+    let result = admit_broad_harness_batch(
         ChildPlanEnv {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
@@ -3128,9 +3055,8 @@ async fn provider_unavailable_after_partial_admissions_persists_failed_child_pla
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
-    ))
+    )
     .await;
-    dump_trace_if_requested(&trace);
     let err = match result {
         Ok(_) => panic!("provider failure should still block child planning"),
         Err(err) => err,
@@ -3245,7 +3171,7 @@ async fn provider_unavailable_after_min_admitted_returns_published_plan() {
         );
     }
 
-    let (result, trace) = collect_traces_async(admit_broad_harness_batch(
+    let result = admit_broad_harness_batch(
         ChildPlanEnv {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
@@ -3254,21 +3180,13 @@ async fn provider_unavailable_after_min_admitted_returns_published_plan() {
             route_source: ModelRouteSource::OpenRouter,
         },
         batch,
-    ))
+    )
     .await;
-    dump_trace_if_requested(&trace);
     let receipt = result.expect("batch at/above minimum should publish children");
     assert_eq!(
         receipt.plan.body().children().len(),
         2,
         "two admitted slots should materialize as children"
-    );
-    assert!(
-        trace_contains(
-            &trace,
-            &["reached child minimum despite a fatal slot error"],
-        ),
-        "dropped fatal-error logging path should be exercised: {trace:#?}"
     );
 
     let files = ChildPlanFiles::for_parent(&manifest_path, &parent_identity, Vec::new());
@@ -3276,6 +3194,17 @@ async fn provider_unavailable_after_min_admitted_returns_published_plan() {
     let bytes = fs::read(&plan_path).expect("published child plan should persist");
     let body: ChildPlanFiles = serde_json::from_slice(&bytes).expect("decode child plan");
     assert_eq!(body.children().len(), 2);
+    assert!(
+        body.rejected_surface_attempts().iter().any(|attempt| {
+            matches!(
+                &attempt.outcome,
+                surface_attempt::Outcome::Rejected { reason }
+                    if reason.contains("provider unavailable")
+            )
+        }),
+        "published child plan should retain evidence for the dropped provider error: {:?}",
+        body.rejected_surface_attempts()
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -3318,7 +3247,7 @@ async fn database_setup_fatal_after_min_admitted_returns_published_plan() {
         );
     }
 
-    let (result, trace) = collect_traces_async(admit_broad_harness_batch(
+    let result = admit_broad_harness_batch(
         ChildPlanEnv {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
@@ -3327,27 +3256,27 @@ async fn database_setup_fatal_after_min_admitted_returns_published_plan() {
             route_source: ModelRouteSource::OpenRouter,
         },
         batch,
-    ))
+    )
     .await;
-    dump_trace_if_requested(&trace);
     let receipt = result.expect("database-setup fatal at/above minimum should publish children");
     assert_eq!(receipt.plan.body().children().len(), 2);
-    assert!(
-        trace_contains(
-            &trace,
-            &[
-                "reached child minimum despite a fatal slot error",
-                "database setup unavailable",
-            ],
-        ),
-        "dropped DatabaseSetup error should be logged: {trace:#?}"
-    );
 
     let files = ChildPlanFiles::for_parent(&manifest_path, &parent_identity, Vec::new());
     let plan_path = files.message_at().path().to_path_buf();
     let bytes = fs::read(&plan_path).expect("published child plan should persist");
     let body: ChildPlanFiles = serde_json::from_slice(&bytes).expect("decode child plan");
     assert_eq!(body.children().len(), 2);
+    assert!(
+        body.rejected_surface_attempts().iter().any(|attempt| {
+            matches!(
+                &attempt.outcome,
+                surface_attempt::Outcome::Rejected { reason }
+                    if reason.contains("database setup unavailable")
+            )
+        }),
+        "published child plan should retain evidence for the dropped DatabaseSetup error: {:?}",
+        body.rejected_surface_attempts()
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -3401,7 +3330,7 @@ async fn provider_unavailable_with_parallel_slots_aborts_without_corrupting_plan
     assert_eq!(batch.patch_generation_parallel_cap, 2);
     assert_eq!(batch.slots.len(), 2);
 
-    let (result, trace) = collect_traces_async(admit_broad_harness_batch(
+    let result = admit_broad_harness_batch(
         ChildPlanEnv {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
@@ -3410,9 +3339,8 @@ async fn provider_unavailable_with_parallel_slots_aborts_without_corrupting_plan
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
-    ))
+    )
     .await;
-    dump_trace_if_requested(&trace);
     let err = match result {
         Ok(_) => panic!("provider failure should block child planning"),
         Err(err) => err,
@@ -3496,7 +3424,7 @@ async fn provider_unavailable_with_google_direct_permanently_fails_parent() {
         );
     }
 
-    let (result, trace) = collect_traces_async(admit_broad_harness_batch(
+    let result = admit_broad_harness_batch(
         ChildPlanEnv {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
@@ -3505,9 +3433,8 @@ async fn provider_unavailable_with_google_direct_permanently_fails_parent() {
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
-    ))
+    )
     .await;
-    dump_trace_if_requested(&trace);
     let err = match result {
         Ok(_) => panic!("below-minimum direct-google provider failure should fail the parent"),
         Err(err) => err,
@@ -3606,7 +3533,7 @@ async fn provider_unavailable_without_google_direct_keeps_parent_resumable() {
         submitted_result_paths.push(slot.published.submitted_result_path().to_path_buf());
     }
 
-    let (result, trace) = collect_traces_async(admit_broad_harness_batch(
+    let result = admit_broad_harness_batch(
         ChildPlanEnv {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
@@ -3615,9 +3542,8 @@ async fn provider_unavailable_without_google_direct_keeps_parent_resumable() {
             route_source: ModelRouteSource::OpenRouter,
         },
         batch,
-    ))
+    )
     .await;
-    dump_trace_if_requested(&trace);
     let err = match result {
         Ok(_) => panic!("provider failure should surface even on a resumable route"),
         Err(err) => err,

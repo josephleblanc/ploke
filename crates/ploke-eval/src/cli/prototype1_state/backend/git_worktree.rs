@@ -10,7 +10,7 @@ use super::{
     validate_normal_repo_relpath,
 };
 use crate::cli::prototype1_state::history::{
-    ArtifactSurface, SurfaceCommitment, TreeKeyCommitment,
+    ArtifactSurface, SurfaceCommitment, TreeKeyCommitment, TreeKeyHash,
 };
 use crate::cli::prototype1_state::identity::{
     PARENT_IDENTITY_RELPATH, ParentIdentity, parent_identity_commit_message,
@@ -84,6 +84,39 @@ impl GitWorktreeBackend {
     pub(crate) fn artifact_id_for_head(&self, root: &Path) -> Result<ArtifactId, BackendError> {
         let head = self.head_commit(root)?;
         Ok(artifact_id_from_git_commit(&head))
+    }
+
+    pub(crate) fn branch_tree_key_hash(
+        &self,
+        repo_root: &Path,
+        branch: &GitBranch,
+    ) -> Result<TreeKeyHash, BackendError> {
+        let spec = format!("{}^{{tree}}", branch.0);
+        let output = Command::new("git")
+            .current_dir(repo_root)
+            .args(["rev-parse", &spec])
+            .output()
+            .map_err(|source| BackendError::GitCommand {
+                command: format!("git rev-parse {spec}"),
+                source,
+            })?;
+
+        if !output.status.success() {
+            return Err(BackendError::GitCommandStatus {
+                command: format!("git rev-parse {spec}"),
+                status: output.status.code().unwrap_or(-1),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            });
+        }
+
+        let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        GitTreeKey {
+            tree: GitObjectId::parse_hex(&value)?,
+        }
+        .tree_key_hash()
+        .map_err(|source| BackendError::ArtifactSurfaceMeasurement {
+            detail: source.to_string(),
+        })
     }
 
     /// Fully qualified branch ref used when verifying existing worktree state.

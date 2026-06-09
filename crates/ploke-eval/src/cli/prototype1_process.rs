@@ -253,7 +253,7 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    use tempfile::tempdir;
+    use tempfile::{TempDir, tempdir};
 
     use super::*;
     use crate::inner::core::{RegisteredRunRole, RunIntent, RunStorageRoots};
@@ -367,6 +367,151 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         String::from_utf8(output.stdout).expect("git stdout is utf8")
+    }
+
+    fn setup_successor_install_case(
+        campaign_id: &str,
+    ) -> (
+        TempDir,
+        crate::test_support::EnvGuard,
+        PathBuf,
+        Prototype1NodeRecord,
+        ResolvedTreatmentBranch,
+        GitBranch,
+        ArtifactSurface,
+        ArtifactSurface,
+        ParentIdentity,
+        ParentIdentity,
+    ) {
+        let tmp = tempdir().expect("tempdir");
+        let eval_home = tmp.path().join("eval-home");
+        let env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            eval_home.clone().into_os_string(),
+        )]);
+        let campaign_root = eval_home.join("campaigns").join(campaign_id);
+        let prototype_root = campaign_root.join("prototype1");
+        fs::create_dir_all(&prototype_root).expect("prototype root");
+        fs::write(campaign_root.join("campaign.json"), "{}").expect("campaign manifest");
+
+        let repo_root = tmp.path().join("repo");
+        fs::create_dir_all(&repo_root).expect("repo root");
+        run_git_test(&repo_root, &["init", "-b", "main"]);
+        run_git_test(
+            &repo_root,
+            &["config", "user.email", "prototype1-test@example.invalid"],
+        );
+        run_git_test(&repo_root, &["config", "user.name", "Prototype1 Test"]);
+        write_text(
+            &repo_root.join("crates/ploke-eval/src/lib.rs"),
+            "pub fn authority_surface() {}\n",
+        );
+        for tool in ploke_tui::tools::ToolName::ALL {
+            write_text(
+                &repo_root.join(tool.description_artifact_relpath()),
+                "tool description\n",
+            );
+        }
+        write_text(
+            &repo_root.join("src/lib.rs"),
+            "pub fn value() -> u8 { 1 }\n",
+        );
+        run_git_test(&repo_root, &["add", "."]);
+        run_git_test(&repo_root, &["commit", "--no-gpg-sign", "-m", "base"]);
+
+        let parent_branch = "prototype1-parent-gen0";
+        run_git_test(&repo_root, &["switch", "-c", parent_branch]);
+        let current_parent = ParentIdentity::root_bootstrap(
+            campaign_id,
+            "node-parent",
+            "BurntSushi__ripgrep-2209",
+            "branch-parent",
+            Some(parent_branch.to_string()),
+        );
+        write_parent_identity(&repo_root, &current_parent).expect("write gen0 identity");
+        GitWorktreeBackend
+            .persist_active_checkout_files(
+                &repo_root,
+                &[parent_identity_relpath()],
+                &parent_identity_commit_message(&current_parent),
+            )
+            .expect("commit gen0 identity");
+        GitWorktreeBackend
+            .validate_parent_checkout(&repo_root, &current_parent)
+            .expect("valid gen0 parent checkout");
+
+        let mut node = test_node(&prototype_root);
+        node.node_id = "node-child".to_string();
+        node.parent_node_id = Some(current_parent.node_id().to_string());
+        node.generation = 1;
+        node.source_state_id = current_parent.branch_id().to_string();
+        node.parent_branch_id = Some(current_parent.branch_id().to_string());
+        node.branch_id = "branch-child".to_string();
+        node.candidate_id = "candidate-child".to_string();
+        node.node_dir = prototype_root.join("nodes").join(&node.node_id);
+        node.workspace_root = prototype_root
+            .join("workspaces")
+            .join("edit-harness")
+            .join(&node.node_id);
+        node.binary_path = node.node_dir.join("bin").join("ploke-eval");
+        node.runner_request_path = node.node_dir.join("runner-request.json");
+        node.runner_result_path = node.node_dir.join("runner-result.json");
+        let resolved = resolved_branch_for(&node);
+
+        let branch = GitBranch("prototype1-successor-artifact".to_string());
+        run_git_test(&repo_root, &["switch", "-c", &branch.0]);
+        write_text(
+            &repo_root.join(&resolved.target_relpath),
+            &resolved.branch.proposed_content,
+        );
+        run_git_test(&repo_root, &["add", "."]);
+        run_git_test(
+            &repo_root,
+            &["commit", "--no-gpg-sign", "-m", "candidate artifact"],
+        );
+        let artifact_surface = GitWorktreeBackend
+            .artifact_surface(&repo_root)
+            .expect("candidate artifact surface");
+        run_git_test(&repo_root, &["switch", parent_branch]);
+        let current_surface = GitWorktreeBackend
+            .artifact_surface(&repo_root)
+            .expect("current parent surface");
+
+        let parent_identity = ParentIdentity::from_node(
+            campaign_id,
+            &node,
+            Some(&current_parent),
+            Some(branch.0.clone()),
+        );
+
+        (
+            tmp,
+            env,
+            repo_root,
+            node,
+            resolved,
+            branch,
+            artifact_surface,
+            current_surface,
+            current_parent,
+            parent_identity,
+        )
+    }
+
+    fn selection_for_artifact(
+        node: Prototype1NodeRecord,
+        resolved: ResolvedTreatmentBranch,
+        surface: ArtifactSurface,
+    ) -> selection::Selection<selection::Artifact> {
+        selection::Selection::artifact_for_test(
+            node,
+            SubjectRef::new("candidate:node-child:plan_index=0"),
+            resolved,
+            surface,
+            selection::Source::CurrentGeneration,
+            None,
+        )
+        .expect("typed artifact selection")
     }
 
     #[cfg(feature = "live_api_tests")]
@@ -1135,116 +1280,20 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
 
     #[test]
     fn successor_install_commits_selected_parent_identity() {
-        let tmp = tempdir().expect("tempdir");
-        let eval_home = tmp.path().join("eval-home");
-        let _env = crate::test_support::env_guard_os(vec![(
-            "PLOKE_EVAL_HOME",
-            eval_home.clone().into_os_string(),
-        )]);
         let campaign_id = "successor-identity-install";
-        let campaign_root = eval_home.join("campaigns").join(campaign_id);
-        let prototype_root = campaign_root.join("prototype1");
-        fs::create_dir_all(&prototype_root).expect("prototype root");
-        fs::write(campaign_root.join("campaign.json"), "{}").expect("campaign manifest");
-
-        let repo_root = tmp.path().join("repo");
-        fs::create_dir_all(&repo_root).expect("repo root");
-        run_git_test(&repo_root, &["init", "-b", "main"]);
-        run_git_test(
-            &repo_root,
-            &["config", "user.email", "prototype1-test@example.invalid"],
-        );
-        run_git_test(&repo_root, &["config", "user.name", "Prototype1 Test"]);
-        write_text(
-            &repo_root.join("crates/ploke-eval/src/lib.rs"),
-            "pub fn authority_surface() {}\n",
-        );
-        for tool in ploke_tui::tools::ToolName::ALL {
-            write_text(
-                &repo_root.join(tool.description_artifact_relpath()),
-                "tool description\n",
-            );
-        }
-        write_text(
-            &repo_root.join("src/lib.rs"),
-            "pub fn value() -> u8 { 1 }\n",
-        );
-        run_git_test(&repo_root, &["add", "."]);
-        run_git_test(&repo_root, &["commit", "--no-gpg-sign", "-m", "base"]);
-
-        let parent_branch = "prototype1-parent-gen0";
-        run_git_test(&repo_root, &["switch", "-c", parent_branch]);
-        let current_parent = ParentIdentity::root_bootstrap(
-            campaign_id,
-            "node-parent",
-            "BurntSushi__ripgrep-2209",
-            "branch-parent",
-            Some(parent_branch.to_string()),
-        );
-        write_parent_identity(&repo_root, &current_parent).expect("write gen0 identity");
-        GitWorktreeBackend
-            .persist_active_checkout_files(
-                &repo_root,
-                &[parent_identity_relpath()],
-                &parent_identity_commit_message(&current_parent),
-            )
-            .expect("commit gen0 identity");
-        GitWorktreeBackend
-            .validate_parent_checkout(&repo_root, &current_parent)
-            .expect("valid gen0 parent checkout");
-
-        let mut node = test_node(&prototype_root);
-        node.node_id = "node-child".to_string();
-        node.parent_node_id = Some(current_parent.node_id().to_string());
-        node.generation = 1;
-        node.source_state_id = current_parent.branch_id().to_string();
-        node.parent_branch_id = Some(current_parent.branch_id().to_string());
-        node.branch_id = "branch-child".to_string();
-        node.candidate_id = "candidate-child".to_string();
-        node.node_dir = prototype_root.join("nodes").join(&node.node_id);
-        node.workspace_root = prototype_root
-            .join("workspaces")
-            .join("edit-harness")
-            .join(&node.node_id);
-        node.binary_path = node.node_dir.join("bin").join("ploke-eval");
-        node.runner_request_path = node.node_dir.join("runner-request.json");
-        node.runner_result_path = node.node_dir.join("runner-result.json");
-        let resolved = resolved_branch_for(&node);
-
-        let artifact_branch = GitBranch("prototype1-successor-artifact".to_string());
-        run_git_test(&repo_root, &["switch", "-c", &artifact_branch.0]);
-        write_text(
-            &repo_root.join(&resolved.target_relpath),
-            &resolved.branch.proposed_content,
-        );
-        run_git_test(&repo_root, &["add", "."]);
-        run_git_test(
-            &repo_root,
-            &["commit", "--no-gpg-sign", "-m", "candidate artifact"],
-        );
-        let artifact_surface = GitWorktreeBackend
-            .artifact_surface(&repo_root)
-            .expect("candidate artifact surface");
-        run_git_test(&repo_root, &["switch", parent_branch]);
-        let current_surface = GitWorktreeBackend
-            .artifact_surface(&repo_root)
-            .expect("current parent surface");
-
-        let selected_parent_identity = ParentIdentity::from_node(
-            campaign_id,
-            &node,
-            Some(&current_parent),
-            Some(artifact_branch.0.clone()),
-        );
-        let selected = selection::Selection::artifact_for_test(
-            node.clone(),
-            SubjectRef::new("candidate:node-child:plan_index=0"),
-            resolved.clone(),
+        let (
+            _tmp,
+            _env,
+            repo_root,
+            node,
+            resolved,
+            artifact_branch,
             artifact_surface,
-            selection::Source::CurrentGeneration,
-            None,
-        )
-        .expect("typed artifact selection");
+            current_surface,
+            current_parent,
+            selected_parent_identity,
+        ) = setup_successor_install_case(campaign_id);
+        let selected = selection_for_artifact(node, resolved.clone(), artifact_surface);
 
         let installed = install_committed_successor_artifact(
             campaign_id,
@@ -1291,6 +1340,59 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
         assert_eq!(
             fs::read_to_string(repo_root.join(&resolved.target_relpath)).expect("target content"),
             resolved.branch.proposed_content
+        );
+    }
+
+    #[test]
+    fn successor_install_rejects_branch_drift_after_selection() {
+        let campaign_id = "successor-drift-reject";
+        let (
+            _tmp,
+            _env,
+            repo_root,
+            node,
+            resolved,
+            artifact_branch,
+            artifact_surface,
+            current_surface,
+            current_parent,
+            selected_parent_identity,
+        ) = setup_successor_install_case(campaign_id);
+        let selected = selection_for_artifact(node, resolved, artifact_surface);
+
+        run_git_test(&repo_root, &["switch", &artifact_branch.0]);
+        write_text(&repo_root.join("Cargo.toml"), "[workspace]\nmembers = []\n");
+        run_git_test(&repo_root, &["add", "Cargo.toml"]);
+        run_git_test(
+            &repo_root,
+            &["commit", "--no-gpg-sign", "-m", "drift authority surface"],
+        );
+        run_git_test(
+            &repo_root,
+            &["switch", current_parent.artifact_branch().unwrap()],
+        );
+        let parent_branch = current_parent.artifact_branch().unwrap().to_string();
+
+        let err = install_committed_successor_artifact(
+            campaign_id,
+            &repo_root,
+            &selected,
+            artifact_branch,
+            current_surface,
+            selected_parent_identity,
+            Some(current_parent),
+        )
+        .expect_err("branch drift must be rejected before successor install");
+
+        match err {
+            PrepareError::InvalidBatchSelection { detail } => {
+                assert!(detail.contains("changed after selection"), "{detail}");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+        assert_eq!(
+            git_output(&repo_root, &["branch", "--show-current"]).trim(),
+            parent_branch
         );
     }
 
@@ -1811,6 +1913,13 @@ fn install_committed_successor_artifact(
     let artifact = selected.selected();
     let node = artifact.node();
     let resolved = artifact.resolved();
+    let branch_key = backend
+        .branch_tree_key_hash(active_parent_root, &artifact_branch)
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_successor_artifact_tree_key",
+            detail: source.to_string(),
+        })?;
+    ensure_artifact_tree(&artifact_branch, artifact.artifact_surface(), &branch_key)?;
     backend
         .verify_artifact_target(
             active_parent_root,
@@ -1858,6 +1967,17 @@ fn install_committed_successor_artifact(
                 return Err(error);
             }
         };
+    let installed_surface = backend
+        .artifact_surface(active_parent_root)
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_successor_artifact_surface_before_identity",
+            detail: source.to_string(),
+        })?;
+    let _selected_transition = ensure_installed_artifact(
+        &artifact_branch,
+        artifact.artifact_surface(),
+        &installed_surface,
+    )?;
     selected_parent_identity.validate_for_command(campaign_id, Some(&node.node_id))?;
     write_parent_identity(active_parent_root, &selected_parent_identity)?;
     let installed_commit = backend
@@ -1930,7 +2050,7 @@ fn install_committed_successor_artifact(
             detail: source.to_string(),
         })?;
     let _identity_transition =
-        SurfaceCommitment::from_artifact_surfaces(artifact.artifact_surface(), &selected_surface)
+        SurfaceCommitment::from_artifact_surfaces(&installed_surface, &selected_surface)
             .map_err(history_prepare_error)?;
     let surface = SurfaceCommitment::from_artifact_surfaces(&current_surface, &selected_surface)
         .map_err(history_prepare_error)?;
@@ -1940,6 +2060,34 @@ fn install_committed_successor_artifact(
         surface,
         parent_identity: selected_parent_identity,
     })
+}
+
+fn ensure_artifact_tree(
+    branch: &GitBranch,
+    selected: &ArtifactSurface,
+    observed: &TreeKeyHash,
+) -> Result<(), PrepareError> {
+    if selected.tree_key() == observed {
+        return Ok(());
+    }
+
+    Err(PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "successor artifact branch '{}' changed after selection: selected tree key {:?}, observed tree key {:?}",
+            branch.0,
+            selected.tree_key(),
+            observed
+        ),
+    })
+}
+
+fn ensure_installed_artifact(
+    branch: &GitBranch,
+    selected: &ArtifactSurface,
+    installed: &ArtifactSurface,
+) -> Result<SurfaceCommitment, PrepareError> {
+    ensure_artifact_tree(branch, selected, installed.tree_key())?;
+    SurfaceCommitment::from_artifact_surfaces(selected, installed).map_err(history_prepare_error)
 }
 
 fn ensure_node_child_path(node_dir: &Path, path: &Path) -> Result<(), PrepareError> {
