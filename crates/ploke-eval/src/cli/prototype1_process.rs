@@ -1875,16 +1875,11 @@ fn child_artifact_workspace(
     campaign_manifest_path: &Path,
     node: &crate::intervention::Prototype1NodeRecord,
 ) -> Result<crate::cli::prototype1_state::backend::Workspace, BackendError> {
-    match backend.workspace_for_node(&node.node_id, &node.node_dir, &node.workspace_root) {
-        Ok(workspace) => Ok(workspace),
-        Err(err @ BackendError::WorkspacePathMismatch { .. })
-            if is_broad_harness_workspace(campaign_manifest_path, &node.workspace_root) =>
-        {
-            eprintln!("{err:#?}");
-            backend.workspace_for_artifact_root(&node.workspace_root)
-        }
-        Err(err) => Err(err),
+    if is_broad_harness_workspace(campaign_manifest_path, &node.workspace_root) {
+        return backend.workspace_for_artifact_root(&node.workspace_root);
     }
+
+    backend.workspace_for_node(&node.node_id, &node.node_dir, &node.workspace_root)
 }
 
 fn is_broad_harness_workspace(campaign_manifest_path: &Path, workspace_root: &Path) -> bool {
