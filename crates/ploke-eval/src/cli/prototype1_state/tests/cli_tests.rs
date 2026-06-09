@@ -14,6 +14,7 @@ use crate::cli::{
 use crate::intervention::Prototype1NodeRecord;
 use ploke_llm::request::models::ModelRouteSource;
 use ploke_records::identity::ParentIdentityRecord;
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::{
     path::{Path, PathBuf},
@@ -26,8 +27,8 @@ use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::{Layer, Registry};
 
 use crate::intervention::{
-    PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1SearchPolicy, TreatmentBranchNode,
-    TreatmentBranchStatus,
+    CommitPhase, PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1RunnerResult,
+    Prototype1SearchPolicy, RecordStore, TreatmentBranchNode, TreatmentBranchStatus,
 };
 use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, RuntimeId};
 
@@ -3744,6 +3745,21 @@ exit 0
     path
 }
 
+fn local_node(mut node: Prototype1NodeRecord, manifest_path: &Path) -> Prototype1NodeRecord {
+    let prototype_root = manifest_path
+        .parent()
+        .expect("test manifest has parent")
+        .join("prototype1");
+    node.node_dir = prototype_root.join("nodes").join(&node.node_id);
+    node.workspace_root = prototype_root
+        .join("workspaces/edit-harness")
+        .join(node.parent_node_id.as_deref().unwrap_or("parent"));
+    node.binary_path = node.node_dir.join("bin/ploke-eval");
+    node.runner_request_path = node.node_dir.join("runner-request.json");
+    node.runner_result_path = node.node_dir.join("runner-result.json");
+    node
+}
+
 #[tokio::test]
 async fn child_build_promotes_binary_and_cleans_scratch() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -3819,6 +3835,427 @@ async fn child_build_promotes_binary_and_cleans_scratch() {
     assert!(
         !node.node_dir.join("target").exists(),
         "temporary child build target should be removed after a successful build"
+    );
+}
+
+#[tokio::test]
+async fn historical_late_child_result_blocks_direct_reentry() {
+    const NODE_ID: &str = "node-7809adc3fc6e4aad";
+    const RUNTIME_ID: &str = "a7691248-60cb-419f-9a3a-52670fcb7e08";
+    const BRANCH_ID: &str = "branch-3e52c562999775da";
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let journal_path = prototype1_transition_journal_path(&manifest_path);
+    let child_plan: ChildPlanFiles = json_fixture(include_str!(
+        "../../../tests/fixtures/prototype1-late-child-result/child-plan-node-0dae679bb16a4604.json"
+    ));
+    let (plan_index, child) = child_plan
+        .children()
+        .iter()
+        .enumerate()
+        .find(|(_, child)| child.node_id() == NODE_ID)
+        .expect("historical late child plan entry");
+    let recorded_node: Prototype1NodeRecord = json_fixture(include_str!(
+        "../../../tests/fixtures/prototype1-late-child-result/node.json"
+    ));
+    let runner_result: Prototype1RunnerResult = json_fixture(include_str!(
+        "../../../tests/fixtures/prototype1-late-child-result/runner-result.json"
+    ));
+
+    assert_eq!(child.node_record().node_id, NODE_ID);
+    assert_eq!(child.node_record().branch_id, BRANCH_ID);
+    assert_eq!(recorded_node.node_id, NODE_ID);
+    assert_eq!(recorded_node.status, Prototype1NodeStatus::BinaryBuilt);
+    assert_eq!(runner_result.node_id, NODE_ID);
+    assert_eq!(runner_result.status, Prototype1NodeStatus::Succeeded);
+
+    let terminal =
+        include_str!(
+            "../../../tests/fixtures/prototype1-late-child-result/child-to-parent-a7691248-60cb-419f-9a3a-52670fcb7e08.jsonl"
+        )
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            serde_json::from_str::<
+                crate::cli::prototype1_state::channel::Envelope<
+                    crate::cli::prototype1_state::channel::ToParent,
+                >,
+            >(line)
+            .expect("historical late-child channel envelope")
+        })
+        .find_map(|envelope| match envelope.body() {
+            crate::cli::prototype1_state::channel::ToParent::Result {
+                runner_result,
+                treatment,
+            } => Some((
+                envelope.runtime_id().to_string(),
+                runner_result.clone(),
+                treatment.clone(),
+            )),
+            _ => None,
+        })
+        .expect("historical late-child terminal channel result");
+    assert_eq!(terminal.0, RUNTIME_ID);
+    assert_eq!(terminal.1, runner_result);
+    assert!(
+        terminal.2.is_some(),
+        "successful late child result carried treatment evidence"
+    );
+
+    let mut stored = local_node(recorded_node, &manifest_path);
+    write_node_projection(&stored).expect("write historical contaminated node projection");
+    crate::intervention::write_runner_result_at(&stored.runner_result_path, &runner_result)
+        .expect("write historical terminal runner result");
+    let runtime_result_path = stored
+        .node_dir
+        .join("results")
+        .join(format!("{RUNTIME_ID}.json"));
+    fs::create_dir_all(runtime_result_path.parent().expect("runtime result parent"))
+        .expect("create runtime result dir");
+    fs::write(
+        &runtime_result_path,
+        include_str!(
+            "../../../tests/fixtures/prototype1-late-child-result/runtime-result-a7691248-60cb-419f-9a3a-52670fcb7e08.json"
+        ),
+    )
+    .expect("write historical per-runtime result");
+
+    let runtime_id = crate::loop_graph::RuntimeId::from_str(RUNTIME_ID).expect("runtime id");
+    let mut observe_before = None;
+    let mut parent_identity = None;
+    for line in include_str!(
+        "../../../tests/fixtures/prototype1-late-child-result/transition-journal.jsonl"
+    )
+    .lines()
+    .filter(|line| !line.trim().is_empty())
+    {
+        let entry: JournalEntry = serde_json::from_str(line).expect("historical journal entry");
+        match entry {
+            JournalEntry::ParentStarted(entry)
+                if entry.parent_identity.node_id() == child_plan.parent_node_id() =>
+            {
+                parent_identity.get_or_insert(entry.parent_identity);
+            }
+            JournalEntry::ObserveChild(mut entry)
+                if entry.refs.node_id == NODE_ID
+                    && entry.runtime_id == runtime_id
+                    && entry.phase == CommitPhase::Before =>
+            {
+                entry.runner_result_path = runtime_result_path.clone();
+                observe_before = Some(entry);
+            }
+            _ => {}
+        }
+    }
+    let mut journal = PrototypeJournal::new(journal_path.clone());
+    journal
+        .append(JournalEntry::ObserveChild(
+            observe_before.expect("historical observe_child before entry"),
+        ))
+        .expect("append historical observe replay entry");
+    let replay = journal
+        .replay_observe_child_at(
+            crate::cli::prototype1_state::event::RecordedAt(1_781_028_186_753),
+            Duration::from_secs(1),
+        )
+        .expect("replay historical observe child");
+    assert_eq!(replay.len(), 1);
+    assert!(matches!(
+        &replay[0].outcome,
+        crate::cli::prototype1_state::journal::CompletionOutcome::Pending {
+            disposition:
+                crate::cli::prototype1_state::journal::PendingCompletion::TerminalResultWrittenUnobserved(
+                    crate::cli::prototype1_state::event::ObservedChildTerminal::Succeeded
+                ),
+        }
+    ));
+    assert!(
+        !prototype1_branch_evaluation_path(&manifest_path, BRANCH_ID).exists(),
+        "historical late child has no selection-grade branch evaluation"
+    );
+
+    let parent_identity = parent_identity.expect("historical parent identity");
+    let baseline = CompleteBaseline::complete(
+        parent_identity.campaign_id().to_string(),
+        parent_identity.node_id().to_string(),
+        parent_identity.branch_id().to_string(),
+        "eval-set".to_string(),
+        vec![BaselineInstance {
+            instance_id: parent_identity
+                .instance_id()
+                .expect("historical parent instance")
+                .to_string(),
+            registration_path: None,
+            record_path: tmp.path().join("baseline-record.json.gz"),
+            metrics: test_metrics(false, true, 0),
+        }],
+    )
+    .expect("complete baseline");
+
+    let err = run_planned_child(
+        parent_identity.campaign_id().to_string(),
+        manifest_path.clone(),
+        tmp.path().join("repo"),
+        journal_path.clone(),
+        parent_identity,
+        baseline,
+        Arc::new(Mutex::new(())),
+        Prototype1StateStopAfter::Build,
+        Duration::from_secs(30),
+        plan_index,
+        child.clone(),
+    )
+    .expect_err("historical late child direct re-entry must not rebuild");
+
+    match err {
+        PrepareError::InvalidBatchSelection { detail } => {
+            assert!(detail.contains("terminal runner result"));
+            assert!(detail.contains("repair terminal node state"));
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+    stored = load_node_record(
+        &manifest_path,
+        NODE_ID,
+        OperatorProjectionRead::cli_operator(),
+    )
+    .expect("reload historical late child");
+    assert_eq!(stored.status, Prototype1NodeStatus::BinaryBuilt);
+    assert_eq!(stored.updated_at, "2026-06-09T18:03:04.433855206+00:00");
+    assert!(
+        !stored.node_dir.join("target").exists(),
+        "blocked historical re-entry must not create a child build target"
+    );
+    assert_eq!(
+        PrototypeJournal::new(journal_path)
+            .load_entries()
+            .expect("reload historical replay journal")
+            .len(),
+        1,
+        "blocked re-entry must not append materialize/build records"
+    );
+}
+
+#[tokio::test]
+async fn terminal_child_blocks_reentry() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let fake_bin = tmp.path().join("fake-bin");
+    let path = install_fake_cargo(&fake_bin, "#!/bin/sh\nexit 0\n");
+    let _env = crate::test_support::env_guard_os(vec![("PATH", path)]);
+
+    let allowed = write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "broad surface fixture");
+    let parent = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
+    let budget = Prototype1ChildBudget::new(1, 1);
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
+    submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
+    let receipt = admit_broad_harness_batch(
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
+        },
+        batch,
+    )
+    .await
+    .expect("admit one child");
+    let child = receipt.plan.body().children()[0].clone();
+    let node = child.node_record().clone();
+    let mut stored = project_node_status(&node, Prototype1NodeStatus::BinaryBuilt);
+    stored.updated_at = "2026-06-09T18:03:04.433855206+00:00".to_string();
+    write_node_projection(&stored).expect("write contaminated node projection");
+    let runner_result = crate::intervention::Prototype1RunnerResult {
+        schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
+        campaign_id: "campaign".to_string(),
+        node_id: node.node_id.clone(),
+        generation: node.generation,
+        branch_id: node.branch_id.clone(),
+        status: Prototype1NodeStatus::Succeeded,
+        disposition: crate::intervention::Prototype1RunnerDisposition::Succeeded,
+        treatment_campaign_id: Some("treatment".to_string()),
+        evaluation_artifact_path: None,
+        detail: None,
+        exit_code: Some(0),
+        stdout_excerpt: None,
+        stderr_excerpt: None,
+        recorded_at: "2026-06-09T17:55:54.420975107+00:00".to_string(),
+    };
+    crate::intervention::write_runner_result_at(&stored.runner_result_path, &runner_result)
+        .expect("write terminal runner result");
+    let baseline = CompleteBaseline::complete(
+        "campaign".to_string(),
+        parent_identity.node_id().to_string(),
+        parent_identity.branch_id().to_string(),
+        "eval-set".to_string(),
+        vec![BaselineInstance {
+            instance_id: parent_identity
+                .instance_id()
+                .expect("test parent instance")
+                .to_string(),
+            registration_path: None,
+            record_path: tmp.path().join("baseline-record.json.gz"),
+            metrics: test_metrics(false, true, 0),
+        }],
+    )
+    .expect("complete baseline");
+
+    let err = run_planned_child(
+        "campaign".to_string(),
+        manifest_path.clone(),
+        repo_root,
+        prototype1_transition_journal_path(&manifest_path),
+        parent_identity,
+        baseline,
+        Arc::new(Mutex::new(())),
+        Prototype1StateStopAfter::Build,
+        Duration::from_secs(30),
+        0,
+        child,
+    )
+    .expect_err("direct re-entry must not rebuild a terminal child");
+
+    match err {
+        PrepareError::InvalidBatchSelection { detail } => {
+            assert!(detail.contains("terminal runner result"));
+            assert!(detail.contains("repair terminal node state"));
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+    let loaded = load_node_record(
+        &manifest_path,
+        &node.node_id,
+        OperatorProjectionRead::cli_operator(),
+    )
+    .expect("reload node after blocked re-entry");
+    assert_eq!(loaded.status, Prototype1NodeStatus::BinaryBuilt);
+    assert_eq!(loaded.updated_at, "2026-06-09T18:03:04.433855206+00:00");
+    assert!(
+        !loaded.node_dir.join("target").exists(),
+        "blocked re-entry must not create a child build target"
+    );
+}
+
+#[tokio::test]
+async fn succeeded_child_without_evaluation_blocks_direct_reentry() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let fake_bin = tmp.path().join("fake-bin");
+    let path = install_fake_cargo(&fake_bin, "#!/bin/sh\nexit 0\n");
+    let _env = crate::test_support::env_guard_os(vec![("PATH", path)]);
+
+    let allowed = write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "broad surface fixture");
+    let parent = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
+    let budget = Prototype1ChildBudget::new(1, 1);
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
+    submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
+    let receipt = admit_broad_harness_batch(
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
+        },
+        batch,
+    )
+    .await
+    .expect("admit one child");
+    let child = receipt.plan.body().children()[0].clone();
+    let node = child.node_record().clone();
+    let mut stored = project_node_status(&node, Prototype1NodeStatus::Succeeded);
+    stored.updated_at = "2026-06-09T18:04:04.433855206+00:00".to_string();
+    write_node_projection(&stored).expect("write terminal node projection");
+    let runner_result = crate::intervention::Prototype1RunnerResult {
+        schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
+        campaign_id: "campaign".to_string(),
+        node_id: node.node_id.clone(),
+        generation: node.generation,
+        branch_id: node.branch_id.clone(),
+        status: Prototype1NodeStatus::Succeeded,
+        disposition: crate::intervention::Prototype1RunnerDisposition::Succeeded,
+        treatment_campaign_id: Some("treatment".to_string()),
+        evaluation_artifact_path: None,
+        detail: None,
+        exit_code: Some(0),
+        stdout_excerpt: None,
+        stderr_excerpt: None,
+        recorded_at: "2026-06-09T17:55:54.420975107+00:00".to_string(),
+    };
+    crate::intervention::write_runner_result_at(&stored.runner_result_path, &runner_result)
+        .expect("write terminal runner result");
+    let baseline = CompleteBaseline::complete(
+        "campaign".to_string(),
+        parent_identity.node_id().to_string(),
+        parent_identity.branch_id().to_string(),
+        "eval-set".to_string(),
+        vec![BaselineInstance {
+            instance_id: parent_identity
+                .instance_id()
+                .expect("test parent instance")
+                .to_string(),
+            registration_path: None,
+            record_path: tmp.path().join("baseline-record.json.gz"),
+            metrics: test_metrics(false, true, 0),
+        }],
+    )
+    .expect("complete baseline");
+
+    let err = run_planned_child(
+        "campaign".to_string(),
+        manifest_path.clone(),
+        repo_root,
+        prototype1_transition_journal_path(&manifest_path),
+        parent_identity,
+        baseline,
+        Arc::new(Mutex::new(())),
+        Prototype1StateStopAfter::Build,
+        Duration::from_secs(30),
+        0,
+        child,
+    )
+    .expect_err("succeeded child without evaluation must not re-enter as complete");
+
+    match err {
+        PrepareError::InvalidBatchSelection { detail } => {
+            assert!(detail.contains("missing branch evaluation report"));
+            assert!(detail.contains("observe recovery"));
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
+    let loaded = load_node_record(
+        &manifest_path,
+        &node.node_id,
+        OperatorProjectionRead::cli_operator(),
+    )
+    .expect("reload node after blocked re-entry");
+    assert_eq!(loaded.status, Prototype1NodeStatus::Succeeded);
+    assert_eq!(loaded.updated_at, "2026-06-09T18:04:04.433855206+00:00");
+    assert!(
+        !loaded.node_dir.join("target").exists(),
+        "blocked re-entry must not create a child build target"
     );
 }
 

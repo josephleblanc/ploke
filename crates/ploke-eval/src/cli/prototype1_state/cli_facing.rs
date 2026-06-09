@@ -113,11 +113,11 @@ use crate::{
         Prototype1ContinuationDisposition, Prototype1NodeRecord, Prototype1NodeStatus,
         Prototype1SearchPolicy, RecordStore, TreatmentBranchNode, TreatmentBranchStatus,
         ValidationPolicy, branch_log, execute_intervention_apply, load_node_record,
-        load_scheduler_state, project_node_status, prototype1_branch_registry_path,
-        prototype1_node_id, prototype1_nodes_dir, prototype1_scheduler_path,
-        register_root_parent_node, resolved_treatment_branches_from_synthesis,
-        select_primary_issue, treatment_branch_id, write_node_projection,
-        write_treatment_evaluation_projection,
+        load_runner_result, load_scheduler_state, project_node_status,
+        prototype1_branch_registry_path, prototype1_node_id, prototype1_nodes_dir,
+        prototype1_scheduler_path, register_root_parent_node,
+        resolved_treatment_branches_from_synthesis, select_primary_issue, treatment_branch_id,
+        write_node_projection, write_treatment_evaluation_projection,
     },
     load_campaign_manifest, load_closure_state,
     model_registry::resolve_model_for_run,
@@ -5423,6 +5423,9 @@ pub(crate) fn run_planned_child(
     let surface = child.surface().cloned();
     let harness = child.harness_evidence().cloned();
     let node_id = node.node_id.clone();
+    if let Some(outcome) = stored_child_outcome(&manifest_path, plan_index, &child)? {
+        return Ok(outcome);
+    }
     let child_path_span = tracing::info_span!(
         target: EXECUTION_DEBUG_TARGET,
         "prototype1.parent.child_path",
@@ -5713,6 +5716,139 @@ pub(crate) fn run_planned_child(
         // Rejected attempts from proposal validation are tracked separately
         // and projected as payload-only candidates.
     })
+}
+
+fn stored_child_outcome(
+    manifest_path: &Path,
+    plan_index: usize,
+    child: &ChildFiles,
+) -> Result<Option<PlannedChildOutcome>, PrepareError> {
+    let planned = child.node_record();
+    let stored = match load_node_record(
+        manifest_path,
+        &planned.node_id,
+        OperatorProjectionRead::cli_operator(),
+    ) {
+        Ok(node) => node,
+        Err(err) if manifest_not_found(&err) => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    let runner_result = match load_runner_result(
+        manifest_path,
+        &planned.node_id,
+        OperatorProjectionRead::cli_operator(),
+    ) {
+        Ok(result) => Some(result),
+        Err(err) if manifest_not_found(&err) => None,
+        Err(err) => return Err(err),
+    };
+    if let Some(result) = runner_result.as_ref() {
+        if result.branch_id != stored.branch_id || result.generation != stored.generation {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "stored runner result for node '{}' does not match node record: runner branch={} generation={}, node branch={} generation={}",
+                    planned.node_id,
+                    result.branch_id,
+                    result.generation,
+                    stored.branch_id,
+                    stored.generation
+                ),
+            });
+        }
+        if is_terminal_child_status(result.status) && !is_terminal_child_status(stored.status) {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "node '{}' has terminal runner result {:?} but node record is {:?}; repair terminal node state before direct prototype1-state re-entry",
+                    planned.node_id, result.status, stored.status
+                ),
+            });
+        }
+        if is_terminal_child_status(result.status)
+            && is_terminal_child_status(stored.status)
+            && result.status != stored.status
+        {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "node '{}' has conflicting terminal states: runner result {:?}, node record {:?}; repair terminal node state before direct prototype1-state re-entry",
+                    planned.node_id, result.status, stored.status
+                ),
+            });
+        }
+    }
+    if !is_terminal_child_status(stored.status) {
+        return Ok(None);
+    }
+
+    let report = branch_report(manifest_path, &stored.branch_id)?;
+    let outcome = match stored.status {
+        Prototype1NodeStatus::Succeeded => {
+            let report = report.as_ref().ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "terminal child '{}' is missing branch evaluation report; run observe recovery before direct prototype1-state re-entry",
+                    stored.node_id
+                ),
+            })?;
+            format!("completed:{:?}", report.overall_disposition)
+        }
+        Prototype1NodeStatus::Failed => "completed:Reject".to_string(),
+        _ => unreachable!("terminal status checked above"),
+    };
+    let selection_input = report
+        .as_ref()
+        .map(|report| selection_input_from_child_report(&stored, report));
+    let artifact_surface = if stored.workspace_root.exists() {
+        GitWorktreeBackend
+            .artifact_surface(&stored.workspace_root)
+            .ok()
+    } else {
+        None
+    };
+
+    Ok(Some(PlannedChildOutcome {
+        plan_index,
+        node_id: stored.node_id.clone(),
+        outcome,
+        node_status: stored.status,
+        workspace_root: stored.workspace_root.clone(),
+        binary_path: stored.binary_path.clone(),
+        resolved: child.resolved().clone(),
+        child_runtime: None,
+        evaluation_report: report,
+        selection_input,
+        surface: child.surface().cloned(),
+        artifact_surface,
+        node: stored,
+    }))
+}
+
+fn branch_report(
+    manifest_path: &Path,
+    branch_id: &str,
+) -> Result<Option<Prototype1BranchEvaluationReport>, PrepareError> {
+    let path = prototype1_branch_evaluation_path(manifest_path, branch_id);
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(PrepareError::ReadManifest { path, source }),
+    };
+    serde_json::from_str(&text)
+        .map(Some)
+        .map_err(|source| PrepareError::ParseManifest { path, source })
+}
+
+fn is_terminal_child_status(status: Prototype1NodeStatus) -> bool {
+    matches!(
+        status,
+        Prototype1NodeStatus::Succeeded | Prototype1NodeStatus::Failed
+    )
+}
+
+fn manifest_not_found(err: &PrepareError) -> bool {
+    matches!(
+        err,
+        PrepareError::ReadManifest { source, .. }
+            if source.kind() == io::ErrorKind::NotFound
+    )
 }
 
 async fn run_child_fanout(

@@ -307,115 +307,7 @@ impl<S> Child<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Mutex};
     use tempfile::tempdir;
-    use tracing::field::{Field, Visit};
-    use tracing::{Event, Id, Subscriber};
-    use tracing_subscriber::layer::{Context, SubscriberExt};
-    use tracing_subscriber::registry::LookupSpan;
-    use tracing_subscriber::{Layer, Registry};
-
-    #[derive(Clone, Default)]
-    struct TraceLines(Arc<Mutex<Vec<String>>>);
-
-    impl TraceLines {
-        fn push(&self, line: String) {
-            self.0.lock().expect("trace lock").push(line);
-        }
-
-        fn snapshot(&self) -> Vec<String> {
-            self.0.lock().expect("trace lock").clone()
-        }
-    }
-
-    #[derive(Default)]
-    struct TraceFields {
-        values: Vec<String>,
-    }
-
-    impl TraceFields {
-        fn push(&mut self, field: &Field, value: impl Into<String>) {
-            self.values
-                .push(format!("{}={}", field.name(), value.into()));
-        }
-
-        fn finish(self) -> String {
-            self.values.join(" ")
-        }
-    }
-
-    impl Visit for TraceFields {
-        fn record_bool(&mut self, field: &Field, value: bool) {
-            self.push(field, value.to_string());
-        }
-
-        fn record_i64(&mut self, field: &Field, value: i64) {
-            self.push(field, value.to_string());
-        }
-
-        fn record_u64(&mut self, field: &Field, value: u64) {
-            self.push(field, value.to_string());
-        }
-
-        fn record_str(&mut self, field: &Field, value: &str) {
-            self.push(field, value.to_string());
-        }
-
-        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-            self.push(field, format!("{value:?}"));
-        }
-    }
-
-    struct TraceLayer {
-        lines: TraceLines,
-    }
-
-    impl<S> Layer<S> for TraceLayer
-    where
-        S: Subscriber + for<'span> LookupSpan<'span>,
-    {
-        fn on_new_span(
-            &self,
-            attrs: &tracing::span::Attributes<'_>,
-            _id: &Id,
-            _ctx: Context<'_, S>,
-        ) {
-            let mut fields = TraceFields::default();
-            attrs.record(&mut fields);
-            self.lines.push(format!(
-                "span:{} {}",
-                attrs.metadata().name(),
-                fields.finish()
-            ));
-        }
-
-        fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
-            let mut fields = TraceFields::default();
-            event.record(&mut fields);
-            self.lines.push(format!(
-                "event:{} {}",
-                event.metadata().target(),
-                fields.finish()
-            ));
-        }
-    }
-
-    fn collect_traces<T>(f: impl FnOnce() -> T) -> (T, Vec<String>) {
-        let lines = TraceLines::default();
-        let subscriber = Registry::default().with(TraceLayer {
-            lines: lines.clone(),
-        });
-        let guard = tracing::subscriber::set_default(subscriber);
-        let result = f();
-        drop(guard);
-        (result, lines.snapshot())
-    }
-
-    fn trace_contains(lines: &[String], needles: &[&str]) -> bool {
-        lines
-            .iter()
-            .any(|line| needles.iter().all(|needle| line.contains(needle)))
-    }
 
     #[test]
     fn child_runtime_transitions_emit_authority_trace() {
@@ -438,49 +330,47 @@ mod tests {
             target_relpath: PathBuf::from("crates/example/src/lib.rs"),
             absolute_path: tmp.path().join("workspace/crates/example/src/lib.rs"),
         };
-        let child = Child::<Starting>::new(
-            tmp.path().join("transition-journal.jsonl"),
-            runtime_id,
-            1,
-            refs,
-            paths,
-            4242,
-        );
+        let journal_path = tmp.path().join("transition-journal.jsonl");
+        let result_path = tmp.path().join("result.json");
+        let child = Child::<Starting>::new(journal_path.clone(), runtime_id, 1, refs, paths, 4242);
 
-        let (result, trace) = collect_traces(|| {
-            child
-                .ready()
-                .expect("ready")
-                .evaluating()
-                .expect("evaluating")
-                .result_written(tmp.path().join("result.json"))
-        });
+        let result = child
+            .ready()
+            .expect("ready")
+            .evaluating()
+            .expect("evaluating")
+            .result_written(result_path.clone());
         result.expect("result written");
 
-        assert!(trace_contains(
-            &trace,
-            &[
-                "transition=Child<Starting>->Child<Ready>",
-                "authority=child_runtime_channel",
-                "runtime_id=",
-                "node_id=node-child",
-            ],
-        ));
-        assert!(trace_contains(
-            &trace,
-            &[
-                "transition=Child<Ready>->Child<Evaluating>",
-                "campaign_id=campaign-a",
-                "branch_id=branch-child",
-            ],
-        ));
-        assert!(trace_contains(
-            &trace,
-            &[
-                "transition=Child<Evaluating>->Child<ResultWritten>",
-                "runner_result_path=",
-                "candidate_id=candidate-child",
-            ],
-        ));
+        let entries = PrototypeJournal::new(journal_path)
+            .load_entries()
+            .expect("load child transition journal");
+        let records = entries
+            .iter()
+            .map(|entry| match entry {
+                JournalEntry::Child(record) => record,
+                other => panic!("unexpected journal entry: {other:?}"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(records.len(), 3);
+
+        assert_eq!(records[0].runtime_id, runtime_id);
+        assert_eq!(records[0].generation, 1);
+        assert_eq!(records[0].refs.campaign_id, "campaign-a");
+        assert_eq!(records[0].refs.node_id, "node-child");
+        assert_eq!(records[0].refs.branch_id, "branch-child");
+        assert_eq!(records[0].state, State::Ready);
+
+        assert_eq!(records[1].runtime_id, runtime_id);
+        assert_eq!(records[1].refs.candidate_id, "candidate-child");
+        assert_eq!(records[1].state, State::Evaluating);
+
+        assert_eq!(records[2].runtime_id, runtime_id);
+        assert_eq!(
+            records[2].state,
+            State::ResultWritten {
+                runner_result_path: result_path,
+            }
+        );
     }
 }

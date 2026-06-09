@@ -215,3 +215,7 @@ state without checking newer code, History records, and run artifacts.
   Coverage/backlog note for nodes in recent Prototype 1 campaigns, separating
   terminal/scout coverage from full run-review coverage and listing artifact
   roots for follow-up reviews.
+- [`2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-auth3-scout-fanin.md`](2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-auth3-scout-fanin.md)
+  Scout fan-in for the 2026-06-09 direct-Google two-target campaign, preserving
+  broad-harness, selection/protocol, and late-gen2-child red flags before
+  blocker repair.

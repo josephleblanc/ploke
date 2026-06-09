@@ -141,3 +141,5 @@ file and current code before treating a report as still open.
   External auth blocker: child treatment evals reached `direct_google` but both target turns aborted because Google ADC bearer-token resolution required non-interactive reauthentication.
 - [`2026-06-09-prototype1-broad-child-google-429-zero-admission.md`](./2026-06-09-prototype1-broad-child-google-429-zero-admission.md)
   External provider-capacity blocker: fresh `prototype1-state` baseline/protocol completed, but broad child generation admitted zero children after direct-Google HTTP 429 `RESOURCE_EXHAUSTED`.
+- [`2026-06-09-prototype1-late-child-result-recovery-corrupts-node-state.md`](./2026-06-09-prototype1-late-child-result-recovery-corrupts-node-state.md)
+  Open blocker: a gen2 child result arrived after parent `observe_child` timeout, leaving no branch/evaluation record; direct `prototype1-state` re-entry then re-ran child prep and downgraded terminal node states.

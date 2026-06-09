@@ -1,0 +1,12 @@
+{
+  "schema_version": "prototype1-treatment-node.v1",
+  "campaign_id": "p1-g35f-direct-protocol-2target-g0g2-1x3-auth3-20260609-092113",
+  "node_id": "node-7809adc3fc6e4aad",
+  "generation": 2,
+  "branch_id": "branch-3e52c562999775da",
+  "status": "succeeded",
+  "disposition": "succeeded",
+  "treatment_campaign_id": "p1-g35f-direct-protocol-2target-g0g2-1x3-auth3-20260609-092113-treatment-branch-3e52c562999775da-1781026510878",
+  "exit_code": 0,
+  "recorded_at": "2026-06-09T17:55:54.420975107+00:00"
+}
