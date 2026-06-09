@@ -139,3 +139,5 @@ file and current code before treating a report as still open.
   External provider blocker: a fresh direct-Google `google/gemini-3.5-flash` baseline turn aborted with HTTP 429 resource exhaustion and persisted an empty patch, so the campaign is stop-use for loop progress.
 - [`2026-06-08-prototype1-child-treatment-google-adc-reauth.md`](./2026-06-08-prototype1-child-treatment-google-adc-reauth.md)
   External auth blocker: child treatment evals reached `direct_google` but both target turns aborted because Google ADC bearer-token resolution required non-interactive reauthentication.
+- [`2026-06-09-prototype1-broad-child-google-429-zero-admission.md`](./2026-06-09-prototype1-broad-child-google-429-zero-admission.md)
+  External provider-capacity blocker: fresh `prototype1-state` baseline/protocol completed, but broad child generation admitted zero children after direct-Google HTTP 429 `RESOURCE_EXHAUSTED`.
