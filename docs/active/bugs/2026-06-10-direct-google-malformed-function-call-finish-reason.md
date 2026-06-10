@@ -3,7 +3,7 @@
 **Date Discovered:** 2026-06-10  
 **Crates Affected:** `ploke-llm`, `ploke-tui`, `ploke-records`, `ploke-eval`, `ploke-egui`  
 **Severity:** High  
-**Status:** Root cause identified + fixed (output-token-budget floor); classification + deserialize fixes retained. See "Root cause + fix (verified 2026-06-10)".
+**Status:** Fixed + live-verified (output-token-budget floor = 16384); clean baseline in state8 (`gemini-2.5-pro`, direct-google). Classification + deserialize fixes retained. See "State8 live run".
 
 ## Summary
 
@@ -194,6 +194,20 @@ Length-retry investigation (why `length` was terminal, not silently retried):
 
 Re-run after the floor bump uses a fresh campaign (state7 is `blocked` on
 recorded failed baseline evidence and must not be rerun in place).
+
+### State8 live run (2026-06-10): clean baseline at 16384 floor
+
+Fresh campaign `p1-g25p-direct-protocol-2target-g0g2-1x3-state8-20260610-155046`
+(identical state6/7 config: `gemini-2.5-pro` broad + protocol, direct-google) with
+`MAX_TOKENS_FLOOR=16384`:
+
+- `prototype1-step` advanced `baseline_eval → baseline_protocol`, **blockers
+  empty** (state7 was `blocked` at this exact phase on OUTPUT_TRUNCATED).
+- Baseline `llm-full-responses.jsonl` finish reasons: `tool_calls` ×5, `stop` ×2 —
+  **zero `malformed_function_call`, zero `length`/OUTPUT_TRUNCATED**.
+
+The 16384 floor resolves both the malformation and the thinking-model truncation
+at baseline end-to-end.
 
 ---
 
