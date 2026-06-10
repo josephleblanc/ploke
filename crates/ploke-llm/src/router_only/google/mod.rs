@@ -1730,7 +1730,7 @@ answer in prose and do not ask for more information."
         const MODEL_ID: &str = "google/gemini-2.5-flash";
         // Mirror the production floor from
         // `ploke-tui::llm::model_overrides::google_gemini::MAX_TOKENS_FLOOR`.
-        const FLOOR_MAX_TOKENS: u32 = 8192;
+        const FLOOR_MAX_TOKENS: u32 = 16384;
         if !live_google_env_or_skip(TEST_NAME) {
             return Ok(());
         }

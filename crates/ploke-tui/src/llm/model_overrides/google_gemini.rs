@@ -13,7 +13,13 @@
 //! Empirically verified (live spike, 2026-06-10): bumping the budget to 8192
 //! eliminated the malformation for the SAME `tool_choice=auto` + string-diff
 //! schema, while `tool_choice=required` did NOT fix it. The mitigation is
-//! therefore a `max_tokens` floor, not a forced tool choice. See
+//! therefore a `max_tokens` floor, not a forced tool choice.
+//!
+//! Floor raised to 16384 after the state7 live run (gemini-2.5-pro): at 8192 the
+//! malformation was gone but the thinking model's reasoning tokens consumed the
+//! budget before the patch finished, yielding `finish_reason=length`
+//! (OUTPUT_TRUNCATED). 16384 gives think+patch enough room; it is a cap, not
+//! forced spend (the model stops when done). See
 //! `docs/active/bugs/2026-06-10-direct-google-malformed-function-call-finish-reason.md`.
 
 use ploke_llm::router_only::RouterVariants;
@@ -25,10 +31,11 @@ use super::{ModelOverride, ParamOverrides};
 /// quirk.
 const AFFECTED_PREFIXES: &[&str] = &["gemini-2.5", "gemini-3.5"];
 
-/// Output-token floor for affected direct-Google Gemini requests. Proven
-/// sufficient in the live spike and aligned with the protocol budget used in
-/// prototype1 run profiles (~8000).
-const MAX_TOKENS_FLOOR: u32 = 8192;
+/// Output-token floor for affected direct-Google Gemini requests. 8192 was
+/// proven to eliminate the malformation; raised to 16384 so the thinking model
+/// (gemini-2.5-pro) has room for reasoning + a full patch without truncating
+/// (`finish_reason=length`). This is a cap, not forced spend.
+const MAX_TOKENS_FLOOR: u32 = 16384;
 
 pub(super) fn resolve(router: RouterVariants, model_id: &ModelId) -> Option<ModelOverride> {
     if !is_affected(router, model_id) {

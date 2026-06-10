@@ -126,9 +126,11 @@ eliminate the malformation at a small budget.
   plus `effective_max_tokens()` (raises only when unset/lower; never lowers a
   larger explicit budget).
 - `google_gemini::resolve` now returns `tool_choice: None` and
-  `max_tokens_floor: Some(8192)` (`MAX_TOKENS_FLOOR`, ≥ the ~8000 protocol
-  budget used in prototype1 profiles) for direct-Google `gemini-2.5*`/`3.5*`.
-  The empirically-useless, loop-trapping `Required` recommendation was dropped.
+  `max_tokens_floor: Some(MAX_TOKENS_FLOOR)` for direct-Google
+  `gemini-2.5*`/`3.5*`. The empirically-useless, loop-trapping `Required`
+  recommendation was dropped. `MAX_TOKENS_FLOOR` was initially 8192 (proven to
+  remove the malformation) and **raised to 16384** after the state7 live run (see
+  below) showed the thinking model truncating at 8192.
 - The chokepoint (`prepare_and_run_llm_call`) applies the floor to
   `llm_params.max_tokens`. Raising the budget is termination-safe (unlike
   forcing `Required`). The `tool_choice` plumbing is retained behind
@@ -160,6 +162,38 @@ GOOGLE_PROJECT_ID=... GOOGLE_REGION=... \
 cargo test -p ploke-llm --features live_api_tests multiline_patch -- \
   --ignored --nocapture --test-threads=1
 ```
+
+### State7 live run (2026-06-10): malformation eliminated; floor raised to 16384
+
+A fresh prototype1 run replicating the exact state6 config (`gemini-2.5-pro`
+broad + protocol, direct-google) with the fix in place produced a clean
+before/after on the failing config:
+
+- `llm-full-responses.jsonl`: `finish_reason=tool_calls` ×11,
+  `finish_reason=length` ×2, **zero `malformed_function_call`**. The malformation
+  is gone; the model makes real structured tool calls.
+- The run then `blocked` on `code=OUTPUT_TRUNCATED` (baseline eval, 2.5-pro):
+  reasoning tokens consumed the 8192 budget before the patch completed, so the
+  turn hit `finish_reason=length`.
+
+Length-retry investigation (why `length` was terminal, not silently retried):
+
+- The length-continue/retry path DID fire — the 2 `length` responses are the
+  original + 1 continuation retry (`length_continue_prompt`). After the retry was
+  exhausted, the loop returned a terminal `FinishError(OUTPUT_TRUNCATED)` and
+  baseline-eval correctly treats an incomplete turn as a failure → `blocked`.
+- Effective length-retry budget on the baseline `agent-single-turn` is **1**:
+  `benchmark_chat_policy()` (`ploke-eval/src/runner/mod.rs`) builds
+  `ChatPolicy::default()` and never sets `length_retry_limit` (default 1), whereas
+  the headless `configure_sparse_strict_rag` sets 5. **Known inconsistency**
+  (baseline=1 vs headless broad-child=5); not changed here.
+- More retries would not reliably help: a thinking model re-spends reasoning
+  tokens on each continuation within the same budget, so each continued turn
+  truncates again. Continuation adds turns, not per-turn budget. The fix is a
+  larger `max_tokens` floor (16384), not more retries.
+
+Re-run after the floor bump uses a fresh campaign (state7 is `blocked` on
+recorded failed baseline evidence and must not be rerun in place).
 
 ---
 
