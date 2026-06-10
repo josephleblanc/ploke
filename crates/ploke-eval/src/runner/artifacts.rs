@@ -1046,6 +1046,9 @@ pub(crate) fn finish_reason_record(
         ploke_llm::response::FinishReason::Length => FinishReasonRecord::Length,
         ploke_llm::response::FinishReason::ContentFilter => FinishReasonRecord::ContentFilter,
         ploke_llm::response::FinishReason::ToolCalls => FinishReasonRecord::ToolCalls,
+        ploke_llm::response::FinishReason::MalformedFunctionCall => {
+            FinishReasonRecord::MalformedFunctionCall
+        }
         ploke_llm::response::FinishReason::Timeout => FinishReasonRecord::Timeout,
         ploke_llm::response::FinishReason::Error(message) => {
             FinishReasonRecord::Error(message.clone())

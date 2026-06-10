@@ -44,6 +44,46 @@ fn google_success_response_deserializes_as_openai_response_shape() {
 }
 
 #[test]
+fn google_malformed_function_call_finish_reason_deserializes() {
+    let value = json!({
+        "id": "chatcmpl-google-malformed",
+        "object": "chat.completion",
+        "created": 1770000000,
+        "model": "google/gemini-2.5-flash",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "refusal": "Malformed function call: print(default_api.apply_code_edit(edits=[...]))"
+                },
+                "finish_reason": "malformed_function_call"
+            }
+        ],
+        "usage": {
+            "prompt_tokens": 100,
+            "completion_tokens": 10,
+            "total_tokens": 110
+        }
+    });
+
+    let response: OpenAiResponse =
+        serde_json::from_value(value).expect("google malformed_function_call response");
+    let choice = &response.choices[0];
+    assert_eq!(
+        choice.finish_reason,
+        Some(FinishReason::MalformedFunctionCall)
+    );
+    let message = choice.message.as_ref().expect("assistant message");
+    assert!(
+        message
+            .refusal
+            .as_deref()
+            .is_some_and(|refusal| refusal.contains("default_api.apply_code_edit"))
+    );
+}
+
+#[test]
 fn google_resource_exhausted_error_shape_is_diagnostic_array() {
     #[derive(Debug, Deserialize)]
     struct GoogleErrorList(Vec<GoogleErrorEnvelope>);

@@ -1281,6 +1281,19 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepData, LlmError> {
 
     // We prefer the first choice that yields a usable outcome.
     for choice in parsed.choices.iter() {
+        if choice.finish_reason == Some(FinishReason::MalformedFunctionCall) {
+            let msg = choice
+                .message
+                .as_ref()
+                .and_then(|message| message.refusal.clone())
+                .unwrap_or_else(|| "Provider returned malformed function call".to_string());
+            return Err(LlmError::FinishError {
+                msg,
+                full_response: parsed,
+                finish_reason: FinishReason::MalformedFunctionCall,
+            });
+        }
+
         if let Some(err) = &choice.error {
             if first_choice_error.is_none() {
                 first_choice_error = Some(api_error_from_choice_error(
@@ -1570,6 +1583,35 @@ mod tests {
             r.full_response.provider.as_ref().map(ProviderName::as_str),
             Some("OpenAI")
         );
+    }
+
+    #[test]
+    fn parse_outcome_malformed_function_call_returns_finish_error() {
+        let body = r#"{
+            "id": "google-malformed",
+            "choices": [{
+                "index": 0,
+                "finish_reason": "malformed_function_call",
+                "message": {
+                    "role": "assistant",
+                    "refusal": "Malformed function call: print(default_api.apply_code_edit(edits=[...]))"
+                }
+            }],
+            "created": 0,
+            "model": "google/gemini-2.5-flash",
+            "object": "chat.completion"
+        }"#;
+
+        let err = parse_chat_outcome(body).expect_err("malformed function call should fail");
+        match err {
+            LlmError::FinishError {
+                finish_reason, msg, ..
+            } => {
+                assert_eq!(finish_reason, FinishReason::MalformedFunctionCall);
+                assert!(msg.contains("default_api.apply_code_edit"));
+            }
+            other => panic!("expected finish error, got {other:?}"),
+        }
     }
 
     #[test]

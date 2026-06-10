@@ -145,3 +145,5 @@ file and current code before treating a report as still open.
   Open blocker: a gen2 child result arrived after parent `observe_child` timeout, leaving no branch/evaluation record; direct `prototype1-state` re-entry then re-ran child prep and downgraded terminal node states.
 - [`2026-06-10-vertex-gemini-35-flash-dsq-shadow-quota-429.md`](./2026-06-10-vertex-gemini-35-flash-dsq-shadow-quota-429.md)
   External provider blocker: Vertex `direct_google` `google/gemini-3.5-flash` hits DSQ/PayGo HTTP 429 without IAM Quotas `base_model` visibility; downgrade to **`google/gemini-2.5-flash`** (not 3.0-flash, which 404s on Vertex).
+- [`2026-06-10-direct-google-malformed-function-call-finish-reason.md`](./2026-06-10-direct-google-malformed-function-call-finish-reason.md)
+  Direct Google Gemini can return `finish_reason: malformed_function_call` with Python-style refusal text; Ploke now deserializes and classifies it as model behavior instead of entering `UNKNOWN_TOOL_NAME` repair.

@@ -124,6 +124,10 @@ pub enum FinishReason {
     Length,        // Max tokens reached
     ContentFilter, // Blocked by safety system
     ToolCalls,     // Stopped for tool execution
+    /// Gemini/Vertex may return this when the model emits invalid function-call
+    /// text (for example Python `default_api.*` code) instead of structured
+    /// `tool_calls` JSON.
+    MalformedFunctionCall,
     Timeout,       // Processing time exceeded
     Error(String), // Error description
 }

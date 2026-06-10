@@ -880,6 +880,30 @@ fn finish_reason_metadata(
             Some(ArcStr::from("Rephrase the request and retry.")),
             None,
         ),
+        FinishReason::MalformedFunctionCall => (
+            LoopErrorKind::ModelBehavior,
+            ArcStr::from("MALFORMED_FUNCTION_CALL"),
+            ErrorSeverity::Error,
+            RetryAdvice::Maybe {
+                reason: ArcStr::from("Provider returned malformed function call output"),
+            },
+            Some(ArcStr::from(
+                "Retry with a valid tool call using strict JSON arguments.",
+            )),
+            Some(LlmAction {
+                next_steps: vec![LlmNextStep {
+                    action: ArcStr::from("retry_tool_call_with_valid_json"),
+                    details: Some(ArcStr::from(
+                        "Use tool_calls with valid JSON arguments, not Python-style code.",
+                    )),
+                }],
+                constraints: vec![
+                    ArcStr::from("Arguments must be strict JSON."),
+                    ArcStr::from("Do not emit Python-style function calls."),
+                ],
+                retry_hint: Some(RetryStrategy::Fixed),
+            }),
+        ),
         FinishReason::Length => (
             LoopErrorKind::ModelBehavior,
             ArcStr::from("OUTPUT_TRUNCATED"),
@@ -1024,6 +1048,9 @@ fn finish_reason_summary(finish_reason: &FinishReason) -> ArcStr {
         FinishReason::Length => ArcStr::from("Finish reason length: response truncated."),
         FinishReason::Timeout => ArcStr::from("Finish reason timeout from provider."),
         FinishReason::ContentFilter => ArcStr::from("Finish reason content filter."),
+        FinishReason::MalformedFunctionCall => {
+            ArcStr::from("Finish reason malformed function call.")
+        }
         FinishReason::ToolCalls => ArcStr::from("Finish reason tool calls."),
         FinishReason::Stop => ArcStr::from("Finish reason stop."),
     }
@@ -1058,6 +1085,42 @@ fn repair_action_str(action: &super::semantics::RepairAction) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classify_finish_error_malformed_function_call_is_model_behavior_not_tool_name_repair() {
+        use ploke_llm::response::OpenAiResponse;
+
+        let err = LlmError::FinishError {
+            msg: "Malformed function call: print(default_api.apply_code_edit(...))".to_string(),
+            full_response: OpenAiResponse {
+                id: "test".to_string(),
+                choices: vec![],
+                created: 0,
+                model: "google/gemini-2.5-flash".to_string(),
+                object: "chat.completion".to_string(),
+                provider: None,
+                system_fingerprint: None,
+                usage: None,
+                logprobs: None,
+            },
+            finish_reason: FinishReason::MalformedFunctionCall,
+        };
+
+        let loop_error = classify_llm_error(&err, ErrorContext::new(1, 0), CommitPhase::PreCommit);
+
+        assert_eq!(loop_error.code.as_ref(), "MALFORMED_FUNCTION_CALL");
+        assert!(matches!(
+            loop_error.recovery,
+            RecoveryDecision::Retry { .. } | RecoveryDecision::MaybeRetry { .. }
+        ));
+        assert!(!matches!(
+            loop_error.recovery,
+            RecoveryDecision::Repair {
+                action: crate::llm::manager::semantics::RepairAction::ToolName,
+                ..
+            }
+        ));
+    }
 
     #[test]
     fn classify_llm_error_embedded_top_level_rate_limit_is_retryable() {

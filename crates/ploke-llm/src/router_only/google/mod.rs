@@ -216,7 +216,7 @@ fn is_google_openai_chat_model(slug: &str) -> bool {
 
 fn google_context_length(model: &ModelSlug) -> Option<u32> {
     match model.as_str() {
-        "gemini-2.5-flash" | "gemini-3.5-flash" => Some(1_048_576),
+        "gemini-2.5-flash" | "gemini-2.5-pro" | "gemini-3.5-flash" => Some(1_048_576),
         _ => None,
     }
 }
@@ -234,6 +234,7 @@ fn google_catalog_models_response() -> ModelsResponse {
     ModelsResponse {
         data: vec![
             google_catalog_model("gemini-2.5-flash"),
+            google_catalog_model("gemini-2.5-pro"),
             google_catalog_model("gemini-3.5-flash"),
         ],
         object: Some(ArcStr::from("list")),
@@ -491,6 +492,7 @@ mod tests {
         ChatHttpConfig, ChatStepOutcome, HttpFailure, HttpSendFailure, LLM_TIMEOUT_SECS,
         manager::RequestMessage,
         request::endpoint::{ToolChoice, ToolChoiceFunction},
+        response::FinishReason,
         router_only::{
             ChatCompRequest,
             google::{
@@ -993,6 +995,17 @@ mod tests {
     }
 
     #[cfg(feature = "live_api_tests")]
+    fn is_malformed_function_call_error(error: &crate::LlmError) -> bool {
+        matches!(
+            error,
+            crate::LlmError::FinishError {
+                finish_reason: FinishReason::MalformedFunctionCall,
+                ..
+            }
+        )
+    }
+
+    #[cfg(feature = "live_api_tests")]
     fn list_dir_tool_definition() -> ToolDefinition {
         ToolFunctionDef {
             name: ToolName::ListDir,
@@ -1191,7 +1204,7 @@ mod tests {
             .map(crate::request::models::ResponseItem::from)
             .collect::<Vec<_>>();
 
-        assert_eq!(items.len(), 2);
+        assert_eq!(items.len(), 3);
         let flash = items
             .iter()
             .find(|item| item.id.to_string() == "google/gemini-2.5-flash")
@@ -1205,6 +1218,12 @@ mod tests {
             .find(|item| item.id.to_string() == "google/gemini-3.5-flash")
             .expect("3.5 flash direct row");
         assert!(flash_35.route_source.is_direct_google());
+        let pro = items
+            .iter()
+            .find(|item| item.id.to_string() == "google/gemini-2.5-pro")
+            .expect("2.5 pro direct row");
+        assert!(pro.supports_tools());
+        assert!(pro.route_source.is_direct_google());
 
         Ok(())
     }
@@ -1486,6 +1505,61 @@ mod tests {
             }
             other => {
                 bail!("expected forced Google tool call through chat_step, got {other:?}");
+            }
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    #[ignore = "requires Google ADC, GOOGLE_PROJECT_ID, GOOGLE_REGION, gemini-2.5-pro tool support, and quota"]
+    async fn live_google_forced_tool_call_gemini_25_pro_success_or_quota() -> Result<()> {
+        const TEST_NAME: &str = "live_google_forced_tool_call_gemini_25_pro_success_or_quota";
+        const MODEL_ID: &str = "google/gemini-2.5-pro";
+        if !live_google_env_or_skip(TEST_NAME) {
+            return Ok(());
+        }
+
+        let request = ChatCompRequest::<Google>::default()
+            .with_model_str(MODEL_ID)?
+            .with_message(RequestMessage::new_user(
+                "Call the list_dir tool exactly once for path \".\". Do not answer in prose."
+                    .to_string(),
+            ))
+            .with_max_tokens(128)
+            .with_temperature(0.0)
+            .with_tools(Some(vec![list_dir_tool_definition()]))
+            .with_tool_choice(Some(ToolChoice::Function {
+                r#type: FunctionMarker,
+                function: ToolChoiceFunction {
+                    name: ToolName::ListDir.as_str().to_string(),
+                },
+            }));
+
+        let client = Client::new();
+        let cfg = ChatHttpConfig::default();
+        let step = match crate::chat_step(&client, &request, &cfg).await {
+            Ok(step) => step,
+            Err(error) if is_google_quota_error(&error) => return Ok(()),
+            Err(error) if is_malformed_function_call_error(&error) => {
+                bail!(
+                    "gemini-2.5-pro returned malformed_function_call finish reason: {error:?}"
+                );
+            }
+            Err(error) => return Err(error.into()),
+        };
+
+        match step.outcome {
+            ChatStepOutcome::ToolCalls { calls, .. } => {
+                assert!(!calls.is_empty(), "expected at least one Google tool call");
+                assert_eq!(calls[0].function.name, ToolName::ListDir);
+            }
+            ChatStepOutcome::Content { content, .. } => {
+                assert!(
+                    content.as_ref().is_some_and(|text| !text.trim().is_empty()),
+                    "expected tool_calls or non-empty content, got empty content outcome"
+                );
             }
         }
 
