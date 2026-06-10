@@ -1025,6 +1025,65 @@ mod tests {
         .into()
     }
 
+    #[cfg(feature = "live_api_tests")]
+    fn read_file_tool_definition() -> ToolDefinition {
+        ToolFunctionDef {
+            name: ToolName::NsRead,
+            description: "Read the full contents of a file at a relative path.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "file": {
+                        "type": "string",
+                        "description": "Relative file path to read."
+                    }
+                },
+                "required": ["file"],
+                "additionalProperties": false
+            }),
+        }
+        .into()
+    }
+
+    /// Edit/patch tool mirroring the production `non_semantic_patch` schema:
+    /// `{ patches: [ { file, diff } ] }` where `diff` carries a multi-line
+    /// unified diff. This is the argument shape that triggered the state5/state6
+    /// `MALFORMED_FUNCTION_CALL` incident under `tool_choice=auto`.
+    #[cfg(feature = "live_api_tests")]
+    fn non_semantic_patch_tool_definition() -> ToolDefinition {
+        ToolFunctionDef {
+            name: ToolName::NsPatch,
+            description: "Apply one or more unified-diff patches to files.".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "patches": {
+                        "type": "array",
+                        "description": "Patches to apply.",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "file": {
+                                    "type": "string",
+                                    "description": "Relative path of the file to patch."
+                                },
+                                "diff": {
+                                    "type": "string",
+                                    "description": "Unified diff (multi-line) to apply to the file."
+                                }
+                            },
+                            "required": ["file", "diff"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
+                "required": ["patches"],
+                "additionalProperties": false
+            }),
+        }
+        .into()
+    }
+
     #[test]
     fn openai_compatible_route_constants_match_google() {
         assert_eq!(Google::BASE_URL, "https://aiplatform.googleapis.com/v1");
@@ -1543,9 +1602,7 @@ mod tests {
             Ok(step) => step,
             Err(error) if is_google_quota_error(&error) => return Ok(()),
             Err(error) if is_malformed_function_call_error(&error) => {
-                bail!(
-                    "gemini-2.5-pro returned malformed_function_call finish reason: {error:?}"
-                );
+                bail!("gemini-2.5-pro returned malformed_function_call finish reason: {error:?}");
             }
             Err(error) => return Err(error.into()),
         };
@@ -1561,6 +1618,162 @@ mod tests {
                     "expected tool_calls or non-empty content, got empty content outcome"
                 );
             }
+        }
+
+        Ok(())
+    }
+
+    /// Eval-shape prompt that drives the model to emit a complete multi-line
+    /// unified diff via the `non_semantic_patch` tool (mirroring the production
+    /// turn where the model had already read the file before patching).
+    #[cfg(feature = "live_api_tests")]
+    fn multiline_patch_eval_prompt() -> String {
+        "\
+Here is `crates/printer/src/util.rs` (truncated):
+
+```rust
+impl<M: Matcher> Replacer<M> {
+    pub fn replace_all(&mut self, matcher: &M, subject: &[u8]) -> io::Result<()> {
+        let &mut Space { ref mut dst, ref mut caps, ref mut matches } =
+            self.allocate(matcher)?;
+        dst.clear();
+        matches.clear();
+        matcher
+            .replace_with_captures_at(subject, 0, caps, dst, |caps, dst| {
+                let start = dst.len();
+                caps.interpolate(|name| matcher.capture_index(name), subject, &self.replacement, dst);
+                let end = dst.len();
+                matches.push(Match::new(start, end));
+                true
+            })
+            .map_err(io::Error::error_message)?;
+        Ok(())
+    }
+}
+```
+
+Fix the multi-line look-around bug: in multi-line mode, replacements past the \
+end of the requested range must be skipped. Apply the fix now by calling the \
+non_semantic_patch tool exactly once. The `diff` argument MUST be a complete \
+multi-line unified diff (with `---`, `+++`, `@@` and `+`/`-` hunk lines). Do not \
+answer in prose and do not ask for more information."
+            .to_string()
+    }
+
+    /// NEGATIVE / root-cause test. Reproduces the state5/state6 direct-Google
+    /// `MALFORMED_FUNCTION_CALL` incident by giving the eval-shape patch request
+    /// a deliberately small output-token budget (1024). The structured
+    /// tool-call emission is truncated and Vertex returns
+    /// `MALFORMED_FUNCTION_CALL` — confirming the root cause is output-token
+    /// truncation, not the argument schema or `tool_choice` mode.
+    ///
+    /// A genuine quota/429 (`RESOURCE_EXHAUSTED`) is an accepted skip. A
+    /// successful structured tool call would mean the truncation no longer
+    /// reproduces at this budget (provider behavior changed) and FAILS the test
+    /// so the paired floor value can be revisited.
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    #[ignore = "requires Google ADC, GOOGLE_PROJECT_ID, GOOGLE_REGION, a tool-capable Gemini model, and quota; reproduces malformed_function_call at a small token budget (root cause)"]
+    async fn live_google_low_token_budget_multiline_patch_reproduces_malformed_or_quota()
+    -> Result<()> {
+        const TEST_NAME: &str =
+            "live_google_low_token_budget_multiline_patch_reproduces_malformed_or_quota";
+        const MODEL_ID: &str = "google/gemini-2.5-flash";
+        if !live_google_env_or_skip(TEST_NAME) {
+            return Ok(());
+        }
+
+        let request = ChatCompRequest::<Google>::default()
+            .with_model_str(MODEL_ID)?
+            .with_message(RequestMessage::new_user(multiline_patch_eval_prompt()))
+            // Deliberately small budget: truncates the function-call emission.
+            .with_max_tokens(1024)
+            .with_temperature(0.0)
+            .with_tools(Some(vec![
+                read_file_tool_definition(),
+                non_semantic_patch_tool_definition(),
+            ]))
+            .with_tool_choice(Some(ToolChoice::Auto));
+
+        let client = Client::new();
+        let cfg = ChatHttpConfig::default();
+        match crate::chat_step(&client, &request, &cfg).await {
+            // The reproduction: the small budget truncates the call.
+            Err(error) if is_malformed_function_call_error(&error) => Ok(()),
+            // Genuine quota exhaustion still exercised the live route; treat as skip.
+            Err(error) if is_google_quota_error(&error) => Ok(()),
+            Err(error) => Err(error.into()),
+            Ok(step) => bail!(
+                "expected MALFORMED_FUNCTION_CALL at a 1024-token budget, but the call \
+                 succeeded: {:?}. The truncation no longer reproduces at this budget; \
+                 revisit the paired token floor.",
+                step.outcome
+            ),
+        }
+    }
+
+    /// POSITIVE / fix test. Issues the SAME eval-shape patch request as the
+    /// negative test but with the generous output-token budget the
+    /// `model_overrides` floor applies in production (8192). The model can now
+    /// finish emitting the structured tool call, so `MALFORMED_FUNCTION_CALL`
+    /// must NOT occur. This is the live verification of the token-floor fix.
+    ///
+    /// A genuine quota/429 is an accepted skip. A malformed finish reason is a
+    /// FAILURE (the floor did not fix the truncation).
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    #[ignore = "requires Google ADC, GOOGLE_PROJECT_ID, GOOGLE_REGION, a tool-capable Gemini model, and quota; verifies the token-floor fix avoids malformed_function_call"]
+    async fn live_google_floor_token_budget_multiline_patch_avoids_malformed_or_quota() -> Result<()>
+    {
+        const TEST_NAME: &str =
+            "live_google_floor_token_budget_multiline_patch_avoids_malformed_or_quota";
+        const MODEL_ID: &str = "google/gemini-2.5-flash";
+        // Mirror the production floor from
+        // `ploke-tui::llm::model_overrides::google_gemini::MAX_TOKENS_FLOOR`.
+        const FLOOR_MAX_TOKENS: u32 = 8192;
+        if !live_google_env_or_skip(TEST_NAME) {
+            return Ok(());
+        }
+
+        let request = ChatCompRequest::<Google>::default()
+            .with_model_str(MODEL_ID)?
+            .with_message(RequestMessage::new_user(multiline_patch_eval_prompt()))
+            // The fix under test: a generous budget so the call is not truncated.
+            .with_max_tokens(FLOOR_MAX_TOKENS)
+            .with_temperature(0.0)
+            .with_tools(Some(vec![
+                read_file_tool_definition(),
+                non_semantic_patch_tool_definition(),
+            ]))
+            .with_tool_choice(Some(ToolChoice::Auto));
+
+        let client = Client::new();
+        let cfg = ChatHttpConfig::default();
+        let step = match crate::chat_step(&client, &request, &cfg).await {
+            Ok(step) => step,
+            // Genuine quota exhaustion still exercised the live route; treat as skip.
+            Err(error) if is_google_quota_error(&error) => return Ok(()),
+            // The fix failed if the call still truncates at the floor budget.
+            Err(error) if is_malformed_function_call_error(&error) => {
+                bail!(
+                    "token floor ({FLOOR_MAX_TOKENS}) did NOT eliminate \
+                     MALFORMED_FUNCTION_CALL for a multi-line non_semantic_patch diff: {error:?}"
+                );
+            }
+            Err(error) => return Err(error.into()),
+        };
+
+        match step.outcome {
+            ChatStepOutcome::ToolCalls { calls, .. } => {
+                assert!(
+                    !calls.is_empty(),
+                    "expected a non-empty structured tool call at the floor budget"
+                );
+            }
+            // A terminal prose reply (no tool call) is also non-malformed; the
+            // fix's contract is "no MALFORMED_FUNCTION_CALL", not "always a tool
+            // call" (that would be the loop-trapping Required behavior).
+            ChatStepOutcome::Content { .. } => {}
         }
 
         Ok(())

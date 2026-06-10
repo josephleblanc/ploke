@@ -2496,6 +2496,7 @@ pub(crate) fn response_finish_reason_label(
         ploke_records::agent_turn::FinishReasonRecord::MalformedFunctionCall => {
             "malformed_function_call"
         }
+        ploke_records::agent_turn::FinishReasonRecord::UnexpectedToolCall => "unexpected_tool_call",
         ploke_records::agent_turn::FinishReasonRecord::Timeout => "timeout",
         ploke_records::agent_turn::FinishReasonRecord::Error(_) => "error",
     }

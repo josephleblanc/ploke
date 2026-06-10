@@ -904,6 +904,29 @@ fn finish_reason_metadata(
                 retry_hint: Some(RetryStrategy::Fixed),
             }),
         ),
+        FinishReason::UnexpectedToolCall => (
+            LoopErrorKind::ModelBehavior,
+            ArcStr::from("UNEXPECTED_TOOL_CALL"),
+            ErrorSeverity::Error,
+            RetryAdvice::Maybe {
+                reason: ArcStr::from("Provider invoked an undeclared function"),
+            },
+            Some(ArcStr::from(
+                "Retry, calling only a tool declared in the request's tool set.",
+            )),
+            Some(LlmAction {
+                next_steps: vec![LlmNextStep {
+                    action: ArcStr::from("retry_with_declared_tool"),
+                    details: Some(ArcStr::from(
+                        "Call one of the provided tools by its exact declared name.",
+                    )),
+                }],
+                constraints: vec![ArcStr::from(
+                    "Only call functions that were declared in the request.",
+                )],
+                retry_hint: Some(RetryStrategy::Fixed),
+            }),
+        ),
         FinishReason::Length => (
             LoopErrorKind::ModelBehavior,
             ArcStr::from("OUTPUT_TRUNCATED"),
@@ -1051,6 +1074,9 @@ fn finish_reason_summary(finish_reason: &FinishReason) -> ArcStr {
         FinishReason::MalformedFunctionCall => {
             ArcStr::from("Finish reason malformed function call.")
         }
+        FinishReason::UnexpectedToolCall => {
+            ArcStr::from("Finish reason unexpected tool call (undeclared function).")
+        }
         FinishReason::ToolCalls => ArcStr::from("Finish reason tool calls."),
         FinishReason::Stop => ArcStr::from("Finish reason stop."),
     }
@@ -1085,6 +1111,60 @@ fn repair_action_str(action: &super::semantics::RepairAction) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Real refusal text captured from the state6 `gemini-2.5-pro` direct-Google
+    /// incident: a Python `print(default_api.non_semantic_patch(...))` call whose
+    /// `diff` argument is a multi-line unified diff, rejected by Vertex as a
+    /// malformed function call.
+    ///
+    /// Provenance: `~/.ploke-eval/instances/prototype1/`
+    /// `p1-g25p-direct-protocol-2target-g0g2-1x3-state6-20260610-014509/`
+    /// `BurntSushi__ripgrep-2209/runs/`
+    /// `run-1781081390723-structured-current-policy-9b2c8ea1/agent-turn-summary.json`
+    const MALFORMED_NON_SEMANTIC_PATCH_REFUSAL: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/google/malformed_non_semantic_patch_refusal.txt"
+    ));
+
+    #[test]
+    fn classify_finish_error_malformed_multiline_patch_is_model_behavior_code() {
+        use ploke_llm::response::OpenAiResponse;
+
+        // The captured multi-line `non_semantic_patch` refusal must classify as a
+        // MALFORMED_FUNCTION_CALL / ModelBehavior loop error, never an
+        // UNKNOWN_TOOL_NAME repair, and the multi-line body must not break
+        // classification.
+        let err = LlmError::FinishError {
+            msg: MALFORMED_NON_SEMANTIC_PATCH_REFUSAL.to_string(),
+            full_response: OpenAiResponse {
+                id: "ZSUpar6LGMiFodAP1JvsmQQ".to_string(),
+                choices: vec![],
+                created: 1781081445,
+                model: "google/gemini-2.5-pro".to_string(),
+                object: "chat.completion".to_string(),
+                provider: None,
+                system_fingerprint: None,
+                usage: None,
+                logprobs: None,
+            },
+            finish_reason: FinishReason::MalformedFunctionCall,
+        };
+
+        let loop_error = classify_llm_error(&err, ErrorContext::new(1, 0), CommitPhase::PreCommit);
+
+        assert_eq!(loop_error.code.as_ref(), "MALFORMED_FUNCTION_CALL");
+        assert!(matches!(loop_error.kind, LoopErrorKind::ModelBehavior));
+        assert_ne!(loop_error.code.as_ref(), "UNKNOWN_TOOL_NAME");
+        assert_ne!(loop_error.code.as_ref(), "REPAIR_BUDGET_EXHAUSTED");
+        assert!(!matches!(
+            loop_error.recovery,
+            RecoveryDecision::Repair { .. }
+        ));
+        assert_eq!(
+            loop_error.context.finish_reason,
+            Some(FinishReason::MalformedFunctionCall)
+        );
+    }
 
     #[test]
     fn classify_finish_error_malformed_function_call_is_model_behavior_not_tool_name_repair() {

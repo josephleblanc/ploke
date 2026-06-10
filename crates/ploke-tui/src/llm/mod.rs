@@ -1,5 +1,6 @@
 // pub(crate) mod error;
 pub(crate) mod manager;
+pub(crate) mod model_overrides;
 pub(crate) use manager::ChatHistoryTarget;
 pub use manager::events::{
     ContextPlan, ContextPlanExcludedMessage, ContextPlanMessage, ContextPlanRagPart,

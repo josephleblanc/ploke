@@ -1281,16 +1281,26 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepData, LlmError> {
 
     // We prefer the first choice that yields a usable outcome.
     for choice in parsed.choices.iter() {
-        if choice.finish_reason == Some(FinishReason::MalformedFunctionCall) {
+        if let Some(model_behavior_reason) = choice.finish_reason.as_ref().filter(|reason| {
+            matches!(
+                reason,
+                FinishReason::MalformedFunctionCall | FinishReason::UnexpectedToolCall
+            )
+        }) {
+            let default_msg = match model_behavior_reason {
+                FinishReason::UnexpectedToolCall => "Provider returned unexpected tool call",
+                _ => "Provider returned malformed function call",
+            };
             let msg = choice
                 .message
                 .as_ref()
                 .and_then(|message| message.refusal.clone())
-                .unwrap_or_else(|| "Provider returned malformed function call".to_string());
+                .unwrap_or_else(|| default_msg.to_string());
+            let finish_reason = model_behavior_reason.clone();
             return Err(LlmError::FinishError {
                 msg,
                 full_response: parsed,
-                finish_reason: FinishReason::MalformedFunctionCall,
+                finish_reason,
             });
         }
 
@@ -1611,6 +1621,114 @@ mod tests {
                 assert!(msg.contains("default_api.apply_code_edit"));
             }
             other => panic!("expected finish error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_outcome_unexpected_tool_call_returns_finish_error() {
+        let body = r#"{
+            "id": "google-unexpected-tool-call",
+            "choices": [{
+                "index": 0,
+                "finish_reason": "unexpected_tool_call",
+                "message": {
+                    "role": "assistant",
+                    "refusal": "Model tried to call an undeclared function: NonSemanticPatchPatches"
+                }
+            }],
+            "created": 0,
+            "model": "google/gemini-2.5-flash",
+            "object": "chat.completion"
+        }"#;
+
+        let err = parse_chat_outcome(body).expect_err("unexpected tool call should fail");
+        match err {
+            LlmError::FinishError {
+                finish_reason, msg, ..
+            } => {
+                assert_eq!(finish_reason, FinishReason::UnexpectedToolCall);
+                assert!(msg.contains("undeclared function"));
+            }
+            other => panic!("expected finish error, got {other:?}"),
+        }
+    }
+
+    /// Real refusal text captured from the state6 `gemini-2.5-pro` direct-Google
+    /// incident (`MALFORMED_FUNCTION_CALL` finish reason). The model emitted a
+    /// Python `print(default_api.non_semantic_patch(...))` call whose `diff`
+    /// argument is a multi-line unified diff, which Vertex rejected as a
+    /// malformed function call.
+    ///
+    /// Provenance: `~/.ploke-eval/instances/prototype1/`
+    /// `p1-g25p-direct-protocol-2target-g0g2-1x3-state6-20260610-014509/`
+    /// `BurntSushi__ripgrep-2209/runs/`
+    /// `run-1781081390723-structured-current-policy-9b2c8ea1/agent-turn-summary.json`
+    const MALFORMED_NON_SEMANTIC_PATCH_REFUSAL: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/test_data/google/malformed_non_semantic_patch_refusal.txt"
+    ));
+
+    #[test]
+    fn parse_outcome_malformed_non_semantic_patch_multiline_diff_replays_to_finish_error() {
+        // Replays the captured eval-shape Google response (finish_reason
+        // `malformed_function_call` + a multi-line `non_semantic_patch` diff
+        // refusal) through the production parse path. This locks in the
+        // classification fix (commit 3f4d69ea) against the exact state6 payload:
+        // it must surface as a MalformedFunctionCall FinishError, never as an
+        // unknown tool name or repair loop, and the multi-line diff body must
+        // not break parsing.
+        let value = serde_json::json!({
+            "id": "ZSUpar6LGMiFodAP1JvsmQQ",
+            "object": "chat.completion",
+            "created": 1781081445,
+            "model": "google/gemini-2.5-pro",
+            "system_fingerprint": "",
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": "malformed_function_call",
+                    "message": {
+                        "role": "assistant",
+                        "refusal": MALFORMED_NON_SEMANTIC_PATCH_REFUSAL
+                    }
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 8665,
+                "completion_tokens": 113,
+                "total_tokens": 18503
+            }
+        });
+
+        // The finish reason must deserialize to the dedicated variant.
+        let response: OpenAiResponse = serde_json::from_value(value.clone())
+            .expect("captured malformed response deserializes");
+        assert_eq!(
+            response.choices[0].finish_reason,
+            Some(FinishReason::MalformedFunctionCall)
+        );
+
+        // The driver parse path must surface it as a MalformedFunctionCall finish
+        // error, preserving the multi-line diff content in the message.
+        let body = serde_json::to_string(&value).expect("serialize captured response body");
+        let err =
+            parse_chat_outcome(&body).expect_err("malformed multi-line patch call should fail");
+        match err {
+            LlmError::FinishError {
+                finish_reason, msg, ..
+            } => {
+                assert_eq!(finish_reason, FinishReason::MalformedFunctionCall);
+                assert!(
+                    msg.contains("default_api.non_semantic_patch"),
+                    "expected captured python call in refusal msg"
+                );
+                assert!(
+                    msg.contains("--- a/crates/printer/src/util.rs")
+                        && msg.contains("replace_with_captures_at_kludge"),
+                    "expected the multi-line unified diff body to survive parsing"
+                );
+            }
+            other => panic!("expected malformed-function-call finish error, got {other:?}"),
         }
     }
 

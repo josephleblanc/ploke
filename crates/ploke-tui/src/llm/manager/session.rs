@@ -484,6 +484,19 @@ impl FinishPolicy {
                         "finish reason decision: failure"
                     );
                 }
+                FinishReason::UnexpectedToolCall => {
+                    if failure.is_none() {
+                        failure = Some(FinishFailure::FinishError {
+                            msg: "Provider invoked an undeclared function (unexpected tool call)."
+                                .to_string(),
+                            finish_reason,
+                        });
+                    }
+                    tracing::trace!(
+                        target = FINISH_REASON_TARGET,
+                        "finish reason decision: failure"
+                    );
+                }
                 // keep looping
                 FinishReason::ToolCalls => {
                     continue_chain = true;

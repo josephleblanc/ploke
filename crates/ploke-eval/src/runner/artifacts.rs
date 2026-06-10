@@ -1049,6 +1049,9 @@ pub(crate) fn finish_reason_record(
         ploke_llm::response::FinishReason::MalformedFunctionCall => {
             FinishReasonRecord::MalformedFunctionCall
         }
+        ploke_llm::response::FinishReason::UnexpectedToolCall => {
+            FinishReasonRecord::UnexpectedToolCall
+        }
         ploke_llm::response::FinishReason::Timeout => FinishReasonRecord::Timeout,
         ploke_llm::response::FinishReason::Error(message) => {
             FinishReasonRecord::Error(message.clone())

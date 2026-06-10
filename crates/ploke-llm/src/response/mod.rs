@@ -128,6 +128,12 @@ pub enum FinishReason {
     /// text (for example Python `default_api.*` code) instead of structured
     /// `tool_calls` JSON.
     MalformedFunctionCall,
+    /// Gemini/Vertex may return this when the model invokes a function name that
+    /// was not declared in the request's tool set (observed when a nested
+    /// array-valued tool argument confuses the model into renaming the tool).
+    /// Surfaced explicitly so an unknown `finish_reason` string does not fail
+    /// response deserialization outright.
+    UnexpectedToolCall,
     Timeout,       // Processing time exceeded
     Error(String), // Error description
 }

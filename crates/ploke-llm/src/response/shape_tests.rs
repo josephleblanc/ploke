@@ -84,6 +84,46 @@ fn google_malformed_function_call_finish_reason_deserializes() {
 }
 
 #[test]
+fn google_unexpected_tool_call_finish_reason_deserializes() {
+    // Captured from the live fix-A spike (array-of-lines diff argument): Vertex
+    // returned a finish reason of `unexpected_tool_call`. Before adding the
+    // variant this failed whole-response deserialization; it must now parse.
+    let value = json!({
+        "id": "chatcmpl-google-unexpected-tool-call",
+        "object": "chat.completion",
+        "created": 1770000000,
+        "model": "google/gemini-2.5-flash",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "refusal": "Model tried to call an undeclared function: NonSemanticPatchPatches"
+                },
+                "finish_reason": "unexpected_tool_call"
+            }
+        ],
+        "usage": {
+            "prompt_tokens": 100,
+            "completion_tokens": 10,
+            "total_tokens": 110
+        }
+    });
+
+    let response: OpenAiResponse =
+        serde_json::from_value(value).expect("google unexpected_tool_call response");
+    let choice = &response.choices[0];
+    assert_eq!(choice.finish_reason, Some(FinishReason::UnexpectedToolCall));
+    let message = choice.message.as_ref().expect("assistant message");
+    assert!(
+        message
+            .refusal
+            .as_deref()
+            .is_some_and(|refusal| refusal.contains("undeclared function"))
+    );
+}
+
+#[test]
 fn google_resource_exhausted_error_shape_is_diagnostic_array() {
     #[derive(Debug, Deserialize)]
     struct GoogleErrorList(Vec<GoogleErrorEnvelope>);
