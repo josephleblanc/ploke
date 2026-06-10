@@ -65,6 +65,7 @@ pub(crate) async fn run_headless_with_model(
         validation: Vec::new(),
         model,
         capture: Capture::Off,
+        policy_suffix: None,
     }
     .run()
     .await
@@ -89,6 +90,7 @@ pub(crate) async fn run_headless_with_model_capture_responses(
         validation: validation_commands.to_vec(),
         model,
         capture: Capture::Responses,
+        policy_suffix: None,
     }
     .run()
     .await
@@ -1533,14 +1535,31 @@ pub(super) fn attempt_prompt(
     _evidence_roots: &[EvidenceRoot],
     request_prompt: &str,
     feedback: Option<&str>,
+    policy_suffix: Option<&str>,
 ) -> String {
     let mut prompt = request_prompt.trim_end().to_string();
     if let Some(feedback) = feedback {
         prompt.push_str("\n\nPrevious attempt result:\n");
         prompt.push_str(feedback);
+        push_policy_suffix(&mut prompt, policy_suffix);
         prompt.push('\n');
+    } else {
+        push_policy_suffix(&mut prompt, policy_suffix);
     }
     prompt
+}
+
+/// Append the optional anti-attractor policy suffix to the chat-step prompt.
+/// Authority boundary: the suffix is plain text only; the function never
+/// returns a value that influences selection, admission, or replay. When the
+/// suffix is `None` or empty, the prompt is unchanged.
+fn push_policy_suffix(prompt: &mut String, policy_suffix: Option<&str>) {
+    if let Some(suffix) = policy_suffix {
+        if !suffix.is_empty() {
+            prompt.push_str("\n\n");
+            prompt.push_str(suffix);
+        }
+    }
 }
 
 pub(super) fn evidence_read_roots(evidence_roots: &[EvidenceRoot]) -> Vec<PathBuf> {
@@ -1947,4 +1966,93 @@ pub(super) fn policy_repair_prompt(feedback: &str, has_applied_edits: bool) -> S
         prompt.push_str("\nNo allowed source edit has been applied yet.\n");
     }
     prompt
+}
+
+#[cfg(test)]
+mod attempt_prompt_tests {
+    //! Unit tests for the optional anti-attractor policy suffix in
+    //! [`super::attempt_prompt`]. These exercise the read-side / prompt-side
+    //! contract only: the suffix is plain text, appended at the end of the
+    //! chat-step prompt, and never affects selection, admission, or replay.
+
+    use super::attempt_prompt;
+    use crate::cli::prototype1_state::edit_surface::surface_policy::SurfacePolicy;
+
+    fn dummy_surface() -> SurfacePolicy {
+        SurfacePolicy::workspace_except_core()
+    }
+
+    #[test]
+    fn no_policy_suffix_leaves_prompt_unchanged() {
+        let prompt = "the request body";
+        let result = attempt_prompt(
+            std::path::Path::new("."),
+            &dummy_surface(),
+            &[],
+            prompt,
+            None,
+            None,
+        );
+        assert_eq!(result, prompt);
+    }
+
+    #[test]
+    fn policy_suffix_is_appended_with_blank_line_separator() {
+        let prompt = "the request body";
+        let suffix = "Use a different region of the codebase.";
+        let result = attempt_prompt(
+            std::path::Path::new("."),
+            &dummy_surface(),
+            &[],
+            prompt,
+            None,
+            Some(suffix),
+        );
+        assert!(
+            result.ends_with(suffix),
+            "suffix must be present at the end of the prompt, got:\n{result}"
+        );
+        assert!(
+            result.contains(&format!("\n\n{suffix}")),
+            "expected double-newline separator before suffix, got:\n{result}"
+        );
+    }
+
+    #[test]
+    fn empty_policy_suffix_is_a_no_op() {
+        let prompt = "the request body";
+        let result = attempt_prompt(
+            std::path::Path::new("."),
+            &dummy_surface(),
+            &[],
+            prompt,
+            None,
+            Some(""),
+        );
+        assert_eq!(result, prompt);
+    }
+
+    #[test]
+    fn policy_suffix_coexists_with_feedback() {
+        let prompt = "the request body";
+        let feedback = "applied edit to file X";
+        let suffix = "Try a different file next.";
+        let result = attempt_prompt(
+            std::path::Path::new("."),
+            &dummy_surface(),
+            &[],
+            prompt,
+            Some(feedback),
+            Some(suffix),
+        );
+        assert!(result.contains(feedback));
+        assert!(result.contains(suffix));
+        // Suffix must still come at the end so the LLM sees the bias last.
+        let suffix_pos = result.find(suffix).expect("suffix present");
+        let feedback_pos = result.find(feedback).expect("feedback present");
+        assert!(
+            suffix_pos > feedback_pos,
+            "suffix must come after feedback in the prompt"
+        );
+    }
 }

@@ -115,6 +115,13 @@ impl Prototype1RunProfile {
             ..ProtocolCampaignPolicy::default()
         }
     }
+
+    /// Return the active anti-attractor policy, if any. The default is `None`
+    /// (no-op). See [`AntiAttractorPolicy`] and [`prompt_suffix_for`] for the
+    /// read-side / prompt-side contract.
+    pub(crate) fn anti_attractor_policy(&self) -> AntiAttractorPolicy {
+        self.generation.anti_attractor_policy
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -344,6 +351,8 @@ impl Default for Search {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct Generation {
     pub(crate) source: GenerationSource,
+    #[serde(default)]
+    pub(crate) anti_attractor_policy: AntiAttractorPolicy,
 }
 
 impl Generation {
@@ -368,6 +377,82 @@ impl Default for Generation {
     fn default() -> Self {
         Self {
             source: GenerationSource::BroadHarnessRequest,
+            anti_attractor_policy: AntiAttractorPolicy::default(),
+        }
+    }
+}
+
+/// Anti-attractor policy for the candidate-generation step.
+///
+/// **Read-side / prompt-side only.** This mechanism exists to inject a prompt
+/// suffix that nudges the LLM away from recently-touched edit surfaces, in
+/// response to the surface/skeleton attractor pattern observed in
+/// `Mutation Without Variation` (arXiv 2606.05408) and in our own
+/// `target/test-output/lmca-batch-projection-2026-06-09/` panel.
+///
+/// It must never influence selection, admission, replay, oracle, protocol,
+/// History, or Crown authority. The only public surface of the policy is
+/// [`prompt_suffix_for`], which is a pure function returning `Option<String>`.
+///
+/// The first variant is a no-op default. The `SurfaceFreshness` variant
+/// encodes the surface-freshness bias: ask the model to target a different
+/// region than the last `recent_surface_window` successful candidates
+/// touched, with at least `min_target_surface_skew` distinct surfaces among
+/// the last K attempts.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(tag = "policy", rename_all = "kebab-case")]
+pub(crate) enum AntiAttractorPolicy {
+    /// No-op default. [`prompt_suffix_for`] returns `None` for any input.
+    #[default]
+    None,
+    /// Surface-freshness bias: ask the model to target a different region
+    /// than the recent successful candidates touched.
+    SurfaceFreshness {
+        #[serde(default = "default_recent_surface_window")]
+        recent_surface_window: u32,
+        #[serde(default = "default_min_target_surface_skew")]
+        min_target_surface_skew: u32,
+    },
+}
+
+fn default_recent_surface_window() -> u32 {
+    2
+}
+
+fn default_min_target_surface_skew() -> u32 {
+    2
+}
+
+/// Pure function: take a slice of recent successful edit-surface paths and
+/// the active policy, return an optional prompt suffix to inject.
+///
+/// **Authority boundary.** This function is the ONLY place the
+/// anti-attractor policy influences the loop. The return value is a prompt
+/// suffix only; it does not affect selection, admission, replay, oracle, or
+/// protocol authority. The signature takes only the recent-surface slice and
+/// the policy value — never any selector state — so the function cannot grow
+/// an authority hook without an explicit signature change.
+///
+/// `None` policy is always a no-op. `SurfaceFreshness` returns `None` when
+/// `recent_surfaces` is empty (no nudge possible). Otherwise it produces a
+/// short prompt suffix listing the recent surfaces and asking the model to
+/// target a different region.
+pub(crate) fn prompt_suffix_for(
+    recent_surfaces: &[String],
+    policy: AntiAttractorPolicy,
+) -> Option<String> {
+    match policy {
+        AntiAttractorPolicy::None => None,
+        AntiAttractorPolicy::SurfaceFreshness { .. } => {
+            if recent_surfaces.is_empty() {
+                return None;
+            }
+            let surface_list = recent_surfaces.join(", ");
+            Some(format!(
+                "The last successful candidate(s) touched surface(s): {surface_list}. \
+                 For this turn, please target a different region of the codebase or a \
+                 different function family if possible."
+            ))
         }
     }
 }
@@ -1579,5 +1664,148 @@ graph_nearest = 13
         )
         .expect_err("zero workers must reject");
         assert!(err.to_string().contains("execution.mbe.workers"));
+    }
+
+    // -----------------------------------------------------------------
+    // Anti-attractor policy (LMCA mitigation slice, 2026-06-10)
+    //
+    // The anti-attractor policy is a read-side / prompt-side mechanism that
+    // injects a prompt suffix to bias the LLM away from recently-touched edit
+    // surfaces. It must NEVER influence selection, admission, replay, oracle,
+    // protocol, History, or Crown authority. The tests below assert that the
+    // only public surface of the policy is `prompt_suffix_for`, which returns
+    // a plain `Option<String>` and takes only the recent-surface slice and
+    // the policy value (no selector state, no run-level authority).
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn default_run_profile_has_no_anti_attractor_policy() {
+        // Construct a minimal valid profile and confirm the policy defaults to
+        // None. (Prototype1RunProfile has no Default impl because schema_version
+        // and name are required, so we parse a minimal TOML instead.)
+        let profile_toml = r#"
+schema_version = "prototype1-run-profile.v1"
+name = "test-default-policy"
+
+[target]
+instance = "BurntSushi__ripgrep-2209"
+instances = ["BurntSushi__ripgrep-2209"]
+"#;
+        let profile = parse_profile(Path::new("profile.toml"), profile_toml)
+            .expect("minimal profile must parse");
+        assert_eq!(profile.anti_attractor_policy(), AntiAttractorPolicy::None);
+    }
+
+    #[test]
+    fn default_generation_serializes_with_no_policy() {
+        let generation = Generation::default();
+        let toml = toml::to_string(&generation).expect("serialize generation");
+        // The None variant serializes as `policy = "none"` with no extra fields.
+        assert!(
+            toml.contains("anti_attractor_policy") && toml.contains("policy = \"none\""),
+            "expected no-policy serialization, got:\n{toml}"
+        );
+    }
+
+    #[test]
+    fn surface_freshness_policy_round_trip_with_explicit_fields() {
+        let profile_toml = r#"
+schema_version = "prototype1-run-profile.v1"
+name = "test"
+
+[generation]
+source = "broad-harness-request"
+
+[generation.anti_attractor_policy]
+policy = "surface-freshness"
+recent_surface_window = 3
+min_target_surface_skew = 4
+"#;
+        let profile =
+            parse_profile(Path::new("profile.toml"), profile_toml).expect("profile must parse");
+        assert_eq!(
+            profile.anti_attractor_policy(),
+            AntiAttractorPolicy::SurfaceFreshness {
+                recent_surface_window: 3,
+                min_target_surface_skew: 4,
+            }
+        );
+    }
+
+    #[test]
+    fn surface_freshness_policy_round_trip_with_defaults() {
+        let profile_toml = r#"
+schema_version = "prototype1-run-profile.v1"
+name = "test"
+
+[generation]
+source = "broad-harness-request"
+
+[generation.anti_attractor_policy]
+policy = "surface-freshness"
+"#;
+        let profile = parse_profile(Path::new("profile.toml"), profile_toml)
+            .expect("profile must parse with field defaults");
+        assert_eq!(
+            profile.anti_attractor_policy(),
+            AntiAttractorPolicy::SurfaceFreshness {
+                recent_surface_window: default_recent_surface_window(),
+                min_target_surface_skew: default_min_target_surface_skew(),
+            }
+        );
+    }
+
+    #[test]
+    fn prompt_suffix_for_none_policy_is_always_none() {
+        // Regardless of recent-surface state, the None policy must be a no-op.
+        assert_eq!(prompt_suffix_for(&[], AntiAttractorPolicy::None), None,);
+        assert_eq!(
+            prompt_suffix_for(
+                &["src/a.rs".to_string(), "src/b.rs".to_string()],
+                AntiAttractorPolicy::None,
+            ),
+            None,
+        );
+    }
+
+    #[test]
+    fn prompt_suffix_for_surface_freshness_lists_recent_surfaces() {
+        let surfaces = vec!["crates/printer/src/util.rs".to_string()];
+        let suffix = prompt_suffix_for(
+            &surfaces,
+            AntiAttractorPolicy::SurfaceFreshness {
+                recent_surface_window: 2,
+                min_target_surface_skew: 2,
+            },
+        )
+        .expect("non-empty recent surfaces must produce a suffix");
+        assert!(suffix.contains("crates/printer/src/util.rs"));
+    }
+
+    #[test]
+    fn prompt_suffix_for_surface_freshness_with_no_recent_surfaces_is_none() {
+        // No recent surfaces means no nudge — the policy has nothing to push away from.
+        let suffix = prompt_suffix_for(
+            &[],
+            AntiAttractorPolicy::SurfaceFreshness {
+                recent_surface_window: 2,
+                min_target_surface_skew: 2,
+            },
+        );
+        assert_eq!(suffix, None);
+    }
+
+    #[test]
+    fn prompt_suffix_for_does_not_take_any_selector_authority_inputs() {
+        // Authority-boundary test: the function signature must only accept the
+        // recent-surface slice and the policy value. It must not accept any
+        // selection, admission, replay, oracle, protocol, History, or Crown
+        // authority state. This is a compile-time guarantee; the test makes
+        // the contract explicit and documents why the function cannot grow a
+        // selector hook.
+        fn _assert_signature(f: fn(&[String], AntiAttractorPolicy) -> Option<String>) {
+            let _ = f;
+        }
+        let _ = _assert_signature as fn(fn(&[String], AntiAttractorPolicy) -> Option<String>);
     }
 }

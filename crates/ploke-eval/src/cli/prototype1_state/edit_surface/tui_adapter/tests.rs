@@ -754,6 +754,7 @@ fn attempt_prompt_preserves_minimal_request_text() {
         ],
         "Modify any part of the codebase at `/tmp/prototype1/workspace`.\n\nPast benchmark results live under `/tmp/prototype1/evaluations`.\n",
         Some("tool failed"),
+        None,
     );
 
     assert!(prompt.starts_with("Modify any part of the codebase at"));
@@ -2322,6 +2323,7 @@ async fn attempt_capture_responses_keeps_tap_installed_across_run() {
         validation: Vec::new(),
         model: None,
         capture: Capture::Responses,
+        policy_suffix: None,
     };
     let outcome = attempt
         .run()
@@ -3150,6 +3152,7 @@ Do not edit Cargo.toml. Do not create report, result, control, or bookkeeping fi
             "google/gemini-2.5-flash".parse().expect("model id"),
         )),
         capture: Capture::Responses,
+        policy_suffix: None,
     }
     .run()
     .await

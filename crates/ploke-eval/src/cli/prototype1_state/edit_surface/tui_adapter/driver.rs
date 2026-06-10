@@ -29,12 +29,18 @@ pub(crate) struct AttemptDriver {
     validation: Vec<contract::Command>,
     model: Option<ModelSelection>,
     response_rx: Option<Arc<Mutex<Receiver<RecordedResponse>>>>,
+    /// Optional anti-attractor policy suffix to append to every chat-step
+    /// prompt in this attempt. Borrowed for the duration of the attempt run;
+    /// the caller (`Attempt::run`) owns the underlying `String`. `None`
+    /// means no bias is applied. See [`Attempt::policy_suffix`].
+    policy_suffix: Option<String>,
 }
 
 impl AttemptDriver {
     pub(crate) fn new(
         attempt: super::attempt::Attempt,
         response_rx: Option<Arc<Mutex<Receiver<RecordedResponse>>>>,
+        policy_suffix: Option<&str>,
     ) -> Self {
         Self {
             workspace: attempt.workspace,
@@ -45,6 +51,7 @@ impl AttemptDriver {
             validation: attempt.validation,
             model: attempt.model,
             response_rx,
+            policy_suffix: policy_suffix.map(str::to_string),
         }
     }
 
@@ -60,6 +67,7 @@ impl AttemptDriver {
             &self.evidence,
             &self.prompt,
             None,
+            self.policy_suffix.as_deref(),
         );
         let observer = LiveObserver::from_env();
         observer.emit(format!(
@@ -121,6 +129,7 @@ impl AttemptDriver {
                             &self.evidence,
                             &self.prompt,
                             Some(feedback.message()),
+                            self.policy_suffix.as_deref(),
                         );
                     }
                     Step::Terminal(Terminal::Exhausted { attempts, last }) => {

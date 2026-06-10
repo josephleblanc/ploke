@@ -1993,6 +1993,7 @@ async fn run_broad_headless_tui_attempt_with_options(
                 .clone(),
             model: options.model().cloned(),
             capture: tui_adapter::Capture::Responses,
+            policy_suffix: None,
         }
         .run()
         .await
