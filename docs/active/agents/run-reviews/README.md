@@ -219,3 +219,81 @@ state without checking newer code, History records, and run artifacts.
   Scout fan-in for the 2026-06-09 direct-Google two-target campaign, preserving
   broad-harness, selection/protocol, and late-gen2-child red flags before
   blocker repair.
+- [`2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-184302-treatment-auth-401.md`](2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-184302-treatment-auth-401.md)
+  Full review of the `state3-184302` direct-Google run that ended
+  Reject/selection=none/Failed: a mid-run `direct_google` OAuth token expiry
+  (HTTP 401) killed every treatment turn after ~19:18, failing all 3 children as
+  `treatment_failed`; names the provider-vs-merit classification gap and the
+  missing replay repro.
+- [`2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-baseline-eval-protocol.md`](2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-baseline-eval-protocol.md)
+  Combined baseline eval and protocol review for the `state3-203020` two-target
+  campaign, covering non-empty patch export on both `ripgrep-2295` and
+  `ripgrep-2209`, `insert_rust_item` recovery via `non_semantic_patch`, 2209
+  expected-output test edits, weak final cargo scope, and completed protocol
+  artifacts with benchmark-usefulness limits.
+- [`2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-broad-base.md`](2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-broad-base.md)
+  Broad-harness base (primary slot) review for parent `node-e41b4e1ef747bb15`,
+  covering an applied `sanitize_tool_args` `&str` micro-optimization in
+  `tools/mod.rs`, focused `ploke-embed` model-visible validation versus harness
+  `ploke-eval` check, apply_code_edit failure recovery via
+  `non_semantic_patch`, verified `code_item_edges` lookup miss on
+  `process_tool`, and weak descendant benchmark proof.
+- [`2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-broad-r2.md`](2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-broad-r2.md)
+  Broad-harness r2 review for parent `node-e41b4e1ef747bb15`, covering eleven
+  applied `suppress_emission` patches across nine tool/RAG files, compile-driven
+  repair from model-visible `cargo test` failures, ten intermediate harness
+  `ploke-eval` validation failures before final pass, untouched `tools/mod.rs`
+  preflight path, and weak descendant benchmark proof.
+- [`2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-broad-r3.md`](2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-broad-r3.md)
+  Broad-harness r3 review for parent `node-e41b4e1ef747bb15`, covering an
+  applied `tools/mod.rs` preflight refactor, focused `ploke-transform`
+  model-visible validation versus harness `ploke-eval` check, recovered tool
+  failures, turn-live playback gap before apply, and weak descendant benchmark
+  proof.
+- [`2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-treatment-3dce62110.md`](2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-treatment-3dce62110.md)
+  Gen-1 treatment eval review for `node-03d21940fd657962` / broad-harness r2
+  branch `branch-3dce62110fd6c20b`, covering completed eval/protocol on both
+  ripgrep targets, branch reject on 2295 tool-failure regression, 2209 keep with
+  cleaner patch shape, doc-comment export noise, and no campaign blockers.
+- [`2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-treatment-f7e43aba.md`](2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-treatment-f7e43aba.md)
+  Gen-1 treatment child review for `node-0dca4fe449780e85` /
+  `branch-f7e43aba97c12538`, covering succeeded dual-instance eval, operational
+  `keep` branch metrics, alternate-shape 2295 patch with doc-comment regression,
+  2209 test-expectation tampering, partial treatment protocol (2295 missing),
+  and no blockers for mechanical admission.
+- [`2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-gen1-broad-base.md`](2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-gen1-broad-base.md)
+  Gen-1 broad-harness base (primary slot) review for selected successor parent
+  `node-0dca4fe449780e85`, covering applied dead-code `ToolError` JSON helpers
+  in `error.rs`, branch-evaluation evidence reads, non-terminal finalize
+  `INVALID_MODEL_RESPONSE`, focused `ploke-selection-score` validation versus
+  harness `ploke-eval` check, and weak descendant benchmark proof.
+- [`2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-treatment-bc17b460.md`](2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-treatment-bc17b460.md)
+  Gen-1 treatment eval review for `node-f1bb9e07069d5678` / broad-harness r3
+  branch `branch-bc17b460acc98b0d`, covering completed eval/protocol on both
+  ripgrep targets, branch reject on 2295 tool-failure regression, 2209 keep with
+  missing regression test, 2295 AND-vs-OR `has_match` logic risk, and no
+  campaign blockers.
+- [`2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-gen1-broad-r3.md`](2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-gen1-broad-r3.md)
+  Gen-1 broad-harness r3 review for parent `node-0dca4fe449780e85`, covering an
+  applied `code_item_lookup` impl guard after bug-doc and branch-eval evidence
+  intake, `apply_code_edit` failure recovery via `non_semantic_patch`, focused
+  `ploke-protocol` model-visible validation versus harness `ploke-eval` check,
+  and unproven descendant benchmark benefit.
+- [`2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-gen1-broad-r4.md`](2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-gen1-broad-r4.md)
+  Gen-1 broad-harness r4 review for parent `node-0dca4fe449780e85`, contrasting
+  r4 mechanical completion (`request_code_context` `adapt_error`, submitted
+  result, commit `f1059e0b`) with sibling r2 BM25-timeout failure after three
+  applied off-neighborhood `ploke-transform` edits, absent r2 submitted result,
+  and dirty uncommitted r2 workspace.
+- [`2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-terminal-outcome.md`](2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-terminal-outcome.md)
+  Terminal campaign synthesis for the `state3-203020` two-target run, covering
+  clean `max_generations=2` stop on gen-2 successor handoff, gen-0/1/2 selection
+  path (`branch-f7e43aba` → `branch-98d590831a932f41`), gen-2 sibling
+  `HTTP_429` treatment failures on 2209, no HTTP_401, and loop-control versus
+  benchmark-usefulness boundaries.
+- [`2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-treatment-98d590.md`](2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-treatment-98d590.md)
+  Gen-2 treatment eval review for `node-f4a0067a0d3d0234` / broad-harness r3
+  branch `branch-98d590831a932f41`, covering completed eval/protocol on both
+  ripgrep targets versus gen-1 baseline, operational `keep` on 2209 same-file
+  retry improvement, alternate-shape patches, test-expectation tampering on 2209,
+  and no campaign blockers.
