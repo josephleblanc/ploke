@@ -216,7 +216,7 @@ fn is_google_openai_chat_model(slug: &str) -> bool {
 
 fn google_context_length(model: &ModelSlug) -> Option<u32> {
     match model.as_str() {
-        "gemini-2.5-flash" | "gemini-3.0-flash" | "gemini-3.5-flash" => Some(1_048_576),
+        "gemini-2.5-flash" | "gemini-3.5-flash" => Some(1_048_576),
         _ => None,
     }
 }
@@ -234,7 +234,6 @@ fn google_catalog_models_response() -> ModelsResponse {
     ModelsResponse {
         data: vec![
             google_catalog_model("gemini-2.5-flash"),
-            google_catalog_model("gemini-3.0-flash"),
             google_catalog_model("gemini-3.5-flash"),
         ],
         object: Some(ArcStr::from("list")),
@@ -1192,7 +1191,7 @@ mod tests {
             .map(crate::request::models::ResponseItem::from)
             .collect::<Vec<_>>();
 
-        assert_eq!(items.len(), 3);
+        assert_eq!(items.len(), 2);
         let flash = items
             .iter()
             .find(|item| item.id.to_string() == "google/gemini-2.5-flash")
@@ -1201,11 +1200,6 @@ mod tests {
         assert_eq!(flash.context_length, Some(1_048_576));
         assert!(flash.supports_tools());
         assert!(flash.route_source.is_direct_google());
-        let flash_30 = items
-            .iter()
-            .find(|item| item.id.to_string() == "google/gemini-3.0-flash")
-            .expect("3.0 flash direct row");
-        assert!(flash_30.route_source.is_direct_google());
         let flash_35 = items
             .iter()
             .find(|item| item.id.to_string() == "google/gemini-3.5-flash")

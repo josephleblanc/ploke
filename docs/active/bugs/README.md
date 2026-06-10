@@ -144,4 +144,4 @@ file and current code before treating a report as still open.
 - [`2026-06-09-prototype1-late-child-result-recovery-corrupts-node-state.md`](./2026-06-09-prototype1-late-child-result-recovery-corrupts-node-state.md)
   Open blocker: a gen2 child result arrived after parent `observe_child` timeout, leaving no branch/evaluation record; direct `prototype1-state` re-entry then re-ran child prep and downgraded terminal node states.
 - [`2026-06-10-vertex-gemini-35-flash-dsq-shadow-quota-429.md`](./2026-06-10-vertex-gemini-35-flash-dsq-shadow-quota-429.md)
-  External provider blocker: Vertex `direct_google` `google/gemini-3.5-flash` hits DSQ/PayGo HTTP 429 without IAM Quotas `base_model` visibility; operators downgrade to `google/gemini-3.0-flash` for loop runs.
+  External provider blocker: Vertex `direct_google` `google/gemini-3.5-flash` hits DSQ/PayGo HTTP 429 without IAM Quotas `base_model` visibility; downgrade to **`google/gemini-2.5-flash`** (not 3.0-flash, which 404s on Vertex).

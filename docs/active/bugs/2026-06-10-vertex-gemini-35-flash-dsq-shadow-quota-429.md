@@ -21,9 +21,17 @@ per user / 1,500"** is **not** the API surface Ploke uses for `direct_google`.
 
 Our 429s are on **`PredictionService.ChatCompletions`** through Vertex
 OpenAI-compat with ADC (Standard PayGo / **dynamic shared quota** for Flash
-models). IAM Quotas `base_model` filter lists `gemini-3.0-flash` and
-`gemini-2.5-flash` but **not** `gemini-3.5-flash`, so operators cannot inspect
-or raise a per-model limit for the model we routed.
+models). IAM Quotas `base_model` filter lists `gemini-2.5-flash` but **not**
+`gemini-3.5-flash`, so operators cannot inspect or raise a per-model limit for
+the model we routed.
+
+**Downgrade correction (2026-06-10):** `google/gemini-3.0-flash` is **not** a
+valid Vertex OpenAI-compat publisher model. ADC probe against
+`PredictionService.ChatCompletions` returns HTTP 404
+(`Publisher Model .../models/gemini-3.0-flash was not found`). IAM Quotas may
+list quota rows for 3.0, but the model is not routable on Vertex direct_google.
+Use **`google/gemini-2.5-flash`** (HTTP 200 verified) as the downgrade target,
+or stay on 3.5 with throttling/backoff if that model is required.
 
 ## Evidence
 
@@ -35,9 +43,10 @@ or raise a per-model limit for the model we routed.
 | Endpoint | `aiplatform.googleapis.com` / `direct_google` (not Chat API) |
 | Gen-2 parallel 2209 failures | Two of three gen-2 treatment branches on `BurntSushi__ripgrep-2209` aborted with `HTTP_429` / `RESOURCE_EXHAUSTED`; parent runner surfaced `treatment_failed` without provider-vs-merit separation |
 | Terminal synthesis | [`2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-terminal-outcome.md`](../agents/run-reviews/2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-terminal-outcome.md) |
-| IAM `consumerQuotaMetrics` | Project `cs-poc-gtxw7jmtfuwfsiauziui9yx`: **0 rows** with `base_model` containing `gemini-3.5-flash`; rows exist for `gemini-3.0-flash` and `gemini-2.5-flash` |
+| IAM `consumerQuotaMetrics` | Project `cs-poc-gtxw7jmtfuwfsiauziui9yx`: **0 rows** with `base_model` containing `gemini-3.5-flash`; rows exist for `gemini-2.5-flash` (and misleading 3.0 rows that do not imply routability) |
 | Metrics Explorer | `api/request_count` shows 429 for generate-content/chat paths; no matching `quota/exceeded` or per-model quota metric explaining the throttle |
-| Request model string | Ploke sends `google/gemini-3.5-flash` (no alias to 3.0/2.5); see `crates/ploke-llm/src/router_only/google/mod.rs` catalog and completion URL builder |
+| state4 campaign 404 | `p1-g30f-direct-protocol-2target-g0g2-1x3-state4-20260609-234338` aborted on `google/gemini-3.0-flash` with HTTP 404 NOT_FOUND on Vertex OpenAPI chat completions |
+| Request model string | Ploke sends `google/gemini-{version}-flash` verbatim (no alias). Valid Vertex slugs: `gemini-2.5-flash`, `gemini-3.5-flash`. Invalid: `gemini-3.0-flash` (404). |
 
 Example gen-2 failure chain (2209):
 
@@ -101,23 +110,24 @@ to prove quota visibility.
 
 ## Missing Repro / Validation
 
-- Fresh live run on `google/gemini-3.0-flash` (visible IAM quota rows) under the
-  same profile shape to confirm capacity recovery.
+- Fresh live run on `google/gemini-2.5-flash` under the same profile shape to
+  confirm capacity recovery from 3.5 DSQ pressure.
 - Optional: `GOOGLE_REGION=global` vs `us-central1` comparison if 429 persists
-  on 3.0.
+  on 2.5.
 - Repo-side: doctor/preflight or runner classification test that stops before
-  merit batch invalidity when direct-Google returns `RESOURCE_EXHAUSTED` (not
-  justified until 3.0 route also fails under low concurrency).
+  merit batch invalidity when direct-Google returns `RESOURCE_EXHAUSTED`.
 
 ## Fix Direction
 
 **Operator (immediate):**
 
 - Downgrade persisted defaults and new prototype1 profiles from
-  `google/gemini-3.5-flash` to **`google/gemini-3.0-flash`** (IAM Quotas
-  `base_model` rows present).
-- New profile template:
-  `~/.ploke-eval/profiles/prototype1/p1-g30f-direct-protocol-2target-g0g2-1x3-template.toml`.
+  `google/gemini-3.5-flash` to **`google/gemini-2.5-flash`** (Vertex OpenAPI
+  HTTP 200 verified; IAM Quotas `base_model` rows present).
+- **Do not** use `google/gemini-3.0-flash` on Vertex direct_google — returns
+  HTTP 404 (`Publisher Model .../models/gemini-3.0-flash was not found`).
+- Profile template:
+  `~/.ploke-eval/profiles/prototype1/p1-g25f-direct-protocol-2target-g0g2-1x3-template.toml`.
 - Consider `GOOGLE_REGION=global` if regional DSQ pressure continues.
 - Private preview / PT entitlement for 3.5 if that model is required later.
 
