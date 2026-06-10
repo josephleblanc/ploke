@@ -9,8 +9,7 @@ use super::git_worktree::{GitWorktreeBackend, dirty_paths, run_git};
 use super::{
     AdmittedBroadHarnessResult, AttemptRejection, BackendError, EditSurfaceAdmission, GitBranchRef,
     GitCommit, TuiAttemptDiff, TuiAttemptOutcome, path_matches_surface_policy,
-    prototype_surface_for_broad_edit_policy, repo_entry_bytes, tracked_paths,
-    validate_normal_repo_relpath,
+    prototype_surface_for_policy, repo_entry_bytes, tracked_paths, validate_normal_repo_relpath,
 };
 use crate::cli::prototype1_state::edit_surface::harness_request::{
     PublishedBroadHarnessRequest, RequestAdmissionBinding,
@@ -127,7 +126,7 @@ impl GitWorktreeBackend {
             }));
         }
 
-        let surface = prototype_surface_for_broad_edit_policy(published.request().edit_policy);
+        let surface = prototype_surface_for_policy(published.request().edit_policy.clone());
         let changed_paths = changed_paths_between_roots(&source_root, &candidate_root)?;
         if changed_paths.is_empty() {
             return Ok(TuiAttemptOutcome::rejected(AttemptRejection::NoChange {

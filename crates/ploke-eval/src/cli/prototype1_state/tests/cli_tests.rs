@@ -1357,7 +1357,7 @@ async fn rag_unavailable_headless_tui_setup_writes_typed_diagnostics() {
         .await
         .expect_err("RAG/BM25 setup failure must stop child planning");
 
-    let PrepareError::DatabaseSetup { phase, detail } = err else {
+    let tui_adapter::BroadAttemptError::Setup { phase, detail } = err else {
         panic!("expected typed setup blocker, got {err:?}");
     };
     assert_eq!(phase, "bm25_ready");
@@ -1417,7 +1417,7 @@ async fn broad_tui_prep_failure_is_setup_blocker() {
         .await
         .expect_err("workspace preparation failures must stop child planning");
 
-    let PrepareError::DatabaseSetup { phase, detail } = err else {
+    let tui_adapter::BroadAttemptError::Setup { phase, detail } = err else {
         panic!("expected setup blocker, got {err:?}");
     };
     assert_eq!(phase, "broad_headless_tui_workspace");

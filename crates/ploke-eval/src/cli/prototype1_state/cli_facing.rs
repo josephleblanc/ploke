@@ -588,9 +588,9 @@ struct HarnessRequestReceipt {
 }
 
 #[derive(Clone)]
-struct HarnessRequestSlot {
-    request_path: PathBuf,
-    published:
+pub(crate) struct HarnessRequestSlot {
+    pub(crate) request_path: PathBuf,
+    pub(crate) published:
         crate::cli::prototype1_state::edit_surface::harness_request::PublishedBroadHarnessRequest,
 }
 
@@ -1793,10 +1793,10 @@ fn try_admit_request_result(
 async fn run_broad_headless_tui_attempt(
     slot: &HarnessRequestSlot,
     broad_tui: profile::BroadTui,
-) -> Result<Option<transaction::Executor>, PrepareError> {
+) -> Result<Option<transaction::Executor>, tui_adapter::BroadAttemptError> {
     #[cfg(test)]
     if let Some(result) = broad_headless_tui_database_setup_fixture() {
-        return result;
+        return result.map_err(tui_adapter::BroadAttemptError::from);
     }
 
     #[cfg(test)]
@@ -1920,18 +1920,25 @@ fn effective_broad_tui_timeout_secs(
 async fn run_broad_headless_tui_attempt_with_options(
     slot: &HarnessRequestSlot,
     options: &BroadTuiAttemptOptions,
-) -> Result<Option<transaction::Executor>, PrepareError> {
+) -> Result<Option<transaction::Executor>, tui_adapter::BroadAttemptError> {
+    #[cfg(test)]
+    if let Some(result) = tui_adapter::harness::fixture::broad_attempt_from_summary_fixture(slot) {
+        return result
+            .map(|()| None)
+            .map_err(tui_adapter::BroadAttemptError::from);
+    }
+
     let backend = GitWorktreeBackend;
     let repo_root = slot.published.request().workspace.source_repository_path();
     backend
         .prepare_broad_harness_workspace(repo_root, &slot.published)
-        .map_err(|source| PrepareError::DatabaseSetup {
+        .map_err(|source| tui_adapter::BroadAttemptError::Setup {
             phase: "broad_headless_tui_workspace",
             detail: format!("failed to prepare broad headless-tui workspace: {source}"),
         })?;
 
     let prompt = fs::read_to_string(slot.published.prompt_path()).map_err(|source| {
-        PrepareError::InvalidBatchSelection {
+        tui_adapter::BroadAttemptError::Admission {
             detail: format!(
                 "could not read broad harness prompt '{}': {source}",
                 slot.published.prompt_path().display()
@@ -1941,26 +1948,19 @@ async fn run_broad_headless_tui_attempt_with_options(
     let contract = &slot.published.request().contract;
     let max_attempts = effective_broad_tui_max_attempts(contract, options);
     let timeout_secs = effective_broad_tui_timeout_secs(contract, options);
-    let budget = tui_adapter::Budget::new(max_attempts, timeout_secs).map_err(|source| {
-        PrepareError::InvalidBatchSelection {
-            detail: format!("invalid broad headless-tui attempt budget: {source}"),
-        }
-    })?;
-    #[cfg(test)]
-    if let Some(result) = broad_headless_tui_fixture_attempt(slot) {
-        return result;
-    }
+    let budget = tui_adapter::Budget::new(max_attempts, timeout_secs)
+        .map_err(tui_adapter::BroadAttemptError::Adapter)?;
 
     let use_stash_transfer = stash_transfer_enabled();
     if use_stash_transfer {
         match backend
             .validate_tui_attempt(repo_root, &slot.published)
-            .map_err(|source| PrepareError::InvalidBatchSelection {
+            .map_err(|source| tui_adapter::BroadAttemptError::Admission {
                 detail: format!("failed to preflight stash-transfer workspace: {source}"),
             })? {
             TuiAttemptOutcome::Rejected(AttemptRejection::NoChange { .. }) => {}
             outcome => {
-                return Err(PrepareError::InvalidBatchSelection {
+                return Err(tui_adapter::BroadAttemptError::Admission {
                     detail: format!(
                         "stash-transfer broad headless-tui preflight expected clean source and unchanged candidate, got {outcome:?}"
                     ),
@@ -1977,115 +1977,55 @@ async fn run_broad_headless_tui_attempt_with_options(
     let selected_model = options
         .model_label()
         .unwrap_or_else(|| "unknown-headless-model".to_string());
-    let run = match tui_adapter::run_headless_with_model_capture_responses(
-        tui_workspace,
-        &prompt,
-        budget,
-        slot.published.request().edit_policy,
-        &slot.published.request().evidence_roots,
-        &slot.published.request().contract.validation.commands,
-        options.model().cloned(),
-    )
-    .await
-    {
-        Ok(run) => run,
+    let attempt_outcome = match {
+        tui_adapter::Attempt {
+            workspace: tui_workspace.to_path_buf(),
+            prompt: prompt.clone(),
+            budget,
+            surface: slot.published.request().edit_policy.clone(),
+            evidence: slot.published.request().evidence_roots.clone(),
+            validation: slot
+                .published
+                .request()
+                .contract
+                .validation
+                .commands
+                .clone(),
+            model: options.model().cloned(),
+            capture: tui_adapter::Capture::Responses,
+        }
+        .run()
+        .await
+    } {
+        Ok(outcome) => outcome,
         Err(source) => {
             if let Some((phase, detail)) = source.setup_failure() {
                 let run = tui_adapter::HeadlessRun::setup_unavailable(phase, detail.to_string());
-                write_broad_headless_tui_diagnostics(slot, &run)?;
-                return Err(PrepareError::DatabaseSetup {
+                write_broad_headless_tui_diagnostics(slot, &run)
+                    .map_err(tui_adapter::BroadAttemptError::from)?;
+                return Err(tui_adapter::BroadAttemptError::Setup {
                     phase,
                     detail: detail.to_string(),
                 });
             }
-            return Err(PrepareError::InvalidBatchSelection {
-                detail: format!("broad headless-tui attempt failed: {source}"),
-            });
+            return Err(tui_adapter::BroadAttemptError::Adapter(source));
         }
     };
+    let tui_adapter::AttemptOutcome { run, terminal } = attempt_outcome;
 
-    let terminal = run
-        .terminal()
-        .ok_or_else(|| PrepareError::InvalidBatchSelection {
-            detail: "broad headless-tui attempt ended without a terminal outcome".to_string(),
-        })?;
-    write_broad_headless_tui_diagnostics(slot, &run)?;
-    write_broad_headless_tui_turn_live_bundle(slot, &run, &prompt, &selected_model)?;
+    write_broad_headless_tui_diagnostics(slot, &run)
+        .map_err(tui_adapter::BroadAttemptError::from)?;
+    write_broad_headless_tui_turn_live_bundle(slot, &run, &prompt, &selected_model)
+        .map_err(tui_adapter::BroadAttemptError::from)?;
     finish_broad_headless_tui_attempt(
         &backend,
         slot,
         repo_root,
         use_stash_transfer,
         &run,
-        terminal,
+        &terminal,
     )
-}
-
-#[cfg(test)]
-fn broad_headless_tui_fixture_attempt(
-    slot: &HarnessRequestSlot,
-) -> Option<Result<Option<transaction::Executor>, PrepareError>> {
-    let path = std::env::var_os("PLOKE_EVAL_BROAD_TUI_SUMMARY_FIXTURE")?;
-    let path = PathBuf::from(path);
-    let text = match fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(source) => {
-            return Some(Err(PrepareError::ReadManifest { path, source }));
-        }
-    };
-    let summary = match serde_json::from_str::<tui_adapter::evidence::Summary>(&text) {
-        Ok(summary) => summary,
-        Err(source) => {
-            return Some(Err(PrepareError::ParseManifest { path, source }));
-        }
-    };
-    let diagnostics_path =
-        broad_headless_tui_diagnostics_path(slot.published.submitted_result_path());
-    if let Some(parent) = diagnostics_path.parent() {
-        if let Err(source) = fs::create_dir_all(parent) {
-            return Some(Err(PrepareError::CreateOutputDir {
-                path: parent.to_path_buf(),
-                source,
-            }));
-        }
-    }
-    if let Err(source) = fs::write(&diagnostics_path, text) {
-        return Some(Err(PrepareError::WriteManifest {
-            path: diagnostics_path,
-            source,
-        }));
-    }
-
-    Some(Err(match summary.terminal {
-        Some(tui_adapter::evidence::Terminal::ProviderUnavailable { reason }) => {
-            PrepareError::ProviderUnavailable {
-                phase: "broad_headless_tui_attempt",
-                detail: format!("headless ploke-tui provider unavailable: {reason}"),
-            }
-        }
-        Some(tui_adapter::evidence::Terminal::SetupUnavailable { phase, reason }) => {
-            PrepareError::DatabaseSetup {
-                phase: if phase == "bm25_ready" {
-                    "bm25_ready"
-                } else {
-                    "broad_headless_tui_attempt"
-                },
-                detail: reason,
-            }
-        }
-        Some(terminal) => PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "headless ploke-tui test fixture ended without an admissible edit: {}",
-                terminal_reason(&terminal)
-            ),
-        },
-        None => PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "headless ploke-tui test fixture ended without terminal outcome after {} recorded attempt(s)",
-                summary.attempts.len()
-            ),
-        },
-    }))
+    .map_err(tui_adapter::BroadAttemptError::from)
 }
 
 fn finish_broad_headless_tui_attempt(
@@ -2347,7 +2287,9 @@ async fn run_broad_harness_attempt_slot(
     let max_attempts = effective_broad_tui_max_attempts(contract, options);
     let timeout_secs = effective_broad_tui_timeout_secs(contract, options);
     let started = Instant::now();
-    let executor = run_broad_headless_tui_attempt_with_options(slot, options).await?;
+    let executor = run_broad_headless_tui_attempt_with_options(slot, options)
+        .await
+        .map_err(PrepareError::from)?;
     let elapsed_ms = started.elapsed().as_millis();
     let outcome = GitWorktreeBackend
         .validate_tui_attempt(
@@ -5116,7 +5058,9 @@ async fn run_broad_slot_for_admission(
                 result: Err(source),
             };
         }
-        run_broad_headless_tui_attempt(&slot, broad_tui).await
+        run_broad_headless_tui_attempt(&slot, broad_tui)
+            .await
+            .map_err(PrepareError::from)
     };
     cleanup_broad_slot_target(&slot);
     BroadSlotAttempt {

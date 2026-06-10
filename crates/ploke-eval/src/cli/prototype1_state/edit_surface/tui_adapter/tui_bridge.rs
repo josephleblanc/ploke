@@ -16,10 +16,12 @@ use tokio::sync::oneshot;
 use uuid::Uuid;
 
 use super::super::harness_request::{
-    BroadEditPolicy, EvidenceRoot, EvidenceRootKind, EvidenceRootLocation, contract,
+    EvidenceRoot, EvidenceRootKind, EvidenceRootLocation, contract,
 };
+use super::super::surface_policy::SurfacePolicy;
 use super::{
-    Budget, Error, LIVE_TRACE_ENV, ModelSelection, SessionSpec, Timeouts, TuiHarness,
+    Attempt, Budget, Capture, Error, LIVE_TRACE_ENV, ModelSelection, SessionSpec, Timeouts,
+    TuiHarness,
     harness_io::{
         AppliedEdit, CargoValidationObservation, Event, Feedback, HeadlessAttempt,
         HeadlessAttemptResult, HeadlessRun, HeadlessTerminal, Outcome, PromptDiagnostic, Reject,
@@ -32,14 +34,14 @@ pub(crate) async fn run_headless(
     workspace_path: &Path,
     prompt: &str,
     budget: Budget,
-    edit_policy: BroadEditPolicy,
+    surface: &SurfacePolicy,
     evidence_roots: &[EvidenceRoot],
 ) -> Result<HeadlessRun, Error> {
     run_headless_with_model(
         workspace_path,
         prompt,
         budget,
-        edit_policy,
+        surface,
         evidence_roots,
         None,
     )
@@ -50,182 +52,54 @@ pub(crate) async fn run_headless_with_model(
     workspace_path: &Path,
     prompt: &str,
     budget: Budget,
-    edit_policy: BroadEditPolicy,
+    surface: &SurfacePolicy,
     evidence_roots: &[EvidenceRoot],
     model: Option<ModelSelection>,
 ) -> Result<HeadlessRun, Error> {
-    run_headless_with_model_inner(
-        workspace_path,
-        prompt,
+    Attempt {
+        workspace: workspace_path.to_path_buf(),
+        prompt: prompt.to_string(),
         budget,
-        edit_policy,
-        evidence_roots,
-        &[],
+        surface: surface.clone(),
+        evidence: evidence_roots.to_vec(),
+        validation: Vec::new(),
         model,
-        None,
-    )
+        capture: Capture::Off,
+    }
+    .run()
     .await
+    .map(super::attempt::Attempt::into_headless_run)
 }
 
 pub(crate) async fn run_headless_with_model_capture_responses(
     workspace_path: &Path,
     prompt: &str,
     budget: Budget,
-    edit_policy: BroadEditPolicy,
+    surface: &SurfacePolicy,
     evidence_roots: &[EvidenceRoot],
     validation_commands: &[contract::Command],
     model: Option<ModelSelection>,
 ) -> Result<HeadlessRun, Error> {
-    let (response_tx, response_rx) = std::sync::mpsc::channel();
-    let response_rx = Arc::new(Mutex::new(response_rx));
-    let _response_tap_guard = ploke_tui::llm::install_response_tap(response_tx);
-    run_headless_with_model_inner(
-        workspace_path,
-        prompt,
+    Attempt {
+        workspace: workspace_path.to_path_buf(),
+        prompt: prompt.to_string(),
         budget,
-        edit_policy,
-        evidence_roots,
-        validation_commands,
+        surface: surface.clone(),
+        evidence: evidence_roots.to_vec(),
+        validation: validation_commands.to_vec(),
         model,
-        Some(Arc::clone(&response_rx)),
-    )
+        capture: Capture::Responses,
+    }
+    .run()
     .await
-}
-
-async fn run_headless_with_model_inner(
-    workspace_path: &Path,
-    prompt: &str,
-    budget: Budget,
-    edit_policy: BroadEditPolicy,
-    evidence_roots: &[EvidenceRoot],
-    validation_commands: &[contract::Command],
-    model: Option<ModelSelection>,
-    response_rx: Option<Arc<Mutex<Receiver<RecordedResponse>>>>,
-) -> Result<HeadlessRun, Error> {
-    let mut run = HeadlessRun::new();
-    run.model_route = model.as_ref().map(ModelSelection::model_route_record);
-    let mut turn = 1_u32;
-    let extra_read_roots = evidence_read_roots(evidence_roots);
-    let mut next_prompt = attempt_prompt(workspace_path, edit_policy, evidence_roots, prompt, None);
-    let observer = LiveObserver::from_env();
-    observer.emit(format!(
-        "start workspace={} max_attempts={} timeout_secs={} evidence_read_roots={}",
-        workspace_path.display(),
-        budget.max_attempts(),
-        budget.timeout_secs(),
-        extra_read_roots.len()
-    ));
-    observer.emit_workspace_size("workspace_start", workspace_path);
-
-    let timeouts = Timeouts::from_budget(budget);
-    let outcome = tokio::time::timeout(Duration::from_secs(timeouts.attempt_secs), async {
-        loop {
-            observer.emit(format!("attempt {turn} start"));
-            let (runtime, parent_id) = start_attempt_runtime(
-                workspace_path,
-                &extra_read_roots,
-                next_prompt.clone(),
-                edit_policy,
-                model.as_ref(),
-                &timeouts,
-            )
-            .await?;
-            let (end, _runtime) = run_attempt(
-                runtime,
-                parent_id,
-                workspace_path,
-                edit_policy,
-                turn,
-                &mut run,
-                &observer,
-                validation_commands,
-                response_rx.as_ref().map(Arc::clone),
-                timeouts,
-            )
-            .await?;
-
-            match end {
-                AttemptEnd::Terminal(terminal) => {
-                    observer.emit(format!("terminal {}", terminal.live_summary()));
-                    return Ok::<HeadlessTerminal, Error>(terminal);
-                }
-                AttemptEnd::RetryFailure(feedback) => {
-                    let feedback = retry_feedback(&feedback);
-                    if !advance_turn(&budget, &mut turn) {
-                        observer.emit(format!(
-                            "terminal exhausted attempts={turn} last={}",
-                            truncate_chars(&feedback, 240)
-                        ));
-                        return Ok::<HeadlessTerminal, Error>(HeadlessTerminal::Exhausted {
-                            attempts: turn,
-                            last: feedback,
-                        });
-                    }
-                    observer.emit(format!("retry attempt={turn} feedback={}", feedback,));
-                    next_prompt = attempt_prompt(
-                        workspace_path,
-                        edit_policy,
-                        evidence_roots,
-                        prompt,
-                        Some(&feedback),
-                    );
-                }
-                AttemptEnd::RetryNoEdit {
-                    feedback,
-                    outcome,
-                    summary,
-                } => {
-                    let feedback = retry_feedback(&feedback);
-                    if !advance_turn(&budget, &mut turn) {
-                        observer.emit(format!(
-                            "terminal completed_without_edit outcome={} summary={}",
-                            outcome,
-                            truncate_chars(&summary, 240)
-                        ));
-                        return Ok::<HeadlessTerminal, Error>(
-                            HeadlessTerminal::CompletedWithoutEdit { outcome, summary },
-                        );
-                    }
-                    observer.emit(format!(
-                        "retry attempt={turn} no_edit_feedback={}",
-                        truncate_chars(&feedback, 240)
-                    ));
-                    next_prompt = attempt_prompt(
-                        workspace_path,
-                        edit_policy,
-                        evidence_roots,
-                        prompt,
-                        Some(&feedback),
-                    );
-                }
-            }
-        }
-    })
-    .await;
-
-    let terminal = match outcome {
-        Ok(Ok(terminal)) => terminal,
-        Ok(Err(source)) => {
-            if !run.has_observed_activity() {
-                return Err(source);
-            }
-            HeadlessTerminal::ToolFailed {
-                error: observed_headless_error(source),
-            }
-        }
-        Err(_) => timeout_terminal_for_run(&run, budget.timeout_secs()),
-    };
-    observer.emit(format!("done {}", terminal.live_summary()));
-    observer.emit_workspace_size("workspace_done", workspace_path);
-    run.terminal = Some(terminal);
-    Ok(run)
+    .map(super::attempt::Attempt::into_headless_run)
 }
 
 pub(super) async fn start_attempt_runtime(
     workspace_path: &Path,
     extra_read_roots: &[PathBuf],
     prompt: String,
-    edit_policy: BroadEditPolicy,
+    surface: &SurfacePolicy,
     model: Option<&ModelSelection>,
     timeouts: &Timeouts,
 ) -> Result<(crate::runner::WorkspaceTuiRuntime, Uuid), Error> {
@@ -236,7 +110,7 @@ pub(super) async fn start_attempt_runtime(
     .await
     .map_err(Error::from_headless_start)?;
 
-    let write_scope = write_scope_for_policy(edit_policy);
+    let write_scope = surface.write_scope();
     runtime
         .state
         .with_system_txn(|txn| txn.set_write_scope(Some(write_scope)))
@@ -264,30 +138,6 @@ pub(super) async fn start_attempt_runtime(
     }
     let parent_id = submit_prompt(&runtime.app, prompt).await?;
     Ok((runtime, parent_id))
-}
-
-fn write_scope_for_policy(
-    edit_policy: BroadEditPolicy,
-) -> ploke_tui::utils::path_scoping::WriteScope {
-    use crate::cli::prototype1_state::backend::{
-        WORKSPACE_EXCEPT_AUTHORITY_FILENAMES, WORKSPACE_EXCEPT_AUTHORITY_PREFIXES,
-    };
-
-    match edit_policy {
-        BroadEditPolicy::WorkspaceExceptPlokeEval => {
-            ploke_tui::utils::path_scoping::WriteScope::new()
-                .deny_prefixes(
-                    WORKSPACE_EXCEPT_AUTHORITY_PREFIXES
-                        .iter()
-                        .map(PathBuf::from),
-                )
-                .deny_filenames(
-                    WORKSPACE_EXCEPT_AUTHORITY_FILENAMES
-                        .iter()
-                        .map(|name| (*name).to_string()),
-                )
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -399,7 +249,7 @@ pub(super) async fn run_attempt(
     runtime: crate::runner::WorkspaceTuiRuntime,
     active_parent_id: Uuid,
     workspace_path: &Path,
-    edit_policy: BroadEditPolicy,
+    surface: &SurfacePolicy,
     turn: u32,
     run: &mut HeadlessRun,
     observer: &LiveObserver,
@@ -422,7 +272,7 @@ pub(super) async fn run_attempt(
         response_rx,
         *observer,
     );
-    let end = harness.drive_to_attempt_end(edit_policy).await;
+    let end = harness.drive_to_attempt_end(surface).await;
     harness.finalize().await;
     let (restored_run, runtime) = harness.into_parts();
     *run = restored_run;
@@ -968,7 +818,7 @@ async fn settle_staged_batch(
     runtime: &mut crate::runner::WorkspaceTuiRuntime,
     pending_events: &mut VecDeque<ploke_tui::AppEvent>,
     workspace_path: &Path,
-    edit_policy: BroadEditPolicy,
+    surface: &SurfacePolicy,
     turn: u32,
     run: &mut HeadlessRun,
     observer: &LiveObserver,
@@ -1000,7 +850,7 @@ async fn settle_staged_batch(
             outcome.feedbacks.push(repair_prompt_feedback(&reason));
             continue;
         }
-        if let Some(rejection) = classify_paths(workspace_path, edit_policy, &candidate.paths) {
+        if let Some(rejection) = classify_paths(workspace_path, &surface, &candidate.paths) {
             let feedback = Feedback::from_outcome(&Outcome::Rejected(rejection));
             reject_item(
                 runtime,
@@ -1677,17 +1527,9 @@ pub(super) async fn provider_failure_from_chat(
     })
 }
 
-fn advance_turn(budget: &Budget, turn: &mut u32) -> bool {
-    if *turn >= budget.max_attempts() {
-        return false;
-    }
-    *turn += 1;
-    true
-}
-
 pub(super) fn attempt_prompt(
     _workspace_path: &Path,
-    _edit_policy: BroadEditPolicy,
+    _surface: &SurfacePolicy,
     _evidence_roots: &[EvidenceRoot],
     request_prompt: &str,
     feedback: Option<&str>,
@@ -1772,7 +1614,7 @@ pub(super) struct LiveObserver {
 }
 
 impl LiveObserver {
-    fn from_env() -> Self {
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn from_env() -> Self {
         Self {
             enabled: std::env::var_os(LIVE_TRACE_ENV)
                 .and_then(|value| value.into_string().ok())
@@ -1826,7 +1668,11 @@ impl LiveObserver {
         }
     }
 
-    fn emit_workspace_size(&self, label: &str, workspace_path: &Path) {
+    pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) fn emit_workspace_size(
+        &self,
+        label: &str,
+        workspace_path: &Path,
+    ) {
         if self.enabled && self.resources {
             let workspace = dir_size_limited(workspace_path, 50_000);
             let target = dir_size_limited(&workspace_path.join("target"), 50_000);
@@ -2076,42 +1922,10 @@ fn proposal_paths(proposal: &ploke_tui::app_state::core::EditProposal) -> Vec<Pa
 
 pub(super) fn classify_paths(
     workspace_path: &Path,
-    edit_policy: BroadEditPolicy,
+    surface: &SurfacePolicy,
     paths: &[PathBuf],
 ) -> Option<Reject> {
-    use crate::cli::prototype1_state::backend::{
-        path_matches_surface_policy, prototype_surface_for_broad_edit_policy,
-        validate_normal_repo_relpath,
-    };
-
-    let surface = prototype_surface_for_broad_edit_policy(edit_policy);
-    let mut protected = Vec::new();
-    let mut outside = Vec::new();
-    for path in paths {
-        let rel = if path.is_absolute() {
-            match path.strip_prefix(workspace_path) {
-                Ok(rel) => rel.to_path_buf(),
-                Err(_) => {
-                    outside.push(path.clone());
-                    continue;
-                }
-            }
-        } else {
-            path.clone()
-        };
-        if validate_normal_repo_relpath(&rel).is_err() {
-            outside.push(path.clone());
-        } else if !path_matches_surface_policy(surface, &rel) {
-            protected.push(rel);
-        }
-    }
-    if !protected.is_empty() {
-        Some(Reject::Protected { paths: protected })
-    } else if !outside.is_empty() {
-        Some(Reject::Outside { paths: outside })
-    } else {
-        None
-    }
+    surface.classify_paths(workspace_path, paths)
 }
 
 pub(super) fn repair_prompt_feedback(feedback: &str) -> String {

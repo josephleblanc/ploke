@@ -1,5 +1,3 @@
-#![allow(dead_code)] // Phase 1 boundary; live adapters are wired in later phases.
-
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 

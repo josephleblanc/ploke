@@ -125,7 +125,7 @@ async fn run_self_edit_probe(
         &request.workspace,
         &prompt,
         request.budget,
-        published.request().edit_policy,
+        &published.request().edit_policy,
         &published.request().evidence_roots,
         request.model,
     )

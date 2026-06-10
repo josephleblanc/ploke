@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     cli::prototype1_state::edit_surface::{
-        harness_request::BroadEditPolicy,
+        surface_policy::SurfacePolicy,
         tui_adapter::{self, ModelSelection},
     },
     spec::PrepareError,
@@ -462,7 +462,7 @@ pub(crate) async fn run_prefix_then_live_probe(
         &request.workspace,
         &anchor.issue_prompt,
         tui_budget,
-        BroadEditPolicy::WorkspaceExceptPlokeEval,
+        &SurfacePolicy::workspace_except_core(),
         &[],
         request.model.clone(),
     )

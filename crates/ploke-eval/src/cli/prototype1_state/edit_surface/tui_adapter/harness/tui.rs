@@ -10,7 +10,8 @@ use std::{
 use ploke_llm::manager::RecordedResponse;
 use uuid::Uuid;
 
-use super::super::super::harness_request::{BroadEditPolicy, contract};
+use super::super::super::harness_request::contract;
+use super::super::super::surface_policy::SurfacePolicy;
 use super::super::harness_io::{
     Event, Feedback, HeadlessAttempt, HeadlessAttemptResult, HeadlessRun, HeadlessTerminal,
     Outcome, PromptDiagnostic, Tool, observe_cargo_validation, push_changed_paths, truncate_chars,
@@ -100,14 +101,14 @@ impl TuiHarness {
 
     pub(crate) async fn drive_to_attempt_end(
         &mut self,
-        edit_policy: BroadEditPolicy,
+        surface: &SurfacePolicy,
     ) -> Result<AttemptEnd, Error> {
         let started = Instant::now();
         loop {
             let deadline = self.spec.timeouts.attempt_deadline(started);
             match self.next(deadline).await? {
                 Progress::PendingEdit(batch) => {
-                    let decision = surface_decision(&batch, &self.spec.workspace_path, edit_policy);
+                    let decision = surface_decision(&batch, &self.spec.workspace_path, surface);
                     let newly_applied = self.decide(decision).await?;
                     if newly_applied {
                         let settle_deadline = self.spec.timeouts.phase_deadline(
@@ -667,7 +668,7 @@ impl TuiHarness {
 pub(crate) fn surface_decision(
     batch: &Batch,
     workspace_path: &Path,
-    edit_policy: BroadEditPolicy,
+    surface: &SurfacePolicy,
 ) -> Decision {
     let mut approve = Vec::new();
     let mut deny = Vec::new();
@@ -688,7 +689,7 @@ pub(crate) fn surface_decision(
             });
             continue;
         }
-        if let Some(rejection) = classify_paths(workspace_path, edit_policy, &staged.paths) {
+        if let Some(rejection) = classify_paths(workspace_path, &surface, &staged.paths) {
             let feedback = Feedback::from_outcome(&Outcome::Rejected(rejection));
             deny.push(DenyItem {
                 item: staged.clone(),

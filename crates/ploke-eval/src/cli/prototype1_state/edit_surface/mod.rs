@@ -17,6 +17,7 @@ pub(crate) mod harness_result;
 pub(crate) mod request_policy;
 pub(crate) mod route;
 pub(crate) mod surface;
+pub(crate) mod surface_policy;
 pub(crate) mod tui;
 pub(crate) mod tui_adapter;
 

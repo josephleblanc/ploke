@@ -10,14 +10,14 @@ use sha2::{Digest as _, Sha256};
 use crate::cli::prototype1_state::{backend::EditSurfaceAdmission, history::ArtifactSurface};
 use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, RuntimeId};
 
-use super::surface;
+use super::{surface, surface_policy::SurfacePolicy};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct BroadHarnessRequest {
     pub(crate) schema: BroadHarnessRequestSchema,
     pub(crate) parent_node_id: ParentNodeRef,
     pub(crate) workspace: HarnessWorkspace,
-    pub(crate) edit_policy: BroadEditPolicy,
+    pub(crate) edit_policy: SurfacePolicy,
     #[serde(default)]
     pub(crate) graph_restriction: GraphRestriction,
     pub(crate) child_budget: HarnessChildBudget,
@@ -790,7 +790,7 @@ impl request::Binding<surface::SurfacePolicyId> {
         Self::new(coordinate, target_artifact_id, admission.policy().as_str())
     }
 
-    fn prototype1_workspace(source_repository_path: &Path, edit_policy: BroadEditPolicy) -> Self {
+    fn prototype1_workspace(source_repository_path: &Path, edit_policy: SurfacePolicy) -> Self {
         let target_artifact_id = ArtifactId::new(source_repository_path.display().to_string());
         let coordinate = Coordinate {
             runtime_id: RuntimeId::new(),
@@ -856,20 +856,6 @@ impl HarnessWorkspace {
 pub(crate) struct HarnessChildBudget {
     pub(crate) min_children: u32,
     pub(crate) max_children: u32,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum BroadEditPolicy {
-    WorkspaceExceptPlokeEval,
-}
-
-impl BroadEditPolicy {
-    fn label(self) -> &'static str {
-        match self {
-            Self::WorkspaceExceptPlokeEval => "workspace except ploke-eval",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1278,7 +1264,7 @@ impl BroadHarnessRequest {
             schema: BroadHarnessRequestSchema::V1,
             parent_node_id: ParentNodeRef::new(parent_node_id),
             workspace: HarnessWorkspace::new(source_repository, candidate_workspace_path),
-            edit_policy: BroadEditPolicy::WorkspaceExceptPlokeEval,
+            edit_policy: SurfacePolicy::workspace_except_core(),
             graph_restriction: GraphRestriction::tool_neighborhood(nearest_items),
             child_budget,
             protected_core: ProtectedCorePointer {

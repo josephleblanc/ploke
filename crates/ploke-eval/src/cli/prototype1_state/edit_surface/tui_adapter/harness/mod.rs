@@ -1,5 +1,6 @@
 //! Trait boundary between `ploke-eval` policy and the headless `ploke-tui` executor.
 
+pub(crate) mod fixture;
 pub(crate) mod timeouts;
 mod tui;
 

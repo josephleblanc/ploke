@@ -867,6 +867,12 @@ pub(crate) enum HeadlessAttemptResult {
     ToolFailed { error: String },
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct AttemptOutcome {
+    pub(crate) run: HeadlessRun,
+    pub(crate) terminal: HeadlessTerminal,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum HeadlessTerminal {
     Applied {
@@ -1791,6 +1797,58 @@ impl Proposal {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum BroadAttemptError {
+    #[error("broad headless-tui setup failed during '{phase}': {detail}")]
+    Setup { phase: &'static str, detail: String },
+    #[error("broad headless-tui adapter failed: {0}")]
+    Adapter(#[from] Error),
+    #[error("broad headless-tui attempt ended without a terminal outcome")]
+    MissingTerminal,
+    #[error("broad headless-tui attempt failed during admission: {detail}")]
+    Admission { detail: String },
+    #[error("broad headless-tui attempt failed: {0}")]
+    Prepare(#[from] PrepareError),
+}
+
+impl From<BroadAttemptError> for PrepareError {
+    fn from(source: BroadAttemptError) -> Self {
+        match source {
+            BroadAttemptError::Setup { phase, detail } => Self::DatabaseSetup { phase, detail },
+            BroadAttemptError::Adapter(err) => {
+                if let Some((phase, detail)) = err.setup_failure() {
+                    Self::DatabaseSetup {
+                        phase,
+                        detail: detail.to_string(),
+                    }
+                } else {
+                    Self::InvalidBatchSelection {
+                        detail: err.to_string(),
+                    }
+                }
+            }
+            BroadAttemptError::MissingTerminal => Self::InvalidBatchSelection {
+                detail: "broad headless-tui attempt ended without a terminal outcome".to_string(),
+            },
+            BroadAttemptError::Admission { detail } => Self::InvalidBatchSelection { detail },
+            BroadAttemptError::Prepare(err) => err,
+        }
+    }
+}
+
+impl BroadAttemptError {
+    pub(crate) fn setup_phase(&self) -> Option<(&'static str, &str)> {
+        match self {
+            Self::Setup { phase, detail } => Some((*phase, detail.as_str())),
+            Self::Adapter(source) => source.setup_failure(),
+            Self::Prepare(PrepareError::DatabaseSetup { phase, detail }) => {
+                Some((*phase, detail.as_str()))
+            }
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Outcome {
     Applied(Applied),
@@ -1980,6 +2038,25 @@ pub(crate) struct Retry {
 }
 
 impl Retry {
+    pub(crate) fn decide_outcome(&self, attempt_number: u32, outcome: &Outcome) -> Step {
+        if !outcome.retryable() {
+            return Step::Terminal(Terminal::Invalid {
+                reason: "finished attempt recorded a non-retryable outcome".to_string(),
+            });
+        }
+        if attempt_number >= self.max_attempts {
+            Step::Terminal(Terminal::Exhausted {
+                attempts: attempt_number,
+                last: outcome.clone(),
+            })
+        } else {
+            Step::Retry {
+                next_attempt: attempt_number + 1,
+                feedback: Feedback::from_outcome(outcome),
+            }
+        }
+    }
+
     pub(crate) fn decide(&self, attempt: &Attempt<state::Done>) -> Step {
         let Some(outcome) = attempt.outcome() else {
             return Step::Terminal(Terminal::Invalid {

@@ -17,10 +17,7 @@ use thiserror::Error;
 use crate::cli::Prototype1EditSurface;
 use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, PatchId};
 
-use super::edit_surface::{
-    self, harness_request::BroadEditPolicy, harness_result::transaction, request_policy, surface,
-    tui,
-};
+use super::edit_surface::{self, harness_result::transaction, request_policy, surface, tui};
 use super::event::ContentHash;
 use super::history::{
     CheckedSurface, HistoryError, HistoryHash, SurfaceCommitment, SurfaceEvidence, SurfaceTouch,
@@ -1021,11 +1018,12 @@ fn is_workspace_except_forbidden_path(path: &Path) -> bool {
             .is_some_and(|name| WORKSPACE_EXCEPT_AUTHORITY_FILENAMES.contains(&name))
 }
 
-pub(crate) fn prototype_surface_for_broad_edit_policy(
-    policy: BroadEditPolicy,
+pub(crate) fn prototype_surface_for_policy(
+    policy: super::edit_surface::surface_policy::SurfacePolicy,
 ) -> Prototype1EditSurface {
+    use super::edit_surface::surface_policy::SurfacePolicy;
     match policy {
-        BroadEditPolicy::WorkspaceExceptPlokeEval => {
+        SurfacePolicy::WorkspaceExceptCore(_) | SurfacePolicy::GraphNeighborhood(_) => {
             Prototype1EditSurface::WorkspaceExceptPlokeEval
         }
     }

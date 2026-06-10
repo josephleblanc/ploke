@@ -14,21 +14,23 @@ use uuid::Uuid;
 
 use super::*;
 use super::{
-    LiveObserver, ModelSelection, next_event, run_attempt, run_headless, run_headless_with_model,
-    submit_prompt, validation_command_display,
+    Attempt, BroadAttemptError, Capture, LiveObserver, ModelSelection, next_event, run_attempt,
+    run_headless, run_headless_with_model, submit_prompt, validation_command_display,
 };
 use crate::cli::prototype1_state::{
     backend::EditSurfaceAdmission,
     edit_surface::{
         harness_request::{
-            AttachedReport, BroadEditPolicy, EvidenceRole, HarnessChildBudget,
-            PublishedBroadHarnessRequest, RequestAdmissionBinding, contract,
+            AttachedReport, EvidenceRole, HarnessChildBudget, PublishedBroadHarnessRequest,
+            RequestAdmissionBinding, contract,
         },
         harness_result::SubmittedBroadHarnessResult,
         surface,
+        surface_policy::SurfacePolicy,
     },
 };
 use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, RuntimeId};
+use crate::spec::PrepareError;
 
 include!("test_fixtures.rs");
 
@@ -175,7 +177,7 @@ fn turn_live() {
 fn classifier_rejects_absolute_path_outside_workspace() {
     let rejection = classify_paths(
         Path::new("/tmp/prototype1/workspace"),
-        BroadEditPolicy::WorkspaceExceptPlokeEval,
+        &SurfacePolicy::workspace_except_core(),
         &[PathBuf::from("/tmp/other/crates/ploke-tui/src/lib.rs")],
     )
     .expect("outside path should reject");
@@ -187,7 +189,7 @@ fn classifier_rejects_absolute_path_outside_workspace() {
 fn classifier_rejects_non_normal_relative_path() {
     let rejection = classify_paths(
         Path::new("/tmp/prototype1/workspace"),
-        BroadEditPolicy::WorkspaceExceptPlokeEval,
+        &SurfacePolicy::workspace_except_core(),
         &[PathBuf::from("crates/../crates/ploke-tui/src/lib.rs")],
     )
     .expect("non-normal path should reject");
@@ -199,7 +201,7 @@ fn classifier_rejects_non_normal_relative_path() {
 fn classifier_uses_broad_policy_for_protected_core() {
     let rejection = classify_paths(
         Path::new("/tmp/prototype1/workspace"),
-        BroadEditPolicy::WorkspaceExceptPlokeEval,
+        &SurfacePolicy::workspace_except_core(),
         &[PathBuf::from("crates/ploke-eval/src/lib.rs")],
     )
     .expect("protected path should reject");
@@ -733,7 +735,7 @@ fn attempt_prompt_preserves_minimal_request_text() {
 
     let prompt = attempt_prompt(
         Path::new("/tmp/prototype1/workspace"),
-        BroadEditPolicy::WorkspaceExceptPlokeEval,
+        &SurfacePolicy::workspace_except_core(),
         &[
             EvidenceRoot {
                 kind: EvidenceRootKind::Evaluations,
@@ -1410,7 +1412,7 @@ async fn recorded_replay_rejects_protected_ns_patch_before_staged_success_reache
         &fixture.workspace,
         &[],
         fixture.prompt.clone(),
-        BroadEditPolicy::WorkspaceExceptPlokeEval,
+        &SurfacePolicy::workspace_except_core(),
         None,
         &Timeouts::default(),
     )
@@ -1533,7 +1535,7 @@ async fn historical_trace_replay_marks_repeated_protected_ns_patch_before_stagin
         &fixture.workspace,
         &[],
         fixture.prompt.clone(),
-        BroadEditPolicy::WorkspaceExceptPlokeEval,
+        &SurfacePolicy::workspace_except_core(),
         None,
         &Timeouts::default(),
     )
@@ -1698,7 +1700,7 @@ async fn recorded_replay_rejects_stale_same_file_repair_after_first_apply() {
         &fixture.workspace,
         &[],
         fixture.prompt.clone(),
-        BroadEditPolicy::WorkspaceExceptPlokeEval,
+        &SurfacePolicy::workspace_except_core(),
         None,
         &Timeouts::default(),
     )
@@ -1710,7 +1712,7 @@ async fn recorded_replay_rejects_stale_same_file_repair_after_first_apply() {
         runtime,
         parent_id,
         &fixture.workspace,
-        BroadEditPolicy::WorkspaceExceptPlokeEval,
+        &SurfacePolicy::workspace_except_core(),
         1,
         &mut run,
         &LiveObserver::disabled(),
@@ -1873,7 +1875,7 @@ async fn recorded_replay_truncating_patch_removes_stale_snippet_rows() {
         &fixture.workspace,
         &[],
         fixture.prompt.clone(),
-        BroadEditPolicy::WorkspaceExceptPlokeEval,
+        &SurfacePolicy::workspace_except_core(),
         None,
         &Timeouts::default(),
     )
@@ -1895,7 +1897,7 @@ async fn recorded_replay_truncating_patch_removes_stale_snippet_rows() {
         runtime,
         parent_id,
         &fixture.workspace,
-        BroadEditPolicy::WorkspaceExceptPlokeEval,
+        &SurfacePolicy::workspace_except_core(),
         1,
         &mut run,
         &LiveObserver::disabled(),
@@ -2009,7 +2011,7 @@ async fn recorded_replay_actual_ploke_tree_target_refreshes_assemble_run_forest_
         &fixture.workspace,
         &[],
         fixture.prompt.clone(),
-        BroadEditPolicy::WorkspaceExceptPlokeEval,
+        &SurfacePolicy::workspace_except_core(),
         None,
         &Timeouts::default(),
     )
@@ -2033,7 +2035,7 @@ async fn recorded_replay_actual_ploke_tree_target_refreshes_assemble_run_forest_
         runtime,
         parent_id,
         &fixture.workspace,
-        BroadEditPolicy::WorkspaceExceptPlokeEval,
+        &SurfacePolicy::workspace_except_core(),
         1,
         &mut run,
         &LiveObserver::disabled(),
@@ -2109,7 +2111,7 @@ async fn gated_replay_sends_applied_ns_patch_instead_of_staged_success() {
         &fixture.workspace,
         &[],
         fixture.prompt.clone(),
-        BroadEditPolicy::WorkspaceExceptPlokeEval,
+        &SurfacePolicy::workspace_except_core(),
         None,
         &Timeouts::default(),
     )
@@ -2121,7 +2123,7 @@ async fn gated_replay_sends_applied_ns_patch_instead_of_staged_success() {
         runtime,
         parent_id,
         &fixture.workspace,
-        BroadEditPolicy::WorkspaceExceptPlokeEval,
+        &SurfacePolicy::workspace_except_core(),
         1,
         &mut run,
         &LiveObserver::disabled(),
@@ -2179,7 +2181,7 @@ async fn recorded_replay_runs_declared_validation_after_applied_edit() {
         &fixture.workspace,
         &[],
         fixture.prompt.clone(),
-        BroadEditPolicy::WorkspaceExceptPlokeEval,
+        &SurfacePolicy::workspace_except_core(),
         None,
         &Timeouts::default(),
     )
@@ -2192,7 +2194,7 @@ async fn recorded_replay_runs_declared_validation_after_applied_edit() {
         runtime,
         parent_id,
         &fixture.workspace,
-        BroadEditPolicy::WorkspaceExceptPlokeEval,
+        &SurfacePolicy::workspace_except_core(),
         1,
         &mut run,
         &LiveObserver::disabled(),
@@ -2244,7 +2246,7 @@ async fn applied_batch_finalizes_before_completed_turn() {
         &fixture.workspace,
         &[],
         fixture.prompt.clone(),
-        BroadEditPolicy::WorkspaceExceptPlokeEval,
+        &SurfacePolicy::workspace_except_core(),
         None,
         &Timeouts::default(),
     )
@@ -2257,7 +2259,7 @@ async fn applied_batch_finalizes_before_completed_turn() {
         runtime,
         parent_id,
         &fixture.workspace,
-        BroadEditPolicy::WorkspaceExceptPlokeEval,
+        &SurfacePolicy::workspace_except_core(),
         1,
         &mut run,
         &LiveObserver::disabled(),
@@ -2289,6 +2291,48 @@ async fn applied_batch_finalizes_before_completed_turn() {
             .any(|validation| validation.display_command == "cargo check" && validation.ok),
         "expected harness-owned `cargo check` to run at finalize, got {:#?}",
         run.validations()
+    );
+}
+
+// C1 regression: `Attempt::run` with `Capture::Responses` must keep the
+// process-global response-tap guard installed across the whole attempt await.
+// If the guard is dropped early, `clear_response_tap` fires before the session
+// runs and no provider envelopes are captured, leaving `full_response_records`
+// empty even though the model produced responses.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn attempt_capture_responses_keeps_tap_installed_across_run() {
+    let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
+    let fixture = prepare_live_canary(
+        "attempt-capture-responses-tap-lifetime",
+        "Use non_semantic_patch to update src/lib.rs, then stop.",
+    )
+    .expect("prepare capture-responses fixture");
+
+    let call_id = "call_capture_responses_allowed_ns_patch";
+    let tape = recorded_allowed_ns_patch_tape(&fixture.artifact_root, call_id);
+    ploke_tui::llm::install_recorded_response_tape(tape);
+    let _clear_tape = ClearRecordedTapeOnDrop;
+
+    let attempt = Attempt {
+        workspace: fixture.workspace.clone(),
+        prompt: fixture.prompt.clone(),
+        budget: Budget::new(1, 120).expect("valid one-attempt budget"),
+        surface: SurfacePolicy::workspace_except_core(),
+        evidence: Vec::new(),
+        validation: Vec::new(),
+        model: None,
+        capture: Capture::Responses,
+    };
+    let outcome = attempt
+        .run()
+        .await
+        .expect("capture-responses attempt should return an outcome");
+
+    assert!(
+        !outcome.run.full_response_records().is_empty(),
+        "Capture::Responses must drain at least one provider response; the tap \
+         guard was dropped before the run if this is empty. terminal={:?}",
+        outcome.run.terminal()
     );
 }
 
@@ -2574,7 +2618,7 @@ async fn xfail_broad_headless_caps_provider_steps() {
         &fixture.workspace,
         &fixture.prompt,
         budget,
-        BroadEditPolicy::WorkspaceExceptPlokeEval,
+        &SurfacePolicy::workspace_except_core(),
         &[],
         None,
     )
@@ -3042,5 +3086,79 @@ async fn live_tui_request_code_context_ploke_workspace_returns_results() {
         "expected request_code_context to return snippets for all terms in '{}'; misses: {}",
         workspace.display(),
         misses.join("; ")
+    );
+}
+
+#[test]
+fn broad_attempt_error_maps_setup_to_prepare_error() {
+    let source = BroadAttemptError::Setup {
+        phase: "bm25_ready",
+        detail: "RAG service is unavailable".to_string(),
+    };
+    let mapped = PrepareError::from(source);
+    let PrepareError::DatabaseSetup { phase, detail } = mapped else {
+        panic!("expected database setup mapping, got {mapped:?}");
+    };
+    assert_eq!(phase, "bm25_ready");
+    assert_eq!(detail, "RAG service is unavailable");
+}
+
+#[test]
+fn broad_attempt_error_adapter_preserves_setup_failure() {
+    let source = BroadAttemptError::Adapter(Error::HeadlessSetup {
+        phase: "database_open",
+        detail: "locked".to_string(),
+    });
+    assert_eq!(source.setup_phase(), Some(("database_open", "locked")));
+}
+
+#[test]
+fn broad_attempt_error_adapter_non_setup_maps_to_invalid_batch() {
+    let source = BroadAttemptError::Adapter(Error::EmptyBudget);
+    let mapped = PrepareError::from(source);
+    assert!(matches!(mapped, PrepareError::InvalidBatchSelection { .. }));
+}
+
+#[cfg(feature = "live_api_tests")]
+#[tokio::test]
+#[ignore = "requires Google ADC and OPENROUTER_API_KEY"]
+async fn live_attempt_run_google_direct_with_embeddings() {
+    if !crate::test_support::live_google_env_or_skip(
+        "live_attempt_run_google_direct_with_embeddings",
+    )
+    .await
+    {
+        return;
+    }
+
+    let prompt = r#"Use the available edit tools to stage exactly one code edit in src/lib.rs.
+
+Change broad_surface_canary so it returns "after" instead of "before".
+Do not edit Cargo.toml. Do not create report, result, control, or bookkeeping files.
+"#;
+    let fixture =
+        prepare_live_canary("live-attempt-google-direct", prompt).expect("prepare canary");
+    let budget = Budget::new(2, 600).expect("valid live budget");
+    let outcome = Attempt {
+        workspace: fixture.workspace.clone(),
+        prompt: fixture.prompt.clone(),
+        budget,
+        surface: SurfacePolicy::workspace_except_core(),
+        evidence: Vec::new(),
+        validation: Vec::new(),
+        model: Some(ModelSelection::direct_google(
+            "google/gemini-2.5-flash".parse().expect("model id"),
+        )),
+        capture: Capture::Responses,
+    }
+    .run()
+    .await
+    .expect("live attempt should return typed outcome");
+    assert!(
+        outcome.terminal.live_summary().contains("applied")
+            || outcome.terminal.live_summary().contains("exhausted")
+            || outcome.terminal.live_summary().contains("no_edit"),
+        "unexpected terminal: {}",
+        outcome.terminal.live_summary()
     );
 }

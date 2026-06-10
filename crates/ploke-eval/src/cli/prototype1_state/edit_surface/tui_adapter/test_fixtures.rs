@@ -1469,7 +1469,7 @@ async fn run_live_canary(fixture: &LiveCanaryFixture) -> HeadlessRun {
         &fixture.workspace,
         &fixture.prompt,
         budget,
-        BroadEditPolicy::WorkspaceExceptPlokeEval,
+        &crate::cli::prototype1_state::edit_surface::surface_policy::SurfacePolicy::workspace_except_core(),
         &[],
     )
     .await
