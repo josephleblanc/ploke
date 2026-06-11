@@ -2997,23 +2997,6 @@ struct BroadHarnessRequestPublication {
         crate::cli::prototype1_state::edit_surface::harness_request::PublishedBroadHarnessRequest,
 }
 
-fn publish_broad_edit_harness_request(
-    manifest_path: &Path,
-    repo_root: &Path,
-    parent: &ParentIdentity,
-    child_budget: Prototype1ChildBudget,
-    admission_binding: crate::cli::prototype1_state::edit_surface::harness_request::RequestAdmissionBinding,
-) -> Result<BroadHarnessRequestPublication, PrepareError> {
-    publish_broad_edit_harness_request_with_graph_limit(
-        manifest_path,
-        repo_root,
-        parent,
-        child_budget,
-        admission_binding,
-        DEFAULT_GRAPH_NEAREST_ITEMS,
-    )
-}
-
 fn publish_broad_edit_harness_request_with_graph_limit(
     manifest_path: &Path,
     repo_root: &Path,
