@@ -70,10 +70,18 @@ pub struct ProviderTiming {
     pub max_backoff: Duration,
     /// Optional total wall-clock budget for a single chat-step's HTTP retry
     /// sequence. When `Some`, the retry loop stops scheduling further retries
-    /// once this much time has elapsed since the request began, so a turn cannot
-    /// hang indefinitely while riding out transient provider errors. `None`
-    /// leaves the sequence bounded only by `max_attempts`/`attempt_timeout`
-    /// (legacy behavior for routers that do not opt in).
+    /// once this much time has elapsed since the request began, and each retry
+    /// attempt's own timeout is clamped to the remaining budget, so a turn cannot
+    /// keep *re-issuing* requests indefinitely while riding out transient
+    /// provider errors. `None` leaves the sequence bounded only by
+    /// `max_attempts`/`attempt_timeout` (legacy behavior for routers that do not
+    /// opt in).
+    ///
+    /// The first/initial attempt is intentionally not clamped to this budget (it
+    /// keeps its full `attempt_timeout`), so a chat step can still overshoot the
+    /// budget by up to one first-attempt `attempt_timeout`; retries cannot extend
+    /// the sequence further. See `ChatHttpConfig::max_total_elapsed` in
+    /// `manager::session` for the precise contract and worst case.
     #[serde(default)]
     pub max_total_elapsed: Option<Duration>,
     pub retry: RetryTuning,
@@ -245,8 +253,16 @@ impl RouterCalibration for OpenRouter {
 ///
 /// These are intentionally Google-scoped via `default_provider_timing` so the
 /// OpenRouter path keeps its existing behavior. The backoff schedule itself
-/// (exponential + full jitter, capped per attempt by `max_backoff` and overall
-/// by `max_total_elapsed`) lives in `manager::session`.
+/// (exponential + full jitter, capped per attempt by `max_backoff`) lives in
+/// `manager::session`.
+///
+/// `max_total_elapsed` (60s) stops scheduling new retries once 60s has elapsed
+/// and clamps each *retry* attempt's timeout to the remaining budget. Because
+/// this budget (60s) is smaller than the per-attempt `attempt_timeout` (the
+/// shared `LLM_TIMEOUT_SECS` default, 300s), the *first* attempt is left
+/// unclamped so a normal single attempt is never truncated — it can legitimately
+/// run past the 60s budget. Retries cannot extend the sequence further, so the
+/// worst-case wall-clock is one first-attempt `attempt_timeout`.
 const GOOGLE_MAX_ATTEMPTS: u32 = 6;
 const GOOGLE_INITIAL_BACKOFF: Duration = Duration::from_millis(500);
 const GOOGLE_MAX_BACKOFF: Duration = Duration::from_secs(8);
