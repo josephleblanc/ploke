@@ -92,10 +92,10 @@
 //! }
 //! ```
 
+use crate::prelude::*;
+
 use ploke_records::evaluation::PatchProjectionCheckState;
-use serde::{Deserialize, Serialize};
-use std::{fmt, path::PathBuf};
-use uuid::Uuid;
+use std::fmt;
 
 // Re-export types from ploke-llm that we need for structured capture
 pub use ploke_llm::manager::{RequestMessage, Role as LlmRole};

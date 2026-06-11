@@ -344,8 +344,7 @@ pub async fn chat_step_with_attempts<R: Router>(
     }
     let chat_step_start = Instant::now();
     for attempt in 1..=max_attempts {
-        let attempt_timeout =
-            effective_attempt_timeout(cfg, attempt, chat_step_start.elapsed());
+        let attempt_timeout = effective_attempt_timeout(cfg, attempt, chat_step_start.elapsed());
         let mut attempt_record =
             AttemptBuilder::<NonStreaming<R>>::non_streaming_from(chat_step_start);
         trace_chat_http_start(
@@ -2328,8 +2327,7 @@ mod chat_step_retry_exhaustion_tests {
 
     // The process-global mock completion URL is shared via `MockRouter`, so chat
     // step tests must run one at a time.
-    static CHAT_TEST_LOCK: Lazy<tokio::sync::Mutex<()>> =
-        Lazy::new(|| tokio::sync::Mutex::new(()));
+    static CHAT_TEST_LOCK: Lazy<tokio::sync::Mutex<()>> = Lazy::new(|| tokio::sync::Mutex::new(()));
 
     // `Router::completion_url` returns `&'static str`, but a mock transport binds
     // an ephemeral port. We stash a per-test URL here and hand out a leaked
@@ -2351,15 +2349,7 @@ mod chat_step_retry_exhaustion_tests {
     /// Test-only router that reuses OpenRouter's request types but resolves its
     /// completion URL to the per-test mock transport.
     #[derive(
-        Copy,
-        Clone,
-        Debug,
-        Default,
-        PartialEq,
-        Eq,
-        PartialOrd,
-        serde::Serialize,
-        serde::Deserialize,
+        Copy, Clone, Debug, Default, PartialEq, Eq, PartialOrd, serde::Serialize, serde::Deserialize,
     )]
     struct MockRouter;
 
@@ -2701,7 +2691,9 @@ mod chat_step_retry_exhaustion_tests {
         // up to the calibrated Google max-attempts and then stop.
         let mock = server.mock(|when, then| {
             when.method(POST).path("/v1/chat/completions");
-            then.status(429).header("Retry-After", "0").body("rate limited");
+            then.status(429)
+                .header("Retry-After", "0")
+                .body("rate limited");
         });
         set_mock_completion_url(&server.url("/v1/chat/completions"));
 
@@ -2747,7 +2739,9 @@ mod chat_step_retry_exhaustion_tests {
         let server = MockServer::start();
         let mock = server.mock(|when, then| {
             when.method(POST).path("/v1/chat/completions");
-            then.status(429).header("Retry-After", "0").body("rate limited");
+            then.status(429)
+                .header("Retry-After", "0")
+                .body("rate limited");
         });
         set_mock_completion_url(&server.url("/v1/chat/completions"));
 
@@ -2757,7 +2751,10 @@ mod chat_step_retry_exhaustion_tests {
         // unbudgeted path performs exactly one retry (two attempts) and stops.
         const MIN_CHAT_HTTP_ATTEMPTS: u32 = 2;
         let mut timing = OpenRouter::default_provider_timing();
-        assert_eq!(timing.max_attempts, 1, "OpenRouter calibrates a single attempt");
+        assert_eq!(
+            timing.max_attempts, 1,
+            "OpenRouter calibrates a single attempt"
+        );
         assert_eq!(
             timing.max_total_elapsed, None,
             "legacy OpenRouter path stays unbudgeted"
