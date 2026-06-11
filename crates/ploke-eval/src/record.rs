@@ -95,7 +95,6 @@
 use crate::prelude::*;
 
 use ploke_records::evaluation::PatchProjectionCheckState;
-use std::fmt;
 
 // Re-export types from ploke-llm that we need for structured capture
 pub use ploke_llm::manager::{RequestMessage, Role as LlmRole};

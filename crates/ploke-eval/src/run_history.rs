@@ -1,6 +1,5 @@
 use crate::prelude::*;
 
-use chrono::Utc;
 use ploke_db::ObservabilityStore;
 
 use crate::run_registry::{
