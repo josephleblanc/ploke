@@ -7,16 +7,6 @@
 //! outcomes. `ploke-tui` remains the executor; `ploke-eval` owns the bounded
 //! grant, surface check, and durable projection of what happened.
 
-use ploke_llm::{
-    ModelId, ProviderKey,
-    router_only::{RouterVariants, google::Google, openrouter::OpenRouter},
-};
-use ploke_records::agent_turn::ModelRouteRecord;
-use thiserror::Error;
-
-#[cfg(test)]
-use super::harness_request::{AttachedReport, EvidenceRole};
-
 pub(super) const MAX_DEBUG_RELAY_EVENTS: usize = 128;
 pub(super) const MAX_DEBUG_RELAY_EVENT_CHARS: usize = 2_000;
 pub(super) const MAX_EVIDENCE_EVENT_CHARS: usize = 1_000;
@@ -28,16 +18,22 @@ pub(super) const POST_APPLY_STATUS_TIMEOUT_SECS: u64 = 120;
 pub(super) const POST_APPLY_INDEX_TIMEOUT_SECS: u64 = 180;
 pub(super) const POST_APPLY_INDEX_START_GRACE_MS: u64 = 2_000;
 
+use ploke_llm::{
+    ModelId, ProviderKey,
+    router_only::{RouterVariants, google::Google, openrouter::OpenRouter},
+};
+use ploke_records::agent_turn::ModelRouteRecord;
+use thiserror::Error;
+
 mod attempt;
 pub(crate) mod driver;
 pub(crate) mod harness;
 mod harness_io;
 mod tui_bridge;
+#[cfg(test)]
+use tui_bridge::run_headless;
+pub(crate) use tui_bridge::run_headless_with_model;
 
-pub(super) use harness::timeouts::{
-    HEADLESS_VALIDATION_CARGO_CHECK_TIMEOUT_SECS, HEADLESS_VALIDATION_CARGO_TEST_TIMEOUT_SECS,
-    Timeouts,
-};
 pub(crate) mod state {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub(crate) enum Ready {}
@@ -120,13 +116,7 @@ impl ModelSelection {
 
 pub(crate) use attempt::{Attempt, Capture};
 pub(crate) use driver::AttemptDriver;
-pub(crate) use harness::{
-    Batch, Decision, DenyItem, Harness, Progress, SessionSpec, Staged, TuiHarness,
-};
 pub(crate) use harness_io::*;
-pub(crate) use tui_bridge::{
-    run_headless, run_headless_with_model, run_headless_with_model_capture_responses,
-};
 
 #[cfg(test)]
 use std::{
@@ -142,12 +132,12 @@ use super::harness_request::{EvidenceRoot, EvidenceRootKind, EvidenceRootLocatio
 pub(in crate::cli::prototype1_state::edit_surface::tui_adapter) use tui_bridge::{
     AppliedItem, AttemptEnd, Candidate, LiveObserver, StagedItem, ToolBatch, attempt_prompt,
     classify_applied_terminal, classify_paths, command_display_matches, contract_cargo_args,
-    drain_response_records, evidence_read_roots, next_event, next_event_with_deadline,
-    policy_repair_prompt, provider_failure_from_message, provider_unavailable_reason,
-    record_batch_terminal, record_post_approval_indeterminate, retry_feedback, run_attempt,
-    select_disjoint, sparse_search_refresh_enabled, start_attempt_runtime, submit_prompt,
-    terminal_ids, timeout_terminal_for_run, turn_aborted_after_apply_terminal,
-    validation_command_display, wait_for_refresh,
+    drain_response_records, evidence_read_roots, next_event, policy_repair_prompt,
+    provider_failure_from_message, provider_unavailable_reason, record_batch_terminal,
+    record_post_approval_indeterminate, retry_feedback, run_attempt, select_disjoint,
+    sparse_search_refresh_enabled, start_attempt_runtime, submit_prompt, terminal_ids,
+    timeout_terminal_for_run, turn_aborted_after_apply_terminal, validation_command_display,
+    wait_for_refresh,
 };
 
 #[cfg(test)]

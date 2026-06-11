@@ -13,10 +13,6 @@ use std::{
 use uuid::Uuid;
 
 use super::*;
-use super::{
-    Attempt, BroadAttemptError, Capture, LiveObserver, ModelSelection, next_event, run_attempt,
-    run_headless, run_headless_with_model, submit_prompt, validation_command_display,
-};
 use crate::cli::prototype1_state::{
     backend::EditSurfaceAdmission,
     edit_surface::{
@@ -27,6 +23,7 @@ use crate::cli::prototype1_state::{
         harness_result::SubmittedBroadHarnessResult,
         surface,
         surface_policy::SurfacePolicy,
+        tui_adapter::{harness::Timeouts, tui_bridge::run_headless_with_model},
     },
 };
 use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, RuntimeId};
@@ -1696,7 +1693,7 @@ async fn recorded_replay_rejects_stale_same_file_repair_after_first_apply() {
 
     let (request_tx, request_rx) = std::sync::mpsc::channel();
     let _tap_guard = ploke_tui::llm::install_request_tap(request_tx);
-    let (mut runtime, parent_id) = start_attempt_runtime(
+    let (runtime, parent_id) = start_attempt_runtime(
         &fixture.workspace,
         &[],
         fixture.prompt.clone(),
@@ -1871,7 +1868,7 @@ async fn recorded_replay_truncating_patch_removes_stale_snippet_rows() {
     // Runtime startup performs the initial workspace scan. If this fails to
     // index `stale_index_canary`, the test is not reproducing the stale-row
     // condition seen in the live warning.
-    let (mut runtime, parent_id) = start_attempt_runtime(
+    let (runtime, parent_id) = start_attempt_runtime(
         &fixture.workspace,
         &[],
         fixture.prompt.clone(),
@@ -2007,7 +2004,7 @@ async fn recorded_replay_actual_ploke_tree_target_refreshes_assemble_run_forest_
     ploke_tui::llm::install_recorded_response_tape(tape);
     let _clear_tape = ClearRecordedTapeOnDrop;
 
-    let (mut runtime, parent_id) = start_attempt_runtime(
+    let (runtime, parent_id) = start_attempt_runtime(
         &fixture.workspace,
         &[],
         fixture.prompt.clone(),
@@ -2107,7 +2104,7 @@ async fn gated_replay_sends_applied_ns_patch_instead_of_staged_success() {
 
     let (request_tx, request_rx) = std::sync::mpsc::channel();
     let _tap_guard = ploke_tui::llm::install_request_tap(request_tx);
-    let (mut runtime, parent_id) = start_attempt_runtime(
+    let (runtime, parent_id) = start_attempt_runtime(
         &fixture.workspace,
         &[],
         fixture.prompt.clone(),
@@ -2119,7 +2116,7 @@ async fn gated_replay_sends_applied_ns_patch_instead_of_staged_success() {
     .expect("start gated recorded replay runtime");
 
     let mut run = HeadlessRun::new();
-    let (outcome, runtime) = run_attempt(
+    let (outcome, _runtime) = run_attempt(
         runtime,
         parent_id,
         &fixture.workspace,
@@ -2177,7 +2174,7 @@ async fn recorded_replay_runs_declared_validation_after_applied_edit() {
     let tape = recorded_allowed_ns_patch_tape(&fixture.artifact_root, call_id);
     ploke_tui::llm::install_recorded_response_tape(tape);
     let _clear_tape = ClearRecordedTapeOnDrop;
-    let (mut runtime, parent_id) = start_attempt_runtime(
+    let (runtime, parent_id) = start_attempt_runtime(
         &fixture.workspace,
         &[],
         fixture.prompt.clone(),
@@ -2190,7 +2187,7 @@ async fn recorded_replay_runs_declared_validation_after_applied_edit() {
 
     let mut run = HeadlessRun::new();
     let validations = vec![declared_cargo_command("check canary crate", &["check"])];
-    let (outcome, runtime) = run_attempt(
+    let (outcome, _runtime) = run_attempt(
         runtime,
         parent_id,
         &fixture.workspace,
@@ -2242,7 +2239,7 @@ async fn applied_batch_finalizes_before_completed_turn() {
     let tape = recorded_allowed_ns_patch_tape(&fixture.artifact_root, call_id);
     ploke_tui::llm::install_recorded_response_tape(tape);
     let _clear_tape = ClearRecordedTapeOnDrop;
-    let (mut runtime, parent_id) = start_attempt_runtime(
+    let (runtime, parent_id) = start_attempt_runtime(
         &fixture.workspace,
         &[],
         fixture.prompt.clone(),
@@ -2255,7 +2252,7 @@ async fn applied_batch_finalizes_before_completed_turn() {
 
     let mut run = HeadlessRun::new();
     let validations = vec![declared_cargo_command("check canary crate", &["check"])];
-    let (outcome, runtime) = run_attempt(
+    let (outcome, _runtime) = run_attempt(
         runtime,
         parent_id,
         &fixture.workspace,
@@ -2628,7 +2625,7 @@ async fn xfail_broad_headless_caps_provider_steps() {
     let mut snapshots = Vec::new();
     collect_request_snapshots(&request_rx, &mut snapshots);
     let turn_attempts = run.events().iter().rev().find_map(|event| match event {
-        Event::Turn { attempts, .. } => Some(*attempts),
+        Event::Turn { attempts, .. } => Some(attempts),
         _ => None,
     });
 

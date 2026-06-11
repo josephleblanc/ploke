@@ -15,18 +15,19 @@ use serde::Deserialize;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
+use crate::cli::prototype1_state::edit_surface::tui_adapter::harness;
+
 use super::super::harness_request::{
     EvidenceRoot, EvidenceRootKind, EvidenceRootLocation, contract,
 };
 use super::super::surface_policy::SurfacePolicy;
 use super::{
-    Attempt, Budget, Capture, Error, LIVE_TRACE_ENV, ModelSelection, SessionSpec, Timeouts,
-    TuiHarness,
+    Attempt, Budget, Capture, Error, LIVE_TRACE_ENV, ModelSelection,
     harness_io::{
         AppliedEdit, CargoValidationObservation, Event, Feedback, HeadlessAttempt,
-        HeadlessAttemptResult, HeadlessRun, HeadlessTerminal, Outcome, PromptDiagnostic, Reject,
-        Tool, join_paths, latest_failed_cargo_validation_feedback, observe_cargo_validation,
-        observed_headless_error, push_changed_paths, truncate_chars,
+        HeadlessAttemptResult, HeadlessRun, HeadlessTerminal, Outcome, Reject, join_paths,
+        latest_failed_cargo_validation_feedback, observe_cargo_validation, push_changed_paths,
+        truncate_chars,
     },
 };
 
@@ -101,7 +102,7 @@ pub(super) async fn start_attempt_runtime(
     prompt: String,
     surface: &SurfacePolicy,
     model: Option<&ModelSelection>,
-    timeouts: &Timeouts,
+    timeouts: &harness::Timeouts,
 ) -> Result<(crate::runner::WorkspaceTuiRuntime, Uuid), Error> {
     let runtime = crate::runner::setup_workspace_tui_runtime_with_read_roots(
         workspace_path,
@@ -255,14 +256,14 @@ pub(super) async fn run_attempt(
     observer: &LiveObserver,
     validation_commands: &[contract::Command],
     response_rx: Option<Arc<Mutex<Receiver<RecordedResponse>>>>,
-    timeouts: Timeouts,
+    timeouts: harness::Timeouts,
 ) -> Result<(AttemptEnd, crate::runner::WorkspaceTuiRuntime), Error> {
-    let spec = SessionSpec {
+    let spec = harness::SessionSpec {
         workspace_path: workspace_path.to_path_buf(),
         timeouts,
     };
     let owned_run = std::mem::replace(run, HeadlessRun::new());
-    let mut harness = TuiHarness::attach(
+    let mut harness = harness::TuiHarness::attach(
         runtime,
         owned_run,
         spec,
@@ -885,7 +886,7 @@ async fn settle_staged_batch(
         .iter()
         .flat_map(|candidate| candidate.paths.iter().cloned())
         .collect::<Vec<_>>();
-    let timeouts = Timeouts::default();
+    let timeouts = harness::Timeouts::default();
     approve_selected(runtime, turn, observer, &selected).await?;
     let applied_outcome =
         match wait_for_selected(runtime, turn, run, observer, &selected, &timeouts).await {
@@ -1120,7 +1121,7 @@ pub(super) async fn wait_for_selected(
     run: &mut HeadlessRun,
     observer: &LiveObserver,
     selected: &[Candidate],
-    timeouts: &Timeouts,
+    timeouts: &harness::Timeouts,
 ) -> Result<BatchOutcome, Error> {
     use ploke_tui::app_state::core::EditProposalStatus;
 
@@ -1261,7 +1262,7 @@ pub(super) async fn wait_for_refresh(
     turn: u32,
     observer: &LiveObserver,
     deadline: Instant,
-    timeouts: &Timeouts,
+    timeouts: &harness::Timeouts,
     changed_paths: &[PathBuf],
 ) -> Result<(), Error> {
     use ploke_tui::app_state::StateCommand;
@@ -1322,7 +1323,7 @@ async fn wait_for_sparse_search_refresh(
     turn: u32,
     observer: &LiveObserver,
     deadline: Instant,
-    timeouts: &Timeouts,
+    timeouts: &harness::Timeouts,
 ) -> Result<bool, Error> {
     use ploke_db::bm25_index::bm25_service::Bm25Status;
 
@@ -1413,7 +1414,7 @@ async fn wait_for_index_output(
     turn: u32,
     observer: &LiveObserver,
     deadline: Instant,
-    timeouts: &Timeouts,
+    timeouts: &harness::Timeouts,
 ) -> Result<(), Error> {
     use ploke_tui::{AppEvent, app_state::events::SystemEvent};
 
