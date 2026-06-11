@@ -142,6 +142,42 @@ to prove quota visibility.
 - Provider-capacity disposition for `RESOURCE_EXHAUSTED` on `direct_google`
   (distinct from merit `treatment_failed`).
 
+## Run Abandonment Log
+
+**2026-06-10 — state8 (`gemini-2.5-pro`, direct-google/Vertex) abandoned on gen-0 broad search 429.**
+
+| Item | Value |
+| --- | --- |
+| Campaign | `p1-g25p-direct-protocol-2target-g0g2-1x3-state8-20260610-155046` |
+| Worktree | `/home/brasides/.ploke-eval/worktrees/p1-g25p-direct-protocol-2target-g0g2-1x3-state8-20260610-155046` (branch `prototype1-parent-...-gen0`) |
+| Model / route | `google/gemini-2.5-pro`, `route_source = direct_google` (model + protocol model both pro) |
+| Stop reason | HTTP 429 `RESOURCE_EXHAUSTED` at gen-0 broad search — genuine Vertex DSQ/capacity throttle on the Pro model, **not** auth expiry |
+| Auth state | ADC verified VALID; `GOOGLE_PROJECT_ID` + `GOOGLE_REGION=us-central1` present (presence confirmed, no values logged) |
+| max_tokens floor | 16384 floor (commits `9cdd5de5`, `7d10bbc9`) HELD: zero malformed_function_call, zero OUTPUT_TRUNCATED. Floor fix not implicated in this abandonment |
+| cargo clean | Skipped — worktree has no local `target/` (binary built only in main checkout) |
+| Artifacts | Left in place as evidence; git worktree NOT removed |
+| Forward decision | Move future runs to flash tier; `google/gemini-2.5-flash` is the working downgrade target (see Fix Direction) |
+
+DSQ capacity findings backing this decision (gcloud `alpha services quota list` on
+project `cs-poc-gtxw7jmtfuwfsiauziui9yx`, 2026-06-10, + Google docs):
+
+- Regional `us-central1` exposes **no** explicit per-model RPM/TPM quota rows for
+  `gemini-2.5-pro`/`gemini-2.5-flash` chat models → pure DSQ; the 429 is not a
+  fixed quota you can raise via a quota-increase request.
+- `global` endpoint exposes per-model input-TPM ceilings where flash has ~10x pro
+  headroom (`gemini-2.5-flash-ga` 1e10 vs `gemini-2.5-pro-ga`/`-latest` 1e9 input TPM).
+- Google DSQ doc org-level baselines (by 30-day spend tier): Pro 500k/1M/2M,
+  Flash/Flash-Lite 2M/4M/10M (flash ~4-5x pro at the same tier). FAQ also documents
+  a 10 QPM cap specific to `gemini-2.5-pro`.
+- No `gemini-3.5-flash` quota row exists (DSQ shadow model). `gemini-3.0-flash` is
+  not routable on Vertex (404).
+- Sources: [DSQ / Standard PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/dynamic-shared-quota),
+  [Gemini FAQ](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/faq).
+
+In-code quota notes added (comments only, no logic change):
+`crates/ploke-llm/src/router_only/google/mod.rs` (catalog rows) and
+`crates/ploke-tui/src/llm/model_overrides/google_gemini.rs` (`AFFECTED_PREFIXES`).
+
 ## Related Bugs
 
 - [`2026-06-08-prototype1-direct-google-g35flash-quota-empty-baseline.md`](./2026-06-08-prototype1-direct-google-g35flash-quota-empty-baseline.md)

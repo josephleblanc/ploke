@@ -230,6 +230,37 @@ fn google_catalog_model(slug: &str) -> Model {
     }
 }
 
+// Static direct-Google (Vertex) chat catalog. All rows route through
+// `PredictionService.ChatCompletions` (OpenAI-compat endpoint + ADC), NOT the
+// AI Studio Chat API per-user daily quota.
+//
+// Vertex quota behavior for these text models (Standard PayGo / Dynamic Shared
+// Quota, DSQ): there is no fixed per-project RPM you can pin or raise via a
+// quota-increase request. A 429 RESOURCE_EXHAUSTED here means temporary
+// shared-capacity contention, not a hit on a fixed ceiling. Confirmed against
+// project cs-poc-gtxw7jmtfuwfsiauziui9yx via `gcloud alpha services quota list
+// --service=aiplatform.googleapis.com` (2026-06-10): regional us-central1 has
+// NO explicit per-model RPM/TPM rows for these chat models (pure DSQ); only the
+// `global` endpoint exposes per-model input-TPM ceilings, and there flash has
+// ~10x pro headroom (`gemini-2.5-flash-ga` 10e9 vs `gemini-2.5-pro-ga` 1e9
+// input TPM). No `gemini-3.5-flash` quota row exists at all (DSQ "shadow"
+// model, not operator-inspectable).
+//
+// Pro vs Flash capacity (Google DSQ doc, org-level baseline TPM by 30-day spend
+// tier; values are baselines, not guarantees):
+//   Pro family:   500k / 1M / 2M  (tier 1 / 2 / 3)
+//   Flash family: 2M  / 4M / 10M  (tier 1 / 2 / 3)
+// So flash has ~4-5x the shared throughput of pro at the same spend tier, and
+// the FAQ additionally documents a 10 QPM limit specific to gemini-2.5-pro.
+// Net: pro throttles (429s) sooner under high-parallelism eval fan-out. Prefer
+// flash for parallel eval runs; for pro, lower parallelism, add backoff, and/or
+// try GOOGLE_REGION=global. Routable Vertex slugs: gemini-2.5-flash (200 ok),
+// gemini-2.5-pro (200 ok), gemini-3.5-flash (routable but DSQ-shadow, 429-prone);
+// gemini-3.0-flash is NOT routable (404).
+//
+// Sources: https://cloud.google.com/vertex-ai/generative-ai/docs/dynamic-shared-quota
+// and https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/faq
+// See docs/active/bugs/2026-06-10-vertex-gemini-35-flash-dsq-shadow-quota-429.md.
 fn google_catalog_models_response() -> ModelsResponse {
     ModelsResponse {
         data: vec![
