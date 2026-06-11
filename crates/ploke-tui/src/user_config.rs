@@ -590,10 +590,14 @@ pub struct ChatPolicy {
     pub error_retry_limit: u32,
     #[serde(default = "default_length_retry_limit")]
     pub length_retry_limit: u32,
+    #[serde(default = "default_malformed_retry_limit")]
+    pub malformed_retry_limit: u32,
     #[serde(default = "default_repair_attempt_limit")]
     pub repair_attempt_limit: u32,
     #[serde(default = "default_length_continue_prompt")]
     pub length_continue_prompt: String,
+    #[serde(default = "default_malformed_retry_prompt")]
+    pub malformed_retry_prompt: String,
     #[serde(default)]
     pub tool_replay: ToolReplayPolicy,
 }
@@ -609,8 +613,10 @@ impl Default for ChatPolicy {
             timeout_base_secs: default_timeout_base_secs(),
             error_retry_limit: default_error_retry_limit(),
             length_retry_limit: default_length_retry_limit(),
+            malformed_retry_limit: default_malformed_retry_limit(),
             repair_attempt_limit: default_repair_attempt_limit(),
             length_continue_prompt: default_length_continue_prompt(),
+            malformed_retry_prompt: default_malformed_retry_prompt(),
             tool_replay: ToolReplayPolicy::default(),
         }
     }
@@ -624,6 +630,7 @@ impl ChatPolicy {
         let timeout_base_secs = self.timeout_base_secs.clamp(5, 600);
         let error_retry_limit = self.error_retry_limit.min(10);
         let length_retry_limit = self.length_retry_limit.min(5);
+        let malformed_retry_limit = self.malformed_retry_limit.min(5);
         let repair_attempt_limit = self.repair_attempt_limit.clamp(1, 500);
         let timeout_strategy = self.timeout_strategy.validated();
         Self {
@@ -635,8 +642,10 @@ impl ChatPolicy {
             timeout_base_secs,
             error_retry_limit,
             length_retry_limit,
+            malformed_retry_limit,
             repair_attempt_limit,
             length_continue_prompt: self.length_continue_prompt,
+            malformed_retry_prompt: self.malformed_retry_prompt,
             tool_replay: self.tool_replay.validated(),
         }
     }
@@ -928,12 +937,26 @@ fn default_length_retry_limit() -> u32 {
     1
 }
 
+fn default_malformed_retry_limit() -> u32 {
+    1
+}
+
 fn default_repair_attempt_limit() -> u32 {
     4
 }
 
 fn default_length_continue_prompt() -> String {
     "Continue from where you left off. Do not repeat prior text.".to_string()
+}
+
+fn default_malformed_retry_prompt() -> String {
+    "Your previous reply was rejected as a malformed function call: the provider \
+     returned Python-style code (for example `print(default_api.<tool>(...))`) instead \
+     of a structured tool call. Respond again with a single valid STRUCTURED tool call \
+     using strict JSON arguments. Do not emit Python, code-interpreter text, or \
+     `print(...)` wrappers. If your previous call targeted a symbol that may not exist, \
+     re-verify the target against the available symbols before editing."
+        .to_string()
 }
 
 fn default_top_k() -> usize {
