@@ -1,6 +1,4 @@
-use std::collections::BTreeMap;
-use std::fs;
-use std::path::{Path, PathBuf};
+use crate::prelude::*;
 
 use ploke_llm::Router;
 use ploke_llm::request::models::{Response, ResponseItem};
@@ -10,12 +8,10 @@ use ploke_llm::router_only::openrouter::OpenRouter;
 use ploke_llm::{HTTP_REFERER, HTTP_TITLE, ModelId, ModelKey};
 use reqwest::Client;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use serde::{Deserialize, Serialize};
 
 use crate::layout::{
     active_model_file, model_registry_file, models_dir, parent_patcher_model_file,
 };
-use crate::spec::PrepareError;
 
 pub type ModelRegistry = Response;
 

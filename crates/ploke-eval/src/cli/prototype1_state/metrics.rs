@@ -9,12 +9,9 @@
 //! `Stored<T>` records through `history_preview::FsEvidenceStore`, not loose
 //! `Document` JSON, degraded value parsing, or path/filename recovery.
 
-use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use crate::prelude::*;
 
-use chrono::Utc;
-use serde::Serialize;
+use std::cmp::Ordering;
 
 use crate::cli::{InspectOutputFormat, MetricSlice};
 use crate::intervention::{
@@ -22,7 +19,6 @@ use crate::intervention::{
     TreatmentBranchStatus,
 };
 use crate::record::SubmissionArtifactState;
-use crate::spec::PrepareError;
 use crate::{OperationalRunMetrics, PatchApplyState};
 
 use super::evidence::{

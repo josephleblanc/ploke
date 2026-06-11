@@ -18,18 +18,16 @@
 //! - the artifact world remains child-aligned
 //! - a promoted child binary now exists, but is not running yet
 
-use std::fs;
-use std::path::{Path, PathBuf};
+use crate::prelude::*;
+
 use std::process::{Command as ProcessCommand, Output};
 
-use thiserror::Error;
 use tracing::{debug, instrument, warn};
 
 use crate::intervention::{
     CommitError, CommitPhase, Intervention, Outcome, Prototype1NodeStatus, RecordStore, Surface,
     project_node_status, write_node_projection,
 };
-use crate::spec::PrepareError;
 
 use super::c1::{
     Binary, C2, Child, ChildAckState, ChildBinaryState, Parent, Present, Prototype, Unacknowledged,

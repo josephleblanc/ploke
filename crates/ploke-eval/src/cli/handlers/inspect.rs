@@ -1,6 +1,6 @@
-use std::collections::{BTreeMap, BTreeSet};
+use crate::prelude::*;
+
 use std::io::IsTerminal;
-use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use ploke_protocol::tool_calls::trace;
@@ -11,9 +11,6 @@ use ploke_records::tool_contracts::{
     PersistedToolCallArguments, ToolArgumentDecodeError, ToolArgumentParseFailure,
     ToolArgumentsJson, ToolCallArguments,
 };
-use serde::{Deserialize, Serialize};
-
-use uuid::Uuid;
 
 use crate::cli::record::{print_record_resolution_footer, resolve_record_path};
 use crate::cli::{
@@ -49,7 +46,6 @@ use crate::protocol_triage_report::{
 };
 use crate::record::read_compressed_record;
 use crate::run_history::list_finished_record_paths_in_instances_root;
-use crate::spec::PrepareError;
 
 impl InspectCommand {
     pub async fn run(self) -> Result<(), PrepareError> {

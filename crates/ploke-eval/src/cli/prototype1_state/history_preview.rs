@@ -5,15 +5,13 @@
 //! hashes, and emits a History-shaped preview that can be inspected before live
 //! History writes are wired into the Crown handoff path.
 
-use std::collections::BTreeMap;
-use std::fs;
-use std::io::{BufRead, BufReader};
-use std::path::{Path, PathBuf};
+use crate::prelude::*;
 
-use chrono::{DateTime, Utc};
+use std::io::{BufRead, BufReader};
+
+use chrono::DateTime;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
-use thiserror::Error;
 
 use super::event::RecordedAt;
 use super::history::{Block, EntryKind, FsBlockStore, HistoryHash, SelectionDecisionEntry, block};
@@ -25,7 +23,6 @@ use super::journal::{
 };
 use crate::cli::InspectOutputFormat;
 use crate::intervention::{prototype1_branch_registry_path, prototype1_scheduler_path};
-use crate::spec::PrepareError;
 
 use super::evidence::{
     ChildEvidenceRecords, ChildEvidenceSet, ComparedRunEvidence, EvaluationEvidence,
@@ -3050,7 +3047,6 @@ pub(crate) enum PreviewError {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
 
     use super::*;
     use crate::cli::prototype1_state::identity::{
