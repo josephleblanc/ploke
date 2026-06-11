@@ -9,7 +9,6 @@
 //! `MALFORMED_FUNCTION_CALL` quirk; see
 //! `docs/active/bugs/2026-06-10-direct-google-malformed-function-call-finish-reason.md`.
 
-use ploke_llm::request::ToolChoice;
 use ploke_llm::router_only::RouterVariants;
 use ploke_llm::types::model_types::ModelId;
 
@@ -18,8 +17,7 @@ mod google_gemini;
 /// Per-model LLM parameter overrides (token budget, temperature, ...).
 ///
 /// Extension point: add fields here as model-specific parameter quirks are
-/// discovered, then apply them at the request-build chokepoint alongside
-/// [`ModelOverride::tool_choice`].
+/// discovered, then apply them at the request-build chokepoint.
 #[derive(Debug, Clone, Default)]
 pub struct ParamOverrides {
     /// Minimum `max_tokens` to request for this model. The chokepoint raises the
@@ -52,8 +50,6 @@ impl ParamOverrides {
 /// registered.
 #[derive(Debug, Clone)]
 pub struct ModelOverride {
-    /// Recommended tool-selection override for this model, if any.
-    pub tool_choice: Option<ToolChoice>,
     /// Per-model parameter overrides (currently empty; see [`ParamOverrides`]).
     pub params: ParamOverrides,
 }
@@ -75,19 +71,15 @@ mod tests {
     }
 
     #[test]
-    fn resolve_sets_max_tokens_floor_without_tool_choice_for_direct_google_gemini_families() {
+    fn resolve_sets_max_tokens_floor_for_direct_google_gemini_families() {
         let router = RouterVariants::Google(Google);
 
         for slug in ["google/gemini-2.5-flash", "google/gemini-3.5-flash"] {
             let resolved = resolve(router, &model(slug))
                 .unwrap_or_else(|| panic!("expected override for direct Google {slug}"));
-            // Forcing a tool choice was empirically useless and loop-trapping;
-            // the mitigation is a token-budget floor, not a tool choice.
-            assert!(
-                resolved.tool_choice.is_none(),
-                "no tool_choice override expected for {slug}, got {:?}",
-                resolved.tool_choice
-            );
+            // The mitigation is a token-budget floor; forcing a tool choice was
+            // empirically useless and loop-trapping, so no tool-choice override
+            // exists.
             let floor = resolved
                 .params
                 .max_tokens_floor

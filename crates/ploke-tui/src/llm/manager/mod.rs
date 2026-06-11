@@ -586,7 +586,7 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
 
     // Gate tools by crate_focus: disable when no workspace is loaded
     let crate_loaded = state.with_system_read(|sys| sys.has_loaded_crates()).await;
-    let (tools, mut tool_choice) = if crate_loaded {
+    let (tools, tool_choice) = if crate_loaded {
         (Some(tool_defs.clone()), Some(ToolChoice::Auto))
     } else {
         (None, None)
@@ -617,31 +617,17 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
     // See `crate::llm::model_overrides` and the direct-Google malformed
     // function-call bug doc.
     //
-    // PARAM FLOOR (active mitigation): direct-Google Gemini truncates a
-    // structured tool call when the output-token budget is too small, surfacing
-    // as `MALFORMED_FUNCTION_CALL`. The override raises `max_tokens` to a
-    // generous floor (only when unset/lower), which a live spike proved
-    // eliminates the malformation. Raising the budget is termination-safe.
-    //
-    // TOOL_CHOICE (defaulted off): this chokepoint builds ONE request whose
-    // `tool_choice` is reused for every turn of the in-session tool-call loop
-    // (`run_chat_session`), which only terminates on a no-tool `Content`
-    // response. Forcing `ToolChoice::Required` session-wide would trap the loop,
-    // and it was empirically shown NOT to fix the malformation anyway. So no
-    // tool-choice override is currently emitted; the plumbing is retained behind
-    // `FORCE_OVERRIDE_TOOL_CHOICE` for a future per-turn application site.
+    // Direct-Google Gemini truncates a structured tool call when the output-token
+    // budget is too small, surfacing as `MALFORMED_FUNCTION_CALL`. The override
+    // raises `max_tokens` to a generous floor (only when unset/lower), which a
+    // live spike proved eliminates the malformation. Raising the budget is
+    // termination-safe. (A forced `tool_choice` was empirically shown NOT to fix
+    // the malformation and would trap the per-request session loop, so no
+    // tool-choice override is emitted here.)
     if let Some(model_override) = model_overrides::resolve(active_router, &model_id) {
         llm_params.max_tokens = model_override
             .params
             .effective_max_tokens(llm_params.max_tokens);
-
-        const FORCE_OVERRIDE_TOOL_CHOICE: bool = false;
-        if FORCE_OVERRIDE_TOOL_CHOICE
-            && tools.is_some()
-            && let Some(forced) = model_override.tool_choice.clone()
-        {
-            tool_choice = Some(forced);
-        }
     }
 
     // 6) Diagnostics: skip provider-bound diag logs until registry replaces user_config.

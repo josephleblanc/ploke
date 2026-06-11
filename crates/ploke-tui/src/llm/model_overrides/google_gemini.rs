@@ -54,11 +54,10 @@ pub(super) fn resolve(router: RouterVariants, model_id: &ModelId) -> Option<Mode
     if !is_affected(router, model_id) {
         return None;
     }
+    // `tool_choice=required` was empirically shown NOT to eliminate the
+    // malformation and would trap the session loop (every turn forced to emit a
+    // tool call), so the mitigation is a token-budget floor only.
     Some(ModelOverride {
-        // `Required` was empirically shown NOT to eliminate the malformation and
-        // would trap the session loop (every turn forced to emit a tool call),
-        // so no tool-choice override is recommended.
-        tool_choice: None,
         params: ParamOverrides {
             max_tokens_floor: Some(MAX_TOKENS_FLOOR),
         },
