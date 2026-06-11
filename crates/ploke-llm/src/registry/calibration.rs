@@ -68,6 +68,14 @@ pub struct ProviderTiming {
     pub max_attempts: u32,
     pub initial_backoff: Duration,
     pub max_backoff: Duration,
+    /// Optional total wall-clock budget for a single chat-step's HTTP retry
+    /// sequence. When `Some`, the retry loop stops scheduling further retries
+    /// once this much time has elapsed since the request began, so a turn cannot
+    /// hang indefinitely while riding out transient provider errors. `None`
+    /// leaves the sequence bounded only by `max_attempts`/`attempt_timeout`
+    /// (legacy behavior for routers that do not opt in).
+    #[serde(default)]
+    pub max_total_elapsed: Option<Duration>,
     pub retry: RetryTuning,
 }
 
@@ -84,6 +92,7 @@ impl Default for ProviderTiming {
             max_attempts: 1,
             initial_backoff: Duration::from_millis(250),
             max_backoff: Duration::from_secs(2),
+            max_total_elapsed: None,
             retry: RetryTuning::default(),
         }
     }
@@ -225,11 +234,39 @@ impl RouterCalibration for OpenRouter {
     }
 }
 
+/// Direct-Google (Vertex OpenAI-compat) retry budget.
+///
+/// Vertex `gemini-2.5-*` models run on Dynamic Shared Quota, where HTTP 429
+/// `RESOURCE_EXHAUSTED` and 503 `UNAVAILABLE` are transient shared-capacity
+/// contention rather than a hard per-key cap. Google's own guidance is to ride
+/// these out with exponential backoff (honoring any `Retry-After`/RetryInfo
+/// delay). The previous shared default (2 attempts, ~250ms fixed backoff) was
+/// far too short to survive contention and aborted eval turns immediately.
+///
+/// These are intentionally Google-scoped via `default_provider_timing` so the
+/// OpenRouter path keeps its existing behavior. The backoff schedule itself
+/// (exponential + full jitter, capped per attempt by `max_backoff` and overall
+/// by `max_total_elapsed`) lives in `manager::session`.
+const GOOGLE_MAX_ATTEMPTS: u32 = 6;
+const GOOGLE_INITIAL_BACKOFF: Duration = Duration::from_millis(500);
+const GOOGLE_MAX_BACKOFF: Duration = Duration::from_secs(8);
+const GOOGLE_RETRY_TOTAL_BUDGET: Duration = Duration::from_secs(60);
+
 impl RouterCalibration for Google {
     type Model = ModelKey;
     type Provider = ();
     type Preferences = ();
     type Key = GoogleCalibrationKey;
+
+    fn default_provider_timing() -> ProviderTiming {
+        ProviderTiming {
+            max_attempts: GOOGLE_MAX_ATTEMPTS,
+            initial_backoff: GOOGLE_INITIAL_BACKOFF,
+            max_backoff: GOOGLE_MAX_BACKOFF,
+            max_total_elapsed: Some(GOOGLE_RETRY_TOTAL_BUDGET),
+            ..ProviderTiming::default()
+        }
+    }
 
     fn calibration_input(req: &ChatCompRequest<Self>) -> CalibrationInput<Self> {
         let key = req
@@ -312,6 +349,32 @@ mod tests {
             OpenRouter::calibration_key(&input).as_deref(),
             Some("openrouter:x-ai/grok-4-fast:provider:xai")
         );
+    }
+
+    #[test]
+    fn google_provider_timing_uses_exponential_dsq_retry_budget() {
+        let timing = Google::default_provider_timing();
+
+        assert_eq!(timing.max_attempts, GOOGLE_MAX_ATTEMPTS);
+        assert_eq!(timing.initial_backoff, Duration::from_millis(500));
+        assert_eq!(timing.max_backoff, Duration::from_secs(8));
+        assert_eq!(timing.max_total_elapsed, Some(Duration::from_secs(60)));
+        // 429 RESOURCE_EXHAUSTED and 503 UNAVAILABLE remain retryable; fatal 4xx
+        // are not added to the retryable set.
+        assert!(timing.retry.retry_statuses.contains(&429));
+        assert!(timing.retry.retry_statuses.contains(&503));
+        assert!(!timing.retry.retry_statuses.contains(&400));
+        assert!(!timing.retry.retry_statuses.contains(&404));
+    }
+
+    #[test]
+    fn openrouter_provider_timing_keeps_unbudgeted_defaults() {
+        // The Google-specific budget must not leak into the OpenRouter path.
+        let timing = OpenRouter::default_provider_timing();
+        assert_eq!(timing.max_attempts, 1);
+        assert_eq!(timing.initial_backoff, Duration::from_millis(250));
+        assert_eq!(timing.max_backoff, Duration::from_secs(2));
+        assert_eq!(timing.max_total_elapsed, None);
     }
 
     #[test]

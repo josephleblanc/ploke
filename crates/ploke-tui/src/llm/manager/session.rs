@@ -53,6 +53,9 @@ const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parse
 const OPENROUTER_RESPONSE_LOG_RAW: &str = "logs/openrouter/session/last_response_raw.txt";
 const DEFAULT_REPAIR_ATTEMPTS_PER_SESSION: u32 = 4;
 const REPLAY_LIVE_STEP_LIMIT_REACHED: &str = "replay live step limit reached";
+/// Minimum number of provider HTTP attempts (one retry) for any router. Routers
+/// that calibrate a larger retry budget keep it; others are floored here.
+const MIN_CHAT_HTTP_ATTEMPTS: u32 = 2;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FullResponseTraceRecord {
     assistant_message_id: Uuid,
@@ -1037,7 +1040,11 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
         let calibration_input = R::calibration_input(&req);
         let mut provider_timing = R::resolve_provider_timing(calibration_input);
         provider_timing.attempt_timeout = AttemptTimeout::fixed(http_timeout);
-        provider_timing.max_attempts = 2;
+        // Honor the router-calibrated HTTP attempt budget (e.g. the direct-Google
+        // path opts into a larger exponential-backoff budget to ride out Vertex
+        // DSQ 429s) while keeping a floor of one retry for routers that do not
+        // customize it. The per-attempt timeout stays statically session-driven.
+        provider_timing.max_attempts = provider_timing.max_attempts.max(MIN_CHAT_HTTP_ATTEMPTS);
         let mut cfg = ChatHttpConfig::from(&provider_timing);
         let ChatStepData {
             outcome,
@@ -3387,7 +3394,10 @@ mod tests {
             step.provider_timing.attempt_timeout.for_attempt(2),
             Duration::from_secs(90)
         );
-        assert_eq!(step.provider_timing.max_attempts, 2);
+        // The per-attempt timeout is statically overridden to the session
+        // timeout, but the router-calibrated attempt budget is now honored
+        // (CalibratedTestRouter requests 3, above the floor of 2).
+        assert_eq!(step.provider_timing.max_attempts, 3);
     }
 
     #[tokio::test]

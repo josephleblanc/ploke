@@ -172,6 +172,11 @@ pub struct ChatHttpConfig {
     pub max_attempts: u32,
     pub initial_backoff: Duration,
     pub max_backoff: Duration,
+    /// Optional total wall-clock budget for the retry sequence of a single
+    /// chat step. `None` means the sequence is bounded only by `max_attempts`
+    /// and `attempt_timeout`; `Some(budget)` additionally stops retrying once
+    /// the request has spent `budget` since it began.
+    pub max_total_elapsed: Option<Duration>,
     pub retry: RetryTuning,
 }
 
@@ -184,6 +189,7 @@ impl Default for ChatHttpConfig {
             max_attempts: 1,
             initial_backoff: Duration::from_millis(250),
             max_backoff: Duration::from_secs(2),
+            max_total_elapsed: None,
             retry: RetryTuning::default(),
         }
     }
@@ -196,6 +202,7 @@ impl From<&ProviderTiming> for ChatHttpConfig {
             max_attempts: timing.max_attempts,
             initial_backoff: timing.initial_backoff,
             max_backoff: timing.max_backoff,
+            max_total_elapsed: timing.max_total_elapsed,
             retry: timing.retry.clone(),
             ..Self::default()
         }
@@ -382,8 +389,11 @@ pub async fn chat_step_with_attempts<R: Router>(
                     send_failure.clone(),
                 ));
                 let should_retry = should_retry_send_error(&error, &cfg.retry);
-                if should_retry && attempt < max_attempts {
-                    let backoff = compute_retry_backoff(cfg, attempt, None);
+                if should_retry
+                    && attempt < max_attempts
+                    && let Some(backoff) =
+                        schedule_retry_backoff(cfg, attempt, None, chat_step_start.elapsed())
+                {
                     trace_chat_http_retry_scheduled(
                         request_id,
                         attempt,
@@ -476,28 +486,33 @@ pub async fn chat_step_with_attempts<R: Router>(
                 let should_retry =
                     should_retry_body_failure(status, &body_failure, attempt, &cfg.retry);
                 if should_retry && attempt < max_attempts {
-                    let backoff = compute_retry_backoff(cfg, attempt, retry_after);
-                    trace_chat_http_retry_scheduled(
-                        request_id,
-                        attempt,
-                        max_attempts,
-                        &resp_url,
-                        "body",
-                        Some(status),
-                        backoff,
-                        attempt_elapsed,
-                    );
-                    provider_attempts.push(
-                        attempt_record
-                            .status(status)
-                            .failure_phase(ProviderFailurePhase::Body)
-                            .body_failure(body_failure.clone())
-                            .retry_decision(ProviderRetryDecision::Scheduled)
-                            .backoff(backoff)
-                            .finish_traced(request_id, attempt, max_attempts),
-                    );
-                    sleep(backoff).await;
-                    continue;
+                    if let Some(backoff) =
+                        schedule_retry_backoff(cfg, attempt, retry_after, chat_step_start.elapsed())
+                    {
+                        trace_chat_http_retry_scheduled(
+                            request_id,
+                            attempt,
+                            max_attempts,
+                            &resp_url,
+                            "body",
+                            Some(status),
+                            backoff,
+                            attempt_elapsed,
+                        );
+                        provider_attempts.push(
+                            attempt_record
+                                .status(status)
+                                .failure_phase(ProviderFailurePhase::Body)
+                                .body_failure(body_failure.clone())
+                                .retry_decision(ProviderRetryDecision::Scheduled)
+                                .backoff(backoff)
+                                .finish_traced(request_id, attempt, max_attempts),
+                        );
+                        sleep(backoff).await;
+                        continue;
+                    }
+                    // Retry budget exhausted: fall through to the Exhausted
+                    // decision below rather than scheduling another attempt.
                 } else if attempt < max_attempts {
                     trace_chat_http_retry_suppressed(
                         request_id,
@@ -564,8 +579,11 @@ pub async fn chat_step_with_attempts<R: Router>(
                 body_elapsed,
             );
             let should_retry = should_retry_status(status, &cfg.retry);
-            if should_retry && attempt < max_attempts {
-                let backoff = compute_retry_backoff(cfg, attempt, retry_after);
+            if should_retry
+                && attempt < max_attempts
+                && let Some(backoff) =
+                    schedule_retry_backoff(cfg, attempt, retry_after, chat_step_start.elapsed())
+            {
                 trace_chat_http_retry_scheduled(
                     request_id,
                     attempt,
@@ -1009,19 +1027,93 @@ fn should_retry_status(status: u16, tuning: &RetryTuning) -> bool {
     tuning.retry_statuses.contains(&status)
 }
 
-fn compute_retry_backoff(
-    cfg: &ChatHttpConfig,
-    attempt: u32,
-    retry_after: Option<Duration>,
-) -> Duration {
-    if let Some(retry_after) = retry_after {
-        return retry_after.min(cfg.max_backoff);
-    }
-
+/// Deterministic upper bound of the exponential backoff for `attempt`:
+/// `min(initial_backoff * 2^(attempt-1), max_backoff)`.
+///
+/// This is the *ceiling*; the actual sleep is a full-jitter sample within
+/// `[0, ceiling]` (see [`full_jitter`]). Kept separate so the exponential
+/// schedule can be asserted deterministically in tests.
+fn backoff_ceiling(cfg: &ChatHttpConfig, attempt: u32) -> Duration {
     let exponent = attempt.saturating_sub(1);
     let multiplier = 1u32.checked_shl(exponent.min(16)).unwrap_or(u32::MAX);
     let backoff = cfg.initial_backoff.saturating_mul(multiplier);
     backoff.min(cfg.max_backoff)
+}
+
+/// Full-jitter sample in `[0, ceiling]`.
+///
+/// Full jitter (`random_between(0, ceiling)`) decorrelates concurrent retries.
+/// This matters for the direct-Google path because Prototype 1 fires several
+/// parallel child attempts that can all hit Vertex DSQ 429s at the same instant;
+/// a deterministic backoff would resynchronize them into a fresh burst, whereas
+/// jitter spreads the retries out.
+fn full_jitter(ceiling: Duration) -> Duration {
+    let ceiling_nanos = ceiling.as_nanos();
+    if ceiling_nanos == 0 {
+        return Duration::ZERO;
+    }
+    let sampled = (ceiling_nanos as f64 * next_jitter_unit()) as u128;
+    let nanos = sampled.min(ceiling_nanos).min(u128::from(u64::MAX)) as u64;
+    Duration::from_nanos(nanos)
+}
+
+/// Cheap, dependency-free, non-cryptographic PRNG returning a value in `[0, 1)`.
+///
+/// Used only to jitter retry backoff. A process-wide atomic counter (advanced by
+/// an odd constant) mixed with the wall clock gives well-spread values across
+/// concurrent calls without pulling in a `rand` dependency.
+fn next_jitter_unit() -> f64 {
+    static STATE: AtomicU64 = AtomicU64::new(0);
+    let counter = STATE.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed);
+    let clock = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos() as u64);
+    // xorshift64* on the mixed seed.
+    let mut x = counter ^ clock ^ 0x2545_F491_4F6C_DD1D;
+    x ^= x >> 12;
+    x ^= x << 25;
+    x ^= x >> 27;
+    let x = x.wrapping_mul(0x2545_F491_4F6C_DD1D);
+    // Take the top 53 bits for an evenly distributed f64 in [0, 1).
+    ((x >> 11) as f64) / ((1u64 << 53) as f64)
+}
+
+/// Decide the sleep before the next retry, or `None` to stop retrying.
+///
+/// - A server-provided `Retry-After` / RetryInfo delay is honored as-is, but
+///   never beyond the remaining total budget (when one is configured); if it
+///   cannot be honored within budget we stop retrying rather than waking early.
+/// - Otherwise we use a full-jitter exponential backoff, capped to the remaining
+///   budget.
+/// - When `cfg.max_total_elapsed` is `None` the budget is unbounded, preserving
+///   legacy behavior for routers that have not opted in.
+fn schedule_retry_backoff(
+    cfg: &ChatHttpConfig,
+    attempt: u32,
+    retry_after: Option<Duration>,
+    elapsed: Duration,
+) -> Option<Duration> {
+    let remaining = match cfg.max_total_elapsed {
+        Some(budget) => budget.checked_sub(elapsed).filter(|left| !left.is_zero())?,
+        None => Duration::MAX,
+    };
+
+    let backoff = match retry_after {
+        Some(delay) => match cfg.max_total_elapsed {
+            // Budgeted (direct-Google): honor the server delay, but only if we
+            // can wait it out within the remaining budget.
+            Some(_) => {
+                if delay > remaining {
+                    return None;
+                }
+                delay
+            }
+            // Unbudgeted (legacy): preserve the historical max_backoff cap.
+            None => delay.min(cfg.max_backoff),
+        },
+        None => full_jitter(backoff_ceiling(cfg, attempt)).min(remaining),
+    };
+    Some(backoff)
 }
 
 fn parse_retry_after(headers: &HeaderMap) -> Option<Duration> {
@@ -1891,18 +1983,157 @@ mod tests {
         assert_eq!(parse_retry_after(&headers), Some(Duration::from_secs(2)));
     }
 
+    /// Config matching the direct-Google retry budget so the schedule tests
+    /// exercise the same parameters production uses for Vertex DSQ 429s.
+    fn google_like_cfg() -> ChatHttpConfig {
+        ChatHttpConfig {
+            initial_backoff: Duration::from_millis(500),
+            max_backoff: Duration::from_secs(8),
+            max_total_elapsed: Some(Duration::from_secs(60)),
+            ..ChatHttpConfig::default()
+        }
+    }
+
     #[test]
-    fn compute_retry_backoff_caps_retry_after() {
+    fn backoff_ceiling_is_monotonic_exponential_and_capped() {
+        let cfg = google_like_cfg();
+        // 500ms * 2^(attempt-1), capped at max_backoff (8s).
+        assert_eq!(backoff_ceiling(&cfg, 1), Duration::from_millis(500));
+        assert_eq!(backoff_ceiling(&cfg, 2), Duration::from_secs(1));
+        assert_eq!(backoff_ceiling(&cfg, 3), Duration::from_secs(2));
+        assert_eq!(backoff_ceiling(&cfg, 4), Duration::from_secs(4));
+        assert_eq!(backoff_ceiling(&cfg, 5), Duration::from_secs(8));
+        // Cap holds and the schedule never decreases.
+        assert_eq!(backoff_ceiling(&cfg, 6), Duration::from_secs(8));
+        let mut previous = Duration::ZERO;
+        for attempt in 1..=8 {
+            let ceiling = backoff_ceiling(&cfg, attempt);
+            assert!(
+                ceiling >= previous,
+                "ceiling must be monotonic non-decreasing"
+            );
+            assert!(
+                ceiling <= cfg.max_backoff,
+                "ceiling must respect max_backoff"
+            );
+            previous = ceiling;
+        }
+    }
+
+    #[test]
+    fn backoff_ceiling_does_not_overflow_for_large_attempts() {
+        let cfg = google_like_cfg();
+        // Saturating shift/mul must not panic and must stay capped.
+        assert_eq!(backoff_ceiling(&cfg, u32::MAX), cfg.max_backoff);
+    }
+
+    #[test]
+    fn full_jitter_stays_within_zero_and_ceiling() {
+        let ceiling = Duration::from_secs(8);
+        for _ in 0..10_000 {
+            let sampled = full_jitter(ceiling);
+            assert!(sampled <= ceiling, "jitter must not exceed the ceiling");
+        }
+        // Zero ceiling yields zero (no panic, no negative).
+        assert_eq!(full_jitter(Duration::ZERO), Duration::ZERO);
+    }
+
+    #[test]
+    fn schedule_jittered_backoff_respects_ceiling_and_remaining_budget() {
+        let cfg = google_like_cfg();
+        // Early in the request: jittered exponential bounded by the attempt ceiling.
+        for _ in 0..1_000 {
+            let scheduled = schedule_retry_backoff(&cfg, 4, None, Duration::from_secs(1))
+                .expect("budget remains");
+            assert!(scheduled <= backoff_ceiling(&cfg, 4));
+        }
+        // Near the end of the budget the sleep is clamped to what is left.
+        let remaining = Duration::from_millis(120);
+        let elapsed = cfg.max_total_elapsed.unwrap() - remaining;
+        for _ in 0..1_000 {
+            let scheduled =
+                schedule_retry_backoff(&cfg, 6, None, elapsed).expect("tiny budget remains");
+            assert!(
+                scheduled <= remaining,
+                "must not sleep past the remaining budget"
+            );
+        }
+    }
+
+    #[test]
+    fn schedule_stops_retrying_once_budget_is_exhausted() {
+        let cfg = google_like_cfg();
+        let budget = cfg.max_total_elapsed.unwrap();
+        assert!(schedule_retry_backoff(&cfg, 3, None, budget).is_none());
+        assert!(schedule_retry_backoff(&cfg, 3, None, budget + Duration::from_secs(5)).is_none());
+    }
+
+    #[test]
+    fn schedule_honors_retry_after_within_budget() {
+        let cfg = google_like_cfg();
+        // A server Retry-After larger than max_backoff is honored in full when it
+        // still fits in the remaining budget (it is NOT clamped to max_backoff).
+        assert_eq!(
+            schedule_retry_backoff(
+                &cfg,
+                1,
+                Some(Duration::from_secs(20)),
+                Duration::from_secs(1)
+            ),
+            Some(Duration::from_secs(20))
+        );
+    }
+
+    #[test]
+    fn schedule_drops_retry_after_that_exceeds_remaining_budget() {
+        let cfg = google_like_cfg();
+        // Only 5s of budget remains but the server asks for 20s: we cannot honor
+        // it within budget, so we stop retrying instead of waking too early.
+        let elapsed = cfg.max_total_elapsed.unwrap() - Duration::from_secs(5);
+        assert!(schedule_retry_backoff(&cfg, 1, Some(Duration::from_secs(20)), elapsed).is_none());
+    }
+
+    #[test]
+    fn schedule_unbudgeted_caps_retry_after_to_max_backoff() {
+        // Legacy (OpenRouter) path: no total budget, Retry-After clamped to
+        // max_backoff and exponential backoff never blocked by a budget.
         let cfg = ChatHttpConfig {
             max_backoff: Duration::from_secs(2),
+            max_total_elapsed: None,
             ..ChatHttpConfig::default()
         };
-
         assert_eq!(
-            compute_retry_backoff(&cfg, 2, Some(Duration::from_secs(9))),
-            Duration::from_secs(2)
+            schedule_retry_backoff(
+                &cfg,
+                2,
+                Some(Duration::from_secs(9)),
+                Duration::from_secs(120)
+            ),
+            Some(Duration::from_secs(2))
         );
-        assert_eq!(compute_retry_backoff(&cfg, 3, None), Duration::from_secs(1));
+        // Without a budget, a retry is always scheduled regardless of elapsed.
+        let scheduled = schedule_retry_backoff(&cfg, 3, None, Duration::from_secs(600))
+            .expect("unbudgeted path always schedules");
+        assert!(scheduled <= cfg.max_backoff);
+    }
+
+    #[test]
+    fn retryable_statuses_are_retried_and_fatal_4xx_fail_fast() {
+        let tuning = RetryTuning::default();
+        // Retryable: 429 RESOURCE_EXHAUSTED, 503 UNAVAILABLE, transient 5xx/timeout.
+        for status in [408, 409, 425, 429, 500, 502, 503, 504] {
+            assert!(
+                should_retry_status(status, &tuning),
+                "status {status} should be retryable"
+            );
+        }
+        // Fatal 4xx must fail fast (never retried).
+        for status in [400, 401, 403, 404, 422] {
+            assert!(
+                !should_retry_status(status, &tuning),
+                "status {status} must not be retried"
+            );
+        }
     }
 
     #[test]
