@@ -177,21 +177,73 @@ instances = ["BurntSushi__ripgrep-2209"]
 - `instances`: Explicit target set. If both `instance` and `instances` are set,
   `instance` must be included in `instances`.
 
+## Rate limiting (client-side RPM cap)
+
+Ploke applies a **client-side rate limiter** at the central chat
+dispatch in `crates/ploke-llm/src/manager/session.rs` (the single
+chokepoint for every outbound chat call). The limiter holds one
+permit per request and sleeps to enforce a per-call minimum
+interval derived from a configured RPM value. 429
+`RESOURCE_EXHAUSTED` from Vertex AI DSQ is structurally impossible
+below the configured cap.
+
+The rate is read from environment variables, evaluated once at
+process start. Mutating the env var at runtime has no effect.
+
+| Env var | Default (RPM) | Notes |
+|---|---|---|
+| `PLOKE_GOOGLE_CHAT_RPM` | `300` | Sized for `gemini-2.5-flash` at ~360 RPM DSQ floor with ~20% safety margin. |
+| `PLOKE_OPENROUTER_CHAT_RPM` | `0` (unlimited) | OpenRouter has its own per-account limits, not Vertex DSQ. |
+
+To raise the cap, file a **Quota Increase Request (QIR)** for the
+project in the Cloud Console (IAM & Admin → Quotas, filter on the
+Vertex AI metric
+`aiplatform.googleapis.com/generate_content_requests_per_minute_per_base_model`).
+QIRs are typically approved within 2-5 business days for a Standard
+PayGo account.
+
+### Citations
+
+- Vertex AI Dynamic Shared Quota (canonical doc):
+  <https://cloud.google.com/vertex-ai/generative-ai/docs/resources/dynamic-shared-quota>
+- Vertex AI quotas and system limits:
+  <https://cloud.google.com/vertex-ai/generative-ai/docs/quotas>
+- Vertex AI 429 error code reference:
+  <https://cloud.google.com/vertex-ai/generative-ai/docs/error-code-429>
+- Purchase Provisioned Throughput (alternative to DSQ):
+  <https://cloud.google.com/vertex-ai/generative-ai/docs/purchase-provisioned-throughput>
+- Calculate Provisioned Throughput requirements (GSU math):
+  <https://docs.cloud.google.com/vertex-ai/generative-ai/docs/provisioned-throughput/measure-provisioned-throughput>
+- Gemini API rate limits and Tier 1/2/3 table (parallel route on
+  `ai.google.dev`; tier system differs from Vertex DSQ):
+  <https://ai.google.dev/gemini-api/docs/rate-limits>
+- Free trial credits do NOT unlock tier upgrades:
+  <https://discuss.ai.google.dev/t/free-trial-credits-not-applied-to-gemini-api-charges-requesting-billing-adjustment-refund/143336>
+- Tier-2-stuck-on-Tier-1 example (paid spend required, not credits):
+  <https://discuss.ai.google.dev/t/tier-2-upgrade-not-working-despite-meeting-all-requirements-im-still-on-tier-1/146946>
+- Local live-probe notes for `cs-poc-gtxw7jmtfuwfsiauziui9yx`:
+  `/home/team_ploke_dev/work/notes/ploke-vm/rate-limits-2026-06-11.md`
+- Ploke-loop 429 blocker doc (the original symptom in Ploke's
+  own docs): `docs/active/bugs/2026-06-09-prototype1-broad-child-google-429-zero-admission.md`
+  on `feature/ploke-loop` (commit `1d691469`).
+
 ## `model`
 
 ```toml
 [model]
-id = "google/gemini-3.5-flash"
+id = "google/gemini-2.5-flash"
 route_source = "direct-google"
 provider = "google"
 ```
+
+
 
 - `id`: Optional default model id for Prototype 1 setup. This is the eval
   model default. Protocol uses it only when neither `[protocol.model]` nor
   `--protocol-*` setup flags supply a protocol-specific override.
 - `route_source`: Optional default router for ambiguous model ids. Accepted
   values are `direct-google` and `openrouter`. This disambiguates ids such as
-  `google/gemini-3.5-flash`, which can be valid through both routers.
+  `google/gemini-2.5-flash`, which can be valid through both routers.
 - `provider`: Optional provider slug. For `route_source = "direct-google"`,
   `provider = "google"` is accepted as the direct Google sentinel and resolves
   to no OpenRouter provider pin in the campaign manifest. For

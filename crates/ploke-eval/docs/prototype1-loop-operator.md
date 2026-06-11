@@ -34,7 +34,7 @@ The run profile may contain:
 
 ```toml
 [model]
-id = "google/gemini-3.5-flash"
+id = "google/gemini-2.5-flash"
 route_source = "direct-google"
 provider = "google"
 ```

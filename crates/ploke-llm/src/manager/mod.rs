@@ -1,11 +1,13 @@
 pub mod builders;
 mod commands;
 pub mod events;
+pub mod rate_limit;
 mod session;
 pub use builders::attempt::{
     ProviderAttempt, ProviderAttemptOutcome, ProviderAttemptTimeline, ProviderFailurePhase,
     ProviderRetryDecision,
 };
+pub use rate_limit::{Permit, acquire as acquire_rate_limit_permit};
 pub use session::{
     ChatHttpConfig, ChatStepData, ChatStepError, ChatStepOutcome, RecordedResponse,
     RecordedResponseTape, ResponseIndex, chat_step, chat_step_with_attempts, parse_chat_outcome,

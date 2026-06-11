@@ -402,6 +402,29 @@ impl Router for Google {
     type RouterModelId = GoogleModelId;
 
     const BASE_URL: &'static str = "https://aiplatform.googleapis.com/v1";
+    // Vertex AI (Google) chat-completions URL pattern. The path
+    // below is built at runtime from `GOOGLE_PROJECT_ID` and
+    // `GOOGLE_REGION` env vars; see `google_openapi_base_url`.
+    //
+    // Gemini 2.5+/3.x models on Vertex AI Standard PayGo are
+    // subject to **Dynamic Shared Quota (DSQ)** — a per-region
+    // capacity pool with no fixed RPM and no console-increasable
+    // cap. The client-side rate limiter in
+    // `crate::manager::rate_limit` makes 429
+    // RESOURCE_EXHAUSTED structurally impossible below the
+    // configured RPM (`PLOKE_GOOGLE_CHAT_RPM`, default 300).
+    //
+    // Citations:
+    //   - DSQ doc:
+    //     <https://cloud.google.com/vertex-ai/generative-ai/docs/resources/dynamic-shared-quota>
+    //   - Vertex quotas:
+    //     <https://cloud.google.com/vertex-ai/generative-ai/docs/quotas>
+    //   - 429 reference:
+    //     <https://cloud.google.com/vertex-ai/generative-ai/docs/error-code-429>
+    //   - Live-probe notes (cs-poc-gtxw7jmtfuwfsiauziui9yx):
+    //     /home/team_ploke_dev/work/notes/ploke-vm/rate-limits-2026-06-11.md
+    //   - Ploke-loop 429 blocker:
+    //     docs/active/bugs/2026-06-09-prototype1-broad-child-google-429-zero-admission.md
     const COMPLETION_URL: &'static str = concat!(
         "https://aiplatform.googleapis.com/v1/projects/",
         "{GOOGLE_PROJECT_ID}/locations/{GOOGLE_REGION}/endpoints/openapi/chat/completions"
@@ -572,6 +595,13 @@ mod tests {
 
     #[cfg(feature = "live_api_tests")]
     fn live_chat_model() -> String {
+        // Default model for live Vertex AI (Gemini) tests.
+        // gemini-2.5-flash is the only frontier-class model that
+        // is currently routable on cs-poc-gtxw7jmtfuwfsiauziui9yx
+        // (1.5-flash/1.5-pro/2.0-flash/3.x-preview all return 404).
+        // Sustained ceiling: ~360 RPM (DSQ); see rate_limit.rs.
+        //   <https://cloud.google.com/vertex-ai/generative-ai/docs/resources/dynamic-shared-quota>
+        //   /home/team_ploke_dev/work/notes/ploke-vm/rate-limits-2026-06-11.md
         env::var("PLOKE_LIVE_GOOGLE_CHAT_MODEL")
             .unwrap_or_else(|_| "google/gemini-2.5-flash".to_string())
     }

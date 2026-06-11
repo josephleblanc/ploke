@@ -24,6 +24,7 @@ use crate::error::{HttpBodyFailure, HttpFailure, HttpReceivePhase, HttpSendFailu
 use crate::manager::builders::attempt::{
     AttemptBuilder, NonStreaming, ProviderAttempt, ProviderFailurePhase, ProviderRetryDecision,
 };
+use crate::manager::rate_limit::acquire as acquire_rate_limit;
 use crate::registry::calibration::{AttemptTimeout, ProviderTiming, RetryTuning};
 use crate::response::FinishReason;
 use crate::response::OpenAiResponse;
@@ -303,6 +304,20 @@ pub async fn chat_step_with_attempts<R: Router>(
     })?;
     let request_id = NEXT_CHAT_REQUEST_ID.fetch_add(1, Ordering::Relaxed);
     let mut provider_attempts = Vec::new();
+    // Acquire a rate-limit permit before doing any work. The
+    // permit is held until the function returns; the next caller
+    // blocks (paced by RPM) until the previous request finishes.
+    //
+    // This is the single chokepoint for outbound chat requests
+    // to Vertex AI / Gemini, OpenRouter, and any other router.
+    // 429 RESOURCE_EXHAUSTED from Vertex DSQ is structurally
+    // impossible below the configured RPM cap.
+    //
+    // See crates/ploke-llm/src/manager/rate_limit.rs for the
+    // policy and citations:
+    //   <https://cloud.google.com/vertex-ai/generative-ai/docs/resources/dynamic-shared-quota>
+    //   <https://cloud.google.com/vertex-ai/generative-ai/docs/quotas>
+    let _rate_limit_permit = acquire_rate_limit().await;
     let api_key = R::resolve_bearer_token().await.map_err(|e| {
         ChatStepError::new(LlmError::Http(HttpFailure::send(
             None,
