@@ -207,7 +207,13 @@ impl ChatSessionReport {
 
     pub fn summary(&self) -> String {
         let mut summary = match &self.outcome {
-            SessionOutcome::Completed => "Request summary: [success]".to_string(),
+            SessionOutcome::Completed => {
+                if self.errors.is_empty() {
+                    "Request summary: [success]".to_string()
+                } else {
+                    "Request summary: [completed_with_errors]".to_string()
+                }
+            }
             SessionOutcome::Aborted { error_id } => {
                 format!("Request summary: [aborted] error_id={error_id}")
             }
@@ -1253,6 +1259,59 @@ mod tests {
         assert!(summary.contains("code=HTTP_SEND_FAILED"));
         assert!(summary.contains("kind=transport"));
         assert!(summary.contains("failed to resolve bearer token"));
+    }
+
+    #[test]
+    fn chat_session_summary_completed_without_errors_is_success() {
+        let report = ChatSessionReport::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        assert!(matches!(report.outcome, SessionOutcome::Completed));
+
+        let summary = report.summary();
+
+        assert!(
+            summary.starts_with("Request summary: [success]"),
+            "error-free completion must report [success]: {summary}"
+        );
+        assert!(!summary.contains("[completed_with_errors]"));
+        assert!(!summary.contains(" code="));
+    }
+
+    #[test]
+    fn chat_session_summary_completed_with_errors_is_not_labeled_success() {
+        // A turn that ended cleanly (Completed) but recorded a tool-execution
+        // failure must not be presented as `[success]`; it should be labeled
+        // honestly while still preserving the failed-call detail. Mirrors the
+        // live state11 ripgrep-2209 incident where a tool failure remained in
+        // the terminal diagnostic on an otherwise-completed turn.
+        let err = LlmError::ToolCall(
+            "apply_code_edit: fuzzy match rejected: no matching span".to_string(),
+        );
+        let loop_error = classify_llm_error(&err, ErrorContext::new(1, 0), CommitPhase::PreCommit);
+        let mut report = ChatSessionReport::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        report.record_error(loop_error);
+        // Outcome stays Completed (the chat loop ended cleanly).
+        assert!(matches!(report.outcome, SessionOutcome::Completed));
+
+        let summary = report.summary();
+
+        assert!(
+            summary.starts_with("Request summary: [completed_with_errors]"),
+            "completed turn with recorded errors must not be labeled [success]: {summary}"
+        );
+        assert!(!summary.contains("[success]"));
+        // The failed-call detail suffix must still be preserved.
+        assert!(summary.contains("code=TOOL_EXECUTION_FAILED"));
+        assert!(summary.contains("kind=tool_execution"));
     }
 
     #[test]
