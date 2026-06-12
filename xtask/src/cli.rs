@@ -18,8 +18,8 @@
 //! ```
 
 use crate::commands::{
-    CommandContext, OutputFormat, XtaskError, check::Check, db::Db, orchestrate::Orchestrate,
-    parse::Parse, pipeline::Pipeline,
+    CommandContext, OutputFormat, XtaskError, check::Check, db::Db, mbe::Mbe,
+    orchestrate::Orchestrate, parse::Parse, pipeline::Pipeline,
 };
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -91,6 +91,10 @@ impl Cli {
                 let result = cmd.execute(&ctx)?;
                 serde_json::to_value(result)?
             }
+            Commands::Mbe(cmd) => {
+                let result = cmd.execute(&ctx)?;
+                serde_json::to_value(result)?
+            }
             Commands::Pipeline(Pipeline::HookContext(cmd)) => {
                 cmd.execute_raw(&ctx)?;
                 return Ok(());
@@ -148,6 +152,10 @@ pub enum Commands {
     /// Coordinate sub-agent worker slots, task queues, blockers, and packets
     #[command(subcommand)]
     Orchestrate(Orchestrate),
+
+    /// Set up and verify Multi-SWE-Bench evaluator tooling
+    #[command(subcommand)]
+    Mbe(Mbe),
 
     /// Look up source functions that belong to documented workflow pipelines
     #[command(subcommand)]
@@ -387,5 +395,29 @@ mod tests {
     fn test_cli_quiet() {
         let cli = Cli::parse_from(["xtask", "--quiet", "help-topic"]);
         assert!(cli.quiet);
+    }
+
+    #[test]
+    fn test_mbe_setup_command_parses() {
+        let cli = Cli::parse_from([
+            "xtask",
+            "mbe",
+            "setup",
+            "--source",
+            "/tmp/multi-swe-bench",
+            "--venv",
+            "/tmp/mbe-venv",
+            "--python",
+            "python3.11",
+        ]);
+
+        match cli.command {
+            Commands::Mbe(crate::commands::mbe::Mbe::Setup(setup)) => {
+                assert_eq!(setup.source, Some(PathBuf::from("/tmp/multi-swe-bench")));
+                assert_eq!(setup.venv, Some(PathBuf::from("/tmp/mbe-venv")));
+                assert_eq!(setup.python_interpreter, "python3.11");
+            }
+            other => panic!("expected MBE setup command, got {other:?}"),
+        }
     }
 }
