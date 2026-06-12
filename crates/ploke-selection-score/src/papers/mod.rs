@@ -3,6 +3,7 @@
 pub mod agentcl;
 pub mod axiom;
 pub mod csa;
+pub mod deepcode;
 pub mod deliberative;
 pub mod entropy;
 pub mod eva;
