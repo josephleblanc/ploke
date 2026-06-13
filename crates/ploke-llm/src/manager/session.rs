@@ -1308,6 +1308,15 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepData, LlmError> {
             continue;
         }
 
+        if choice.finish_reason == Some(FinishReason::MalformedFunctionCall) {
+            return Err(api_error_from_malformed_function_call(
+                choice,
+                parsed.provider.as_ref(),
+                raw_provider_slug.clone(),
+                body_text,
+            ));
+        }
+
         // Case 1: Chat-style `message`
         if let Some(msg) = &choice.message {
             let calls_opt = &msg.tool_calls;
@@ -1475,6 +1484,33 @@ fn api_error_from_choice_error(
     }
 }
 
+fn api_error_from_malformed_function_call(
+    choice: &crate::response::Choices,
+    provider_name: Option<&ProviderName>,
+    raw_provider_slug: Option<ArcStr>,
+    body_text: &str,
+) -> LlmError {
+    let detail = choice
+        .message
+        .as_ref()
+        .and_then(|message| message.refusal.as_deref())
+        .or(choice.text.as_deref())
+        .unwrap_or("Provider reported a malformed function call");
+    LlmError::Api {
+        status: 200,
+        message: detail.to_string(),
+        url: None,
+        body_snippet: Some(truncate_for_error(body_text, 4_096)),
+        api_code: Some(ArcStr::from("malformed_function_call")),
+        provider_name: provider_name.map(|name| ArcStr::from(name.as_str())),
+        provider_slug: provider_name
+            .and_then(ProviderName::to_slug)
+            .map(|slug| ArcStr::from(slug.as_str()))
+            .or(raw_provider_slug),
+        error_source: ApiErrorSource::ChoiceError,
+    }
+}
+
 fn check_provider_error(body_text: &str) -> Result<(), LlmError> {
     // Providers sometimes put errors inside a 200 body
     match serde_json::from_str::<ProviderResponseObservation>(body_text) {
@@ -1518,6 +1554,36 @@ mod tests {
                 content: Some(c), ..
             } => assert_eq!(c.as_ref(), "Hello world"),
             _ => panic!("expected content"),
+        }
+    }
+
+    #[test]
+    fn malformed_function_call_finish_reason_surfaces_as_choice_error() {
+        let body = r#"{
+            "choices": [{
+                "finish_reason": "malformed_function_call",
+                "index": 0,
+                "message": {
+                    "refusal": "Malformed function call: print(default_api.apply_code_edit(...))"
+                }
+            }]
+        }"#;
+
+        let err = parse_chat_outcome(body).expect_err("malformed function call should error");
+        match err {
+            LlmError::Api {
+                status,
+                message,
+                api_code: Some(api_code),
+                error_source,
+                ..
+            } => {
+                assert_eq!(status, 200);
+                assert_eq!(api_code.as_ref(), "malformed_function_call");
+                assert_eq!(error_source, ApiErrorSource::ChoiceError);
+                assert!(message.contains("default_api.apply_code_edit"));
+            }
+            other => panic!("unexpected error: {other:?}"),
         }
     }
 

@@ -192,6 +192,7 @@ fn normalize_provider_tool_args_invalid(
         message,
         body_snippet,
         provider_slug,
+        api_code,
         error_source,
         ..
     } = err
@@ -201,6 +202,16 @@ fn normalize_provider_tool_args_invalid(
     if *error_source != ApiErrorSource::ChoiceError {
         return None;
     }
+    if let Some(spec) = normalize_malformed_function_call(
+        message,
+        body_snippet.as_deref(),
+        api_code.as_ref(),
+        provider_slug.as_ref(),
+        &mut context,
+    ) {
+        return Some(spec);
+    }
+
     let provider_slug = provider_slug.as_ref()?;
     if provider_slug.as_ref() != "groq" {
         return None;
@@ -286,6 +297,111 @@ fn normalize_provider_tool_args_invalid(
     })
 }
 
+fn normalize_malformed_function_call(
+    message: &str,
+    body_snippet: Option<&str>,
+    api_code: Option<&ArcStr>,
+    provider_slug: Option<&ArcStr>,
+    context: &mut ErrorContext,
+) -> Option<SemanticLoopErrorSpec> {
+    let api_code_matches = api_code.is_some_and(|code| code.as_ref() == "malformed_function_call");
+    let mut source = None;
+    for candidate in [message, body_snippet.unwrap_or_default()] {
+        if candidate.contains("Malformed function call")
+            || candidate.contains("malformed_function_call")
+        {
+            source = Some(candidate);
+            break;
+        }
+    }
+    if !api_code_matches && source.is_none() {
+        return None;
+    }
+
+    let source = source.unwrap_or(message);
+    let tool_name = extract_tool_name_from_malformed_function_call(source);
+    context.provider = provider_slug.cloned();
+    context.tool_name = tool_name.clone();
+    let detail = ArcStr::from(format!(
+        "Provider reported malformed function-call syntax: {}",
+        truncate_chars(source.trim(), 600)
+    ));
+
+    let mut constraints = vec![
+        ArcStr::from("Use the native tool-call envelope; do not write Python syntax."),
+        ArcStr::from(
+            "Do not wrap tool calls in print(...), default_api.*, or constructor-style helper calls.",
+        ),
+        ArcStr::from("Arguments must be strict JSON and match the tool schema."),
+    ];
+    if let Some(tool_name) = tool_name.as_ref() {
+        constraints.push(ArcStr::from(format!(
+            "Retry the same tool name: {tool_name}"
+        )));
+    }
+
+    Some(SemanticLoopErrorSpec {
+        failure: SemanticFailure::ProviderToolArgsInvalid {
+            provider: provider_slug.cloned(),
+            tool_name: tool_name.clone(),
+            detail: detail.clone(),
+            realization: ToolArgsFailureRealization::ProviderRejectedToolCall,
+        },
+        recovery: RecoveryDecision::Repair {
+            strategy: RetryStrategy::Fixed,
+            reason: ArcStr::from(
+                "Malformed tool-call syntax requires a corrected native tool call",
+            ),
+            action: RepairAction::ToolArgs,
+        },
+        kind: LoopErrorKind::ModelBehavior,
+        code: ArcStr::from("TOOL_ARGS_REPAIR_REQUIRED"),
+        severity: ErrorSeverity::Error,
+        summary: ArcStr::from("Provider rejected malformed function-call syntax."),
+        user_action: Some(ArcStr::from(
+            "Request a corrected native tool call and retry.",
+        )),
+        llm_action: Some(LlmAction {
+            next_steps: vec![LlmNextStep {
+                action: ArcStr::from("repair_tool_args"),
+                details: Some(detail.clone()),
+            }],
+            constraints,
+            retry_hint: Some(RetryStrategy::Fixed),
+        }),
+        context: context.clone(),
+        diagnostics: Some(Diagnostics { diagnostic: detail }),
+    })
+}
+
+fn extract_tool_name_from_malformed_function_call(source: &str) -> Option<ArcStr> {
+    for needle in ["default_api.", "api."] {
+        if let Some(start) = source.find(needle) {
+            let rest = &source[start + needle.len()..];
+            let name = rest
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+                .collect::<String>();
+            if !name.is_empty() {
+                return Some(ArcStr::from(name));
+            }
+        }
+    }
+    None
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    for (idx, ch) in value.chars().enumerate() {
+        if idx >= max_chars {
+            out.push_str("...");
+            return out;
+        }
+        out.push(ch);
+    }
+    out
+}
+
 fn extract_unknown_tool_name(err: &LlmError) -> Option<ArcStr> {
     let message = match err {
         LlmError::Deserialization { message, .. } => message.as_str(),
@@ -360,6 +476,40 @@ mod tests {
             }
         ));
         assert_eq!(spec.context.tool_name.as_deref(), Some("fake_tool"));
+    }
+
+    #[test]
+    fn normalize_malformed_function_call_maps_to_tool_args_repair() {
+        let err = LlmError::Api {
+            status: 200,
+            message: "Malformed function call: print(default_api.apply_code_edit(...))".to_string(),
+            url: None,
+            body_snippet: None,
+            api_code: Some(ArcStr::from("malformed_function_call")),
+            provider_name: Some(ArcStr::from("Google")),
+            provider_slug: Some(ArcStr::from("google")),
+            error_source: ApiErrorSource::ChoiceError,
+        };
+
+        let spec = normalize_llm_error(&err, &[], ErrorContext::new(1, 0))
+            .expect("malformed function call should normalize");
+
+        assert_eq!(spec.code.as_ref(), "TOOL_ARGS_REPAIR_REQUIRED");
+        assert!(matches!(
+            spec.recovery,
+            RecoveryDecision::Repair {
+                action: RepairAction::ToolArgs,
+                ..
+            }
+        ));
+        assert_eq!(spec.context.provider.as_deref(), Some("google"));
+        assert_eq!(spec.context.tool_name.as_deref(), Some("apply_code_edit"));
+        assert!(spec.llm_action.as_ref().is_some_and(|action| {
+            action
+                .constraints
+                .iter()
+                .any(|item| item.contains("default_api"))
+        }));
     }
 
     #[test]

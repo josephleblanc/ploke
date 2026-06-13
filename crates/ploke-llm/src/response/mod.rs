@@ -120,12 +120,13 @@ pub struct Choices {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum FinishReason {
-    Stop,          // Natural stop sequence
-    Length,        // Max tokens reached
-    ContentFilter, // Blocked by safety system
-    ToolCalls,     // Stopped for tool execution
-    Timeout,       // Processing time exceeded
-    Error(String), // Error description
+    Stop,                  // Natural stop sequence
+    Length,                // Max tokens reached
+    ContentFilter,         // Blocked by safety system
+    ToolCalls,             // Stopped for tool execution
+    MalformedFunctionCall, // Provider rejected malformed tool-call syntax
+    Timeout,               // Processing time exceeded
+    Error(String),         // Error description
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

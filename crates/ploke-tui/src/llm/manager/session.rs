@@ -505,6 +505,18 @@ impl FinishPolicy {
                         );
                     }
                 }
+                FinishReason::MalformedFunctionCall => {
+                    if failure.is_none() {
+                        failure = Some(FinishFailure::FinishError {
+                            msg: "Provider reported a malformed function call; retry with a native tool-call envelope.".to_string(),
+                            finish_reason,
+                        });
+                    }
+                    tracing::trace!(
+                        target = FINISH_REASON_TARGET,
+                        "finish reason decision: failure"
+                    );
+                }
                 FinishReason::Error(ref e) => {
                     if should_retry_error(self.error, &mut state.retried_errors) {
                         tracing::warn!(

@@ -919,6 +919,29 @@ fn finish_reason_metadata(
             None,
             None,
         ),
+        FinishReason::MalformedFunctionCall => (
+            LoopErrorKind::ModelBehavior,
+            ArcStr::from("TOOL_ARGS_REPAIR_REQUIRED"),
+            ErrorSeverity::Error,
+            RetryAdvice::Maybe {
+                reason: ArcStr::from("Provider rejected malformed tool-call syntax"),
+            },
+            Some(ArcStr::from(
+                "Request a corrected native tool call and retry.",
+            )),
+            Some(LlmAction {
+                next_steps: vec![LlmNextStep {
+                    action: ArcStr::from("repair_tool_args"),
+                    details: Some(ArcStr::from(
+                        "Call the tool directly with JSON arguments; do not emit Python syntax, print(...), or default_api.* wrappers.",
+                    )),
+                }],
+                constraints: vec![ArcStr::from(
+                    "Use the native tool-call envelope instead of textual function-call syntax.",
+                )],
+                retry_hint: Some(RetryStrategy::Fixed),
+            }),
+        ),
         FinishReason::ToolCalls | FinishReason::Stop => (
             LoopErrorKind::StateMachine,
             ArcStr::from("UNEXPECTED_FINISH_REASON"),
@@ -1023,6 +1046,9 @@ fn finish_reason_summary(finish_reason: &FinishReason) -> ArcStr {
         FinishReason::Error(msg) => ArcStr::from(format!("Finish reason error: {}", msg)),
         FinishReason::Length => ArcStr::from("Finish reason length: response truncated."),
         FinishReason::Timeout => ArcStr::from("Finish reason timeout from provider."),
+        FinishReason::MalformedFunctionCall => ArcStr::from(
+            "Finish reason malformed function call: provider rejected tool-call syntax.",
+        ),
         FinishReason::ContentFilter => ArcStr::from("Finish reason content filter."),
         FinishReason::ToolCalls => ArcStr::from("Finish reason tool calls."),
         FinishReason::Stop => ArcStr::from("Finish reason stop."),
