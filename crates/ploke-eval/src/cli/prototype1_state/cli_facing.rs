@@ -650,6 +650,7 @@ struct ChildPlanEnv<'a> {
     manifest_path: &'a Path,
     repo_root: &'a Path,
     broad_tui: profile::BroadTui,
+    anti_attractor_policy: profile::AntiAttractorPolicy,
     /// Active run-level model route for this campaign. A broad-batch
     /// provider-unavailable abort only permanently fails the parent when this
     /// is `DirectGoogle`; other routers keep the parent resumable. This is the
@@ -973,6 +974,7 @@ struct Prototype1StateRunShape {
     stop_after: Prototype1StateStopAfter,
     observe_child_stale_after: Duration,
     broad_tui: profile::BroadTui,
+    anti_attractor_policy: profile::AntiAttractorPolicy,
     candidate_generation: CandidateGenerationConfig,
     successor_selection: Prototype1SuccessorSelection,
     successor_selection_seed: u64,
@@ -988,6 +990,7 @@ impl Prototype1StateRunShape {
             stop_after: command.stop_after,
             observe_child_stale_after: profile::Execution::default().observe_child_stale_after(),
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             candidate_generation: CandidateGenerationConfig::from_command(command),
             successor_selection: command.successor_selection,
             successor_selection_seed: command.successor_selection_seed,
@@ -1003,6 +1006,7 @@ impl Prototype1StateRunShape {
             stop_after: profile.execution.state_stop_after(),
             observe_child_stale_after: profile.execution.observe_child_stale_after(),
             broad_tui: profile.execution.broad_tui,
+            anti_attractor_policy: profile.anti_attractor_policy(),
             candidate_generation: CandidateGenerationConfig::from_profile_generation(
                 profile.generation,
             ),
@@ -1158,6 +1162,7 @@ async fn run_parent_target_selection(
                 parent,
                 child_budget,
                 env.broad_tui,
+                env.anti_attractor_policy,
             )?;
             run_pre_child_planning_review(env, &batch).await?;
             Ok(ParentTargetSelection::AwaitingHarnessBatch(batch))
@@ -1276,6 +1281,7 @@ fn publish_broad_harness_child_plan_request(
     parent: Parent<Ready>,
     child_budget: Prototype1ChildBudget,
     broad_tui: profile::BroadTui,
+    anti_attractor_policy: profile::AntiAttractorPolicy,
 ) -> Result<HarnessRequestBatch, PrepareError> {
     let parent_identity = parent.identity().clone();
     let root_node = parent.node().clone();
@@ -1309,6 +1315,7 @@ fn publish_broad_harness_child_plan_request(
             broad_tui
                 .graph_nearest
                 .unwrap_or(DEFAULT_GRAPH_NEAREST_ITEMS),
+            anti_attractor_policy,
         )?;
         slots.push(HarnessRequestSlot {
             request_path: publication.request_path,
@@ -3000,6 +3007,7 @@ fn publish_broad_edit_harness_request(
     parent: &ParentIdentity,
     child_budget: Prototype1ChildBudget,
     admission_binding: crate::cli::prototype1_state::edit_surface::harness_request::RequestAdmissionBinding,
+    anti_attractor_policy: profile::AntiAttractorPolicy,
 ) -> Result<BroadHarnessRequestPublication, PrepareError> {
     publish_broad_edit_harness_request_with_graph_limit(
         manifest_path,
@@ -3008,6 +3016,7 @@ fn publish_broad_edit_harness_request(
         child_budget,
         admission_binding,
         DEFAULT_GRAPH_NEAREST_ITEMS,
+        anti_attractor_policy,
     )
 }
 
@@ -3018,6 +3027,7 @@ fn publish_broad_edit_harness_request_with_graph_limit(
     child_budget: Prototype1ChildBudget,
     admission_binding: crate::cli::prototype1_state::edit_surface::harness_request::RequestAdmissionBinding,
     nearest_items: usize,
+    anti_attractor_policy: profile::AntiAttractorPolicy,
 ) -> Result<BroadHarnessRequestPublication, PrepareError> {
     let prototype_root = prototype1_campaign_root(manifest_path);
     let request_dir = prototype_root.join("messages/edit-harness-request");
@@ -3044,6 +3054,11 @@ fn publish_broad_edit_harness_request_with_graph_limit(
     let planning_artifact_path =
         pre_child_planning_artifact_path(&prototype_root, parent.node_id());
     let published = published.with_planning_artifact_path(planning_artifact_path);
+    let published = if let Some(suffix) = profile::prompt_suffix_for(&[], anti_attractor_policy) {
+        published.with_prompt_suffix(suffix)
+    } else {
+        published
+    };
     let request_path = published.request_path().to_path_buf();
     if let Some(parent) = request_path.parent() {
         fs::create_dir_all(parent).map_err(|source| PrepareError::CreateOutputDir {
@@ -4731,6 +4746,7 @@ async fn resolve_child_plan(
     selected_node_id: Option<&str>,
     child_budget: Prototype1ChildBudget,
     broad_tui: profile::BroadTui,
+    anti_attractor_policy: profile::AntiAttractorPolicy,
     route_source: ModelRouteSource,
 ) -> Result<PlannedChildren, PrepareError> {
     let parent_identity = parent.identity().clone();
@@ -4739,6 +4755,7 @@ async fn resolve_child_plan(
         manifest_path,
         repo_root,
         broad_tui,
+        anti_attractor_policy,
         route_source,
     };
     info!(
@@ -5286,6 +5303,7 @@ pub(crate) async fn resolve_profile_child_plan(
         None,
         child_budget,
         run_profile.execution.broad_tui,
+        run_profile.anti_attractor_policy(),
         route_source,
     )
     .await
@@ -7392,6 +7410,7 @@ pub(crate) async fn run_prototype1_state_turn(
         command.node_id.as_deref(),
         plan_child_budget,
         run_shape.broad_tui,
+        run_shape.anti_attractor_policy,
         resolved_campaign.route_source,
     )
     .await?;

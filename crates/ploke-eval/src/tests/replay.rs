@@ -40,13 +40,15 @@ use tracing_subscriber::fmt::SubscriberBuilder;
 use uuid::Uuid;
 
 use crate::{
-    PreparedSingleRun,
     replay::llm::LoadedResponseTape,
     runner::{
-        RepoStateArtifact, checkout_repo_to_base, init_runtime_db, prepare_sparse_workspace,
+        RepoStateArtifact, init_runtime_db, prepare_sparse_workspace,
         sparse_headless_embedding_processor,
     },
 };
+
+#[cfg(feature = "replay_tests")]
+use crate::PreparedSingleRun;
 
 #[cfg(feature = "replay_tests")]
 use crate::runner::{
@@ -141,6 +143,7 @@ fn load_recorded_apply_code_edit_request() -> RecordedApplyCodeEditToolRequest {
     .expect("recorded apply_code_edit tool request fixture must be valid json")
 }
 
+#[cfg(feature = "replay_tests")]
 fn load_prepared_single_run(path: &Path) -> PreparedSingleRun {
     let text = std::fs::read_to_string(path).expect("read historical run manifest");
     serde_json::from_str(&text).expect("historical run manifest must parse")
@@ -1290,27 +1293,20 @@ async fn test_apply_code_edit_historical_failure_path() {
 #[tokio::test(flavor = "multi_thread")]
 async fn regression_ripgrep_setup_indexes_without_convert_keyword_2015() {
     init_tracing();
-    const SOURCE_MANIFEST: &str =
-        "/home/brasides/.ploke-eval/instances/BurntSushi__ripgrep-1642/run.json";
 
-    assert!(
-        PathBuf::from(SOURCE_MANIFEST).exists(),
-        "expected historical run manifest at {SOURCE_MANIFEST}"
-    );
+    let temp = tempfile::tempdir().expect("tempdir");
+    let repo_root = temp.path().join("ripgrep-1642-portable");
+    write_portable_ripgrep_2015_workspace(&repo_root);
 
-    let mut prepared = load_prepared_single_run(Path::new(SOURCE_MANIFEST));
-    prepared.task_id = format!("{}-regression-dual-syn", prepared.task_id);
-    checkout_repo_to_base(&prepared.repo_root, prepared.base_sha.as_deref())
-        .expect("historical ripgrep repo should checkout base sha");
-    let resolved = resolve_index_target(Some(prepared.repo_root.clone()), &prepared.repo_root)
-        .expect("historical ripgrep root should resolve");
+    let resolved = resolve_index_target(Some(repo_root.clone()), &repo_root)
+        .expect("portable ripgrep-style root should resolve");
     assert_eq!(resolved.kind, IndexTargetKind::Workspace);
     assert!(
         resolved
             .member_roots
             .iter()
             .any(|root| root.ends_with("crates/printer")),
-        "expected ripgrep workspace members to include target crate: {:?}",
+        "expected portable ripgrep workspace members to include target crate: {:?}",
         resolved.member_roots
     );
 
@@ -1321,9 +1317,9 @@ async fn regression_ripgrep_setup_indexes_without_convert_keyword_2015() {
     );
     let state = runtime.state_arc();
 
-    prepare_sparse_workspace(&state, &prepared.repo_root, &[])
+    prepare_sparse_workspace(&state, &repo_root, &[])
         .await
-        .expect("ripgrep setup should index successfully via dual-syn syn1 path without convert_keyword_2015");
+        .expect("portable ripgrep-style setup should index successfully via dual-syn syn1 path without convert_keyword_2015");
 
     let crate_rows = state
         .db
@@ -1336,9 +1332,76 @@ async fn regression_ripgrep_setup_indexes_without_convert_keyword_2015() {
     for expected in ["grep-printer", "ignore", "globset"] {
         assert!(
             crate_names.contains(expected),
-            "expected ripgrep workspace member '{expected}' after indexing, got {crate_rows:?}"
+            "expected portable ripgrep workspace member '{expected}' after indexing, got {crate_rows:?}"
         );
     }
+}
+
+fn write_portable_ripgrep_2015_workspace(repo_root: &Path) {
+    std::fs::create_dir_all(repo_root.join("crates/printer/src"))
+        .expect("create portable printer crate");
+    std::fs::create_dir_all(repo_root.join("crates/ignore/src"))
+        .expect("create portable ignore crate");
+    std::fs::create_dir_all(repo_root.join("crates/globset/src"))
+        .expect("create portable globset crate");
+
+    std::fs::write(
+        repo_root.join("Cargo.toml"),
+        r#"[workspace]
+members = ["crates/printer", "crates/ignore", "crates/globset"]
+resolver = "2"
+"#,
+    )
+    .expect("write portable ripgrep workspace manifest");
+
+    write_portable_member_crate(
+        &repo_root.join("crates/printer"),
+        "grep-printer",
+        "2015",
+        r#"pub mod style {
+    pub fn render_match_line(line: &str) -> String {
+        let dyn = line.trim();
+        format!("{}", dyn)
+    }
+}
+"#,
+    );
+    write_portable_member_crate(
+        &repo_root.join("crates/ignore"),
+        "ignore",
+        "2018",
+        r#"pub fn hidden(path: &str) -> bool {
+    path.starts_with('.')
+}
+"#,
+    );
+    write_portable_member_crate(
+        &repo_root.join("crates/globset"),
+        "globset",
+        "2021",
+        r#"pub fn matches(pattern: &str, path: &str) -> bool {
+    path.contains(pattern)
+}
+"#,
+    );
+}
+
+fn write_portable_member_crate(root: &Path, name: &str, edition: &str, lib_rs: &str) {
+    std::fs::write(
+        root.join("Cargo.toml"),
+        format!(
+            r#"[package]
+name = "{name}"
+version = "0.1.0"
+edition = "{edition}"
+
+[lib]
+path = "src/lib.rs"
+"#
+        ),
+    )
+    .expect("write portable member manifest");
+    std::fs::write(root.join("src/lib.rs"), lib_rs).expect("write portable member lib.rs");
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -30,6 +30,8 @@ pub(crate) struct BroadHarnessRequest {
     pub(crate) evidence_roots: Vec<EvidenceRoot>,
     pub(crate) return_evidence: ReturnEvidenceContract,
     pub(crate) instructions: Vec<HarnessInstruction>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) prompt_suffixes: Vec<String>,
 }
 
 // structural-naming:allow compatibility alias; active carrier is request::Request<request::Broad, request::Published>.
@@ -1301,7 +1303,13 @@ impl BroadHarnessRequest {
                 HarnessInstruction::ChooseLikelyDescendantImprovement,
                 HarnessInstruction::StageCandidateChange,
             ],
+            prompt_suffixes: Vec::new(),
         }
+    }
+
+    pub(crate) fn with_prompt_suffix(mut self, suffix: impl Into<String>) -> Self {
+        self.prompt_suffixes.push(suffix.into());
+        self
     }
 
     pub(crate) fn render_prompt(&self) -> String {
@@ -1342,6 +1350,9 @@ impl BroadHarnessRequest {
             "Before editing, produce and follow a structured planning review with target_pipeline, evidence_citations, pipeline_scope, and edit_intent. Use the `{}` planner route for that review.\n",
             self.planning.planner.route.render()
         ));
+        prompt.push_str(
+            "Before editing, read the benchmark/oracle evidence for named fail-to-pass or regression tests. Cite each named regression test separately in the planning review with its expected-vs-observed behavior and why the proposed edit should affect it. For BurntSushi__ripgrep-2209, when those tests are present, cite both regression::r2095 and regression::r2208 before choosing an edit.\n",
+        );
         if let Some(path) = self.planning.artifact_path.as_ref() {
             prompt.push_str(&format!(
                 "A parent-side pre-child planning review is expected at `{}` before this request is executed; read it as guidance, but do not treat it as submitted child evidence.\n",
@@ -1361,6 +1372,16 @@ impl BroadHarnessRequest {
         prompt.push_str(
             "Inspect the repository and evidence. Choose the change you think is most likely to improve future evaluated descendants. The provided evaluations are guidance, not hard edit targets.\n",
         );
+        if !self.prompt_suffixes.is_empty() {
+            prompt.push_str("\nAdditional run-profile guidance:\n");
+            for suffix in &self.prompt_suffixes {
+                prompt.push_str("- ");
+                prompt.push_str(suffix);
+                if !suffix.ends_with('\n') {
+                    prompt.push('\n');
+                }
+            }
+        }
         prompt
     }
 
@@ -1522,6 +1543,12 @@ impl request::Request<request::Broad, request::Published> {
 
     pub(crate) fn with_planning_artifact_path(mut self, path: PathBuf) -> Self {
         self.request.planning.artifact_path = Some(path);
+        self.request_hash = request::Hash::new(self.compute_request_hash());
+        self
+    }
+
+    pub(crate) fn with_prompt_suffix(mut self, suffix: impl Into<String>) -> Self {
+        self.request = self.request.with_prompt_suffix(suffix);
         self.request_hash = request::Hash::new(self.compute_request_hash());
         self
     }
@@ -1770,6 +1797,48 @@ mod tests {
         assert!(prompt.contains("7 nearest code items"));
         assert!(prompt.contains("crates/ploke-tui/src/tools/mod.rs"));
         assert!(prompt.contains("protocol output and detected tool failures"));
+    }
+
+    #[test]
+    fn broad_prompt_requires_named_regression_evidence_before_editing() {
+        let fixture = Fixture::new();
+        let published = fixture.published_request();
+
+        let prompt = published.request.render_prompt();
+
+        assert!(
+            prompt.contains("Before editing"),
+            "prompt must put evidence review before edits: {prompt}"
+        );
+        assert!(
+            prompt.contains("regression::r2095"),
+            "ripgrep-2209 prompt contract must name r2095 when present: {prompt}"
+        );
+        assert!(
+            prompt.contains("regression::r2208"),
+            "ripgrep-2209 prompt contract must name r2208 when present: {prompt}"
+        );
+        assert!(
+            prompt.contains("expected-vs-observed"),
+            "prompt must require expected-vs-observed evidence before editing: {prompt}"
+        );
+    }
+
+    #[test]
+    fn published_request_prompt_suffix_is_rendered_and_hash_bound() {
+        let fixture = Fixture::new();
+        let original = fixture.published_request();
+        let original_hash = original.request_hash().to_string();
+
+        let published = original.with_prompt_suffix(
+            "verify both boundaries: reject matches after range.end and cap trailing copied bytes",
+        );
+        let prompt = published.request.render_prompt();
+
+        assert!(prompt.contains("Additional run-profile guidance"));
+        assert!(prompt.contains("range.end"));
+        assert!(prompt.contains("trailing copied bytes"));
+        assert_ne!(published.request_hash(), original_hash);
     }
 
     #[test]

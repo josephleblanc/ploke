@@ -2376,10 +2376,15 @@ async fn historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_l
         "historical r10 replay must not run with the broad TUI summary fixture hook enabled"
     );
     let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
-    let turn_live_dir = historical_r10_turn_live_dir();
+    let fixture = prepare_live_canary(
+        "historical-r10-post-stop-admission",
+        "Replay historical r10 through broad headless-TUI admission.",
+    )
+    .expect("prepare historical r10 admission fixture");
+    let turn_live_dir = write_portable_historical_r10_turn_live_bundle(&fixture.artifact_root);
     assert!(
         turn_live_dir.exists(),
-        "expected historical r10 turn-live bundle at {}",
+        "expected portable historical r10 turn-live bundle at {}",
         turn_live_dir.display()
     );
 
@@ -2434,15 +2439,10 @@ async fn historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_l
         "selected prefix should include the historical repair ns_patch response"
     );
 
-    let fixture = prepare_live_canary(
-        "historical-r10-post-stop-admission",
-        "Replay historical r10 through broad headless-TUI admission.",
-    )
-    .expect("prepare historical r10 admission fixture");
-    // This fixture preserves the historical ordering requirement:
-    // the first r10 patch introduces `+ nth` (where `nth: &mut f64`, so
-    // `f64 + &mut f64` does not compile), and the repair patch changes it to
-    // `+ *nth`, which compiles. `ploke-eval` depends on `ploke-selection-score`,
+    // Portable fixture preserves the historical ordering requirement:
+    // the first r10 patch introduces `+ kids` (where `kids: &usize`, so
+    // `f64 + &usize` does not compile), and the repair patch changes it to
+    // `+ *kids`, which compiles. `ploke-eval` depends on `ploke-selection-score`,
     // so the buildability gate (`cargo check -p ploke-eval`) fails on the first
     // patch and passes only after the repair. The harness validates each applied
     // batch and finalizes as soon as the declared validation passes, so
@@ -2578,18 +2578,22 @@ async fn historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_l
         .join("crates/ploke-selection-score/src/ploke/frontier.rs");
     let final_src = fs::read_to_string(&target_file).expect("read final historical r10 target");
     println!(
-        "\n=== historical r10 replay: final source check ===\n  target_file: {}\n  contains_repaired_deref: {}\n  contains_unrepaired_nth: {}",
+        "\n=== historical r10 replay: final source check ===\n  target_file: {}\n  contains_repaired_deref: {}\n  contains_unrepaired_kids_cast: {}",
         target_file.display(),
-        final_src.contains("(left.iter().sum::<f64>() + *nth) / count as f64"),
-        final_src.contains("(left.iter().sum::<f64>() + nth) / count as f64")
+        final_src.contains("/ (1.0 + *kids as f64)"),
+        final_src.contains("/ (1.0 + kids as f64)")
     );
     assert!(
-        final_src.contains("(left.iter().sum::<f64>() + *nth) / count as f64"),
-        "historical r10 patch should dereference nth, got:\n{final_src}"
+        final_src.contains("let count = cfg.top_m.saturating_add(1).clamp(1, qual.len());"),
+        "portable historical r10 patch should retain a net source change, got:\n{final_src}"
     );
     assert!(
-        !final_src.contains("(left.iter().sum::<f64>() + nth) / count as f64"),
-        "historical r10 pre-patch expression should be gone, got:\n{final_src}"
+        final_src.contains("/ (1.0 + *kids as f64)"),
+        "portable historical r10 repair should dereference kids, got:\n{final_src}"
+    );
+    assert!(
+        !final_src.contains("/ (1.0 + kids as f64)"),
+        "portable historical r10 pre-repair expression should be gone, got:\n{final_src}"
     );
 }
 

@@ -1284,6 +1284,7 @@ fn provider_unavailable_headless_tui_terminal_is_typed_prepare_error() {
         &test_parent_identity(),
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("published broad harness request");
     let slot = HarnessRequestSlot {
@@ -1318,6 +1319,12 @@ fn provider_unavailable_headless_tui_terminal_is_typed_prepare_error() {
 
 #[tokio::test]
 async fn rag_unavailable_headless_tui_setup_writes_typed_diagnostics() {
+    // This test intentionally sets a process-global env override consumed by
+    // `wait_for_bm25_ready`. Hold the shared LLM/headless-TUI test lock before
+    // installing that env so parallel recorded-replay tests cannot observe the
+    // forced setup failure spuriously.
+    let _headless_tui_guard = crate::test_support::llm_lock().lock().await;
+
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
     let repo_root = tmp.path().join("repo");
@@ -1341,6 +1348,7 @@ async fn rag_unavailable_headless_tui_setup_writes_typed_diagnostics() {
         &test_parent_identity(),
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("published broad harness request");
     let slot = HarnessRequestSlot {
@@ -1400,6 +1408,7 @@ async fn broad_tui_prep_failure_is_setup_blocker() {
         &test_parent_identity(),
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("published broad harness request");
     let slot = HarnessRequestSlot {
@@ -1468,6 +1477,7 @@ async fn zero_admission_batch_is_persisted() {
         parent,
         budget,
         profile::BroadTui::default(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     let first_diagnostics =
@@ -1487,6 +1497,7 @@ async fn zero_admission_batch_is_persisted() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -1584,6 +1595,7 @@ fn timed_out_headless_tui_applied_attempt_blocks_submitted_result_for_admission(
         &test_parent_identity(),
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("published broad harness request");
     let slot = HarnessRequestSlot {
@@ -1675,6 +1687,7 @@ fn applied_timed_out_headless_tui_blocks_submitted_result_with_typed_detail() {
         &test_parent_identity(),
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("published broad harness request");
     let slot = HarnessRequestSlot {
@@ -1833,6 +1846,7 @@ fn tui_edit_surface_parent_selection_publishes_child_plan() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::DirectGoogle,
         },
         parent,
@@ -1877,6 +1891,7 @@ fn broad_workspace_edit_surface_republication_uses_request_scoped_family_paths()
         &parent_identity,
         budget,
         admission_binding.clone(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("first publication");
     let second = publish_broad_edit_harness_request(
@@ -1885,6 +1900,7 @@ fn broad_workspace_edit_surface_republication_uses_request_scoped_family_paths()
         &parent_identity,
         budget,
         admission_binding,
+        profile::AntiAttractorPolicy::None,
     )
     .expect("second publication");
 
@@ -1951,6 +1967,7 @@ fn broad_batch_publication_allocates_request_slots() {
         parent,
         budget,
         profile::BroadTui::default(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("broad harness should allocate request slots from active artifact head");
 
@@ -2011,6 +2028,7 @@ async fn pre_child_planning_review_writes_prompt_and_artifact_before_admission()
         parent,
         budget,
         profile::BroadTui::default(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     let first = &batch.slots[0].published;
@@ -2027,6 +2045,7 @@ async fn pre_child_planning_review_writes_prompt_and_artifact_before_admission()
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::DirectGoogle,
         },
         &batch,
@@ -2068,6 +2087,7 @@ fn broad_batch_default_cap_respects_small_max() {
         parent,
         budget,
         profile::BroadTui::default(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("broad harness should allocate request slots");
 
@@ -2094,6 +2114,7 @@ fn broad_batch_uses_explicit_parallel_targets() {
         parent,
         budget,
         profile::BroadTui::default(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("broad harness should allocate request slots");
 
@@ -2133,6 +2154,7 @@ fn turn_live_bundle() {
         &test_parent_identity(),
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("published broad harness request");
     let slot = HarnessRequestSlot {
@@ -2335,6 +2357,7 @@ path = "src/lib.rs"
         &test_parent_identity(),
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("published broad harness request");
     fs::write(
@@ -2561,6 +2584,7 @@ fn broad_harness_rejects_unbound_existing_child_plan() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::DirectGoogle,
         },
         parent,
@@ -2624,6 +2648,7 @@ fn broad_harness_multi_file_admission_mints_one_artifact_child() {
         parent.identity(),
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("published request");
     let awaiting_parent = parent.awaiting_harness_plan_for_request((&publication.published).into());
@@ -2663,6 +2688,7 @@ fn broad_harness_multi_file_admission_mints_one_artifact_child() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::DirectGoogle,
         },
         receipt,
@@ -2730,6 +2756,7 @@ fn broad_harness_materialization_accepts_relative_parent_repo_root() {
         &parent_identity,
         Prototype1ChildBudget::new(1, 1),
         admission_binding.clone(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad request");
     let awaiting_parent = parent.awaiting_harness_plan_for_request((&publication.published).into());
@@ -2768,6 +2795,7 @@ fn broad_harness_materialization_accepts_relative_parent_repo_root() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::DirectGoogle,
         },
         receipt,
@@ -2824,6 +2852,7 @@ async fn broad_harness_batch_admits_three_transactions_into_three_children() {
         parent,
         budget,
         profile::BroadTui::default(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     assert_eq!(batch.patch_generation_parallel_cap, 2);
@@ -2848,6 +2877,7 @@ async fn broad_harness_batch_admits_three_transactions_into_three_children() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -2938,6 +2968,7 @@ async fn broad_slots_run_in_parallel() {
         parent,
         budget,
         profile::BroadTui::default(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     assert_eq!(batch.patch_generation_parallel_cap, 2);
@@ -2954,6 +2985,7 @@ async fn broad_slots_run_in_parallel() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -3034,6 +3066,7 @@ async fn provider_unavailable_after_partial_admissions_persists_failed_child_pla
         parent,
         budget,
         profile::BroadTui::default(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     assert_eq!(batch.slots.len(), 5);
@@ -3053,6 +3086,7 @@ async fn provider_unavailable_after_partial_admissions_persists_failed_child_pla
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -3105,6 +3139,7 @@ async fn provider_unavailable_after_partial_admissions_persists_failed_child_pla
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::DirectGoogle,
         },
         resumed_parent,
@@ -3159,6 +3194,7 @@ async fn provider_unavailable_after_min_admitted_returns_published_plan() {
         parent,
         budget,
         profile::BroadTui::default(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     assert_eq!(batch.slots.len(), 5);
@@ -3178,6 +3214,7 @@ async fn provider_unavailable_after_min_admitted_returns_published_plan() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::OpenRouter,
         },
         batch,
@@ -3235,6 +3272,7 @@ async fn database_setup_fatal_after_min_admitted_returns_published_plan() {
         parent,
         budget,
         profile::BroadTui::default(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     assert_eq!(batch.slots.len(), 5);
@@ -3254,6 +3292,7 @@ async fn database_setup_fatal_after_min_admitted_returns_published_plan() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::OpenRouter,
         },
         batch,
@@ -3326,6 +3365,7 @@ async fn provider_unavailable_with_parallel_slots_aborts_without_corrupting_plan
         parent,
         budget,
         profile::BroadTui::default(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     assert_eq!(batch.patch_generation_parallel_cap, 2);
@@ -3337,6 +3377,7 @@ async fn provider_unavailable_with_parallel_slots_aborts_without_corrupting_plan
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -3413,6 +3454,7 @@ async fn provider_unavailable_with_google_direct_permanently_fails_parent() {
         parent,
         budget,
         profile::BroadTui::default(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
 
@@ -3431,6 +3473,7 @@ async fn provider_unavailable_with_google_direct_permanently_fails_parent() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -3467,6 +3510,7 @@ async fn provider_unavailable_with_google_direct_permanently_fails_parent() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::DirectGoogle,
         },
         resumed_parent,
@@ -3520,6 +3564,7 @@ async fn provider_unavailable_without_google_direct_keeps_parent_resumable() {
         parent,
         budget,
         profile::BroadTui::default(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
 
@@ -3540,6 +3585,7 @@ async fn provider_unavailable_without_google_direct_keeps_parent_resumable() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::OpenRouter,
         },
         batch,
@@ -3585,6 +3631,7 @@ async fn provider_unavailable_without_google_direct_keeps_parent_resumable() {
         resumed_parent,
         budget,
         profile::BroadTui::default(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("resume should re-publish a fresh broad batch");
     assert!(!resumed_batch.slots.is_empty());
@@ -3620,6 +3667,7 @@ async fn child_fanout_is_parallel() {
         parent,
         budget,
         profile::BroadTui::default(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     assert_eq!(batch.patch_generation_parallel_cap, 2);
@@ -3638,6 +3686,7 @@ async fn child_fanout_is_parallel() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -3780,6 +3829,7 @@ async fn child_build_promotes_binary_and_cleans_scratch() {
         parent,
         budget,
         profile::BroadTui::default(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
@@ -3789,6 +3839,7 @@ async fn child_build_promotes_binary_and_cleans_scratch() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -4057,6 +4108,7 @@ async fn terminal_child_blocks_reentry() {
         parent,
         budget,
         profile::BroadTui::default(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
@@ -4066,6 +4118,7 @@ async fn terminal_child_blocks_reentry() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -4168,6 +4221,7 @@ async fn succeeded_child_without_evaluation_blocks_direct_reentry() {
         parent,
         budget,
         profile::BroadTui::default(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
@@ -4177,6 +4231,7 @@ async fn succeeded_child_without_evaluation_blocks_direct_reentry() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -4307,6 +4362,7 @@ exit 0
         parent,
         budget,
         profile::BroadTui::default(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
@@ -4316,6 +4372,7 @@ exit 0
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -4406,6 +4463,7 @@ async fn child_spawn_observes_failed_result() {
         parent,
         budget,
         profile::BroadTui::default(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
@@ -4415,6 +4473,7 @@ async fn child_spawn_observes_failed_result() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -4556,6 +4615,7 @@ fn broad_harness_batch_rejects_below_minimum_admitted_transactions() {
             &parent_identity,
             Prototype1ChildBudget::new(1, 1),
             admission_binding.clone(),
+            profile::AntiAttractorPolicy::None,
         )
         .expect("publish broad slot");
         slots.push(HarnessRequestSlot {
@@ -4587,6 +4647,7 @@ fn broad_harness_batch_rejects_below_minimum_admitted_transactions() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -4620,6 +4681,7 @@ fn broad_harness_materialization_rejects_post_admission_drift() {
         parent.identity(),
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
+        profile::AntiAttractorPolicy::None,
     )
     .expect("published request");
     let awaiting_parent = parent.awaiting_harness_plan_for_request((&publication.published).into());
@@ -4657,6 +4719,7 @@ fn broad_harness_materialization_rejects_post_admission_drift() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::DirectGoogle,
         },
         receipt,
@@ -4711,6 +4774,7 @@ fn below_min_rejected_attempts_are_persisted_and_recoverable_from_existing_child
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             route_source: ModelRouteSource::DirectGoogle,
         },
         resumed_parent,
@@ -4791,6 +4855,7 @@ fn child_plan_replay_rejects_wrong_parent() {
                 manifest_path: &manifest_path,
                 repo_root: &repo_root,
                 broad_tui: profile::BroadTui::default(),
+                anti_attractor_policy: profile::AntiAttractorPolicy::None,
                 route_source: ModelRouteSource::DirectGoogle,
             },
             parent,
@@ -4855,6 +4920,7 @@ fn child_plan_replay_rejects_malformed_file() {
                 manifest_path: &manifest_path,
                 repo_root: &repo_root,
                 broad_tui: profile::BroadTui::default(),
+                anti_attractor_policy: profile::AntiAttractorPolicy::None,
                 route_source: ModelRouteSource::DirectGoogle,
             },
             parent,

@@ -587,7 +587,7 @@ fn broad_request_for_current_parent(context: &RuntimeContext) -> BroadHarnessReq
     let submitted_result_path = prototype_root
         .join("messages/edit-harness-result")
         .join(format!("{parent_node_id}.json"));
-    BroadHarnessRequest::prototype1_workspace(
+    let request = BroadHarnessRequest::prototype1_workspace(
         parent_node_id,
         context.repo_root.clone(),
         HarnessChildBudget {
@@ -597,7 +597,15 @@ fn broad_request_for_current_parent(context: &RuntimeContext) -> BroadHarnessReq
         candidate_workspace,
         &prototype_root,
         &submitted_result_path,
-    )
+    );
+    if let Some(suffix) = profile::prompt_suffix_for(
+        &[],
+        context.admitted_profile.profile.anti_attractor_policy(),
+    ) {
+        request.with_prompt_suffix(suffix)
+    } else {
+        request
+    }
 }
 
 fn into_status(diagnosis: Diagnosis) -> ActiveParentStatus {
@@ -2854,6 +2862,11 @@ mod tests {
 
     #[tokio::test]
     async fn prototype1_doctor_headless_setup_preflight_blocks_on_rag_unavailable() {
+        // This test intentionally sets a process-global env override consumed
+        // by `wait_for_bm25_ready`. Serialize it with recorded/headless TUI
+        // tests so the forced setup failure cannot leak into parallel cases.
+        let _headless_tui_guard = crate::test_support::llm_lock().lock().await;
+
         let temp = tempfile::tempdir().expect("tempdir");
         let eval_home = temp.path().join("eval-home");
         let _env = crate::test_support::env_guard_os(vec![

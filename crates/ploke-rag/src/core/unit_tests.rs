@@ -1662,7 +1662,7 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
             .iter()
             .filter(|case| covers(case, ShapePipelineCoverage::RagApi))
         {
-            let db = Arc::new(fresh_backup_fixture_db(case.fixture.searchable_fixture())?);
+            let db = Arc::new(fresh_backup_fixture_db(case.fixture.fixture())?);
             let owner_id = resolve_matrix_owner(&db, case.owner).map_err(Error::from)?;
             let target_id = resolve_matrix_target(&db, owner_id, case).map_err(Error::from)?;
 
@@ -1713,7 +1713,7 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         init_tracing_once();
 
         let db = Arc::new(fresh_backup_fixture_db(
-            &ploke_test_utils::CORPUS_AXUM_OPENROUTER_EMBEDDINGS,
+            &ploke_test_utils::CORPUS_AXUM_TYPE_GRAPH,
         )?);
         let seed_id = one_uuid_by_file_suffix(
             &db,
@@ -1752,7 +1752,7 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         init_tracing_once();
 
         let db = Arc::new(fresh_backup_fixture_db(
-            &ploke_test_utils::CORPUS_AXUM_OPENROUTER_EMBEDDINGS,
+            &ploke_test_utils::CORPUS_AXUM_TYPE_GRAPH,
         )?);
         let seed_id = one_uuid_by_file_suffix(
             &db,
@@ -1812,7 +1812,7 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         init_tracing_once();
 
         let db = Arc::new(fresh_backup_fixture_db(
-            &ploke_test_utils::CORPUS_CHRONO_OPENROUTER_EMBEDDINGS,
+            &ploke_test_utils::CORPUS_CHRONO_TYPE_GRAPH,
         )?);
         let seed_id = one_uuid(&db, &method_by_impl_self_query("WeekdaySet", "single_day"))
             .map_err(Error::from)?;
@@ -1839,7 +1839,7 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         init_tracing_once();
 
         let db = Arc::new(fresh_backup_fixture_db(
-            &ploke_test_utils::CORPUS_CHRONO_OPENROUTER_EMBEDDINGS,
+            &ploke_test_utils::CORPUS_CHRONO_TYPE_GRAPH,
         )?);
         let method_id = one_uuid(&db, &method_by_impl_self_query("WeekdaySet", "single_day"))
             .map_err(Error::from)?;
@@ -1865,7 +1865,7 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         init_tracing_once();
 
         let db = Arc::new(fresh_backup_fixture_db(
-            &ploke_test_utils::CORPUS_AXUM_OPENROUTER_EMBEDDINGS,
+            &ploke_test_utils::CORPUS_AXUM_TYPE_GRAPH,
         )?);
         let map_id =
             one_uuid_by_file_suffix(&db, &struct_in_file_query("Map"), "axum/src/boxed.rs")
@@ -1907,7 +1907,7 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         init_tracing_once();
 
         let db = Arc::new(fresh_backup_fixture_db(
-            &ploke_test_utils::CORPUS_AXUM_OPENROUTER_EMBEDDINGS,
+            &ploke_test_utils::CORPUS_AXUM_TYPE_GRAPH,
         )?);
         let map_id =
             one_uuid_by_file_suffix(&db, &struct_in_file_query("Map"), "axum/src/boxed.rs")

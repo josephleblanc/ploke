@@ -214,6 +214,7 @@ fn test_names_vs_ids() -> Result<()> {
 
 #[tokio::test]
 #[cfg(feature = "live_api_tests")]
+#[ignore = "hits live OpenRouter endpoint/completion API; requires OPENROUTER_API_KEY"]
 async fn test_default_query_endpoints() -> Result<()> {
     use std::str::FromStr as _;
 
@@ -280,6 +281,7 @@ async fn test_default_query_endpoints() -> Result<()> {
 
 #[tokio::test]
 #[cfg(feature = "live_api_tests")]
+#[ignore = "hits live OpenRouter endpoint/completion API; requires OPENROUTER_API_KEY"]
 async fn test_free_query_endpoints() -> Result<()> {
     use ploke_test_utils::workspace_root;
 
@@ -341,6 +343,7 @@ async fn test_free_query_endpoints() -> Result<()> {
 
 #[tokio::test]
 #[cfg(feature = "live_api_tests")]
+#[ignore = "hits live OpenRouter endpoint/completion API; requires OPENROUTER_API_KEY"]
 async fn test_default_post_completions() -> Result<()> {
     use crate::router_only::cli::COMPLETION_JSON_SIMPLE_DIR;
     use ploke_test_utils::workspace_root;

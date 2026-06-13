@@ -433,10 +433,10 @@ fn default_min_target_surface_skew() -> u32 {
 /// the policy value — never any selector state — so the function cannot grow
 /// an authority hook without an explicit signature change.
 ///
-/// `None` policy is always a no-op. `SurfaceFreshness` returns `None` when
-/// `recent_surfaces` is empty (no nudge possible). Otherwise it produces a
-/// short prompt suffix listing the recent surfaces and asking the model to
-/// target a different region.
+/// `None` policy is always a no-op. `SurfaceFreshness` always emits the
+/// prompt-only boundary guard that keeps broad edit attempts from leaking
+/// multiline replacement context. When `recent_surfaces` is non-empty, it also
+/// lists the recent surfaces and asks the model to target a different region.
 pub(crate) fn prompt_suffix_for(
     recent_surfaces: &[String],
     policy: AntiAttractorPolicy,
@@ -444,14 +444,18 @@ pub(crate) fn prompt_suffix_for(
     match policy {
         AntiAttractorPolicy::None => None,
         AntiAttractorPolicy::SurfaceFreshness { .. } => {
+            let boundary_guard = "If you edit range, context, or replacement-boundary logic, \
+                 verify both boundaries: reject matches after range.end and cap trailing copied \
+                 bytes at min(bytes.len(), range.end) so multiline replacements cannot leak \
+                 context past the intended end boundary.";
             if recent_surfaces.is_empty() {
-                return None;
+                return Some(boundary_guard.to_string());
             }
             let surface_list = recent_surfaces.join(", ");
             Some(format!(
                 "The last successful candidate(s) touched surface(s): {surface_list}. \
                  For this turn, please target a different region of the codebase or a \
-                 different function family if possible."
+                 different function family if possible. {boundary_guard}"
             ))
         }
     }
@@ -1783,16 +1787,41 @@ policy = "surface-freshness"
     }
 
     #[test]
-    fn prompt_suffix_for_surface_freshness_with_no_recent_surfaces_is_none() {
-        // No recent surfaces means no nudge — the policy has nothing to push away from.
+    fn surface_freshness_suffix_names_multiline_replacement_end_boundary_check() {
+        let surfaces = vec!["crates/printer/src/util.rs".to_string()];
+        let suffix = prompt_suffix_for(
+            &surfaces,
+            AntiAttractorPolicy::SurfaceFreshness {
+                recent_surface_window: 2,
+                min_target_surface_skew: 2,
+            },
+        )
+        .expect("non-empty recent surfaces must produce a suffix");
+
+        assert!(
+            suffix.contains("range.end"),
+            "surface-freshness prompt must name the replacement end-boundary check: {suffix}"
+        );
+        assert!(
+            suffix.contains("trailing copied bytes"),
+            "surface-freshness prompt must prevent the r2208 trailing-context leak: {suffix}"
+        );
+    }
+
+    #[test]
+    fn prompt_suffix_for_surface_freshness_with_no_recent_surfaces_still_adds_boundary_guard() {
+        // The surface list is optional, but Treatment D still needs the
+        // prompt-only boundary guard before the first successful surface exists.
         let suffix = prompt_suffix_for(
             &[],
             AntiAttractorPolicy::SurfaceFreshness {
                 recent_surface_window: 2,
                 min_target_surface_skew: 2,
             },
-        );
-        assert_eq!(suffix, None);
+        )
+        .expect("surface freshness should still emit the multiline boundary guard");
+        assert!(suffix.contains("range.end"));
+        assert!(suffix.contains("trailing copied bytes"));
     }
 
     #[test]

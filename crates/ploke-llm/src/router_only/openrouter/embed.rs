@@ -959,6 +959,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "hits live OpenRouter embedding-models API; requires OPENROUTER_API_KEY"]
     async fn embedding_models_basic_fetch() -> Result<()> {
         let _env = openrouter_env().unwrap_or_else(|| {
             error!("OPENROUTER_API_KEY missing; live gate not satisfied");
@@ -1246,6 +1247,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "hits live OpenRouter embeddings API; requires OPENROUTER_API_KEY"]
     async fn live_batch_embeddings_with_dimensions() -> Result<()> {
         require_openrouter_env();
         let models = fixture_model_caps();
@@ -1301,6 +1303,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "hits live OpenRouter embeddings API; requires OPENROUTER_API_KEY"]
     async fn live_batch_embeddings_long_context() -> Result<()> {
         require_openrouter_env();
         let models = fixture_model_caps();

@@ -111,6 +111,7 @@ struct SmokeArtifact {
 }
 
 #[tokio::test]
+#[ignore = "hits live OpenRouter embeddings; requires OPENROUTER_API_KEY"]
 async fn live_openrouter_embed_two_snippets_smoke() -> Result<(), Box<dyn std::error::Error>> {
     require_live_gate();
 
@@ -323,6 +324,7 @@ async fn run_fixture_tracking_hash_index(
 use std::sync::Arc;
 
 #[tokio::test]
+#[ignore = "hits live OpenRouter embeddings; requires OPENROUTER_API_KEY"]
 async fn live_openrouter_index_fixture_tracking_hash_builds_vectors_and_hnsw()
 -> Result<(), Box<dyn std::error::Error>> {
     require_live_gate();
@@ -366,6 +368,7 @@ struct MatrixRunSummary {
 }
 
 #[tokio::test]
+#[ignore = "hits live OpenRouter embeddings; requires OPENROUTER_API_KEY"]
 async fn live_openrouter_matrix_fixture_tracking_hash() -> Result<(), Box<dyn std::error::Error>> {
     require_live_gate();
 
@@ -422,6 +425,7 @@ struct DimOverrideArtifact {
 }
 
 #[tokio::test]
+#[ignore = "hits live OpenRouter embeddings; requires OPENROUTER_API_KEY"]
 async fn live_openrouter_dimensions_override_text_embedding_3_small_256()
 -> Result<(), Box<dyn std::error::Error>> {
     require_live_gate();
@@ -473,6 +477,7 @@ async fn live_openrouter_dimensions_override_text_embedding_3_small_256()
 }
 
 #[tokio::test]
+#[ignore = "hits live OpenRouter embeddings; requires OPENROUTER_API_KEY"]
 async fn live_openrouter_dimensions_override_db_vector_len_matches_256()
 -> Result<(), Box<dyn std::error::Error>> {
     require_live_gate();
@@ -566,6 +571,7 @@ async fn live_openrouter_dimensions_override_db_vector_len_matches_256()
 /// Enable with: `--features "live_api_tests parity_live_tests"`.
 #[cfg(feature = "parity_live_tests")]
 #[tokio::test]
+#[ignore = "hits live OpenRouter embeddings; requires OPENROUTER_API_KEY"]
 async fn live_openrouter_vs_local_all_minilm_l6_v2_cosine_similarity()
 -> Result<(), Box<dyn std::error::Error>> {
     require_live_gate();

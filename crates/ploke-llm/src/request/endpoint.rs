@@ -547,6 +547,7 @@ mod tests {
     use crate::router_only::openrouter::OpenRouterModelId;
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
+    #[ignore = "hits live OpenRouter endpoint API; requires OPENROUTER_API_KEY"]
     async fn live_endpoints_fetch_smoke() -> color_eyre::Result<()> {
         let pe = ModelKey {
             author: Author::new("deepseek")?,
@@ -559,6 +560,7 @@ mod tests {
 
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
+    #[ignore = "hits live OpenRouter endpoint API; requires OPENROUTER_API_KEY"]
     async fn live_endpoints_into_endpoint_deserialize() -> color_eyre::Result<()> {
         use ploke_test_utils::init_test_tracing_with_target;
         use tracing::Level;
@@ -640,6 +642,7 @@ mod tests {
 
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
+    #[ignore = "hits live OpenRouter endpoint API; requires OPENROUTER_API_KEY"]
     async fn live_endpoints_into_endpoint_deepseek() -> color_eyre::Result<()> {
         let pe = ModelKey {
             author: Author::new("deepseek")?,
@@ -656,6 +659,7 @@ mod tests {
     }
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
+    #[ignore = "hits live OpenRouter endpoint API; requires OPENROUTER_API_KEY"]
     async fn live_endpoints_multi_models_smoke() -> color_eyre::Result<()> {
         use crate::utils::test_helpers::openrouter_env;
 
@@ -700,6 +704,7 @@ mod tests {
 
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
+    #[ignore = "hits live OpenRouter endpoint API; requires OPENROUTER_API_KEY"]
     async fn live_endpoints_roundtrip_compare() -> color_eyre::Result<()> {
         let pe = ModelKey {
             author: Author::new("deepseek")?,

@@ -25,10 +25,69 @@ fn collect_request_snapshots(
     }
 }
 
-fn historical_r10_turn_live_dir() -> PathBuf {
-    PathBuf::from(
-        "/home/brasides/.ploke-eval/campaigns/p1-memfix-0604a/prototype1/messages/edit-harness-result/node-a212c1db6c2774de-r10.turn-live",
-    )
+fn write_portable_historical_r10_turn_live_bundle(root: &Path) -> PathBuf {
+    const FINAL_EVENT_INDEX: usize = 95;
+    const HISTORICAL_STOP_RESPONSE_INDEX: usize = 34;
+
+    let turn_live_dir = root.join("portable-historical-r10.turn-live");
+    fs::create_dir_all(&turn_live_dir).expect("create portable historical r10 turn-live dir");
+
+    let assistant_id = Uuid::from_u128(0xa212_c1db_6c27_74de_a212_c1db_6c27_74de);
+    let mut records = Vec::new();
+    for response_index in 0..=HISTORICAL_STOP_RESPONSE_INDEX {
+        let record = match response_index {
+            29 => tool_response_record(
+                assistant_id,
+                response_index,
+                "portable-r10-bad-ns-patch",
+                &historical_r10_bad_frontier_patch_request(),
+            ),
+            30 => cargo_response_record(
+                assistant_id,
+                response_index,
+                "portable-r10-cargo-after-bad-patch",
+                "function-call-e62c3e56-4434-43be-92ef-b9d60a9bf9d8",
+            ),
+            31 => tool_response_record(
+                assistant_id,
+                response_index,
+                "portable-r10-repair-ns-patch",
+                &historical_r10_repair_frontier_patch_request(),
+            ),
+            32 => cargo_response_record(
+                assistant_id,
+                response_index,
+                "portable-r10-cargo-after-repair",
+                "function-call-f300448f-a4c2-487a-a610-6db96e13661c",
+            ),
+            33 => cargo_response_record(
+                assistant_id,
+                response_index,
+                "portable-r10-final-cargo",
+                "function-call-0c5f5c0d-cc91-4b56-b7cd-7b394493df6e",
+            ),
+            HISTORICAL_STOP_RESPONSE_INDEX => stop_response_record(
+                assistant_id,
+                response_index,
+                "portable-r10-stop",
+            ),
+            _ => cargo_response_record(
+                assistant_id,
+                response_index,
+                format!("portable-r10-filler-{response_index}"),
+                &format!("function-call-portable-r10-filler-{response_index}"),
+            ),
+        };
+        records.push(record);
+    }
+
+    write_recorded_tape(&turn_live_dir, assistant_id, &records);
+    write_portable_historical_r10_agent_turn_trace(
+        &turn_live_dir,
+        assistant_id,
+        FINAL_EVENT_INDEX,
+    );
+    turn_live_dir
 }
 
 fn historical_r10_completed_tail_tape(
@@ -503,20 +562,11 @@ fn historical_repeated_cargo_ns_patch_requests(
     workspace: &Path,
     count: usize,
 ) -> Vec<ploke_records::agent_turn::ToolRequestRecord> {
-    let trace_path = Path::new(
-        "/home/brasides/.ploke-eval/campaigns/p1-broad-batch-admission-20260518-2/prototype1/messages/edit-harness-result/node-01c9e8fdc70e3ee8.headless-tui.json",
+    let trace = include_str!(
+        "../../../../tests/fixtures/historical-headless-tui/node-01c9e8fdc70e3ee8.headless-tui.json"
     );
-    let trace = fs::read_to_string(trace_path).unwrap_or_else(|source| {
-        panic!(
-            "read historical headless trace {}: {source}",
-            trace_path.display()
-        )
-    });
-    let summary: evidence::Summary = serde_json::from_str(&trace).unwrap_or_else(|source| {
-        panic!(
-            "parse historical headless trace {} as evidence::Summary: {source}",
-            trace_path.display()
-        )
+    let summary: evidence::Summary = serde_json::from_str(trace).unwrap_or_else(|source| {
+        panic!("parse portable historical protected-repeat headless trace: {source}")
     });
 
     let mut requests = Vec::new();
@@ -956,20 +1006,28 @@ fn assert_decodes_as_ns_patch(record: &ploke_records::agent_turn::ToolRequestRec
     );
 }
 
-fn load_recorded_tape(
+fn write_recorded_tape(
     run_dir: &Path,
     assistant_id: Uuid,
-    records: Vec<ploke_records::llm_response::RawFullResponseRecord>,
-) -> ploke_llm::manager::RecordedResponseTape {
+    records: &[ploke_records::llm_response::RawFullResponseRecord],
+) {
     fs::create_dir_all(run_dir).expect("create recorded response fixture dir");
     let path = run_dir.join(ploke_records::llm_response::FULL_RESPONSE_TRACE_FILE);
     let mut jsonl = String::new();
-    for record in &records {
+    for record in records {
         assert!(record.matches_assistant_message(assistant_id));
         jsonl.push_str(&serde_json::to_string(record).expect("serialize full response record"));
         jsonl.push('\n');
     }
     fs::write(&path, jsonl).expect("write full response fixture");
+}
+
+fn load_recorded_tape(
+    run_dir: &Path,
+    assistant_id: Uuid,
+    records: Vec<ploke_records::llm_response::RawFullResponseRecord>,
+) -> ploke_llm::manager::RecordedResponseTape {
+    write_recorded_tape(run_dir, assistant_id, &records);
     crate::replay::llm::load_recorded_response_tape(run_dir, &assistant_id.to_string())
         .expect("load recorded response tape through full-response record loader")
 }
@@ -1033,6 +1091,182 @@ fn stop_response_record(
         assistant_message_id: assistant_id,
         recorded_response: ploke_llm::manager::RecordedResponse::new(response_index, response),
     }
+}
+
+fn cargo_response_record(
+    assistant_id: Uuid,
+    response_index: usize,
+    response_id: impl Into<String>,
+    call_id: &str,
+) -> ploke_records::llm_response::RawFullResponseRecord {
+    let arguments = serde_json::json!({
+        "command": "check",
+        "scope": "workspace",
+        "package": "ploke-eval"
+    })
+    .to_string();
+    tool_call_response_record(
+        assistant_id,
+        response_index,
+        response_id,
+        call_id,
+        "cargo",
+        &arguments,
+    )
+}
+
+fn tool_call_response_record(
+    assistant_id: Uuid,
+    response_index: usize,
+    response_id: impl Into<String>,
+    call_id: &str,
+    tool: &str,
+    arguments: &str,
+) -> ploke_records::llm_response::RawFullResponseRecord {
+    let response = serde_json::from_value(serde_json::json!({
+        "id": response_id.into(),
+        "choices": [{
+            "index": 0,
+            "finish_reason": "tool_calls",
+            "message": {
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": call_id,
+                    "type": "function",
+                    "function": {
+                        "name": tool,
+                        "arguments": arguments,
+                    }
+                }]
+            }
+        }],
+        "created": response_index,
+        "model": "test/model",
+        "object": "chat.completion"
+    }))
+    .expect("recorded tool provider response should parse");
+    ploke_records::llm_response::RawFullResponseRecord {
+        assistant_message_id: assistant_id,
+        recorded_response: ploke_llm::manager::RecordedResponse::new(response_index, response),
+    }
+}
+
+fn historical_r10_bad_frontier_patch_request() -> ploke_records::agent_turn::ToolRequestRecord {
+    ns_patch_request(
+        "function-call-f57da9c4-31f4-4046-9548-532a4b57f143",
+        "crates/ploke-selection-score/src/ploke/frontier.rs".to_string(),
+        historical_r10_bad_frontier_diff(),
+        "historical r10 bad frontier patch",
+        Some(0.84),
+    )
+}
+
+fn historical_r10_repair_frontier_patch_request() -> ploke_records::agent_turn::ToolRequestRecord {
+    ns_patch_request(
+        "function-call-34662591-b7b8-4c3e-b589-f70d5b7fb2c1",
+        "crates/ploke-selection-score/src/ploke/frontier.rs".to_string(),
+        historical_r10_repair_frontier_diff(),
+        "historical r10 repair frontier patch",
+        Some(0.91),
+    )
+}
+
+fn historical_r10_bad_frontier_diff() -> String {
+    [
+        "--- a/crates/ploke-selection-score/src/ploke/frontier.rs",
+        "+++ b/crates/ploke-selection-score/src/ploke/frontier.rs",
+        "@@ -342,14 +342,14 @@ pub fn frontier_weights(",
+        " if !cfg.lambda.is_finite() || qual.iter().any(|value| !value.is_finite()) {",
+        "     return Err(ScoreError::NonFinite);",
+        " }",
+        " ",
+        "-let count = cfg.top_m.clamp(1, qual.len());",
+        "+let count = cfg.top_m.saturating_add(1).clamp(1, qual.len());",
+        " let mut top = qual.to_vec();",
+        " top.sort_by(|left, right| right.total_cmp(left));",
+        " let mid = top.iter().take(count).sum::<f64>() / count as f64;",
+        " ",
+        " Ok(qual",
+        "     .iter()",
+        "     .zip(child.iter())",
+        "-    .map(|(quality, kids)| sigmoid(cfg.lambda * (quality - mid)) / (1.0 + *kids as f64))",
+        "+    .map(|(quality, kids)| sigmoid(cfg.lambda * (quality - mid)) / (1.0 + kids as f64))",
+        "     .collect())",
+        "}",
+        "",
+    ]
+    .join("\n")
+}
+
+fn historical_r10_repair_frontier_diff() -> String {
+    [
+        "--- a/crates/ploke-selection-score/src/ploke/frontier.rs",
+        "+++ b/crates/ploke-selection-score/src/ploke/frontier.rs",
+        "@@ -351,5 +351,5 @@ pub fn frontier_weights(",
+        " Ok(qual",
+        "     .iter()",
+        "     .zip(child.iter())",
+        "-    .map(|(quality, kids)| sigmoid(cfg.lambda * (quality - mid)) / (1.0 + kids as f64))",
+        "+    .map(|(quality, kids)| sigmoid(cfg.lambda * (quality - mid)) / (1.0 + *kids as f64))",
+        "     .collect())",
+        "}",
+        "",
+    ]
+    .join("\n")
+}
+
+fn write_portable_historical_r10_agent_turn_trace(
+    turn_live_dir: &Path,
+    assistant_id: Uuid,
+    final_event_index: usize,
+) {
+    let mut events = (0..final_event_index)
+        .map(|index| ploke_records::agent_turn::ObservedTurnEventRecord::DebugCommand(format!(
+            "portable-historical-r10-filler-{index}"
+        )))
+        .collect::<Vec<_>>();
+    events.push(
+        ploke_records::agent_turn::ObservedTurnEventRecord::TurnFinished(
+            ploke_records::agent_turn::TurnFinishedRecord {
+                session_id: "portable-historical-r10-session".to_string(),
+                request_id: "portable-historical-r10-request".to_string(),
+                parent_id: "portable-historical-r10-parent".to_string(),
+                assistant_message_id: assistant_id.to_string(),
+                outcome: "completed".to_string(),
+                error_id: None,
+                summary: "portable historical r10 completed turn".to_string(),
+                attempts: 1,
+            },
+        ),
+    );
+    let trace = ploke_records::agent_turn::AgentTurnArtifactRecord {
+        task_id: "portable-historical-r10".to_string(),
+        selected_model: "test/model".to_string(),
+        model_route: None,
+        issue_prompt: "Replay portable historical r10 through broad headless-TUI admission."
+            .to_string(),
+        user_message_id: "portable-historical-r10-user".to_string(),
+        events,
+        prompt_debug: None,
+        terminal_record: None,
+        final_assistant_message: None,
+        patch_artifact: ploke_records::agent_turn::PatchArtifactRecord {
+            edit_proposals: Vec::new(),
+            create_proposals: Vec::new(),
+            applied: false,
+            all_proposals_applied: false,
+            expected_file_changes: Vec::new(),
+            any_expected_file_changed: false,
+            all_expected_files_changed: false,
+        },
+        llm_prompt: Vec::new(),
+        llm_response: None,
+    };
+    fs::write(
+        turn_live_dir.join("agent-turn-trace.json"),
+        serde_json::to_vec_pretty(&trace).expect("serialize portable historical r10 trace"),
+    )
+    .expect("write portable historical r10 agent-turn trace");
 }
 
 fn protected_ns_patch_diff(protected_rel: &Path) -> String {

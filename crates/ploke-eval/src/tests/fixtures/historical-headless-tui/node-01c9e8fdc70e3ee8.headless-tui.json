@@ -1,0 +1,35 @@
+{
+  "attempts": [],
+  "terminal": null,
+  "events": [
+    {
+      "kind": "tool_request",
+      "request_id": "historical-protected-repeat-request-0",
+      "parent_id": "historical-protected-repeat-parent",
+      "call_id": "call_historical_protected_cargo_0",
+      "tool": "non_semantic_patch",
+      "arguments": {
+        "chars": 246,
+        "preview": "{\"patches\":[{\"file\":\"/home/brasides/code/ploke/Cargo.toml\",\"diff\":\"--- a/Cargo.toml\\n+++ b/Cargo.toml\\n@@ -1,3 +1,3 @@\\n [workspace]\\n-resolver = \\\"1\\\"\\n+resolver = \\\"2\\\"\\n\",\"reasoning\":\"historical protected Cargo.toml retry\"}],\"confidence\":0.88}"
+      }
+    },
+    {
+      "kind": "tool_request",
+      "request_id": "historical-protected-repeat-request-1",
+      "parent_id": "historical-protected-repeat-parent",
+      "call_id": "call_historical_protected_cargo_1",
+      "tool": "non_semantic_patch",
+      "arguments": {
+        "chars": 246,
+        "preview": "{\"patches\":[{\"file\":\"/home/brasides/code/ploke/Cargo.toml\",\"diff\":\"--- a/Cargo.toml\\n+++ b/Cargo.toml\\n@@ -1,3 +1,3 @@\\n [workspace]\\n-resolver = \\\"1\\\"\\n+resolver = \\\"2\\\"\\n\",\"reasoning\":\"historical protected Cargo.toml retry\"}],\"confidence\":0.88}"
+      }
+    }
+  ],
+  "validations": [],
+  "debug_relay": {
+    "retained": [],
+    "dropped": 0,
+    "truncated": 0
+  },
+  "prompt_diagnostics": []
+}
