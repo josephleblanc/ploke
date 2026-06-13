@@ -207,7 +207,13 @@ impl ChatSessionReport {
 
     pub fn summary(&self) -> String {
         let mut summary = match &self.outcome {
-            SessionOutcome::Completed => "Request summary: [success]".to_string(),
+            SessionOutcome::Completed => {
+                if self.errors.is_empty() {
+                    "Request summary: [success]".to_string()
+                } else {
+                    "Request summary: [completed_with_errors]".to_string()
+                }
+            }
             SessionOutcome::Aborted { error_id } => {
                 format!("Request summary: [aborted] error_id={error_id}")
             }
@@ -880,6 +886,53 @@ fn finish_reason_metadata(
             Some(ArcStr::from("Rephrase the request and retry.")),
             None,
         ),
+        FinishReason::MalformedFunctionCall => (
+            LoopErrorKind::ModelBehavior,
+            ArcStr::from("MALFORMED_FUNCTION_CALL"),
+            ErrorSeverity::Error,
+            RetryAdvice::Maybe {
+                reason: ArcStr::from("Provider returned malformed function call output"),
+            },
+            Some(ArcStr::from(
+                "Retry with a valid tool call using strict JSON arguments.",
+            )),
+            Some(LlmAction {
+                next_steps: vec![LlmNextStep {
+                    action: ArcStr::from("retry_tool_call_with_valid_json"),
+                    details: Some(ArcStr::from(
+                        "Use tool_calls with valid JSON arguments, not Python-style code.",
+                    )),
+                }],
+                constraints: vec![
+                    ArcStr::from("Arguments must be strict JSON."),
+                    ArcStr::from("Do not emit Python-style function calls."),
+                ],
+                retry_hint: Some(RetryStrategy::Fixed),
+            }),
+        ),
+        FinishReason::UnexpectedToolCall => (
+            LoopErrorKind::ModelBehavior,
+            ArcStr::from("UNEXPECTED_TOOL_CALL"),
+            ErrorSeverity::Error,
+            RetryAdvice::Maybe {
+                reason: ArcStr::from("Provider invoked an undeclared function"),
+            },
+            Some(ArcStr::from(
+                "Retry, calling only a tool declared in the request's tool set.",
+            )),
+            Some(LlmAction {
+                next_steps: vec![LlmNextStep {
+                    action: ArcStr::from("retry_with_declared_tool"),
+                    details: Some(ArcStr::from(
+                        "Call one of the provided tools by its exact declared name.",
+                    )),
+                }],
+                constraints: vec![ArcStr::from(
+                    "Only call functions that were declared in the request.",
+                )],
+                retry_hint: Some(RetryStrategy::Fixed),
+            }),
+        ),
         FinishReason::Length => (
             LoopErrorKind::ModelBehavior,
             ArcStr::from("OUTPUT_TRUNCATED"),
@@ -918,29 +971,6 @@ fn finish_reason_metadata(
             },
             None,
             None,
-        ),
-        FinishReason::MalformedFunctionCall => (
-            LoopErrorKind::ModelBehavior,
-            ArcStr::from("TOOL_ARGS_REPAIR_REQUIRED"),
-            ErrorSeverity::Error,
-            RetryAdvice::Maybe {
-                reason: ArcStr::from("Provider rejected malformed tool-call syntax"),
-            },
-            Some(ArcStr::from(
-                "Request a corrected native tool call and retry.",
-            )),
-            Some(LlmAction {
-                next_steps: vec![LlmNextStep {
-                    action: ArcStr::from("repair_tool_args"),
-                    details: Some(ArcStr::from(
-                        "Call the tool directly with JSON arguments; do not emit Python syntax, print(...), or default_api.* wrappers.",
-                    )),
-                }],
-                constraints: vec![ArcStr::from(
-                    "Use the native tool-call envelope instead of textual function-call syntax.",
-                )],
-                retry_hint: Some(RetryStrategy::Fixed),
-            }),
         ),
         FinishReason::ToolCalls | FinishReason::Stop => (
             LoopErrorKind::StateMachine,
@@ -1050,6 +1080,9 @@ fn finish_reason_summary(finish_reason: &FinishReason) -> ArcStr {
             "Finish reason malformed function call: provider rejected tool-call syntax.",
         ),
         FinishReason::ContentFilter => ArcStr::from("Finish reason content filter."),
+        FinishReason::UnexpectedToolCall => {
+            ArcStr::from("Finish reason unexpected tool call (undeclared function).")
+        }
         FinishReason::ToolCalls => ArcStr::from("Finish reason tool calls."),
         FinishReason::Stop => ArcStr::from("Finish reason stop."),
     }
@@ -1084,6 +1117,96 @@ fn repair_action_str(action: &super::semantics::RepairAction) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Real refusal text captured from the state6 `gemini-2.5-pro` direct-Google
+    /// incident: a Python `print(default_api.non_semantic_patch(...))` call whose
+    /// `diff` argument is a multi-line unified diff, rejected by Vertex as a
+    /// malformed function call.
+    ///
+    /// Provenance: `~/.ploke-eval/instances/prototype1/`
+    /// `p1-g25p-direct-protocol-2target-g0g2-1x3-state6-20260610-014509/`
+    /// `BurntSushi__ripgrep-2209/runs/`
+    /// `run-1781081390723-structured-current-policy-9b2c8ea1/agent-turn-summary.json`
+    const MALFORMED_NON_SEMANTIC_PATCH_REFUSAL: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/google/malformed_non_semantic_patch_refusal.txt"
+    ));
+
+    #[test]
+    fn classify_finish_error_malformed_multiline_patch_is_model_behavior_code() {
+        use ploke_llm::response::OpenAiResponse;
+
+        // The captured multi-line `non_semantic_patch` refusal must classify as a
+        // MALFORMED_FUNCTION_CALL / ModelBehavior loop error, never an
+        // UNKNOWN_TOOL_NAME repair, and the multi-line body must not break
+        // classification.
+        let err = LlmError::FinishError {
+            msg: MALFORMED_NON_SEMANTIC_PATCH_REFUSAL.to_string(),
+            full_response: OpenAiResponse {
+                id: "ZSUpar6LGMiFodAP1JvsmQQ".to_string(),
+                choices: vec![],
+                created: 1781081445,
+                model: "google/gemini-2.5-pro".to_string(),
+                object: "chat.completion".to_string(),
+                provider: None,
+                system_fingerprint: None,
+                usage: None,
+                logprobs: None,
+            },
+            finish_reason: FinishReason::MalformedFunctionCall,
+        };
+
+        let loop_error = classify_llm_error(&err, ErrorContext::new(1, 0), CommitPhase::PreCommit);
+
+        assert_eq!(loop_error.code.as_ref(), "MALFORMED_FUNCTION_CALL");
+        assert!(matches!(loop_error.kind, LoopErrorKind::ModelBehavior));
+        assert_ne!(loop_error.code.as_ref(), "UNKNOWN_TOOL_NAME");
+        assert_ne!(loop_error.code.as_ref(), "REPAIR_BUDGET_EXHAUSTED");
+        assert!(!matches!(
+            loop_error.recovery,
+            RecoveryDecision::Repair { .. }
+        ));
+        assert_eq!(
+            loop_error.context.finish_reason,
+            Some(FinishReason::MalformedFunctionCall)
+        );
+    }
+
+    #[test]
+    fn classify_finish_error_malformed_function_call_is_model_behavior_not_tool_name_repair() {
+        use ploke_llm::response::OpenAiResponse;
+
+        let err = LlmError::FinishError {
+            msg: "Malformed function call: print(default_api.apply_code_edit(...))".to_string(),
+            full_response: OpenAiResponse {
+                id: "test".to_string(),
+                choices: vec![],
+                created: 0,
+                model: "google/gemini-2.5-flash".to_string(),
+                object: "chat.completion".to_string(),
+                provider: None,
+                system_fingerprint: None,
+                usage: None,
+                logprobs: None,
+            },
+            finish_reason: FinishReason::MalformedFunctionCall,
+        };
+
+        let loop_error = classify_llm_error(&err, ErrorContext::new(1, 0), CommitPhase::PreCommit);
+
+        assert_eq!(loop_error.code.as_ref(), "MALFORMED_FUNCTION_CALL");
+        assert!(matches!(
+            loop_error.recovery,
+            RecoveryDecision::Retry { .. } | RecoveryDecision::MaybeRetry { .. }
+        ));
+        assert!(!matches!(
+            loop_error.recovery,
+            RecoveryDecision::Repair {
+                action: crate::llm::manager::semantics::RepairAction::ToolName,
+                ..
+            }
+        ));
+    }
 
     #[test]
     fn classify_llm_error_embedded_top_level_rate_limit_is_retryable() {
@@ -1136,6 +1259,59 @@ mod tests {
         assert!(summary.contains("code=HTTP_SEND_FAILED"));
         assert!(summary.contains("kind=transport"));
         assert!(summary.contains("failed to resolve bearer token"));
+    }
+
+    #[test]
+    fn chat_session_summary_completed_without_errors_is_success() {
+        let report = ChatSessionReport::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        assert!(matches!(report.outcome, SessionOutcome::Completed));
+
+        let summary = report.summary();
+
+        assert!(
+            summary.starts_with("Request summary: [success]"),
+            "error-free completion must report [success]: {summary}"
+        );
+        assert!(!summary.contains("[completed_with_errors]"));
+        assert!(!summary.contains(" code="));
+    }
+
+    #[test]
+    fn chat_session_summary_completed_with_errors_is_not_labeled_success() {
+        // A turn that ended cleanly (Completed) but recorded a tool-execution
+        // failure must not be presented as `[success]`; it should be labeled
+        // honestly while still preserving the failed-call detail. Mirrors the
+        // live state11 ripgrep-2209 incident where a tool failure remained in
+        // the terminal diagnostic on an otherwise-completed turn.
+        let err = LlmError::ToolCall(
+            "apply_code_edit: fuzzy match rejected: no matching span".to_string(),
+        );
+        let loop_error = classify_llm_error(&err, ErrorContext::new(1, 0), CommitPhase::PreCommit);
+        let mut report = ChatSessionReport::new(
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        report.record_error(loop_error);
+        // Outcome stays Completed (the chat loop ended cleanly).
+        assert!(matches!(report.outcome, SessionOutcome::Completed));
+
+        let summary = report.summary();
+
+        assert!(
+            summary.starts_with("Request summary: [completed_with_errors]"),
+            "completed turn with recorded errors must not be labeled [success]: {summary}"
+        );
+        assert!(!summary.contains("[success]"));
+        // The failed-call detail suffix must still be preserved.
+        assert!(summary.contains("code=TOOL_EXECUTION_FAILED"));
+        assert!(summary.contains("kind=tool_execution"));
     }
 
     #[test]

@@ -68,6 +68,22 @@ pub struct ProviderTiming {
     pub max_attempts: u32,
     pub initial_backoff: Duration,
     pub max_backoff: Duration,
+    /// Optional total wall-clock budget for a single chat-step's HTTP retry
+    /// sequence. When `Some`, the retry loop stops scheduling further retries
+    /// once this much time has elapsed since the request began, and each retry
+    /// attempt's own timeout is clamped to the remaining budget, so a turn cannot
+    /// keep *re-issuing* requests indefinitely while riding out transient
+    /// provider errors. `None` leaves the sequence bounded only by
+    /// `max_attempts`/`attempt_timeout` (legacy behavior for routers that do not
+    /// opt in).
+    ///
+    /// The first/initial attempt is intentionally not clamped to this budget (it
+    /// keeps its full `attempt_timeout`), so a chat step can still overshoot the
+    /// budget by up to one first-attempt `attempt_timeout`; retries cannot extend
+    /// the sequence further. See `ChatHttpConfig::max_total_elapsed` in
+    /// `manager::session` for the precise contract and worst case.
+    #[serde(default)]
+    pub max_total_elapsed: Option<Duration>,
     pub retry: RetryTuning,
 }
 
@@ -84,6 +100,7 @@ impl Default for ProviderTiming {
             max_attempts: 1,
             initial_backoff: Duration::from_millis(250),
             max_backoff: Duration::from_secs(2),
+            max_total_elapsed: None,
             retry: RetryTuning::default(),
         }
     }
@@ -225,11 +242,47 @@ impl RouterCalibration for OpenRouter {
     }
 }
 
+/// Direct-Google (Vertex OpenAI-compat) retry budget.
+///
+/// Vertex `gemini-2.5-*` models run on Dynamic Shared Quota, where HTTP 429
+/// `RESOURCE_EXHAUSTED` and 503 `UNAVAILABLE` are transient shared-capacity
+/// contention rather than a hard per-key cap. Google's own guidance is to ride
+/// these out with exponential backoff (honoring any `Retry-After`/RetryInfo
+/// delay). The previous shared default (2 attempts, ~250ms fixed backoff) was
+/// far too short to survive contention and aborted eval turns immediately.
+///
+/// These are intentionally Google-scoped via `default_provider_timing` so the
+/// OpenRouter path keeps its existing behavior. The backoff schedule itself
+/// (exponential + full jitter, capped per attempt by `max_backoff`) lives in
+/// `manager::session`.
+///
+/// `max_total_elapsed` (60s) stops scheduling new retries once 60s has elapsed
+/// and clamps each *retry* attempt's timeout to the remaining budget. Because
+/// this budget (60s) is smaller than the per-attempt `attempt_timeout` (the
+/// shared `LLM_TIMEOUT_SECS` default, 300s), the *first* attempt is left
+/// unclamped so a normal single attempt is never truncated — it can legitimately
+/// run past the 60s budget. Retries cannot extend the sequence further, so the
+/// worst-case wall-clock is one first-attempt `attempt_timeout`.
+const GOOGLE_MAX_ATTEMPTS: u32 = 6;
+const GOOGLE_INITIAL_BACKOFF: Duration = Duration::from_millis(500);
+const GOOGLE_MAX_BACKOFF: Duration = Duration::from_secs(8);
+const GOOGLE_RETRY_TOTAL_BUDGET: Duration = Duration::from_secs(60);
+
 impl RouterCalibration for Google {
     type Model = ModelKey;
     type Provider = ();
     type Preferences = ();
     type Key = GoogleCalibrationKey;
+
+    fn default_provider_timing() -> ProviderTiming {
+        ProviderTiming {
+            max_attempts: GOOGLE_MAX_ATTEMPTS,
+            initial_backoff: GOOGLE_INITIAL_BACKOFF,
+            max_backoff: GOOGLE_MAX_BACKOFF,
+            max_total_elapsed: Some(GOOGLE_RETRY_TOTAL_BUDGET),
+            ..ProviderTiming::default()
+        }
+    }
 
     fn calibration_input(req: &ChatCompRequest<Self>) -> CalibrationInput<Self> {
         let key = req
@@ -312,6 +365,32 @@ mod tests {
             OpenRouter::calibration_key(&input).as_deref(),
             Some("openrouter:x-ai/grok-4-fast:provider:xai")
         );
+    }
+
+    #[test]
+    fn google_provider_timing_uses_exponential_dsq_retry_budget() {
+        let timing = Google::default_provider_timing();
+
+        assert_eq!(timing.max_attempts, GOOGLE_MAX_ATTEMPTS);
+        assert_eq!(timing.initial_backoff, Duration::from_millis(500));
+        assert_eq!(timing.max_backoff, Duration::from_secs(8));
+        assert_eq!(timing.max_total_elapsed, Some(Duration::from_secs(60)));
+        // 429 RESOURCE_EXHAUSTED and 503 UNAVAILABLE remain retryable; fatal 4xx
+        // are not added to the retryable set.
+        assert!(timing.retry.retry_statuses.contains(&429));
+        assert!(timing.retry.retry_statuses.contains(&503));
+        assert!(!timing.retry.retry_statuses.contains(&400));
+        assert!(!timing.retry.retry_statuses.contains(&404));
+    }
+
+    #[test]
+    fn openrouter_provider_timing_keeps_unbudgeted_defaults() {
+        // The Google-specific budget must not leak into the OpenRouter path.
+        let timing = OpenRouter::default_provider_timing();
+        assert_eq!(timing.max_attempts, 1);
+        assert_eq!(timing.initial_backoff, Duration::from_millis(250));
+        assert_eq!(timing.max_backoff, Duration::from_secs(2));
+        assert_eq!(timing.max_total_elapsed, None);
     }
 
     #[test]

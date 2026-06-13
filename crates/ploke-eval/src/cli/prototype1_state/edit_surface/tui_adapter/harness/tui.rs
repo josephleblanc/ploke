@@ -17,12 +17,11 @@ use super::super::harness_io::{
     Outcome, PromptDiagnostic, Tool, observe_cargo_validation, push_changed_paths, truncate_chars,
 };
 use super::super::tui_bridge::{
-    AppliedItem, AttemptEnd, Candidate, LiveObserver, StagedItem, ToolBatch,
-    applied_edit_from_terminal_items, approve_selected, candidate_for_item,
-    classify_applied_terminal, classify_paths, drain_debug_observed, drain_response_records,
-    next_event_with_deadline, observe_staged_item, provider_failure_from_chat,
-    provider_failure_from_message, provider_unavailable_reason, record_batch_terminal,
-    record_post_approval_indeterminate, reject_item, repair_prompt_feedback,
+    AppliedItem, AttemptEnd, LiveObserver, StagedItem, ToolBatch, applied_edit_from_terminal_items,
+    approve_selected, candidate_for_item, classify_applied_terminal, classify_paths,
+    drain_debug_observed, drain_response_records, next_event_with_deadline, observe_staged_item,
+    provider_failure_from_chat, provider_failure_from_message, provider_unavailable_reason,
+    record_batch_terminal, record_post_approval_indeterminate, reject_item, repair_prompt_feedback,
     run_contract_validations, select_disjoint, turn_aborted_after_apply_terminal,
     validate_applied_batch, wait_for_refresh, wait_for_selected,
 };

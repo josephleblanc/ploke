@@ -92,10 +92,9 @@
 //! }
 //! ```
 
+use crate::prelude::*;
+
 use ploke_records::evaluation::PatchProjectionCheckState;
-use serde::{Deserialize, Serialize};
-use std::{fmt, path::PathBuf};
-use uuid::Uuid;
 
 // Re-export types from ploke-llm that we need for structured capture
 pub use ploke_llm::manager::{RequestMessage, Role as LlmRole};
@@ -637,8 +636,20 @@ fn extract_llm_response_from_events(events: &[ObservedTurnEvent]) -> Option<LlmR
     })
 }
 
+fn summary_has_error(summary: &str) -> bool {
+    // Legacy records may report a completed turn with a success label while still
+    // appending machine error fields such as `code=MALFORMED_FUNCTION_CALL`.
+    summary.starts_with("Request summary: [success]") && summary.contains(" code=")
+}
+
 fn turn_outcome_from_artifact(artifact: &AgentTurnArtifact, tool_call_count: usize) -> TurnOutcome {
     if let Some(terminal) = artifact.terminal_record.as_ref() {
+        if summary_has_error(&terminal.summary) {
+            return TurnOutcome::Error {
+                message: terminal.summary.clone(),
+            };
+        }
+
         match terminal.outcome.as_str() {
             "completed" if tool_call_count > 0 => TurnOutcome::ToolCalls {
                 count: tool_call_count,
@@ -2522,6 +2533,47 @@ mod tests {
         assert_eq!(turn.tool_calls[0].request.tool, "search_code");
         assert_eq!(turn.tool_calls[0].latency_ms, 150);
         assert!(matches!(turn.outcome, TurnOutcome::ToolCalls { count: 1 }));
+    }
+
+    #[test]
+    fn synthetic_malformed_function_call_terminal_record_should_persist_error_outcome() {
+        let mut record = create_test_record();
+        let mut artifact = create_test_turn_artifact();
+        // Synthetic minimal projection of state17:
+        // p1-g25f-direct-protocol-2target-g0g2-1x3-state17-20260612-211338
+        // BurntSushi__ripgrep-2295 / run-1781324160564-structured-current-policy-874f9a47.
+        // The real turn summary reported outcome=completed while embedding a
+        // MALFORMED_FUNCTION_CALL model-behavior failure in the summary.
+        let summary = "Request summary: [success] code=MALFORMED_FUNCTION_CALL \
+            kind=model_behavior error_summary=FinishReason Error: Malformed \
+            function call: print(default_api.non_semantic_patch(...))"
+            .to_string();
+
+        for event in &mut artifact.events {
+            if let ObservedTurnEvent::TurnFinished(record) = event {
+                record.summary = summary.clone();
+            }
+        }
+        artifact
+            .terminal_record
+            .as_mut()
+            .expect("test artifact has terminal record")
+            .summary = summary;
+        artifact.final_assistant_message = None;
+        artifact.patch_artifact.applied = false;
+        artifact.patch_artifact.edit_proposals.clear();
+        artifact.patch_artifact.create_proposals.clear();
+
+        record.add_turn_from_artifact(artifact, 1744223415800000);
+
+        let turn = record.turn_record(1).expect("Should persist turn");
+        let TurnOutcome::Error { message } = &turn.outcome else {
+            panic!(
+                "malformed function-call terminal summary must persist as an error outcome, got {:?}",
+                turn.outcome
+            );
+        };
+        assert!(message.contains("MALFORMED_FUNCTION_CALL"));
     }
 
     #[test]

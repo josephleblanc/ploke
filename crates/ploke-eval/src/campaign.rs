@@ -1,16 +1,14 @@
-use std::fs;
-use std::path::PathBuf;
+use crate::prelude::*;
 
 use ploke_llm::{ModelId, ProviderKey, request::models::ModelRouteSource};
 use ploke_protocol::ProtocolReasoningPolicy;
-use serde::{Deserialize, Serialize};
 
 use crate::closure::ClosureRecomputeRequest;
 use crate::layout::{batches_dir, campaigns_dir, instances_dir};
 use crate::model_registry::{load_active_model, load_model_registry, registry_has_model};
 use crate::provider_prefs::load_provider_for_model;
 use crate::runner::resolve_route_for_model;
-use crate::spec::{EvalBudget, FrameworkConfig, PrepareError};
+use crate::spec::{EvalBudget, FrameworkConfig};
 use crate::target_registry::{
     BenchmarkFamily, RegistryDatasetSource, RegistryRecomputeRequest, TargetRegistry,
     load_target_registry, recompute_target_registry, resolve_registry_dataset_sources,
@@ -251,8 +249,17 @@ pub fn default_protocol_tool_review_parallelism() -> usize {
     8
 }
 
+/// Minimum completion budget for Prototype 1 protocol closure.
+///
+/// Keep this at or above 4096 unless the direct-Google protocol live preflight
+/// and malformed-call regression test prove a lower budget still emits valid
+/// JSON/tool-call output. Earlier low budgets reproduced provider-side
+/// `MALFORMED_FUNCTION_CALL` or invalid structured output before closure could
+/// complete.
+pub const PROTOTYPE1_PROTOCOL_MIN_SAFE_MAX_TOKENS: u32 = 4096;
+
 pub fn default_protocol_max_tokens() -> u32 {
-    4000
+    PROTOTYPE1_PROTOCOL_MIN_SAFE_MAX_TOKENS
 }
 
 impl CampaignManifest {

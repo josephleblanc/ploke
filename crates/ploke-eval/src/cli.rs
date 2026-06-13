@@ -1,7 +1,6 @@
-use serde::Serialize;
-use std::fs;
-use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+
+use crate::prelude::*;
 
 mod args;
 mod dispatch;
@@ -56,14 +55,18 @@ pub(crate) use record::{
 #[path = "cli/tests.rs"]
 mod tests;
 
-pub(crate) const PROTOCOL_HTTP_MAX_ATTEMPTS: u32 = 1;
+// Protocol closure calls run through `ploke-protocol::JsonAdjudicator`, which
+// maps this value directly onto `ChatHttpConfig::max_attempts`. Keep this above
+// 1 for direct-Google runs: Vertex Standard PayGo can return transient DSQ
+// 429/503 responses without an operator-visible fixed RPM row, and a single
+// attempt turns that provider-capacity blip into immediate closure no-progress.
+pub(crate) const PROTOCOL_HTTP_MAX_ATTEMPTS: u32 = 3;
 pub(crate) const PROTOCOL_JSON_REVIEW_MAX_ATTEMPTS: usize = 3;
 pub(crate) const TOOL_CALL_REVIEW_TIMEOUT_SECS: u64 = ploke_llm::LLM_TIMEOUT_SECS;
 
 use crate::campaign::{CampaignOverrides, campaign_manifest_path, resolve_campaign_config};
 use crate::closure::load_closure_state;
 use crate::registry::builtin_dataset_registry_entries;
-use crate::spec::PrepareError;
 
 #[cfg(test)]
 use crate::campaign::{EvalCampaignPolicy, ProtocolCampaignPolicy, ResolvedCampaignConfig};
@@ -114,10 +117,6 @@ use ploke_protocol::ProtocolReasoningPolicy;
 use ploke_protocol::tool_calls::review;
 #[cfg(test)]
 use ploke_records::tool_contracts::ToolArgumentsJson;
-#[cfg(test)]
-use serde::Deserialize;
-#[cfg(test)]
-use std::collections::BTreeMap;
 
 impl Cli {
     pub async fn run(self) -> ExitCode {

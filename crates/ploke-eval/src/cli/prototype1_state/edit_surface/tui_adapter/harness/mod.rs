@@ -4,10 +4,7 @@ pub(crate) mod fixture;
 pub(crate) mod timeouts;
 mod tui;
 
-pub(crate) use timeouts::{
-    HEADLESS_VALIDATION_CARGO_CHECK_TIMEOUT_SECS, HEADLESS_VALIDATION_CARGO_TEST_TIMEOUT_SECS,
-    Timeouts,
-};
+pub(crate) use timeouts::Timeouts;
 pub(crate) use tui::TuiHarness;
 
 use std::{path::PathBuf, time::Instant};

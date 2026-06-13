@@ -407,6 +407,11 @@ fn extract_unknown_tool_name(err: &LlmError) -> Option<ArcStr> {
         LlmError::Deserialization { message, .. } => message.as_str(),
         _ => return None,
     };
+    if message.contains("malformed_function_call")
+        || (message.contains("finish_reason") && message.contains("unknown variant"))
+    {
+        return None;
+    }
     let needle = "unknown variant `";
     if let Some(start) = message.find(needle) {
         let rest = &message[start + needle.len()..];
@@ -454,6 +459,21 @@ mod tests {
         ));
         assert_eq!(spec.context.provider.as_deref(), Some("groq"));
         assert_eq!(spec.context.tool_name.as_deref(), Some("cargo"));
+    }
+
+    #[test]
+    fn deserialization_unknown_finish_reason_does_not_map_to_unknown_tool_name() {
+        let err = LlmError::Deserialization {
+            message: "unknown variant `malformed_function_call`, expected one of `stop`, `length`, `content_filter`, `tool_calls`, `timeout`, `error`".to_string(),
+            body_snippet: None,
+        };
+
+        let spec = normalize_llm_error(&err, &[], ErrorContext::new(1, 0));
+
+        assert!(
+            spec.is_none(),
+            "finish-reason deserialization failures must not enter UNKNOWN_TOOL_NAME repair"
+        );
     }
 
     #[test]

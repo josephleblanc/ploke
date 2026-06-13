@@ -6,9 +6,11 @@
 
 use tracing::Span;
 
-use crate::intervention::Prototype1NodeRecord;
+// these were only being used in the `child` accessor below, but `child` was never actually being used
+// use crate::intervention::Prototype1NodeRecord;
+// use super::event::RuntimeId;
 
-use super::{event::RuntimeId, identity::ParentIdentity};
+use super::identity::ParentIdentity;
 
 /// Trace context derived from an admitted Prototype 1 runtime path.
 #[derive(Debug, Clone)]
@@ -35,22 +37,22 @@ impl RuntimeTelemetry {
         }
     }
 
-    pub(crate) fn child(
-        campaign_id: &str,
-        node: &Prototype1NodeRecord,
-        runtime_id: RuntimeId,
-        runtime_phase: &'static str,
-    ) -> Self {
-        Self {
-            role: "child",
-            runtime_phase,
-            campaign_id: campaign_id.to_string(),
-            node_id: node.node_id.clone(),
-            branch_id: node.branch_id.clone(),
-            generation: node.generation,
-            runtime_id: Some(runtime_id.to_string()),
-        }
-    }
+    // pub(crate) fn child(
+    //     campaign_id: &str,
+    //     node: &Prototype1NodeRecord,
+    //     runtime_id: RuntimeId,
+    //     runtime_phase: &'static str,
+    // ) -> Self {
+    //     Self {
+    //         role: "child",
+    //         runtime_phase,
+    //         campaign_id: campaign_id.to_string(),
+    //         node_id: node.node_id.clone(),
+    //         branch_id: node.branch_id.clone(),
+    //         generation: node.generation,
+    //         runtime_id: Some(runtime_id.to_string()),
+    //     }
+    // }
 
     pub(crate) fn span(&self) -> Span {
         tracing::info_span!(

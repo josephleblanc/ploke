@@ -24,8 +24,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tracing::{Instrument, debug, error, info, instrument, warn};
 
-use crate::cli::handlers::closure::{advance_eval_closure, advance_protocol_closure};
 use crate::cli::handlers::run::default_batch_id;
+use crate::cli::{
+    handlers::closure::{advance_eval_closure, advance_protocol_closure},
+    prototype1_state::edit_surface::harness_request,
+};
 use crate::{
     BenchmarkFamily, BranchDisposition, BranchEvaluationInput, BranchEvaluationResult,
     CampaignManifest, CampaignOverrides, ClosureClass, EvalBudget, EvalCampaignPolicy,
@@ -786,7 +789,7 @@ const BROAD_TUI_ATTEMPT_LIMIT: usize = 3;
 const BROAD_TUI_FRESH_ATTEMPTS_PER_CHILD: usize = 3;
 const DEFAULT_GRAPH_NEAREST_ITEMS: usize = 24;
 const PRE_CHILD_PLANNING_SCHEMA: &str = "prototype1-pre-child-planning-review.v1";
-const PRE_CHILD_PLANNER_MODEL: &str = "google/gemini-3.5-flash";
+const PRE_CHILD_PLANNER_MODEL: &str = "google/gemini-2.5-flash-lite";
 const BROAD_TUI_STASH_TRANSFER_ENV: &str = "PLOKE_EVAL_HEADLESS_TUI_STASH_TRANSFER";
 const BROAD_TUI_PRODUCER: &str = "prototype1:broad-headless-tui-adapter-v1";
 
@@ -1543,6 +1546,66 @@ async fn run_direct_google_pre_child_planner(
     use ploke_llm::router_only::google::Google;
     use ploke_llm::{ChatStepOutcome, RequestMessage, Router};
 
+    fn parse_pre_child_planning_json(content: &str) -> Result<serde_json::Value, PrepareError> {
+        let value = serde_json::from_str::<serde_json::Value>(content)
+            .or_else(|_| extract_json_object(content))
+            .map_err(|source| PrepareError::DatabaseSetup {
+                phase: "prototype1_pre_child_planning_parse",
+                detail: format!("planner response was not valid JSON: {source}"),
+            })?;
+        validate_pre_child_planning_json(&value)?;
+        Ok(value)
+    }
+
+    fn extract_json_object(content: &str) -> Result<serde_json::Value, serde_json::Error> {
+        let Some(start) = content.find('{') else {
+            return serde_json::from_str(content);
+        };
+        let Some(end) = content.rfind('}') else {
+            return serde_json::from_str(content);
+        };
+        serde_json::from_str(&content[start..=end])
+    }
+
+    fn validate_pre_child_planning_json(value: &serde_json::Value) -> Result<(), PrepareError> {
+        let object = value
+            .as_object()
+            .ok_or_else(|| PrepareError::DatabaseSetup {
+                phase: "prototype1_pre_child_planning_parse",
+                detail: "planner response root must be a JSON object".to_string(),
+            })?;
+        for field in ["target_pipeline", "pipeline_scope", "edit_intent"] {
+            let valid = object
+                .get(field)
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|value| !value.trim().is_empty());
+            if !valid {
+                return Err(PrepareError::DatabaseSetup {
+                    phase: "prototype1_pre_child_planning_parse",
+                    detail: format!("planner response field '{field}' must be a non-empty string"),
+                });
+            }
+        }
+        let valid_citations = object
+            .get("evidence_citations")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|items| {
+                !items.is_empty()
+                    && items
+                        .iter()
+                        .all(|item| item.as_str().is_some_and(|value| !value.trim().is_empty()))
+            });
+        if !valid_citations {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_pre_child_planning_parse",
+                detail:
+                    "planner response field 'evidence_citations' must be a non-empty string array"
+                        .to_string(),
+            });
+        }
+        Ok(())
+    }
+
     let model = ModelId::from_str(PRE_CHILD_PLANNER_MODEL).map_err(|source| {
         PrepareError::DatabaseSetup {
             phase: "prototype1_pre_child_planning_model",
@@ -1589,65 +1652,6 @@ async fn run_direct_google_pre_child_planner(
     };
     let structured = parse_pre_child_planning_json(&content)?;
     Ok((content, structured))
-}
-
-fn parse_pre_child_planning_json(content: &str) -> Result<serde_json::Value, PrepareError> {
-    let value = serde_json::from_str::<serde_json::Value>(content)
-        .or_else(|_| extract_json_object(content))
-        .map_err(|source| PrepareError::DatabaseSetup {
-            phase: "prototype1_pre_child_planning_parse",
-            detail: format!("planner response was not valid JSON: {source}"),
-        })?;
-    validate_pre_child_planning_json(&value)?;
-    Ok(value)
-}
-
-fn extract_json_object(content: &str) -> Result<serde_json::Value, serde_json::Error> {
-    let Some(start) = content.find('{') else {
-        return serde_json::from_str(content);
-    };
-    let Some(end) = content.rfind('}') else {
-        return serde_json::from_str(content);
-    };
-    serde_json::from_str(&content[start..=end])
-}
-
-fn validate_pre_child_planning_json(value: &serde_json::Value) -> Result<(), PrepareError> {
-    let object = value
-        .as_object()
-        .ok_or_else(|| PrepareError::DatabaseSetup {
-            phase: "prototype1_pre_child_planning_parse",
-            detail: "planner response root must be a JSON object".to_string(),
-        })?;
-    for field in ["target_pipeline", "pipeline_scope", "edit_intent"] {
-        let valid = object
-            .get(field)
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|value| !value.trim().is_empty());
-        if !valid {
-            return Err(PrepareError::DatabaseSetup {
-                phase: "prototype1_pre_child_planning_parse",
-                detail: format!("planner response field '{field}' must be a non-empty string"),
-            });
-        }
-    }
-    let valid_citations = object
-        .get("evidence_citations")
-        .and_then(serde_json::Value::as_array)
-        .is_some_and(|items| {
-            !items.is_empty()
-                && items
-                    .iter()
-                    .all(|item| item.as_str().is_some_and(|value| !value.trim().is_empty()))
-        });
-    if !valid_citations {
-        return Err(PrepareError::DatabaseSetup {
-            phase: "prototype1_pre_child_planning_parse",
-            detail: "planner response field 'evidence_citations' must be a non-empty string array"
-                .to_string(),
-        });
-    }
-    Ok(())
 }
 
 fn pre_child_planning_artifact_path(prototype_root: &Path, request_id: &str) -> PathBuf {
@@ -3001,31 +3005,12 @@ struct BroadHarnessRequestPublication {
         crate::cli::prototype1_state::edit_surface::harness_request::PublishedBroadHarnessRequest,
 }
 
-fn publish_broad_edit_harness_request(
-    manifest_path: &Path,
-    repo_root: &Path,
-    parent: &ParentIdentity,
-    child_budget: Prototype1ChildBudget,
-    admission_binding: crate::cli::prototype1_state::edit_surface::harness_request::RequestAdmissionBinding,
-    anti_attractor_policy: profile::AntiAttractorPolicy,
-) -> Result<BroadHarnessRequestPublication, PrepareError> {
-    publish_broad_edit_harness_request_with_graph_limit(
-        manifest_path,
-        repo_root,
-        parent,
-        child_budget,
-        admission_binding,
-        DEFAULT_GRAPH_NEAREST_ITEMS,
-        anti_attractor_policy,
-    )
-}
-
 fn publish_broad_edit_harness_request_with_graph_limit(
     manifest_path: &Path,
     repo_root: &Path,
     parent: &ParentIdentity,
     child_budget: Prototype1ChildBudget,
-    admission_binding: crate::cli::prototype1_state::edit_surface::harness_request::RequestAdmissionBinding,
+    admission_binding: harness_request::RequestAdmissionBinding,
     nearest_items: usize,
     anti_attractor_policy: profile::AntiAttractorPolicy,
 ) -> Result<BroadHarnessRequestPublication, PrepareError> {

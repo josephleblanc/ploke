@@ -36,6 +36,7 @@ use ploke_llm::{
     router_only::{RouterVariants, google::Google, openrouter::OpenRouter},
 };
 
+use crate::llm::model_overrides;
 use ploke_rag::{TokenCounter as _, context::ApproxCharTokenizer};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -581,7 +582,7 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
 
     // 4) Parameters (placeholder: use defaults until llm registry/prefs are wired)
     //    When registry is available, merge model/user defaults into LLMParameters.
-    let llm_params = crate::llm::LLMParameters::default();
+    let mut llm_params = crate::llm::LLMParameters::default();
 
     // Gate tools by crate_focus: disable when no workspace is loaded
     let crate_loaded = state.with_system_read(|sys| sys.has_loaded_crates()).await;
@@ -611,6 +612,23 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
             router_fields,
         )
     };
+
+    // Model-specific request quirk overrides (per-model API adaptations).
+    // See `crate::llm::model_overrides` and the direct-Google malformed
+    // function-call bug doc.
+    //
+    // Direct-Google Gemini truncates a structured tool call when the output-token
+    // budget is too small, surfacing as `MALFORMED_FUNCTION_CALL`. The override
+    // raises `max_tokens` to a generous floor (only when unset/lower), which a
+    // live spike proved eliminates the malformation. Raising the budget is
+    // termination-safe. (A forced `tool_choice` was empirically shown NOT to fix
+    // the malformation and would trap the per-request session loop, so no
+    // tool-choice override is emitted here.)
+    if let Some(model_override) = model_overrides::resolve(active_router, &model_id) {
+        llm_params.max_tokens = model_override
+            .params
+            .effective_max_tokens(llm_params.max_tokens);
+    }
 
     // 6) Diagnostics: skip provider-bound diag logs until registry replaces user_config.
     // let log_fut: Option<_> = None;

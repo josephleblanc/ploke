@@ -53,6 +53,9 @@ const OPENROUTER_RESPONSE_LOG_PARSED: &str = "logs/openrouter/session/last_parse
 const OPENROUTER_RESPONSE_LOG_RAW: &str = "logs/openrouter/session/last_response_raw.txt";
 const DEFAULT_REPAIR_ATTEMPTS_PER_SESSION: u32 = 4;
 const REPLAY_LIVE_STEP_LIMIT_REACHED: &str = "replay live step limit reached";
+/// Minimum number of provider HTTP attempts (one retry) for any router. Routers
+/// that calibrate a larger retry budget keep it; others are floored here.
+const MIN_CHAT_HTTP_ATTEMPTS: u32 = 2;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FullResponseTraceRecord {
     assistant_message_id: Uuid,
@@ -224,6 +227,19 @@ pub enum TuiLengthPolicy {
     Strict,
 }
 
+/// Retry policy for a terminal `malformed_function_call` finish reason.
+///
+/// Mirrors [`TuiLengthPolicy`]: a bounded in-session corrective re-prompt for a
+/// model-behavior finish reason that aborts the turn. Unlike length, the
+/// malformed finish reason is surfaced by `parse_chat_outcome` as an
+/// `LlmError::FinishError`, so it is handled in the chat-step error branch of
+/// `run_chat_session` rather than in `handle_finish_reasons`.
+#[derive(Clone, Copy, Debug)]
+pub enum TuiMalformedPolicy {
+    RetryLimit(u32),
+    Strict,
+}
+
 #[derive(Clone, Debug)]
 pub struct FinishPolicy {
     /// Timeout backoff/limit behavior for FinishReason::Timeout.
@@ -234,6 +250,11 @@ pub struct FinishPolicy {
     length: TuiLengthPolicy,
     /// System prompt appended when retrying after FinishReason::Length.
     length_continue_prompt: String,
+    /// Retry policy for FinishReason::MalformedFunctionCall.
+    malformed: TuiMalformedPolicy,
+    /// Corrective system prompt appended when retrying after a malformed
+    /// function call.
+    malformed_retry_prompt: String,
 }
 
 impl Default for TuiErrorPolicy {
@@ -248,6 +269,12 @@ impl Default for TuiLengthPolicy {
     }
 }
 
+impl Default for TuiMalformedPolicy {
+    fn default() -> Self {
+        Self::RetryLimit(1)
+    }
+}
+
 impl Default for FinishPolicy {
     fn default() -> Self {
         Self {
@@ -256,6 +283,11 @@ impl Default for FinishPolicy {
             length: TuiLengthPolicy::default(),
             length_continue_prompt: "Continue from where you left off. Do not repeat prior text."
                 .to_string(),
+            malformed: TuiMalformedPolicy::default(),
+            malformed_retry_prompt:
+                "Respond again with a single valid structured tool call using strict JSON \
+                 arguments. Do not emit Python-style code or `print(...)` wrappers."
+                    .to_string(),
         }
     }
 }
@@ -284,6 +316,8 @@ pub(crate) fn finish_policy_from_chat(cfg: &ChatPolicy) -> FinishPolicy {
         error: TuiErrorPolicy::RetryLimit(cfg.error_retry_limit),
         length: TuiLengthPolicy::RetryLimit(cfg.length_retry_limit),
         length_continue_prompt: cfg.length_continue_prompt.clone(),
+        malformed: TuiMalformedPolicy::RetryLimit(cfg.malformed_retry_limit),
+        malformed_retry_prompt: cfg.malformed_retry_prompt.clone(),
     }
 }
 
@@ -317,6 +351,34 @@ fn should_retry_length(policy: TuiLengthPolicy, retried_lengths: &mut u32) -> bo
         }
         TuiLengthPolicy::Strict => false,
     }
+}
+
+fn should_retry_malformed(policy: TuiMalformedPolicy, retried_malformed: &mut u32) -> bool {
+    match policy {
+        TuiMalformedPolicy::RetryLimit(limit) => {
+            if *retried_malformed < limit {
+                *retried_malformed += 1;
+                true
+            } else {
+                false
+            }
+        }
+        TuiMalformedPolicy::Strict => false,
+    }
+}
+
+/// True only for a terminal `malformed_function_call` finish reason surfaced as
+/// an `LlmError::FinishError`. Used to scope the bounded malformed re-prompt to
+/// that exact model-behavior failure and nothing else in the chat-step error
+/// branch.
+fn is_malformed_finish_error(err: &LlmError) -> bool {
+    matches!(
+        err,
+        LlmError::FinishError {
+            finish_reason: FinishReason::MalformedFunctionCall,
+            ..
+        }
+    )
 }
 
 fn repair_budget_exhausted(state: &ChatLoopState, limit: u32) -> bool {
@@ -369,6 +431,7 @@ enum FinishFailure {
 struct ChatLoopState {
     retried_errors: u32,
     retried_lengths: u32,
+    retried_malformed: u32,
     timeout_attempts: usize,
     request_error_retries: u32,
     repair_attempts: u32,
@@ -472,6 +535,31 @@ impl FinishPolicy {
                         "finish reason decision: failure"
                     );
                 }
+                FinishReason::MalformedFunctionCall => {
+                    if failure.is_none() {
+                        failure = Some(FinishFailure::FinishError {
+                            msg: "Provider returned malformed function call.".to_string(),
+                            finish_reason,
+                        });
+                    }
+                    tracing::trace!(
+                        target = FINISH_REASON_TARGET,
+                        "finish reason decision: failure"
+                    );
+                }
+                FinishReason::UnexpectedToolCall => {
+                    if failure.is_none() {
+                        failure = Some(FinishFailure::FinishError {
+                            msg: "Provider invoked an undeclared function (unexpected tool call)."
+                                .to_string(),
+                            finish_reason,
+                        });
+                    }
+                    tracing::trace!(
+                        target = FINISH_REASON_TARGET,
+                        "finish reason decision: failure"
+                    );
+                }
                 // keep looping
                 FinishReason::ToolCalls => {
                     continue_chain = true;
@@ -504,18 +592,6 @@ impl FinishPolicy {
                             "finish reason decision: failure"
                         );
                     }
-                }
-                FinishReason::MalformedFunctionCall => {
-                    if failure.is_none() {
-                        failure = Some(FinishFailure::FinishError {
-                            msg: "Provider reported a malformed function call; retry with a native tool-call envelope.".to_string(),
-                            finish_reason,
-                        });
-                    }
-                    tracing::trace!(
-                        target = FINISH_REASON_TARGET,
-                        "finish reason decision: failure"
-                    );
                 }
                 FinishReason::Error(ref e) => {
                     if should_retry_error(self.error, &mut state.retried_errors) {
@@ -1024,7 +1100,11 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
         let calibration_input = R::calibration_input(&req);
         let mut provider_timing = R::resolve_provider_timing(calibration_input);
         provider_timing.attempt_timeout = AttemptTimeout::fixed(http_timeout);
-        provider_timing.max_attempts = 2;
+        // Honor the router-calibrated HTTP attempt budget (e.g. the direct-Google
+        // path opts into a larger exponential-backoff budget to ride out Vertex
+        // DSQ 429s) while keeping a floor of one retry for routers that do not
+        // customize it. The per-attempt timeout stays statically session-driven.
+        provider_timing.max_attempts = provider_timing.max_attempts.max(MIN_CHAT_HTTP_ATTEMPTS);
         let mut cfg = ChatHttpConfig::from(&provider_timing);
         let ChatStepData {
             outcome,
@@ -1107,7 +1187,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                     &model_key,
                     assistant_message_id,
                 );
-                let loop_error = classify_llm_error(&err, context, commit_phase.clone());
+                let mut loop_error = classify_llm_error(&err, context, commit_phase.clone());
                 if !provider_exhausted
                     && matches!(&loop_error.recovery, RecoveryDecision::Retry { .. })
                     && loop_state.request_error_retries < chat_policy.error_retry_limit
@@ -1164,6 +1244,52 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                         }
                     }
 
+                    continue;
+                }
+
+                // Bounded in-session corrective re-prompt for a residual
+                // `malformed_function_call` (provider emitted Python-style
+                // `print(default_api...)` instead of a structured tool call).
+                // Mirrors the length-retry policy: append a corrective prompt and
+                // retry up to the configured limit. On exhaustion we fall through
+                // to the terminal abort below, preserving the MALFORMED_FUNCTION_CALL
+                // / ModelBehavior classification (no success masking).
+                if is_malformed_finish_error(&err)
+                    && should_retry_malformed(
+                        finish_policy.malformed,
+                        &mut loop_state.retried_malformed,
+                    )
+                {
+                    apply_prompt_hint(
+                        &mut loop_error,
+                        finish_policy.malformed_retry_prompt.clone(),
+                    );
+                    if !matches!(loop_error.retry, RetryAdvice::Yes { .. }) {
+                        let retry = RetryAdvice::Yes {
+                            strategy: RetryStrategy::Fixed,
+                            reason: ploke_core::ArcStr::from(
+                                "Retrying malformed function call within session",
+                            ),
+                        };
+                        loop_error.recovery = recovery_from_retry(&retry);
+                        loop_error.retry = retry;
+                    }
+                    tracing::warn!(
+                        target = "chat-loop",
+                        error = %err,
+                        retried_malformed = loop_state.retried_malformed,
+                        ?model_key,
+                        "malformed function call; retrying with corrective re-prompt"
+                    );
+                    emit_loop_error(
+                        &state_cmd_tx,
+                        assistant_message_id,
+                        &mut initial_message_updated,
+                        &loop_error,
+                    )
+                    .await;
+                    push_llm_payload(&mut req, &loop_error);
+                    report.record_error(loop_error);
                     continue;
                 }
 
@@ -2163,6 +2289,7 @@ mod tests {
     use crate::EventBus;
     use crate::app_state::AppState;
     use crate::event_bus::EventBusCaps;
+    use crate::llm::manager::loop_error::LoopErrorKind;
     use crate::tools::{FunctionMarker, Tool, ToolName};
     use crate::user_config::ChatPolicy;
     use ploke_db::Database;
@@ -2501,6 +2628,29 @@ mod tests {
         .to_string()
     }
 
+    /// A provider envelope whose `finish_reason` is `malformed_function_call`
+    /// and whose message carries the Python-codegen refusal text observed on the
+    /// residual direct-Google incident (a `print(default_api.apply_code_edit(...))`
+    /// against a hallucinated symbol). `parse_chat_outcome` surfaces this as an
+    /// `LlmError::FinishError`, exercising the chat-step error branch.
+    fn malformed_function_call_response(index: usize) -> String {
+        json!({
+            "id": format!("malformed-{index}"),
+            "choices": [{
+                "index": 0,
+                "finish_reason": "malformed_function_call",
+                "message": {
+                    "role": "assistant",
+                    "refusal": "Malformed function call: print(default_api.apply_code_edit(edits=[default_api.ApplyCodeEditEdits(file=\"crates/printer/src/standard.rs\", canon=\"crate::standard::StandardSink::print_replacement\")]))"
+                }
+            }],
+            "created": 0,
+            "model": "test/model",
+            "object": "chat.completion"
+        })
+        .to_string()
+    }
+
     fn content_response(content: &str) -> String {
         json!({
             "id": "final",
@@ -2729,6 +2879,146 @@ mod tests {
             traces.iter().any(|line| line.contains("\"id\":\"final\"")),
             "expected final provider envelope in full-response trace, got {traces:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn run_chat_session_retries_malformed_function_call_then_aborts_terminally() {
+        // Default policy allows a single malformed retry. With two consecutive
+        // malformed responses the session must: (1) retry once with a corrective
+        // re-prompt, then (2) abort terminally with the MALFORMED_FUNCTION_CALL
+        // classification once the retry budget is exhausted — never silently
+        // succeed.
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let drain = tokio::spawn(async move { while state_cmd_rx.recv().await.is_some() {} });
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let assistant_message_id = Uuid::new_v4();
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_messages(vec![RequestMessage::new_system(
+                "You are a test assistant.".to_string(),
+            )]);
+        let first = serde_json::from_str(&malformed_function_call_response(0))
+            .expect("malformed envelope parses as provider response");
+        let second = serde_json::from_str(&malformed_function_call_response(1))
+            .expect("malformed envelope parses as provider response");
+        let tape = RecordedResponseTape::new(vec![
+            RecordedResponse::new(0, first),
+            RecordedResponse::new(1, second),
+        ]);
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::recorded(tape),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id,
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+            },
+            2,
+        )
+        .await;
+        drain.abort();
+
+        // One retry (corrective re-prompt) then a terminal abort: two recorded
+        // errors, both classified as MALFORMED_FUNCTION_CALL / ModelBehavior.
+        assert!(
+            matches!(report.outcome, SessionOutcome::Aborted { .. }),
+            "expected terminal abort after malformed retry budget exhausted, got {:?}",
+            report.outcome
+        );
+        assert_eq!(report.errors.len(), 2, "errors={:#?}", report.errors);
+        for error in &report.errors {
+            assert_eq!(error.code.as_ref(), "MALFORMED_FUNCTION_CALL");
+            assert!(matches!(error.kind, LoopErrorKind::ModelBehavior));
+        }
+        let SessionOutcome::Aborted { error_id } = report.outcome else {
+            unreachable!("checked above");
+        };
+        assert_eq!(
+            report.errors[1].error_id, error_id,
+            "terminal abort must point at the final malformed error"
+        );
+
+        // The retried error must carry a corrective re-prompt instructing a
+        // structured tool call, and must advertise the retry as allowed.
+        let retried = &report.errors[0];
+        assert!(matches!(retried.retry, RetryAdvice::Yes { .. }));
+        let llm_action = retried
+            .llm_action
+            .as_ref()
+            .expect("retried malformed error carries an llm_action");
+        assert!(
+            llm_action.next_steps.iter().any(|step| {
+                step.details
+                    .as_ref()
+                    .is_some_and(|d| d.contains("STRUCTURED tool call"))
+            }),
+            "corrective re-prompt should instruct a structured tool call, got {:?}",
+            llm_action.next_steps
+        );
+    }
+
+    #[tokio::test]
+    async fn run_chat_session_aborts_malformed_immediately_when_retry_disabled() {
+        // With the malformed retry budget set to zero, a single malformed
+        // response must abort terminally on the first attempt (no masking, no
+        // wasted retry).
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let drain = tokio::spawn(async move { while state_cmd_rx.recv().await.is_some() {} });
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let assistant_message_id = Uuid::new_v4();
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_messages(vec![RequestMessage::new_system(
+                "You are a test assistant.".to_string(),
+            )]);
+        let only = serde_json::from_str(&malformed_function_call_response(0))
+            .expect("malformed envelope parses as provider response");
+        let tape = RecordedResponseTape::new(vec![RecordedResponse::new(0, only)]);
+
+        let chat_policy = ChatPolicy {
+            malformed_retry_limit: 0,
+            ..ChatPolicy::default()
+        };
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::recorded(tape),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id,
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy,
+                cancel_rx,
+            },
+            2,
+        )
+        .await;
+        drain.abort();
+
+        assert!(
+            matches!(report.outcome, SessionOutcome::Aborted { .. }),
+            "expected immediate terminal abort, got {:?}",
+            report.outcome
+        );
+        assert_eq!(report.errors.len(), 1, "errors={:#?}", report.errors);
+        assert_eq!(report.errors[0].code.as_ref(), "MALFORMED_FUNCTION_CALL");
+        assert!(matches!(
+            report.errors[0].kind,
+            LoopErrorKind::ModelBehavior
+        ));
     }
 
     #[tokio::test]
@@ -3374,7 +3664,10 @@ mod tests {
             step.provider_timing.attempt_timeout.for_attempt(2),
             Duration::from_secs(90)
         );
-        assert_eq!(step.provider_timing.max_attempts, 2);
+        // The per-attempt timeout is statically overridden to the session
+        // timeout, but the router-calibrated attempt budget is now honored
+        // (CalibratedTestRouter requests 3, above the floor of 2).
+        assert_eq!(step.provider_timing.max_attempts, 3);
     }
 
     #[tokio::test]
@@ -3737,6 +4030,67 @@ mod tests {
         let mut retries = 0_u32;
         assert!(!should_retry_length(TuiLengthPolicy::Strict, &mut retries));
         assert_eq!(retries, 0);
+    }
+
+    #[test]
+    fn malformed_policy_retry_limit_stops_after_limit() {
+        let mut retries = 0_u32;
+
+        assert!(should_retry_malformed(
+            TuiMalformedPolicy::RetryLimit(2),
+            &mut retries
+        ));
+        assert_eq!(retries, 1);
+        assert!(should_retry_malformed(
+            TuiMalformedPolicy::RetryLimit(2),
+            &mut retries
+        ));
+        assert_eq!(retries, 2);
+        assert!(!should_retry_malformed(
+            TuiMalformedPolicy::RetryLimit(2),
+            &mut retries
+        ));
+        assert_eq!(retries, 2);
+    }
+
+    #[test]
+    fn malformed_policy_strict_never_retries() {
+        let mut retries = 0_u32;
+        assert!(!should_retry_malformed(
+            TuiMalformedPolicy::Strict,
+            &mut retries
+        ));
+        assert_eq!(retries, 0);
+    }
+
+    #[test]
+    fn is_malformed_finish_error_matches_only_malformed_finish_reason() {
+        use ploke_llm::response::OpenAiResponse;
+
+        let envelope = |finish_reason: FinishReason| LlmError::FinishError {
+            msg: "boom".to_string(),
+            full_response: OpenAiResponse {
+                id: "t".to_string(),
+                choices: vec![],
+                created: 0,
+                model: "test/model".to_string(),
+                object: "chat.completion".to_string(),
+                provider: None,
+                system_fingerprint: None,
+                usage: None,
+                logprobs: None,
+            },
+            finish_reason,
+        };
+
+        assert!(is_malformed_finish_error(&envelope(
+            FinishReason::MalformedFunctionCall
+        )));
+        assert!(!is_malformed_finish_error(&envelope(
+            FinishReason::UnexpectedToolCall
+        )));
+        assert!(!is_malformed_finish_error(&envelope(FinishReason::Length)));
+        assert!(!is_malformed_finish_error(&LlmError::RateLimited));
     }
 
     #[test]

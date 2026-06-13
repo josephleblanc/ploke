@@ -105,6 +105,8 @@ pub enum FinishReasonRecord {
     Length,
     ContentFilter,
     ToolCalls,
+    MalformedFunctionCall,
+    UnexpectedToolCall,
     Timeout,
     Error(String),
 }

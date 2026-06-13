@@ -1070,7 +1070,7 @@ pub use artifacts::*;
 pub use msb_batch::*;
 #[cfg(test)]
 pub use msb_single::*;
-pub use replay::*;
+pub(crate) use replay::*;
 
 #[cfg(test)]
 mod tests;

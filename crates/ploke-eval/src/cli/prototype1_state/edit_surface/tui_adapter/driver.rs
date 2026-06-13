@@ -1,15 +1,13 @@
 use std::{
-    path::Path,
     sync::{Arc, Mutex, mpsc::Receiver},
     time::Duration,
 };
 
 use ploke_llm::manager::RecordedResponse;
-use uuid::Uuid;
 
 use super::super::harness_request::contract;
 use super::super::surface_policy::SurfacePolicy;
-use super::harness::{SessionSpec, Timeouts, TuiHarness};
+use super::harness::Timeouts;
 use super::harness_io::observed_headless_error;
 use super::tui_bridge::{
     AttemptEnd, LiveObserver, attempt_prompt, evidence_read_roots, run_attempt,
@@ -197,18 +195,12 @@ fn exhausted_terminal(end: AttemptEnd, attempts: u32, last: &Outcome) -> Headles
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
     use std::time::Instant;
 
-    use uuid::Uuid;
-
-    use super::super::harness::{
-        Batch, Decision, DenyItem, Harness, Progress, SessionSpec, Staged, StagedKind, TurnStop,
-    };
-    use super::super::harness_io::{HeadlessRun, PromptDiagnostic};
+    use super::super::harness::{Decision, Harness, Progress};
+    use super::super::harness_io::HeadlessRun;
     use super::super::{Budget, Error};
     use super::*;
-    use crate::cli::prototype1_state::edit_surface::surface_policy::SurfacePolicy;
 
     struct FixtureHarness {
         run: HeadlessRun,

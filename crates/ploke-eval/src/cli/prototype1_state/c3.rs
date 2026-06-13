@@ -17,20 +17,18 @@
 //! - the fresh child process bootstraps from one persisted invocation record
 //!   written before spawn
 
-use std::fs;
-use std::path::PathBuf;
+use crate::prelude::*;
+
 use std::process::{Child as ProcessChild, Command as ProcessCommand, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use thiserror::Error;
 use tracing::{debug, instrument};
 
 use crate::intervention::{
     CommitError, Intervention, Outcome, Prototype1NodeStatus, RecordStore, Surface,
     project_node_status, write_node_projection,
 };
-use crate::spec::PrepareError;
 
 use super::c1::{Acknowledged, Binary, Child, ChildAckState, Parent, Present, Prototype};
 use super::channel::{Channel, Cursor, FileTransport, ToParent};

@@ -1278,12 +1278,13 @@ fn provider_unavailable_headless_tui_terminal_is_typed_prepare_error() {
     index_repo(&repo_root);
     commit_indexed_repo(&repo_root, "provider unavailable fixture");
 
-    let publication = publish_broad_edit_harness_request(
+    let publication = publish_broad_edit_harness_request_with_graph_limit(
         &manifest_path,
         &repo_root,
         &test_parent_identity(),
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
+        DEFAULT_GRAPH_NEAREST_ITEMS,
         profile::AntiAttractorPolicy::None,
     )
     .expect("published broad harness request");
@@ -1342,12 +1343,13 @@ async fn rag_unavailable_headless_tui_setup_writes_typed_diagnostics() {
     index_repo(&repo_root);
     commit_indexed_repo(&repo_root, "rag unavailable fixture");
 
-    let publication = publish_broad_edit_harness_request(
+    let publication = publish_broad_edit_harness_request_with_graph_limit(
         &manifest_path,
         &repo_root,
         &test_parent_identity(),
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
+        DEFAULT_GRAPH_NEAREST_ITEMS,
         profile::AntiAttractorPolicy::None,
     )
     .expect("published broad harness request");
@@ -1402,12 +1404,13 @@ async fn broad_tui_prep_failure_is_setup_blocker() {
     index_repo(&repo_root);
     commit_indexed_repo(&repo_root, "workspace prep fixture");
 
-    let publication = publish_broad_edit_harness_request(
+    let publication = publish_broad_edit_harness_request_with_graph_limit(
         &manifest_path,
         &repo_root,
         &test_parent_identity(),
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
+        DEFAULT_GRAPH_NEAREST_ITEMS,
         profile::AntiAttractorPolicy::None,
     )
     .expect("published broad harness request");
@@ -1589,12 +1592,13 @@ fn timed_out_headless_tui_applied_attempt_blocks_submitted_result_for_admission(
     index_repo(&repo_root);
     commit_indexed_repo(&repo_root, "timeout applied handoff fixture");
 
-    let publication = publish_broad_edit_harness_request(
+    let publication = publish_broad_edit_harness_request_with_graph_limit(
         &manifest_path,
         &repo_root,
         &test_parent_identity(),
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
+        DEFAULT_GRAPH_NEAREST_ITEMS,
         profile::AntiAttractorPolicy::None,
     )
     .expect("published broad harness request");
@@ -1681,12 +1685,13 @@ fn applied_timed_out_headless_tui_blocks_submitted_result_with_typed_detail() {
     index_repo(&repo_root);
     commit_indexed_repo(&repo_root, "typed applied timeout fixture");
 
-    let publication = publish_broad_edit_harness_request(
+    let publication = publish_broad_edit_harness_request_with_graph_limit(
         &manifest_path,
         &repo_root,
         &test_parent_identity(),
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
+        DEFAULT_GRAPH_NEAREST_ITEMS,
         profile::AntiAttractorPolicy::None,
     )
     .expect("published broad harness request");
@@ -1885,21 +1890,23 @@ fn broad_workspace_edit_surface_republication_uses_request_scoped_family_paths()
     let admission_binding = test_broad_request_admission_binding();
     let budget = Prototype1ChildBudget::new(2, 3);
 
-    let first = publish_broad_edit_harness_request(
+    let first = publish_broad_edit_harness_request_with_graph_limit(
         &manifest_path,
         &repo_root,
         &parent_identity,
         budget,
         admission_binding.clone(),
+        DEFAULT_GRAPH_NEAREST_ITEMS,
         profile::AntiAttractorPolicy::None,
     )
     .expect("first publication");
-    let second = publish_broad_edit_harness_request(
+    let second = publish_broad_edit_harness_request_with_graph_limit(
         &manifest_path,
         &repo_root,
         &parent_identity,
         budget,
         admission_binding,
+        DEFAULT_GRAPH_NEAREST_ITEMS,
         profile::AntiAttractorPolicy::None,
     )
     .expect("second publication");
@@ -2148,12 +2155,13 @@ fn turn_live_bundle() {
     index_repo(&repo_root);
     commit_indexed_repo(&repo_root, "turn live bundle fixture");
 
-    let publication = publish_broad_edit_harness_request(
+    let publication = publish_broad_edit_harness_request_with_graph_limit(
         &manifest_path,
         &repo_root,
         &test_parent_identity(),
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
+        DEFAULT_GRAPH_NEAREST_ITEMS,
         profile::AntiAttractorPolicy::None,
     )
     .expect("published broad harness request");
@@ -2351,12 +2359,13 @@ path = "src/lib.rs"
     index_repo(&repo_root);
     commit_indexed_repo(&repo_root, "google broad headless fixture");
 
-    let publication = publish_broad_edit_harness_request(
+    let publication = publish_broad_edit_harness_request_with_graph_limit(
         &manifest_path,
         &repo_root,
         &test_parent_identity(),
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
+        DEFAULT_GRAPH_NEAREST_ITEMS,
         profile::AntiAttractorPolicy::None,
     )
     .expect("published broad harness request");
@@ -2642,12 +2651,13 @@ fn broad_harness_multi_file_admission_mints_one_artifact_child() {
         vec![allowed[0].clone(), allowed[1].clone()]
     };
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
-    let publication = publish_broad_edit_harness_request(
+    let publication = publish_broad_edit_harness_request_with_graph_limit(
         &manifest_path,
         &repo_root,
         parent.identity(),
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
+        DEFAULT_GRAPH_NEAREST_ITEMS,
         profile::AntiAttractorPolicy::None,
     )
     .expect("published request");
@@ -2750,12 +2760,13 @@ fn broad_harness_materialization_accepts_relative_parent_repo_root() {
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
     let parent_identity = parent.identity().clone();
     let admission_binding = test_broad_request_admission_binding();
-    let publication = publish_broad_edit_harness_request(
+    let publication = publish_broad_edit_harness_request_with_graph_limit(
         &manifest_path,
         &repo_root,
         &parent_identity,
         Prototype1ChildBudget::new(1, 1),
         admission_binding.clone(),
+        DEFAULT_GRAPH_NEAREST_ITEMS,
         profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad request");
@@ -4609,12 +4620,13 @@ fn broad_harness_batch_rejects_below_minimum_admitted_transactions() {
     let budget = Prototype1ChildBudget::new(3, 3);
     let mut slots = Vec::new();
     for _ in 0..budget.max {
-        let publication = publish_broad_edit_harness_request(
+        let publication = publish_broad_edit_harness_request_with_graph_limit(
             &manifest_path,
             &repo_root,
             &parent_identity,
             Prototype1ChildBudget::new(1, 1),
             admission_binding.clone(),
+            DEFAULT_GRAPH_NEAREST_ITEMS,
             profile::AntiAttractorPolicy::None,
         )
         .expect("publish broad slot");
@@ -4675,12 +4687,13 @@ fn broad_harness_materialization_rejects_post_admission_drift() {
         vec![allowed[0].clone(), allowed[1].clone()]
     };
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
-    let publication = publish_broad_edit_harness_request(
+    let publication = publish_broad_edit_harness_request_with_graph_limit(
         &manifest_path,
         &repo_root,
         parent.identity(),
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
+        DEFAULT_GRAPH_NEAREST_ITEMS,
         profile::AntiAttractorPolicy::None,
     )
     .expect("published request");

@@ -1,0 +1,190 @@
+# Vertex Gemini 3.5 Flash DSQ Shadow Quota 429
+
+Status: open
+
+## Broken Contract
+
+Operators cannot see or enforce capacity limits for `google/gemini-3.5-flash` on
+the Vertex `direct_google` route, so live `RESOURCE_EXHAUSTED` (HTTP 429)
+responses terminate Prototype 1 treatment and broad child turns without a
+provider-capacity classification distinct from patch-merit failure.
+
+## Chat API Quota vs Vertex Path (embedded answer)
+
+The Console quota row **"Gemini for Google Cloud API / Chat API requests per day
+per user / 1,500"** is **not** the API surface Ploke uses for `direct_google`.
+
+| Surface | What it governs | Ploke usage |
+| --- | --- | --- |
+| Chat API (per-user daily) | Gemini API / AI Studio style Chat API | **Not used** by `direct_google` |
+| Vertex `aiplatform.googleapis.com` | `PredictionService.ChatCompletions` via OpenAI-compatible endpoint + ADC | **Used** by `direct_google` |
+
+Our 429s are on **`PredictionService.ChatCompletions`** through Vertex
+OpenAI-compat with ADC (Standard PayGo / **dynamic shared quota** for Flash
+models). IAM Quotas `base_model` filter lists `gemini-2.5-flash` but **not**
+`gemini-3.5-flash`, so operators cannot inspect or raise a per-model limit for
+the model we routed.
+
+**Downgrade correction (2026-06-10):** `google/gemini-3.0-flash` is **not** a
+valid Vertex OpenAI-compat publisher model. ADC probe against
+`PredictionService.ChatCompletions` returns HTTP 404
+(`Publisher Model .../models/gemini-3.0-flash was not found`). IAM Quotas may
+list quota rows for 3.0, but the model is not routable on Vertex direct_google.
+Use **`google/gemini-2.5-flash-lite`** (HTTP 200 verified after the 1.5
+retirement check) as the current downgrade target, or stay on 3.5 with
+throttling/backoff if that model is required.
+
+## Evidence
+
+| Item | Observation |
+| --- | --- |
+| Campaign | `p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020` |
+| Campaign root | `/home/brasides/.ploke-eval/campaigns/p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020` |
+| Profile model | `[model]` and `[protocol.model]` both `google/gemini-3.5-flash`, `route_source = direct-google` |
+| Endpoint | `aiplatform.googleapis.com` / `direct_google` (not Chat API) |
+| Gen-2 parallel 2209 failures | Two of three gen-2 treatment branches on `BurntSushi__ripgrep-2209` aborted with `HTTP_429` / `RESOURCE_EXHAUSTED`; parent runner surfaced `treatment_failed` without provider-vs-merit separation |
+| Terminal synthesis | [`2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-terminal-outcome.md`](../agents/run-reviews/2026-06-09-p1-g35f-direct-protocol-2target-g0g2-1x3-state3-20260609-203020-terminal-outcome.md) |
+| IAM `consumerQuotaMetrics` | Project `cs-poc-gtxw7jmtfuwfsiauziui9yx`: **0 rows** with `base_model` containing `gemini-3.5-flash`; rows exist for `gemini-2.5-flash` (and misleading 3.0 rows that do not imply routability) |
+| Metrics Explorer | `api/request_count` shows 429 for generate-content/chat paths; no matching `quota/exceeded` or per-model quota metric explaining the throttle |
+| state4 campaign 404 | `p1-g30f-direct-protocol-2target-g0g2-1x3-state4-20260609-234338` aborted on `google/gemini-3.0-flash` with HTTP 404 NOT_FOUND on Vertex OpenAPI chat completions |
+| Request model string | Ploke sends `google/gemini-{version}-flash` verbatim (no alias). Valid Vertex slugs: `gemini-2.5-flash`, `gemini-3.5-flash`. Invalid: `gemini-3.0-flash` (404). |
+
+Example gen-2 failure chain (2209):
+
+```text
+direct_google treatment request (google/gemini-3.5-flash)
+  -> Vertex PredictionService.ChatCompletions
+  -> HTTP 429 RESOURCE_EXHAUSTED
+  -> headless terminal aborted
+  -> parent runner treatment_failed / batch invalidity
+  -> branch evaluation treats provider abort like merit batch failure
+```
+
+## Source Trace
+
+Upstream cause is **external GCP dynamic shared quota / PayGo capacity** for a
+model without IAM Quotas visibility, not a Ploke model-id prefix bug (contrast
+[`google-api.md`](../plans/self-improvement-loop/google-api.md) `models/` prefix
+fix).
+
+Downstream repo gap: Prototype 1 branch evaluation and runner batch validity do
+not classify direct-Google `RESOURCE_EXHAUSTED` as a resumable provider-capacity
+blocker separate from patch-merit `treatment_failed`.
+
+Trace:
+
+`Vertex 429 -> headless/TUI adapter abort -> persisted terminal failure ->
+closure/runner batch invalidity -> successor selection / campaign evidence
+tainted for merit interpretation`.
+
+Authority layers:
+
+- **External:** GCP DSQ / org-level Flash TPM tiers (not Console-visible for 3.5).
+- **Operator:** profile/model selection (`ploke-eval` persisted defaults and
+  prototype1 run profiles).
+- **Repo (separate follow-up):** provider-capacity disposition in eval/runner
+  (see related bugs).
+
+## Docs/Policy Expectation
+
+- [`google-api.md`](../plans/self-improvement-loop/google-api.md): `direct_google`
+  uses Vertex ADC, not Chat API per-user limits.
+- Operator policy: provider/auth/capacity failures are external blockers; do not
+  reinterpret aborted campaigns as loop-progress evidence.
+- IAM Quotas `base_model` filter is the operator's expected place to see
+  per-model Vertex limits; absence of `gemini-3.5-flash` violates that
+  expectation while the model remains routable in Ploke.
+
+## Current Repro Coverage
+
+Live campaign evidence only:
+
+- [`2026-06-08-prototype1-direct-google-g35flash-quota-empty-baseline.md`](./2026-06-08-prototype1-direct-google-g35flash-quota-empty-baseline.md)
+  — baseline turn 429 + empty patch (closure guard since fixed).
+- [`2026-06-09-prototype1-broad-child-google-429-zero-admission.md`](./2026-06-09-prototype1-broad-child-google-429-zero-admission.md)
+  — broad child zero admission on 429.
+- `state3-20260609-203020` — gen-2 parallel treatment 429 on 2209 with partial
+  2295 success; campaign otherwise reached configured `max_generations` stop.
+
+No deterministic replay covers DSQ 429; historical replays must not be stretched
+to prove quota visibility.
+
+## Missing Repro / Validation
+
+- Fresh live run on `google/gemini-2.5-flash` under the same profile shape to
+  confirm capacity recovery from 3.5 DSQ pressure.
+- Optional: `GOOGLE_REGION=global` vs `us-central1` comparison if 429 persists
+  on 2.5.
+- Repo-side: doctor/preflight or runner classification test that stops before
+  merit batch invalidity when direct-Google returns `RESOURCE_EXHAUSTED`.
+
+## Fix Direction
+
+**Operator (immediate):**
+
+- Downgrade persisted defaults and new prototype1 profiles from
+  `google/gemini-3.5-flash` to **`google/gemini-2.5-flash-lite`** (Vertex
+  OpenAI-compatible and native probes returned HTTP 200; use
+  `cargo xtask google-direct-rpm-limits` for live quota-row visibility).
+- **Do not** use `google/gemini-3.0-flash` on Vertex direct_google — returns
+  HTTP 404 (`Publisher Model .../models/gemini-3.0-flash was not found`).
+- Profile template:
+  `~/.ploke-eval/profiles/prototype1/p1-g25f-direct-protocol-2target-g0g2-1x3-template.toml`.
+- Consider `GOOGLE_REGION=global` if regional DSQ pressure continues.
+- Private preview / PT entitlement for 3.5 if that model is required later.
+
+**Do not:**
+
+- Treat 429-aborted treatment branches as patch-quality evidence.
+- Patch closure or selection to salvage zero-useful provider failures.
+- Conflate the 1,500/day Chat API per-user quota with Vertex ADC usage.
+
+**Repo (separate):**
+
+- Provider-capacity disposition for `RESOURCE_EXHAUSTED` on `direct_google`
+  (distinct from merit `treatment_failed`).
+
+## Run Abandonment Log
+
+**2026-06-10 — state8 (`gemini-2.5-pro`, direct-google/Vertex) abandoned on gen-0 broad search 429.**
+
+| Item | Value |
+| --- | --- |
+| Campaign | `p1-g25p-direct-protocol-2target-g0g2-1x3-state8-20260610-155046` |
+| Worktree | `/home/brasides/.ploke-eval/worktrees/p1-g25p-direct-protocol-2target-g0g2-1x3-state8-20260610-155046` (branch `prototype1-parent-...-gen0`) |
+| Model / route | `google/gemini-2.5-pro`, `route_source = direct_google` (model + protocol model both pro) |
+| Stop reason | HTTP 429 `RESOURCE_EXHAUSTED` at gen-0 broad search — genuine Vertex DSQ/capacity throttle on the Pro model, **not** auth expiry |
+| Auth state | ADC verified VALID; `GOOGLE_PROJECT_ID` + `GOOGLE_REGION=us-central1` present (presence confirmed, no values logged) |
+| max_tokens floor | 16384 floor (commits `9cdd5de5`, `7d10bbc9`) HELD: zero malformed_function_call, zero OUTPUT_TRUNCATED. Floor fix not implicated in this abandonment |
+| cargo clean | Skipped — worktree has no local `target/` (binary built only in main checkout) |
+| Artifacts | Left in place as evidence; git worktree NOT removed |
+| Forward decision | Move future runs to flash tier; `google/gemini-2.5-flash-lite` is the current downgrade target (see Fix Direction) |
+
+DSQ capacity findings backing this decision (gcloud `alpha services quota list` on
+project `cs-poc-gtxw7jmtfuwfsiauziui9yx`, 2026-06-10, + Google docs):
+
+- Regional `us-central1` exposes **no** explicit per-model RPM/TPM quota rows for
+  current text `gemini-2.5-*` chat models → pure DSQ; the 429 is not a fixed
+  quota you can raise via a quota-increase request.
+- `global` endpoint exposes per-model input-TPM ceilings where flash has ~10x pro
+  headroom (`gemini-2.5-flash-ga` 1e10 vs `gemini-2.5-pro-ga`/`-latest` 1e9 input TPM).
+- Google DSQ doc org-level baselines (by 30-day spend tier): Pro 500k/1M/2M,
+  Flash/Flash-Lite 2M/4M/10M (flash ~4-5x pro at the same tier). FAQ also documents
+  a 10 QPM cap specific to `gemini-2.5-pro`.
+- No `gemini-3.5-flash` quota row exists (DSQ shadow model). `gemini-3.0-flash` is
+  not routable on Vertex (404).
+- Sources: [DSQ / Standard PayGo](https://cloud.google.com/vertex-ai/generative-ai/docs/dynamic-shared-quota),
+  [Gemini FAQ](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/faq).
+
+In-code quota notes added (comments only, no logic change):
+`crates/ploke-llm/src/router_only/google/mod.rs` (catalog rows) and
+`crates/ploke-tui/src/llm/model_overrides/google_gemini.rs` (`AFFECTED_PREFIXES`).
+
+## Related Bugs
+
+- [`2026-06-08-prototype1-direct-google-g35flash-quota-empty-baseline.md`](./2026-06-08-prototype1-direct-google-g35flash-quota-empty-baseline.md)
+- [`2026-06-09-prototype1-broad-child-google-429-zero-admission.md`](./2026-06-09-prototype1-broad-child-google-429-zero-admission.md)
+- [`2026-05-22-prototype1-continue-protocol-quota-no-progress-loop.md`](./2026-05-22-prototype1-continue-protocol-quota-no-progress-loop.md)
+- [`google-api.md`](../plans/self-improvement-loop/google-api.md) — `models/`
+  prefix and direct-Google catalog parity (different issue from DSQ visibility)
+- [Google Cloud dynamic shared quota documentation](https://cloud.google.com/vertex-ai/generative-ai/docs/dynamic-shared-quota)

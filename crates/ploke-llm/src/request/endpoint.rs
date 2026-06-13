@@ -212,11 +212,16 @@ impl<'de> Deserialize<'de> for FallbackMarker {
 }
 
 /// Tool selection behavior for OpenRouter requests.
-/// Bridge format: "none" | "auto" | { type: "function", function: { name } }
+/// Bridge format: "none" | "auto" | "required" | { type: "function", function: { name } }
 #[derive(Debug, Clone)]
 pub enum ToolChoice {
     None,
     Auto,
+    /// Force the model to emit a structured tool call this turn. Serializes to
+    /// the OpenAI-compatible string `"required"`; on the Vertex
+    /// `aiplatform.googleapis.com` OpenAI-compat path this maps to
+    /// `functionCallingConfig.mode = ANY`.
+    Required,
     Function {
         r#type: FunctionMarker,
         function: ToolChoiceFunction,
@@ -231,6 +236,7 @@ impl Serialize for ToolChoice {
         match self {
             ToolChoice::None => serializer.serialize_str("none"),
             ToolChoice::Auto => serializer.serialize_str("auto"),
+            ToolChoice::Required => serializer.serialize_str("required"),
             ToolChoice::Function { r#type, function } => {
                 use serde::ser::SerializeMap;
                 let mut map = serializer.serialize_map(Some(2))?;
@@ -251,7 +257,9 @@ impl<'de> Deserialize<'de> for ToolChoice {
         impl<'de> serde::de::Visitor<'de> for V {
             type Value = ToolChoice;
             fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("\"none\" | \"auto\" | { type: \"function\", function: { name } }")
+                f.write_str(
+                    "\"none\" | \"auto\" | \"required\" | { type: \"function\", function: { name } }",
+                )
             }
             fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
             where
@@ -260,6 +268,7 @@ impl<'de> Deserialize<'de> for ToolChoice {
                 match v {
                     "none" => Ok(ToolChoice::None),
                     "auto" => Ok(ToolChoice::Auto),
+                    "required" => Ok(ToolChoice::Required),
                     _ => Err(E::custom("invalid ToolChoice string")),
                 }
             }
@@ -353,6 +362,15 @@ mod tests {
         }
         let s = serde_json::to_string(&auto).unwrap();
         assert_eq!(s, "\"auto\"");
+
+        // required
+        let required: ToolChoice = serde_json::from_str("\"required\"").expect("required deser");
+        match required {
+            ToolChoice::Required => {}
+            _ => panic!("expected Required"),
+        }
+        let s = serde_json::to_string(&required).unwrap();
+        assert_eq!(s, "\"required\"");
 
         // function
         let func_json = json!({

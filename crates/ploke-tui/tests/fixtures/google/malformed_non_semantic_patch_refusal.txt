@@ -1,0 +1,107 @@
+Malformed function call: print(default_api.non_semantic_patch(patches=[default_api.NonSemanticPatchPatches(file='crates/printer/src/util.rs', diff='''--- a/crates/printer/src/util.rs
++++ b/crates/printer/src/util.rs
+@@ -51,6 +51,46 @@
+     }
+ }
+ 
++/// This is a copy of `grep_regex::Matcher::replace_with_captures_at` but with
++/// a modification to support our multi-line look-around kludge. In particular,
++/// it takes a `range` and will not find replacements for matches that start at
++/// or after `range.end`.
++fn replace_with_captures_at_kludge<M: Matcher>(
++    matcher: &M,
++    haystack: &[u8],
++    range: &std::ops::Range<usize>,
++    caps: &mut M::Captures,
++    dst: &mut Vec<u8>,
++    mut matched: impl FnMut(&M::Captures, &mut Vec<u8>) -> bool,
++) -> io::Result<()> {
++    let mut last_match = range.start;
++    matcher
++        .find_iter_at(haystack, range.start, |m| {
++            if m.start() >= range.end {
++                return false;
++            }
++            // Infallible because we got `m` from the same matcher.
++            matcher.captures_at(haystack, caps, m.start()).unwrap();
++
++            dst.extend_from_slice(&haystack[last_match..m.start()]);
++            if !matched(caps, dst) {
++                return false;
++            }
++            last_match = m.end();
++            true
++        })
++        .map_err(io::Error::error_message)?;
++    // The normal `replace_with_captures_at` routine writes through to the
++    // end of haystack, but our kludge demands that we only write through to
++    // the end of the original match that we're rediscovering.
++    //
++    // It is VERY important that we do not write any bytes from `haystack`
++    // beyond `range.end`. That is the entire point of this routine.
++    dst.extend_from_slice(&haystack[last_match..range.end]);
++    Ok(())
++}
++
+ impl<M: Matcher> Replacer<M> {
+     /// Create a new replacer for use with a particular matcher.
+     ///
+@@ -107,26 +147,35 @@
+             let &mut Space { ref mut dst, ref mut caps, ref mut matches } =
+                 self.allocate(matcher)?;
+             dst.clear();
+             matches.clear();
+ 
+-            matcher
+-                .replace_with_captures_at(
+-                    subject,
+-                    range.start,
+-                    caps,
+-                    dst,
+-                    |caps, dst| {
+-                        let start = dst.len();
+-                        caps.interpolate(
+-                            |name| matcher.capture_index(name),
+-                            subject,
+-                            replacement,
+-                            dst,
+-                        );
+-                        let end = dst.len();
+-                        matches.push(Match::new(start, end));
+-                        true
+-                    },
+-                )
+-                .map_err(io::Error::error_message)?;\n        }\n        Ok(())\n    }
++            let mut do_matched = |caps: &M::Captures, dst: &mut Vec<u8>| {
++                let start = dst.len();
++                caps.interpolate(
++                    |name| matcher.capture_index(name),
++                    subject,
++                    replacement,
++                    dst,
++                );
++                let end = dst.len();
++                matches.push(Match::new(start, end));
++                true
++            };
++
++            if is_multi_line {
++                replace_with_captures_at_kludge(
++                    matcher, &subject, &range, caps, dst, do_matched,
++                )?
++            } else {
++                // When we aren't in multi-line mode, we don't need to worry
++                // about our look-around kludge.
++                matcher
++                    .replace_with_captures_at(
++                        subject, range.start, caps, dst, do_matched,
++                    )
++                    .map_err(io::Error::error_message)?
++            }
++        }
++        Ok(())
++    }
+ 
+     /// Return the result of the prior replacement and the match offsets for
+     /// all replacement occurrences within the returned replacement buffer.
+''', reasoning='fix duplicative replacement in multiline mode'))

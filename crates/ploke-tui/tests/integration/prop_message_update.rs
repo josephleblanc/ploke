@@ -45,6 +45,7 @@ fn finish_reason_strategy() -> impl Strategy<Value = FinishReason> {
         Just(FinishReason::Length),
         Just(FinishReason::ContentFilter),
         Just(FinishReason::ToolCalls),
+        Just(FinishReason::MalformedFunctionCall),
         Just(FinishReason::Timeout),
         any_string(40).prop_map(FinishReason::Error),
     ]

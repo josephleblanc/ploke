@@ -77,6 +77,17 @@ const GOOGLE_MODEL_CATALOG_PATHS: &[&str] = &[
     GOOGLE_MODELS_JSON_TOP,
     GOOGLE_MODELS_JSON_PRICING,
 ];
+const GOOGLE_DIRECT_SERVICE: &str = "aiplatform.googleapis.com";
+const GOOGLE_DIRECT_RPM_METRICS: &[&str] = &[
+    "aiplatform.googleapis.com/generate_content_requests_per_minute_per_project_per_base_model",
+    "aiplatform.googleapis.com/global_generate_content_requests_per_minute_per_project_per_base_model",
+];
+const GOOGLE_DIRECT_DEFAULT_MODELS: &[&str] = &[
+    "google/gemini-2.5-flash-lite",
+    "google/gemini-2.5-flash",
+    "google/gemini-2.5-pro",
+    "google/gemini-3.5-flash",
+];
 const GITHUB_FIXTURE_SERDE_REPO_URL: &str = "https://github.com/serde-rs/serde.git";
 const GITHUB_FIXTURE_SERDE_REF: &str = "fa7da4a93567ed347ad0735c28e439fca688ef26";
 const GITHUB_FIXTURE_SERDE_DIR: &str = "tests/fixture_github_clones/corpus/serde";
@@ -203,6 +214,7 @@ fn dispatch() -> Result<(), DispatchError> {
         "regen-embedding-models" => regen_embedding_models().map_err(DispatchError::Xtask),
         "regen-model-catalog" => regen_model_catalog().map_err(DispatchError::Xtask),
         "regen-google-model-catalog" => regen_google_model_catalog().map_err(DispatchError::Xtask),
+        "google-direct-rpm-limits" => google_direct_rpm_limits(tail).map_err(DispatchError::Xtask),
         "extract-tokens-log" => extract_tokens_log(tail).map_err(DispatchError::Xtask),
         "profile-ingest" => profile_ingest::parse_profile_ingest_args(tail)
             .and_then(profile_ingest::run_profile_ingest)
@@ -232,7 +244,7 @@ fn print_usage() {
     eprintln!(
         "xtask helpers\n\
          Usage: cargo xtask <command>\n\
-         Commands:\n  setup-fixtures          Prepare all ignored/generated fixtures for this checkout\n  verify-fixtures         Ensure required local test assets are staged\n  fixtures ensure --snapshots Ensure DB fixture snapshots without sharing checkout-local DBs\n  fixtures ensure --typed Prepare shared typed corpus fixture sources and snapshots\n  verify-backup-dbs      Validate registered backup DB fixtures used by tests\n  recreate-backup-db     Recreate or print regeneration steps for a registered backup DB fixture\n  repair-backup-db-schema Add the missing workspace_metadata relation to a stale backup fixture in place\n  setup-rag-fixtures      Stage the canonical local fixture_nodes backup into the config dir used by load_db\n  setup-github-fixtures   Clone ignored GitHub checkout fixtures required by parser tests\n  regen-embedding-models  Refresh fixtures/openrouter/embeddings_models.json from OpenRouter\n  regen-model-catalog     Refresh crates/ploke-tui/data/models from OpenRouter /models\n  regen-google-model-catalog Materialize direct Google model catalog fixtures\n  extract-tokens-log      Copy filtered token diagnostics into tests/fixture_chat/tokens_sample.log\n  profile-ingest          Cold-start parse/transform/embed timing (see --target, --stages, --verbosity, --loops)\n  profile-ingest-help     Show detailed help for profile-ingest command"
+         Commands:\n  setup-fixtures          Prepare all ignored/generated fixtures for this checkout\n  verify-fixtures         Ensure required local test assets are staged\n  fixtures ensure --snapshots Ensure DB fixture snapshots without sharing checkout-local DBs\n  fixtures ensure --typed Prepare shared typed corpus fixture sources and snapshots\n  verify-backup-dbs      Validate registered backup DB fixtures used by tests\n  recreate-backup-db     Recreate or print regeneration steps for a registered backup DB fixture\n  repair-backup-db-schema Add the missing workspace_metadata relation to a stale backup fixture in place\n  setup-rag-fixtures      Stage the canonical local fixture_nodes backup into the config dir used by load_db\n  setup-github-fixtures   Clone ignored GitHub checkout fixtures required by parser tests\n  regen-embedding-models  Refresh fixtures/openrouter/embeddings_models.json from OpenRouter\n  regen-model-catalog     Refresh crates/ploke-tui/data/models from OpenRouter /models\n  regen-google-model-catalog Materialize direct Google model catalog fixtures\n  google-direct-rpm-limits Show Service Usage RPM rows for direct Google Vertex models\n  extract-tokens-log      Copy filtered token diagnostics into tests/fixture_chat/tokens_sample.log\n  profile-ingest          Cold-start parse/transform/embed timing (see --target, --stages, --verbosity, --loops)\n  profile-ingest-help     Show detailed help for profile-ingest command"
     );
 }
 
@@ -2989,6 +3001,370 @@ fn regen_google_model_catalog() -> Result<(), XtaskError> {
     Ok(())
 }
 
+#[derive(Debug)]
+struct RpmArgs {
+    project: String,
+    models: Vec<String>,
+    access_file: Option<PathBuf>,
+    json: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct RpmReport {
+    project: String,
+    service: &'static str,
+    rows: Vec<RpmRow>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+struct RpmRow {
+    model: String,
+    location: String,
+    effective_rpm: Option<String>,
+    default_rpm: Option<String>,
+    unit: Option<String>,
+    source_metric: Option<String>,
+    status: String,
+}
+
+fn google_direct_rpm_limits(args: Vec<String>) -> Result<(), XtaskError> {
+    if args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "-h" | "--help"))
+    {
+        print_google_rpm_usage();
+        return Ok(());
+    }
+
+    let args = parse_google_rpm_args(args)?;
+    let raw = fetch_google_quota_json(&args)?;
+    let rows = flatten_google_rpm_rows(&raw, &args.models)?;
+    let report = RpmReport {
+        project: args.project,
+        service: GOOGLE_DIRECT_SERVICE,
+        rows,
+    };
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|err| {
+                XtaskError::new(format!("Failed to serialize RPM report: {err}"))
+            })?
+        );
+    } else {
+        print_google_rpm_report(&report);
+    }
+
+    Ok(())
+}
+
+fn parse_google_rpm_args(args: Vec<String>) -> Result<RpmArgs, XtaskError> {
+    let mut project = None;
+    let mut models = Vec::new();
+    let mut access_file = None;
+    let mut json = false;
+
+    let mut iter = args.into_iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--project" => {
+                project = iter.next();
+                if project.is_none() {
+                    return Err(google_rpm_usage("missing value for --project"));
+                }
+            }
+            "--model" => {
+                let Some(model) = iter.next() else {
+                    return Err(google_rpm_usage("missing value for --model"));
+                };
+                models.push(normalize_google_model(&model));
+            }
+            "--models" => {
+                let Some(list) = iter.next() else {
+                    return Err(google_rpm_usage("missing value for --models"));
+                };
+                for model in list
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|model| !model.is_empty())
+                {
+                    models.push(normalize_google_model(model));
+                }
+            }
+            "--access-token-file" => {
+                let Some(path) = iter.next() else {
+                    return Err(google_rpm_usage("missing value for --access-token-file"));
+                };
+                access_file = Some(PathBuf::from(path));
+            }
+            "--json" => json = true,
+            other => return Err(google_rpm_usage(format!("unknown flag '{other}'"))),
+        }
+    }
+
+    if models.is_empty() {
+        models.extend(
+            GOOGLE_DIRECT_DEFAULT_MODELS
+                .iter()
+                .map(|model| (*model).to_string()),
+        );
+    }
+    models.sort();
+    models.dedup();
+
+    let project = resolve_google_project(project)?;
+    Ok(RpmArgs {
+        project,
+        models,
+        access_file,
+        json,
+    })
+}
+
+fn google_rpm_usage(message: impl Into<String>) -> XtaskError {
+    XtaskError::validation(message.into()).with_recovery(
+        "Usage: cargo xtask google-direct-rpm-limits [--project PROJECT] [--model MODEL | --models A,B] [--access-token-file PATH] [--json]",
+    )
+}
+
+fn print_google_rpm_usage() {
+    eprintln!(
+        "Usage: cargo xtask google-direct-rpm-limits [--project PROJECT] [--model MODEL | --models A,B] [--access-token-file PATH] [--json]\n\
+         Defaults: project from GOOGLE_PROJECT_ID/GCLOUD_PROJECT/CLOUDSDK_CORE_PROJECT, models from the direct Google catalog.\n\
+         Auth: uses gcloud auth application-default print-access-token unless --access-token-file is provided."
+    );
+}
+
+fn normalize_google_model(model: &str) -> String {
+    if model.contains('/') {
+        model.to_string()
+    } else {
+        format!("google/{model}")
+    }
+}
+
+fn resolve_google_project(project: Option<String>) -> Result<String, XtaskError> {
+    project
+        .or_else(|| env::var("GOOGLE_PROJECT_ID").ok())
+        .or_else(|| env::var("GCLOUD_PROJECT").ok())
+        .or_else(|| env::var("CLOUDSDK_CORE_PROJECT").ok())
+        .filter(|project| !project.trim().is_empty())
+        .ok_or_else(|| {
+            XtaskError::validation("Google project is not configured").with_recovery(
+                "Pass --project PROJECT or set GOOGLE_PROJECT_ID. The command uses aiplatform.googleapis.com Service Usage quota rows.",
+            )
+        })
+}
+
+fn fetch_google_quota_json(args: &RpmArgs) -> Result<serde_json::Value, XtaskError> {
+    let tmp = if args.access_file.is_none() {
+        Some(tempdir().map_err(|err| {
+            XtaskError::new(format!("Failed to create temporary token directory: {err}"))
+        })?)
+    } else {
+        None
+    };
+    let token_path = match args.access_file.as_ref() {
+        Some(path) => path.clone(),
+        None => {
+            let token = gcloud_adc_token()?;
+            let path = tmp
+                .as_ref()
+                .expect("tempdir exists")
+                .path()
+                .join("adc-token.txt");
+            fs::write(&path, token.trim()).map_err(|err| {
+                XtaskError::new(format!("Failed to write temporary ADC token file: {err}"))
+            })?;
+            path
+        }
+    };
+
+    let output = ProcessCommand::new("gcloud")
+        .args([
+            "alpha",
+            "services",
+            "quota",
+            "list",
+            "--service",
+            GOOGLE_DIRECT_SERVICE,
+            "--consumer",
+        ])
+        .arg(format!("projects/{}", args.project))
+        .arg("--access-token-file")
+        .arg(&token_path)
+        .args(["--format", "json"])
+        .output()
+        .map_err(|err| XtaskError::new(format!("Failed to run gcloud quota list: {err}")))?;
+
+    if !output.status.success() {
+        return Err(XtaskError::new(format!(
+            "gcloud quota list failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+
+    serde_json::from_slice(&output.stdout)
+        .map_err(|err| XtaskError::new(format!("Failed to parse gcloud quota JSON: {err}")))
+}
+
+fn gcloud_adc_token() -> Result<String, XtaskError> {
+    let output = ProcessCommand::new("gcloud")
+        .args(["auth", "application-default", "print-access-token"])
+        .output()
+        .map_err(|err| XtaskError::new(format!("Failed to run gcloud ADC token command: {err}")))?;
+
+    if !output.status.success() {
+        return Err(XtaskError::new(format!(
+            "gcloud ADC token command failed:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn flatten_google_rpm_rows(
+    raw: &serde_json::Value,
+    models: &[String],
+) -> Result<Vec<RpmRow>, XtaskError> {
+    let wanted = models
+        .iter()
+        .map(|model| (google_base_model(model), model.clone()))
+        .collect::<BTreeMap<_, _>>();
+    let mut rows = Vec::new();
+
+    let metrics = raw.as_array().ok_or_else(|| {
+        XtaskError::new("Expected gcloud quota output to be a JSON array of metrics")
+    })?;
+    for metric in metrics {
+        let Some(limits) = metric
+            .get("consumerQuotaLimits")
+            .and_then(serde_json::Value::as_array)
+        else {
+            continue;
+        };
+        for limit in limits {
+            let Some(source) = limit.get("metric").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            if !GOOGLE_DIRECT_RPM_METRICS.contains(&source) {
+                continue;
+            }
+            let unit = limit
+                .get("unit")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
+            let Some(buckets) = limit
+                .get("quotaBuckets")
+                .and_then(serde_json::Value::as_array)
+            else {
+                continue;
+            };
+            for bucket in buckets {
+                let Some(dims) = bucket
+                    .get("dimensions")
+                    .and_then(serde_json::Value::as_object)
+                else {
+                    continue;
+                };
+                let Some(base) = dims.get("base_model").and_then(serde_json::Value::as_str) else {
+                    continue;
+                };
+                let Some(model) = wanted.get(base) else {
+                    continue;
+                };
+                let location = dims
+                    .get("region")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_else(|| {
+                        if source.starts_with("aiplatform.googleapis.com/global_") {
+                            "global"
+                        } else {
+                            "regional"
+                        }
+                    })
+                    .to_string();
+                rows.push(RpmRow {
+                    model: model.clone(),
+                    location,
+                    effective_rpm: quota_limit(bucket, "effectiveLimit"),
+                    default_rpm: quota_limit(bucket, "defaultLimit"),
+                    unit: unit.clone(),
+                    source_metric: Some(source.to_string()),
+                    status: "fixed_rpm_row".to_string(),
+                });
+            }
+        }
+    }
+
+    for model in models {
+        if !rows.iter().any(|row| row.model == *model) {
+            rows.push(RpmRow {
+                model: model.clone(),
+                location: "all".to_string(),
+                effective_rpm: None,
+                default_rpm: None,
+                unit: None,
+                source_metric: None,
+                status: "no_fixed_rpm_row".to_string(),
+            });
+        }
+    }
+
+    rows.sort_by(|left, right| {
+        left.model
+            .cmp(&right.model)
+            .then(left.location.cmp(&right.location))
+            .then(left.status.cmp(&right.status))
+    });
+    Ok(rows)
+}
+
+fn google_base_model(model: &str) -> String {
+    model
+        .rsplit_once('/')
+        .map(|(_, slug)| slug.to_string())
+        .unwrap_or_else(|| model.to_string())
+}
+
+fn quota_limit(bucket: &serde_json::Value, key: &str) -> Option<String> {
+    bucket
+        .get(key)
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string)
+}
+
+fn print_google_rpm_report(report: &RpmReport) {
+    println!(
+        "Google direct RPM limits: project={} service={}",
+        report.project, report.service
+    );
+    println!("model\tlocation\teffective_rpm\tdefault_rpm\tstatus\tmetric");
+    for row in &report.rows {
+        println!(
+            "{}\t{}\t{}\t{}\t{}\t{}",
+            row.model,
+            row.location,
+            row.effective_rpm.as_deref().unwrap_or("-"),
+            row.default_rpm.as_deref().unwrap_or("-"),
+            row.status,
+            row.source_metric.as_deref().unwrap_or("-"),
+        );
+    }
+    if report
+        .rows
+        .iter()
+        .any(|row| row.status == "no_fixed_rpm_row")
+    {
+        println!(
+            "\nRows marked no_fixed_rpm_row have no Service Usage RPM bucket for that base_model. \
+             On Vertex Standard PayGo, these models may still throttle through Dynamic Shared Quota."
+        );
+    }
+}
+
 fn write_json_fixture<T: Serialize + ?Sized>(
     root: &Path,
     rel_path: &str,
@@ -3081,5 +3457,79 @@ fn display_relative(path: &Path, root: &Path) -> String {
     match path.strip_prefix(root) {
         Ok(rel) => rel.display().to_string(),
         Err(_) => path.display().to_string(),
+    }
+}
+
+#[cfg(test)]
+mod google_direct_rpm_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn flatten_google_rpm_rows_matches_exact_base_model() {
+        let raw = json!([
+            {
+                "consumerQuotaLimits": [{
+                    "metric": "aiplatform.googleapis.com/generate_content_requests_per_minute_per_project_per_base_model",
+                    "unit": "1/min/{project}/{region}/{base_model}",
+                    "quotaBuckets": [
+                        {
+                            "dimensions": {
+                                "base_model": "gemini-1.5-flash",
+                                "region": "us-central1"
+                            },
+                            "defaultLimit": "5",
+                            "effectiveLimit": "5"
+                        },
+                        {
+                            "dimensions": {
+                                "base_model": "gemini-2.5-flash-lite-tts",
+                                "region": "us-central1"
+                            },
+                            "defaultLimit": "10",
+                            "effectiveLimit": "10"
+                        }
+                    ]
+                }]
+            },
+            {
+                "consumerQuotaLimits": [{
+                    "metric": "aiplatform.googleapis.com/global_generate_content_requests_per_minute_per_project_per_base_model",
+                    "unit": "1/min/{project}/{base_model}",
+                    "quotaBuckets": [{
+                        "dimensions": {
+                            "base_model": "gemini-2.5-flash"
+                        },
+                        "defaultLimit": "250",
+                        "effectiveLimit": "250"
+                    }]
+                }]
+            }
+        ]);
+        let models = vec![
+            "google/gemini-2.5-flash".to_string(),
+            "google/gemini-2.5-flash-lite".to_string(),
+        ];
+
+        let rows = flatten_google_rpm_rows(&raw, &models).expect("flatten rows");
+
+        assert!(rows.iter().any(|row| {
+            row.model == "google/gemini-2.5-flash"
+                && row.location == "global"
+                && row.effective_rpm.as_deref() == Some("250")
+                && row.status == "fixed_rpm_row"
+        }));
+        assert!(rows.iter().any(|row| {
+            row.model == "google/gemini-2.5-flash-lite"
+                && row.location == "all"
+                && row.effective_rpm.is_none()
+                && row.status == "no_fixed_rpm_row"
+        }));
+        assert!(
+            !rows
+                .iter()
+                .any(|row| row.model.contains("tts") || row.location == "us-central1"),
+            "text model RPM report must not absorb TTS quota rows"
+        );
     }
 }

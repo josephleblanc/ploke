@@ -120,13 +120,22 @@ pub struct Choices {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum FinishReason {
-    Stop,                  // Natural stop sequence
-    Length,                // Max tokens reached
-    ContentFilter,         // Blocked by safety system
-    ToolCalls,             // Stopped for tool execution
-    MalformedFunctionCall, // Provider rejected malformed tool-call syntax
-    Timeout,               // Processing time exceeded
-    Error(String),         // Error description
+    Stop,          // Natural stop sequence
+    Length,        // Max tokens reached
+    ContentFilter, // Blocked by safety system
+    ToolCalls,     // Stopped for tool execution
+    /// Gemini/Vertex may return this when the model emits invalid function-call
+    /// text (for example Python `default_api.*` code) instead of structured
+    /// `tool_calls` JSON.
+    MalformedFunctionCall,
+    /// Gemini/Vertex may return this when the model invokes a function name that
+    /// was not declared in the request's tool set (observed when a nested
+    /// array-valued tool argument confuses the model into renaming the tool).
+    /// Surfaced explicitly so an unknown `finish_reason` string does not fail
+    /// response deserialization outright.
+    UnexpectedToolCall,
+    Timeout,       // Processing time exceeded
+    Error(String), // Error description
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

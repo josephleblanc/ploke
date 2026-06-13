@@ -675,6 +675,8 @@ pub(crate) enum ArchiveScope {
 pub(crate) struct Protocol {
     #[serde(default, skip_serializing_if = "ModelDefaults::is_empty")]
     pub(crate) model: ModelDefaults,
+    // Defaults through campaign::PROTOTYPE1_PROTOCOL_MIN_SAFE_MAX_TOKENS. Keep
+    // omitted-profile protocol closure budgets at or above the live canary floor.
     #[serde(default = "default_protocol_max_tokens")]
     pub(crate) max_tokens: u32,
     #[serde(default = "default_protocol_tool_review_parallelism")]
@@ -1186,7 +1188,10 @@ mode = "record-only"
 require_evidence = true
 
 [protocol]
-max_tokens = 4000
+# Keep this aligned with the 4096 safe floor in
+# campaign::PROTOTYPE1_PROTOCOL_MIN_SAFE_MAX_TOKENS. Lower budgets previously
+# reproduced direct-Google malformed/truncated structured output before closure.
+max_tokens = 4096
 tool_review_parallelism = 2
 
 [protocol.reasoning]
@@ -1222,7 +1227,7 @@ graph_nearest = 13
         assert_eq!(profile.selection.metrics.imp_at_k.budget_k, 50);
         assert_eq!(profile.selection.oracle_mode(), OracleMode::RecordOnly);
         assert!(profile.selection.oracle_require_evidence());
-        assert_eq!(profile.protocol_policy().max_tokens, 4000);
+        assert_eq!(profile.protocol_policy().max_tokens, 4096);
         assert_eq!(profile.protocol_policy().tool_review_parallelism, 2);
         assert_eq!(
             profile.protocol_policy().reasoning,
@@ -1406,10 +1411,7 @@ graph_nearest = 13
     fn run_profile_protocol_defaults_max_tokens_to_campaign_default() {
         let profile = parse_profile(
             Path::new("profile.toml"),
-            &PROFILE.replace(
-                "\n[protocol]\nmax_tokens = 4000\ntool_review_parallelism = 2\n\n[protocol.reasoning]\nmode = \"omit\"\n",
-                "\n",
-            ),
+            &PROFILE.replace("max_tokens = 4096\n", ""),
         )
         .expect("profile parses");
 
@@ -1417,13 +1419,10 @@ graph_nearest = 13
             profile.protocol_policy().max_tokens,
             default_protocol_max_tokens()
         );
-        assert_eq!(
-            profile.protocol_policy().tool_review_parallelism,
-            default_protocol_tool_review_parallelism()
-        );
+        assert_eq!(profile.protocol_policy().tool_review_parallelism, 2);
         assert_eq!(
             profile.protocol_policy().reasoning,
-            ProtocolReasoningPolicy::default()
+            ProtocolReasoningPolicy::omit()
         );
     }
 
@@ -1442,7 +1441,7 @@ graph_nearest = 13
         assert_eq!(policy.model_id.as_deref(), Some("google/gemini-2.5-flash"));
         assert_eq!(policy.route_source, Some(ModelRouteSource::DirectGoogle));
         assert_eq!(policy.provider_slug.as_deref(), Some("google"));
-        assert_eq!(policy.max_tokens, 4000);
+        assert_eq!(policy.max_tokens, 4096);
     }
 
     #[test]
@@ -1466,7 +1465,7 @@ graph_nearest = 13
     fn run_profile_protocol_rejects_zero_max_tokens() {
         let err = parse_profile(
             Path::new("profile.toml"),
-            &PROFILE.replace("max_tokens = 4000", "max_tokens = 0"),
+            &PROFILE.replace("max_tokens = 4096", "max_tokens = 0"),
         )
         .expect_err("zero protocol token budget should reject");
 
