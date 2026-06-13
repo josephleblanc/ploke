@@ -55,7 +55,12 @@ pub(crate) use record::{
 #[path = "cli/tests.rs"]
 mod tests;
 
-pub(crate) const PROTOCOL_HTTP_MAX_ATTEMPTS: u32 = 1;
+// Protocol closure calls run through `ploke-protocol::JsonAdjudicator`, which
+// maps this value directly onto `ChatHttpConfig::max_attempts`. Keep this above
+// 1 for direct-Google runs: Vertex Standard PayGo can return transient DSQ
+// 429/503 responses without an operator-visible fixed RPM row, and a single
+// attempt turns that provider-capacity blip into immediate closure no-progress.
+pub(crate) const PROTOCOL_HTTP_MAX_ATTEMPTS: u32 = 3;
 pub(crate) const PROTOCOL_JSON_REVIEW_MAX_ATTEMPTS: usize = 3;
 pub(crate) const TOOL_CALL_REVIEW_TIMEOUT_SECS: u64 = ploke_llm::LLM_TIMEOUT_SECS;
 

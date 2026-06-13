@@ -1,8 +1,8 @@
 # Prototype 1 Step Env-Cwd Preflight Reporting
 
-Status: open; failed-row doctor blocker fix in progress
+Status: open; launch-cwd env split still recurs
 Discovered: 2026-05-25
-Updated: 2026-06-08
+Updated: 2026-06-12
 
 ## Summary
 
@@ -266,3 +266,69 @@ This recurrence expands the original bug from baseline eval setup to child
 treatment setup: every helper that launches eval work must preserve the
 operator-approved credential environment or run an equivalent preflight from the
 same process environment that will spawn paid work.
+
+## 2026-06-12 Baseline Eval Recurrence
+
+The launch-cwd environment split recurred while setting up a fresh direct-Google
+`google/gemini-2.5-flash` loop run after fixture regeneration.
+
+Campaign:
+
+```text
+p1-g25f-direct-protocol-2target-g0g2-1x3-state14-20260612-204854
+```
+
+Worktree:
+
+```text
+/home/brasides/.ploke-eval/worktrees/p1-g25f-direct-protocol-2target-g0g2-1x3-state14-20260612-204854
+```
+
+The campaign was admitted from source profile:
+
+```text
+/home/brasides/.ploke-eval/campaigns/p1-g25f-direct-protocol-2target-g0g2-1x3-state13-20260611-202620/prototype1/run-profile.toml
+```
+
+Doctor passed when run with an absolute `--repo-root`, including both live
+direct-Google protocol and headless TUI setup preflights:
+
+```text
+protocol_preflight.outcome = passed
+protocol_preflight.model_id = google/gemini-2.5-flash
+protocol_preflight.provider = google
+protocol_preflight.route_source = direct_google
+headless_tui_setup_preflight.outcome = passed
+phase = baseline_eval
+blockers = []
+```
+
+The bounded step was then launched from the campaign worktree:
+
+```text
+./target/debug/ploke-eval loop prototype1-step \
+  --repo-root /home/brasides/.ploke-eval/worktrees/p1-g25f-direct-protocol-2target-g0g2-1x3-state14-20260612-204854 \
+  --format json
+```
+
+It failed before any baseline model turn because both selected instances hit
+embedding preflight failure:
+
+```text
+eval.status = partial
+eval.failed_total = 2
+protocol.status = missing
+eval_failure = database setup failed during 'embedding_model_preflight':
+  embedding preflight failed for 'mistralai/codestral-embed-2505':
+  Var error: Error from env variable, original: environment variable not found
+```
+
+The source checkout command environment reported `OPENROUTER_API_KEY=present`,
+while the campaign worktree command environment reported
+`OPENROUTER_API_KEY=missing`. This is an external environment launch failure,
+not evidence that the admitted direct-Google chat/protocol route is broken.
+
+Disposition: abandon-and-restart for clean loop evidence. Do not resume this
+campaign over the persisted failed baseline eval rows. Start the replacement
+campaign from a fresh worktree and run live control commands from the
+env-bearing source checkout with `--repo-root <fresh-worktree>`.

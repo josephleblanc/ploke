@@ -30,8 +30,9 @@ valid Vertex OpenAI-compat publisher model. ADC probe against
 `PredictionService.ChatCompletions` returns HTTP 404
 (`Publisher Model .../models/gemini-3.0-flash was not found`). IAM Quotas may
 list quota rows for 3.0, but the model is not routable on Vertex direct_google.
-Use **`google/gemini-2.5-flash`** (HTTP 200 verified) as the downgrade target,
-or stay on 3.5 with throttling/backoff if that model is required.
+Use **`google/gemini-2.5-flash-lite`** (HTTP 200 verified after the 1.5
+retirement check) as the current downgrade target, or stay on 3.5 with
+throttling/backoff if that model is required.
 
 ## Evidence
 
@@ -122,8 +123,9 @@ to prove quota visibility.
 **Operator (immediate):**
 
 - Downgrade persisted defaults and new prototype1 profiles from
-  `google/gemini-3.5-flash` to **`google/gemini-2.5-flash`** (Vertex OpenAPI
-  HTTP 200 verified; IAM Quotas `base_model` rows present).
+  `google/gemini-3.5-flash` to **`google/gemini-2.5-flash-lite`** (Vertex
+  OpenAI-compatible and native probes returned HTTP 200; use
+  `cargo xtask google-direct-rpm-limits` for live quota-row visibility).
 - **Do not** use `google/gemini-3.0-flash` on Vertex direct_google — returns
   HTTP 404 (`Publisher Model .../models/gemini-3.0-flash was not found`).
 - Profile template:
@@ -156,14 +158,14 @@ to prove quota visibility.
 | max_tokens floor | 16384 floor (commits `9cdd5de5`, `7d10bbc9`) HELD: zero malformed_function_call, zero OUTPUT_TRUNCATED. Floor fix not implicated in this abandonment |
 | cargo clean | Skipped — worktree has no local `target/` (binary built only in main checkout) |
 | Artifacts | Left in place as evidence; git worktree NOT removed |
-| Forward decision | Move future runs to flash tier; `google/gemini-2.5-flash` is the working downgrade target (see Fix Direction) |
+| Forward decision | Move future runs to flash tier; `google/gemini-2.5-flash-lite` is the current downgrade target (see Fix Direction) |
 
 DSQ capacity findings backing this decision (gcloud `alpha services quota list` on
 project `cs-poc-gtxw7jmtfuwfsiauziui9yx`, 2026-06-10, + Google docs):
 
 - Regional `us-central1` exposes **no** explicit per-model RPM/TPM quota rows for
-  `gemini-2.5-pro`/`gemini-2.5-flash` chat models → pure DSQ; the 429 is not a
-  fixed quota you can raise via a quota-increase request.
+  current text `gemini-2.5-*` chat models → pure DSQ; the 429 is not a fixed
+  quota you can raise via a quota-increase request.
 - `global` endpoint exposes per-model input-TPM ceilings where flash has ~10x pro
   headroom (`gemini-2.5-flash-ga` 1e10 vs `gemini-2.5-pro-ga`/`-latest` 1e9 input TPM).
 - Google DSQ doc org-level baselines (by 30-day spend tier): Pro 500k/1M/2M,

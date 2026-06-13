@@ -216,7 +216,9 @@ fn is_google_openai_chat_model(slug: &str) -> bool {
 
 fn google_context_length(model: &ModelSlug) -> Option<u32> {
     match model.as_str() {
-        "gemini-2.5-flash" | "gemini-2.5-pro" | "gemini-3.5-flash" => Some(1_048_576),
+        "gemini-2.5-flash-lite" | "gemini-2.5-flash" | "gemini-2.5-pro" | "gemini-3.5-flash" => {
+            Some(1_048_576)
+        }
         _ => None,
     }
 }
@@ -240,11 +242,13 @@ fn google_catalog_model(slug: &str) -> Model {
 // shared-capacity contention, not a hit on a fixed ceiling. Confirmed against
 // project cs-poc-gtxw7jmtfuwfsiauziui9yx via `gcloud alpha services quota list
 // --service=aiplatform.googleapis.com` (2026-06-10): regional us-central1 has
-// NO explicit per-model RPM/TPM rows for these chat models (pure DSQ); only the
-// `global` endpoint exposes per-model input-TPM ceilings, and there flash has
-// ~10x pro headroom (`gemini-2.5-flash-ga` 10e9 vs `gemini-2.5-pro-ga` 1e9
-// input TPM). No `gemini-3.5-flash` quota row exists at all (DSQ "shadow"
-// model, not operator-inspectable).
+// NO explicit per-model RPM rows for the current text Flash/Pro rows (pure
+// DSQ); only the `global` endpoint exposes per-model input-TPM ceilings, and
+// there the flash tier has materially more pro headroom (`gemini-2.5-flash-ga`
+// 10e9 vs `gemini-2.5-pro-ga` 1e9 input TPM). Use
+// `cargo xtask google-direct-rpm-limits` to inspect the live Service Usage rows
+// before a campaign. No `gemini-3.5-flash` quota row exists at all (DSQ
+// "shadow" model, not operator-inspectable).
 //
 // Pro vs Flash capacity (Google DSQ doc, org-level baseline TPM by 30-day spend
 // tier; values are baselines, not guarantees):
@@ -253,10 +257,11 @@ fn google_catalog_model(slug: &str) -> Model {
 // So flash has ~4-5x the shared throughput of pro at the same spend tier, and
 // the FAQ additionally documents a 10 QPM limit specific to gemini-2.5-pro.
 // Net: pro throttles (429s) sooner under high-parallelism eval fan-out. Prefer
-// flash for parallel eval runs; for pro, lower parallelism, add backoff, and/or
-// try GOOGLE_REGION=global. Routable Vertex slugs: gemini-2.5-flash (200 ok),
-// gemini-2.5-pro (200 ok), gemini-3.5-flash (routable but DSQ-shadow, 429-prone);
-// gemini-3.0-flash is NOT routable (404).
+// gemini-2.5-flash-lite for parallel eval/protocol runs; for pro, lower
+// parallelism, add backoff, and/or try GOOGLE_REGION=global. Routable Vertex
+// slugs: gemini-2.5-flash-lite (200 ok), gemini-2.5-flash (200 ok),
+// gemini-2.5-pro (200 ok), gemini-3.5-flash (routable but DSQ-shadow,
+// 429-prone); gemini-3.0-flash is NOT routable (404).
 //
 // Sources: https://cloud.google.com/vertex-ai/generative-ai/docs/dynamic-shared-quota
 // and https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/faq
@@ -264,6 +269,7 @@ fn google_catalog_model(slug: &str) -> Model {
 fn google_catalog_models_response() -> ModelsResponse {
     ModelsResponse {
         data: vec![
+            google_catalog_model("gemini-2.5-flash-lite"),
             google_catalog_model("gemini-2.5-flash"),
             google_catalog_model("gemini-2.5-pro"),
             google_catalog_model("gemini-3.5-flash"),
@@ -606,7 +612,7 @@ mod tests {
     #[cfg(feature = "live_api_tests")]
     fn live_chat_model() -> String {
         env::var("PLOKE_LIVE_GOOGLE_CHAT_MODEL")
-            .unwrap_or_else(|_| "google/gemini-2.5-flash".to_string())
+            .unwrap_or_else(|_| "google/gemini-2.5-flash-lite".to_string())
     }
 
     #[cfg(feature = "live_api_tests")]
@@ -1294,7 +1300,14 @@ mod tests {
             .map(crate::request::models::ResponseItem::from)
             .collect::<Vec<_>>();
 
-        assert_eq!(items.len(), 3);
+        assert_eq!(items.len(), 4);
+        let lite = items
+            .iter()
+            .find(|item| item.id.to_string() == "google/gemini-2.5-flash-lite")
+            .expect("2.5 flash-lite direct row");
+        assert_eq!(lite.context_length, Some(1_048_576));
+        assert!(lite.supports_tools());
+        assert!(lite.route_source.is_direct_google());
         let flash = items
             .iter()
             .find(|item| item.id.to_string() == "google/gemini-2.5-flash")
@@ -1329,7 +1342,7 @@ mod tests {
         let key = Google::resolve_bearer_token().await?;
         let url = Google::completion_url()?;
         let request = json!({
-            "model": "google/gemini-2.5-flash",
+            "model": "google/gemini-2.5-flash-lite",
             "messages": [
                 {
                     "role": "user",
@@ -1698,54 +1711,108 @@ answer in prose and do not ask for more information."
     /// `MALFORMED_FUNCTION_CALL` — confirming the root cause is output-token
     /// truncation, not the argument schema or `tool_choice` mode.
     ///
-    /// A genuine quota/429 (`RESOURCE_EXHAUSTED`) is an accepted skip. A
-    /// successful structured tool call would mean the truncation no longer
-    /// reproduces at this budget (provider behavior changed) and FAILS the test
-    /// so the paired floor value can be revisited.
+    /// The second half sends the same request with the baseline token floor
+    /// and asserts that neither `MALFORMED_FUNCTION_CALL` nor Google quota
+    /// exhaustion occurs. Set `PLOKE_LIVE_GOOGLE_FLOOR_MAX_TOKENS` to probe a
+    /// lower candidate floor without editing the test. A successful low-budget
+    /// structured tool call would mean the truncation no longer reproduces at
+    /// that budget (provider behavior changed) and FAILS the test so the paired
+    /// floor value can be revisited.
     #[tokio::test]
     #[cfg(feature = "live_api_tests")]
-    #[ignore = "requires Google ADC, GOOGLE_PROJECT_ID, GOOGLE_REGION, a tool-capable Gemini model, and quota; reproduces malformed_function_call at a small token budget (root cause)"]
     async fn live_google_low_token_budget_multiline_patch_reproduces_malformed_or_quota()
     -> Result<()> {
         const TEST_NAME: &str =
             "live_google_low_token_budget_multiline_patch_reproduces_malformed_or_quota";
-        const MODEL_ID: &str = "google/gemini-2.5-flash";
+        const MODEL_ID: &str = "google/gemini-2.5-flash-lite";
+        // Do not reduce this baseline without rerunning this live repro. Lower
+        // candidates near 2.7k still produced malformed or invalid structured
+        // output for this direct-Google Gemini Flash tool-call shape.
+        const FLOOR_MAX_TOKENS: u32 = 4096;
         if !live_google_env_or_skip(TEST_NAME) {
             return Ok(());
         }
+        let floor_max_tokens = env::var("PLOKE_LIVE_GOOGLE_FLOOR_MAX_TOKENS")
+            .ok()
+            .map(|value| value.parse::<u32>())
+            .transpose()?
+            .unwrap_or(FLOOR_MAX_TOKENS);
+        eprintln!("{TEST_NAME}: probing floor max_tokens={floor_max_tokens}");
 
-        let request = ChatCompRequest::<Google>::default()
-            .with_model_str(MODEL_ID)?
-            .with_message(RequestMessage::new_user(multiline_patch_eval_prompt()))
-            // Deliberately small budget: truncates the function-call emission.
-            .with_max_tokens(1024)
-            .with_temperature(0.0)
-            .with_tools(Some(vec![
-                read_file_tool_definition(),
-                non_semantic_patch_tool_definition(),
-            ]))
-            .with_tool_choice(Some(ToolChoice::Auto));
+        let build_request = |max_tokens| -> Result<ChatCompRequest<Google>> {
+            Ok(ChatCompRequest::<Google>::default()
+                .with_model_str(MODEL_ID)?
+                .with_message(RequestMessage::new_user(multiline_patch_eval_prompt()))
+                .with_max_tokens(max_tokens)
+                .with_temperature(0.0)
+                .with_tools(Some(vec![
+                    read_file_tool_definition(),
+                    non_semantic_patch_tool_definition(),
+                ]))
+                .with_tool_choice(Some(ToolChoice::Auto)))
+        };
 
         let client = Client::new();
         let cfg = ChatHttpConfig::default();
-        match crate::chat_step(&client, &request, &cfg).await {
+        let low_budget_request = build_request(1024)?;
+        match crate::chat_step(&client, &low_budget_request, &cfg).await {
             // The reproduction: the small budget truncates the call.
-            Err(error) if is_malformed_function_call_error(&error) => Ok(()),
+            Err(error) if is_malformed_function_call_error(&error) => {
+                eprintln!("{TEST_NAME}: 1024-token request reproduced MALFORMED_FUNCTION_CALL");
+            }
             // Genuine quota exhaustion still exercised the live route; treat as skip.
-            Err(error) if is_google_quota_error(&error) => Ok(()),
-            Err(error) => Err(error.into()),
+            Err(error) if is_google_quota_error(&error) => {
+                eprintln!("{TEST_NAME}: 1024-token request hit Google quota; continuing");
+            }
+            Err(error) => return Err(error.into()),
             Ok(step) => bail!(
                 "expected MALFORMED_FUNCTION_CALL at a 1024-token budget, but the call \
                  succeeded: {:?}. The truncation no longer reproduces at this budget; \
                  revisit the paired token floor.",
                 step.outcome
             ),
+        };
+
+        let floor_budget_request = build_request(floor_max_tokens)?;
+        let step = match crate::chat_step(&client, &floor_budget_request, &cfg).await {
+            Ok(step) => step,
+            Err(error) if is_malformed_function_call_error(&error) => {
+                bail!(
+                    "token floor ({floor_max_tokens}) did NOT eliminate \
+                     MALFORMED_FUNCTION_CALL for a multi-line non_semantic_patch diff: {error:?}"
+                );
+            }
+            Err(error) if is_google_quota_error(&error) => {
+                bail!(
+                    "token floor ({floor_max_tokens}) unexpectedly hit Google quota exhaustion: \
+                     {error:?}"
+                );
+            }
+            Err(error) => return Err(error.into()),
+        };
+
+        match step.outcome {
+            ChatStepOutcome::ToolCalls { calls, .. } => {
+                eprintln!(
+                    "{TEST_NAME}: {floor_max_tokens}-token request produced {} tool call(s)",
+                    calls.len()
+                );
+                assert!(
+                    !calls.is_empty(),
+                    "expected a non-empty structured tool call at the floor budget"
+                );
+            }
+            ChatStepOutcome::Content { .. } => {
+                eprintln!("{TEST_NAME}: {floor_max_tokens}-token request produced content");
+            }
         }
+
+        Ok(())
     }
 
     /// POSITIVE / fix test. Issues the SAME eval-shape patch request as the
     /// negative test but with the generous output-token budget the
-    /// `model_overrides` floor applies in production (8192). The model can now
+    /// `model_overrides` floor applies in production (16384). The model can now
     /// finish emitting the structured tool call, so `MALFORMED_FUNCTION_CALL`
     /// must NOT occur. This is the live verification of the token-floor fix.
     ///
@@ -1758,7 +1825,7 @@ answer in prose and do not ask for more information."
     {
         const TEST_NAME: &str =
             "live_google_floor_token_budget_multiline_patch_avoids_malformed_or_quota";
-        const MODEL_ID: &str = "google/gemini-2.5-flash";
+        const MODEL_ID: &str = "google/gemini-2.5-flash-lite";
         // Mirror the production floor from
         // `ploke-tui::llm::model_overrides::google_gemini::MAX_TOKENS_FLOOR`.
         const FLOOR_MAX_TOKENS: u32 = 16384;

@@ -788,7 +788,7 @@ const BROAD_TUI_ATTEMPT_LIMIT: usize = 3;
 const BROAD_TUI_FRESH_ATTEMPTS_PER_CHILD: usize = 3;
 const DEFAULT_GRAPH_NEAREST_ITEMS: usize = 24;
 const PRE_CHILD_PLANNING_SCHEMA: &str = "prototype1-pre-child-planning-review.v1";
-const PRE_CHILD_PLANNER_MODEL: &str = "google/gemini-3.5-flash";
+const PRE_CHILD_PLANNER_MODEL: &str = "google/gemini-2.5-flash-lite";
 const BROAD_TUI_STASH_TRANSFER_ENV: &str = "PLOKE_EVAL_HEADLESS_TUI_STASH_TRANSFER";
 const BROAD_TUI_PRODUCER: &str = "prototype1:broad-headless-tui-adapter-v1";
 

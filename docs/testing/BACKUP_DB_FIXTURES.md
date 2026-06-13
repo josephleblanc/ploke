@@ -1,7 +1,7 @@
 # Backup DB Fixtures
 
-Last reviewed: 2026-05-25
-Last updated: 2026-05-25
+Last reviewed: 2026-06-12
+Last updated: 2026-06-12
 
 This document is the current inventory for backup database fixtures under
 the shared DB snapshot fixture directory. It records which source targets
@@ -270,6 +270,9 @@ impl Drop for FixtureRestoreGuard {
     - [crates/ploke-tui/tests/tool_ui_payload_fixture.rs](../../crates/ploke-tui/tests/tool_ui_payload_fixture.rs): shared immutable DB via harness
 - Notes:
   - older backups remain on disk (for example `fixture_nodes_local_embeddings_2026-05-06.sqlite`) but the active registry entry points at the 2026-05-17 snapshot
+  - 2026-06-12 review: regenerated the checkout-local effective backup after
+    validation reported a stale schema missing `type_contains`; strict
+    validation passed with `relations=61` and `roundtrip=ok`
 
 ## `fixture_nodes_multi_embedding_schema_v1_bfc25988-15c1-5e58-9aa8-3d33b5e58b92`
 

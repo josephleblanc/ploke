@@ -331,11 +331,13 @@ signal.
 
 ```toml
 [protocol]
-max_tokens = 4000
+# Keep at or above 4096 unless the live protocol preflight and direct-Google
+# malformed-call repro both prove a lower budget is safe for the chosen route.
+max_tokens = 4096
 tool_review_parallelism = 8
 
 [protocol.model]
-id = "google/gemini-2.5-flash"
+id = "google/gemini-2.5-flash-lite"
 route_source = "direct-google"
 provider = "google"
 
@@ -357,9 +359,11 @@ mode = "omit"
 - `max_tokens`: Completion token budget for Prototype 1 protocol adjudication
   requests admitted from this profile. This applies to the campaign-driven
   baseline protocol path, including tool-call intent segmentation, tool-call
-  review, and segment review. The default is `4000`; set it higher when a
+  review, and segment review. The default is `4096`; set it higher when a
   provider spends part of the completion budget on hidden or reported reasoning
-  tokens before emitting JSON.
+  tokens before emitting JSON. Run `prototype1-doctor
+  --live-protocol-preflight` before a full live loop; the doctor now includes a
+  protocol-shaped budget canary and blocks budgets below the 4096 safe floor.
 - `tool_review_parallelism`: Maximum number of tool-call review adjudications
   that may be in flight at once within a single protocol run. This is distinct
   from campaign-level run concurrency. Lower it, for example to `1` or `2`, for

@@ -36,11 +36,11 @@ use super::{ModelOverride, ParamOverrides};
 // quota you can raise. `gemini-2.5-pro` has materially tighter shared capacity
 // than the flash tier (Google DSQ baselines ~4-5x higher for flash; FAQ also
 // notes a 10 QPM cap specific to 2.5-pro), so pro throttles sooner under
-// high-parallelism eval fan-out. Prefer `gemini-2.5-flash` for parallel eval
-// runs and keep parallel_cap modest for pro (or use GOOGLE_REGION=global +
-// backoff). `gemini-3.5-flash` is routable but a DSQ "shadow" model with no
-// operator-visible quota row (429-prone); `gemini-3.0-flash` is not routable
-// (Vertex 404). See
+// high-parallelism eval fan-out. Prefer `gemini-2.5-flash-lite` for parallel
+// eval/protocol runs and keep parallel_cap modest for pro (or use
+// GOOGLE_REGION=global + backoff). `gemini-3.5-flash` is routable but a DSQ
+// "shadow" model with no operator-visible quota row (429-prone);
+// `gemini-3.0-flash` is not routable (Vertex 404). See
 // docs/active/bugs/2026-06-10-vertex-gemini-35-flash-dsq-shadow-quota-429.md.
 const AFFECTED_PREFIXES: &[&str] = &["gemini-2.5", "gemini-3.5"];
 

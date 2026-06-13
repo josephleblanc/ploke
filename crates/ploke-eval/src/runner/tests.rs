@@ -486,7 +486,7 @@ mod tests {
         let raw = std::env::var("PLOKE_EVAL_LIVE_GOOGLE_MODEL_ID")
             .or_else(|_| std::env::var("PLOKE_EVAL_HEADLESS_TUI_GOOGLE_MODEL_ID"))
             .or_else(|_| std::env::var("PLOKE_LIVE_GOOGLE_CHAT_MODEL"))
-            .unwrap_or_else(|_| "google/gemini-2.5-flash".to_string());
+            .unwrap_or_else(|_| "google/gemini-2.5-flash-lite".to_string());
         let model = if raw.contains('/') {
             raw
         } else {

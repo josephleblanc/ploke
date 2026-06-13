@@ -249,8 +249,17 @@ pub fn default_protocol_tool_review_parallelism() -> usize {
     8
 }
 
+/// Minimum completion budget for Prototype 1 protocol closure.
+///
+/// Keep this at or above 4096 unless the direct-Google protocol live preflight
+/// and malformed-call regression test prove a lower budget still emits valid
+/// JSON/tool-call output. Earlier low budgets reproduced provider-side
+/// `MALFORMED_FUNCTION_CALL` or invalid structured output before closure could
+/// complete.
+pub const PROTOTYPE1_PROTOCOL_MIN_SAFE_MAX_TOKENS: u32 = 4096;
+
 pub fn default_protocol_max_tokens() -> u32 {
-    4000
+    PROTOTYPE1_PROTOCOL_MIN_SAFE_MAX_TOKENS
 }
 
 impl CampaignManifest {

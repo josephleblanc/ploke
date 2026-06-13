@@ -74,7 +74,11 @@ mod tests {
     fn resolve_sets_max_tokens_floor_for_direct_google_gemini_families() {
         let router = RouterVariants::Google(Google);
 
-        for slug in ["google/gemini-2.5-flash", "google/gemini-3.5-flash"] {
+        for slug in [
+            "google/gemini-2.5-flash-lite",
+            "google/gemini-2.5-flash",
+            "google/gemini-3.5-flash",
+        ] {
             let resolved = resolve(router, &model(slug))
                 .unwrap_or_else(|| panic!("expected override for direct Google {slug}"));
             // The mitigation is a token-budget floor; forcing a tool choice was

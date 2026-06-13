@@ -129,11 +129,11 @@ selected_runs[0].missing_segment_indices = [0, 1, 2]
 
 Secondary contributing factor: protocol review fanout is not provider-aware.
 The current campaign protocol policy had `max_concurrency = 100`; run-level
-protocol work is capped by `TOOL_REVIEW_CALL_LIMIT = 8`, and Google JSON
-protocol requests currently use `PROTOCOL_HTTP_MAX_ATTEMPTS = 1`. That makes
-rate/quota failures more likely to surface as immediate run-level failures,
-which is acceptable only if the controller stops cleanly instead of retrying
-the same no-progress phase.
+protocol work is capped by `TOOL_REVIEW_CALL_LIMIT = 8`. At the time of this
+failure, Google JSON protocol requests used `PROTOCOL_HTTP_MAX_ATTEMPTS = 1`,
+which made rate/quota failures surface as immediate run-level failures. Current
+code keeps the protocol HTTP attempt budget above one so transient direct-Google
+DSQ 429/503 responses can back off before closure reports no progress.
 
 ## Triage
 

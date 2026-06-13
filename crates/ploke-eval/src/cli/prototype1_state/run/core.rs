@@ -12,7 +12,7 @@ use tokio::task::JoinSet;
 
 use crate::{
     ClosureClass, ResolvedCampaignConfig,
-    campaign::resolve_campaign_config,
+    campaign::{PROTOTYPE1_PROTOCOL_MIN_SAFE_MAX_TOKENS, resolve_campaign_config},
     campaign_manifest_path,
     cli::{
         InspectOutputFormat, Prototype1CandidateGenerator, Prototype1ControlCommand,
@@ -167,6 +167,8 @@ pub(crate) struct ProtocolLivePreflight {
     pub(crate) route_source: String,
     pub(crate) reasoning: String,
     pub(crate) max_tokens: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) budget_canary_max_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) detail: Option<String>,
 }
@@ -394,6 +396,9 @@ fn render_status(
                 );
                 if let Some(detail) = preflight.detail.as_deref() {
                     println!("  detail: {detail}");
+                }
+                if let Some(max_tokens) = preflight.budget_canary_max_tokens {
+                    println!("  budget_canary_max_tokens: {max_tokens}");
                 }
             }
             if let Some(preflight) = status.headless_tui_setup_preflight.as_ref() {
@@ -724,6 +729,14 @@ struct ProtocolLivePreflightOk {
     ok: bool,
 }
 
+const PROTOCOL_LIVE_PREFLIGHT_BUDGET_CANARY_CHECKS: &[&str] = &[
+    "intent_segmentation",
+    "tool_call_review",
+    "segment_review",
+    "aggregate_projection",
+    "closure_readiness",
+];
+
 const PROTOCOL_LIVE_PREFLIGHT_TEXT_CANARY_MAX_TOKENS: u32 = 64;
 const PROTOCOL_LIVE_PREFLIGHT_REASONING_CANARY_MIN_TOKENS: u32 = 256;
 const PROTOCOL_LIVE_PREFLIGHT_REASONING_CANARY_MAX_TOKENS: u32 = 512;
@@ -747,6 +760,7 @@ fn protocol_live_preflight_max_tokens(
 async fn run_protocol_live_preflight(context: &RuntimeContext) -> ProtocolLivePreflight {
     let policy = context.admitted_profile.profile.protocol_policy();
     let max_tokens = protocol_live_preflight_max_tokens(policy.max_tokens, policy.reasoning);
+    let budget_canary_max_tokens = policy.max_tokens.max(1);
     let model_id = policy.model_id_for(&context.resolved_campaign.model_id);
     let route_source = policy.route_source_for(context.resolved_campaign.route_source);
     let provider = policy.provider_slug_for(context.resolved_campaign.provider_slug.as_deref());
@@ -768,6 +782,7 @@ async fn run_protocol_live_preflight(context: &RuntimeContext) -> ProtocolLivePr
                 route_source: "unresolved".to_string(),
                 reasoning: policy.reasoning.display_label(),
                 max_tokens,
+                budget_canary_max_tokens: None,
                 detail: Some(sanitize_protocol_preflight_detail(&err.to_string())),
             };
         }
@@ -781,34 +796,175 @@ async fn run_protocol_live_preflight(context: &RuntimeContext) -> ProtocolLivePr
         ploke_protocol::adjudicate_json::<ProtocolLivePreflightOk>(&client, &cfg, &prompt).await;
 
     match result {
-        Ok(result) if result.parsed.ok => ProtocolLivePreflight {
-            outcome: ProtocolLivePreflightOutcome::Passed,
-            model_id: cfg.model_id.clone(),
-            provider: cfg.provider_display().to_string(),
-            route_source: protocol_route_source_label(cfg.route_source).to_string(),
-            reasoning: cfg.reasoning.display_label(),
-            max_tokens: cfg.max_tokens,
-            detail: None,
-        },
-        Ok(_) => ProtocolLivePreflight {
+        Ok(result) if result.parsed.ok => {}
+        Ok(_) => {
+            return ProtocolLivePreflight {
+                outcome: ProtocolLivePreflightOutcome::Failed,
+                model_id: cfg.model_id.clone(),
+                provider: cfg.provider_display().to_string(),
+                route_source: protocol_route_source_label(cfg.route_source).to_string(),
+                reasoning: cfg.reasoning.display_label(),
+                max_tokens: cfg.max_tokens,
+                budget_canary_max_tokens: None,
+                detail: Some(
+                    "live request returned parseable JSON but not the sentinel".to_string(),
+                ),
+            };
+        }
+        Err(error) => {
+            return ProtocolLivePreflight {
+                outcome: ProtocolLivePreflightOutcome::Failed,
+                model_id: cfg.model_id.clone(),
+                provider: cfg.provider_display().to_string(),
+                route_source: protocol_route_source_label(cfg.route_source).to_string(),
+                reasoning: cfg.reasoning.display_label(),
+                max_tokens: cfg.max_tokens,
+                budget_canary_max_tokens: None,
+                detail: Some(classify_protocol_preflight_error(&error)),
+            };
+        }
+    }
+
+    if budget_canary_max_tokens < PROTOTYPE1_PROTOCOL_MIN_SAFE_MAX_TOKENS {
+        return ProtocolLivePreflight {
             outcome: ProtocolLivePreflightOutcome::Failed,
             model_id: cfg.model_id.clone(),
             provider: cfg.provider_display().to_string(),
             route_source: protocol_route_source_label(cfg.route_source).to_string(),
             reasoning: cfg.reasoning.display_label(),
             max_tokens: cfg.max_tokens,
-            detail: Some("live request returned parseable JSON but not the sentinel".to_string()),
+            budget_canary_max_tokens: Some(budget_canary_max_tokens),
+            detail: Some(format!(
+                "protocol.max_tokens={} is below the {} safe floor; this floor protects direct-Google protocol closure from truncated or malformed structured output",
+                budget_canary_max_tokens, PROTOTYPE1_PROTOCOL_MIN_SAFE_MAX_TOKENS
+            )),
+        };
+    }
+
+    let budget_cfg = match protocol_llm_config(
+        Some(model_id),
+        route_source,
+        provider,
+        30,
+        1,
+        budget_canary_max_tokens,
+        policy.reasoning,
+    ) {
+        Ok(cfg) => cfg,
+        Err(err) => {
+            return ProtocolLivePreflight {
+                outcome: ProtocolLivePreflightOutcome::Failed,
+                model_id: cfg.model_id.clone(),
+                provider: cfg.provider_display().to_string(),
+                route_source: protocol_route_source_label(cfg.route_source).to_string(),
+                reasoning: cfg.reasoning.display_label(),
+                max_tokens: cfg.max_tokens,
+                budget_canary_max_tokens: Some(budget_canary_max_tokens),
+                detail: Some(sanitize_protocol_preflight_detail(&err.to_string())),
+            };
+        }
+    };
+
+    let budget_prompt = protocol_live_budget_canary_prompt();
+    let budget_result =
+        ploke_protocol::adjudicate_json::<serde_json::Value>(&client, &budget_cfg, &budget_prompt)
+            .await;
+    match budget_result {
+        Ok(result) if protocol_live_budget_canary_passed(&result.parsed) => {
+            ProtocolLivePreflight {
+                outcome: ProtocolLivePreflightOutcome::Passed,
+                model_id: budget_cfg.model_id.clone(),
+                provider: budget_cfg.provider_display().to_string(),
+                route_source: protocol_route_source_label(budget_cfg.route_source).to_string(),
+                reasoning: budget_cfg.reasoning.display_label(),
+                max_tokens: cfg.max_tokens,
+                budget_canary_max_tokens: Some(budget_cfg.max_tokens),
+                detail: None,
+            }
+        }
+        Ok(_) => ProtocolLivePreflight {
+            outcome: ProtocolLivePreflightOutcome::Failed,
+            model_id: budget_cfg.model_id.clone(),
+            provider: budget_cfg.provider_display().to_string(),
+            route_source: protocol_route_source_label(budget_cfg.route_source).to_string(),
+            reasoning: budget_cfg.reasoning.display_label(),
+            max_tokens: cfg.max_tokens,
+            budget_canary_max_tokens: Some(budget_cfg.max_tokens),
+            detail: Some(
+                "budget canary returned parseable JSON but not the expected protocol readiness shape"
+                    .to_string(),
+            ),
         },
         Err(error) => ProtocolLivePreflight {
             outcome: ProtocolLivePreflightOutcome::Failed,
-            model_id: cfg.model_id.clone(),
-            provider: cfg.provider_display().to_string(),
-            route_source: protocol_route_source_label(cfg.route_source).to_string(),
-            reasoning: cfg.reasoning.display_label(),
+            model_id: budget_cfg.model_id.clone(),
+            provider: budget_cfg.provider_display().to_string(),
+            route_source: protocol_route_source_label(budget_cfg.route_source).to_string(),
+            reasoning: budget_cfg.reasoning.display_label(),
             max_tokens: cfg.max_tokens,
-            detail: Some(classify_protocol_preflight_error(&error)),
+            budget_canary_max_tokens: Some(budget_cfg.max_tokens),
+            detail: Some(format!(
+                "budget canary failed at max_tokens={}: {}",
+                budget_cfg.max_tokens,
+                classify_protocol_preflight_error(&error)
+            )),
         },
     }
+}
+
+fn protocol_live_budget_canary_prompt() -> ploke_protocol::JsonChatPrompt {
+    ploke_protocol::JsonChatPrompt {
+        system: "You are running a Prototype 1 protocol-closure preflight. Return JSON only. Do not use markdown or prose outside the JSON object.".to_string(),
+        user: r#"Review this synthetic protocol packet before a live loop run.
+
+Context:
+- The candidate produced ordered tool calls: read_file, search_code, non_semantic_patch, cargo test.
+- The protocol must classify segmentation, local usefulness, recoverability, aggregate projection, and closure readiness.
+- This canary intentionally exercises the admitted protocol completion-token budget.
+
+Return exactly one JSON object with this shape:
+{
+  "readiness": "ready",
+  "checks": [
+    {"name": "intent_segmentation", "status": "pass", "rationale": "The calls form a coherent locate-inspect-edit-validate episode."},
+    {"name": "tool_call_review", "status": "pass", "rationale": "The edit call is locally useful and is supported by prior inspection."},
+    {"name": "segment_review", "status": "pass", "rationale": "The segment has a clear recovery path if validation fails."},
+    {"name": "aggregate_projection", "status": "pass", "rationale": "The aggregate can distinguish useful protocol evidence from mechanical completion."},
+    {"name": "closure_readiness", "status": "pass", "rationale": "The JSON response is complete enough for closure accounting before a full live loop."}
+  ],
+  "overall_rationale": "The protocol live preflight can emit and parse a complete protocol-shaped JSON object at the admitted token budget."
+}"#
+        .to_string(),
+    }
+}
+
+fn protocol_live_budget_canary_passed(value: &serde_json::Value) -> bool {
+    let Some(checks) = value.get("checks").and_then(serde_json::Value::as_array) else {
+        return false;
+    };
+    value
+        .get("readiness")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|readiness| readiness == "ready")
+        && checks.len() == PROTOCOL_LIVE_PREFLIGHT_BUDGET_CANARY_CHECKS.len()
+        && PROTOCOL_LIVE_PREFLIGHT_BUDGET_CANARY_CHECKS
+            .iter()
+            .all(|expected| {
+                checks.iter().any(|check| {
+                    check
+                        .get("name")
+                        .and_then(serde_json::Value::as_str)
+                        .is_some_and(|name| name == *expected)
+                        && check
+                            .get("status")
+                            .and_then(serde_json::Value::as_str)
+                            .is_some_and(|status| status == "pass")
+                })
+            })
+        && value
+            .get("overall_rationale")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|rationale| !rationale.trim().is_empty())
 }
 
 fn protocol_route_source_label(
@@ -842,6 +998,10 @@ fn classify_protocol_preflight_error(error: &ploke_protocol::ProtocolLlmError) -
             let lower = message.to_ascii_lowercase();
             let class = if lower.contains("reasoning") {
                 "provider_request_shape"
+            } else if lower.contains("malformed_function_call")
+                || lower.contains("malformed function call")
+            {
+                "provider_response_malformed_tool_call"
             } else if lower.contains("401")
                 || lower.contains("403")
                 || lower.contains("auth")
@@ -4297,6 +4457,36 @@ Suggested validation after editing: run `cargo test`.
         assert_eq!(protocol_live_preflight_max_tokens(0, reasoning), 1);
         assert_eq!(protocol_live_preflight_max_tokens(16, reasoning), 16);
         assert_eq!(protocol_live_preflight_max_tokens(4000, reasoning), 64);
+    }
+
+    #[test]
+    fn protocol_live_budget_canary_requires_complete_protocol_shape() {
+        let value = serde_json::json!({
+            "readiness": "ready",
+            "checks": [
+                {"name": "intent_segmentation", "status": "pass"},
+                {"name": "tool_call_review", "status": "pass"},
+                {"name": "segment_review", "status": "pass"},
+                {"name": "aggregate_projection", "status": "pass"},
+                {"name": "closure_readiness", "status": "pass"}
+            ],
+            "overall_rationale": "complete protocol canary"
+        });
+
+        assert!(protocol_live_budget_canary_passed(&value));
+
+        let missing_check = serde_json::json!({
+            "readiness": "ready",
+            "checks": [
+                {"name": "intent_segmentation", "status": "pass"},
+                {"name": "tool_call_review", "status": "pass"},
+                {"name": "segment_review", "status": "pass"},
+                {"name": "aggregate_projection", "status": "pass"}
+            ],
+            "overall_rationale": "incomplete protocol canary"
+        });
+
+        assert!(!protocol_live_budget_canary_passed(&missing_check));
     }
 
     #[test]
