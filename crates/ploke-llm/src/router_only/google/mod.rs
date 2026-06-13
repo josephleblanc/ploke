@@ -1706,10 +1706,10 @@ answer in prose and do not ask for more information."
 
     /// NEGATIVE / root-cause test. Reproduces the state5/state6 direct-Google
     /// `MALFORMED_FUNCTION_CALL` incident by giving the eval-shape patch request
-    /// a deliberately small output-token budget (1024). The structured
-    /// tool-call emission is truncated and Vertex returns
-    /// `MALFORMED_FUNCTION_CALL` — confirming the root cause is output-token
-    /// truncation, not the argument schema or `tool_choice` mode.
+    /// a deliberately tiny output-token budget. The structured tool-call
+    /// emission is truncated and Vertex returns `MALFORMED_FUNCTION_CALL` —
+    /// confirming the root cause is output-token truncation, not the argument
+    /// schema or `tool_choice` mode.
     ///
     /// The second half sends the same request with the baseline token floor
     /// and asserts that neither `MALFORMED_FUNCTION_CALL` nor Google quota
@@ -1725,6 +1725,10 @@ answer in prose and do not ask for more information."
         const TEST_NAME: &str =
             "live_google_low_token_budget_multiline_patch_reproduces_malformed_or_quota";
         const MODEL_ID: &str = "google/gemini-2.5-flash-lite";
+        // `gemini-2.5-flash-lite` can emit this patch successfully at 256 tokens,
+        // but still reproduces MALFORMED_FUNCTION_CALL at 128 (2026-06-13).
+        // Override with PLOKE_LIVE_GOOGLE_LOW_MAX_TOKENS when probing provider drift.
+        const LOW_MAX_TOKENS: u32 = 128;
         // Do not reduce this baseline without rerunning this live repro. Lower
         // candidates near 2.7k still produced malformed or invalid structured
         // output for this direct-Google Gemini Flash tool-call shape.
@@ -1732,12 +1736,19 @@ answer in prose and do not ask for more information."
         if !live_google_env_or_skip(TEST_NAME) {
             return Ok(());
         }
+        let low_max_tokens = env::var("PLOKE_LIVE_GOOGLE_LOW_MAX_TOKENS")
+            .ok()
+            .map(|value| value.parse::<u32>())
+            .transpose()?
+            .unwrap_or(LOW_MAX_TOKENS);
         let floor_max_tokens = env::var("PLOKE_LIVE_GOOGLE_FLOOR_MAX_TOKENS")
             .ok()
             .map(|value| value.parse::<u32>())
             .transpose()?
             .unwrap_or(FLOOR_MAX_TOKENS);
-        eprintln!("{TEST_NAME}: probing floor max_tokens={floor_max_tokens}");
+        eprintln!(
+            "{TEST_NAME}: probing low max_tokens={low_max_tokens}, floor max_tokens={floor_max_tokens}"
+        );
 
         let build_request = |max_tokens| -> Result<ChatCompRequest<Google>> {
             Ok(ChatCompRequest::<Google>::default()
@@ -1754,19 +1765,23 @@ answer in prose and do not ask for more information."
 
         let client = Client::new();
         let cfg = ChatHttpConfig::default();
-        let low_budget_request = build_request(1024)?;
+        let low_budget_request = build_request(low_max_tokens)?;
         match crate::chat_step(&client, &low_budget_request, &cfg).await {
             // The reproduction: the small budget truncates the call.
             Err(error) if is_malformed_function_call_error(&error) => {
-                eprintln!("{TEST_NAME}: 1024-token request reproduced MALFORMED_FUNCTION_CALL");
+                eprintln!(
+                    "{TEST_NAME}: {low_max_tokens}-token request reproduced MALFORMED_FUNCTION_CALL"
+                );
             }
             // Genuine quota exhaustion still exercised the live route; treat as skip.
             Err(error) if is_google_quota_error(&error) => {
-                eprintln!("{TEST_NAME}: 1024-token request hit Google quota; continuing");
+                eprintln!(
+                    "{TEST_NAME}: {low_max_tokens}-token request hit Google quota; continuing"
+                );
             }
             Err(error) => return Err(error.into()),
             Ok(step) => bail!(
-                "expected MALFORMED_FUNCTION_CALL at a 1024-token budget, but the call \
+                "expected MALFORMED_FUNCTION_CALL at a {low_max_tokens}-token budget, but the call \
                  succeeded: {:?}. The truncation no longer reproduces at this budget; \
                  revisit the paired token floor.",
                 step.outcome

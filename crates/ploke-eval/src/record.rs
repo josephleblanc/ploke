@@ -636,8 +636,20 @@ fn extract_llm_response_from_events(events: &[ObservedTurnEvent]) -> Option<LlmR
     })
 }
 
+fn summary_has_error(summary: &str) -> bool {
+    // Legacy records may report a completed turn with a success label while still
+    // appending machine error fields such as `code=MALFORMED_FUNCTION_CALL`.
+    summary.starts_with("Request summary: [success]") && summary.contains(" code=")
+}
+
 fn turn_outcome_from_artifact(artifact: &AgentTurnArtifact, tool_call_count: usize) -> TurnOutcome {
     if let Some(terminal) = artifact.terminal_record.as_ref() {
+        if summary_has_error(&terminal.summary) {
+            return TurnOutcome::Error {
+                message: terminal.summary.clone(),
+            };
+        }
+
         match terminal.outcome.as_str() {
             "completed" if tool_call_count > 0 => TurnOutcome::ToolCalls {
                 count: tool_call_count,
