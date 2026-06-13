@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -269,6 +269,10 @@ pub struct OracleEvaluation {
     pub instance_report_path: PathBuf,
     pub instance_report: Option<InstanceReport>,
     pub diagnostic: OracleDiagnostic,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing_f2p_tests: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub failed_fix_tests: Vec<String>,
     pub usable_for_selection: bool,
 }
 
@@ -277,6 +281,7 @@ pub struct OracleEvaluation {
 pub enum OracleDiagnostic {
     Resolved,
     UnresolvedTestsRan,
+    MissingFailToPassTests,
     FixCompileFailed,
     MissingFixResults,
     InvalidInstanceReport,
@@ -1048,16 +1053,28 @@ impl OracleEvaluation {
             }
         }
 
+        let expected_f2p_tests = load_expected_f2p_tests(source)?;
+        let missing_f2p_tests = instance_report
+            .as_ref()
+            .map(|report| missing_f2p_tests(report, &expected_f2p_tests))
+            .unwrap_or_default();
+        let failed_fix_tests = instance_report
+            .as_ref()
+            .map(failed_fix_tests)
+            .unwrap_or_default();
         let diagnostic = classify_oracle_diagnostic(
             evidence.verdict,
             instance_report.as_ref(),
             &fix_patch_run_log_path(&layout.workdir, source),
+            !missing_f2p_tests.is_empty(),
         )?;
         Ok(Self {
             evidence,
             instance_report_path,
             instance_report,
             diagnostic,
+            missing_f2p_tests,
+            failed_fix_tests,
             usable_for_selection: diagnostic.usable_for_selection(),
         })
     }
@@ -1087,6 +1104,7 @@ impl OracleDiagnostic {
         match self {
             OracleDiagnostic::Resolved => "resolved",
             OracleDiagnostic::UnresolvedTestsRan => "unresolved_tests_ran",
+            OracleDiagnostic::MissingFailToPassTests => "missing_fail_to_pass_tests",
             OracleDiagnostic::FixCompileFailed => "fix_compile_failed",
             OracleDiagnostic::MissingFixResults => "missing_fix_results",
             OracleDiagnostic::InvalidInstanceReport => "invalid_instance_report",
@@ -1101,7 +1119,9 @@ impl OracleDiagnostic {
     pub fn usable_for_selection(self) -> bool {
         matches!(
             self,
-            OracleDiagnostic::Resolved | OracleDiagnostic::UnresolvedTestsRan
+            OracleDiagnostic::Resolved
+                | OracleDiagnostic::UnresolvedTestsRan
+                | OracleDiagnostic::MissingFailToPassTests
         )
     }
 }
@@ -1581,6 +1601,7 @@ fn classify_oracle_diagnostic(
     verdict: Verdict,
     report: Option<&InstanceReport>,
     fix_log_path: &Path,
+    has_missing_f2p: bool,
 ) -> Result<OracleDiagnostic, PrepareError> {
     match verdict {
         Verdict::Resolved => Ok(OracleDiagnostic::Resolved),
@@ -1596,10 +1617,75 @@ fn classify_oracle_diagnostic(
                     Ok(OracleDiagnostic::MissingFixResults)
                 }
             }
+            Some(_) if has_missing_f2p => Ok(OracleDiagnostic::MissingFailToPassTests),
             Some(_) => Ok(OracleDiagnostic::UnresolvedTestsRan),
             None => Ok(OracleDiagnostic::MissingInstanceReport),
         },
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct MbeDatasetRecord {
+    instance_id: Option<String>,
+    org: Option<String>,
+    repo: Option<String>,
+    number: Option<u64>,
+    #[serde(default)]
+    f2p_tests: BTreeMap<String, serde_json::Value>,
+}
+
+fn load_expected_f2p_tests(
+    source: &crate::spec::MultiSweBenchSource,
+) -> Result<BTreeSet<String>, PrepareError> {
+    let file =
+        fs::File::open(&source.dataset_file).map_err(|source_err| PrepareError::ReadManifest {
+            path: source.dataset_file.clone(),
+            source: source_err,
+        })?;
+    let reader = BufReader::new(file);
+    for line in reader.lines() {
+        let line = line.map_err(|source_err| PrepareError::ReadManifest {
+            path: source.dataset_file.clone(),
+            source: source_err,
+        })?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let record: MbeDatasetRecord =
+            serde_json::from_str(&line).map_err(|source_err| PrepareError::ParseManifest {
+                path: source.dataset_file.clone(),
+                source: source_err,
+            })?;
+        if dataset_record_matches(&record, source) {
+            return Ok(record.f2p_tests.into_keys().collect());
+        }
+    }
+    Ok(BTreeSet::new())
+}
+
+fn dataset_record_matches(
+    record: &MbeDatasetRecord,
+    source: &crate::spec::MultiSweBenchSource,
+) -> bool {
+    let instance_matches = record.instance_id.as_deref() == Some(source.instance_id.as_str());
+    let repo_matches = record.org.as_deref() == Some(source.org.as_str())
+        && record.repo.as_deref() == Some(source.repo.as_str())
+        && record.number == Some(source.number);
+    instance_matches || repo_matches
+}
+
+fn missing_f2p_tests(report: &InstanceReport, expected: &BTreeSet<String>) -> Vec<String> {
+    let actual = report.f2p_tests.keys().cloned().collect::<BTreeSet<_>>();
+    expected.difference(&actual).cloned().collect()
+}
+
+fn failed_fix_tests(report: &InstanceReport) -> Vec<String> {
+    report
+        .fix_patch_result
+        .failed_tests
+        .iter()
+        .cloned()
+        .collect()
 }
 
 fn fix_log_indicates_compile_failure(path: &Path) -> Result<bool, PrepareError> {
@@ -1928,6 +2014,113 @@ mod tests {
             test_patch_result: stage_result(274, 2, 0),
             fix_patch_result: stage_result(0, 0, 0),
         }
+    }
+
+    fn stage_result_with_failed(failed_tests: &[&str]) -> StageResult {
+        StageResult {
+            passed_count: 0,
+            failed_count: failed_tests.len(),
+            skipped_count: 0,
+            passed_tests: BTreeSet::new(),
+            failed_tests: failed_tests
+                .iter()
+                .map(|test| (*test).to_string())
+                .collect(),
+            skipped_tests: BTreeSet::new(),
+        }
+    }
+
+    #[test]
+    fn unresolved_report_names_missing_fail_to_pass_tests() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let request = request(tmp.path());
+        let report_path = tmp.path().join("final_report.json");
+        fs::write(
+            &report_path,
+            serde_json::to_string_pretty(&FinalReport {
+                total_instances: 1,
+                submitted_instances: 1,
+                completed_instances: 1,
+                incomplete_instances: 0,
+                resolved_instances: 0,
+                unresolved_instances: 1,
+                empty_patch_instances: 0,
+                error_instances: 0,
+                submitted_ids: vec!["BurntSushi/ripgrep:pr-2209".to_string()],
+                completed_ids: vec!["BurntSushi/ripgrep:pr-2209".to_string()],
+                incomplete_ids: Vec::new(),
+                resolved_ids: Vec::new(),
+                unresolved_ids: vec!["BurntSushi/ripgrep:pr-2209".to_string()],
+                empty_patch_ids: Vec::new(),
+                error_ids: Vec::new(),
+            })
+            .expect("serialize final report"),
+        )
+        .expect("write final report");
+        fs::write(
+            tmp.path().join("dataset.jsonl"),
+            concat!(
+                r#"{"instance_id":"BurntSushi__ripgrep-2209","org":"BurntSushi","repo":"ripgrep","number":2209,"base":{"sha":"abc123"},"f2p_tests":{"regression::r2095":{},"regression::r2208":{}}}"#,
+                "\n"
+            ),
+        )
+        .expect("write dataset");
+        let instance_path = instance_report_path(
+            &request.layout.workdir,
+            require_msb_source(&request.prepared).expect("source"),
+        );
+        fs::create_dir_all(instance_path.parent().expect("instance report parent"))
+            .expect("create instance report parent");
+        let mut f2p_tests = BTreeMap::new();
+        f2p_tests.insert(
+            "regression::r2095".to_string(),
+            TestTransition {
+                run: TestStatus::None,
+                test: TestStatus::Fail,
+                fix: TestStatus::Pass,
+            },
+        );
+        fs::write(
+            &instance_path,
+            serde_json::to_string_pretty(&InstanceReport {
+                org: "BurntSushi".to_string(),
+                repo: "ripgrep".to_string(),
+                number: 2209,
+                valid: Some(true),
+                error_msg: Some(String::new()),
+                fixed_tests: f2p_tests.clone(),
+                p2p_tests: BTreeMap::new(),
+                f2p_tests,
+                s2p_tests: BTreeMap::new(),
+                n2p_tests: BTreeMap::new(),
+                run_result: stage_result(274, 0, 0),
+                test_patch_result: stage_result_with_failed(&[
+                    "regression::r2095",
+                    "regression::r2208",
+                ]),
+                fix_patch_result: stage_result_with_failed(&["regression::r2208"]),
+            })
+            .expect("serialize instance report"),
+        )
+        .expect("write instance report");
+
+        let evaluation = request
+            .load_oracle_evaluation_from(&report_path)
+            .expect("load oracle evaluation");
+
+        assert_eq!(
+            evaluation.diagnostic,
+            OracleDiagnostic::MissingFailToPassTests
+        );
+        assert_eq!(
+            evaluation.missing_f2p_tests,
+            vec!["regression::r2208".to_string()]
+        );
+        assert_eq!(
+            evaluation.failed_fix_tests,
+            vec!["regression::r2208".to_string()]
+        );
+        assert!(evaluation.usable_for_selection);
     }
 
     #[test]

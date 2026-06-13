@@ -3555,6 +3555,8 @@ mod tests {
             instance_report_path: PathBuf::from("mbe/report.json"),
             instance_report: None,
             diagnostic: crate::mbe::OracleDiagnostic::MissingInstanceReport,
+            missing_f2p_tests: Vec::new(),
+            failed_fix_tests: Vec::new(),
             usable_for_selection: false,
         }
     }
