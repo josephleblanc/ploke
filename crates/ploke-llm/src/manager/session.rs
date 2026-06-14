@@ -1422,14 +1422,25 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepData, LlmError> {
         }
     }
 
-    let parsed: OpenAiResponse = serde_json::from_str(body_text).map_err(|e| {
-        // Avoid dumping arbitrarily large bodies into errors/logs.
-        let excerpt = truncate_for_error(body_text, 2_000);
-        LlmError::Deserialization {
-            message: format!("{e} — body excerpt: {excerpt}"),
-            body_snippet: Some(excerpt),
+    let parsed: OpenAiResponse = match serde_json::from_str(body_text) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            if let Some(parsed) = normalize_apply_code_edit_edits_tool_body(body_text) {
+                tracing::warn!(
+                    target: "chat-loop",
+                    "salvaged ApplyCodeEditEdits unexpected tool call into apply_code_edit"
+                );
+                parsed
+            } else {
+                // Avoid dumping arbitrarily large bodies into errors/logs.
+                let excerpt = truncate_for_error(body_text, 2_000);
+                return Err(LlmError::Deserialization {
+                    message: format!("{err} — body excerpt: {excerpt}"),
+                    body_snippet: Some(excerpt),
+                });
+            }
         }
-    })?;
+    };
 
     // We prefer the first choice that yields a usable outcome.
     for choice in parsed.choices.iter() {
@@ -1444,11 +1455,13 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepData, LlmError> {
                     .message
                     .as_ref()
                     .and_then(|message| message.refusal.as_deref())
-                && let Some(call) = salvage_ns_patch_call(refusal, choice.index.unwrap_or(0))
+                && let Some((call, salvage_kind)) =
+                    salvage_malformed_tool_call(refusal, choice.index.unwrap_or(0))
             {
                 tracing::warn!(
                     target: "chat-loop",
-                    "salvaged non_semantic_patch tool call from malformed_function_call refusal"
+                    salvage_kind,
+                    "salvaged tool call from malformed_function_call refusal"
                 );
                 let reasoning_opt = choice
                     .message
@@ -1722,10 +1735,228 @@ fn check_provider_error(body_text: &str) -> Result<(), LlmError> {
 }
 
 #[derive(Debug, Serialize)]
+struct ApplyCodeEditArg {
+    file: String,
+    canon: String,
+    node_type: String,
+    code: String,
+}
+
+#[derive(Debug)]
+struct ApplyCodeEditSalvage {
+    edits: Vec<ApplyCodeEditArg>,
+    confidence: Option<f64>,
+}
+
+#[derive(Debug, Serialize)]
 struct NsPatchArg {
     file: String,
     diff: String,
     reasoning: String,
+}
+
+fn salvage_malformed_tool_call(refusal: &str, index: u32) -> Option<(ToolCall, &'static str)> {
+    if let Some(call) = salvage_apply_code_edit_call(refusal, index) {
+        return Some((call, "apply_code_edit"));
+    }
+    if let Some(call) = salvage_ns_patch_call(refusal, index) {
+        return Some((call, "non_semantic_patch"));
+    }
+    None
+}
+
+fn salvage_apply_code_edit_call(refusal: &str, index: u32) -> Option<ToolCall> {
+    let payload = apply_code_edit_payload(parse_apply_code_edit_args(refusal)?)?;
+    let arguments = serde_json::to_string(&payload).ok()?;
+    let call_id = format!("salvaged_malformed_apply_code_edit_{index}");
+
+    Some(ToolCall {
+        call_id: ArcStr::from(call_id.as_str()),
+        call_type: FunctionMarker,
+        function: FunctionCall {
+            name: ToolName::ApplyCodeEdit,
+            arguments,
+        },
+        extra_content: None,
+    })
+}
+
+fn parse_apply_code_edit_args(refusal: &str) -> Option<ApplyCodeEditSalvage> {
+    let call = refusal.find("default_api.apply_code_edit(")?;
+    let call_open = call + "default_api.apply_code_edit".len();
+    let call_close = matching_delim(refusal, call_open, b'(', b')')?;
+
+    let mut confidence = None;
+    for field in split_fields(&refusal[call_open + 1..call_close])? {
+        let Some((name, value)) = field.trim().split_once('=') else {
+            continue;
+        };
+        if name.trim() == "confidence" {
+            confidence = parse_number_literal(value.trim());
+        }
+    }
+
+    let edits_key = refusal[call..call_close].find("edits=[")? + call;
+    let edits_start = edits_key + "edits=[".len();
+    if edits_start > call_close {
+        return None;
+    }
+    let body = &refusal[edits_start..call_close];
+    let prefix = "default_api.ApplyCodeEditEdits";
+
+    let mut edits = Vec::new();
+    let mut offset = 0;
+    while let Some(found) = body[offset..].find(prefix) {
+        let open = edits_start + offset + found + prefix.len();
+        if refusal.as_bytes().get(open) != Some(&b'(') {
+            return None;
+        }
+        let close = matching_delim(refusal, open, b'(', b')')?;
+        if close > call_close {
+            return None;
+        }
+        let (edit, edit_confidence) = parse_apply_code_edit_fields(&refusal[open + 1..close])?;
+        if confidence.is_none() {
+            confidence = edit_confidence;
+        }
+        edits.push(edit);
+        offset = close - edits_start + 1;
+    }
+
+    if edits.is_empty() {
+        return None;
+    }
+
+    Some(ApplyCodeEditSalvage { edits, confidence })
+}
+
+fn parse_apply_code_edit_fields(fields: &str) -> Option<(ApplyCodeEditArg, Option<f64>)> {
+    let mut file = None;
+    let mut canon = None;
+    let mut node_type = None;
+    let mut code = None;
+    let mut confidence = None;
+
+    for field in split_fields(fields)? {
+        let (name, value) = field.trim().split_once('=')?;
+        match name.trim() {
+            "file" => file = parse_string_literal(value.trim()),
+            "canon" => canon = parse_string_literal(value.trim()),
+            "node_type" => node_type = parse_string_literal(value.trim()),
+            "code" => code = parse_string_literal(value.trim()),
+            "confidence" => confidence = parse_number_literal(value.trim()),
+            _ => {}
+        }
+    }
+
+    Some((
+        ApplyCodeEditArg {
+            file: file?,
+            canon: canon?,
+            node_type: node_type?,
+            code: code?,
+        },
+        confidence,
+    ))
+}
+
+fn apply_code_edit_payload(salvage: ApplyCodeEditSalvage) -> Option<serde_json::Value> {
+    if salvage.edits.is_empty() {
+        return None;
+    }
+    let mut payload = serde_json::json!({
+        "edits": salvage.edits,
+    });
+    if let Some(confidence) = salvage.confidence {
+        payload["confidence"] = serde_json::json!(confidence);
+    }
+    Some(payload)
+}
+
+fn normalize_apply_code_edit_edits_tool_body(body_text: &str) -> Option<OpenAiResponse> {
+    let mut value: serde_json::Value = serde_json::from_str(body_text).ok()?;
+    let choices = value.get_mut("choices")?.as_array_mut()?;
+    let mut changed = false;
+
+    for choice in choices {
+        let mut choice_changed = false;
+        let Some(message) = choice
+            .get_mut("message")
+            .and_then(serde_json::Value::as_object_mut)
+        else {
+            continue;
+        };
+        let Some(tool_calls) = message
+            .get_mut("tool_calls")
+            .and_then(serde_json::Value::as_array_mut)
+        else {
+            continue;
+        };
+
+        for tool_call in tool_calls {
+            let Some(function) = tool_call
+                .get_mut("function")
+                .and_then(serde_json::Value::as_object_mut)
+            else {
+                continue;
+            };
+            if function.get("name").and_then(serde_json::Value::as_str)
+                != Some("ApplyCodeEditEdits")
+            {
+                continue;
+            }
+            let arguments_value = function.get("arguments")?.clone();
+            let payload = apply_code_edit_payload_from_value(&arguments_value)?;
+            function.insert(
+                "name".to_string(),
+                serde_json::Value::String("apply_code_edit".to_string()),
+            );
+            function.insert(
+                "arguments".to_string(),
+                serde_json::Value::String(serde_json::to_string(&payload).ok()?),
+            );
+            choice_changed = true;
+        }
+
+        if choice_changed {
+            message.remove("refusal");
+            if let Some(choice_obj) = choice.as_object_mut() {
+                choice_obj.insert(
+                    "finish_reason".to_string(),
+                    serde_json::Value::String("tool_calls".to_string()),
+                );
+            }
+            changed = true;
+        }
+    }
+
+    if changed {
+        serde_json::from_value(value).ok()
+    } else {
+        None
+    }
+}
+
+fn apply_code_edit_payload_from_value(value: &serde_json::Value) -> Option<serde_json::Value> {
+    let edit_value = if let Some(arguments) = value.as_str() {
+        serde_json::from_str::<serde_json::Value>(arguments).ok()?
+    } else {
+        value.clone()
+    };
+    let edit = edit_value.as_object()?;
+    let confidence = edit.get("confidence").and_then(serde_json::Value::as_f64);
+
+    let salvage = ApplyCodeEditSalvage {
+        edits: vec![ApplyCodeEditArg {
+            file: edit.get("file")?.as_str()?.to_string(),
+            canon: edit.get("canon")?.as_str()?.to_string(),
+            node_type: edit.get("node_type")?.as_str()?.to_string(),
+            code: edit.get("code")?.as_str()?.to_string(),
+        }],
+        confidence,
+    };
+
+    apply_code_edit_payload(salvage)
 }
 
 fn salvage_ns_patch_call(refusal: &str, index: u32) -> Option<ToolCall> {
@@ -1853,7 +2084,40 @@ fn parse_string_literal(value: &str) -> Option<String> {
         &value[1..end - 1]
     };
 
-    Some(body.to_string())
+    Some(unescape_python_string(body))
+}
+
+fn parse_number_literal(value: &str) -> Option<f64> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    value.parse::<f64>().ok()
+}
+
+fn unescape_python_string(body: &str) -> String {
+    let mut out = String::with_capacity(body.len());
+    let mut chars = body.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('t') => out.push('\t'),
+            Some('\\') => out.push('\\'),
+            Some('\'') => out.push('\''),
+            Some('"') => out.push('"'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 fn matching_delim(input: &str, open: usize, start: u8, end: u8) -> Option<usize> {
@@ -2167,6 +2431,115 @@ mod tests {
                 assert!(diff.contains("replace_with_captures_at_kludge"));
             }
             other => panic!("expected salvaged tool call, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_outcome_malformed_apply_code_edit_salvages_tool_call() {
+        let refusal = r#"Malformed function call: print(default_api.apply_code_edit(edits=[default_api.ApplyCodeEditEdits(file='crates/printer/src/util.rs', canon='crate::util::Replacer::replace_all', node_type='method', code='\n    fn replace_all<\'a>() -> io::Result<()> {\n        Ok(())\n    }', confidence=0.9)]))"#;
+        let value = serde_json::json!({
+            "id": "google-malformed-apply-edit",
+            "object": "chat.completion",
+            "created": 1781398292,
+            "model": "google/gemini-2.5-flash",
+            "system_fingerprint": "",
+            "choices": [{
+                "index": 0,
+                "finish_reason": "malformed_function_call",
+                "message": {
+                    "role": "assistant",
+                    "refusal": refusal
+                }
+            }]
+        });
+        let body = serde_json::to_string(&value).expect("serialize response body");
+        let step =
+            parse_chat_outcome(&body).expect("malformed apply_code_edit call should be salvaged");
+
+        match step.outcome {
+            ChatStepOutcome::ToolCalls {
+                calls,
+                finish_reason,
+                ..
+            } => {
+                assert_eq!(finish_reason, FinishReason::ToolCalls);
+                assert_eq!(calls.len(), 1);
+                let call = &calls[0];
+                assert_eq!(call.function.name.as_str(), "apply_code_edit");
+                let args: serde_json::Value = serde_json::from_str(&call.function.arguments)
+                    .expect("salvaged arguments are JSON");
+                assert_eq!(args["edits"][0]["file"], "crates/printer/src/util.rs");
+                assert_eq!(
+                    args["edits"][0]["canon"],
+                    "crate::util::Replacer::replace_all"
+                );
+                assert_eq!(args["edits"][0]["node_type"], "method");
+                assert_eq!(args["confidence"].as_f64(), Some(0.9));
+                let code = args["edits"][0]["code"].as_str().expect("code string");
+                assert!(code.starts_with("\n    fn replace_all"));
+                assert!(code.contains("<'a>()"));
+            }
+            other => panic!("expected salvaged apply_code_edit call, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_outcome_unexpected_apply_code_edit_edits_tool_name_normalizes() {
+        let nested_args = serde_json::json!({
+            "file": "crates/printer/src/util.rs",
+            "canon": "crate::util::Replacer::replace_all",
+            "node_type": "method",
+            "code": "fn replace_all() -> io::Result<()> { Ok(()) }",
+            "confidence": 0.9
+        });
+        let value = serde_json::json!({
+            "id": "google-unexpected-apply-edit-edits",
+            "object": "chat.completion",
+            "created": 1781398292,
+            "model": "google/gemini-2.5-flash",
+            "system_fingerprint": "",
+            "choices": [{
+                "index": 0,
+                "finish_reason": "unexpected_tool_call",
+                "message": {
+                    "role": "assistant",
+                    "refusal": "Unexpected tool call: Model tried to call an undeclared function: ApplyCodeEditEdits",
+                    "tool_calls": [{
+                        "id": "function-call-d39d2e1c-c0da-43c9-8672-37f4997ea70a",
+                        "type": "function",
+                        "function": {
+                            "name": "ApplyCodeEditEdits",
+                            "arguments": nested_args.to_string()
+                        }
+                    }]
+                }
+            }]
+        });
+        let body = serde_json::to_string(&value).expect("serialize response body");
+        assert!(
+            serde_json::from_str::<OpenAiResponse>(&body).is_err(),
+            "raw response should fail the strict ToolName deserializer"
+        );
+
+        let step = parse_chat_outcome(&body)
+            .expect("ApplyCodeEditEdits unexpected tool call should be normalized");
+        match step.outcome {
+            ChatStepOutcome::ToolCalls {
+                calls,
+                finish_reason,
+                ..
+            } => {
+                assert_eq!(finish_reason, FinishReason::ToolCalls);
+                assert_eq!(calls.len(), 1);
+                let call = &calls[0];
+                assert_eq!(call.function.name.as_str(), "apply_code_edit");
+                let args: serde_json::Value = serde_json::from_str(&call.function.arguments)
+                    .expect("normalized arguments are JSON");
+                assert_eq!(args["edits"][0]["file"], "crates/printer/src/util.rs");
+                assert_eq!(args["edits"][0]["node_type"], "method");
+                assert_eq!(args["confidence"].as_f64(), Some(0.9));
+            }
+            other => panic!("expected normalized apply_code_edit call, got {other:?}"),
         }
     }
 
