@@ -1819,40 +1819,41 @@ fn parse_apply_code_edit_args(refusal: &str) -> Option<ApplyCodeEditSalvage> {
     let call_close = matching_delim(refusal, call_open, b'(', b')')?;
 
     let mut confidence = None;
+    let mut edits_value = None;
     for field in split_fields(&refusal[call_open + 1..call_close])? {
         let Some((name, value)) = field.trim().split_once('=') else {
             continue;
         };
-        if name.trim() == "confidence" {
-            confidence = parse_number_literal(value.trim());
+        match name.trim() {
+            "confidence" => confidence = parse_number_literal(value.trim()),
+            "edits" => edits_value = Some(value.trim()),
+            _ => {}
         }
     }
 
-    let edits_key = refusal[call..call_close].find("edits=[")? + call;
-    let edits_start = edits_key + "edits=[".len();
-    if edits_start > call_close {
+    let edits_value = edits_value?;
+    let list_close = matching_delim(edits_value, 0, b'[', b']')?;
+    if !edits_value[list_close + 1..].trim().is_empty() {
         return None;
     }
-    let body = &refusal[edits_start..call_close];
+    let body = &edits_value[1..list_close];
     let prefix = "default_api.ApplyCodeEditEdits";
 
     let mut edits = Vec::new();
     let mut offset = 0;
     while let Some(found) = body[offset..].find(prefix) {
-        let open = edits_start + offset + found + prefix.len();
-        if refusal.as_bytes().get(open) != Some(&b'(') {
+        let mut open = offset + found + prefix.len();
+        open = skip_ascii_whitespace(body, open);
+        if body.as_bytes().get(open) != Some(&b'(') {
             return None;
         }
-        let close = matching_delim(refusal, open, b'(', b')')?;
-        if close > call_close {
-            return None;
-        }
-        let (edit, edit_confidence) = parse_apply_code_edit_fields(&refusal[open + 1..close])?;
+        let close = matching_delim(body, open, b'(', b')')?;
+        let (edit, edit_confidence) = parse_apply_code_edit_fields(&body[open + 1..close])?;
         if confidence.is_none() {
             confidence = edit_confidence;
         }
         edits.push(edit);
-        offset = close - edits_start + 1;
+        offset = close + 1;
     }
 
     if edits.is_empty() {
@@ -2095,6 +2096,17 @@ fn split_fields(input: &str) -> Option<Vec<&str>> {
 
     fields.push(&input[start..]);
     Some(fields)
+}
+
+fn skip_ascii_whitespace(input: &str, mut index: usize) -> usize {
+    while input
+        .as_bytes()
+        .get(index)
+        .is_some_and(u8::is_ascii_whitespace)
+    {
+        index += 1;
+    }
+    index
 }
 
 fn parse_string_literal(value: &str) -> Option<String> {
@@ -2531,6 +2543,75 @@ mod tests {
                 let code = args["edits"][0]["code"].as_str().expect("code string");
                 assert!(code.starts_with("\n    fn replace_all"));
                 assert!(code.contains("<'a>()"));
+            }
+            other => panic!("expected salvaged apply_code_edit call, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_outcome_malformed_apply_code_edit_with_spaced_edits_salvages_tool_call() {
+        let refusal = r#"Malformed function call: print(default_api.apply_code_edit(
+    edits = [
+        default_api.ApplyCodeEditEdits(
+            file = "crates/ploke-tui/src/tools/mod.rs",
+            canon = "crate::tools::validate_and_sanitize_tool_call",
+            node_type = "function",
+            code = """pub fn validate_and_sanitize_tool_call(
+    tool_call: &ToolCall,
+) -> Result<ToolCall, ToolCallPreflightError> {
+    Ok(tool_call.clone())
+}"""
+        )
+    ],
+    confidence = 0.7
+))"#;
+        let value = serde_json::json!({
+            "id": "google-malformed-apply-edit-spaced",
+            "object": "chat.completion",
+            "created": 1781431115,
+            "model": "google/gemini-2.5-flash",
+            "system_fingerprint": "",
+            "choices": [{
+                "index": 0,
+                "finish_reason": "malformed_function_call",
+                "message": {
+                    "role": "assistant",
+                    "refusal": refusal
+                }
+            }]
+        });
+        let body = serde_json::to_string(&value).expect("serialize response body");
+        let step = parse_chat_outcome(&body)
+            .expect("spaced malformed apply_code_edit call should be salvaged");
+
+        match step.outcome {
+            ChatStepOutcome::ToolCalls {
+                calls,
+                finish_reason,
+                ..
+            } => {
+                assert_eq!(finish_reason, FinishReason::ToolCalls);
+                assert_eq!(calls.len(), 1);
+                let call = &calls[0];
+                assert_eq!(call.function.name.as_str(), "apply_code_edit");
+                let args: serde_json::Value = serde_json::from_str(&call.function.arguments)
+                    .expect("salvaged arguments are JSON");
+                assert_eq!(
+                    args["edits"][0]["file"],
+                    "crates/ploke-tui/src/tools/mod.rs"
+                );
+                assert_eq!(
+                    args["edits"][0]["canon"],
+                    "crate::tools::validate_and_sanitize_tool_call"
+                );
+                assert_eq!(args["edits"][0]["node_type"], "function");
+                assert_eq!(args["confidence"].as_f64(), Some(0.7));
+                assert!(
+                    args["edits"][0]["code"]
+                        .as_str()
+                        .expect("code string")
+                        .contains("validate_and_sanitize_tool_call")
+                );
             }
             other => panic!("expected salvaged apply_code_edit call, got {other:?}"),
         }

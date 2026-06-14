@@ -652,6 +652,13 @@ mod tests {
     }
 
     #[cfg(feature = "live_api_tests")]
+    fn live_schema_model() -> String {
+        env::var("PLOKE_LIVE_GOOGLE_STRUCTURED_MODEL")
+            .or_else(|_| env::var("PLOKE_LIVE_GOOGLE_CHAT_MODEL"))
+            .unwrap_or_else(|_| "google/gemini-2.5-flash".to_string())
+    }
+
+    #[cfg(feature = "live_api_tests")]
     fn google_slug_model(model: &str) -> String {
         let without_author = model.strip_prefix("google/").unwrap_or(model);
         without_author
@@ -1151,6 +1158,42 @@ mod tests {
         .into()
     }
 
+    #[cfg(feature = "live_api_tests")]
+    fn action_schema() -> serde_json::Value {
+        json!({
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "enum": ["apply_code_edit"]
+                },
+                "arguments": {
+                    "type": "object",
+                    "properties": {
+                        "edits": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "file_path": { "type": "string" },
+                                    "old_string": { "type": "string" },
+                                    "new_string": { "type": "string" }
+                                },
+                                "required": ["file_path", "old_string", "new_string"],
+                                "additionalProperties": false
+                            }
+                        },
+                        "confidence": { "type": "number" }
+                    },
+                    "required": ["edits", "confidence"],
+                    "additionalProperties": false
+                }
+            },
+            "required": ["name", "arguments"],
+            "additionalProperties": false
+        })
+    }
+
     #[test]
     fn openai_compatible_route_constants_match_google() {
         assert_eq!(Google::BASE_URL, "https://aiplatform.googleapis.com/v1");
@@ -1640,6 +1683,124 @@ mod tests {
                 bail!("expected forced Google tool call through chat_step, got {other:?}");
             }
         }
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    #[ignore = "requires Google ADC, GOOGLE_PROJECT_ID, GOOGLE_REGION, a Gemini model that supports OpenAI-compatible response_format json_schema, and quota"]
+    async fn live_google_response_format_json_schema_returns_action_json_success_or_quota()
+    -> Result<()> {
+        const TEST_NAME: &str =
+            "live_google_response_format_json_schema_returns_action_json_success_or_quota";
+        if !live_google_env_or_skip(TEST_NAME) {
+            return Ok(());
+        }
+
+        let model = live_schema_model();
+        let body = json!({
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You emit only the JSON object requested by response_format. Do not call tools and do not wrap JSON in markdown."
+                },
+                {
+                    "role": "user",
+                    "content": "Represent exactly one apply_code_edit call. Use file_path src/lib.rs, old_string let bug = true;, new_string let bug = false;, and confidence 0.87."
+                }
+            ],
+            "max_tokens": 512,
+            "temperature": 0.0,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "ploke_action",
+                    "strict": true,
+                    "schema": action_schema()
+                }
+            }
+        });
+
+        let key = Google::resolve_bearer_token().await?;
+        let url = Google::completion_url()?;
+        let response = Client::new()
+            .post(url)
+            .bearer_auth(key)
+            .header("Accept", "application/json")
+            .json(&body)
+            .timeout(Duration::from_secs(LLM_TIMEOUT_SECS))
+            .send()
+            .await
+            .map_err(|error| send_failure(url, error))?;
+
+        let status = response.status();
+        let response_text = response.text().await?;
+        let response_value: serde_json::Value = serde_json::from_str(&response_text)?;
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS
+            && is_resource_exhausted(&response_value)
+        {
+            eprintln!(
+                "{TEST_NAME}: Google quota exhausted; live route reached but schema support not validated"
+            );
+            return Ok(());
+        }
+        if !status.is_success() {
+            bail!(
+                "Google response_format json_schema request failed: status={} body={}",
+                status,
+                body_snippet(&response_text)
+            );
+        }
+
+        let reason = response_value
+            .get("choices")
+            .and_then(|choices| choices.as_array())
+            .and_then(|choices| choices.first())
+            .and_then(|choice| choice.get("finish_reason"))
+            .and_then(|reason| reason.as_str());
+        assert_ne!(
+            reason,
+            Some("malformed_function_call"),
+            "response_format json_schema must avoid provider tool-call malformation: {response_value}"
+        );
+
+        let Some(content) = first_message_content(&response_value) else {
+            bail!(
+                "expected JSON content from response_format json_schema response, got {}",
+                body_snippet(&response_text)
+            );
+        };
+        let action: serde_json::Value = serde_json::from_str(content)?;
+        assert_eq!(
+            action.get("name").and_then(|name| name.as_str()),
+            Some("apply_code_edit"),
+            "structured action did not name apply_code_edit: {action}"
+        );
+        let edit = action
+            .pointer("/arguments/edits/0")
+            .unwrap_or_else(|| panic!("structured action missing first edit: {action}"));
+        assert_eq!(
+            edit.get("file_path").and_then(|path| path.as_str()),
+            Some("src/lib.rs")
+        );
+        assert_eq!(
+            edit.get("old_string").and_then(|text| text.as_str()),
+            Some("let bug = true;")
+        );
+        assert_eq!(
+            edit.get("new_string").and_then(|text| text.as_str()),
+            Some("let bug = false;")
+        );
+        assert!(
+            action
+                .pointer("/arguments/confidence")
+                .and_then(|confidence| confidence.as_f64())
+                .is_some_and(|confidence| (0.0..=1.0).contains(&confidence)),
+            "structured action confidence should be in [0, 1]: {action}"
+        );
+        eprintln!("{TEST_NAME}: parsed structured action: {action}");
 
         Ok(())
     }
