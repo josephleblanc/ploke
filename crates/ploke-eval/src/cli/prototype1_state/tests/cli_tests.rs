@@ -2247,6 +2247,75 @@ fn broad_tui_attempt_google_provider_selects_google_router() {
     assert!(model.provider().is_none());
 }
 
+#[tokio::test]
+async fn broad_tui_direct_google_attempt_installs_prototype1_chat_context() {
+    let _headless_tui_guard = crate::test_support::llm_lock().lock().await;
+    ploke_tui::llm::clear_prototype1_trace_context_for_test();
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    init_indexed_repo(&repo_root);
+    write_surface_target(&repo_root, Path::new("src/lib.rs"), "pub fn canary() {}\n");
+    index_repo(&repo_root);
+    commit_indexed_repo(&repo_root, "prototype1 chat context fixture");
+
+    let publication = publish_broad_edit_harness_request_with_graph_limit(
+        &manifest_path,
+        &repo_root,
+        &test_parent_identity(),
+        Prototype1ChildBudget::new(1, 1),
+        test_broad_request_admission_binding(),
+        DEFAULT_GRAPH_NEAREST_ITEMS,
+        profile::AntiAttractorPolicy::None,
+    )
+    .expect("published broad harness request");
+    let slot = HarnessRequestSlot {
+        request_path: publication.request_path,
+        published: publication.published,
+    };
+    let summary_path = tmp.path().join("headless-summary.json");
+    fs::write(
+        &summary_path,
+        include_str!(
+            "../../../tests/fixtures/prototype1-zero-admission-child-plan/node-18f71c7f3b1718b8.headless-tui.json"
+        ),
+    )
+    .expect("write summary fixture");
+    let _env = crate::test_support::env_guard_os(vec![(
+        "PLOKE_EVAL_BROAD_TUI_SUMMARY_FIXTURE",
+        summary_path.into_os_string(),
+    )]);
+    let options = BroadTuiAttemptOptions::from_cli(
+        Some("google/gemini-2.5-flash".to_string()),
+        Some("google".to_string()),
+        Some(1),
+        Some(60),
+    )
+    .expect("google headless model selection");
+
+    let err = run_broad_headless_tui_attempt_with_options(&slot, &options)
+        .await
+        .expect_err("summary fixture returns a rejected broad-TUI attempt");
+    assert!(
+        err.to_string()
+            .contains("headless ploke-tui test fixture ended without an admissible edit"),
+        "unexpected fixture error: {err}"
+    );
+    let context = ploke_tui::llm::prototype1_trace_context_for_test()
+        .expect("broad direct-Google attempt must install Prototype 1 chat context");
+    assert_eq!(context.role, "parent");
+    assert_eq!(context.runtime_phase, "broad_headless_tui_attempt");
+    assert_eq!(
+        context.node_id,
+        slot.published.request().parent_node_id.as_str()
+    );
+    assert_eq!(
+        context.runtime_id.as_deref(),
+        Some(slot.published.request_id())
+    );
+}
+
 #[cfg(feature = "live_api_tests")]
 fn live_google_headless_tui_model_id() -> String {
     let raw = std::env::var("PLOKE_EVAL_HEADLESS_TUI_GOOGLE_MODEL_ID")

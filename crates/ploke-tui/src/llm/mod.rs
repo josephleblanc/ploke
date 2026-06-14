@@ -10,10 +10,11 @@ pub use manager::{
 };
 #[cfg(feature = "test_harness")]
 pub use manager::{
-    RequestTapGuard, ResponseTapGuard, clear_recorded_response_tape, clear_request_tap,
-    clear_response_tap, install_recorded_response_prefix_then_live,
-    install_recorded_response_prefix_then_live_steps, install_recorded_response_tape,
-    install_request_tap, install_response_tap,
+    RequestTapGuard, ResponseTapGuard, clear_prototype1_trace_context_for_test,
+    clear_recorded_response_tape, clear_request_tap, clear_response_tap,
+    install_recorded_response_prefix_then_live, install_recorded_response_prefix_then_live_steps,
+    install_recorded_response_tape, install_request_tap, install_response_tap,
+    prototype1_trace_context_for_test,
 };
 
 pub(crate) use ploke_llm::error;

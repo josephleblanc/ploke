@@ -866,6 +866,8 @@ pub(crate) struct GraphRestriction {
     pub(crate) nearest_items: usize,
     pub(crate) seed_modules: Vec<PathBuf>,
     pub(crate) source: GraphRestrictionSource,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) canonical_targets: Vec<GraphCanonicalTarget>,
 }
 
 impl GraphRestriction {
@@ -875,8 +877,77 @@ impl GraphRestriction {
             nearest_items,
             seed_modules: vec![PathBuf::from("crates/ploke-tui/src/tools/mod.rs")],
             source: GraphRestrictionSource::CodeGraphCozo,
+            canonical_targets: prototype1_tool_neighborhood_targets(),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct GraphCanonicalTarget {
+    pub(crate) file: PathBuf,
+    pub(crate) canon: String,
+    pub(crate) node_type: String,
+    pub(crate) reason: String,
+    pub(crate) current_code: String,
+}
+
+fn prototype1_tool_neighborhood_targets() -> Vec<GraphCanonicalTarget> {
+    vec![
+        GraphCanonicalTarget {
+            file: PathBuf::from("crates/ploke-tui/src/tools/mod.rs"),
+            canon: "crate::tools::validate_and_sanitize_tool_call".to_string(),
+            node_type: "function".to_string(),
+            reason:
+                "central argument-sanitization guard shared by structured and classic tool calls"
+                    .to_string(),
+            current_code: r#"pub fn validate_and_sanitize_tool_call(
+    tool_call: &ToolCall,
+) -> Result<ToolCall, ToolCallPreflightError> {
+    let mut sanitized = tool_call.clone();
+    sanitized.function.arguments = sanitize_tool_args(&sanitized.function.arguments);
+    validate_tool_args(sanitized.function.name, &sanitized.function.arguments).map_err(
+        |error| ToolCallPreflightError {
+            call_id: sanitized.call_id.clone(),
+            tool_name: sanitized.function.name,
+            rejected_arguments: crate::tools::error::truncate_for_error(
+                &sanitized.function.arguments,
+                1024,
+            ),
+            error,
+        },
+    )?;
+    Ok(sanitized)
+}"#
+            .to_string(),
+        },
+        GraphCanonicalTarget {
+            file: PathBuf::from("crates/ploke-tui/src/tools/mod.rs"),
+            canon: "crate::tools::validate_tool_args".to_string(),
+            node_type: "function".to_string(),
+            reason: "single dispatch point from tool names to typed parameter validation"
+                .to_string(),
+            current_code:
+                r#"fn validate_tool_args(tool_name: ToolName, args: &str) -> Result<(), ToolError> {
+    match tool_name {
+        ToolName::RequestCodeContext => validate_tool_args_with::<RequestCodeContextGat>(args),
+        ToolName::ApplyCodeEdit => validate_tool_args_with::<GatCodeEdit>(args),
+        ToolName::InsertRustItem => {
+            validate_tool_args_with::<insert_rust_item::InsertRustItem>(args)
+        }
+        ToolName::CreateFile => validate_tool_args_with::<create_file::CreateFile>(args),
+        ToolName::NsPatch => validate_tool_args_with::<ns_patch::NsPatch>(args),
+        ToolName::NsRead => validate_tool_args_with::<ns_read::NsRead>(args),
+        ToolName::CodeItemLookup => {
+            validate_tool_args_with::<code_item_lookup::CodeItemLookup>(args)
+        }
+        ToolName::CodeItemEdges => validate_tool_args_with::<get_code_edges::CodeItemEdges>(args),
+        ToolName::Cargo => validate_tool_args_with::<cargo::CargoTool>(args),
+        ToolName::ListDir => validate_tool_args_with::<list_dir::ListDir>(args),
+    }
+}"#
+                .to_string(),
+        },
+    ]
 }
 
 impl Default for GraphRestriction {
@@ -1320,11 +1391,14 @@ impl BroadHarnessRequest {
             self.evaluation.scope.benchmark_name()
         ));
         prompt.push_str(
-            "Treat the current direcory as the write target and command root.
+            "Treat the current directory as the workspace root, write target, and command root.
             Resolve ordinary file paths there; read only the explicitly listed
-            evidence paths outside it. When running cargo, prefer root-level
-            `cargo check` or `cargo test` unless you have confirmed a package
-            name in the candidate checkout.\n",
+            evidence paths outside it. For non_semantic_patch and apply_code_edit, every `file` value
+            must be workspace-root-relative, for example `crates/<crate-name>/src/lib.rs`.
+            Do not use `src/lib.rs` for files inside a workspace member crate; include the
+            crate directory prefix such as `crates/ploke-protocol/src/lib.rs`. When running
+            cargo, prefer root-level `cargo check` or `cargo test` unless you have confirmed
+            a package name in the candidate checkout.\n",
         );
 
         prompt.push_str("All files in this directory may be read.\n");
@@ -1369,6 +1443,30 @@ impl BroadHarnessRequest {
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
+        if !self.graph_restriction.canonical_targets.is_empty() {
+            prompt.push_str(
+                "Structured edit target guidance (response_format mode with no request_code_context tool):\n",
+            );
+            prompt.push_str(
+                "Prefer non_semantic_patch for these prompt-provided current-code targets: choose one listed workspace-root-relative file and build one minimal unified diff from its Current target code block.\n",
+            );
+            prompt.push_str(
+                "Use apply_code_edit only when the exact file/canon/node_type triple is known to be accepted by the semantic edit backend. If using apply_code_edit, choose one listed triple and do not invent `canon` values.\n",
+            );
+            prompt.push_str(
+                "If apply_code_edit rejects a listed target with invalid_format, internal staging failure, or a method-target/canon error, do not repeat the same apply_code_edit call. Immediately switch to non_semantic_patch for the same workspace-root-relative file.\n",
+            );
+            for target in &self.graph_restriction.canonical_targets {
+                prompt.push_str(&format!(
+                    "- file=`{}` canon=`{}` node_type=`{}` reason={}\nCurrent target code:\n```rust\n{}\n```\n",
+                    target.file.display(),
+                    target.canon,
+                    target.node_type,
+                    target.reason,
+                    target.current_code
+                ));
+            }
+        }
         prompt.push_str(
             "Inspect the repository and evidence. Choose the change you think is most likely to improve future evaluated descendants. The provided evaluations are guidance, not hard edit targets.\n",
         );
@@ -1797,6 +1895,69 @@ mod tests {
         assert!(prompt.contains("7 nearest code items"));
         assert!(prompt.contains("crates/ploke-tui/src/tools/mod.rs"));
         assert!(prompt.contains("protocol output and detected tool failures"));
+    }
+
+    #[test]
+    fn broad_prompt_requires_workspace_root_relative_edit_paths() {
+        let fixture = Fixture::new();
+        let published = fixture.published_request();
+
+        let prompt = published.request.render_prompt();
+
+        assert!(
+            prompt.contains("workspace-root-relative"),
+            "prompt must require apply_code_edit file paths relative to the workspace root: {prompt}"
+        );
+        assert!(
+            prompt.contains("crates/<crate-name>/src/lib.rs")
+                || prompt.contains("crates/ploke-protocol/src/lib.rs"),
+            "prompt must show a crate-root file-path example instead of leaving models to emit src/lib.rs: {prompt}"
+        );
+        assert!(
+            prompt.contains("Do not use `src/lib.rs`"),
+            "prompt must explicitly reject focused-crate-relative paths that fail apply_code_edit: {prompt}"
+        );
+    }
+
+    #[test]
+    fn broad_prompt_lists_exact_canonical_targets_for_structured_actions() {
+        let fixture = Fixture::new();
+        let published = fixture.published_request();
+
+        let prompt = published.request.render_prompt();
+
+        assert!(
+            prompt.contains("Structured edit target guidance"),
+            "structured response mode has no request_code_context tool; prompt must list exact editable targets: {prompt}"
+        );
+        assert!(
+            prompt.contains("Prefer non_semantic_patch"),
+            "prompt must make non_semantic_patch the first-choice structured action for prompt-provided current-code targets: {prompt}"
+        );
+        assert!(
+            prompt.contains("do not invent `canon` values"),
+            "prompt must stop Gemini from guessing invalid canonical paths: {prompt}"
+        );
+        assert!(
+            prompt.contains("file=`crates/ploke-tui/src/tools/mod.rs`"),
+            "prompt must list workspace-root-relative target files: {prompt}"
+        );
+        assert!(
+            prompt.contains("canon=`crate::tools::validate_and_sanitize_tool_call`"),
+            "prompt must list a concrete canonical function target candidate: {prompt}"
+        );
+        assert!(
+            prompt.contains("node_type=`function`"),
+            "prompt must list the node_type paired with each canonical target: {prompt}"
+        );
+        assert!(
+            prompt.contains("Current target code"),
+            "prompt must include enough source for a compile-preserving replacement without tool calls: {prompt}"
+        );
+        assert!(
+            prompt.contains("If apply_code_edit rejects a listed target"),
+            "live r11d showed canonical targets can still miss the TUI resolver; prompt must route the model to non_semantic_patch instead of repeating a doomed apply_code_edit call: {prompt}"
+        );
     }
 
     #[test]

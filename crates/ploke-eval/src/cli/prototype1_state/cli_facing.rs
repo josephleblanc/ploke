@@ -1932,6 +1932,10 @@ async fn run_broad_headless_tui_attempt_with_options(
     slot: &HarnessRequestSlot,
     options: &BroadTuiAttemptOptions,
 ) -> Result<Option<transaction::Executor>, tui_adapter::BroadAttemptError> {
+    let telemetry =
+        RuntimeTelemetry::broad_harness_parent(&slot.published, "broad_headless_tui_attempt");
+    telemetry.install_for_chat_requests();
+
     #[cfg(test)]
     if let Some(result) = tui_adapter::harness::fixture::broad_attempt_from_summary_fixture(slot) {
         return result
@@ -2007,6 +2011,7 @@ async fn run_broad_headless_tui_attempt_with_options(
             policy_suffix: None,
         }
         .run()
+        .instrument(telemetry.span())
         .await
     } {
         Ok(outcome) => outcome,

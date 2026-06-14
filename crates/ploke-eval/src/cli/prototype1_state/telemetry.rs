@@ -10,7 +10,9 @@ use tracing::Span;
 // use crate::intervention::Prototype1NodeRecord;
 // use super::event::RuntimeId;
 
-use super::identity::ParentIdentity;
+use super::{
+    edit_surface::harness_request::PublishedBroadHarnessRequest, identity::ParentIdentity,
+};
 
 /// Trace context derived from an admitted Prototype 1 runtime path.
 #[derive(Debug, Clone)]
@@ -34,6 +36,31 @@ impl RuntimeTelemetry {
             branch_id: identity.branch_id().to_string(),
             generation: identity.generation(),
             runtime_id: None,
+        }
+    }
+
+    pub(crate) fn broad_harness_parent(
+        request: &PublishedBroadHarnessRequest,
+        runtime_phase: &'static str,
+    ) -> Self {
+        let campaign_id = request
+            .request_path()
+            .ancestors()
+            .nth(4)
+            .and_then(|path| path.file_name())
+            .and_then(|name| name.to_str())
+            .unwrap_or("unknown-campaign")
+            .to_string();
+        let node_id = request.request().parent_node_id.as_str().to_string();
+
+        Self {
+            role: "parent",
+            runtime_phase,
+            campaign_id,
+            node_id: node_id.clone(),
+            branch_id: node_id,
+            generation: 0,
+            runtime_id: Some(request.request_id().to_string()),
         }
     }
 

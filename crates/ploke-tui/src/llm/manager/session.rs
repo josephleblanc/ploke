@@ -5,7 +5,8 @@ use chrono::DateTime;
 use ploke_llm::ChatStepOutcome;
 use ploke_llm::manager::{ChatStepData, RecordedResponse, RecordedResponseTape};
 use ploke_llm::registry::calibration::{AttemptTimeout, RouterCalibration};
-use ploke_llm::response::ToolCall;
+use ploke_llm::request::ResponseFormat;
+use ploke_llm::response::{FinishReason, FunctionCall, OpenAiResponse, TokenUsage, ToolCall};
 use ploke_llm::{ChatHttpConfig, ChatStepError, ProviderAttempt, ProviderRetryDecision};
 use ploke_test_utils::workspace_root;
 use reqwest::Client;
@@ -27,9 +28,6 @@ use crate::chat_history::{MessageStatus, TokenKind};
 use crate::tracing_setup::{FINISH_REASON_TARGET, FULL_RESPONSE_TARGET, TOKENS_TARGET};
 use crate::utils::consts::TOOL_CALL_TIMEOUT;
 use ploke_llm::RequestMessage;
-use ploke_llm::response::FinishReason;
-use ploke_llm::response::OpenAiResponse;
-use ploke_llm::response::TokenUsage;
 use ploke_llm::router_only::{ApiRoute, ChatCompRequest, Router};
 use ploke_llm::types::meta::{LLMMetadata, PerformanceMetrics};
 
@@ -42,8 +40,8 @@ use crate::llm::manager::loop_error::{
 };
 use crate::llm::manager::semantics::{self, RecoveryDecision};
 use crate::tools::{
-    ToolCallPreflightError, ToolError, ToolErrorCode, ToolErrorWire, ToolUiPayload,
-    allowed_tool_names, validate_and_sanitize_tool_calls,
+    FunctionMarker, ToolCallPreflightError, ToolError, ToolErrorCode, ToolErrorWire, ToolName,
+    ToolUiPayload, allowed_tool_names, validate_and_sanitize_tool_calls,
 };
 use ploke_llm::LlmError;
 use tokio::time::sleep;
@@ -113,6 +111,74 @@ fn compact_tool_content_for_llm_replay(content: &str, max_file_lines: usize) -> 
     );
 
     serde_json::to_string(&value).unwrap_or_else(|_| content.to_string())
+}
+
+fn structured_action_tool_call_from_content(
+    response_format: Option<&ResponseFormat>,
+    content: &str,
+) -> Result<Option<ToolCall>, LlmError> {
+    if !matches!(
+        response_format.and_then(ResponseFormat::json_schema_name),
+        Some(super::GOOGLE_STRUCTURED_ACTION_SCHEMA_NAME)
+    ) {
+        return Ok(None);
+    }
+
+    #[derive(Deserialize)]
+    struct StructuredAction {
+        name: ToolName,
+        arguments: serde_json::Value,
+    }
+
+    let action: StructuredAction = serde_json::from_str(content).map_err(|err| {
+        LlmError::ToolCall(format!(
+            "structured action response was not valid JSON for local lowering: {err}"
+        ))
+    })?;
+
+    let arguments = serde_json::to_string(&action.arguments).map_err(|err| {
+        LlmError::ToolCall(format!(
+            "structured {} action arguments failed serialization: {err}",
+            action.name.as_str()
+        ))
+    })?;
+
+    match action.name {
+        ToolName::ApplyCodeEdit => {
+            <crate::tools::code_edit::GatCodeEdit as crate::tools::Tool>::deserialize_params(
+                &arguments,
+            )
+            .map_err(|err| {
+                LlmError::ToolCall(format!(
+                    "structured apply_code_edit action arguments failed validation: {err}"
+                ))
+            })?;
+        }
+        ToolName::NsPatch => {
+            <crate::tools::ns_patch::NsPatch as crate::tools::Tool>::deserialize_params(&arguments)
+                .map_err(|err| {
+                    LlmError::ToolCall(format!(
+                        "structured non_semantic_patch action arguments failed validation: {err}"
+                    ))
+                })?;
+        }
+        other => {
+            return Err(LlmError::ToolCall(format!(
+                "structured action response requested unsupported action {}; expected non_semantic_patch or apply_code_edit",
+                other.as_str()
+            )));
+        }
+    }
+
+    Ok(Some(ToolCall {
+        call_id: ploke_core::ArcStr::from(format!("structured-action-{}", Uuid::new_v4())),
+        call_type: FunctionMarker,
+        function: FunctionCall {
+            name: action.name,
+            arguments,
+        },
+        extra_content: None,
+    }))
 }
 
 /// Generic per-request session over a router-specific ApiRoute.
@@ -1281,6 +1347,8 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                         ?model_key,
                         "malformed function call; retrying with corrective re-prompt"
                     );
+                    let google_structured_repair =
+                        prepare_google_structured_action_repair(&mut req);
                     emit_loop_error(
                         &state_cmd_tx,
                         assistant_message_id,
@@ -1288,7 +1356,11 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                         &loop_error,
                     )
                     .await;
-                    push_llm_payload(&mut req, &loop_error);
+                    if google_structured_repair {
+                        push_google_structured_action_retry_payload(&mut req);
+                    } else {
+                        push_llm_payload(&mut req, &loop_error);
+                    }
                     report.record_error(loop_error);
                     continue;
                 }
@@ -1320,6 +1392,58 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
         );
         capture_response_for_tap(chain_index, &full_response);
 
+        if structured_action_response_finished_by_length(&req, &full_response) {
+            let reason = FinishReason::Length;
+            let context = base_error_context(
+                attempts,
+                chain_index,
+                "finish_reason",
+                &model_key,
+                assistant_message_id,
+            );
+            let mut loop_error = classify_finish_reason(&reason, context, commit_phase.clone());
+            if should_retry_length(finish_policy.length, &mut loop_state.retried_lengths) {
+                apply_prompt_hint(
+                    &mut loop_error,
+                    google_structured_action_length_retry_prompt(),
+                );
+                if !matches!(loop_error.retry, RetryAdvice::Yes { .. }) {
+                    let retry = RetryAdvice::Yes {
+                        strategy: RetryStrategy::Fixed,
+                        reason: ploke_core::ArcStr::from(
+                            "Retrying truncated structured action within session",
+                        ),
+                    };
+                    loop_error.recovery = recovery_from_retry(&retry);
+                    loop_error.retry = retry;
+                }
+                tracing::warn!(
+                    target = "chat-loop",
+                    retried_lengths = loop_state.retried_lengths,
+                    ?model_key,
+                    "structured action response hit length limit; retrying with single-edit prompt"
+                );
+                push_llm_payload(&mut req, &loop_error);
+                report.record_error(loop_error);
+                continue;
+            }
+
+            emit_loop_error(
+                &state_cmd_tx,
+                assistant_message_id,
+                &mut initial_message_updated,
+                &loop_error,
+            )
+            .await;
+            report.record_error(loop_error.clone());
+            report.outcome = SessionOutcome::Aborted {
+                error_id: loop_error.error_id,
+            };
+            report.commit_phase = commit_phase;
+            report.attempts = attempts;
+            return report;
+        }
+
         let token_usage = full_response.usage;
         if let Some(resp_tokens) = token_usage {
             state_cmd_tx
@@ -1332,6 +1456,52 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                 .await
                 .expect("Invariant: state manager running");
         }
+        let outcome = match outcome {
+            ChatStepOutcome::Content {
+                content: Some(content),
+                reasoning,
+            } => match structured_action_tool_call_from_content(
+                req.core.response_format.as_ref(),
+                content.as_ref(),
+            ) {
+                Ok(Some(call)) => ChatStepOutcome::ToolCalls {
+                    calls: vec![call],
+                    content: None,
+                    reasoning,
+                    finish_reason: FinishReason::ToolCalls,
+                },
+                Ok(None) => ChatStepOutcome::Content {
+                    content: Some(content),
+                    reasoning,
+                },
+                Err(err) => {
+                    let context = base_error_context(
+                        attempts,
+                        chain_index,
+                        "structured_action_lowering",
+                        &model_key,
+                        assistant_message_id,
+                    );
+                    let loop_error = classify_llm_error(&err, context, commit_phase.clone());
+                    emit_loop_error(
+                        &state_cmd_tx,
+                        assistant_message_id,
+                        &mut initial_message_updated,
+                        &loop_error,
+                    )
+                    .await;
+                    report.record_error(loop_error.clone());
+                    report.outcome = SessionOutcome::Aborted {
+                        error_id: loop_error.error_id,
+                    };
+                    report.commit_phase = commit_phase;
+                    report.attempts = attempts;
+                    return report;
+                }
+            },
+            other => other,
+        };
+
         match outcome {
             ChatStepOutcome::ToolCalls {
                 calls,
@@ -1875,6 +2045,115 @@ fn push_llm_payload<R: Router>(req: &mut ChatCompRequest<R>, error: &LoopError) 
     }
 }
 
+fn request_uses_google_model<R>(req: &ChatCompRequest<R>) -> bool
+where
+    R: Router,
+    R::CompletionFields: ApiRoute + Serialize,
+{
+    req.core.model.key.author.as_str() == "google"
+}
+
+fn request_declares_apply_code_edit<R>(req: &ChatCompRequest<R>) -> bool
+where
+    R: Router,
+    R::CompletionFields: ApiRoute + Serialize,
+{
+    req.tools.as_ref().is_some_and(|tools| {
+        tools
+            .iter()
+            .any(|tool| tool.function.name == ToolName::ApplyCodeEdit)
+    })
+}
+
+fn already_uses_google_structured_action_schema<R>(req: &ChatCompRequest<R>) -> bool
+where
+    R: Router,
+    R::CompletionFields: ApiRoute + Serialize,
+{
+    matches!(
+        req.core
+            .response_format
+            .as_ref()
+            .and_then(ResponseFormat::json_schema_name),
+        Some(super::GOOGLE_STRUCTURED_ACTION_SCHEMA_NAME)
+    )
+}
+
+fn structured_action_response_finished_by_length<R>(
+    req: &ChatCompRequest<R>,
+    response: &OpenAiResponse,
+) -> bool
+where
+    R: Router,
+    R::CompletionFields: ApiRoute + Serialize,
+{
+    already_uses_google_structured_action_schema(req)
+        && response
+            .choices
+            .iter()
+            .any(|choice| matches!(choice.finish_reason, Some(FinishReason::Length)))
+}
+
+fn google_structured_action_length_retry_prompt() -> String {
+    "The previous structured JSON action was truncated and has been discarded. Start over with a complete fresh JSON object. Prefer name=non_semantic_patch with exactly one concise patch in arguments.patches; use name=apply_code_edit only if you know the exact semantic target is accepted. Do not continue the truncated text, do not repeat candidate edits, and do not include markdown or prose."
+        .to_string()
+}
+
+fn prepare_google_structured_action_repair<R>(req: &mut ChatCompRequest<R>) -> bool
+where
+    R: Router,
+    R::CompletionFields: ApiRoute + Serialize,
+{
+    if !request_uses_google_model(req) || !request_declares_apply_code_edit(req) {
+        return false;
+    }
+
+    if !already_uses_google_structured_action_schema(req) {
+        let messages = std::mem::take(&mut req.core.messages);
+        req.core.messages = super::google_structured_action_messages(messages);
+    }
+    req.core.response_format = Some(ResponseFormat::json_schema(
+        super::GOOGLE_STRUCTURED_ACTION_SCHEMA_NAME,
+        true,
+        super::google_apply_code_edit_action_schema(),
+    ));
+    req.tools = None;
+    req.tool_choice = None;
+    true
+}
+
+fn push_google_structured_action_retry_payload<R>(req: &mut ChatCompRequest<R>)
+where
+    R: Router,
+    R::CompletionFields: ApiRoute + Serialize,
+{
+    let payload = json!({
+        "type": "ploke.error",
+        "code": "MALFORMED_FUNCTION_CALL",
+        "kind": "model_behavior",
+        "summary": "The provider rejected the previous native function-call syntax before Ploke could execute it.",
+        "retry": {
+            "allowed": true,
+            "strategy": "fixed",
+            "reason": "Retry using the response_format JSON action channel."
+        },
+        "next_steps": [{
+            "action": "return_structured_action_json",
+            "details": "Return exactly one JSON object whose top-level name is preferably non_semantic_patch with exactly one valid patch in arguments.patches; use apply_code_edit only when an exact accepted semantic target is known."
+        }],
+        "constraints": [
+            "Do not call provider tools on this retry.",
+            "Do not emit Python-style function calls.",
+            "Prefer non_semantic_patch for prompt-provided current-code targets.",
+            "Use exactly one patch in arguments.patches or exactly one edit in arguments.edits; choose the best single target rather than repeating candidates.",
+            "Do not wrap the JSON in markdown or prose."
+        ]
+    });
+    req.core
+        .messages
+        .push(RequestMessage::new_system(payload.to_string()));
+}
+
 fn apply_prompt_hint(error: &mut LoopError, prompt: String) {
     let prompt = ploke_core::ArcStr::from(prompt);
     match error.llm_action.as_mut() {
@@ -2279,11 +2558,6 @@ mod tests {
     use ploke_llm::router_only::openrouter::ProviderPreferences;
     use serde::{Deserialize, Serialize};
     use serde_json::json;
-    use tracing::Event;
-    use tracing::field::{Field, Visit};
-    use tracing_subscriber::layer::{Context, SubscriberExt};
-    use tracing_subscriber::registry::LookupSpan;
-    use tracing_subscriber::{Layer, Registry};
 
     use super::*;
     use crate::EventBus;
@@ -2307,75 +2581,6 @@ mod tests {
 
     const TEST_ROUTER_URL: &str = "http://127.0.0.1:39181/v1/chat/completions";
     const TEST_ROUTER_URL_ALT: &str = "http://127.0.0.1:39182/v1/chat/completions";
-
-    #[derive(Clone, Default)]
-    struct TraceLines(StdArc<StdMutex<Vec<String>>>);
-
-    impl TraceLines {
-        fn push(&self, line: String) {
-            self.0.lock().expect("trace lock").push(line);
-        }
-
-        fn snapshot(&self) -> Vec<String> {
-            self.0.lock().expect("trace lock").clone()
-        }
-    }
-
-    #[derive(Default)]
-    struct TraceFields {
-        values: Vec<String>,
-    }
-
-    impl TraceFields {
-        fn push(&mut self, field: &Field, value: impl Into<String>) {
-            self.values
-                .push(format!("{}={}", field.name(), value.into()));
-        }
-
-        fn finish(self) -> String {
-            self.values.join(" ")
-        }
-    }
-
-    impl Visit for TraceFields {
-        fn record_bool(&mut self, field: &Field, value: bool) {
-            self.push(field, value.to_string());
-        }
-
-        fn record_i64(&mut self, field: &Field, value: i64) {
-            self.push(field, value.to_string());
-        }
-
-        fn record_u64(&mut self, field: &Field, value: u64) {
-            self.push(field, value.to_string());
-        }
-
-        fn record_str(&mut self, field: &Field, value: &str) {
-            self.push(field, value.to_string());
-        }
-
-        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-            self.push(field, format!("{value:?}"));
-        }
-    }
-
-    struct TraceLayer {
-        lines: TraceLines,
-    }
-
-    impl<S> Layer<S> for TraceLayer
-    where
-        S: tracing::Subscriber + for<'span> LookupSpan<'span>,
-    {
-        fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
-            if event.metadata().target() != FULL_RESPONSE_TARGET {
-                return;
-            }
-            let mut fields = TraceFields::default();
-            event.record(&mut fields);
-            self.lines.push(fields.finish());
-        }
-    }
 
     #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize, Default, Eq)]
     struct TestRouter;
@@ -2789,11 +2994,8 @@ mod tests {
 
     #[tokio::test]
     async fn run_chat_session_replays_recorded_tool_arg_repair_without_provider_http() {
-        let trace_lines = TraceLines::default();
-        let subscriber = Registry::default().with(TraceLayer {
-            lines: trace_lines.clone(),
-        });
-        let trace_guard = tracing::subscriber::set_default(subscriber);
+        let (response_tx, response_rx) = std::sync::mpsc::channel();
+        let response_tap_guard = install_response_tap(response_tx);
 
         let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
         let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
@@ -2830,7 +3032,8 @@ mod tests {
             2,
         )
         .await;
-        drop(trace_guard);
+        drop(response_tap_guard);
+        let captured_responses = response_rx.try_iter().collect::<Vec<_>>();
 
         let mut assistant_updates = Vec::new();
         while let Ok(command) = state_cmd_rx.try_recv() {
@@ -2863,21 +3066,33 @@ mod tests {
                 .any(|content| content.contains("recovered after repair")),
             "expected final assistant update after recorded repair, got {assistant_updates:?}"
         );
-        let traces = trace_lines.snapshot();
-        assert_eq!(
-            traces.len(),
-            2,
-            "recorded repair replay should trace both provider envelopes, got {traces:?}"
+        assert!(
+            captured_responses.len() >= 2,
+            "recorded repair replay should capture both provider envelopes, got {captured_responses:?}"
         );
         assert!(
-            traces
+            captured_responses
                 .iter()
-                .any(|line| line.contains("\"id\":\"repair-1\"")),
-            "expected malformed tool-call provider envelope in full-response trace, got {traces:?}"
+                .any(|record| record.response.id == "repair-1"),
+            "expected malformed tool-call provider envelope in captured responses, got {captured_responses:?}"
         );
+        let captured_expected_final = captured_responses.iter().any(|record| {
+            if record.response.id != "final" {
+                return false;
+            }
+            let value =
+                serde_json::to_value(&record.response).expect("captured response serializes");
+            value
+                .get("choices")
+                .and_then(|choices| choices.get(0))
+                .and_then(|choice| choice.get("message"))
+                .and_then(|message| message.get("content"))
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|content| content == "recovered after repair")
+        });
         assert!(
-            traces.iter().any(|line| line.contains("\"id\":\"final\"")),
-            "expected final provider envelope in full-response trace, got {traces:?}"
+            captured_expected_final,
+            "expected final provider envelope in captured responses, got {captured_responses:?}"
         );
     }
 
@@ -3356,6 +3571,204 @@ mod tests {
         );
         assert_eq!(captured_responses[0].index(), 0);
         assert_eq!(captured_responses[1].index(), 1);
+    }
+
+    #[test]
+    fn google_malformed_retry_switches_apply_code_edit_request_to_response_format() {
+        let mut req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("google/gemini-2.5-flash")
+            .expect("Google model id parses")
+            .with_message(RequestMessage::new_user(
+                "Use the available context to edit code.".to_string(),
+            ))
+            .with_tools(Some(vec![crate::tools::code_edit::GatCodeEdit::tool_def()]))
+            .with_tool_choice(Some(ToolChoice::Auto));
+
+        assert!(
+            prepare_google_structured_action_repair(&mut req),
+            "Google apply_code_edit malformed retry should switch request shape"
+        );
+
+        assert!(
+            req.tools.is_none(),
+            "native provider tools must be disabled"
+        );
+        assert!(
+            req.tool_choice.is_none(),
+            "native tool_choice must be disabled"
+        );
+        assert_eq!(
+            req.core
+                .response_format
+                .as_ref()
+                .and_then(ResponseFormat::json_schema_name),
+            Some(super::super::GOOGLE_STRUCTURED_ACTION_SCHEMA_NAME)
+        );
+        assert!(
+            req.core
+                .messages
+                .first()
+                .is_some_and(|message| message.content.contains("response_format schema"))
+        );
+    }
+
+    #[test]
+    fn google_malformed_retry_payload_omits_provider_pseudo_python() {
+        let mut req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("google/gemini-2.5-flash")
+            .expect("Google model id parses")
+            .with_message(RequestMessage::new_user(
+                "Use the available context to edit code.".to_string(),
+            ));
+
+        push_google_structured_action_retry_payload(&mut req);
+
+        let retry_payload = &req
+            .core
+            .messages
+            .last()
+            .expect("retry payload appended")
+            .content;
+        assert!(retry_payload.contains("MALFORMED_FUNCTION_CALL"));
+        assert!(retry_payload.contains("apply_code_edit"));
+        assert!(retry_payload.contains("exactly one"));
+        assert!(
+            !retry_payload.contains("default_api")
+                && !retry_payload.contains("ApplyCodeEditEdits")
+                && !retry_payload.contains("print("),
+            "retry payload must not echo provider pseudo-Python: {retry_payload}"
+        );
+    }
+
+    #[test]
+    fn google_structured_action_length_detection_requires_schema_and_length() {
+        let mut req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("google/gemini-2.5-flash")
+            .expect("Google model id parses")
+            .with_message(RequestMessage::new_user(
+                "Use the available context to edit code.".to_string(),
+            ))
+            .with_tools(Some(vec![crate::tools::code_edit::GatCodeEdit::tool_def()]))
+            .with_tool_choice(Some(ToolChoice::Auto));
+        assert!(prepare_google_structured_action_repair(&mut req));
+
+        let length_response: OpenAiResponse = serde_json::from_value(json!({
+            "choices": [{
+                "finish_reason": "length",
+                "message": { "role": "assistant", "content": "{\"name\":\"apply_code_edit\"" }
+            }]
+        }))
+        .expect("length response parses");
+        assert!(structured_action_response_finished_by_length(
+            &req,
+            &length_response
+        ));
+
+        let stop_response: OpenAiResponse = serde_json::from_value(json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": { "role": "assistant", "content": "{}" }
+            }]
+        }))
+        .expect("stop response parses");
+        assert!(!structured_action_response_finished_by_length(
+            &req,
+            &stop_response
+        ));
+
+        let mut native_req = req.clone();
+        native_req.core.response_format = None;
+        assert!(!structured_action_response_finished_by_length(
+            &native_req,
+            &length_response
+        ));
+    }
+
+    #[test]
+    fn google_structured_action_length_retry_prompt_restarts_single_edit_json() {
+        let prompt = google_structured_action_length_retry_prompt();
+        assert!(prompt.contains("Start over"));
+        assert!(prompt.contains("exactly one"));
+        assert!(prompt.contains("Do not continue"));
+        assert!(!prompt.contains("Continue from where you left off"));
+    }
+
+    #[test]
+    fn structured_action_content_lowers_to_apply_code_edit_tool_call() {
+        let response_format = ploke_llm::request::ResponseFormat::json_schema(
+            super::super::GOOGLE_STRUCTURED_ACTION_SCHEMA_NAME,
+            true,
+            serde_json::json!({ "type": "object" }),
+        );
+        let content = serde_json::json!({
+            "name": "apply_code_edit",
+            "arguments": {
+                "confidence": 0.91,
+                "edits": [{
+                    "file": "crates/demo/src/lib.rs",
+                    "canon": "crate::demo::target",
+                    "node_type": "function",
+                    "code": "fn target() -> bool { true }"
+                }]
+            }
+        })
+        .to_string();
+
+        let call = structured_action_tool_call_from_content(Some(&response_format), &content)
+            .expect("valid structured action should parse")
+            .expect("structured action should lower to tool call");
+
+        assert_eq!(call.function.name, ToolName::ApplyCodeEdit);
+        let args: serde_json::Value = serde_json::from_str(&call.function.arguments)
+            .expect("tool call arguments should be JSON");
+        assert_eq!(args["confidence"], 0.91);
+        assert_eq!(args["edits"][0]["canon"], "crate::demo::target");
+    }
+
+    #[test]
+    fn structured_action_content_lowers_to_non_semantic_patch_tool_call() {
+        let response_format = ploke_llm::request::ResponseFormat::json_schema(
+            super::super::GOOGLE_STRUCTURED_ACTION_SCHEMA_NAME,
+            true,
+            serde_json::json!({ "type": "object" }),
+        );
+        let diff = "--- a/crates/demo/src/lib.rs\n+++ b/crates/demo/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn target() -> bool {\n-    false\n+    true\n }\n";
+        let content = serde_json::json!({
+            "name": "non_semantic_patch",
+            "arguments": {
+                "confidence": 0.86,
+                "patches": [{
+                    "file": "crates/demo/src/lib.rs",
+                    "diff": diff,
+                    "reasoning": "Flip the target predicate for the minimal candidate."
+                }]
+            }
+        })
+        .to_string();
+
+        let call = structured_action_tool_call_from_content(Some(&response_format), &content)
+            .expect("valid structured patch action should parse")
+            .expect("structured patch action should lower to tool call");
+
+        assert_eq!(call.function.name, ToolName::NsPatch);
+        let args: serde_json::Value = serde_json::from_str(&call.function.arguments)
+            .expect("tool call arguments should be JSON");
+        assert_eq!(args["confidence"], 0.86);
+        assert_eq!(args["patches"][0]["file"], "crates/demo/src/lib.rs");
+        assert_eq!(args["patches"][0]["diff"], diff);
+    }
+
+    #[test]
+    fn structured_action_content_ignored_without_ploke_action_response_format() {
+        let content = serde_json::json!({
+            "name": "apply_code_edit",
+            "arguments": { "edits": [] }
+        })
+        .to_string();
+
+        let lowered = structured_action_tool_call_from_content(None, &content)
+            .expect("missing response_format should not be a parse error");
+        assert!(lowered.is_none());
     }
 
     #[test]

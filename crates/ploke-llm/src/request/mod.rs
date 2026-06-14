@@ -13,7 +13,7 @@ use crate::utils::se_de::string_to_f64_opt_zero;
 use serde::{Deserialize, Serialize};
 
 pub use completion::ChatCompReqCore;
-pub use marker::JsonObjMarker;
+pub use marker::{JsonObjMarker, JsonSchemaResponseFormat, ResponseFormat};
 
 // --- common types for requests ---
 //

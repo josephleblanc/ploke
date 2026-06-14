@@ -18,7 +18,7 @@ use ploke_core::tool_types::ToolDefinition;
 
 use super::{
     EndpointKey, EndpointsResponse, LLMParameters, ModelId, ModelKey, ReasoningConfig,
-    request::{ChatCompReqCore, JsonObjMarker, endpoint::ToolChoice, models},
+    request::{ChatCompReqCore, ResponseFormat, endpoint::ToolChoice, models},
 };
 use crate::{HTTP_REFERER, HTTP_TITLE};
 mod anthropic {
@@ -413,7 +413,7 @@ struct RawChatCompReqCore {
     prompt: Option<String>,
     #[serde(default)]
     model: Option<String>,
-    response_format: Option<JsonObjMarker>,
+    response_format: Option<ResponseFormat>,
     stop: Option<Vec<String>>,
     stream: Option<bool>,
 }

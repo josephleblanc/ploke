@@ -90,6 +90,19 @@ pub fn set_prototype1_trace_context(context: Prototype1TraceContext) {
     }
 }
 
+#[cfg(feature = "test_harness")]
+pub fn clear_prototype1_trace_context_for_test() {
+    let lock = PROTOTYPE1_TRACE_CONTEXT.get_or_init(|| RwLock::new(None));
+    if let Ok(mut guard) = lock.write() {
+        *guard = None;
+    }
+}
+
+#[cfg(feature = "test_harness")]
+pub fn prototype1_trace_context_for_test() -> Option<Prototype1TraceContext> {
+    prototype1_trace_context()
+}
+
 fn prototype1_trace_context() -> Option<Prototype1TraceContext> {
     PROTOTYPE1_TRACE_CONTEXT
         .get()
@@ -135,6 +148,138 @@ fn prototype1_chat_request_span() -> tracing::Span {
         generation = generation.as_str(),
         runtime_id = context.as_ref().and_then(|context| context.runtime_id.as_deref()).unwrap_or(""),
     )
+}
+
+const GOOGLE_STRUCTURED_ACTION_SCHEMA_NAME: &str = "ploke_action";
+
+fn prototype1_google_structured_actions_enabled(
+    crate_loaded: bool,
+    prototype1_context: bool,
+) -> bool {
+    crate_loaded && prototype1_context
+}
+
+fn google_structured_action_messages(mut messages: Vec<RequestMessage>) -> Vec<RequestMessage> {
+    messages.insert(
+        0,
+        RequestMessage::new_system(
+            "Direct-Google Prototype 1 edit mode: return exactly one JSON object matching the response_format schema. The top-level name must be either non_semantic_patch or apply_code_edit. Prefer non_semantic_patch for the prompt-provided current-code targets because it avoids brittle canonical-node resolution; use apply_code_edit only when an exact target is known to be accepted by the semantic edit backend. Include exactly one patch in arguments.patches or exactly one edit in arguments.edits; choose the best single target rather than repeating candidates. Do not call provider tools, do not wrap JSON in markdown, and do not answer in prose."
+                .to_string(),
+        ),
+    );
+    messages
+}
+
+fn google_apply_code_edit_action_schema() -> serde_json::Value {
+    let mut apply_arguments = GatCodeEdit::schema().clone();
+    if let Some(arguments_object) = apply_arguments.as_object_mut() {
+        arguments_object.insert("additionalProperties".to_string(), serde_json::json!(false));
+        if let Some(edits_schema) = arguments_object
+            .get_mut("properties")
+            .and_then(|properties| properties.as_object_mut())
+            .and_then(|properties| properties.get_mut("edits"))
+            .and_then(|edits| edits.as_object_mut())
+        {
+            edits_schema.insert("minItems".to_string(), serde_json::json!(1));
+            edits_schema.insert("maxItems".to_string(), serde_json::json!(1));
+            edits_schema.insert(
+                "description".to_string(),
+                serde_json::json!("Exactly one canonical edit. Choose the single best target; do not repeat alternatives."),
+            );
+        }
+    }
+
+    let mut patch_arguments = NsPatch::schema().clone();
+    if let Some(arguments_object) = patch_arguments.as_object_mut() {
+        arguments_object.insert("additionalProperties".to_string(), serde_json::json!(false));
+        if let Some(patches_schema) = arguments_object
+            .get_mut("properties")
+            .and_then(|properties| properties.as_object_mut())
+            .and_then(|properties| properties.get_mut("patches"))
+            .and_then(|patches| patches.as_object_mut())
+        {
+            patches_schema.insert("minItems".to_string(), serde_json::json!(1));
+            patches_schema.insert("maxItems".to_string(), serde_json::json!(1));
+            patches_schema.insert(
+                "description".to_string(),
+                serde_json::json!("Exactly one non-semantic unified diff patch. Choose the single best target; do not repeat alternatives."),
+            );
+        }
+    }
+
+    let edit_schema = apply_arguments
+        .get("properties")
+        .and_then(|properties| properties.get("edits"))
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({ "type": "array", "minItems": 1, "maxItems": 1 }));
+    let patch_schema = patch_arguments
+        .get("properties")
+        .and_then(|properties| properties.get("patches"))
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({ "type": "array", "minItems": 1, "maxItems": 1 }));
+    let confidence_schema = apply_arguments
+        .get("properties")
+        .and_then(|properties| properties.get("confidence"))
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({ "type": "number", "minimum": 0.0, "maximum": 1.0 }));
+
+    let arguments = serde_json::json!({
+        "type": "object",
+        "description": "Arguments for the selected Ploke edit action. Use patches for non_semantic_patch, or edits for apply_code_edit.",
+        "properties": {
+            "edits": edit_schema,
+            "patches": patch_schema,
+            "confidence": confidence_schema
+        },
+        "additionalProperties": false
+    });
+
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "enum": ["non_semantic_patch", "apply_code_edit"],
+                "description": "The Ploke action to lower locally. Prefer non_semantic_patch for prompt-provided current-code targets."
+            },
+            "arguments": arguments
+        },
+        "required": ["name", "arguments"],
+        "additionalProperties": false
+    })
+}
+
+struct GoogleChatRequestShape {
+    core: ploke_llm::request::ChatCompReqCore,
+    tools: Option<Vec<ToolDefinition>>,
+    tool_choice: Option<ToolChoice>,
+}
+
+fn google_chat_request_shape(
+    crate_loaded: bool,
+    prototype1_context: bool,
+    messages: Vec<RequestMessage>,
+    tools: Option<Vec<ToolDefinition>>,
+    tool_choice: Option<ToolChoice>,
+) -> GoogleChatRequestShape {
+    if prototype1_google_structured_actions_enabled(crate_loaded, prototype1_context) {
+        GoogleChatRequestShape {
+            core: ploke_llm::request::ChatCompReqCore::default()
+                .with_messages(google_structured_action_messages(messages))
+                .with_json_schema_response(
+                    GOOGLE_STRUCTURED_ACTION_SCHEMA_NAME,
+                    google_apply_code_edit_action_schema(),
+                ),
+            tools: None,
+            tool_choice: None,
+        }
+    } else {
+        GoogleChatRequestShape {
+            core: ploke_llm::request::ChatCompReqCore::default().with_messages(messages),
+            tools,
+            tool_choice,
+        }
+    }
 }
 
 pub(super) fn format_tokens_payload<T: Serialize>(value: &T) -> String {
@@ -643,13 +788,19 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
     let http_timeout = Duration::from_secs(llm_timeout_secs);
 
     if matches!(active_router, RouterVariants::Google(_)) {
+        let google_shape = google_chat_request_shape(
+            crate_loaded,
+            prototype1_trace_context().is_some(),
+            messages,
+            tools,
+            tool_choice,
+        );
         let req = Google::default_chat_completion()
-            .with_core_bundle(ploke_llm::request::ChatCompReqCore::default())
+            .with_core_bundle(google_shape.core)
             .with_model(model_id)
-            .with_messages(messages)
             .with_param_bundle(llm_params)
-            .with_tools(tools)
-            .with_tool_choice(tool_choice);
+            .with_tools(google_shape.tools)
+            .with_tool_choice(google_shape.tool_choice);
 
         let chat_session = session::ChatSession {
             client,
@@ -790,6 +941,79 @@ mod tests {
     use tokio::sync::{mpsc, oneshot};
     use tokio::time::{Duration, sleep, timeout};
     use uuid::Uuid;
+
+    #[test]
+    fn google_structured_action_shape_disables_provider_tools_and_sets_json_schema() {
+        let messages = vec![RequestMessage::new_user("stage one edit".to_string())];
+        let tools = Some(vec![GatCodeEdit::tool_def(), ListDir::tool_def()]);
+        let shape = google_chat_request_shape(true, true, messages, tools, Some(ToolChoice::Auto));
+
+        assert!(shape.tools.is_none(), "provider tools should be bypassed");
+        assert!(
+            shape.tool_choice.is_none(),
+            "provider tool_choice should be bypassed"
+        );
+        assert_eq!(shape.core.messages.len(), 2);
+        assert_eq!(shape.core.messages[0].role, Role::System);
+        assert!(
+            shape.core.messages[0]
+                .content
+                .contains("return exactly one JSON object")
+        );
+        assert!(
+            shape.core.messages[0]
+                .content
+                .contains("non_semantic_patch")
+        );
+        assert!(shape.core.messages[0].content.contains("exactly one patch"));
+        let response_format = shape
+            .core
+            .response_format
+            .as_ref()
+            .expect("structured action response_format");
+        assert_eq!(
+            response_format.json_schema_name(),
+            Some(GOOGLE_STRUCTURED_ACTION_SCHEMA_NAME)
+        );
+        let value = serde_json::to_value(response_format).expect("response_format serializes");
+        assert_eq!(value["type"], "json_schema");
+        let allowed_names = value["json_schema"]["schema"]["properties"]["name"]["enum"]
+            .as_array()
+            .expect("structured action name enum");
+        assert!(
+            allowed_names.contains(&serde_json::json!("non_semantic_patch")),
+            "schema should admit non_semantic_patch: {value}"
+        );
+        assert!(
+            allowed_names.contains(&serde_json::json!("apply_code_edit")),
+            "schema should keep apply_code_edit fallback: {value}"
+        );
+        assert_eq!(
+            value["json_schema"]["schema"]["properties"]["arguments"]["additionalProperties"],
+            false
+        );
+        assert_eq!(
+            value["json_schema"]["schema"]["properties"]["arguments"]["properties"]["patches"]["minItems"],
+            1
+        );
+        assert_eq!(
+            value["json_schema"]["schema"]["properties"]["arguments"]["properties"]["patches"]["maxItems"],
+            1
+        );
+    }
+
+    #[test]
+    fn google_structured_action_shape_keeps_normal_tools_without_prototype_context() {
+        let messages = vec![RequestMessage::new_user("normal chat".to_string())];
+        let tools = Some(vec![GatCodeEdit::tool_def(), ListDir::tool_def()]);
+        let shape =
+            google_chat_request_shape(true, false, messages, tools.clone(), Some(ToolChoice::Auto));
+
+        assert_eq!(shape.core.messages.len(), 1);
+        assert!(shape.core.response_format.is_none());
+        assert_eq!(shape.tools, tools);
+        assert!(matches!(shape.tool_choice, Some(ToolChoice::Auto)));
+    }
 
     #[test]
     fn test_role_tool_serialization() {

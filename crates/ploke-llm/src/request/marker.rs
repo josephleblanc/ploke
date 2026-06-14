@@ -4,15 +4,56 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct JsonObjMarker;
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponseFormat {
+    #[serde(rename = "json_object")]
+    JsonObject,
+    #[serde(rename = "json_schema")]
+    JsonSchema {
+        json_schema: JsonSchemaResponseFormat,
+    },
+}
+
+impl ResponseFormat {
+    pub fn json_schema(name: impl Into<String>, strict: bool, schema: serde_json::Value) -> Self {
+        Self::JsonSchema {
+            json_schema: JsonSchemaResponseFormat {
+                name: name.into(),
+                strict,
+                schema,
+            },
+        }
+    }
+
+    pub fn json_schema_name(&self) -> Option<&str> {
+        match self {
+            Self::JsonSchema { json_schema } => Some(json_schema.name.as_str()),
+            Self::JsonObject => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JsonSchemaResponseFormat {
+    pub name: String,
+    #[serde(default)]
+    pub strict: bool,
+    pub schema: serde_json::Value,
+}
+
+impl From<JsonObjMarker> for ResponseFormat {
+    fn from(_: JsonObjMarker) -> Self {
+        Self::JsonObject
+    }
+}
+
 impl Serialize for JsonObjMarker {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        use serde::ser::SerializeMap;
-        let mut map = serializer.serialize_map(Some(1))?;
-        map.serialize_entry("type", "json_object")?;
-        map.end()
+        ResponseFormat::JsonObject.serialize(serializer)
     }
 }
 
@@ -21,49 +62,11 @@ impl<'de> Deserialize<'de> for JsonObjMarker {
     where
         D: serde::Deserializer<'de>,
     {
-        use serde::de::{self, MapAccess, Visitor};
-        use std::fmt;
-
-        struct JsonObjMarkerVisitor;
-
-        impl<'de> Visitor<'de> for JsonObjMarkerVisitor {
-            type Value = JsonObjMarker;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("a map with 'type' key set to 'json_object'")
-            }
-
-            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-            where
-                A: MapAccess<'de>,
-            {
-                let mut found_type = false;
-
-                while let Some(key) = map.next_key::<String>()? {
-                    if key == "type" {
-                        let value: String = map.next_value()?;
-                        if value == "json_object" {
-                            found_type = true;
-                        } else {
-                            return Err(de::Error::custom(format!(
-                                "expected 'json_object', got '{}'",
-                                value
-                            )));
-                        }
-                    } else {
-                        // Skip any other keys
-                        let _: serde::de::IgnoredAny = map.next_value()?;
-                    }
-                }
-
-                if found_type {
-                    Ok(JsonObjMarker)
-                } else {
-                    Err(de::Error::missing_field("type"))
-                }
-            }
+        match ResponseFormat::deserialize(deserializer)? {
+            ResponseFormat::JsonObject => Ok(JsonObjMarker),
+            ResponseFormat::JsonSchema { .. } => Err(serde::de::Error::custom(
+                "expected response_format type 'json_object'",
+            )),
         }
-
-        deserializer.deserialize_map(JsonObjMarkerVisitor)
     }
 }

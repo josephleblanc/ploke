@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::ModelId;
 use std::str::FromStr;
 
-use super::marker::JsonObjMarker;
+use super::marker::ResponseFormat;
 
 /// Completion request for the OpenRouter url at
 /// - https://openrouter.ai/api/v1/chat/completions
@@ -38,7 +38,7 @@ pub struct ChatCompReqCore {
     /// `crates/ploke-tui/src/tools/mod.rs`, since this is a constant value
     /// corresponding json: `response_format?: { type: 'json_object' };`
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub response_format: Option<JsonObjMarker>,
+    pub response_format: Option<ResponseFormat>,
 
     /// corresponding json: `stop?: string | string[];`
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -88,7 +88,17 @@ impl ChatCompReqCore {
 
     /// Set the response format to JSON object
     pub fn with_json_response(mut self) -> Self {
-        self.response_format = Some(JsonObjMarker);
+        self.response_format = Some(ResponseFormat::JsonObject);
+        self
+    }
+
+    /// Set the response format to a strict JSON schema object.
+    pub fn with_json_schema_response(
+        mut self,
+        name: impl Into<String>,
+        schema: serde_json::Value,
+    ) -> Self {
+        self.response_format = Some(ResponseFormat::json_schema(name, true, schema));
         self
     }
 

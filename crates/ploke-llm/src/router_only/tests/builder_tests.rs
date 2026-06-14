@@ -8,6 +8,36 @@ use std::str::FromStr;
 type TestChatCompRequest = super::super::ChatCompRequest<OpenRouter>;
 
 #[test]
+fn json_schema_response_format_serializes_openai_compatible_shape() -> Result<()> {
+    let req = TestChatCompRequest::default().with_core_bundle(
+        super::super::ChatCompReqCore::default().with_json_schema_response(
+            "ploke_action",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "const": "apply_code_edit" }
+                },
+                "required": ["name"],
+                "additionalProperties": false
+            }),
+        ),
+    );
+
+    let value = serde_json::to_value(&req)?;
+    assert_eq!(value["response_format"]["type"], "json_schema");
+    assert_eq!(
+        value["response_format"]["json_schema"]["name"],
+        "ploke_action"
+    );
+    assert_eq!(value["response_format"]["json_schema"]["strict"], true);
+    assert_eq!(
+        value["response_format"]["json_schema"]["schema"]["properties"]["name"]["const"],
+        "apply_code_edit"
+    );
+    Ok(())
+}
+
+#[test]
 fn test_builder_with_core_bundle() -> Result<()> {
     let core = super::super::ChatCompReqCore::default()
         .with_model(ModelId::from_str("test/model")?)
