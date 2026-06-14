@@ -1443,7 +1443,7 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepData, LlmError> {
     };
 
     // We prefer the first choice that yields a usable outcome.
-    for choice in parsed.choices.iter() {
+    for (choice_index, choice) in parsed.choices.iter().enumerate() {
         if let Some(model_behavior_reason) = choice.finish_reason.as_ref().filter(|reason| {
             matches!(
                 reason,
@@ -1468,12 +1468,21 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepData, LlmError> {
                     .as_ref()
                     .and_then(|message| message.reasoning.as_deref());
                 let outcome = ChatStepOutcome::ToolCalls {
-                    calls: vec![call],
+                    calls: vec![call.clone()],
                     content: None,
                     reasoning: reasoning_opt.map(ArcStr::from),
                     finish_reason: FinishReason::ToolCalls,
                 };
-                return builder.outcome(outcome).full_response(parsed).build();
+                let full_response = normalized_salvaged_tool_call_response(
+                    &parsed,
+                    choice_index,
+                    call,
+                    "malformed_function_call",
+                );
+                return builder
+                    .outcome(outcome)
+                    .full_response(full_response)
+                    .build();
             }
 
             let default_msg = match model_behavior_reason {
@@ -1599,6 +1608,29 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepData, LlmError> {
         message: "No usable choice in LLM response (no message/text/tool_calls)".into(),
         body_snippet: Some(truncate_for_error(body_text, 512)),
     })
+}
+
+fn normalized_salvaged_tool_call_response(
+    parsed: &OpenAiResponse,
+    choice_index: usize,
+    call: ToolCall,
+    raw_finish_reason: &'static str,
+) -> OpenAiResponse {
+    let mut response = parsed.clone();
+    let Some(choice) = response.choices.get_mut(choice_index) else {
+        return response;
+    };
+
+    choice
+        .native_finish_reason
+        .get_or_insert_with(|| raw_finish_reason.to_string());
+    choice.finish_reason = Some(FinishReason::ToolCalls);
+    if let Some(message) = choice.message.as_mut() {
+        message.refusal = None;
+        message.tool_calls = Some(vec![call]);
+    }
+
+    response
 }
 
 /// Truncate large response bodies so error strings remain bounded.
@@ -2455,6 +2487,27 @@ mod tests {
         let body = serde_json::to_string(&value).expect("serialize response body");
         let step =
             parse_chat_outcome(&body).expect("malformed apply_code_edit call should be salvaged");
+        assert_eq!(
+            step.full_response.choices[0].finish_reason,
+            Some(FinishReason::ToolCalls),
+            "salvaged tool calls must not leave the raw malformed finish reason for downstream finish-policy handling"
+        );
+        assert_eq!(
+            step.full_response.choices[0]
+                .native_finish_reason
+                .as_deref(),
+            Some("malformed_function_call"),
+            "normalized full responses should preserve the provider's raw finish reason for diagnostics"
+        );
+        assert_eq!(
+            step.full_response.choices[0]
+                .message
+                .as_ref()
+                .and_then(|message| message.tool_calls.as_ref())
+                .map(Vec::len),
+            Some(1),
+            "normalized full responses should replay the salvaged structured tool call"
+        );
 
         match step.outcome {
             ChatStepOutcome::ToolCalls {
