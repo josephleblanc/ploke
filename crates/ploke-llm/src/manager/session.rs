@@ -10,7 +10,10 @@ use std::time::{Duration, Instant};
 use std::{env, fmt};
 
 use chrono::{DateTime, Utc};
-use ploke_core::ArcStr;
+use ploke_core::{
+    ArcStr,
+    tool_types::{FunctionMarker, ToolName},
+};
 use reqwest::header::HeaderMap;
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
@@ -28,7 +31,7 @@ use crate::manager::rate_limit::acquire as acquire_rate_limit;
 use crate::registry::calibration::{AttemptTimeout, ProviderTiming, RetryTuning};
 use crate::response::FinishReason;
 use crate::response::OpenAiResponse;
-use crate::response::ToolCall;
+use crate::response::{FunctionCall, ToolCall};
 use crate::router_only::openrouter::providers::ProviderName;
 use crate::router_only::{ChatCompRequest, Router};
 
@@ -1436,6 +1439,30 @@ pub fn parse_chat_outcome(body_text: &str) -> Result<ChatStepData, LlmError> {
                 FinishReason::MalformedFunctionCall | FinishReason::UnexpectedToolCall
             )
         }) {
+            if *model_behavior_reason == FinishReason::MalformedFunctionCall
+                && let Some(refusal) = choice
+                    .message
+                    .as_ref()
+                    .and_then(|message| message.refusal.as_deref())
+                && let Some(call) = salvage_ns_patch_call(refusal, choice.index.unwrap_or(0))
+            {
+                tracing::warn!(
+                    target: "chat-loop",
+                    "salvaged non_semantic_patch tool call from malformed_function_call refusal"
+                );
+                let reasoning_opt = choice
+                    .message
+                    .as_ref()
+                    .and_then(|message| message.reasoning.as_deref());
+                let outcome = ChatStepOutcome::ToolCalls {
+                    calls: vec![call],
+                    content: None,
+                    reasoning: reasoning_opt.map(ArcStr::from),
+                    finish_reason: FinishReason::ToolCalls,
+                };
+                return builder.outcome(outcome).full_response(parsed).build();
+            }
+
             let default_msg = match model_behavior_reason {
                 FinishReason::UnexpectedToolCall => "Provider returned unexpected tool call",
                 _ => "Provider returned malformed function call",
@@ -1694,6 +1721,201 @@ fn check_provider_error(body_text: &str) -> Result<(), LlmError> {
     }
 }
 
+#[derive(Debug, Serialize)]
+struct NsPatchArg {
+    file: String,
+    diff: String,
+    reasoning: String,
+}
+
+fn salvage_ns_patch_call(refusal: &str, index: u32) -> Option<ToolCall> {
+    let patches = parse_ns_patch_args(refusal)?;
+    if patches.is_empty() {
+        return None;
+    }
+
+    let arguments = serde_json::to_string(&serde_json::json!({
+        "patches": patches,
+    }))
+    .ok()?;
+    let call_id = format!("salvaged_malformed_call_{index}");
+
+    Some(ToolCall {
+        call_id: ArcStr::from(call_id.as_str()),
+        call_type: FunctionMarker,
+        function: FunctionCall {
+            name: ToolName::NsPatch,
+            arguments,
+        },
+        extra_content: None,
+    })
+}
+
+fn parse_ns_patch_args(refusal: &str) -> Option<Vec<NsPatchArg>> {
+    let call = refusal.find("default_api.non_semantic_patch(")?;
+    let call_open = call + "default_api.non_semantic_patch".len();
+    let call_close = matching_delim(refusal, call_open, b'(', b')')?;
+    let patch_key = refusal[call..call_close].find("patches=[")? + call;
+    let patch_start = patch_key + "patches=[".len();
+    if patch_start > call_close {
+        return None;
+    }
+    let body = &refusal[patch_start..call_close];
+    let prefix = "default_api.NonSemanticPatchPatches";
+
+    let mut patches = Vec::new();
+    let mut offset = 0;
+    while let Some(found) = body[offset..].find(prefix) {
+        let open = patch_start + offset + found + prefix.len();
+        if refusal.as_bytes().get(open) != Some(&b'(') {
+            return None;
+        }
+        let close = matching_delim(refusal, open, b'(', b')')?;
+        if close > call_close {
+            return None;
+        }
+        patches.push(parse_patch_fields(&refusal[open + 1..close])?);
+        offset = close - patch_start + 1;
+    }
+
+    Some(patches)
+}
+
+fn parse_patch_fields(fields: &str) -> Option<NsPatchArg> {
+    let mut file = None;
+    let mut diff = None;
+    let mut reasoning = None;
+
+    for field in split_fields(fields)? {
+        let (name, value) = field.trim().split_once('=')?;
+        match name.trim() {
+            "file" => file = parse_string_literal(value.trim()),
+            "diff" => diff = parse_string_literal(value.trim()),
+            "reasoning" => reasoning = parse_string_literal(value.trim()),
+            _ => {}
+        }
+    }
+
+    Some(NsPatchArg {
+        file: file?,
+        diff: diff?,
+        reasoning: reasoning?,
+    })
+}
+
+fn split_fields(input: &str) -> Option<Vec<&str>> {
+    let bytes = input.as_bytes();
+    let mut fields = Vec::new();
+    let mut start = 0;
+    let mut depth = 0usize;
+    let mut i = 0;
+
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' | b'"' => i = skip_string(input, i)?,
+            b'(' | b'[' | b'{' => {
+                depth += 1;
+                i += 1;
+            }
+            b')' | b']' | b'}' => {
+                depth = depth.checked_sub(1)?;
+                i += 1;
+            }
+            b',' if depth == 0 => {
+                fields.push(&input[start..i]);
+                start = i + 1;
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+
+    fields.push(&input[start..]);
+    Some(fields)
+}
+
+fn parse_string_literal(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let quote = *bytes.first()?;
+    if quote != b'\'' && quote != b'"' {
+        return None;
+    }
+
+    let end = skip_string(value, 0)?;
+    if !value[end..].trim().is_empty() {
+        return None;
+    }
+
+    let triple = bytes.get(1) == Some(&quote) && bytes.get(2) == Some(&quote);
+    let body = if triple {
+        &value[3..end - 3]
+    } else {
+        &value[1..end - 1]
+    };
+
+    Some(body.to_string())
+}
+
+fn matching_delim(input: &str, open: usize, start: u8, end: u8) -> Option<usize> {
+    let bytes = input.as_bytes();
+    if bytes.get(open) != Some(&start) {
+        return None;
+    }
+
+    let mut depth = 0usize;
+    let mut i = open;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\'' | b'"' => i = skip_string(input, i)?,
+            byte if byte == start => {
+                depth += 1;
+                i += 1;
+            }
+            byte if byte == end => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(i);
+                }
+                i += 1;
+            }
+            _ => i += 1,
+        }
+    }
+
+    None
+}
+
+fn skip_string(input: &str, start: usize) -> Option<usize> {
+    let bytes = input.as_bytes();
+    let quote = *bytes.get(start)?;
+    if quote != b'\'' && quote != b'"' {
+        return None;
+    }
+
+    let triple = bytes.get(start + 1) == Some(&quote) && bytes.get(start + 2) == Some(&quote);
+    if triple {
+        let mut i = start + 3;
+        while i + 2 < bytes.len() {
+            if bytes[i] == quote && bytes[i + 1] == quote && bytes[i + 2] == quote {
+                return Some(i + 3);
+            }
+            i += 1;
+        }
+        return None;
+    }
+
+    let mut i = start + 1;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2,
+            byte if byte == quote => return Some(i + 1),
+            _ => i += 1,
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1878,14 +2100,14 @@ mod tests {
     ));
 
     #[test]
-    fn parse_outcome_malformed_non_semantic_patch_multiline_diff_replays_to_finish_error() {
+    fn parse_outcome_malformed_non_semantic_patch_multiline_diff_salvages_tool_call() {
         // Replays the captured eval-shape Google response (finish_reason
         // `malformed_function_call` + a multi-line `non_semantic_patch` diff
-        // refusal) through the production parse path. This locks in the
-        // classification fix (commit 3f4d69ea) against the exact state6 payload:
-        // it must surface as a MalformedFunctionCall FinishError, never as an
-        // unknown tool name or repair loop, and the multi-line diff body must
-        // not break parsing.
+        // refusal) through the production parse path. The provider rejected the
+        // response wrapper, but the refusal text contains a complete
+        // `default_api.non_semantic_patch(...)` call, so the parser should
+        // salvage that call into the normal tool executor instead of poisoning a
+        // retry with the Python-ish call text.
         let value = serde_json::json!({
             "id": "ZSUpar6LGMiFodAP1JvsmQQ",
             "object": "chat.completion",
@@ -1917,27 +2139,34 @@ mod tests {
             Some(FinishReason::MalformedFunctionCall)
         );
 
-        // The driver parse path must surface it as a MalformedFunctionCall finish
-        // error, preserving the multi-line diff content in the message.
         let body = serde_json::to_string(&value).expect("serialize captured response body");
-        let err =
-            parse_chat_outcome(&body).expect_err("malformed multi-line patch call should fail");
-        match err {
-            LlmError::FinishError {
-                finish_reason, msg, ..
+        let step = parse_chat_outcome(&body)
+            .expect("captured malformed non_semantic_patch call should be salvaged");
+
+        match step.outcome {
+            ChatStepOutcome::ToolCalls {
+                calls,
+                finish_reason,
+                ..
             } => {
-                assert_eq!(finish_reason, FinishReason::MalformedFunctionCall);
-                assert!(
-                    msg.contains("default_api.non_semantic_patch"),
-                    "expected captured python call in refusal msg"
+                assert_eq!(finish_reason, FinishReason::ToolCalls);
+                assert_eq!(calls.len(), 1);
+                let call = &calls[0];
+                assert_eq!(call.function.name.as_str(), "non_semantic_patch");
+                let args: serde_json::Value = serde_json::from_str(&call.function.arguments)
+                    .expect("salvaged arguments are JSON");
+                assert_eq!(args["patches"][0]["file"], "crates/printer/src/util.rs");
+                assert_eq!(
+                    args["patches"][0]["reasoning"],
+                    "fix duplicative replacement in multiline mode"
                 );
-                assert!(
-                    msg.contains("--- a/crates/printer/src/util.rs")
-                        && msg.contains("replace_with_captures_at_kludge"),
-                    "expected the multi-line unified diff body to survive parsing"
-                );
+                let diff = args["patches"][0]["diff"]
+                    .as_str()
+                    .expect("diff is a string");
+                assert!(diff.contains("--- a/crates/printer/src/util.rs"));
+                assert!(diff.contains("replace_with_captures_at_kludge"));
             }
-            other => panic!("expected malformed-function-call finish error, got {other:?}"),
+            other => panic!("expected salvaged tool call, got {other:?}"),
         }
     }
 
