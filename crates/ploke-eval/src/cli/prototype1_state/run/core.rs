@@ -3553,18 +3553,12 @@ Suggested validation after editing: run `cargo test`.
             .expect("diagnose pre-child-plan world");
         assert_eq!(diagnosis.phase, DiagnosedPhase::ChildPlan);
 
-        let err = step(Prototype1ControlCommand {
+        step(Prototype1ControlCommand {
             repo_root: Some(world.repo_root.clone()),
             format: InspectOutputFormat::Json,
         })
         .await
-        .expect_err("zero-admission child planning still returns the below-minimum error");
-
-        assert!(
-            err.to_string()
-                .contains("broad harness admitted 0 child transaction(s)"),
-            "{err}"
-        );
+        .expect("zero-admission child planning should complete with a rejected-only plan");
         let plan_path = child_plan_path(&world.manifest_path, world.parent_identity.node_id());
         let bytes = fs::read(&plan_path).expect("child plan was persisted by prototype1-step");
         let plan: ChildPlanFiles =
@@ -3596,10 +3590,15 @@ Suggested validation after editing: run `cargo test`.
         assert_eq!(after_requests, before_requests + 9);
         let retry_diagnosis = diagnose(&resolve_context(Some(&world.repo_root)).expect("context"))
             .expect("diagnose after persisted child plan");
-        assert_ne!(
+        assert_eq!(
             retry_diagnosis.phase,
-            DiagnosedPhase::ChildPlan,
-            "retry must not mint fresh broad-harness slots after the rejected child plan is durable"
+            DiagnosedPhase::Complete,
+            "retry should diagnose the rejected-only child plan as a clean terminal state"
+        );
+        assert!(
+            retry_diagnosis.blockers.is_empty(),
+            "terminal rejected-only diagnosis should not carry blockers: {:?}",
+            retry_diagnosis.blockers
         );
         assert_eq!(count_broad_requests(&world.manifest_path), after_requests);
     }

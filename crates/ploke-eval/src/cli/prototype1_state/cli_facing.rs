@@ -2611,6 +2611,7 @@ fn publish_broad_harness_child_plan_from_admitted_batch(
         admitted,
         &attempted,
         &BTreeMap::new(),
+        false,
     )
 }
 
@@ -2620,11 +2621,39 @@ fn publish_broad_harness_child_plan_from_attempts(
     admitted: Vec<AdmittedBroadHarnessResult>,
     attempted: &BTreeSet<usize>,
     rejections: &BTreeMap<usize, String>,
+    fail_parent_on_below_minimum: bool,
 ) -> Result<ChildPlanReceipt, PrepareError> {
     if admitted.len() < batch.child_budget.min as usize {
-        let failed_parent = project_node_status(batch.parent.node(), Prototype1NodeStatus::Failed);
         let rejected_attempts =
             batch_attempt_evidence(&batch, &admitted, attempted, rejections, true);
+        if admitted.is_empty() && !rejected_attempts.is_empty() && !fail_parent_on_below_minimum {
+            let parent_identity = batch.parent.identity().clone();
+            let files = ChildPlanFiles::for_parent(env.manifest_path, &parent_identity, Vec::new())
+                .with_rejected_surface_attempts(rejected_attempts);
+            let at = files.message_at();
+            let observed_at = at.clone();
+            let ready_parent = batch.parent.accept_harness_plan();
+            let open = Open::<ChildPlan>::from_sender(ready_parent, files);
+            let (planned, locked) = observe::transition::<LockChildPlan>(&parent_identity)
+                .stage(observe::Stage::BatchAdmission)
+                .writes(observe::RecordRef::ChildPlanFile(&observed_at))
+                .try_commit(|| {
+                    open.lock(at, |at, body| {
+                        validate_and_write_broad_harness_child_plan(
+                            &parent_identity,
+                            at.path(),
+                            body,
+                        )
+                    })
+                })
+                .map_err(|err| {
+                    let (_parent, source) = err.into_parts();
+                    source
+                })?;
+            return receive_child_plan(env, &parent_identity, planned, locked);
+        }
+
+        let failed_parent = project_node_status(batch.parent.node(), Prototype1NodeStatus::Failed);
         let ready_parent = batch.parent.accept_harness_plan();
         // Task C2: error precedence edge case. If persisting the failed plan
         // itself errors here, that persistence error is surfaced via `?` and
@@ -4962,6 +4991,7 @@ async fn admit_broad_harness_batch(
                     admitted,
                     &ledger.attempted,
                     &ledger.rejections,
+                    true,
                 );
                 return match result {
                     Err(PrepareError::InvalidBatchSelection { .. }) if below_min => Err(source),
@@ -5036,6 +5066,7 @@ async fn admit_broad_harness_batch(
         admitted,
         &ledger.attempted,
         &ledger.rejections,
+        false,
     )
 }
 

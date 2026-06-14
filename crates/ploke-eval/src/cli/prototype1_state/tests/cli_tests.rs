@@ -1489,12 +1489,13 @@ async fn zero_admission_batch_is_persisted() {
         .expect("write historical diagnostic into temp slot");
     let request_count_before = count_broad_requests(&manifest_path);
 
-    // Zero admitted children is an error, but it still represents an attempted
-    // child-plan phase. The below-min branch must accept the harness-plan state
-    // back to Parent<Ready>, lock a rejected-attempt-only ChildPlan, and then
-    // return InvalidBatchSelection.
+    // Zero admitted children with parent-readable rejected evidence is a clean
+    // exhausted child-plan phase, not a hard parent failure. The below-min branch
+    // accepts the harness-plan state back to Parent<Ready>, locks a
+    // rejected-attempt-only ChildPlan, and returns it for the Complete-mode
+    // rejected-only terminal path.
     let parent_identity = batch.parent.identity().clone();
-    let result = publish_broad_harness_child_plan_from_admitted_batch(
+    let receipt = publish_broad_harness_child_plan_from_admitted_batch(
         ChildPlanEnv {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
@@ -1505,15 +1506,12 @@ async fn zero_admission_batch_is_persisted() {
         },
         batch,
         Vec::new(),
-    );
-    let err = match result {
-        Ok(_) => panic!("zero admitted broad harness batch must not seal children"),
-        Err(err) => err,
-    };
+    )
+    .expect("zero admitted broad harness batch should return rejected-only child plan");
+    assert!(receipt.plan.body().children().is_empty());
     assert!(
-        err.to_string()
-            .contains("broad harness admitted 0 child transaction(s)"),
-        "{err}"
+        !receipt.rejected_surface_attempts.is_empty(),
+        "zero admitted batch should preserve parent-readable rejected attempt evidence"
     );
     let files = ChildPlanFiles::for_parent(&manifest_path, &parent_identity, Vec::new());
     let bytes = fs::read(files.message_at().path())
@@ -2990,7 +2988,7 @@ async fn broad_slots_run_in_parallel() {
     );
     assert_eq!(count_broad_requests(&manifest_path), 2);
 
-    let result = admit_broad_harness_batch(
+    let receipt = admit_broad_harness_batch(
         ChildPlanEnv {
             campaign_id: "campaign",
             manifest_path: &manifest_path,
@@ -3001,15 +2999,15 @@ async fn broad_slots_run_in_parallel() {
         },
         batch,
     )
-    .await;
-    let err = match result {
-        Ok(_) => panic!("fixture-backed parallel slots should not admit children"),
-        Err(err) => err,
-    };
-    assert!(
-        err.to_string()
-            .contains("broad harness admitted 0 child transaction(s)"),
-        "{err}"
+    .await
+    .expect(
+        "fixture-backed parallel zero-admission slots should publish a rejected-only child plan",
+    );
+    assert!(receipt.plan.body().children().is_empty());
+    assert_eq!(
+        receipt.rejected_surface_attempts.len(),
+        2,
+        "both concurrently-started slots should be returned as rejected parent-readable evidence"
     );
 
     for slot_index in [0, 1] {
@@ -3423,6 +3421,83 @@ async fn provider_unavailable_with_parallel_slots_aborts_without_corrupting_plan
         1,
         "only the observed (non-aborted) slot should appear as parent-readable evidence: {:#?}",
         body.rejected_surface_attempts()
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn completed_without_edit_zero_admission_returns_rejected_only_plan_without_failed_parent() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let completed_fixture = tmp.path().join("completed-without-edit.headless-tui.json");
+    write_json_file_pretty(
+        &completed_fixture,
+        &serde_json::json!({
+            "attempts": [],
+            "terminal": {
+                "terminal": "completed_without_edit",
+                "outcome": "completed",
+                "summary": "Request summary: [success]"
+            }
+        }),
+    )
+    .expect("write completed-without-edit fixture");
+    let _env = crate::test_support::env_guard_os(vec![
+        ("PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT", "1".into()),
+        (
+            "PLOKE_EVAL_BROAD_TUI_SUMMARY_FIXTURE",
+            completed_fixture.into_os_string(),
+        ),
+    ]);
+
+    write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "completed without edit fixture");
+    let parent: Parent<Ready> = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
+    let budget = Prototype1ChildBudget::new(1, 1).with_parallel_targets(1);
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+        profile::AntiAttractorPolicy::None,
+    )
+    .expect("publish broad harness batch");
+
+    let receipt = admit_broad_harness_batch(
+        ChildPlanEnv {
+            campaign_id: "campaign",
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            route_source: ModelRouteSource::DirectGoogle,
+        },
+        batch,
+    )
+    .await
+    .expect("completed-without-edit zero admission should return a rejected-only child plan");
+
+    assert!(receipt.plan.body().children().is_empty());
+    assert_eq!(receipt.rejected_surface_attempts.len(), 1);
+    assert!(
+        receipt.rejected_surface_attempts.iter().any(|attempt| {
+            matches!(
+                &attempt.outcome,
+                surface_attempt::Outcome::Rejected { reason }
+                    if reason.contains("completed without edit")
+            )
+        }),
+        "completed-without-edit diagnostics should be preserved as rejected attempt evidence: {:?}",
+        receipt.rejected_surface_attempts
+    );
+
+    let node_record = load_test_node_record(&manifest_path, parent_identity.node_id());
+    assert_ne!(
+        node_record.status,
+        Prototype1NodeStatus::Failed,
+        "non-fatal completed-without-edit exhaustion must not permanently fail the parent"
     );
 }
 
