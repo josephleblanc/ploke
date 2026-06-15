@@ -32,8 +32,8 @@ pub mod branch_log {
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub struct ComparisonSummary {
-        pub baseline_campaign_id: String,
-        pub treatment_campaign_id: String,
+        pub baseline_campaign_id: CampaignId,
+        pub treatment_campaign_id: CampaignId,
         pub compared_instances: usize,
         pub rejected_instances: usize,
         pub overall_disposition: BranchDisposition,
@@ -97,7 +97,7 @@ pub mod branch_log {
     }
 
     pub fn parent_comparison(
-        campaign_id: &str,
+        campaign_id: &CampaignId,
         resolved: &ResolvedTreatmentBranch,
         summary: ComparisonSummary,
     ) -> Record {
@@ -105,7 +105,7 @@ pub mod branch_log {
             schema_version: SCHEMA_VERSION.to_string(),
             recorded_at: Utc::now().to_rfc3339(),
             body: Body::ParentComparison(ParentComparison {
-                campaign_id: campaign_id.to_string(),
+                campaign_id: campaign_id.clone(),
                 instance_id: resolved.instance_id.clone(),
                 source_state_id: resolved.source_state_id.clone(),
                 parent_branch_id: resolved.parent_branch_id.clone(),
@@ -118,7 +118,7 @@ pub mod branch_log {
     }
 
     pub fn record_parent_comparison(
-        campaign_id: &str,
+        campaign_id: &CampaignId,
         campaign_manifest_path: &Path,
         resolved: &ResolvedTreatmentBranch,
         summary: ComparisonSummary,
@@ -346,10 +346,10 @@ pub fn resolved_treatment_branches_from_synthesis(
         .collect()
 }
 
-fn default_registry(campaign_id: &str) -> Prototype1BranchRegistry {
+fn default_registry(campaign_id: &CampaignId) -> Prototype1BranchRegistry {
     Prototype1BranchRegistry {
         schema_version: PROTOTYPE1_BRANCH_REGISTRY_SCHEMA_VERSION.to_string(),
-        campaign_id: campaign_id.to_string(),
+        campaign_id: campaign_id.clone(),
         updated_at: Utc::now().to_rfc3339(),
         source_nodes: Vec::new(),
         active_targets: Vec::new(),
@@ -357,7 +357,7 @@ fn default_registry(campaign_id: &str) -> Prototype1BranchRegistry {
 }
 
 pub fn load_or_default_branch_registry(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     campaign_manifest_path: &Path,
     _projection: OperatorProjectionRead,
 ) -> Result<Prototype1BranchRegistry, PrepareError> {
@@ -398,7 +398,7 @@ pub fn save_branch_registry(
 }
 
 pub fn record_synthesized_branches(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     campaign_manifest_path: &Path,
     instance_id: &str,
     synthesis: &InterventionSynthesisOutput,
@@ -537,7 +537,7 @@ pub fn record_synthesized_branches(
 }
 
 pub fn mark_treatment_branch_applied(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     campaign_manifest_path: &Path,
     target_relpath: &Path,
     apply: &InterventionApplyOutput,
@@ -641,7 +641,7 @@ pub fn mark_treatment_branch_applied(
 }
 
 pub fn select_treatment_branch(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     campaign_manifest_path: &Path,
     branch_id: &str,
 ) -> Result<Prototype1BranchRegistry, PrepareError> {
@@ -740,7 +740,7 @@ pub fn select_treatment_branch(
 }
 
 pub fn active_branch_selection_for_target(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     campaign_manifest_path: &Path,
     target_relpath: &Path,
 ) -> Result<Option<ActiveBranchSelection>, PrepareError> {
@@ -780,7 +780,7 @@ pub fn active_branch_selection_for_target(
 }
 
 pub fn resolve_treatment_branch(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     campaign_manifest_path: &Path,
     branch_id: &str,
     projection: OperatorProjectionRead,
@@ -812,7 +812,7 @@ pub fn resolve_treatment_branch(
 }
 
 pub fn restore_treatment_branch(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     campaign_manifest_path: &Path,
     branch_id: &str,
     repo_root: &Path,
@@ -962,7 +962,7 @@ mod tests {
         let synthesis = synthesis_output();
 
         let registry = record_synthesized_branches(
-            "test-campaign",
+            &CampaignId::from("test-campaign"),
             &manifest,
             "clap-rs__clap-3670",
             &synthesis,
@@ -989,7 +989,7 @@ mod tests {
     fn branch_registry_deserializes_legacy_records_without_graph_provenance() {
         let legacy = serde_json::json!({
             "schema_version": PROTOTYPE1_BRANCH_REGISTRY_SCHEMA_VERSION,
-            "campaign_id": "test-campaign",
+            "campaign_id": &CampaignId::from("test-campaign"),
             "updated_at": "2026-04-26T00:00:00Z",
             "source_nodes": [{
                 "source_state_id": "baseline-run-1",
@@ -1050,7 +1050,7 @@ mod tests {
         let synthesis = synthesis_output();
 
         let registry = record_synthesized_branches(
-            "test-campaign",
+            &CampaignId::from("test-campaign"),
             &manifest,
             "clap-rs__clap-3670",
             &synthesis,
@@ -1105,8 +1105,8 @@ mod tests {
         .find(|branch| branch.branch.candidate_id == "candidate-1")
         .expect("resolved branch");
         let summary = branch_log::ComparisonSummary {
-            baseline_campaign_id: "test-campaign".to_string(),
-            treatment_campaign_id: "test-campaign-treatment".to_string(),
+            baseline_campaign_id: CampaignId::from("test-campaign"),
+            treatment_campaign_id: CampaignId::from("test-campaign-treatment"),
             compared_instances: 1,
             rejected_instances: 0,
             overall_disposition: BranchDisposition::Keep,
@@ -1114,7 +1114,7 @@ mod tests {
         };
 
         let record = branch_log::record_parent_comparison(
-            "test-campaign",
+            &CampaignId::from("test-campaign"),
             &manifest,
             &resolved,
             summary.clone(),
@@ -1124,7 +1124,7 @@ mod tests {
         let branch_log::Body::ParentComparison(comparison) = &record.body else {
             panic!("expected parent comparison record");
         };
-        assert_eq!(comparison.campaign_id, "test-campaign");
+        assert_eq!(comparison.campaign_id, CampaignId::from("test-campaign"));
         assert_eq!(comparison.instance_id, resolved.instance_id);
         assert_eq!(comparison.source_state_id, resolved.source_state_id);
         assert_eq!(
@@ -1155,7 +1155,7 @@ mod tests {
 
         let synthesis = synthesis_output();
         let registry = record_synthesized_branches(
-            "test-campaign",
+            &CampaignId::from("test-campaign"),
             &manifest,
             "clap-rs__clap-3670",
             &synthesis,
@@ -1184,7 +1184,7 @@ mod tests {
         })
         .expect("apply");
         let registry = mark_treatment_branch_applied(
-            "test-campaign",
+            &CampaignId::from("test-campaign"),
             &manifest,
             &target_relpath,
             &apply_output,
@@ -1217,15 +1217,20 @@ mod tests {
             apply_output.derived_artifact_id.as_ref()
         );
 
-        let restored = restore_treatment_branch("test-campaign", &manifest, &branch_id, &repo_root)
-            .expect("restore");
+        let restored = restore_treatment_branch(
+            &CampaignId::from("test-campaign"),
+            &manifest,
+            &branch_id,
+            &repo_root,
+        )
+        .expect("restore");
         assert!(restored.changed);
         assert_eq!(
             fs::read_to_string(&absolute_target).expect("restored target"),
             "old text\n"
         );
         let registry = load_or_default_branch_registry(
-            "test-campaign",
+            &CampaignId::from("test-campaign"),
             &manifest,
             OperatorProjectionRead::projection_module(),
         )
@@ -1245,7 +1250,7 @@ mod tests {
         let manifest = campaign_manifest_path(tmp.path());
         let synthesis = synthesis_output();
         let registry = record_synthesized_branches(
-            "test-campaign",
+            &CampaignId::from("test-campaign"),
             &manifest,
             "clap-rs__clap-3670",
             &synthesis,
@@ -1256,13 +1261,14 @@ mod tests {
         let branch_id = registry.source_nodes[0].branches[1].branch_id.clone();
 
         let registry =
-            select_treatment_branch("test-campaign", &manifest, &branch_id).expect("select");
+            select_treatment_branch(&CampaignId::from("test-campaign"), &manifest, &branch_id)
+                .expect("select");
         assert_eq!(
             registry.active_targets[0].active_branch_id.as_deref(),
             Some(branch_id.as_str())
         );
         let selected = active_branch_selection_for_target(
-            "test-campaign",
+            &CampaignId::from("test-campaign"),
             &manifest,
             &synthesis.candidate_set.target_relpath,
         )
@@ -1278,7 +1284,7 @@ mod tests {
         let manifest = campaign_manifest_path(tmp.path());
         let synthesis = synthesis_output();
         let registry = record_synthesized_branches(
-            "test-campaign",
+            &CampaignId::from("test-campaign"),
             &manifest,
             "clap-rs__clap-3670",
             &synthesis,
@@ -1289,7 +1295,7 @@ mod tests {
         let branch_id = registry.source_nodes[0].branches[1].branch_id.clone();
 
         let resolved = resolve_treatment_branch(
-            "test-campaign",
+            &CampaignId::from("test-campaign"),
             &manifest,
             &branch_id,
             OperatorProjectionRead::projection_module(),

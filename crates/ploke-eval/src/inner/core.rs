@@ -1,3 +1,4 @@
+use ploke_records::ids::CampaignId;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
@@ -75,7 +76,7 @@ pub struct RunIntent {
     pub provider_slug: Option<String>,
     /// Optional campaign that owns this run attempt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub campaign_id: Option<String>,
+    pub campaign_id: Option<CampaignId>,
     /// Optional batch that owns this run attempt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch_id: Option<String>,
@@ -107,7 +108,7 @@ pub struct FrozenRunSpec {
     pub provider_slug: Option<String>,
     /// Concrete campaign context, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub campaign_id: Option<String>,
+    pub campaign_id: Option<CampaignId>,
     /// Concrete batch context, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch_id: Option<String>,
@@ -171,7 +172,7 @@ mod tests {
             },
             model_id: Some("anthropic/claude-sonnet-4".to_string()),
             provider_slug: Some("openrouter".to_string()),
-            campaign_id: Some("baseline-smoke".to_string()),
+            campaign_id: Some(CampaignId::from("baseline-smoke")),
             batch_id: Some("ripgrep-2209".to_string()),
             run_arm_id: "structured-current-policy".to_string(),
             run_role: RegisteredRunRole::Treatment,
@@ -197,7 +198,10 @@ mod tests {
             Some("anthropic/claude-sonnet-4")
         );
         assert_eq!(frozen.provider_slug.as_deref(), Some("openrouter"));
-        assert_eq!(frozen.campaign_id.as_deref(), Some("baseline-smoke"));
+        assert_eq!(
+            frozen.campaign_id.as_ref().map(|id| id.as_str()),
+            Some("baseline-smoke")
+        );
         assert_eq!(frozen.batch_id.as_deref(), Some("ripgrep-2209"));
         assert_eq!(frozen.run_arm_id, "structured-current-policy");
         assert_eq!(frozen.run_role, RegisteredRunRole::Treatment);

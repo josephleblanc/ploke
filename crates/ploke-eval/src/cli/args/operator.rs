@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use ploke_records::ids::CampaignId;
+
 use clap::{Parser, Subcommand};
 
 use crate::selection::ActiveSelectionSlot;
@@ -76,7 +78,7 @@ pub struct SelectStatusCommand {
 #[derive(Debug, Parser)]
 pub struct SelectCampaignCommand {
     /// Stable campaign identifier.
-    pub campaign: String,
+    pub campaign: CampaignId,
 }
 
 #[derive(Debug, Parser)]

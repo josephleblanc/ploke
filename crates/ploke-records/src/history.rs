@@ -532,6 +532,7 @@ mod tests {
 
     use super::*;
     use crate::identity::{PARENT_IDENTITY_SCHEMA_VERSION, ParentIdentityRecord};
+    use crate::ids::CampaignId;
     use crate::invocation::{InvocationRecord, Role};
 
     fn hash(value: char) -> crate::ids::HistoryHash {
@@ -556,7 +557,7 @@ mod tests {
         let record = InvocationRecord {
             schema_version: crate::invocation::INVOCATION_SCHEMA_VERSION.to_string(),
             role: Role::Successor,
-            campaign_id: "campaign-1".to_string(),
+            campaign_id: CampaignId::from("campaign-1"),
             node_id: "node-2".to_string(),
             runtime_id: crate::ids::RuntimeId("runtime-1".to_string()),
             journal_path: "/tmp/prototype1/journal.jsonl".into(),
@@ -578,7 +579,7 @@ mod tests {
     fn parent_identity_record_roundtrips() {
         let record = ParentIdentityRecord {
             schema_version: PARENT_IDENTITY_SCHEMA_VERSION.to_string(),
-            campaign_id: "campaign-1".to_string(),
+            campaign_id: CampaignId::from("campaign-1"),
             parent_id: "node-1".to_string(),
             node_id: "node-1".to_string(),
             generation: 0,

@@ -1,3 +1,6 @@
+#[cfg(test)]
+use ploke_records::ids::CampaignId;
+
 /// Ingress chain-of-custody payload that must be sealed with the entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct IngressImportPayload {
@@ -309,7 +312,7 @@ pub(crate) struct SealBlock {
 fn test_parent_identity() -> ParentIdentity {
     ParentIdentity::from_record_for_test(ParentIdentityRecord {
         schema_version: PARENT_IDENTITY_SCHEMA_VERSION.to_string(),
-        campaign_id: "campaign:test".to_string(),
+        campaign_id: CampaignId::from("campaign:test"),
         parent_id: "node:successor".to_string(),
         node_id: "node:successor".to_string(),
         generation: 0,

@@ -165,7 +165,7 @@ pub(crate) struct Prototype<
     ChildState: ChildBinaryState,
     AckState: ChildAckState,
 > {
-    pub(in crate::cli::prototype1_state) campaign_id: String,
+    pub(in crate::cli::prototype1_state) campaign_id: CampaignId,
     pub(in crate::cli::prototype1_state) campaign_manifest_path: PathBuf,
     pub(in crate::cli::prototype1_state) node: Prototype1NodeRecord,
     pub(in crate::cli::prototype1_state) request: Prototype1RunnerRequest,
@@ -206,7 +206,7 @@ impl<
     AckState: ChildAckState,
 > Prototype<Running, ArtifactWorld, ChildState, AckState>
 {
-    pub(crate) fn campaign_id(&self) -> &str {
+    pub(crate) fn campaign_id(&self) -> &CampaignId {
         &self.campaign_id
     }
 
@@ -434,7 +434,7 @@ pub(crate) enum MaterializeBranchError {
 impl Prototype<Parent, Parent, Absent, Unacknowledged> {
     /// Validate an aligned `C1` state from a received child-plan payload.
     pub(crate) fn from_child_plan(
-        campaign_id: impl Into<String>,
+        campaign_id: impl Into<CampaignId>,
         campaign_manifest_path: impl Into<PathBuf>,
         node: Prototype1NodeRecord,
         request: Prototype1RunnerRequest,

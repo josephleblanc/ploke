@@ -76,7 +76,7 @@ static PROTOTYPE1_TRACE_CONTEXT: OnceLock<RwLock<Option<Prototype1TraceContext>>
 pub struct Prototype1TraceContext {
     pub role: String,
     pub runtime_phase: String,
-    pub campaign_id: CampaignId,
+    pub campaign_id: String,
     pub node_id: String,
     pub branch_id: String,
     pub generation: u32,

@@ -270,7 +270,7 @@ struct CampaignValidationView {
 
 #[derive(Debug, Clone, Serialize)]
 struct CampaignSubmissionExportSummary {
-    campaign_id: String,
+    campaign_id: CampaignId,
     closure_state_path: PathBuf,
     output_path: PathBuf,
     exported_records: usize,
@@ -280,7 +280,7 @@ struct CampaignSubmissionExportSummary {
     nonempty_only: bool,
 }
 pub(crate) fn default_campaign_submission_export_path(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     nonempty_only: bool,
 ) -> Result<PathBuf, PrepareError> {
     let file_name = if nonempty_only {
@@ -289,7 +289,7 @@ pub(crate) fn default_campaign_submission_export_path(
         "multi-swe-bench-submission.jsonl"
     };
     Ok(crate::layout::campaigns_dir()?
-        .join(campaign_id)
+        .join(campaign_id.as_str())
         .join(file_name))
 }
 

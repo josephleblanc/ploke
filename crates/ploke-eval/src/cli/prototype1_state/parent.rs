@@ -3,6 +3,7 @@
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
+use ploke_records::ids::CampaignId;
 use serde::{Deserialize, Serialize};
 use tracing::{info, instrument};
 
@@ -296,7 +297,7 @@ impl MessageBox for ChildPlanFile {
 
 impl ChildFiles {
     pub(crate) fn from_resolved(
-        campaign_id: &str,
+        campaign_id: &CampaignId,
         node: Prototype1NodeRecord,
         resolved: ResolvedTreatmentBranch,
         stop_on_error: bool,
@@ -465,7 +466,7 @@ pub(crate) enum ChildPlanReceiverError {
 /// Inputs needed to check whether an unchecked Parent role is valid here.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Check<'a> {
-    pub campaign_id: &'a str,
+    pub campaign_id: &'a CampaignId,
     pub active_root: &'a Path,
 }
 
@@ -898,7 +899,7 @@ impl Startup<Validated> {
                 });
             }
         }
-        if self.lineage_id.as_str() != identity.campaign_id() {
+        if self.lineage_id.as_str() != identity.campaign_id().as_str() {
             return Err(PrepareError::InvalidBatchSelection {
                 detail: format!(
                     "validated startup lineage '{}' does not match parent campaign '{}'",
@@ -1274,7 +1275,7 @@ mod tests {
     fn identity(node_id: &str, generation: u32) -> ParentIdentity {
         ParentIdentity::from_record_for_test(ParentIdentityRecord {
             schema_version: "prototype1-parent-identity.v1".to_string(),
-            campaign_id: "campaign".to_string(),
+            campaign_id: CampaignId::from("campaign"),
             parent_id: node_id.to_string(),
             node_id: node_id.to_string(),
             generation,

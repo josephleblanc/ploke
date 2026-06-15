@@ -14,6 +14,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use ploke_records::ids::CampaignId;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -178,7 +179,7 @@ pub(crate) trait Transport {
 /// Concrete endpoint for one directed side of a runtime channel.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Endpoint {
-    campaign_id: String,
+    campaign_id: CampaignId,
     node_id: String,
     runtime_id: RuntimeId,
     direction: Direction,
@@ -187,7 +188,7 @@ pub(crate) struct Endpoint {
 
 impl Endpoint {
     /// Campaign that owns this runtime attempt.
-    pub(crate) fn campaign_id(&self) -> &str {
+    pub(crate) fn campaign_id(&self) -> &CampaignId {
         &self.campaign_id
     }
 
@@ -216,7 +217,7 @@ impl Endpoint {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Endpoints {
     root: PathBuf,
-    campaign_id: String,
+    campaign_id: CampaignId,
     node_id: String,
     runtime_id: RuntimeId,
 }
@@ -225,7 +226,7 @@ impl Endpoints {
     /// Construct endpoints rooted at `nodes/<node-id>/channels/<runtime-id>/`.
     pub(crate) fn new(
         root: PathBuf,
-        campaign_id: String,
+        campaign_id: CampaignId,
         node_id: String,
         runtime_id: RuntimeId,
     ) -> Self {
@@ -268,7 +269,7 @@ impl Endpoints {
 pub(crate) struct Envelope<M> {
     schema_version: String,
     direction: Direction,
-    campaign_id: String,
+    campaign_id: CampaignId,
     node_id: String,
     runtime_id: RuntimeId,
     message_id: Uuid,
@@ -308,8 +309,8 @@ impl<M> Envelope<M> {
         }
         if self.campaign_id != endpoint.campaign_id {
             return Err(EnvelopeError::Campaign {
-                expected: endpoint.campaign_id.clone(),
-                actual: self.campaign_id.clone(),
+                expected: endpoint.campaign_id.to_string(),
+                actual: self.campaign_id.to_string(),
             });
         }
         if self.node_id != endpoint.node_id {
@@ -858,7 +859,7 @@ mod tests {
     fn endpoints(root: PathBuf) -> Endpoints {
         Endpoints::new(
             root,
-            "campaign-1".to_string(),
+            CampaignId::from("campaign-1"),
             "node-1".to_string(),
             RuntimeId::new(),
         )
@@ -870,7 +871,7 @@ mod tests {
             RuntimeId::new(),
             1,
             Refs {
-                campaign_id: "campaign-1".to_string(),
+                campaign_id: CampaignId::from("campaign-1"),
                 node_id: "node-1".to_string(),
                 instance_id: "instance-1".to_string(),
                 source_state_id: "source-1".to_string(),

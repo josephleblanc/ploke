@@ -169,7 +169,7 @@ pub(crate) struct ReadyEntry {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ObservedChildResult {
     TreatmentComplete {
-        treatment_campaign_id: String,
+        treatment_campaign_id: CampaignId,
     },
     Succeeded {
         evaluation_artifact_path: PathBuf,
@@ -1148,7 +1148,7 @@ mod tests {
             recorded_at: RecordedAt(1_777_091_200_000),
             generation: 1,
             refs: Refs {
-                campaign_id: "campaign".to_string(),
+                campaign_id: CampaignId::from("campaign"),
                 node_id: "node-1".to_string(),
                 instance_id: "instance".to_string(),
                 source_state_id: "state-1".to_string(),
@@ -1191,7 +1191,7 @@ mod tests {
             recorded_at: RecordedAt(1_777_091_200_000),
             generation: 1,
             refs: Refs {
-                campaign_id: "campaign".to_string(),
+                campaign_id: CampaignId::from("campaign"),
                 node_id: "node-2".to_string(),
                 instance_id: "instance".to_string(),
                 source_state_id: "state-2".to_string(),
@@ -1243,7 +1243,7 @@ mod tests {
             recorded_at: RecordedAt(1_777_091_200_000),
             generation: 1,
             refs: Refs {
-                campaign_id: "campaign".to_string(),
+                campaign_id: CampaignId::from("campaign"),
                 node_id: "node-3".to_string(),
                 instance_id: "instance".to_string(),
                 source_state_id: "state-3".to_string(),
@@ -1281,7 +1281,7 @@ mod tests {
             recorded_at: RecordedAt(1_777_091_200_100),
             generation: 1,
             refs: Refs {
-                campaign_id: "campaign".to_string(),
+                campaign_id: CampaignId::from("campaign"),
                 node_id: "node-3".to_string(),
                 instance_id: "instance".to_string(),
                 source_state_id: "state-3".to_string(),
@@ -1315,7 +1315,7 @@ mod tests {
             recorded_at: RecordedAt(1_777_091_200_000),
             generation: 1,
             refs: Refs {
-                campaign_id: "campaign".to_string(),
+                campaign_id: CampaignId::from("campaign"),
                 node_id: "node-4".to_string(),
                 instance_id: "instance".to_string(),
                 source_state_id: "state-4".to_string(),
@@ -1546,7 +1546,7 @@ mod tests {
 
         let runner_result = crate::intervention::Prototype1RunnerResult {
             schema_version: "prototype1_runner_result.v1".to_string(),
-            campaign_id: "campaign".to_string(),
+            campaign_id: CampaignId::from("campaign"),
             node_id: "node-4".to_string(),
             generation: 1,
             branch_id: "branch-4".to_string(),

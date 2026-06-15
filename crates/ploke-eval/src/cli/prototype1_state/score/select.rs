@@ -11,7 +11,7 @@ pub(crate) struct ScoreSelectionReviewRequest {
 pub(crate) struct ScoreSelectionSnapshot {
     pub(super) schema_version: String,
     pub(super) generated_at: String,
-    pub(super) campaign_id: String,
+    pub(super) campaign_id: CampaignId,
     pub(super) manifest_path: PathBuf,
     pub(super) prototype_root: PathBuf,
     pub(super) review: ScoreSelectionReview,
@@ -151,7 +151,7 @@ impl ScoreSelectionSnapshot {
 pub(super) struct ScoreSelectionReport {
     schema_version: String,
     generated_at: String,
-    campaign_id: String,
+    campaign_id: CampaignId,
     manifest_path: PathBuf,
     prototype_root: PathBuf,
     score_schema_version: String,
@@ -564,7 +564,7 @@ mod tests {
         let snapshot = ScoreSelectionSnapshot {
             schema_version: "prototype1-score-selection-review.v1".to_string(),
             generated_at: "2026-06-08T00:00:00Z".to_string(),
-            campaign_id: "campaign-a".to_string(),
+            campaign_id: CampaignId::from("campaign-a"),
             manifest_path: PathBuf::from("/tmp/campaign/manifest.json"),
             prototype_root: PathBuf::from("/tmp/campaign/prototype1"),
             review: ScoreSelectionReview {

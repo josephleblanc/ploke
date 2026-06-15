@@ -19,3 +19,4 @@ pub use thiserror::Error;
 pub use uuid::Uuid;
 
 pub use crate::spec::PrepareError;
+pub use ploke_records::ids::CampaignId;

@@ -520,7 +520,7 @@ fn protocol_report(
     failures: Vec<String>,
 ) -> ClosureAdvanceProtocolReport {
     ClosureAdvanceProtocolReport {
-        campaign_id: "campaign-google".to_string(),
+        campaign_id: CampaignId::from("campaign-google"),
         dry_run: false,
         before,
         after,
@@ -625,7 +625,7 @@ fn eval_closure_repo_cache_override_accepts_child_owned_run_roots() {
         .path()
         .join("node")
         .join("instance-targets")
-        .join("campaign");
+        .join(&CampaignId::from("campaign"));
     let repo_root = repo_cache.join("BurntSushi").join("ripgrep");
     fs::create_dir_all(&repo_root).expect("repo root");
 
@@ -645,7 +645,7 @@ fn eval_closure_repo_cache_override_rejects_shared_cache_escape() {
         .path()
         .join("node")
         .join("instance-targets")
-        .join("campaign");
+        .join(&CampaignId::from("campaign"));
     let shared_root = tmp.path().join("shared").join("BurntSushi").join("ripgrep");
     fs::create_dir_all(&repo_cache).expect("repo cache");
     fs::create_dir_all(&shared_root).expect("shared root");
@@ -672,7 +672,7 @@ fn repo_cache_clone_preflight_accepts_child_owned_cache() {
         .path()
         .join("node")
         .join("instance-targets")
-        .join("campaign");
+        .join(&CampaignId::from("campaign"));
     fs::create_dir_all(&source).expect("source repo");
     fs::create_dir_all(&repo_cache).expect("repo cache");
 
@@ -713,7 +713,7 @@ fn repo_cache_clone_preflight_rejects_path_components() {
         .path()
         .join("node")
         .join("instance-targets")
-        .join("campaign");
+        .join(&CampaignId::from("campaign"));
     fs::create_dir_all(&source).expect("source repo");
     fs::create_dir_all(&repo_cache).expect("repo cache");
 
@@ -733,7 +733,7 @@ fn eval_closure_repo_cache_override_rejects_dotdot_spelled_escape() {
         .path()
         .join("node")
         .join("instance-targets")
-        .join("campaign");
+        .join(&CampaignId::from("campaign"));
     let shared_root = tmp.path().join("shared").join("BurntSushi").join("ripgrep");
     fs::create_dir_all(&repo_cache).expect("repo cache");
     fs::create_dir_all(&shared_root).expect("shared root");
@@ -837,7 +837,7 @@ async fn live_google_protocol_override_uses_direct_route_success_or_quota() {
         format!("google/{model_id}")
     };
     let config = ResolvedCampaignConfig {
-        campaign_id: "live-google-protocol-override".to_string(),
+        campaign_id: CampaignId::from("live-google-protocol-override"),
         benchmark_family: BenchmarkFamily::MultiSweBenchRust,
         dataset_sources: Vec::new(),
         model_id: "anthropic/claude-3.5-sonnet".to_string(),
@@ -1575,7 +1575,10 @@ fn loop_prototype1_command_parses_continued_branch_source() {
         Command::Loop(LoopCommand {
             command: LoopSubcommand::Prototype1(cmd),
         }) => {
-            assert_eq!(cmd.source_campaign.as_deref(), Some("prototype1-campaign"));
+            assert_eq!(
+                cmd.source_campaign.as_ref().map(|id| id.as_str()),
+                Some("prototype1-campaign")
+            );
             assert_eq!(cmd.source_branch_id.as_deref(), Some("branch-123"));
             assert_eq!(cmd.stop_after, Prototype1LoopStopAfter::Compare);
         }
@@ -1621,7 +1624,7 @@ fn loop_prototype1_setup_command_parses() {
                 Some("perplexity/pplx-embed-v1-4b")
             );
             assert_eq!(cmd.embedding_provider.as_deref(), Some("perplexity"));
-            assert_eq!(cmd.campaign.as_deref(), Some("p1-clap"));
+            assert_eq!(cmd.campaign.as_ref().map(|id| id.as_str()), Some("p1-clap"));
             assert_eq!(cmd.profile.as_deref(), Some("overnight-edit-surface"));
         }
         other => panic!("unexpected command shape: {:?}", other),
@@ -1651,7 +1654,10 @@ fn loop_prototype1_state_command_parses() {
         Command::Loop(LoopCommand {
             command: LoopSubcommand::Prototype1State(cmd),
         }) => {
-            assert_eq!(cmd.campaign.as_deref(), Some("prototype1-campaign"));
+            assert_eq!(
+                cmd.campaign.as_ref().map(|id| id.as_str()),
+                Some("prototype1-campaign")
+            );
             assert_eq!(cmd.node_id.as_deref(), Some("branch-abc-g1"));
             assert_eq!(
                 cmd.handoff_invocation.as_deref(),
@@ -1879,7 +1885,10 @@ fn loop_prototype1_state_identity_init_command_parses() {
         Command::Loop(LoopCommand {
             command: LoopSubcommand::Prototype1State(cmd),
         }) => {
-            assert_eq!(cmd.campaign.as_deref(), Some("prototype1-campaign"));
+            assert_eq!(
+                cmd.campaign.as_ref().map(|id| id.as_str()),
+                Some("prototype1-campaign")
+            );
             assert_eq!(cmd.node_id.as_deref(), Some("node-639a992e45ac3533"));
             assert!(cmd.init_parent_identity);
             assert_eq!(
@@ -1937,7 +1946,10 @@ fn history_score_selection_review_command_parses() {
             command: HistorySubcommand::ScoreSelectionReview(review),
             ..
         }) => {
-            assert_eq!(campaign.as_deref(), Some("prototype1-campaign"));
+            assert_eq!(
+                campaign.as_ref().map(|id| id.as_str()),
+                Some("prototype1-campaign")
+            );
             assert_eq!(review.format, InspectOutputFormat::Json);
             assert_eq!(review.rows, 12);
             assert_eq!(review.generation, Some(2));
@@ -2122,7 +2134,7 @@ fn inspect_tool_overview_accepts_campaign_and_tool() {
         Command::Inspect(InspectCommand {
             command: InspectSubcommand::ToolOverview(cmd),
         }) => {
-            assert_eq!(cmd.campaign, "rust-baseline-grok4-xai");
+            assert_eq!(cmd.campaign, CampaignId::from("rust-baseline-grok4-xai"));
             assert_eq!(cmd.tool.as_deref(), Some("apply_code_edit"));
         }
         other => panic!("unexpected command shape: {:?}", other),
@@ -2610,7 +2622,7 @@ fn sample_closure_state_for_submission_export(
 ) -> crate::closure::ClosureState {
     crate::closure::ClosureState {
         schema_version: crate::closure::CLOSURE_STATE_SCHEMA_VERSION.to_string(),
-        campaign_id: "campaign-1".to_string(),
+        campaign_id: CampaignId::from("campaign-1"),
         updated_at: "2026-04-17T00:00:00Z".to_string(),
         config: crate::closure::ClosureConfig {
             benchmark_family: BenchmarkFamily::MultiSweBenchRust,
@@ -2704,11 +2716,13 @@ fn sample_closure_state_for_submission_export(
 
 #[test]
 fn default_campaign_submission_export_path_uses_campaign_directory() {
-    let path = default_campaign_submission_export_path("campaign-1", false).expect("default path");
+    let path = default_campaign_submission_export_path(&CampaignId::from("campaign-1"), false)
+        .expect("default path");
     assert!(path.ends_with("campaign-1/multi-swe-bench-submission.jsonl"));
 
     let nonempty_path =
-        default_campaign_submission_export_path("campaign-1", true).expect("nonempty path");
+        default_campaign_submission_export_path(&CampaignId::from("campaign-1"), true)
+            .expect("nonempty path");
     assert!(nonempty_path.ends_with("campaign-1/multi-swe-bench-submission.nonempty.jsonl"));
 }
 
@@ -2728,7 +2742,7 @@ fn campaign_export_submissions_parses_nonempty_flag() {
         Command::Campaign(CampaignCommand {
             command: CampaignSubcommand::ExportSubmissions(cmd),
         }) => {
-            assert_eq!(cmd.campaign, "campaign-1");
+            assert_eq!(cmd.campaign, CampaignId::from("campaign-1"));
             assert!(cmd.nonempty_only);
         }
         other => panic!("unexpected command shape: {:?}", other),
@@ -2884,7 +2898,7 @@ fn mbe_campaign_candidates_parses_campaign() {
         Command::Mbe(MbeCommand {
             command: MbeSubcommand::CampaignCandidates(cmd),
         }) => {
-            assert_eq!(cmd.campaign, "campaign-1");
+            assert_eq!(cmd.campaign, CampaignId::from("campaign-1"));
             assert!(cmd.nonempty_only);
         }
         other => panic!("unexpected command shape: {:?}", other),
@@ -2916,7 +2930,7 @@ fn mbe_run_campaign_candidate_parses_node() {
         Command::Mbe(MbeCommand {
             command: MbeSubcommand::RunCampaignCandidate(cmd),
         }) => {
-            assert_eq!(cmd.campaign, "campaign-1");
+            assert_eq!(cmd.campaign, CampaignId::from("campaign-1"));
             assert_eq!(cmd.node, "node-1");
             assert_eq!(cmd.output_dir, Some(PathBuf::from("/tmp/mbe")));
             assert_eq!(cmd.repo_dir, Some(PathBuf::from("/tmp/repos")));

@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use ploke_records::history::EvidenceRefRecord;
-use ploke_records::ids::{ArtifactId, BlockHash, EntryId, RuntimeId};
+use ploke_records::ids::{ArtifactId, BlockHash, CampaignId, EntryId, RuntimeId};
 use ploke_records::run_profile::{
     ExecutionStopAfter, GenerationSource, GenerationSurface, RunProfileCommitmentRecord,
     RunProfileRecord, SelectionEvidence, SelectionStrategy, TraceJsonl,
@@ -181,7 +181,7 @@ pub enum EvidenceSubject {
         record_count: usize,
         registry_snapshot_count: usize,
         parent_comparison_count: usize,
-        latest_campaign_id: Option<String>,
+        latest_campaign_id: Option<CampaignId>,
         latest_recorded_at: Option<String>,
     },
     HistoryStorageSummary {

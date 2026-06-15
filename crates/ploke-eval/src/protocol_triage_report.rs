@@ -1,6 +1,7 @@
 use std::cmp::Reverse;
 use std::fmt::Write as _;
 
+use ploke_records::ids::CampaignId;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -395,7 +396,7 @@ mod tests {
     #[test]
     fn triage_report_renders_core_sections() {
         let report = ProtocolCampaignTriageReport {
-            campaign_id: "rust-baseline-grok4-xai".to_string(),
+            campaign_id: CampaignId::from("rust-baseline-grok4-xai"),
             scope: "campaign-wide protocol triage".to_string(),
             selected_runs: 12,
             campaign_runs: 12,

@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::branch::ResolvedTreatmentBranch;
-use crate::ids::RuntimeId;
+use crate::ids::{CampaignId, RuntimeId};
 use crate::scheduler::{NodeRecord, RunnerRequestRecord};
 
 /// Durable schema version for runtime invocation records.

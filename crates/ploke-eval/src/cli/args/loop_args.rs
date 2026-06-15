@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use ploke_records::ids::CampaignId;
+
 use clap::{ArgAction, Parser, Subcommand};
 use ploke_llm::request::models::ModelRouteSource;
 use serde::Serialize;
@@ -81,7 +83,7 @@ pub enum Prototype1EditSurface {
 pub struct Prototype1StateCommand {
     /// Campaign id. Defaults to parent identity, then active `select campaign`.
     #[arg(long)]
-    pub campaign: Option<String>,
+    pub campaign: Option<CampaignId>,
 
     /// Candidate node id to materialize/evaluate. During --init-parent-identity only, this is the generation-0 parent node.
     #[arg(long)]
@@ -176,7 +178,7 @@ pub struct Prototype1PromptCommand {
 )]
 pub struct Prototype1RunnerCommand {
     #[arg(long)]
-    pub campaign: Option<String>,
+    pub campaign: Option<CampaignId>,
 
     #[arg(long)]
     pub node_id: Option<String>,
@@ -341,7 +343,7 @@ pub struct Prototype1LoopCommand {
 
     /// Stable human campaign/profile id for Prototype 1 state.
     #[arg(long)]
-    pub campaign: Option<String>,
+    pub campaign: Option<CampaignId>,
 
     /// Prototype 1 run profile name or TOML path. Profile admission is owned by setup.
     #[arg(long, value_name = "NAME_OR_PATH")]
@@ -414,7 +416,7 @@ pub struct Prototype1LoopCommand {
 
     /// Continue the loop from a previously synthesized/applied branch in another Prototype 1 campaign.
     #[arg(long, requires = "source_branch_id")]
-    pub source_campaign: Option<String>,
+    pub source_campaign: Option<CampaignId>,
 
     /// Branch id to materialize as the starting source content state for this loop generation.
     #[arg(long, requires = "source_campaign")]

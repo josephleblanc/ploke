@@ -1,5 +1,7 @@
 use clap::{Parser, Subcommand};
 
+use ploke_records::ids::CampaignId;
+
 use super::campaign::CampaignOverrideArgs;
 use super::common::InspectOutputFormat;
 
@@ -54,7 +56,7 @@ pub enum ClosureAdvanceSubcommand {
 pub struct ClosureRecomputeCommand {
     /// Stable campaign identifier, used under ~/.ploke-eval/campaigns/<campaign>.
     #[arg(long)]
-    pub campaign: String,
+    pub campaign: CampaignId,
 
     #[command(flatten)]
     pub overrides: CampaignOverrideArgs,
@@ -68,7 +70,7 @@ pub struct ClosureRecomputeCommand {
 pub struct ClosureStatusCommand {
     /// Stable campaign identifier, used under ~/.ploke-eval/campaigns/<campaign>.
     #[arg(long)]
-    pub campaign: String,
+    pub campaign: CampaignId,
 
     /// Output format: table (default) or json.
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
@@ -79,7 +81,7 @@ pub struct ClosureStatusCommand {
 pub struct ClosureAdvanceEvalCommand {
     /// Stable campaign identifier, used under ~/.ploke-eval/campaigns/<campaign>.
     #[arg(long)]
-    pub campaign: String,
+    pub campaign: CampaignId,
 
     #[command(flatten)]
     pub overrides: CampaignOverrideArgs,
@@ -105,7 +107,7 @@ pub struct ClosureAdvanceEvalCommand {
 pub struct ClosureAdvanceProtocolCommand {
     /// Stable campaign identifier, used under ~/.ploke-eval/campaigns/<campaign>.
     #[arg(long)]
-    pub campaign: String,
+    pub campaign: CampaignId,
 
     #[command(flatten)]
     pub overrides: CampaignOverrideArgs,
@@ -135,7 +137,7 @@ pub struct ClosureAdvanceProtocolCommand {
 pub struct ClosureAdvanceAllCommand {
     /// Stable campaign identifier, used under ~/.ploke-eval/campaigns/<campaign>.
     #[arg(long)]
-    pub campaign: String,
+    pub campaign: CampaignId,
 
     #[command(flatten)]
     pub overrides: CampaignOverrideArgs,

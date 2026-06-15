@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::identity::ParentIdentityRecord;
-use crate::ids::{ContentHash, RecordedAt, RuntimeId, TransitionId};
+use crate::ids::{CampaignId, ContentHash, RecordedAt, RuntimeId, TransitionId};
 use crate::scheduler::{ContinuationDecisionRecord, RunnerDispositionRecord};
 use crate::selection::Decision;
 
@@ -207,7 +207,7 @@ pub struct ParentStartedRecord {
 #[serde(rename_all = "snake_case")]
 pub enum ObservedChildResultRecord {
     TreatmentComplete {
-        treatment_campaign_id: String,
+        treatment_campaign_id: CampaignId,
     },
     Succeeded {
         evaluation_artifact_path: PathBuf,
@@ -592,7 +592,7 @@ mod tests {
         }
 
         let parent_started = parent_started.expect("parent_started entry");
-        assert!(!parent_started.campaign_id.is_empty());
+        assert!(!parent_started.campaign_id.as_str().is_empty());
         assert!(!parent_started.parent_identity.node_id.is_empty());
         assert!(count > 0);
         assert!(observed_child_count > 0);

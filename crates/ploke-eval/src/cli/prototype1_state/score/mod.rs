@@ -59,7 +59,7 @@ pub(crate) struct ScoreRequest {
 }
 
 pub(crate) fn run(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     request: ScoreRequest,
 ) -> Result<(), PrepareError> {
@@ -84,7 +84,7 @@ pub(crate) fn run(
 }
 
 pub(crate) fn build(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
 ) -> Result<ScoreSnapshot, PreviewError> {
     let store = FsEvidenceStore::new(manifest_path);
@@ -93,7 +93,7 @@ pub(crate) fn build(
     Ok(ScoreSnapshot {
         schema_version: scores.schema_version.clone(),
         generated_at: Utc::now().to_rfc3339(),
-        campaign_id: campaign_id.to_string(),
+        campaign_id: campaign_id.clone(),
         manifest_path: manifest_path.to_path_buf(),
         prototype_root: prototype_root(manifest_path),
         scores,
@@ -101,7 +101,7 @@ pub(crate) fn build(
 }
 
 pub(crate) fn run_selection_review(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     request: ScoreSelectionReviewRequest,
 ) -> Result<(), PrepareError> {
@@ -127,7 +127,7 @@ pub(crate) fn run_selection_review(
 }
 
 pub(crate) fn build_selection_review(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
 ) -> Result<ScoreSelectionSnapshot, PreviewError> {
     let store = FsEvidenceStore::new(manifest_path);
@@ -136,7 +136,7 @@ pub(crate) fn build_selection_review(
     Ok(ScoreSelectionSnapshot {
         schema_version: review.schema_version.clone(),
         generated_at: Utc::now().to_rfc3339(),
-        campaign_id: campaign_id.to_string(),
+        campaign_id: campaign_id.clone(),
         manifest_path: manifest_path.to_path_buf(),
         prototype_root: prototype_root(manifest_path),
         review,
@@ -147,7 +147,7 @@ pub(crate) fn build_selection_review(
 pub(crate) struct ScoreSnapshot {
     schema_version: String,
     generated_at: String,
-    campaign_id: String,
+    campaign_id: CampaignId,
     manifest_path: PathBuf,
     prototype_root: PathBuf,
     scores: ScoreSet,
@@ -268,7 +268,7 @@ impl ScoreSnapshot {
 struct ScoreReport {
     schema_version: String,
     generated_at: String,
-    campaign_id: String,
+    campaign_id: CampaignId,
     manifest_path: PathBuf,
     prototype_root: PathBuf,
     procedure_id: String,

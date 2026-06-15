@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::{ArtifactId, Coordinate, OperationTarget, PatchId};
+use crate::ids::{ArtifactId, CampaignId, Coordinate, OperationTarget, PatchId};
 
 /// Durable schema version used by current Prototype 1 branch registries.
 pub const PROTOTYPE1_BRANCH_REGISTRY_SCHEMA_VERSION: &str = "prototype1-branch-registry.v1";
@@ -37,8 +37,8 @@ pub enum TreatmentBranchStatus {
 /// Summary of an evaluation comparing a baseline and treatment campaign.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TreatmentBranchEvaluationSummary {
-    pub baseline_campaign_id: String,
-    pub treatment_campaign_id: String,
+    pub baseline_campaign_id: CampaignId,
+    pub treatment_campaign_id: CampaignId,
     pub compared_instances: usize,
     pub rejected_instances: usize,
     pub overall_disposition: Disposition,
@@ -327,7 +327,7 @@ mod tests {
         );
         assert_eq!(
             record.campaign_id,
-            "p1-edit-surface-history-long-20260508-1"
+            CampaignId::from("p1-edit-surface-history-long-20260508-1")
         );
         assert_eq!(record.source_nodes.len(), 11);
         assert_eq!(
@@ -363,7 +363,7 @@ mod tests {
             .expect("selected branch evaluation");
         assert_eq!(
             evaluation.baseline_campaign_id,
-            "p1-edit-surface-history-long-20260508-1"
+            CampaignId::from("p1-edit-surface-history-long-20260508-1")
         );
         assert_eq!(evaluation.compared_instances, 1);
         assert_eq!(evaluation.rejected_instances, 0);

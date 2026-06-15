@@ -18,7 +18,7 @@ pub mod baseline {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Baseline<S> {
-    campaign_id: String,
+    campaign_id: CampaignId,
     parent_node_id: String,
     parent_branch_id: String,
     eval_set_id: String,
@@ -28,7 +28,7 @@ pub struct Baseline<S> {
 
 impl Baseline<baseline::Complete> {
     pub fn complete(
-        campaign_id: String,
+        campaign_id: CampaignId,
         parent_node_id: String,
         parent_branch_id: String,
         eval_set_id: String,
@@ -52,7 +52,7 @@ impl Baseline<baseline::Complete> {
         })
     }
 
-    pub fn campaign_id(&self) -> &str {
+    pub fn campaign_id(&self) -> &CampaignId {
         &self.campaign_id
     }
 
@@ -74,7 +74,7 @@ impl Baseline<baseline::Complete> {
 
     pub fn validate_for_parent(
         &self,
-        campaign_id: &str,
+        campaign_id: &CampaignId,
         parent_node_id: &str,
         parent_branch_id: &str,
     ) -> Result<(), PrepareError> {
@@ -86,7 +86,7 @@ impl Baseline<baseline::Complete> {
                 ),
             });
         }
-        if self.campaign_id != campaign_id
+        if self.campaign_id != *campaign_id
             || self.parent_node_id != parent_node_id
             || self.parent_branch_id != parent_branch_id
         {
@@ -318,7 +318,7 @@ pub struct Prototype1RunnerResult {
     pub status: Prototype1NodeStatus,
     pub disposition: Prototype1RunnerDisposition,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub treatment_campaign_id: Option<String>,
+    pub treatment_campaign_id: Option<CampaignId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evaluation_artifact_path: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -430,7 +430,7 @@ pub fn prototype1_node_id(branch_id: &str, generation: u32) -> String {
 }
 
 pub fn register_root_parent_node(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     campaign_manifest_path: &Path,
     instance_id: &str,
     artifact_branch: &str,
@@ -480,7 +480,7 @@ pub fn register_root_parent_node(
 
     let request = Prototype1RunnerRequest {
         schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
-        campaign_id: campaign_id.to_string(),
+        campaign_id: campaign_id.clone(),
         node_id: node_id.clone(),
         generation,
         instance_id: instance_id.to_string(),
@@ -530,10 +530,10 @@ pub fn register_root_parent_node(
 
 const PARENT_IDENTITY_RELPATH_FOR_SCHEDULER: &str = ".ploke/prototype1/parent_identity.json";
 
-fn default_scheduler_state(campaign_id: &str) -> Prototype1SchedulerState {
+fn default_scheduler_state(campaign_id: &CampaignId) -> Prototype1SchedulerState {
     Prototype1SchedulerState {
         schema_version: PROTOTYPE1_SCHEDULER_SCHEMA_VERSION.to_string(),
-        campaign_id: campaign_id.to_string(),
+        campaign_id: campaign_id.clone(),
         updated_at: Utc::now().to_rfc3339(),
         policy: Prototype1SearchPolicy::default(),
         frontier_node_ids: Vec::new(),
@@ -545,7 +545,7 @@ fn default_scheduler_state(campaign_id: &str) -> Prototype1SchedulerState {
 }
 
 fn load_or_default_scheduler_state(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     campaign_manifest_path: &Path,
 ) -> Result<Prototype1SchedulerState, PrepareError> {
     let path = prototype1_scheduler_path(campaign_manifest_path);
@@ -715,7 +715,7 @@ fn passive_runner_request_record(
 ) -> ploke_records::scheduler::RunnerRequestRecord {
     ploke_records::scheduler::RunnerRequestRecord {
         schema_version: request.schema_version.clone(),
-        campaign_id: ploke_records::ids::CampaignId(request.campaign_id.clone()),
+        campaign_id: request.campaign_id.clone(),
         node_id: ploke_records::ids::SchedulerNodeId(request.node_id.clone()),
         generation: request.generation,
         instance_id: ploke_records::ids::InstanceId(request.instance_id.clone()),
@@ -744,7 +744,7 @@ fn passive_runner_result_record(
 ) -> ploke_records::scheduler::RunnerResultRecord {
     ploke_records::scheduler::RunnerResultRecord {
         schema_version: result.schema_version.clone(),
-        campaign_id: ploke_records::ids::CampaignId(result.campaign_id.clone()),
+        campaign_id: result.campaign_id.clone(),
         node_id: ploke_records::ids::SchedulerNodeId(result.node_id.clone()),
         generation: result.generation,
         branch_id: ploke_records::ids::BranchId(result.branch_id.clone()),
@@ -807,13 +807,13 @@ pub fn project_node_workspace_root(
 }
 
 pub fn runner_request_from_node(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     node: &Prototype1NodeRecord,
     stop_on_error: bool,
 ) -> Prototype1RunnerRequest {
     Prototype1RunnerRequest {
         schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
-        campaign_id: campaign_id.to_string(),
+        campaign_id: campaign_id.clone(),
         node_id: node.node_id.clone(),
         generation: node.generation,
         instance_id: node.instance_id.clone(),
@@ -913,7 +913,7 @@ fn is_not_found(err: &PrepareError) -> bool {
 }
 
 pub fn update_scheduler_policy(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     campaign_manifest_path: &Path,
     policy: Prototype1SearchPolicy,
 ) -> Result<Prototype1SchedulerState, PrepareError> {
@@ -925,7 +925,7 @@ pub fn update_scheduler_policy(
 }
 
 pub fn update_node_status(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     campaign_manifest_path: &Path,
     node_id: &str,
     status: Prototype1NodeStatus,
@@ -972,7 +972,7 @@ pub fn update_node_status(
 }
 
 pub fn update_node_workspace_root(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     campaign_manifest_path: &Path,
     node_id: &str,
     workspace_root: PathBuf,
@@ -1014,7 +1014,7 @@ pub fn update_node_workspace_root(
 }
 
 pub fn record_runner_result(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     campaign_manifest_path: &Path,
     result: Prototype1RunnerResult,
 ) -> Result<(Prototype1SchedulerState, Prototype1NodeRecord), PrepareError> {
@@ -1109,7 +1109,7 @@ pub fn decide_node_successor_continuation(
 }
 
 pub fn record_continuation_decision(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     campaign_manifest_path: &Path,
     decision: Prototype1ContinuationDecision,
 ) -> Result<Prototype1SchedulerState, PrepareError> {
@@ -1121,7 +1121,7 @@ pub fn record_continuation_decision(
 }
 
 pub fn register_treatment_evaluation_node(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     campaign_manifest_path: &Path,
     branch: &ResolvedTreatmentBranch,
     generation: u32,
@@ -1212,7 +1212,7 @@ pub fn register_treatment_evaluation_node(
 
     let request = Prototype1RunnerRequest {
         schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
-        campaign_id: campaign_id.to_string(),
+        campaign_id: campaign_id.clone(),
         node_id: node_id.clone(),
         generation,
         instance_id: branch.instance_id.clone(),
@@ -1269,7 +1269,7 @@ pub fn register_treatment_evaluation_node(
 }
 
 pub fn write_treatment_evaluation_projection(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     campaign_manifest_path: &Path,
     branch: &ResolvedTreatmentBranch,
     generation: u32,
@@ -1347,7 +1347,7 @@ pub fn write_treatment_evaluation_projection(
 }
 
 pub fn load_or_register_treatment_evaluation_node(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     campaign_manifest_path: &Path,
     branch: &ResolvedTreatmentBranch,
     generation: u32,
@@ -1502,7 +1502,7 @@ mod tests {
         let manifest = campaign_manifest_path(tmp.path());
 
         let (scheduler, node, request) = register_treatment_evaluation_node(
-            "test-campaign",
+            &CampaignId::from("test-campaign"),
             &manifest,
             &resolved_branch(),
             2,
@@ -1527,7 +1527,8 @@ mod tests {
         assert_eq!(request.runner_args[1], "prototype1-runner");
 
         let loaded_scheduler =
-            load_or_default_scheduler_state("test-campaign", &manifest).expect("load scheduler");
+            load_or_default_scheduler_state(&CampaignId::from("test-campaign"), &manifest)
+                .expect("load scheduler");
         let projection = OperatorProjectionRead::projection_module();
         let loaded_node =
             load_node_record(&manifest, &node.node_id, projection).expect("load node");
@@ -1568,7 +1569,7 @@ mod tests {
         let manifest = campaign_manifest_path(tmp.path());
 
         let (_scheduler, node, _request) = register_treatment_evaluation_node(
-            "test-campaign",
+            &CampaignId::from("test-campaign"),
             &manifest,
             &resolved_branch(),
             2,
@@ -1579,13 +1580,13 @@ mod tests {
         .expect("register node");
         let result = Prototype1RunnerResult {
             schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
-            campaign_id: "test-campaign".to_string(),
+            campaign_id: CampaignId::from("test-campaign"),
             node_id: node.node_id.clone(),
             generation: node.generation,
             branch_id: node.branch_id.clone(),
             status: Prototype1NodeStatus::Failed,
             disposition: Prototype1RunnerDisposition::CompileFailed,
-            treatment_campaign_id: Some("treatment-1".to_string()),
+            treatment_campaign_id: Some(CampaignId::from("treatment-1")),
             evaluation_artifact_path: Some(tmp.path().join("evaluation.json")),
             detail: Some("compile failed".to_string()),
             exit_code: Some(101),
@@ -1637,7 +1638,7 @@ mod tests {
 
         let payload = serde_json::json!({
             "schema_version": PROTOTYPE1_SCHEDULER_SCHEMA_VERSION,
-            "campaign_id": "test-campaign",
+            "campaign_id": &CampaignId::from("test-campaign"),
             "updated_at": "2026-05-08T00:00:00Z",
             "policy": {
                 "max_generations": 2,
@@ -1695,7 +1696,7 @@ mod tests {
         let manifest = campaign_manifest_path(tmp.path());
 
         let (_scheduler, node, request) = register_treatment_evaluation_node(
-            "test-campaign",
+            &CampaignId::from("test-campaign"),
             &manifest,
             &resolved_branch_with_graph(),
             2,
@@ -1726,7 +1727,7 @@ mod tests {
         let manifest = campaign_manifest_path(tmp.path());
 
         let (_scheduler, node, request) = register_treatment_evaluation_node(
-            "test-campaign",
+            &CampaignId::from("test-campaign"),
             &manifest,
             &resolved_branch(),
             2,
@@ -1767,7 +1768,7 @@ mod tests {
         let manifest = campaign_manifest_path(tmp.path());
 
         let (_scheduler, mut node, mut request) = register_treatment_evaluation_node(
-            "test-campaign",
+            &CampaignId::from("test-campaign"),
             &manifest,
             &resolved_branch(),
             2,
@@ -1819,7 +1820,7 @@ mod tests {
         let manifest = campaign_manifest_path(tmp.path());
 
         let (scheduler, node, _request) = register_treatment_evaluation_node(
-            "test-campaign",
+            &CampaignId::from("test-campaign"),
             &manifest,
             &resolved_branch_with_graph(),
             2,
@@ -1833,7 +1834,7 @@ mod tests {
         let record: ploke_records::scheduler::SchedulerStateRecord =
             serde_json::from_value(scheduler_json).expect("parse passive scheduler record");
 
-        assert_eq!(record.campaign_id.as_str(), "test-campaign");
+        assert_eq!(record.campaign_id, CampaignId::from("test-campaign"));
         assert_eq!(record.nodes.len(), 1);
         assert_eq!(record.nodes[0].node_id.as_str(), node.node_id);
         assert_eq!(record.nodes[0].branch_id.as_str(), node.branch_id);
@@ -1862,8 +1863,12 @@ mod tests {
             require_keep_for_continuation: true,
             explore_from_rejected: false,
         };
-        let scheduler = update_scheduler_policy("test-campaign", &manifest, policy.clone())
-            .expect("persist policy");
+        let scheduler = update_scheduler_policy(
+            &CampaignId::from("test-campaign"),
+            &manifest,
+            policy.clone(),
+        )
+        .expect("persist policy");
 
         let reject = decide_continuation(&scheduler, 1, Some("branch-1"), Some("reject"));
         assert_eq!(
@@ -1893,7 +1898,7 @@ mod tests {
         );
 
         let stop_on_first_keep_scheduler = update_scheduler_policy(
-            "test-campaign",
+            &CampaignId::from("test-campaign"),
             &manifest,
             Prototype1SearchPolicy {
                 stop_on_first_keep: true,
@@ -1918,7 +1923,7 @@ mod tests {
         let tmp = tempdir().expect("tmp");
         let manifest = campaign_manifest_path(tmp.path());
         let scheduler = update_scheduler_policy(
-            "test-campaign",
+            &CampaignId::from("test-campaign"),
             &manifest,
             Prototype1SearchPolicy {
                 max_generations: 2,
@@ -1942,7 +1947,7 @@ mod tests {
         assert!(decision.disposition.allows_successor());
 
         let strict_scheduler = update_scheduler_policy(
-            "test-campaign",
+            &CampaignId::from("test-campaign"),
             &manifest,
             Prototype1SearchPolicy {
                 explore_from_rejected: false,
@@ -1969,7 +1974,7 @@ mod tests {
         let resolved = resolved_branch();
 
         let (_scheduler, node, request) = register_treatment_evaluation_node(
-            "test-campaign",
+            &CampaignId::from("test-campaign"),
             &manifest,
             &resolved,
             2,
@@ -1981,7 +1986,7 @@ mod tests {
 
         let (loaded_scheduler, loaded_node, loaded_request) =
             load_or_register_treatment_evaluation_node(
-                "test-campaign",
+                &CampaignId::from("test-campaign"),
                 &manifest,
                 &resolved,
                 2,

@@ -492,7 +492,7 @@ impl Intervention<C3, C4> for SpawnChild {
         command
             .args(&child_argv)
             .current_dir(&from.artifact.repo_root)
-            .env(CAMPAIGN_ID_ENV, &from.campaign_id)
+            .env(CAMPAIGN_ID_ENV, from.campaign_id.as_str())
             .env(NODE_ID_ENV, &from.node.node_id)
             .env(RUNTIME_ID_ENV, self.runtime_id.to_string())
             .env(JOURNAL_PATH_ENV, handoff.path.as_os_str())

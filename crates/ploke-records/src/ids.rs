@@ -94,21 +94,47 @@ passive_string_accessors!(
     SourceStateId,
 );
 
-impl CampaignId {
-    pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
-    }
-}
-
 impl From<String> for CampaignId {
     fn from(value: String) -> Self {
-        Self::new(value)
+        Self(value)
     }
 }
 
 impl From<&str> for CampaignId {
     fn from(value: &str) -> Self {
-        Self::new(value)
+        Self(value.to_string())
+    }
+}
+
+impl From<CampaignId> for String {
+    fn from(value: CampaignId) -> Self {
+        value.0
+    }
+}
+
+impl std::str::FromStr for CampaignId {
+    type Err = std::convert::Infallible;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        Ok(Self(value.to_string()))
+    }
+}
+
+impl AsRef<str> for CampaignId {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl AsRef<std::path::Path> for CampaignId {
+    fn as_ref(&self) -> &std::path::Path {
+        std::path::Path::new(self.as_str())
+    }
+}
+
+impl Default for CampaignId {
+    fn default() -> Self {
+        Self(String::new())
     }
 }
 

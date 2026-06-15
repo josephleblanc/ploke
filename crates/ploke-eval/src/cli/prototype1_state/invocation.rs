@@ -73,7 +73,7 @@ fn successor_parent_argv(
         "loop".to_string(),
         "prototype1-state".to_string(),
         "--campaign".to_string(),
-        invocation.campaign_id.clone(),
+        invocation.campaign_id.to_string(),
         "--repo-root".to_string(),
         active_parent_root.display().to_string(),
         "--handoff-invocation".to_string(),
@@ -151,7 +151,7 @@ pub(crate) enum InvocationAuthority {
 impl Invocation {
     /// Child-evaluator bootstrap contract.
     fn child(
-        campaign_id: String,
+        campaign_id: CampaignId,
         node_id: String,
         runtime_id: RuntimeId,
         journal_path: PathBuf,
@@ -179,7 +179,7 @@ impl Invocation {
 
     /// Selected-successor bootstrap contract.
     fn successor(
-        campaign_id: String,
+        campaign_id: CampaignId,
         node_id: String,
         runtime_id: RuntimeId,
         journal_path: PathBuf,
@@ -221,7 +221,7 @@ impl ChildInvocation {
     /// Create the executable leaf-child invocation with the typed runtime
     /// payload needed to evaluate without reading node/request projection files.
     pub(crate) fn with_bootstrap(
-        campaign_id: String,
+        campaign_id: CampaignId,
         node: Prototype1NodeRecord,
         request: Prototype1RunnerRequest,
         resolved: ResolvedTreatmentBranch,
@@ -274,7 +274,7 @@ impl ChildInvocation {
     }
 
     /// Campaign this child leaf run belongs to.
-    pub(crate) fn campaign_id(&self) -> &str {
+    pub(crate) fn campaign_id(&self) -> &CampaignId {
         &self.inner.campaign_id
     }
 
@@ -354,7 +354,7 @@ impl SuccessorInvocation {
     /// Create the executable successor invocation used by the detached
     /// handoff path.
     fn new(
-        campaign_id: String,
+        campaign_id: CampaignId,
         node_id: String,
         runtime_id: RuntimeId,
         journal_path: PathBuf,
@@ -376,7 +376,7 @@ impl SuccessorInvocation {
     /// Create the executable successor invocation with an explicit channel root.
     pub(crate) fn from_retired_parent_with_channel_root(
         _parent: &Parent<Retired>,
-        campaign_id: String,
+        campaign_id: CampaignId,
         node_id: String,
         runtime_id: RuntimeId,
         journal_path: PathBuf,
@@ -402,7 +402,7 @@ impl SuccessorInvocation {
     /// Crown-locking handoff boundary.
     pub(crate) fn from_retired_parent(
         _parent: &Parent<Retired>,
-        campaign_id: String,
+        campaign_id: CampaignId,
         node_id: String,
         runtime_id: RuntimeId,
         journal_path: PathBuf,
@@ -426,7 +426,7 @@ impl SuccessorInvocation {
     }
 
     /// Campaign this successor bootstrap belongs to.
-    pub(crate) fn campaign_id(&self) -> &str {
+    pub(crate) fn campaign_id(&self) -> &CampaignId {
         &self.inner.campaign_id
     }
 
@@ -591,7 +591,7 @@ mod tests {
     fn successor_launch_args_reenter_typed_parent_command() {
         let runtime_id = RuntimeId::new();
         let invocation = SuccessorInvocation::new(
-            "campaign-1".to_string(),
+            CampaignId::from("campaign-1"),
             "node-2".to_string(),
             runtime_id,
             PathBuf::from("/tmp/prototype1/journal.jsonl"),
@@ -629,7 +629,7 @@ mod tests {
         let runtime_id = RuntimeId::new();
         let channel_root = PathBuf::from("/tmp/prototype1/nodes/node-2/channels/runtime-2");
         let invocation = SuccessorInvocation::new(
-            "campaign-1".to_string(),
+            CampaignId::from("campaign-1"),
             "node-2".to_string(),
             runtime_id,
             PathBuf::from("/tmp/prototype1/journal.jsonl"),

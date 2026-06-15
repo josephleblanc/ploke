@@ -25,3 +25,5 @@ pub use protocol::*;
 pub use registry::*;
 pub use root::*;
 pub use run::*;
+
+pub use ploke_records::ids::CampaignId;

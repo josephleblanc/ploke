@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use ploke_records::ids::CampaignId;
+
 use clap::{Parser, Subcommand};
 
 use ploke_llm::request::models::ModelRouteSource;
@@ -84,7 +86,7 @@ pub struct CampaignOverrideArgs {
 pub struct CampaignInitCommand {
     /// Stable campaign identifier, used under ~/.ploke-eval/campaigns/<campaign>.
     #[arg(long)]
-    pub campaign: String,
+    pub campaign: CampaignId,
 
     #[command(flatten)]
     pub overrides: CampaignOverrideArgs,
@@ -117,7 +119,7 @@ pub struct CampaignListCommand {
 pub struct CampaignShowCommand {
     /// Stable campaign identifier, used under ~/.ploke-eval/campaigns/<campaign>.
     #[arg(long)]
-    pub campaign: String,
+    pub campaign: CampaignId,
 
     #[command(flatten)]
     pub overrides: CampaignOverrideArgs,
@@ -131,7 +133,7 @@ pub struct CampaignShowCommand {
 pub struct CampaignValidateCommand {
     /// Stable campaign identifier, used under ~/.ploke-eval/campaigns/<campaign>.
     #[arg(long)]
-    pub campaign: String,
+    pub campaign: CampaignId,
 
     #[command(flatten)]
     pub overrides: CampaignOverrideArgs,
@@ -162,7 +164,7 @@ Selection behavior:
 pub struct CampaignExportSubmissionsCommand {
     /// Stable campaign identifier, used under ~/.ploke-eval/campaigns/<campaign>.
     #[arg(long)]
-    pub campaign: String,
+    pub campaign: CampaignId,
 
     /// Write only records whose fix_patch is non-empty.
     #[arg(long)]

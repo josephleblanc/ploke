@@ -454,7 +454,7 @@ pub enum Prototype1ParentError {
         "selected instance '{selected_instance}' does not match parent for campaign '{campaign_id}': {parent}"
     )]
     SelectionMismatch {
-        campaign_id: String,
+        campaign_id: CampaignId,
         selected_instance: String,
         parent: Prototype1ParentNodeContext,
     },

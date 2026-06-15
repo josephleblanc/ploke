@@ -222,7 +222,7 @@ fn successor_records_attach_evidence_without_history_authority() {
         parent_identity: None,
         successor_ready: vec![SuccessorReadyRecord {
             schema_version: "prototype1-successor-ready.v1".to_owned(),
-            campaign_id: "campaign-1".to_owned(),
+            campaign_id: CampaignId::from("campaign-1"),
             node_id: "node-1".to_owned(),
             runtime_id: RuntimeId("runtime-1".to_owned()),
             pid: 42,
@@ -230,7 +230,7 @@ fn successor_records_attach_evidence_without_history_authority() {
         }],
         successor_completion: vec![SuccessorCompletionRecord {
             schema_version: "prototype1-successor-completion.v1".to_owned(),
-            campaign_id: "campaign-1".to_owned(),
+            campaign_id: CampaignId::from("campaign-1"),
             node_id: "node-1".to_owned(),
             runtime_id: RuntimeId("runtime-1".to_owned()),
             status: SuccessorCompletionStatus::Succeeded,
@@ -269,7 +269,7 @@ fn successor_completion_failure_adds_diagnostic_not_history_authority() {
         successor_ready: Vec::new(),
         successor_completion: vec![SuccessorCompletionRecord {
             schema_version: "prototype1-successor-completion.v1".to_owned(),
-            campaign_id: "campaign-1".to_owned(),
+            campaign_id: CampaignId::from("campaign-1"),
             node_id: "node-1".to_owned(),
             runtime_id: RuntimeId("runtime-1".to_owned()),
             status: SuccessorCompletionStatus::Failed,
@@ -1204,7 +1204,10 @@ fn fs_run_store_loads_branch_log_evidence() {
     assert_eq!(branches.record_count, 1);
     assert_eq!(branches.registry_snapshot_count, 0);
     assert_eq!(branches.parent_comparison_count, 1);
-    assert_eq!(branches.latest_campaign_id.as_deref(), Some("campaign-1"));
+    assert_eq!(
+        branches.latest_campaign_id.as_ref(),
+        Some(&CampaignId::from("campaign-1"))
+    );
     assert_eq!(branches.source_node_count, 0);
     assert_eq!(branches.branch_count, 0);
     assert_eq!(branches.active_target_count, 0);
@@ -1321,7 +1324,7 @@ fn fs_run_store_loads_run_attempt_evidence() {
         &InvocationRecord {
             schema_version: "prototype1-invocation.v1".to_owned(),
             role: Role::Child,
-            campaign_id: "campaign-1".to_owned(),
+            campaign_id: CampaignId::from("campaign-1"),
             node_id: child_node.node_id.as_str().to_owned(),
             runtime_id: RuntimeId("runtime-1".to_owned()),
             journal_path: root.join("transition-journal.jsonl"),
@@ -1851,7 +1854,7 @@ fn node(id: &str, parent: Option<&str>, status: NodeStatusRecord) -> NodeRecord 
 fn parent_identity(node_id: &str, generation: u32) -> ParentIdentityRecord {
     ParentIdentityRecord {
         schema_version: "prototype1-parent-identity.v1".to_owned(),
-        campaign_id: "campaign-1".to_owned(),
+        campaign_id: CampaignId::from("campaign-1"),
         parent_id: node_id.to_owned(),
         node_id: node_id.to_owned(),
         generation,
@@ -1894,7 +1897,7 @@ fn runner_result(node: &NodeRecord) -> RunnerResultRecord {
         branch_id: node.branch_id.clone(),
         status: node.status,
         disposition: ploke_records::scheduler::RunnerDispositionRecord::Succeeded,
-        treatment_campaign_id: Some("campaign-1-treatment".to_owned()),
+        treatment_campaign_id: Some(CampaignId::from("campaign-1-treatment")),
         evaluation_artifact_path: Some(PathBuf::from("evaluations/branch-child.json")),
         detail: None,
         exit_code: Some(0),

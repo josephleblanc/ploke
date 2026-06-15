@@ -7,6 +7,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use ploke_records::ids::CampaignId;
 use serde::{Deserialize, Serialize};
 use tokio::task::JoinSet;
 
@@ -132,7 +133,7 @@ pub(crate) struct ActiveParentStatus {
 #[derive(Debug, Clone)]
 struct RuntimeContext {
     repo_root: PathBuf,
-    campaign_id: String,
+    campaign_id: CampaignId,
     manifest_path: PathBuf,
     resolved_campaign: ResolvedCampaignConfig,
     parent_identity: ParentIdentity,
@@ -483,7 +484,7 @@ fn resolve_context(repo_root: Option<&Path>) -> Result<RuntimeContext, PrepareEr
             ),
         });
     };
-    let campaign_id = parent_identity.campaign_id().to_string();
+    let campaign_id = parent_identity.campaign_id().clone();
     // Resolve the campaign from the parent identity; step and continue do not
     // accept an independent run root.
     let manifest_path = campaign_manifest_path(&campaign_id)?;
@@ -2935,7 +2936,8 @@ mod tests {
                 derived_artifact_id: None,
             },
         };
-        let plan_child = ChildFiles::from_resolved("campaign", node.clone(), resolved, false);
+        let plan_child =
+            ChildFiles::from_resolved(&CampaignId::from("campaign"), node.clone(), resolved, false);
         let request = plan_child.runner_request().clone();
         ChildSnapshot {
             plan_index: 0,
@@ -2950,9 +2952,9 @@ mod tests {
 
     fn phase_test_evaluation_report() -> Prototype1BranchEvaluationReport {
         Prototype1BranchEvaluationReport {
-            baseline_campaign_id: "campaign".to_string(),
+            baseline_campaign_id: CampaignId::from("campaign"),
             branch_id: "branch-child".to_string(),
-            treatment_campaign_id: "treatment".to_string(),
+            treatment_campaign_id: CampaignId::from("treatment"),
             evaluation_procedure_id: None,
             evaluator_identity: None,
             eval_set_identity: None,
@@ -3075,9 +3077,9 @@ mod tests {
             max: u32,
             configure: impl FnOnce(&mut Prototype1RunProfile),
         ) -> Self {
-            let campaign_id = "campaign";
+            let campaign_id = CampaignId::from("campaign");
             let instance_id = "BurntSushi__ripgrep-2209";
-            let campaign_dir = eval_home.join("campaigns").join(campaign_id);
+            let campaign_dir = eval_home.join("campaigns").join(campaign_id.as_str());
             let repo_root = eval_home.join("worktrees").join("prototype1-parent");
             fs::create_dir_all(&campaign_dir).expect("create campaign dir");
             fs::create_dir_all(eval_home.join("instances/prototype1/campaign"))
@@ -3085,7 +3087,7 @@ mod tests {
             fs::create_dir_all(eval_home.join("batches")).expect("create batches root");
             let slice_path = campaign_dir.join("slice.jsonl");
 
-            let mut manifest = CampaignManifest::new(campaign_id.to_string());
+            let mut manifest = CampaignManifest::new(campaign_id.clone());
             manifest.dataset_sources = vec![RegistryDatasetSource {
                 key: None,
                 path: slice_path.clone(),
@@ -3115,14 +3117,14 @@ mod tests {
             );
             closure.protocol.status = ClosureClass::Complete;
             let closure_path =
-                campaign_closure_state_path(campaign_id).expect("closure state path");
+                campaign_closure_state_path(&campaign_id).expect("closure state path");
             fs::write(
                 &closure_path,
                 serde_json::to_vec_pretty(&closure).expect("serialize closure"),
             )
             .expect("write closure");
 
-            let base_sha = init_repo_with_parent_identity(&repo_root, campaign_id, instance_id);
+            let base_sha = init_repo_with_parent_identity(&repo_root, &campaign_id, instance_id);
             write_slice_dataset(&slice_path, instance_id, &base_sha);
             clone_repo_cache(&repo_root, &eval_home.join("repos/BurntSushi/ripgrep"));
             let parent_identity = load_parent_identity_optional(&repo_root)
@@ -3382,7 +3384,7 @@ Suggested validation after editing: run `cargo test`.
 
     fn init_repo_with_parent_identity(
         repo_root: &Path,
-        campaign_id: &str,
+        campaign_id: &CampaignId,
         instance_id: &str,
     ) -> String {
         fs::create_dir_all(repo_root).expect("create repo root");
@@ -3956,7 +3958,7 @@ Suggested validation after editing: run `cargo test`.
 
         let before_requests = count_broad_requests(&world.manifest_path);
         let command = crate::cli::Prototype1StateCommand {
-            campaign: Some("campaign".to_string()),
+            campaign: Some(CampaignId::from("campaign")),
             node_id: None,
             repo_root: Some(world.repo_root.clone()),
             init_parent_identity: false,
@@ -4661,7 +4663,7 @@ Suggested validation after editing: run `cargo test`.
             },
             model_id: Some("google/gemini-3.5-flash".to_string()),
             provider_slug: Some("google".to_string()),
-            campaign_id: Some("campaign".to_string()),
+            campaign_id: Some(CampaignId::from("campaign")),
             batch_id: Some("batch".to_string()),
             run_arm_id: "structured-current-policy".to_string(),
             run_role: RegisteredRunRole::Treatment,
@@ -4696,7 +4698,7 @@ Suggested validation after editing: run `cargo test`.
 
         crate::closure::ClosureState {
             schema_version: crate::closure::CLOSURE_STATE_SCHEMA_VERSION.to_string(),
-            campaign_id: "campaign".to_string(),
+            campaign_id: CampaignId::from("campaign"),
             updated_at: "2026-05-25T00:00:00Z".to_string(),
             config: ClosureConfig {
                 benchmark_family: BenchmarkFamily::MultiSweBenchRust,
@@ -4780,7 +4782,7 @@ Suggested validation after editing: run `cargo test`.
             recorded_at,
             generation: 1,
             refs: Refs {
-                campaign_id: "campaign".to_string(),
+                campaign_id: CampaignId::from("campaign"),
                 node_id: node_id.to_string(),
                 instance_id: "instance".to_string(),
                 source_state_id: "state".to_string(),
@@ -4825,7 +4827,7 @@ Suggested validation after editing: run `cargo test`.
             recorded_at: crate::cli::prototype1_state::event::RecordedAt(0),
             generation: 1,
             refs: Refs {
-                campaign_id: "campaign".to_string(),
+                campaign_id: CampaignId::from("campaign"),
                 node_id: node_id.to_string(),
                 instance_id: "instance".to_string(),
                 source_state_id: "state".to_string(),

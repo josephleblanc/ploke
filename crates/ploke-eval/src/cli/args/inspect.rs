@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use ploke_records::ids::CampaignId;
+
 use clap::{Parser, Subcommand};
 
 use crate::protocol_report::ProtocolColorProfile;
@@ -133,7 +135,7 @@ pub struct InspectToolCallsCommand {
 pub struct InspectToolOverviewCommand {
     /// Campaign id whose eval-complete runs should be scanned.
     #[arg(long)]
-    pub campaign: String,
+    pub campaign: CampaignId,
 
     /// Restrict the report to one tool name, e.g. `apply_code_edit`.
     #[arg(long)]
@@ -312,7 +314,7 @@ pub struct InspectProtocolOverviewCommand {
 
     /// Inspect one campaign-scoped protocol triage surface instead of one run or all visible runs.
     #[arg(long, conflicts_with_all = ["record", "instance", "all_runs"])]
-    pub campaign: Option<String>,
+    pub campaign: Option<CampaignId>,
 
     /// Which panel to emphasize for a single-run report.
     #[arg(long, value_enum, default_value_t = ProtocolOverviewView::Overview)]

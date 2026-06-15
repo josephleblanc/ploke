@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::ids::CampaignId;
 use crate::record::{Record, RecordFamily, RecordFormat};
 
 pub const CLOSURE_STATE_SCHEMA_VERSION: &str = "closure-state.v1";

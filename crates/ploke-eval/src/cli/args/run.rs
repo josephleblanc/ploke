@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use ploke_records::ids::CampaignId;
+
 use clap::{ArgAction, ArgGroup, Parser, Subcommand};
 
 use crate::spec::OutputMode;
@@ -184,7 +186,7 @@ pub enum JustSubcommand {
 pub struct JustWatchCommand {
     /// Campaign id. Defaults to parent identity, then active `select campaign`.
     #[arg(long)]
-    pub campaign: Option<String>,
+    pub campaign: Option<CampaignId>,
 
     /// Parent checkout root. Defaults to the current directory.
     #[arg(long, value_name = "PATH")]

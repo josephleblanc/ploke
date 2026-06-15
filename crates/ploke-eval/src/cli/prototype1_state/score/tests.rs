@@ -1,3 +1,4 @@
+use ploke_records::ids::CampaignId;
 use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
@@ -966,7 +967,8 @@ fn score_build_aborts_on_malformed_declared_typed_record() {
     fs::create_dir_all(&node_dir).expect("node dir");
     fs::write(node_dir.join("node.json"), "{ malformed").expect("node");
 
-    let err = super::build("campaign-a", &manifest).expect_err("malformed record aborts");
+    let err = super::build(&CampaignId::from("campaign-a"), &manifest)
+        .expect_err("malformed record aborts");
 
     match err {
         super::PreviewError::ParseRecord { path, record, .. } => {
@@ -1634,7 +1636,7 @@ fn write_run_registration(
         budget: EvalBudget::default(),
         model_id: Some("model".to_string()),
         provider_slug: Some("provider".to_string()),
-        campaign_id: Some("campaign-a".to_string()),
+        campaign_id: Some(CampaignId::from("campaign-a")),
         batch_id: Some("batch-a".to_string()),
         run_arm_id: format!("{run_id}-arm"),
         run_role,

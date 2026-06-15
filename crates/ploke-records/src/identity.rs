@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::ids::CampaignId;
+
 /// Stable repo-relative path used by current parent identity artifacts.
 pub const PARENT_IDENTITY_RELPATH: &str = ".ploke/prototype1/parent_identity.json";
 

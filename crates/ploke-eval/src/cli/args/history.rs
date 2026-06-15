@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use ploke_records::ids::CampaignId;
+
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 
@@ -9,7 +11,7 @@ use super::common::InspectOutputFormat;
 #[command(about = "Inspect History-shaped projections and metrics from persisted evidence")]
 pub struct HistoryCommand {
     #[arg(long, global = true)]
-    pub campaign: Option<String>,
+    pub campaign: Option<CampaignId>,
 
     #[arg(long, global = true, value_name = "PATH")]
     pub repo_root: Option<PathBuf>,

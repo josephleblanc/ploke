@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::evaluation::{EvalSet, Evaluator, InstanceComparison};
-use crate::ids::{RecordedAt, RuntimeId};
+use crate::ids::{CampaignId, RecordedAt, RuntimeId};
 use crate::invocation::{SuccessorCompletionRecord, SuccessorReadyRecord};
 use crate::scheduler::RunnerResultRecord;
 
@@ -86,9 +86,9 @@ pub enum ToParent {
 /// Branch evaluation report payload exchanged over child-to-parent channels.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EvaluationReport {
-    pub baseline_campaign_id: String,
+    pub baseline_campaign_id: CampaignId,
     pub branch_id: String,
-    pub treatment_campaign_id: String,
+    pub treatment_campaign_id: CampaignId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evaluation_procedure_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -187,7 +187,7 @@ mod tests {
                 serde_json::from_str(&line).expect("parse child-to-parent envelope");
             assert_eq!(
                 envelope.campaign_id,
-                "p1-edit-surface-history-long-20260508-1"
+                CampaignId::from("p1-edit-surface-history-long-20260508-1")
             );
             assert_eq!(envelope.node_id, "node-b3ed41bd152ed715");
             count += 1;

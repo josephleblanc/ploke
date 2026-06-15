@@ -4,6 +4,7 @@ use ploke_records::agent_turn::{AgentTurnArtifactRecord, ObservedTurnEventRecord
 use ploke_records::child_plan::ChildPlanRecord;
 use ploke_records::closure::ClosureStateRecord;
 use ploke_records::evaluation::Artifact as EvaluationArtifact;
+use ploke_records::ids::CampaignId;
 use ploke_records::invocation::InvocationRecord;
 use ploke_records::journal::JournalEntry;
 use ploke_records::protocol::Artifact as ProtocolArtifact;
@@ -90,7 +91,7 @@ pub struct BranchRegistryEvidence {
     #[serde(default)]
     pub parent_comparison_count: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub latest_campaign_id: Option<String>,
+    pub latest_campaign_id: Option<CampaignId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_recorded_at: Option<String>,
 }

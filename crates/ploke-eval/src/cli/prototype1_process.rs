@@ -250,6 +250,7 @@ fn channel_error_phase(
 
 #[cfg(test)]
 mod tests {
+    use ploke_records::ids::CampaignId;
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -370,7 +371,7 @@ mod tests {
     }
 
     fn setup_successor_install_case(
-        campaign_id: &str,
+        campaign_id: &CampaignId,
     ) -> (
         TempDir,
         crate::test_support::EnvGuard,
@@ -389,7 +390,7 @@ mod tests {
             "PLOKE_EVAL_HOME",
             eval_home.clone().into_os_string(),
         )]);
-        let campaign_root = eval_home.join("campaigns").join(campaign_id);
+        let campaign_root = eval_home.join("campaigns").join(campaign_id.as_str());
         let prototype_root = campaign_root.join("prototype1");
         fs::create_dir_all(&prototype_root).expect("prototype root");
         fs::write(campaign_root.join("campaign.json"), "{}").expect("campaign manifest");
@@ -422,7 +423,7 @@ mod tests {
         let parent_branch = "prototype1-parent-gen0";
         run_git_test(&repo_root, &["switch", "-c", parent_branch]);
         let current_parent = ParentIdentity::root_bootstrap(
-            campaign_id,
+            campaign_id.clone(),
             "node-parent",
             "BurntSushi__ripgrep-2209",
             "branch-parent",
@@ -478,7 +479,7 @@ mod tests {
             .expect("current parent surface");
 
         let parent_identity = ParentIdentity::from_node(
-            campaign_id,
+            campaign_id.clone(),
             &node,
             Some(&current_parent),
             Some(branch.0.clone()),
@@ -588,8 +589,13 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
     }
 
     #[cfg(feature = "live_api_tests")]
-    fn write_live_campaign(eval_home: &Path, campaign_id: &str, dataset: PathBuf, model: &str) {
-        let mut manifest = crate::CampaignManifest::new(campaign_id.to_string());
+    fn write_live_campaign(
+        eval_home: &Path,
+        campaign_id: &CampaignId,
+        dataset: PathBuf,
+        model: &str,
+    ) {
+        let mut manifest = crate::CampaignManifest::new(campaign_id.clone());
         manifest.dataset_sources = vec![crate::target_registry::RegistryDatasetSource {
             key: None,
             path: dataset,
@@ -598,8 +604,8 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
         }];
         manifest.model_id = Some(model.to_string());
         manifest.route_source = Some(ploke_llm::request::models::ModelRouteSource::DirectGoogle);
-        manifest.instances_root = Some(eval_home.join("instances").join(campaign_id));
-        manifest.batches_root = Some(eval_home.join("batches").join(campaign_id));
+        manifest.instances_root = Some(eval_home.join("instances").join(campaign_id.as_str()));
+        manifest.batches_root = Some(eval_home.join("batches").join(campaign_id.as_str()));
         manifest.eval.limit = Some(1);
         manifest.eval.batch_prefix = Some("live-child-runner".to_string());
         manifest.eval.budget = crate::spec::EvalBudget {
@@ -616,9 +622,9 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
 
     fn treatment_with_instances(instance_ids: &[&str]) -> Prototype1TreatmentEvidence {
         Prototype1TreatmentEvidence {
-            baseline_campaign_id: "baseline".to_string(),
+            baseline_campaign_id: CampaignId::from("baseline"),
             branch_id: "branch-1".to_string(),
-            treatment_campaign_id: "treatment".to_string(),
+            treatment_campaign_id: CampaignId::from("treatment"),
             treatment_campaign_manifest: PathBuf::from("treatment/campaign.json"),
             treatment_closure_state_path: PathBuf::from("treatment/closure-state.json"),
             eval_policy: EvalCampaignPolicy::default(),
@@ -765,26 +771,26 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
     #[tokio::test]
     async fn child_runner_failure_records_terminal_channel() {
         let tmp = tempdir().expect("tempdir");
+        let campaign_id = CampaignId::from("live-child-runner-failure");
         let eval_home = tmp.path().join("eval-home");
         let _env = crate::test_support::env_guard_os(vec![(
             "PLOKE_EVAL_HOME",
             eval_home.clone().into_os_string(),
         )]);
-        let campaign_id = "child-runner-failure";
-        let campaign_dir = eval_home.join("campaigns").join(campaign_id);
+        let campaign_dir = eval_home.join("campaigns").join(campaign_id.as_str());
         let prototype1_root = campaign_dir.join("prototype1");
         let manifest_path = campaign_dir.join("campaign.json");
         fs::create_dir_all(&prototype1_root).expect("prototype1 root");
 
         let node = test_node(&prototype1_root);
-        let request = crate::intervention::runner_request_from_node(campaign_id, &node, true);
+        let request = crate::intervention::runner_request_from_node(&campaign_id, &node, true);
         let resolved = resolved_branch_for(&node);
         let runtime_id = RuntimeId::new();
         let journal_path = prototype1_root.join("transition-journal.jsonl");
         let channel_root =
             crate::cli::prototype1_state::invocation::channel_root(&node.node_dir, runtime_id);
         let invocation = crate::cli::prototype1_state::invocation::ChildInvocation::with_bootstrap(
-            campaign_id.to_string(),
+            campaign_id.clone(),
             node.clone(),
             request,
             resolved,
@@ -912,13 +918,13 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
             crate::test_support::write_direct_google_model_config(&eval_home, &model_id);
             print_live_child_timing("model_config_written", started, &mut previous);
 
-            let campaign_id = "live-child-runner-success";
+            let campaign_id = CampaignId::from("live-child-runner-success");
             let base_sha = write_live_repo(&eval_home);
             let dataset = write_live_dataset(&eval_home, &base_sha);
-            write_live_campaign(&eval_home, campaign_id, dataset, &model_id.to_string());
+            write_live_campaign(&eval_home, &campaign_id, dataset, &model_id.to_string());
             print_live_child_timing("campaign_written", started, &mut previous);
 
-            let campaign_dir = eval_home.join("campaigns").join(campaign_id);
+            let campaign_dir = eval_home.join("campaigns").join(campaign_id.as_str());
             let prototype1_root = campaign_dir.join("prototype1");
             fs::create_dir_all(&prototype1_root).expect("prototype1 root");
             let manifest_path = campaign_dir.join("campaign.json");
@@ -929,7 +935,7 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
             write_text(&target_path, source);
             crate::intervention::write_node_projection(&node).expect("write node projection");
 
-            let request = crate::intervention::runner_request_from_node(campaign_id, &node, true);
+            let request = crate::intervention::runner_request_from_node(&campaign_id, &node, true);
             let resolved = live_branch_for(&node, source, proposed);
             let runtime_id = RuntimeId::new();
             let journal_path = prototype1_root.join("transition-journal.jsonl");
@@ -937,7 +943,7 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
                 crate::cli::prototype1_state::invocation::channel_root(&node.node_dir, runtime_id);
             let invocation =
                 crate::cli::prototype1_state::invocation::ChildInvocation::with_bootstrap(
-                    campaign_id.to_string(),
+                    campaign_id.clone(),
                     node.clone(),
                     request,
                     resolved,
@@ -1073,7 +1079,8 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
         let node = test_node(tmp.path());
         fs::create_dir_all(&node.workspace_root).expect("worktree");
 
-        let cache = prepare_child_instance_target_cache(&node, "treatment-1").expect("cache");
+        let cache = prepare_child_instance_target_cache(&node, &CampaignId::from("treatment-1"))
+            .expect("cache");
 
         assert!(cache.starts_with(&node.node_dir));
         assert!(!cache.starts_with(&node.workspace_root));
@@ -1102,8 +1109,12 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
         )
         .expect("instance target");
 
-        cleanup_prototype1_child_build_products(&manifest_path, "campaign", &node)
-            .expect("cleanup");
+        cleanup_prototype1_child_build_products(
+            &manifest_path,
+            &CampaignId::from("campaign"),
+            &node,
+        )
+        .expect("cleanup");
 
         assert!(!node.binary_path.exists());
         assert!(!node.node_dir.join("target").exists());
@@ -1131,8 +1142,12 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
         fs::write(first_workspace.join("README.md"), b"first").expect("first marker");
         fs::write(retry_workspace.join("README.md"), b"retry").expect("retry marker");
 
-        cleanup_prototype1_child_build_products(&manifest_path, "campaign", &node)
-            .expect("cleanup");
+        cleanup_prototype1_child_build_products(
+            &manifest_path,
+            &CampaignId::from("campaign"),
+            &node,
+        )
+        .expect("cleanup");
 
         assert!(!first_workspace.join("target").exists());
         assert!(!retry_workspace.join("target").exists());
@@ -1168,8 +1183,12 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
         fs::write(outside_target.join("artifact"), b"keep").expect("outside marker");
         symlink(&outside_target, workspace.join("target")).expect("target symlink");
 
-        cleanup_prototype1_child_build_products(&manifest_path, "campaign", &node)
-            .expect("cleanup");
+        cleanup_prototype1_child_build_products(
+            &manifest_path,
+            &CampaignId::from("campaign"),
+            &node,
+        )
+        .expect("cleanup");
 
         assert!(!workspace.join("target").exists());
         assert_eq!(
@@ -1280,7 +1299,7 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
 
     #[test]
     fn successor_install_commits_selected_parent_identity() {
-        let campaign_id = "successor-identity-install";
+        let campaign_id = CampaignId::from("successor-identity-install");
         let (
             _tmp,
             _env,
@@ -1292,11 +1311,11 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
             current_surface,
             current_parent,
             selected_parent_identity,
-        ) = setup_successor_install_case(campaign_id);
+        ) = setup_successor_install_case(&campaign_id);
         let selected = selection_for_artifact(node, resolved.clone(), artifact_surface);
 
         let installed = install_committed_successor_artifact(
-            campaign_id,
+            &campaign_id,
             &repo_root,
             &selected,
             artifact_branch.clone(),
@@ -1345,7 +1364,7 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
 
     #[test]
     fn successor_install_rejects_branch_drift_after_selection() {
-        let campaign_id = "successor-drift-reject";
+        let campaign_id = CampaignId::from("successor-drift-reject");
         let (
             _tmp,
             _env,
@@ -1357,7 +1376,7 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
             current_surface,
             current_parent,
             selected_parent_identity,
-        ) = setup_successor_install_case(campaign_id);
+        ) = setup_successor_install_case(&campaign_id);
         let selected = selection_for_artifact(node, resolved, artifact_surface);
 
         run_git_test(&repo_root, &["switch", &artifact_branch.0]);
@@ -1374,7 +1393,7 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
         let parent_branch = current_parent.artifact_branch().unwrap().to_string();
 
         let err = install_committed_successor_artifact(
-            campaign_id,
+            &campaign_id,
             &repo_root,
             &selected,
             artifact_branch,
@@ -1430,9 +1449,9 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
         );
 
         let treatment = Prototype1TreatmentEvidence {
-            baseline_campaign_id: "baseline".to_string(),
+            baseline_campaign_id: CampaignId::from("baseline"),
             branch_id: node.branch_id.clone(),
-            treatment_campaign_id: "treatment".to_string(),
+            treatment_campaign_id: CampaignId::from("treatment"),
             treatment_campaign_manifest: tmp.path().join("campaign.json"),
             treatment_closure_state_path: tmp.path().join("closure.json"),
             eval_policy: EvalCampaignPolicy::default(),
@@ -1499,7 +1518,7 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
             budget: EvalBudget::default(),
             model_id: Some("model".to_string()),
             provider_slug: Some("provider".to_string()),
-            campaign_id: Some("treatment".to_string()),
+            campaign_id: Some(CampaignId::from("treatment")),
             batch_id: Some("batch".to_string()),
             run_arm_id: "treatment".to_string(),
             run_role: RegisteredRunRole::Treatment,
@@ -1554,7 +1573,7 @@ pub(crate) fn record_prototype1_successor_ready(
     let record = crate::cli::prototype1_state::invocation::SuccessorReadyRecord {
         schema_version: crate::cli::prototype1_state::invocation::SUCCESSOR_READY_SCHEMA_VERSION
             .to_string(),
-        campaign_id: invocation.campaign_id().to_string(),
+        campaign_id: invocation.campaign_id().clone(),
         node_id: invocation.node_id().to_string(),
         runtime_id: crate::cli::prototype1_state::invocation::record_runtime_id(
             invocation.runtime_id(),
@@ -1594,7 +1613,7 @@ pub(crate) fn record_prototype1_successor_completion(
         schema_version:
             crate::cli::prototype1_state::invocation::SUCCESSOR_COMPLETION_SCHEMA_VERSION
                 .to_string(),
-        campaign_id: invocation.campaign_id().to_string(),
+        campaign_id: invocation.campaign_id().clone(),
         node_id: invocation.node_id().to_string(),
         runtime_id: crate::cli::prototype1_state::invocation::record_runtime_id(
             invocation.runtime_id(),
@@ -1637,7 +1656,7 @@ pub(crate) fn validate_prototype1_successor_continuation(
     manifest_path: &Path,
 ) -> Result<ParentIdentity, PrepareError> {
     let store = FsBlockStore::for_campaign_manifest(manifest_path);
-    let lineage_id = LineageId::new(invocation.campaign_id().to_string());
+    let lineage_id = LineageId::new(invocation.campaign_id().clone());
     let state = store
         .lineage_state(&lineage_id)
         .map_err(block_store_prepare_error)?;
@@ -1735,7 +1754,7 @@ fn build_prototype1_active_successor_binary(repo_root: &Path) -> Result<PathBuf,
 }
 
 fn prepare_prototype1_active_successor_runtime(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     _manifest_path: &Path,
     selected: &selection::Selection<selection::Artifact>,
     active_parent_root: &Path,
@@ -1752,7 +1771,7 @@ fn prepare_prototype1_active_successor_runtime(
 }
 
 fn install_prototype1_successor_artifact(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     active_parent_root: &Path,
     selected: &selection::Selection<selection::Artifact>,
     current_parent: &ParentIdentity,
@@ -1774,7 +1793,7 @@ fn install_prototype1_successor_artifact(
             detail: source.to_string(),
         })?;
     let selected_parent_identity = ParentIdentity::from_node(
-        campaign_id.to_string(),
+        campaign_id.clone(),
         node,
         Some(current_parent),
         Some(artifact_branch.0.clone()),
@@ -1895,7 +1914,7 @@ struct InstalledSuccessorArtifact {
 }
 
 fn install_committed_successor_artifact(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     active_parent_root: &Path,
     selected: &selection::Selection<selection::Artifact>,
     artifact_branch: GitBranch,
@@ -1929,7 +1948,7 @@ fn install_committed_successor_artifact(
     append_prototype1_journal_entry(
         &manifest_path,
         JournalEntry::Successor(SuccessorRecord::checkout(
-            campaign_id.to_string(),
+            campaign_id.clone(),
             node.node_id.clone(),
             CommitPhase::Before,
             active_parent_root.to_path_buf(),
@@ -2005,7 +2024,7 @@ fn install_committed_successor_artifact(
     append_prototype1_journal_entry(
         &manifest_path,
         JournalEntry::Successor(SuccessorRecord::checkout(
-            campaign_id.to_string(),
+            campaign_id.clone(),
             node.node_id.clone(),
             CommitPhase::After,
             active_parent_root.to_path_buf(),
@@ -2018,7 +2037,7 @@ fn install_committed_successor_artifact(
         &manifest_path,
         JournalEntry::ActiveCheckoutAdvanced(ActiveCheckoutAdvancedEntry {
             recorded_at: RecordedAt::now(),
-            campaign_id: campaign_id.to_string(),
+            campaign_id: campaign_id.clone(),
             previous_parent_identity: previous_parent,
             selected_parent_identity: selected_parent_identity.clone(),
             active_parent_root: active_parent_root.to_path_buf(),
@@ -2104,7 +2123,7 @@ fn child_instance_targets_root(node_dir: &Path) -> PathBuf {
 
 fn prepare_child_instance_target_cache(
     node: &crate::intervention::Prototype1NodeRecord,
-    treatment_campaign_id: &str,
+    treatment_campaign_id: &CampaignId,
 ) -> Result<PathBuf, PrepareError> {
     let root = child_instance_targets_root(&node.node_dir);
     let repo_cache = root.join(treatment_campaign_id);
@@ -2371,7 +2390,7 @@ fn validate_child_patch_projection_checkout(
 
 pub(crate) fn cleanup_prototype1_child_build_products(
     manifest_path: &Path,
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     node: &crate::intervention::Prototype1NodeRecord,
 ) -> Result<(), PrepareError> {
     ensure_node_child_path(&node.node_dir, &node.binary_path)?;
@@ -2426,7 +2445,7 @@ pub(crate) fn cleanup_prototype1_child_build_products(
 
 fn remove_node_target(
     manifest_path: &Path,
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     node: &crate::intervention::Prototype1NodeRecord,
     target_dir: &Path,
 ) -> Result<(), PrepareError> {
@@ -2473,7 +2492,7 @@ fn remove_node_target(
 
 fn remove_child_instance_targets(
     manifest_path: &Path,
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     node: &crate::intervention::Prototype1NodeRecord,
     targets_root: &Path,
 ) -> Result<(), PrepareError> {
@@ -2527,7 +2546,7 @@ fn broad_harness_workspace_root(campaign_manifest_path: &Path) -> PathBuf {
 
 fn remove_broad_harness_targets(
     manifest_path: &Path,
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     node: &crate::intervention::Prototype1NodeRecord,
 ) -> Result<(), PrepareError> {
     let workspace_root = broad_harness_workspace_root(manifest_path);
@@ -2585,7 +2604,7 @@ fn remove_broad_harness_targets(
 
 fn remove_broad_harness_target(
     manifest_path: &Path,
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     node: &crate::intervention::Prototype1NodeRecord,
     target_dir: &Path,
 ) -> Result<(), PrepareError> {
@@ -2691,7 +2710,7 @@ fn remove_broad_harness_target(
 }
 
 pub(crate) fn persist_prototype1_buildable_child_artifact(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     campaign_manifest_path: &Path,
     active_parent_root: &Path,
     current_parent: &ParentIdentity,
@@ -2717,7 +2736,7 @@ pub(crate) fn persist_prototype1_buildable_child_artifact(
             detail: source.to_string(),
         })?;
     let identity = ParentIdentity::from_node(
-        campaign_id.to_string(),
+        campaign_id.clone(),
         node,
         Some(current_parent),
         Some(workspace.branch.0.clone()),
@@ -2748,7 +2767,7 @@ pub(crate) fn persist_prototype1_buildable_child_artifact(
         campaign_manifest_path,
         JournalEntry::ChildArtifactCommitted(ChildArtifactCommittedEntry {
             recorded_at: RecordedAt::now(),
-            campaign_id: campaign_id.to_string(),
+            campaign_id: campaign_id.clone(),
             parent_identity: Some(current_parent.clone()),
             child_identity: identity,
             node_id: node.node_id.clone(),
@@ -2937,7 +2956,7 @@ fn wait_for_prototype1_successor_ready(
 }
 
 pub(crate) fn spawn_and_handoff_prototype1_successor(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     selected: selection::Selection<selection::Artifact>,
     active_parent_root: &Path,
     parent: Parent<Selectable>,
@@ -3082,7 +3101,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         crate::cli::prototype1_state::invocation::invocation_path(&node.node_dir, runtime_id);
     let invocation = SuccessorInvocation::from_retired_parent(
         &retired_parent,
-        campaign_id.to_string(),
+        campaign_id.clone(),
         node.node_id.clone(),
         runtime_id,
         prototype1_transition_journal_path(&manifest_path),
@@ -3152,7 +3171,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
             &manifest_path,
             JournalEntry::SuccessorHandoff(SuccessorHandoffEntry {
                 recorded_at: RecordedAt::now(),
-                campaign_id: campaign_id.to_string(),
+                campaign_id: campaign_id.clone(),
                 node_id: node.node_id.clone(),
                 runtime_id,
                 active_parent_root: active_parent_root.to_path_buf(),
@@ -3234,7 +3253,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
                 &manifest_path,
                 JournalEntry::SuccessorHandoff(SuccessorHandoffEntry {
                     recorded_at: RecordedAt::now(),
-                    campaign_id: campaign_id.to_string(),
+                    campaign_id: campaign_id.clone(),
                     node_id: node.node_id.clone(),
                     runtime_id,
                     active_parent_root: active_parent_root.to_path_buf(),
@@ -3288,13 +3307,13 @@ struct HandoffBlock {
 }
 
 fn handoff_block_fields(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     parent_identity: &ParentIdentity,
     manifest_path: &Path,
     installed: &InstalledSuccessorArtifact,
 ) -> Result<HandoffBlock, PrepareError> {
     let store = FsBlockStore::for_campaign_manifest(manifest_path);
-    let lineage_id = LineageId::new(campaign_id.to_string());
+    let lineage_id = LineageId::new(campaign_id.clone());
     let state = store
         .lineage_state(&lineage_id)
         .map_err(block_store_prepare_error)?;
@@ -3368,7 +3387,7 @@ fn block_store_prepare_error(
 /// Construct a persisted runner result for failure after the child binary
 /// exists but before a successful evaluation report is produced.
 fn build_treatment_failed_runner_result(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     node: &crate::intervention::Prototype1NodeRecord,
     detail: impl Into<String>,
     exit_code: Option<i32>,
@@ -3377,7 +3396,7 @@ fn build_treatment_failed_runner_result(
 ) -> Prototype1RunnerResult {
     Prototype1RunnerResult {
         schema_version: crate::intervention::PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
-        campaign_id: campaign_id.to_string(),
+        campaign_id: campaign_id.clone(),
         node_id: node.node_id.clone(),
         generation: node.generation,
         branch_id: node.branch_id.clone(),
@@ -3396,13 +3415,13 @@ fn build_treatment_failed_runner_result(
 /// Construct the success result written by a child runner after it completes
 /// one treatment evaluation.
 fn build_succeeded_runner_result(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     node: &crate::intervention::Prototype1NodeRecord,
     treatment: &Prototype1TreatmentEvidence,
 ) -> Prototype1RunnerResult {
     Prototype1RunnerResult {
         schema_version: crate::intervention::PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
-        campaign_id: campaign_id.to_string(),
+        campaign_id: campaign_id.clone(),
         node_id: node.node_id.clone(),
         generation: node.generation,
         branch_id: node.branch_id.clone(),
@@ -3419,7 +3438,7 @@ fn build_succeeded_runner_result(
 }
 
 fn record_attempt_runner_result(
-    _campaign_id: &str,
+    _campaign_id: &CampaignId,
     _campaign_manifest_path: &Path,
     node: &crate::intervention::Prototype1NodeRecord,
     runtime_id: RuntimeId,
@@ -3471,7 +3490,7 @@ pub(super) async fn execute_prototype1_runner_invocation(
         invocation.runtime_id(),
         node.generation,
         Refs {
-            campaign_id: invocation.campaign_id().to_string(),
+            campaign_id: invocation.campaign_id().clone(),
             node_id: invocation.node_id().to_string(),
             instance_id: node.instance_id.clone(),
             source_state_id: node.source_state_id.clone(),
@@ -3589,7 +3608,7 @@ pub(super) async fn execute_prototype1_runner_invocation(
 }
 
 pub(super) async fn run_prototype1_resolved_branch_treatment(
-    baseline_campaign_id: &str,
+    baseline_campaign_id: &CampaignId,
     baseline_manifest_path: &Path,
     resolved_branch: &ResolvedTreatmentBranch,
     node: &crate::intervention::Prototype1NodeRecord,

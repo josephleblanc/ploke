@@ -9,6 +9,7 @@ use ploke_llm::{ModelId, ProviderKey};
 use ploke_protocol::Procedure;
 use ploke_protocol::tool_calls::{review, segment, trace};
 use ploke_protocol::{JsonAdjudicator, JsonLlmConfig, ProtocolReasoningPolicy};
+use ploke_records::ids::CampaignId;
 use serde::Serialize;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -388,7 +389,7 @@ pub(crate) struct ClosureAdvanceProtocolReport {
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ClosureAdvanceAllReport {
-    campaign_id: String,
+    campaign_id: CampaignId,
     dry_run: bool,
     eval: ClosureAdvanceEvalReport,
     protocol: ClosureAdvanceProtocolReport,
@@ -460,7 +461,7 @@ fn select_protocol_rows<'a>(
 fn build_eval_batch_plans(
     registry: &TargetRegistry,
     selected_rows: &[&crate::closure::ClosureInstanceRow],
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     batch_prefix: Option<&str>,
 ) -> Result<Vec<EvalBatchPlan>, PrepareError> {
     let mut by_instance = BTreeMap::<String, RegistryEntry>::new();
@@ -469,7 +470,7 @@ fn build_eval_batch_plans(
     }
 
     let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S").to_string();
-    let prefix = batch_prefix.unwrap_or(campaign_id);
+    let prefix = batch_prefix.unwrap_or(campaign_id.as_str());
     let mut grouped = BTreeMap::<(String, PathBuf), Vec<String>>::new();
     for row in selected_rows {
         let entry =

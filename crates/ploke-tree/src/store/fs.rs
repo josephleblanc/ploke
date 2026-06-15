@@ -1194,6 +1194,7 @@ fn run_relative_key(run_root: &Path, path: &Path) -> String {
 mod tests {
     use super::*;
     use ploke_records::agent_turn::ObservedTurnEventRecord;
+    use ploke_records::ids::CampaignId;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -1386,7 +1387,7 @@ mod tests {
             .expect("closure evidence");
 
         assert_eq!(closure.source_path, root.join("closure-state.json"));
-        assert_eq!(closure.state.campaign_id, "campaign-1");
+        assert_eq!(closure.state.campaign_id, CampaignId::from("campaign-1"));
         assert_eq!(
             closure.state.config.model_id.as_deref(),
             Some("google/gemini")

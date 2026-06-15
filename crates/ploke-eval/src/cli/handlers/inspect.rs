@@ -1343,7 +1343,7 @@ struct ProtocolRunSummaryRecord {
 }
 
 fn collect_protocol_campaign_triage_report(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     command: &InspectProtocolOverviewCommand,
 ) -> Result<ProtocolCampaignTriageReport, PrepareError> {
     let state = load_closure_state(campaign_id)?;
@@ -1655,7 +1655,7 @@ fn collect_protocol_campaign_triage_report(
     );
 
     Ok(ProtocolCampaignTriageReport {
-        campaign_id: campaign_id.to_string(),
+        campaign_id: campaign_id.clone(),
         scope: query.scope_label(),
         issue_filter: command.issue.clone(),
         tool_filter: command.tool.clone(),
@@ -1968,7 +1968,7 @@ fn dedupe_exemplars(rows: &mut Vec<ProtocolCampaignExemplarRow>) {
 }
 
 fn build_triage_next_steps(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     query: &ProtocolCampaignQuery,
     problem_families: &[ProtocolCampaignFamilyRow],
     issue_kinds: &[ProtocolCampaignCountRow],
@@ -2081,7 +2081,7 @@ struct ProtocolRunSummaryRow {
 
 #[derive(Debug, Clone, Serialize)]
 struct ToolCampaignOverviewReport {
-    campaign_id: String,
+    campaign_id: CampaignId,
     tool_filter: Option<String>,
     scanned_complete_runs: usize,
     runs_with_tool: usize,

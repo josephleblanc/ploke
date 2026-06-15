@@ -785,7 +785,7 @@ mod tests {
                 .expect("loaded forest")
                 .campaign
                 .campaign_id,
-            "campaign-ui"
+            CampaignId::from("campaign-ui")
         );
 
         app.graph_snapshot_path = output.display().to_string();
@@ -799,7 +799,7 @@ mod tests {
                 .expect("exported forest")
                 .campaign
                 .campaign_id,
-            "campaign-ui"
+            CampaignId::from("campaign-ui")
         );
 
         fs::remove_dir_all(&dir).expect("remove test dir");
