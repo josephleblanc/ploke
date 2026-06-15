@@ -6,6 +6,7 @@ pub mod csa;
 pub mod deliberative;
 pub mod entropy;
 pub mod eva;
+pub mod hyperagents;
 pub mod planning;
 pub mod raser;
 pub mod sadn;

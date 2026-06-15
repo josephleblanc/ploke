@@ -8,6 +8,14 @@ pub const FORMAL_NOTE: &str = "/home/brasides/wiki/queries/research/ploke-arxiv-
 /// SADN setup/algorithm equation note used as the source authority.
 pub const SADN_ALGORITHM_NOTE: &str = "/home/brasides/wiki/queries/ploke/selection-scoring/sadn-equations/setup-and-algorithm-equations.md";
 
+/// Archive parent-selection note used as the source authority for DGM-H / HyperAgents.
+pub const ARCHIVE_PARENT_NOTE: &str =
+    "/home/brasides/wiki/queries/ploke/selection-scoring/archive-parent-selection-mechanisms.md";
+
+/// Nearby-mechanism ledger for candidates that are tracked but not executable formulas yet.
+pub const NEARBY_MECHANISM_LEDGER: &str =
+    "/home/brasides/wiki/queries/ploke/selection-scoring/ledgers/mechanism-ledger.md";
+
 macro_rules! spec {
     ($id:literal, Some($paper:literal), $name:literal, $kind:expr, $exact:expr) => {
         MechanismSpec {
@@ -37,8 +45,68 @@ macro_rules! spec {
     };
 }
 
+macro_rules! nearby_candidate {
+    ($id:literal, $paper:literal, $name:literal) => {
+        MechanismSpec {
+            id: $id,
+            paper_id: Some($paper),
+            name: $name,
+            kind: MechanismKind::Unresolved,
+            exactness: Exactness::NotFormalizable,
+            source: [SourceRef {
+                path: NEARBY_MECHANISM_LEDGER,
+                section_key: $paper,
+            }],
+        }
+    };
+}
+
 /// All source-backed mechanisms currently represented by this crate boundary.
 pub static MECHANISMS: &[MechanismSpec] = &[
+    MechanismSpec {
+        id: "2603.19461-dgmh-parent-selection",
+        paper_id: Some("2603.19461"),
+        name: "DGM-H score-child-prop parent selection",
+        kind: MechanismKind::Selector,
+        exactness: Exactness::Faithful,
+        source: [SourceRef {
+            path: ARCHIVE_PARENT_NOTE,
+            section_key: "2603.19461",
+        }],
+    },
+    MechanismSpec {
+        id: "2603.19461-dgmh-archive-admission",
+        paper_id: Some("2603.19461"),
+        name: "DGM-H valid-child archive admission",
+        kind: MechanismKind::Predicate,
+        exactness: Exactness::Faithful,
+        source: [SourceRef {
+            path: ARCHIVE_PARENT_NOTE,
+            section_key: "2603.19461",
+        }],
+    },
+    MechanismSpec {
+        id: "2603.19461-dgmh-staged-cross-domain",
+        paper_id: Some("2603.19461"),
+        name: "DGM-H staged evaluation and cross-domain average",
+        kind: MechanismKind::Metric,
+        exactness: Exactness::Faithful,
+        source: [SourceRef {
+            path: ARCHIVE_PARENT_NOTE,
+            section_key: "2603.19461",
+        }],
+    },
+    MechanismSpec {
+        id: "2603.19461-dgmh-modifiable-parent-selection",
+        paper_id: Some("2603.19461"),
+        name: "DGM-H modifiable parent-selection sketches",
+        kind: MechanismKind::Selector,
+        exactness: Exactness::Interpretive,
+        source: [SourceRef {
+            path: ARCHIVE_PARENT_NOTE,
+            section_key: "2603.19461",
+        }],
+    },
     spec!(
         "2606.00007-deliberative-curation",
         Some("2606.00007"),
@@ -175,6 +243,31 @@ pub static MECHANISMS: &[MechanismSpec] = &[
         "Verifier metrics candidate lead",
         MechanismKind::Unresolved,
         Exactness::NotFormalizable
+    ),
+    nearby_candidate!(
+        "2606.03056-skilldag-typed-skill-graph",
+        "2606.03056",
+        "SkillDAG typed skill-graph admission candidate"
+    ),
+    nearby_candidate!(
+        "2606.03083-deltamem-residual-tree-write-rule",
+        "2606.03083",
+        "DELTAMEM residual-tree write-rule candidate"
+    ),
+    nearby_candidate!(
+        "2606.03467-stepfinder-step-attribution",
+        "2606.03467",
+        "StepFinder step-attribution candidate"
+    ),
+    nearby_candidate!(
+        "2606.02875-handoff-debt-rediscovery-cost",
+        "2606.02875",
+        "Handoff Debt rediscovery-cost candidate"
+    ),
+    nearby_candidate!(
+        "2606.02994-reasoning-primitive-induction",
+        "2606.02994",
+        "Reasoning primitive induction candidate"
     ),
 ];
 
