@@ -1,11 +1,11 @@
 {
   "schema_version": "prototype1-parent-identity.v1",
-  "campaign_id": "p1-occurrence-selection-overnight-20260509-1",
-  "parent_id": "node-61313248d50826c3",
-  "node_id": "node-61313248d50826c3",
+  "campaign_id": "mwv-live-r16-dangling-symlink-surface-fix-20260615T003337Z",
+  "parent_id": "node-4765c0096cb47bd5",
+  "node_id": "node-4765c0096cb47bd5",
   "generation": 0,
   "instance_id": "BurntSushi__ripgrep-2209",
-  "branch_id": "prototype1-parent-p1-occurrence-selection-overnight-20260509-1-gen0",
-  "artifact_branch": "prototype1-parent-p1-occurrence-selection-overnight-20260509-1-gen0",
-  "created_at": "2026-05-10T06:13:46.730761972+00:00"
+  "branch_id": "prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0",
+  "artifact_branch": "prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0",
+  "created_at": "2026-06-15T00:33:37.666333945+00:00"
 }
