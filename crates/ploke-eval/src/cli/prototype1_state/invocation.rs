@@ -108,7 +108,7 @@ pub(crate) enum Role {
 pub(crate) struct Invocation {
     pub schema_version: String,
     pub role: Role,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub node_id: String,
     pub runtime_id: RuntimeId,
     pub journal_path: PathBuf,

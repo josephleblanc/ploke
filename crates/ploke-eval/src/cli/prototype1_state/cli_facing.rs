@@ -17,6 +17,7 @@ use ploke_core::EXECUTION_DEBUG_TARGET;
 use ploke_llm::{ModelId, ProviderKey, request::models::ModelRouteSource};
 use ploke_records::{
     agent_turn::{AgentTurnSummaryRecord, AgentTurnTraceRecord},
+    ids::CampaignId,
     llm_response::FULL_RESPONSE_TRACE_FILE,
 };
 use ploke_tui::tools::ToolName;
@@ -47,10 +48,11 @@ use crate::{
         persist_intervention_synthesis_for_record, persist_issue_detection_for_record,
         print_issue_case_block,
         prototype1_process::{
-            SuccessorHandoffMode, cleanup_prototype1_child_build_products,
-            persist_prototype1_buildable_child_artifact, record_prototype1_successor_completion,
-            record_prototype1_successor_ready, spawn_and_handoff_prototype1_successor,
-            validate_child_surface, validate_prototype1_successor_continuation,
+            Prototype1SuccessorHandoff, SuccessorHandoffMode,
+            cleanup_prototype1_child_build_products, persist_prototype1_buildable_child_artifact,
+            record_prototype1_successor_completion, record_prototype1_successor_ready,
+            spawn_and_handoff_prototype1_successor, validate_child_surface,
+            validate_prototype1_successor_continuation,
         },
         prototype1_state::{
             backend::{
@@ -143,7 +145,7 @@ use crate::{
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct Prototype1SetupReport {
-    pub(crate) campaign_id: String,
+    pub(crate) campaign_id: CampaignId,
     campaign_manifest: PathBuf,
     closure_state_path: PathBuf,
     slice_dataset_path: PathBuf,
@@ -369,7 +371,7 @@ fn load_existing_prototype1_campaign(
         });
 
     Ok(Prototype1LoopCampaign {
-        campaign_id: campaign_id.to_string(),
+        campaign_id,
         manifest_path,
         closure_state_path,
         slice_dataset_path,
@@ -401,6 +403,15 @@ pub(crate) async fn establish_parent_baseline(
     };
     baseline.validate_for_parent(campaign_id, parent.node_id(), parent.branch_id())?;
     Ok(baseline)
+}
+
+async fn establish_parent_baseline_for_id(
+    campaign_id: &CampaignId,
+    config: &ResolvedCampaignConfig,
+    manifest_path: &Path,
+    parent: &ParentIdentity,
+) -> Result<CompleteBaseline, PrepareError> {
+    establish_parent_baseline(campaign_id.as_str(), config, manifest_path, parent).await
 }
 
 async fn establish_initial_parent_baseline(
@@ -4576,9 +4587,9 @@ fn infer_campaign_from_parent_identity(repo_root: &Path) -> Result<Option<String
         .map(|identity| identity.map(|identity| identity.campaign_id().to_string()))
 }
 
-pub(crate) fn record_active_prototype1_monitor_target(campaign_id: &str, repo_root: &Path) {
+pub(crate) fn record_active_prototype1_monitor_target(campaign_id: &CampaignId, repo_root: &Path) {
     let target = ActivePrototype1MonitorTarget {
-        campaign_id: campaign_id.to_string(),
+        campaign_id,
         repo_root: repo_root.to_path_buf(),
     };
     if let Err(error) = save_active_prototype1_monitor_target(&target) {
@@ -4586,15 +4597,26 @@ pub(crate) fn record_active_prototype1_monitor_target(campaign_id: &str, repo_ro
     }
 }
 
+fn campaign_manifest_path_for_id(campaign_id: &CampaignId) -> Result<PathBuf, PrepareError> {
+    campaign_manifest_path(campaign_id.as_str())
+}
+
+fn resolve_campaign_config_for_id(
+    campaign_id: &CampaignId,
+    overrides: &CampaignOverrides,
+) -> Result<ResolvedCampaignConfig, PrepareError> {
+    resolve_campaign_config(campaign_id.as_str(), overrides)
+}
+
 fn resolve_prototype1_state_campaign(
     command: &Prototype1StateCommand,
     repo_root: &Path,
-) -> Result<String, PrepareError> {
+) -> Result<CampaignId, PrepareError> {
     if let Some(campaign) = command.campaign.as_ref() {
-        return Ok(campaign.clone());
+        return Ok(CampaignId::from(campaign.as_str()));
     }
     if let Some(campaign) = infer_campaign_from_parent_identity(repo_root)? {
-        return Ok(campaign);
+        return Ok(CampaignId::from(campaign));
     }
 
     Err(PrepareError::InvalidBatchSelection {
@@ -4673,7 +4695,7 @@ fn latest_prototype1_campaign() -> Result<Option<String>, PrepareError> {
 
 fn resolve_prototype1_candidate_node_id(
     command: &Prototype1StateCommand,
-    _campaign_id: &str,
+    _campaign_id: &CampaignId,
     _manifest_path: &Path,
     required_generation: Option<u32>,
     _parent_node_id: Option<&str>,
@@ -4695,7 +4717,7 @@ fn resolve_prototype1_candidate_node_id(
 
 fn resolve_initial_parent_node_id(
     command: &Prototype1StateCommand,
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
 ) -> Result<String, PrepareError> {
     resolve_prototype1_candidate_node_id(
@@ -4817,6 +4839,31 @@ async fn resolve_child_plan(
         children,
         rejected_surface_attempts: receipt.rejected_surface_attempts,
     })
+}
+
+async fn resolve_child_plan_for_id(
+    campaign_id: &CampaignId,
+    manifest_path: &Path,
+    repo_root: &Path,
+    parent: Parent<Ready>,
+    candidate_generation: CandidateGenerationConfig,
+    selected_node_id: Option<&str>,
+    child_budget: Prototype1ChildBudget,
+    broad_tui: profile::BroadTui,
+    route_source: ModelRouteSource,
+) -> Result<PlannedChildren, PrepareError> {
+    resolve_child_plan(
+        campaign_id.as_str(),
+        manifest_path,
+        repo_root,
+        parent,
+        candidate_generation,
+        selected_node_id,
+        child_budget,
+        broad_tui,
+        route_source,
+    )
+    .await
 }
 
 async fn create_child_plan(
@@ -6863,7 +6910,7 @@ fn outcome_for_report<'a>(
 
 fn initialize_prototype1_parent_identity(
     command: &Prototype1StateCommand,
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     repo_root: &Path,
 ) -> Result<ParentIdentity, PrepareError> {
@@ -6923,11 +6970,11 @@ fn initialize_prototype1_parent_identity(
 }
 
 fn resolve_prototype1_parent_identity(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     repo_root: &Path,
 ) -> Result<ParentIdentity, PrepareError> {
     if let Some(identity) = load_parent_identity_optional(repo_root)? {
-        identity.validate_for_command(campaign_id, None)?;
+        identity.validate_for_command(campaign_id.as_str(), None)?;
         return Ok(identity);
     }
 
@@ -6941,7 +6988,7 @@ fn resolve_prototype1_parent_identity(
 
 fn acknowledge_prototype1_state_handoff(
     command: &Prototype1StateCommand,
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     parent: Parent<Unchecked>,
     manifest_path: &Path,
     repo_root: &Path,
@@ -6952,7 +6999,7 @@ fn acknowledge_prototype1_state_handoff(
             &backend,
             manifest_path,
             Check {
-                campaign_id,
+                campaign_id: campaign_id.as_str(),
                 active_root: repo_root,
             },
         )?;
@@ -6972,12 +7019,12 @@ fn acknowledge_prototype1_state_handoff(
     };
     let identity = parent.identity();
 
-    if invocation.campaign_id() != campaign_id {
+    let invocation_campaign_id = CampaignId::from(invocation.campaign_id());
+    if &invocation_campaign_id != campaign_id {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
                 "handoff invocation campaign '{}' does not match command campaign '{}'",
-                invocation.campaign_id(),
-                campaign_id
+                invocation_campaign_id, campaign_id
             ),
         });
     }
@@ -7076,7 +7123,7 @@ fn directory_size_bytes(path: &Path) -> io::Result<u64> {
 
 fn append_parent_target_sample(
     journal: &mut PrototypeJournal,
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     parent_identity: &ParentIdentity,
     runtime_id: Option<crate::cli::prototype1_state::event::RuntimeId>,
     repo_root: &Path,
@@ -7096,7 +7143,7 @@ fn append_parent_target_sample(
     };
     let sample = journal::resource::Sample {
         recorded_at: RecordedAt::now(),
-        campaign_id: campaign_id.to_string(),
+        campaign_id,
         parent_id: parent_identity.parent_id().to_string(),
         node_id: parent_identity.node_id().to_string(),
         generation: parent_identity.generation(),
@@ -7165,9 +7212,10 @@ pub(crate) async fn run_prototype1_state_turn(
     };
     let campaign_id = resolve_prototype1_state_campaign(&command, &repo_root)?;
     record_active_prototype1_monitor_target(&campaign_id, &repo_root);
-    let manifest_path = campaign_manifest_path(&campaign_id)?;
+    let manifest_path = campaign_manifest_path_for_id(&campaign_id)?;
     let run_shape = Prototype1StateRunShape::resolve(&command, &manifest_path)?;
-    let resolved_campaign = resolve_campaign_config(&campaign_id, &CampaignOverrides::default())?;
+    let resolved_campaign =
+        resolve_campaign_config_for_id(&campaign_id, &CampaignOverrides::default())?;
     ensure_prototype1_baseline_closure_state(&resolved_campaign)?;
     let journal_path = prototype1_transition_journal_path(&manifest_path);
     let mut journal = PrototypeJournal::new(journal_path.clone());
@@ -7243,12 +7291,12 @@ pub(crate) async fn run_prototype1_state_turn(
     let parent = if let Some(invocation_path) = command.handoff_invocation.as_deref() {
         let runtime_id = match invocation::load_executable(invocation_path)? {
             InvocationAuthority::Successor(invocation) => {
-                if invocation.campaign_id() != campaign_id {
+                let invocation_campaign_id = CampaignId::from(invocation.campaign_id());
+                if invocation_campaign_id != campaign_id {
                     return Err(PrepareError::InvalidBatchSelection {
                         detail: format!(
                             "handoff invocation campaign '{}' does not match command campaign '{}'",
-                            invocation.campaign_id(),
-                            campaign_id
+                            invocation_campaign_id, campaign_id
                         ),
                     });
                 }
@@ -7300,7 +7348,7 @@ pub(crate) async fn run_prototype1_state_turn(
     journal
         .append(JournalEntry::ParentStarted(ParentStartedEntry {
             recorded_at: RecordedAt::now(),
-            campaign_id: campaign_id.clone(),
+            campaign_id,
             parent_identity: parent_identity.clone(),
             repo_root: repo_root.clone(),
             handoff_runtime_id: handoff_invocation
@@ -7331,7 +7379,7 @@ pub(crate) async fn run_prototype1_state_turn(
         journal_path = %journal_path.display(),
         "starting typed prototype1 parent turn"
     );
-    let parent_baseline = establish_parent_baseline(
+    let parent_baseline = establish_parent_baseline_for_id(
         &campaign_id,
         &resolved_campaign,
         &manifest_path,
@@ -7369,7 +7417,7 @@ pub(crate) async fn run_prototype1_state_turn(
     } else {
         Prototype1ChildBudget::new(1, 1)
     };
-    let planned_children = resolve_child_plan(
+    let planned_children = resolve_child_plan_for_id(
         &campaign_id,
         &manifest_path,
         &repo_root,
@@ -7429,7 +7477,7 @@ pub(crate) async fn run_prototype1_state_turn(
     } else if run_shape.stop_after == Prototype1StateStopAfter::Complete
         && child_schedule_mode == Prototype1ChildScheduleMode::AdaptiveBatch
     {
-        let (outcomes, selection) = run_adaptive_child_fanout(
+        let (outcomes, selection) = run_adaptive_child_fanout_for_id(
             &campaign_id,
             &manifest_path,
             &repo_root,
@@ -7446,7 +7494,7 @@ pub(crate) async fn run_prototype1_state_turn(
         .await?;
         (outcomes, selection, None)
     } else {
-        let child_outcomes = run_child_fanout(
+        let child_outcomes = run_child_fanout_for_id(
             &campaign_id,
             &manifest_path,
             &repo_root,
@@ -7556,7 +7604,7 @@ pub(crate) async fn run_prototype1_state_turn(
         journal
             .append(JournalEntry::Successor(
                 SuccessorRecord::selected_with_decision(
-                    campaign_id.clone(),
+                    campaign_id.to_string(),
                     node.node_id.clone(),
                     decision.clone(),
                     selection_decision.clone(),
@@ -7570,7 +7618,7 @@ pub(crate) async fn run_prototype1_state_turn(
             selection_decision.outcome, selection_decision.candidate_node_id
         ));
         if let Some((selected_artifact, selection_entry)) = handoff {
-            match spawn_and_handoff_prototype1_successor(
+            match spawn_and_handoff_prototype1_successor_for_id(
                 &campaign_id,
                 selected_artifact,
                 &repo_root,
@@ -7591,7 +7639,7 @@ pub(crate) async fn run_prototype1_state_turn(
         } else {
             journal
                 .append(JournalEntry::Successor(SuccessorRecord::stopped(
-                    campaign_id.clone(),
+                    campaign_id.to_string(),
                     node.node_id.clone(),
                     decision.clone(),
                     selection_decision.clone(),
@@ -8542,7 +8590,7 @@ pub(crate) struct Prototype1LoopBranchEvaluationSummary {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct Prototype1StateReport {
-    campaign_id: String,
+    campaign_id: CampaignId,
     node_id: String,
     repo_root: PathBuf,
     journal_path: PathBuf,
@@ -8672,7 +8720,7 @@ pub(crate) fn selection_input_from_child_report(
 }
 
 pub(crate) struct Prototype1LoopCampaign {
-    pub(crate) campaign_id: String,
+    pub(crate) campaign_id: CampaignId,
     pub(crate) manifest_path: PathBuf,
     pub(crate) closure_state_path: PathBuf,
     pub(crate) slice_dataset_path: PathBuf,

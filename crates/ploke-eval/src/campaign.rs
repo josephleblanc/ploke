@@ -25,7 +25,7 @@ const DEFAULT_REQUIRED_PROCEDURES: [&str; 3] = [
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CampaignManifest {
     pub schema_version: String,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     #[serde(default = "default_benchmark_family")]
     pub benchmark_family: BenchmarkFamily,
     #[serde(default)]
@@ -161,7 +161,7 @@ pub struct CampaignOverrides {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ResolvedCampaignConfig {
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub benchmark_family: BenchmarkFamily,
     pub dataset_sources: Vec<RegistryDatasetSource>,
     pub model_id: String,
@@ -184,7 +184,7 @@ pub struct CampaignValidationCheck {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CampaignListEntry {
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub has_manifest: bool,
     pub has_closure_state: bool,
 }
@@ -404,7 +404,7 @@ pub fn adopt_campaign_manifest_from_closure_state(
 
     Ok(CampaignManifest {
         schema_version: CAMPAIGN_MANIFEST_SCHEMA_VERSION.to_string(),
-        campaign_id: campaign_id.to_string(),
+        campaign_id,
         benchmark_family: stored.config.benchmark_family,
         dataset_sources: stored.config.dataset_sources,
         model_id: stored.config.model_id,
@@ -442,7 +442,7 @@ pub fn adopt_campaign_manifest_from_registry(
 
     Ok(CampaignManifest {
         schema_version: CAMPAIGN_MANIFEST_SCHEMA_VERSION.to_string(),
-        campaign_id: campaign_id.to_string(),
+        campaign_id,
         benchmark_family,
         dataset_sources: registry.dataset_sources,
         model_id: Some(active_model.model_id.to_string()),
@@ -605,7 +605,7 @@ pub fn resolve_campaign_config(
         .unwrap_or(batches_dir()?);
 
     Ok(ResolvedCampaignConfig {
-        campaign_id: campaign_id.to_string(),
+        campaign_id,
         benchmark_family: manifest.benchmark_family,
         dataset_sources,
         model_id,

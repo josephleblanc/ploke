@@ -546,7 +546,7 @@ pub enum DiagnosticSeverity {
 /// Lightweight campaign identity for renderers.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CampaignRef {
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub updated_at: String,
 }
 

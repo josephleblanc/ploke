@@ -5,7 +5,7 @@ use serde::Serialize;
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct ProtocolCampaignTriageReport {
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub scope: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issue_filter: Option<String>,

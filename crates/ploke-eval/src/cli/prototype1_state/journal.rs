@@ -208,7 +208,7 @@ pub(crate) struct CompletionEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ParentStartedEntry {
     pub recorded_at: RecordedAt,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub parent_identity: ParentIdentity,
     pub repo_root: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -258,7 +258,7 @@ pub(crate) mod resource {
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub(crate) struct Sample {
         pub recorded_at: RecordedAt,
-        pub campaign_id: String,
+        pub campaign_id: CampaignId,
         pub parent_id: String,
         pub node_id: String,
         pub generation: u32,
@@ -285,7 +285,7 @@ pub(crate) mod resource {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ChildArtifactCommittedEntry {
     pub recorded_at: RecordedAt,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub parent_identity: Option<ParentIdentity>,
     pub child_identity: ParentIdentity,
     pub node_id: String,
@@ -306,7 +306,7 @@ pub(crate) struct ChildArtifactCommittedEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ActiveCheckoutAdvancedEntry {
     pub recorded_at: RecordedAt,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub previous_parent_identity: Option<ParentIdentity>,
     pub selected_parent_identity: ParentIdentity,
     pub active_parent_root: PathBuf,
@@ -323,7 +323,7 @@ pub(crate) struct ActiveCheckoutAdvancedEntry {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct SuccessorHandoffEntry {
     pub recorded_at: RecordedAt,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub node_id: String,
     pub runtime_id: RuntimeId,
     pub active_parent_root: PathBuf,

@@ -311,7 +311,7 @@ pub(crate) struct EvalBatchPlan {
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ClosureAdvanceEvalReport {
-    pub(crate) campaign_id: String,
+    pub(crate) campaign_id: CampaignId,
     pub(crate) dry_run: bool,
     pub(crate) before: crate::closure::EvalClosureSummary,
     pub(crate) after: crate::closure::EvalClosureSummary,
@@ -374,7 +374,7 @@ pub(crate) struct ProtocolRunExecution {
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ClosureAdvanceProtocolReport {
-    pub(crate) campaign_id: String,
+    pub(crate) campaign_id: CampaignId,
     pub(crate) dry_run: bool,
     pub(crate) before: crate::closure::ProtocolClosureSummary,
     pub(crate) after: crate::closure::ProtocolClosureSummary,

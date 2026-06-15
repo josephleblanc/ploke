@@ -311,7 +311,7 @@ pub struct Prototype1NodeRecord {
 #[must_use = "runner results must be checked so node failures are not silently ignored"]
 pub struct Prototype1RunnerResult {
     pub schema_version: String,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub node_id: String,
     pub generation: u32,
     pub branch_id: String,
@@ -335,7 +335,7 @@ pub struct Prototype1RunnerResult {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Prototype1RunnerRequest {
     pub schema_version: String,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub node_id: String,
     pub generation: u32,
     pub instance_id: String,
@@ -360,7 +360,7 @@ pub struct Prototype1RunnerRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Prototype1SchedulerState {
     pub schema_version: String,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub updated_at: String,
     #[serde(default)]
     pub policy: Prototype1SearchPolicy,

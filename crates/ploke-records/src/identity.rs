@@ -15,7 +15,7 @@ pub const PARENT_IDENTITY_SCHEMA_VERSION: &str = "prototype1-parent-identity.v1"
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ParentIdentityRecord {
     pub schema_version: String,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub parent_id: String,
     pub node_id: String,
     pub generation: u32,

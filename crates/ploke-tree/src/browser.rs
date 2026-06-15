@@ -105,7 +105,7 @@ pub enum ExecutionEdgeKind {
 /// Top-level summary of a completed (or in-progress) run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunSummary {
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub node_count: usize,
     pub generation_count: u64,
     pub sealed_block_count: usize,

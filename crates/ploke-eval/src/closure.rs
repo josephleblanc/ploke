@@ -35,7 +35,7 @@ const STORED_TOOL_CALL_SEGMENT_REVIEW: &str = "tool_call_segment_review";
 
 #[derive(Debug, Clone)]
 pub struct ClosureRecomputeRequest {
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub benchmark_family: Option<BenchmarkFamily>,
     pub model_id: Option<String>,
     pub provider_slug: Option<String>,
@@ -51,7 +51,7 @@ pub struct ClosureRecomputeRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClosureState {
     pub schema_version: String,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub updated_at: String,
     pub config: ClosureConfig,
     pub registry: RegistryClosureSummary,

@@ -94,6 +94,24 @@ passive_string_accessors!(
     SourceStateId,
 );
 
+impl CampaignId {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+}
+
+impl From<String> for CampaignId {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<&str> for CampaignId {
+    fn from(value: &str) -> Self {
+        Self::new(value)
+    }
+}
+
 string_id! {
     /// Durable identity for one committed transition attempt.
     TransitionId

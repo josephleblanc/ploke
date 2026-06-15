@@ -39,7 +39,7 @@ pub enum Role {
 pub struct InvocationRecord {
     pub schema_version: String,
     pub role: Role,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub node_id: String,
     pub runtime_id: RuntimeId,
     pub journal_path: PathBuf,
@@ -60,7 +60,7 @@ pub struct InvocationRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SuccessorReadyRecord {
     pub schema_version: String,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub node_id: String,
     pub runtime_id: RuntimeId,
     pub pid: u32,
@@ -81,7 +81,7 @@ pub enum SuccessorCompletionStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SuccessorCompletionRecord {
     pub schema_version: String,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub node_id: String,
     pub runtime_id: RuntimeId,
     pub status: SuccessorCompletionStatus,

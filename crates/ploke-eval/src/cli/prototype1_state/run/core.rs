@@ -109,7 +109,7 @@ pub(crate) struct CurrentChildStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ActiveParentStatus {
-    pub(crate) campaign_id: String,
+    pub(crate) campaign_id: CampaignId,
     pub(crate) repo_root: PathBuf,
     pub(crate) parent_identity: ParentIdentity,
     pub(crate) run_profile: RunProfileCommitment,

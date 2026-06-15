@@ -23,7 +23,7 @@ pub struct ActiveSelection {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActivePrototype1MonitorTarget {
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub repo_root: PathBuf,
 }
 

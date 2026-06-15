@@ -50,7 +50,7 @@ pub enum ObservedChildTerminal {
 /// Identity-bearing references attached to one recorded transition.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Refs {
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub node_id: String,
     pub instance_id: String,
     pub source_state_id: String,
@@ -194,7 +194,7 @@ pub struct ReadyRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ParentStartedRecord {
     pub recorded_at: RecordedAt,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub parent_identity: ParentIdentityRecord,
     pub repo_root: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -269,7 +269,7 @@ pub mod resource {
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub struct Sample {
         pub recorded_at: RecordedAt,
-        pub campaign_id: String,
+        pub campaign_id: CampaignId,
         pub parent_id: String,
         pub node_id: String,
         pub generation: u32,
@@ -290,7 +290,7 @@ pub mod resource {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChildArtifactCommittedRecord {
     pub recorded_at: RecordedAt,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub parent_identity: Option<ParentIdentityRecord>,
     pub child_identity: ParentIdentityRecord,
     pub node_id: String,
@@ -306,7 +306,7 @@ pub struct ChildArtifactCommittedRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActiveCheckoutAdvancedRecord {
     pub recorded_at: RecordedAt,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub previous_parent_identity: Option<ParentIdentityRecord>,
     pub selected_parent_identity: ParentIdentityRecord,
     pub active_parent_root: PathBuf,
@@ -318,7 +318,7 @@ pub struct ActiveCheckoutAdvancedRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SuccessorHandoffRecord {
     pub recorded_at: RecordedAt,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub node_id: String,
     pub runtime_id: RuntimeId,
     pub active_parent_root: PathBuf,
@@ -398,7 +398,7 @@ pub enum SuccessorStateRecord {
 pub struct SuccessorRecord {
     pub runtime_id: Option<RuntimeId>,
     pub recorded_at: RecordedAt,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub node_id: String,
     pub state: SuccessorStateRecord,
 }

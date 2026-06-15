@@ -56,7 +56,7 @@ pub mod branch_log {
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub struct ParentComparison {
-        pub campaign_id: String,
+        pub campaign_id: CampaignId,
         pub instance_id: String,
         pub source_state_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -191,7 +191,7 @@ pub struct ActiveInterventionTarget {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Prototype1BranchRegistry {
     pub schema_version: String,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub updated_at: String,
     #[serde(default)]
     pub source_nodes: Vec<InterventionSourceNode>,

@@ -15,14 +15,15 @@ mod tests;
 
 pub use graph::Graph;
 pub use playback::{
+    build_coarse_history_spine, coarse_run_playback_from_sealed_history,
+    coarse_run_playback_ref_steps_from_sealed_history, fine_run_playback_from_sealed_history,
+    fine_run_playback_ref_steps_from_sealed_history, project_coarse_history_spine,
+    turn_event_step_at, turn_event_steps_from_agent_turn_records, turn_event_steps_from_artifact,
     CoarseHistorySpine, CoarseHistoryStep, CoarseHistoryWarning, PlaybackCursor, PlaybackScope,
     ResponseTapeRef, RuntimeCoarse, RuntimePlaybackDeltaRef, RuntimePlaybackFrameRef,
     RuntimePlaybackGranularity, RuntimePlaybackIndex, RuntimePlaybackRef, RuntimePlaybackStepRef,
     RuntimePlaybackWarning, TurnArtifactKind, TurnCursor, TurnEventKind, TurnEventPlaybackRefSteps,
-    TurnEventStepRef, build_coarse_history_spine, coarse_run_playback_from_sealed_history,
-    coarse_run_playback_ref_steps_from_sealed_history, fine_run_playback_from_sealed_history,
-    fine_run_playback_ref_steps_from_sealed_history, project_coarse_history_spine,
-    turn_event_step_at, turn_event_steps_from_agent_turn_records, turn_event_steps_from_artifact,
+    TurnEventStepRef,
 };
 pub use store::*;
 
@@ -546,7 +547,7 @@ pub enum DiagnosticSeverity {
 /// Lightweight campaign identity for renderers.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CampaignRef {
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub updated_at: String,
 }
 

@@ -38,7 +38,7 @@ pub struct Cursor {
 pub struct Envelope<M> {
     pub schema_version: String,
     pub direction: Direction,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub node_id: String,
     pub runtime_id: RuntimeId,
     pub message_id: String,

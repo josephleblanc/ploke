@@ -78,7 +78,7 @@ impl State {
 pub(crate) struct Record {
     pub runtime_id: Option<RuntimeId>,
     pub recorded_at: RecordedAt,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub node_id: String,
     pub state: State,
 }

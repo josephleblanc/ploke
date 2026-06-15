@@ -38,7 +38,7 @@ pub struct FrameworkToolConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreparedCampaignContext {
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
