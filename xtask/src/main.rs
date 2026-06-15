@@ -86,6 +86,8 @@ const GOOGLE_DIRECT_DEFAULT_MODELS: &[&str] = &[
     "google/gemini-2.5-flash-lite",
     "google/gemini-2.5-flash",
     "google/gemini-2.5-pro",
+    "google/gemini-3.1-pro-preview",
+    "google/gemini-3.1-pro-preview-customtools",
     "google/gemini-3.5-flash",
 ];
 const GITHUB_FIXTURE_SERDE_REPO_URL: &str = "https://github.com/serde-rs/serde.git";

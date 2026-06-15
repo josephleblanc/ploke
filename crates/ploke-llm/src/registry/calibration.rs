@@ -244,7 +244,7 @@ impl RouterCalibration for OpenRouter {
 
 /// Direct-Google (Vertex OpenAI-compat) retry budget.
 ///
-/// Vertex `gemini-2.5-*` models run on Dynamic Shared Quota, where HTTP 429
+/// Vertex Gemini text models run on Dynamic Shared Quota, where HTTP 429
 /// `RESOURCE_EXHAUSTED` and 503 `UNAVAILABLE` are transient shared-capacity
 /// contention rather than a hard per-key cap. Google's own guidance is to ride
 /// these out with exponential backoff (honoring any `Retry-After`/RetryInfo

@@ -77,6 +77,8 @@ mod tests {
         for slug in [
             "google/gemini-2.5-flash-lite",
             "google/gemini-2.5-flash",
+            "google/gemini-3.1-pro-preview",
+            "google/gemini-3.1-pro-preview-customtools",
             "google/gemini-3.5-flash",
         ] {
             let resolved = resolve(router, &model(slug))
@@ -123,7 +125,7 @@ mod tests {
         let router = RouterVariants::Google(Google);
         assert!(
             resolve(router, &model("google/gemini-1.5-flash")).is_none(),
-            "only the affected gemini-2.5/3.5 families should match"
+            "only the affected gemini-2.5/3.1/3.5 families should match"
         );
     }
 }
