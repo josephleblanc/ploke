@@ -1494,6 +1494,34 @@ fn surface_commitment_hashes_tracked_symlink_to_directory() {
 }
 
 #[test]
+fn surface_commitment_hashes_tracked_dangling_symlink() {
+    let before = init_surface_repo("pub fn policy() {}\n", "same\n");
+    let after = init_surface_repo("pub fn policy() {}\n", "same\n");
+    for root in [before.path(), after.path()] {
+        let symlink_dir = root.join(".antigravitycli");
+        fs::create_dir_all(&symlink_dir).expect("create symlink dir");
+        std::os::unix::fs::symlink(
+            "/nonexistent/ploke-eval-test-config.json",
+            symlink_dir.join("dangling-config.json"),
+        )
+        .expect("create dangling symlink");
+        run_git_test(root, &["add", ".antigravitycli/dangling-config.json"]);
+        run_git_test(
+            root,
+            &["commit", "--no-gpg-sign", "-m", "tracked dangling symlink"],
+        );
+    }
+    let backend = GitWorktreeBackend;
+
+    backend
+        .surface_commitment(before.path(), after.path())
+        .expect("surface commitment handles tracked dangling symlink");
+    backend
+        .artifact_surface(before.path())
+        .expect("artifact surface handles tracked dangling symlink");
+}
+
+#[test]
 fn surface_commitment_rejects_eval_mutation() {
     let before = init_surface_repo("pub fn policy() {}\n", "same\n");
     let after = init_surface_repo("pub fn policy_changed() {}\n", "same\n");

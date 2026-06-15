@@ -1115,13 +1115,18 @@ pub(crate) fn surface_hash(
                 path: relpath.clone(),
             })?;
         let absolute = worktree_root.join(&relpath);
-        if !absolute.exists() {
-            return Err(BackendError::MissingSurfaceFile { path: absolute });
-        }
-        let bytes = surface_entry_bytes(&absolute).map_err(|source| BackendError::ReadTarget {
-            path: absolute,
-            source,
-        })?;
+        let bytes = match surface_entry_bytes(&absolute) {
+            Ok(bytes) => bytes,
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                return Err(BackendError::MissingSurfaceFile { path: absolute });
+            }
+            Err(source) => {
+                return Err(BackendError::ReadTarget {
+                    path: absolute,
+                    source,
+                });
+            }
+        };
         let file_hash: [u8; 32] = Sha256::digest(&bytes).into();
         preimage.extend_from_slice(relpath_str.as_bytes());
         preimage.push(0);
