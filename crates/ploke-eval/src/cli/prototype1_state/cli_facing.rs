@@ -48,11 +48,10 @@ use crate::{
         persist_intervention_synthesis_for_record, persist_issue_detection_for_record,
         print_issue_case_block,
         prototype1_process::{
-            Prototype1SuccessorHandoff, SuccessorHandoffMode,
-            cleanup_prototype1_child_build_products, persist_prototype1_buildable_child_artifact,
-            record_prototype1_successor_completion, record_prototype1_successor_ready,
-            spawn_and_handoff_prototype1_successor, validate_child_surface,
-            validate_prototype1_successor_continuation,
+            SuccessorHandoffMode, cleanup_prototype1_child_build_products,
+            persist_prototype1_buildable_child_artifact, record_prototype1_successor_completion,
+            record_prototype1_successor_ready, spawn_and_handoff_prototype1_successor,
+            validate_child_surface, validate_prototype1_successor_continuation,
         },
         prototype1_state::{
             backend::{

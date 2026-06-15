@@ -1067,8 +1067,6 @@ impl Drop for XdgConfigHomeGuard {
 
 pub use artifacts::*;
 #[cfg(test)]
-pub use msb_batch::*;
-#[cfg(test)]
 pub use msb_single::*;
 pub(crate) use replay::*;
 

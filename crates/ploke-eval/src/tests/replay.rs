@@ -6,6 +6,8 @@ use std::{
 };
 
 #[cfg(feature = "replay_tests")]
+use ploke_tui::tools::insert_rust_item::InsertRustItem;
+#[cfg(feature = "replay_tests")]
 use std::process::Command;
 
 use ploke_db::{Database, NodeType};
@@ -28,7 +30,6 @@ use ploke_tui::{
     },
     tools::{
         Ctx, Tool, ToolErrorCode, ToolErrorWire, ToolName,
-        insert_rust_item::InsertRustItem,
         ns_read::{NsRead, NsReadResult},
     },
     user_config::{ChatPolicy, ChatTimeoutStrategy},
