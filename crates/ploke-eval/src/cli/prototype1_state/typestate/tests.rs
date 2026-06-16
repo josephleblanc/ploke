@@ -12,7 +12,7 @@ use crate::cli::{
     Prototype1StateStopAfter, Prototype1SuccessorSelection, Prototype1TraversalMetrics,
 };
 
-use super::{R1, R2a, R3, R4a, Step, context, transition};
+use super::{AsyncStep, R1, R2a, R3, R4a, Step, async_transition, context, transition};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct S0(u8);
@@ -80,6 +80,15 @@ fn chain_short_circuits_on_error() {
 
     assert_eq!(result, Err(TestError::Stop));
     assert!(!ran_second.get());
+}
+
+#[tokio::test]
+async fn async_transition_applies_single_typed_edge() {
+    let edge = async_transition(|state: S0| async move { Ok::<S1, TestError>(S1(state.0 + 1)) });
+
+    let result = edge.apply(S0(10)).await;
+
+    assert_eq!(result, Ok(S1(11)));
 }
 
 fn state_command_for_typestate_test() -> Prototype1StateCommand {

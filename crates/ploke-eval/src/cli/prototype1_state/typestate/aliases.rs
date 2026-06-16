@@ -13,9 +13,7 @@ use crate::{
 
 use super::super::{
     c1, c2, c3, c4,
-    cli_facing::{
-        PlannedChildOutcome, PlannedChildren, Prototype1StateReport, SelectionSealMaterial,
-    },
+    cli_facing::{PlannedChildOutcome, Prototype1StateReport, SelectionSealMaterial},
     history::{self as history_model, Block, LineageState},
     identity::ParentIdentity,
     inner::{self, Crown, Received},
@@ -727,6 +725,134 @@ impl<RunShape, CampaignConfig> R4cReady<RunShape, CampaignConfig> {
     }
 }
 
+pub(crate) struct ReadyParts<RunShape, CampaignConfig> {
+    pub(crate) collected: context::Collected<RunShape, CampaignConfig>,
+    pub(crate) parent: parent_role::Parent<parent_role::Ready>,
+}
+
+pub(crate) struct SelectableParts<RunShape, CampaignConfig> {
+    pub(crate) collected: context::Collected<RunShape, CampaignConfig>,
+    pub(crate) parent: parent_role::Parent<parent_role::Selectable>,
+}
+
+macro_rules! ready_state_impl {
+    ($alias:ident, $phase:expr) => {
+        impl<RunShape, CampaignConfig> $alias<RunShape, CampaignConfig> {
+            pub(crate) fn from_collected_parent(
+                collected: context::Collected<RunShape, CampaignConfig>,
+                parent: parent_role::Parent<parent_role::Ready>,
+            ) -> Self {
+                Self {
+                    phase: $phase,
+                    role: parent,
+                    context: Context::new(collected),
+                    plan: Plan {
+                        _authority: PhantomData,
+                        _schedule: PhantomData,
+                        _private: Private,
+                    },
+                    children: Children {
+                        _set: PhantomData,
+                        _attempt: PhantomData,
+                        _private: Private,
+                    },
+                    history: History {
+                        _startup: PhantomData,
+                        _head: PhantomData,
+                        _epoch: PhantomData,
+                        _private: Private,
+                    },
+                    evidence: Evidence {
+                        _parent_start: PhantomData,
+                        _baseline: PhantomData,
+                        _policy: PhantomData,
+                        _selection: PhantomData,
+                        _completion: PhantomData,
+                        _private: Private,
+                    },
+                    continuation: Continuation {
+                        _selection: PhantomData,
+                        _decision: PhantomData,
+                        _handoff: PhantomData,
+                        _private: Private,
+                    },
+                    report: Report {
+                        _state: PhantomData,
+                        _private: Private,
+                    },
+                    _private: Private,
+                }
+            }
+
+            pub(crate) fn into_parts(self) -> ReadyParts<RunShape, CampaignConfig> {
+                ReadyParts {
+                    collected: self.context.into_state(),
+                    parent: self.role,
+                }
+            }
+        }
+    };
+}
+
+ready_state_impl!(R5, phase::R5);
+ready_state_impl!(R6, phase::R6);
+ready_state_impl!(R7, phase::R7);
+
+impl<RunShape, CampaignConfig> R8<RunShape, CampaignConfig> {
+    pub(crate) fn from_collected_parent(
+        collected: context::Collected<RunShape, CampaignConfig>,
+        parent: parent_role::Parent<parent_role::Selectable>,
+    ) -> Self {
+        Self {
+            phase: phase::R8,
+            role: parent,
+            context: Context::new(collected),
+            plan: Plan {
+                _authority: PhantomData,
+                _schedule: PhantomData,
+                _private: Private,
+            },
+            children: Children {
+                _set: PhantomData,
+                _attempt: PhantomData,
+                _private: Private,
+            },
+            history: History {
+                _startup: PhantomData,
+                _head: PhantomData,
+                _epoch: PhantomData,
+                _private: Private,
+            },
+            evidence: Evidence {
+                _parent_start: PhantomData,
+                _baseline: PhantomData,
+                _policy: PhantomData,
+                _selection: PhantomData,
+                _completion: PhantomData,
+                _private: Private,
+            },
+            continuation: Continuation {
+                _selection: PhantomData,
+                _decision: PhantomData,
+                _handoff: PhantomData,
+                _private: Private,
+            },
+            report: Report {
+                _state: PhantomData,
+                _private: Private,
+            },
+            _private: Private,
+        }
+    }
+
+    pub(crate) fn into_parts(self) -> SelectableParts<RunShape, CampaignConfig> {
+        SelectableParts {
+            collected: self.context.into_state(),
+            parent: self.role,
+        }
+    }
+}
+
 /// R5: parent-start evidence recorded.
 ///
 /// Axis changes:
@@ -735,10 +861,10 @@ impl<RunShape, CampaignConfig> R4cReady<RunShape, CampaignConfig> {
 ///
 /// Existing carrier: `ParentStartedEntry` in the transition journal, plus a
 /// resource sample for `ParentStart`.
-pub(crate) type R5 = Runtime<
+pub(crate) type R5<RunShape = (), CampaignConfig = ()> = Runtime<
     phase::R5,
     parent_role::Parent<parent_role::Ready>,
-    Context<context::Collected>,
+    Context<context::Collected<RunShape, CampaignConfig>>,
     Plan<plan::authority::None, plan::schedule::None>,
     Children<children::set::None, children::attempt::None>,
     History<
@@ -768,10 +894,10 @@ pub(crate) type R5 = Runtime<
 ///   `-> Evidence<..., baseline::Ready<CompleteBaseline>, ...>`.
 ///
 /// Existing carrier: `CompleteBaseline = Baseline<baseline::Complete>`.
-pub(crate) type R6 = Runtime<
+pub(crate) type R6<RunShape = (), CampaignConfig = ()> = Runtime<
     phase::R6,
     parent_role::Parent<parent_role::Ready>,
-    Context<context::Collected>,
+    Context<context::Collected<RunShape, CampaignConfig>>,
     Plan<plan::authority::None, plan::schedule::None>,
     Children<children::set::None, children::attempt::None>,
     History<
@@ -803,10 +929,10 @@ pub(crate) type R6 = Runtime<
 /// Existing carriers: `Prototype1SearchPolicy`, `Prototype1ChildBudget`, and
 /// `Prototype1ChildScheduleMode`. The live code currently stores these in
 /// locals and sometimes derives them from an admitted run profile.
-pub(crate) type R7 = Runtime<
+pub(crate) type R7<RunShape = (), CampaignConfig = ()> = Runtime<
     phase::R7,
     parent_role::Parent<parent_role::Ready>,
-    Context<context::Collected>,
+    Context<context::Collected<RunShape, CampaignConfig>>,
     Plan<plan::authority::None, plan::schedule::None>,
     Children<children::set::None, children::attempt::None>,
     History<
@@ -843,10 +969,10 @@ pub(crate) type R7 = Runtime<
 /// - `ChildFiles` is the per-child input before C1.
 /// - `PlannedChildren` currently bundles `Parent<Selectable>` with plan/child
 ///   data; future implementation should likely split that bundle across axes.
-pub(crate) type R8 = Runtime<
+pub(crate) type R8<RunShape = (), CampaignConfig = ()> = Runtime<
     phase::R8,
     parent_role::Parent<parent_role::Selectable>,
-    Context<context::Collected>,
+    Context<context::Collected<RunShape, CampaignConfig>>,
     Plan<plan::authority::Received<Received<parent_role::ChildPlan>>, plan::schedule::None>,
     Children<children::set::Planned<parent_role::ChildFiles>, children::attempt::None>,
     History<
@@ -858,7 +984,7 @@ pub(crate) type R8 = Runtime<
         evidence::parent_start::Recorded<ParentStartedEntry>,
         evidence::baseline::Ready<CompleteBaseline>,
         evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
-        evidence::selection::Plan<PlannedChildren>,
+        evidence::selection::Plan<context::ChildPlanFacts>,
         evidence::completion::None,
     >,
     Continuation<
@@ -895,7 +1021,7 @@ pub(crate) type R9 = Runtime<
         evidence::parent_start::Recorded<ParentStartedEntry>,
         evidence::baseline::Ready<CompleteBaseline>,
         evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
-        evidence::selection::Plan<PlannedChildren>,
+        evidence::selection::Plan<context::ChildPlanFacts>,
         evidence::completion::None,
     >,
     Continuation<

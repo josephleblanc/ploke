@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{future::Future, marker::PhantomData};
 
 use super::Private;
 
@@ -194,21 +194,69 @@ where
 /// state name like `GenesisOrPredecessorStartupResolved`.
 type _BranchingDocumentationOnly = ();
 
-/// Async transitions should use the same shape later, but should not be added
-/// until live transitions need them.
+/// Async sibling of `Transition` for edges that must await live work.
 ///
-/// The async analogue is likely:
+/// This deliberately mirrors the synchronous shape instead of replacing it:
 ///
-/// ```ignore
-/// trait AsyncStep<From> {
-///     type To;
-///     type Error;
-///     type Fut: Future<Output = Result<Self::To, Self::Error>>;
-///
-///     fn apply(self, from: From) -> Self::Fut;
-/// }
+/// ```text
+/// From -> Future<Output = Result<To, Error>>
 /// ```
 ///
-/// Keeping the synchronous `Step` first makes the state graph easy to review
-/// before introducing future/lifetime complexity.
-type _AsyncDocumentationOnly = ();
+/// The first live use is the parent-baseline edge, because baseline closure work
+/// is already async in the current controller.
+#[must_use = "an AsyncTransition does nothing until AsyncStep::apply is awaited"]
+pub(crate) struct AsyncTransition<From, To, F, Error = crate::spec::PrepareError> {
+    f: F,
+    _from: PhantomData<From>,
+    _to: PhantomData<To>,
+    _error: PhantomData<Error>,
+    _private: Private,
+}
+
+impl<From, To, F, Fut, Error> AsyncTransition<From, To, F, Error>
+where
+    F: FnOnce(From) -> Fut,
+    Fut: Future<Output = Result<To, Error>>,
+{
+    pub(crate) fn new(f: F) -> Self {
+        Self {
+            f,
+            _from: PhantomData,
+            _to: PhantomData,
+            _error: PhantomData,
+            _private: Private,
+        }
+    }
+}
+
+/// Convenience constructor for async typed transitions.
+pub(crate) fn async_transition<From, To, F, Fut, Error>(f: F) -> AsyncTransition<From, To, F, Error>
+where
+    F: FnOnce(From) -> Fut,
+    Fut: Future<Output = Result<To, Error>>,
+{
+    AsyncTransition::new(f)
+}
+
+/// A value that can asynchronously advance one typed state to another.
+pub(crate) trait AsyncStep<From>: Sized {
+    type To;
+    type Error;
+    type Fut: Future<Output = Result<Self::To, Self::Error>>;
+
+    fn apply(self, from: From) -> Self::Fut;
+}
+
+impl<From, To, F, Fut, Error> AsyncStep<From> for AsyncTransition<From, To, F, Error>
+where
+    F: FnOnce(From) -> Fut,
+    Fut: Future<Output = Result<To, Error>>,
+{
+    type To = To;
+    type Error = Error;
+    type Fut = Fut;
+
+    fn apply(self, from: From) -> Self::Fut {
+        (self.f)(from)
+    }
+}

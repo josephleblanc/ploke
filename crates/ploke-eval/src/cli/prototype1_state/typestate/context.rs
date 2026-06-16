@@ -2,10 +2,19 @@ use std::path::PathBuf;
 
 use ploke_records::ids::CampaignId;
 
-use crate::cli::Prototype1StateCommand;
+use crate::{
+    cli::Prototype1StateCommand,
+    intervention::{CompleteBaseline, Prototype1ChildBudget, Prototype1SearchPolicy},
+};
 
 use super::{
-    super::{invocation::SuccessorInvocation, journal::PrototypeJournal},
+    super::{
+        history::surface_attempt,
+        inner::Received,
+        invocation::SuccessorInvocation,
+        journal::PrototypeJournal,
+        parent::{ChildFiles, ChildPlan},
+    },
     Private,
 };
 
@@ -29,6 +38,27 @@ impl<T> Command<T> {
     }
 }
 
+/// Value facts accumulated by the typed parent loop after initial setup.
+///
+/// These fields are value-level bookkeeping, not extra typestate axes. The type
+/// aliases still describe which facts are required at a given phase; the context
+/// carries the concrete values that the existing live controller needs next.
+#[derive(Debug, Default)]
+pub(crate) struct Facts {
+    pub(crate) parent_baseline: Option<CompleteBaseline>,
+    pub(crate) complete_search_policy: Option<Prototype1SearchPolicy>,
+    pub(crate) plan_child_budget: Option<Prototype1ChildBudget>,
+    pub(crate) child_plan: Option<ChildPlanFacts>,
+}
+
+/// Concrete child-plan values after `Parent<Ready> -> Parent<Selectable>`.
+#[derive(Debug)]
+pub(crate) struct ChildPlanFacts {
+    pub(crate) plan: Received<ChildPlan>,
+    pub(crate) children: Vec<ChildFiles>,
+    pub(crate) rejected_surface_attempts: Vec<surface_attempt::Evidence>,
+}
+
 /// Repo/campaign/manifest/run-shape/journal inputs have been collected.
 ///
 /// This is intentionally generic over `RunShape` and `CampaignConfig`
@@ -46,6 +76,7 @@ pub(crate) struct Collected<RunShape = (), CampaignConfig = ()> {
     journal_path: PathBuf,
     journal: PrototypeJournal,
     handoff_invocation: Option<SuccessorInvocation>,
+    facts: Facts,
     _private: Private,
 }
 
@@ -65,6 +96,7 @@ pub(crate) struct CollectedParts<RunShape, CampaignConfig> {
     pub(crate) journal_path: PathBuf,
     pub(crate) journal: PrototypeJournal,
     pub(crate) handoff_invocation: Option<SuccessorInvocation>,
+    pub(crate) facts: Facts,
 }
 
 impl<RunShape, CampaignConfig> CollectedParts<RunShape, CampaignConfig> {
@@ -80,6 +112,7 @@ impl<RunShape, CampaignConfig> CollectedParts<RunShape, CampaignConfig> {
             self.journal,
         )
         .with_handoff_invocation(self.handoff_invocation)
+        .with_facts(self.facts)
     }
 }
 
@@ -104,6 +137,7 @@ impl<RunShape, CampaignConfig> Collected<RunShape, CampaignConfig> {
             journal_path,
             journal,
             handoff_invocation: None,
+            facts: Facts::default(),
             _private: Private,
         }
     }
@@ -113,6 +147,11 @@ impl<RunShape, CampaignConfig> Collected<RunShape, CampaignConfig> {
         handoff_invocation: Option<SuccessorInvocation>,
     ) -> Self {
         self.handoff_invocation = handoff_invocation;
+        self
+    }
+
+    pub(crate) fn with_facts(mut self, facts: Facts) -> Self {
+        self.facts = facts;
         self
     }
 
@@ -131,6 +170,7 @@ impl<RunShape, CampaignConfig> Collected<RunShape, CampaignConfig> {
             journal_path: self.journal_path,
             journal: self.journal,
             handoff_invocation: self.handoff_invocation,
+            facts: self.facts,
         }
     }
 }

@@ -102,7 +102,7 @@ use crate::{
             profile, selection as state_selection,
             successor::Record as SuccessorRecord,
             telemetry::RuntimeTelemetry,
-            typestate::{self, Step},
+            typestate::{self, AsyncStep, Step},
         },
         resolve_batch_manifest, resolve_protocol_model_id, resolve_protocol_provider_slug,
         sanitize_batch_component, serde_name, write_json_file_pretty, yes_no,
@@ -7161,6 +7161,7 @@ fn r1_to_r2a_or_r3() -> impl Step<
                 journal_path,
                 journal,
                 handoff_invocation: _,
+                facts,
             } = r1.into_collected().into_parts();
 
             if command.init_parent_identity {
@@ -7179,7 +7180,8 @@ fn r1_to_r2a_or_r3() -> impl Step<
                     resolved_campaign,
                     journal_path,
                     journal,
-                );
+                )
+                .with_facts(facts);
                 return Ok(typestate::R1Branch::R2a(
                     typestate::R2a::from_collected_identity(collected, identity),
                 ));
@@ -7225,7 +7227,8 @@ fn r1_to_r2a_or_r3() -> impl Step<
                 resolved_campaign,
                 journal_path,
                 journal,
-            );
+            )
+            .with_facts(facts);
             Ok(typestate::R1Branch::R3(
                 typestate::R3::from_collected_identity(collected, parent_identity),
             ))
@@ -7439,6 +7442,211 @@ fn r4b_to_r4c_genesis() -> impl Step<
     )
 }
 
+fn r4c_to_r5() -> impl Step<
+    typestate::R4cReady<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    To = typestate::R5<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    Error = PrepareError,
+> {
+    typestate::transition(
+        |r4c: typestate::R4cReady<Prototype1StateRunShape, ResolvedCampaignConfig>| -> Result<
+            typestate::R5<Prototype1StateRunShape, ResolvedCampaignConfig>,
+            PrepareError,
+        > {
+            let typestate::R4cParts { collected, parent } = r4c.into_parts();
+            let mut parts = collected.into_parts();
+            let parent_identity = parent.identity().clone();
+            info!(
+                target: EXECUTION_DEBUG_TARGET,
+                role = "parent",
+                authority = "history_startup",
+                transition = "Parent<Checked>->Parent<Ready>",
+                campaign = %parts.campaign_id,
+                parent_id = %parent_identity.parent_id(),
+                node_id = %parent_identity.node_id(),
+                generation = parent_identity.generation(),
+                branch_id = %parent_identity.branch_id(),
+                handoff_runtime_id = ?parts.handoff_invocation.as_ref().map(|invocation| invocation.runtime_id()),
+                "parent entered ready state for active turn"
+            );
+            parts
+                .journal
+                .append(JournalEntry::ParentStarted(ParentStartedEntry {
+                    recorded_at: RecordedAt::now(),
+                    campaign_id: parts.campaign_id.clone(),
+                    parent_identity: parent_identity.clone(),
+                    repo_root: parts.repo_root.clone(),
+                    handoff_runtime_id: parts
+                        .handoff_invocation
+                        .as_ref()
+                        .map(|invocation| invocation.runtime_id()),
+                    pid: std::process::id(),
+                }))
+                .map_err(|err| {
+                    prototype1_state_transition_error("prototype1_parent_start", err.to_string())
+                })?;
+            append_parent_target_sample(
+                &mut parts.journal,
+                &parts.campaign_id,
+                &parent_identity,
+                parts
+                    .handoff_invocation
+                    .as_ref()
+                    .map(|invocation| invocation.runtime_id()),
+                &parts.repo_root,
+                journal::resource::Phase::ParentStart,
+            );
+
+            debug!(
+                target: EXECUTION_DEBUG_TARGET,
+                campaign = %parts.campaign_id,
+                parent_id = %parent_identity.parent_id(),
+                generation = parent_identity.generation(),
+                repo_root = %parts.repo_root.display(),
+                journal_path = %parts.journal_path.display(),
+                "starting typed prototype1 parent turn"
+            );
+            Ok(typestate::R5::from_collected_parent(
+                parts.into_collected(),
+                parent,
+            ))
+        },
+    )
+}
+
+fn r5_to_r6() -> impl AsyncStep<
+    typestate::R5<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    To = typestate::R6<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    Error = PrepareError,
+> {
+    typestate::async_transition(
+        |r5: typestate::R5<Prototype1StateRunShape, ResolvedCampaignConfig>| async move {
+            let typestate::ReadyParts { collected, parent } = r5.into_parts();
+            let mut parts = collected.into_parts();
+            let parent_identity = parent.identity().clone();
+            let parent_baseline = establish_parent_baseline_for_id(
+                &parts.campaign_id,
+                &parts.campaign_config,
+                &parts.manifest_path,
+                &parent_identity,
+            )
+            .await?;
+            parts.facts.parent_baseline = Some(parent_baseline);
+            Ok(typestate::R6::from_collected_parent(
+                parts.into_collected(),
+                parent,
+            ))
+        },
+    )
+}
+
+fn r6_to_r7() -> impl Step<
+    typestate::R6<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    To = typestate::R7<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    Error = PrepareError,
+> {
+    typestate::transition(
+        |r6: typestate::R6<Prototype1StateRunShape, ResolvedCampaignConfig>| -> Result<
+            typestate::R7<Prototype1StateRunShape, ResolvedCampaignConfig>,
+            PrepareError,
+        > {
+            let typestate::ReadyParts { collected, parent } = r6.into_parts();
+            let mut parts = collected.into_parts();
+            let parent_identity = parent.identity().clone();
+            let complete_search_policy =
+                if parts.run_shape.stop_after == Prototype1StateStopAfter::Complete {
+                    Some(
+                        if let Some(admitted) =
+                            profile::load_admitted_run_profile(&parts.manifest_path)?
+                        {
+                            admitted.profile.search_policy()
+                        } else {
+                            load_scheduler_state(
+                                &parts.manifest_path,
+                                OperatorProjectionRead::cli_operator(),
+                            )?
+                            .policy
+                        },
+                    )
+                } else {
+                    None
+                };
+            if parts.run_shape.stop_after == Prototype1StateStopAfter::Complete {
+                parts
+                    .run_shape
+                    .candidate_generation
+                    .ensure_live_complete_admitted()?;
+            }
+            let plan_child_budget = if let Some(policy) = complete_search_policy.as_ref() {
+                let current_node_count = persisted_prototype1_node_count(&parts.manifest_path)?;
+                if parent_identity.generation() >= policy.max_generations {
+                    return Err(PrepareError::InvalidBatchSelection {
+                        detail: format!(
+                            "prototype1 hard stop before child planning: parent generation {} has reached max_generations {}",
+                            parent_identity.generation(),
+                            policy.max_generations
+                        ),
+                    });
+                }
+                reserve_complete_child_budget(policy, current_node_count)?
+            } else {
+                Prototype1ChildBudget::new(1, 1)
+            };
+            parts.facts.complete_search_policy = complete_search_policy;
+            parts.facts.plan_child_budget = Some(plan_child_budget);
+            Ok(typestate::R7::from_collected_parent(
+                parts.into_collected(),
+                parent,
+            ))
+        },
+    )
+}
+
+fn r7_to_r8() -> impl AsyncStep<
+    typestate::R7<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    To = typestate::R8<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    Error = PrepareError,
+> {
+    typestate::async_transition(
+        |r7: typestate::R7<Prototype1StateRunShape, ResolvedCampaignConfig>| async move {
+            let typestate::ReadyParts { collected, parent } = r7.into_parts();
+            let mut parts = collected.into_parts();
+            let plan_child_budget = parts.facts.plan_child_budget.ok_or_else(|| {
+                PrepareError::InvalidBatchSelection {
+                    detail: "R7 child-plan transition missing plan child budget".to_string(),
+                }
+            })?;
+            let planned_children = resolve_child_plan_for_id(
+                &parts.campaign_id,
+                &parts.manifest_path,
+                &parts.repo_root,
+                parent,
+                parts.run_shape.candidate_generation,
+                parts.command.node_id.as_deref(),
+                plan_child_budget,
+                parts.run_shape.broad_tui,
+                parts.campaign_config.route_source.clone(),
+            )
+            .await?;
+            let PlannedChildren {
+                parent,
+                plan,
+                children,
+                rejected_surface_attempts,
+            } = planned_children;
+            parts.facts.plan_child_budget = Some(plan_child_budget);
+            parts.facts.child_plan = Some(typestate::context::ChildPlanFacts {
+                plan,
+                children,
+                rejected_surface_attempts,
+            });
+            Ok(typestate::R8::from_collected_parent(
+                parts.into_collected(),
+                parent,
+            ))
+        },
+    )
+}
+
 #[instrument(
     target = "ploke_exec",
     level = "debug",
@@ -7501,123 +7709,47 @@ pub(crate) async fn run_prototype1_state_turn(
         typestate::R4aStartupBranch::GenesisChecked(r4b) => r4b_to_r4c_genesis().apply(r4b)?,
         typestate::R4aStartupBranch::PredecessorReady(r4c) => r4c,
     };
-    let typestate::R4cParts { collected, parent } = r4c.into_parts();
+    let r5 = r4c_to_r5().apply(r4c)?;
+    let r6 = r5_to_r6().apply(r5).await?;
+    let r7 = r6_to_r7().apply(r6)?;
+    let r8 = r7_to_r8().apply(r7).await?;
+    let typestate::SelectableParts { collected, parent } = r8.into_parts();
     let typestate::context::CollectedParts {
         command,
         repo_root,
         campaign_id,
         manifest_path,
         run_shape,
-        campaign_config: resolved_campaign,
+        campaign_config: _,
         journal_path,
         journal,
         handoff_invocation,
+        facts,
     } = collected.into_parts();
     let mut journal = journal;
     let parent_identity = parent.identity().clone();
-    info!(
-        target: EXECUTION_DEBUG_TARGET,
-        role = "parent",
-        authority = "history_startup",
-        transition = "Parent<Checked>->Parent<Ready>",
-        campaign = %campaign_id,
-        parent_id = %parent_identity.parent_id(),
-        node_id = %parent_identity.node_id(),
-        generation = parent_identity.generation(),
-        branch_id = %parent_identity.branch_id(),
-        handoff_runtime_id = ?handoff_invocation.as_ref().map(|invocation| invocation.runtime_id()),
-        "parent entered ready state for active turn"
-    );
-    journal
-        .append(JournalEntry::ParentStarted(ParentStartedEntry {
-            recorded_at: RecordedAt::now(),
-            campaign_id: campaign_id.clone(),
-            parent_identity: parent_identity.clone(),
-            repo_root: repo_root.clone(),
-            handoff_runtime_id: handoff_invocation
-                .as_ref()
-                .map(|invocation| invocation.runtime_id()),
-            pid: std::process::id(),
-        }))
-        .map_err(|err| {
-            prototype1_state_transition_error("prototype1_parent_start", err.to_string())
-        })?;
-    append_parent_target_sample(
-        &mut journal,
-        &campaign_id,
-        &parent_identity,
-        handoff_invocation
-            .as_ref()
-            .map(|invocation| invocation.runtime_id()),
-        &repo_root,
-        journal::resource::Phase::ParentStart,
-    );
-
-    debug!(
-        target: EXECUTION_DEBUG_TARGET,
-        campaign = %campaign_id,
-        parent_id = %parent_identity.parent_id(),
-        generation = parent_identity.generation(),
-        repo_root = %repo_root.display(),
-        journal_path = %journal_path.display(),
-        "starting typed prototype1 parent turn"
-    );
-    let parent_baseline = establish_parent_baseline_for_id(
-        &campaign_id,
-        &resolved_campaign,
-        &manifest_path,
-        &parent_identity,
-    )
-    .await?;
-    let complete_search_policy = if run_shape.stop_after == Prototype1StateStopAfter::Complete {
-        Some(
-            if let Some(admitted) = profile::load_admitted_run_profile(&manifest_path)? {
-                admitted.profile.search_policy()
-            } else {
-                load_scheduler_state(&manifest_path, OperatorProjectionRead::cli_operator())?.policy
-            },
-        )
-    } else {
-        None
-    };
-    if run_shape.stop_after == Prototype1StateStopAfter::Complete {
-        run_shape
-            .candidate_generation
-            .ensure_live_complete_admitted()?;
-    }
-    let plan_child_budget = if let Some(policy) = complete_search_policy.as_ref() {
-        let current_node_count = persisted_prototype1_node_count(&manifest_path)?;
-        if parent_identity.generation() >= policy.max_generations {
-            return Err(PrepareError::InvalidBatchSelection {
-                detail: format!(
-                    "prototype1 hard stop before child planning: parent generation {} has reached max_generations {}",
-                    parent_identity.generation(),
-                    policy.max_generations
-                ),
-            });
-        }
-        reserve_complete_child_budget(policy, current_node_count)?
-    } else {
-        Prototype1ChildBudget::new(1, 1)
-    };
-    let planned_children = resolve_child_plan_for_id(
-        &campaign_id,
-        &manifest_path,
-        &repo_root,
-        parent,
-        run_shape.candidate_generation,
-        command.node_id.as_deref(),
-        plan_child_budget,
-        run_shape.broad_tui,
-        resolved_campaign.route_source,
-    )
-    .await?;
-    let PlannedChildren {
-        parent,
+    let parent_baseline =
+        facts
+            .parent_baseline
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: "R8 extraction missing parent baseline".to_string(),
+            })?;
+    let complete_search_policy = facts.complete_search_policy;
+    let plan_child_budget =
+        facts
+            .plan_child_budget
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: "R8 extraction missing plan child budget".to_string(),
+            })?;
+    let typestate::context::ChildPlanFacts {
         plan,
         mut children,
         rejected_surface_attempts,
-    } = planned_children;
+    } = facts
+        .child_plan
+        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+            detail: "R8 extraction missing child plan facts".to_string(),
+        })?;
     let planned_child_count = plan.body().children().len();
     let (mut child_budget, mut child_schedule_mode) =
         if let Some(policy) = complete_search_policy.as_ref() {
