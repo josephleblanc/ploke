@@ -19,7 +19,6 @@ use super::super::{
     history::{self as history_model, Block, LineageState},
     identity::ParentIdentity,
     inner::{self, Crown, Received},
-    invocation::SuccessorInvocation,
     journal::ParentStartedEntry,
     parent as parent_role, successor,
 };
@@ -448,10 +447,7 @@ pub(crate) struct R4cParts<RunShape, CampaignConfig> {
 
 pub(crate) enum R4aStartupBranch<RunShape, CampaignConfig> {
     GenesisChecked(R4bGenesisChecked<RunShape, CampaignConfig>),
-    PredecessorReady {
-        ready: R4cPredecessorReady<RunShape, CampaignConfig>,
-        handoff_invocation: SuccessorInvocation,
-    },
+    PredecessorReady(R4cReady<RunShape, CampaignConfig>),
 }
 
 /// R4a: parent loaded/constructed as unchecked.
@@ -529,20 +525,20 @@ pub(crate) type R4bGenesisChecked<RunShape = (), CampaignConfig = ()> = Runtime<
 /// - Genesis: `Parent<Checked> -> Parent<Ready>`.
 /// - Predecessor: `Parent<Unchecked> -> Parent<Ready>`.
 /// - `History<startup::Pending, head::Unobserved, epoch::None>`
-///   `-> History<startup::Validated<Kind>, head::FromStartup, epoch::None>`.
+///   `-> History<startup::Validated<Any>, head::FromStartup, epoch::None>`.
 ///
-/// Both startup branches converge here as `Parent<Ready>`. This is not yet the
-/// intended History-docs `Parent<Ruling>` state. The `Kind` parameter records
-/// which startup branch produced readiness, because existing `Startup<Validated>`
-/// erases that once consumed.
-pub(crate) type R4cReady<Kind, RunShape = (), CampaignConfig = ()> = Runtime<
+/// Both startup branches converge here as the same induction invariant:
+/// `Parent<Ready>`. The runtime does not need a different post-startup state for
+/// genesis vs predecessor. Predecessor bookkeeping, when present, is ordinary
+/// value metadata in `context::Collected::handoff_invocation`.
+pub(crate) type R4cReady<RunShape = (), CampaignConfig = ()> = Runtime<
     phase::R4c,
     parent_role::Parent<parent_role::Ready>,
     Context<context::Collected<RunShape, CampaignConfig>>,
     Plan<plan::authority::None, plan::schedule::None>,
     Children<children::set::None, children::attempt::None>,
     History<
-        history_axis::startup::Validated<Kind>,
+        history_axis::startup::Validated<history_axis::startup::Any>,
         history_axis::head::FromStartup,
         history_axis::epoch::None,
     >,
@@ -562,9 +558,9 @@ pub(crate) type R4cReady<Kind, RunShape = (), CampaignConfig = ()> = Runtime<
 >;
 
 pub(crate) type R4cGenesisReady<RunShape = (), CampaignConfig = ()> =
-    R4cReady<parent_role::Genesis, RunShape, CampaignConfig>;
+    R4cReady<RunShape, CampaignConfig>;
 pub(crate) type R4cPredecessorReady<RunShape = (), CampaignConfig = ()> =
-    R4cReady<parent_role::Predecessor, RunShape, CampaignConfig>;
+    R4cReady<RunShape, CampaignConfig>;
 
 impl<RunShape, CampaignConfig> R4a<RunShape, CampaignConfig> {
     pub(crate) fn from_collected_parent(
@@ -676,7 +672,7 @@ impl<RunShape, CampaignConfig> R4bGenesisChecked<RunShape, CampaignConfig> {
     }
 }
 
-impl<Kind, RunShape, CampaignConfig> R4cReady<Kind, RunShape, CampaignConfig> {
+impl<RunShape, CampaignConfig> R4cReady<RunShape, CampaignConfig> {
     pub(crate) fn from_collected_parent(
         collected: context::Collected<RunShape, CampaignConfig>,
         parent: parent_role::Parent<parent_role::Ready>,

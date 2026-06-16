@@ -7160,6 +7160,7 @@ fn r1_to_r2a_or_r3() -> impl Step<
                 campaign_config: resolved_campaign,
                 journal_path,
                 journal,
+                handoff_invocation: _,
             } = r1.into_collected().into_parts();
 
             if command.init_parent_identity {
@@ -7403,25 +7404,26 @@ fn r4a_to_r4b_or_r4c() -> impl Step<
                 active_parent_root = %active_parent_root.display(),
                 "prototype1 successor acknowledged handoff before entering typed parent run"
             );
-            Ok(typestate::R4aStartupBranch::PredecessorReady {
-                ready: typestate::R4cPredecessorReady::from_collected_parent(
-                    parts.into_collected(),
+            Ok(typestate::R4aStartupBranch::PredecessorReady(
+                typestate::R4cReady::from_collected_parent(
+                    parts
+                        .into_collected()
+                        .with_handoff_invocation(Some(invocation)),
                     parent,
                 ),
-                handoff_invocation: invocation,
-            })
+            ))
         },
     )
 }
 
 fn r4b_to_r4c_genesis() -> impl Step<
     typestate::R4bGenesisChecked<Prototype1StateRunShape, ResolvedCampaignConfig>,
-    To = typestate::R4cGenesisReady<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    To = typestate::R4cReady<Prototype1StateRunShape, ResolvedCampaignConfig>,
     Error = PrepareError,
 > {
     typestate::transition(
         |r4b: typestate::R4bGenesisChecked<Prototype1StateRunShape, ResolvedCampaignConfig>| -> Result<
-            typestate::R4cGenesisReady<Prototype1StateRunShape, ResolvedCampaignConfig>,
+            typestate::R4cReady<Prototype1StateRunShape, ResolvedCampaignConfig>,
             PrepareError,
         > {
             let typestate::R4bParts { collected, parent } = r4b.into_parts();
@@ -7429,7 +7431,7 @@ fn r4b_to_r4c_genesis() -> impl Step<
             let startup =
                 Startup::<Genesis>::from_history(parent.identity(), &parts.manifest_path)?;
             let parent = parent.ready(startup)?;
-            Ok(typestate::R4cGenesisReady::from_collected_parent(
+            Ok(typestate::R4cReady::from_collected_parent(
                 parts.into_collected(),
                 parent,
             ))
@@ -7495,16 +7497,11 @@ pub(crate) async fn run_prototype1_state_turn(
         typestate::R1Branch::R3(r3) => r3,
     };
     let r4a = r3_to_r4a().apply(r3)?;
-    let (r4c_parts, handoff_invocation) = match r4a_to_r4b_or_r4c().apply(r4a)? {
-        typestate::R4aStartupBranch::GenesisChecked(r4b) => {
-            (r4b_to_r4c_genesis().apply(r4b)?.into_parts(), None)
-        }
-        typestate::R4aStartupBranch::PredecessorReady {
-            ready,
-            handoff_invocation,
-        } => (ready.into_parts(), Some(handoff_invocation)),
+    let r4c = match r4a_to_r4b_or_r4c().apply(r4a)? {
+        typestate::R4aStartupBranch::GenesisChecked(r4b) => r4b_to_r4c_genesis().apply(r4b)?,
+        typestate::R4aStartupBranch::PredecessorReady(r4c) => r4c,
     };
-    let typestate::R4cParts { collected, parent } = r4c_parts;
+    let typestate::R4cParts { collected, parent } = r4c.into_parts();
     let typestate::context::CollectedParts {
         command,
         repo_root,
@@ -7514,6 +7511,7 @@ pub(crate) async fn run_prototype1_state_turn(
         campaign_config: resolved_campaign,
         journal_path,
         journal,
+        handoff_invocation,
     } = collected.into_parts();
     let mut journal = journal;
     let parent_identity = parent.identity().clone();
