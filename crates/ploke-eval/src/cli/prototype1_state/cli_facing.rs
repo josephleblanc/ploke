@@ -7740,6 +7740,133 @@ fn r9_to_r10() -> impl Step<
     )
 }
 
+fn r10_to_r11() -> impl AsyncStep<
+    typestate::R10<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    To = typestate::R10FanoutBranch<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    Error = PrepareError,
+> {
+    typestate::async_transition(
+        |r10: typestate::R10<Prototype1StateRunShape, ResolvedCampaignConfig>| async move {
+            let typestate::SelectableParts { collected, parent } = r10.into_parts();
+            let mut parts = collected.into_parts();
+            let parent_identity = parent.identity().clone();
+            let parent_baseline = parts.facts.parent_baseline.as_ref().ok_or_else(|| {
+                PrepareError::InvalidBatchSelection {
+                    detail: "R10 fanout transition missing parent baseline".to_string(),
+                }
+            })?;
+            let child_budget =
+                parts
+                    .facts
+                    .child_budget
+                    .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                        detail: "R10 fanout transition missing child budget".to_string(),
+                    })?;
+            let child_schedule_mode = parts.facts.child_schedule_mode.ok_or_else(|| {
+                PrepareError::InvalidBatchSelection {
+                    detail: "R10 fanout transition missing child schedule mode".to_string(),
+                }
+            })?;
+            let selection_strategy = parts.facts.selection_strategy.ok_or_else(|| {
+                PrepareError::InvalidBatchSelection {
+                    detail: "R10 fanout transition missing selection strategy".to_string(),
+                }
+            })?;
+            let child_plan = parts.facts.child_plan.take().ok_or_else(|| {
+                PrepareError::InvalidBatchSelection {
+                    detail: "R10 fanout transition missing child plan facts".to_string(),
+                }
+            })?;
+            let typestate::context::ChildPlanFacts {
+                plan: _,
+                children,
+                rejected_surface_attempts,
+            } = child_plan;
+            let rejected_only_plan = parts.run_shape.stop_after
+                == Prototype1StateStopAfter::Complete
+                && children.is_empty()
+                && !rejected_surface_attempts.is_empty();
+            if rejected_only_plan {
+                let projection = ParentSelection::new(
+                    &parts.manifest_path,
+                    &parent_identity,
+                    &[],
+                    &rejected_surface_attempts,
+                )
+                .current_generation_candidates()?;
+                parts.facts.child_outcomes = Some(Vec::new());
+                parts.facts.selection = None;
+                parts.facts.rejected_attempt_payloads = Some(projection.considered.len());
+                return Ok(typestate::R10FanoutBranch::RejectedOnly(
+                    typestate::R11aRejectedOnly::from_collected_parent(
+                        parts.into_collected(),
+                        parent,
+                    ),
+                ));
+            }
+
+            let (child_outcomes, selection) = if parts.run_shape.stop_after
+                == Prototype1StateStopAfter::Complete
+                && child_schedule_mode == Prototype1ChildScheduleMode::AdaptiveBatch
+            {
+                run_adaptive_child_fanout(
+                    &parts.campaign_id,
+                    &parts.manifest_path,
+                    &parts.repo_root,
+                    &parts.journal_path,
+                    &parent_identity,
+                    parent_baseline,
+                    child_budget,
+                    parts.run_shape.observe_child_stale_after,
+                    children,
+                    &rejected_surface_attempts,
+                    parts.run_shape.successor_selection_seed,
+                    selection_strategy,
+                )
+                .await?
+            } else {
+                let child_outcomes = run_child_fanout(
+                    &parts.campaign_id,
+                    &parts.manifest_path,
+                    &parts.repo_root,
+                    &parts.journal_path,
+                    &parent_identity,
+                    parent_baseline,
+                    parts.run_shape.stop_after,
+                    parts.run_shape.observe_child_stale_after,
+                    child_schedule_mode,
+                    child_budget,
+                    0,
+                    children,
+                )
+                .await?;
+                let parent_selection = ParentSelection::new(
+                    &parts.manifest_path,
+                    &parent_identity,
+                    &child_outcomes,
+                    &rejected_surface_attempts,
+                );
+                let selection = if parts.run_shape.stop_after == Prototype1StateStopAfter::Complete
+                {
+                    parent_selection.select_successor(
+                        parts.run_shape.successor_selection_seed,
+                        selection_strategy,
+                    )?
+                } else {
+                    None
+                };
+                (child_outcomes, selection)
+            };
+            parts.facts.child_outcomes = Some(child_outcomes);
+            parts.facts.selection = selection;
+            parts.facts.rejected_attempt_payloads = None;
+            Ok(typestate::R10FanoutBranch::FanoutComplete(
+                typestate::R11FanoutComplete::from_collected_parent(parts.into_collected(), parent),
+            ))
+        },
+    )
+}
+
 #[instrument(
     target = "ploke_exec",
     level = "debug",
@@ -7808,7 +7935,11 @@ pub(crate) async fn run_prototype1_state_turn(
     let r8 = r7_to_r8().apply(r7).await?;
     let r9 = r8_to_r9().apply(r8)?;
     let r10 = r9_to_r10().apply(r9)?;
-    let typestate::SelectableParts { collected, parent } = r10.into_parts();
+    let r11 = r10_to_r11().apply(r10).await?;
+    let typestate::SelectableParts { collected, parent } = match r11 {
+        typestate::R10FanoutBranch::RejectedOnly(r11a) => r11a.into_parts(),
+        typestate::R10FanoutBranch::FanoutComplete(r11) => r11.into_parts(),
+    };
     let typestate::context::CollectedParts {
         command,
         repo_root,
@@ -7823,106 +7954,21 @@ pub(crate) async fn run_prototype1_state_turn(
     } = collected.into_parts();
     let mut journal = journal;
     let parent_identity = parent.identity().clone();
-    let parent_baseline =
-        facts
-            .parent_baseline
-            .ok_or_else(|| PrepareError::InvalidBatchSelection {
-                detail: "R8 extraction missing parent baseline".to_string(),
-            })?;
     let complete_search_policy = facts.complete_search_policy;
     let planned_child_count =
         facts
             .planned_child_count
             .ok_or_else(|| PrepareError::InvalidBatchSelection {
-                detail: "R10 extraction missing planned child count".to_string(),
+                detail: "R11 extraction missing planned child count".to_string(),
             })?;
-    let child_budget = facts
-        .child_budget
-        .ok_or_else(|| PrepareError::InvalidBatchSelection {
-            detail: "R10 extraction missing child budget".to_string(),
-        })?;
-    let child_schedule_mode =
+    let child_outcomes =
         facts
-            .child_schedule_mode
+            .child_outcomes
             .ok_or_else(|| PrepareError::InvalidBatchSelection {
-                detail: "R10 extraction missing child schedule mode".to_string(),
+                detail: "R11 extraction missing child outcomes".to_string(),
             })?;
-    let selection_strategy =
-        facts
-            .selection_strategy
-            .ok_or_else(|| PrepareError::InvalidBatchSelection {
-                detail: "R10 extraction missing selection strategy".to_string(),
-            })?;
-    let typestate::context::ChildPlanFacts {
-        plan: _,
-        children,
-        rejected_surface_attempts,
-    } = facts
-        .child_plan
-        .ok_or_else(|| PrepareError::InvalidBatchSelection {
-            detail: "R10 extraction missing child plan facts".to_string(),
-        })?;
-    let rejected_only_plan = run_shape.stop_after == Prototype1StateStopAfter::Complete
-        && children.is_empty()
-        && !rejected_surface_attempts.is_empty();
-    let (child_outcomes, selection, rejected_attempt_payloads) = if rejected_only_plan {
-        let projection = ParentSelection::new(
-            &manifest_path,
-            &parent_identity,
-            &[],
-            &rejected_surface_attempts,
-        )
-        .current_generation_candidates()?;
-        (Vec::new(), None, Some(projection.considered.len()))
-    } else if run_shape.stop_after == Prototype1StateStopAfter::Complete
-        && child_schedule_mode == Prototype1ChildScheduleMode::AdaptiveBatch
-    {
-        let (outcomes, selection) = run_adaptive_child_fanout(
-            &campaign_id,
-            &manifest_path,
-            &repo_root,
-            &journal_path,
-            &parent_identity,
-            &parent_baseline,
-            child_budget,
-            run_shape.observe_child_stale_after,
-            children,
-            &rejected_surface_attempts,
-            run_shape.successor_selection_seed,
-            selection_strategy,
-        )
-        .await?;
-        (outcomes, selection, None)
-    } else {
-        let child_outcomes = run_child_fanout(
-            &campaign_id,
-            &manifest_path,
-            &repo_root,
-            &journal_path,
-            &parent_identity,
-            &parent_baseline,
-            run_shape.stop_after,
-            run_shape.observe_child_stale_after,
-            child_schedule_mode,
-            child_budget,
-            0,
-            children,
-        )
-        .await?;
-        let parent_selection = ParentSelection::new(
-            &manifest_path,
-            &parent_identity,
-            &child_outcomes,
-            &rejected_surface_attempts,
-        );
-        let selection = if run_shape.stop_after == Prototype1StateStopAfter::Complete {
-            parent_selection
-                .select_successor(run_shape.successor_selection_seed, selection_strategy)?
-        } else {
-            None
-        };
-        (child_outcomes, selection, None)
-    };
+    let selection = facts.selection;
+    let rejected_attempt_payloads = facts.rejected_attempt_payloads;
     let fallback_node = parent.node().clone();
     let report_child = if rejected_attempt_payloads.is_some() {
         None

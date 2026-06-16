@@ -1140,10 +1140,10 @@ selectable_state_impl!(R10, phase::R10);
 /// - `Evidence<..., selection::Strategy, ...>`
 ///   `-> Evidence<..., selection::Evidence<SelectionSealMaterial>, ...>`.
 ///
-pub(crate) type R11aRejectedOnly = Runtime<
+pub(crate) type R11aRejectedOnly<RunShape = (), CampaignConfig = ()> = Runtime<
     phase::R11a,
     parent_role::Parent<parent_role::Selectable>,
-    Context<context::Collected>,
+    Context<context::Collected<RunShape, CampaignConfig>>,
     Plan<
         plan::authority::Received<Received<parent_role::ChildPlan>>,
         plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
@@ -1180,10 +1180,10 @@ pub(crate) type R11aRejectedOnly = Runtime<
 ///
 /// Existing carrier: `PlannedChildOutcome`. Inside fanout, each child walks the
 /// C1-C5 chain listed below; after fanout the parent has a vector of outcomes.
-pub(crate) type R11FanoutComplete = Runtime<
+pub(crate) type R11FanoutComplete<RunShape = (), CampaignConfig = ()> = Runtime<
     phase::R11,
     parent_role::Parent<parent_role::Selectable>,
-    Context<context::Collected>,
+    Context<context::Collected<RunShape, CampaignConfig>>,
     Plan<
         plan::authority::Received<Received<parent_role::ChildPlan>>,
         plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
@@ -1208,6 +1208,14 @@ pub(crate) type R11FanoutComplete = Runtime<
     >,
     Report<report::None>,
 >;
+
+selectable_state_impl!(R11aRejectedOnly, phase::R11a);
+selectable_state_impl!(R11FanoutComplete, phase::R11);
+
+pub(crate) enum R10FanoutBranch<RunShape, CampaignConfig> {
+    RejectedOnly(R11aRejectedOnly<RunShape, CampaignConfig>),
+    FanoutComplete(R11FanoutComplete<RunShape, CampaignConfig>),
+}
 
 /// R12: report-child/outcome projection ready.
 ///

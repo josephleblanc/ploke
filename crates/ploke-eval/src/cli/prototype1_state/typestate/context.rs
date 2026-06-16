@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{fmt, path::PathBuf};
 
 use ploke_records::ids::CampaignId;
 
@@ -8,11 +8,12 @@ use crate::{
         CompleteBaseline, Prototype1ChildBudget, Prototype1ChildScheduleMode,
         Prototype1SearchPolicy,
     },
+    successor_selection::SuccessorDecision,
 };
 
 use super::{
     super::{
-        cli_facing::ActiveSelectionStrategy,
+        cli_facing::{ActiveSelectionStrategy, PlannedChildOutcome, SelectionSealMaterial},
         history::surface_attempt,
         inner::Received,
         invocation::SuccessorInvocation,
@@ -47,7 +48,7 @@ impl<T> Command<T> {
 /// These fields are value-level bookkeeping, not extra typestate axes. The type
 /// aliases still describe which facts are required at a given phase; the context
 /// carries the concrete values that the existing live controller needs next.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub(crate) struct Facts {
     pub(crate) parent_baseline: Option<CompleteBaseline>,
     pub(crate) complete_search_policy: Option<Prototype1SearchPolicy>,
@@ -57,14 +58,53 @@ pub(crate) struct Facts {
     pub(crate) child_schedule_mode: Option<Prototype1ChildScheduleMode>,
     pub(crate) child_plan: Option<ChildPlanFacts>,
     pub(crate) selection_strategy: Option<ActiveSelectionStrategy>,
+    pub(crate) child_outcomes: Option<Vec<PlannedChildOutcome>>,
+    pub(crate) selection: Option<(SuccessorDecision, SelectionSealMaterial)>,
+    pub(crate) rejected_attempt_payloads: Option<usize>,
 }
 
 /// Concrete child-plan values after `Parent<Ready> -> Parent<Selectable>`.
-#[derive(Debug)]
 pub(crate) struct ChildPlanFacts {
     pub(crate) plan: Received<ChildPlan>,
     pub(crate) children: Vec<ChildFiles>,
     pub(crate) rejected_surface_attempts: Vec<surface_attempt::Evidence>,
+}
+
+impl fmt::Debug for ChildPlanFacts {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ChildPlanFacts")
+            .field("plan", &self.plan)
+            .field("child_count", &self.children.len())
+            .field(
+                "rejected_surface_attempt_count",
+                &self.rejected_surface_attempts.len(),
+            )
+            .finish()
+    }
+}
+
+impl fmt::Debug for Facts {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Facts")
+            .field("parent_baseline", &self.parent_baseline.is_some())
+            .field(
+                "complete_search_policy",
+                &self.complete_search_policy.is_some(),
+            )
+            .field("plan_child_budget", &self.plan_child_budget)
+            .field("planned_child_count", &self.planned_child_count)
+            .field("child_budget", &self.child_budget)
+            .field("child_schedule_mode", &self.child_schedule_mode)
+            .field("child_plan", &self.child_plan)
+            .field("selection_strategy", &self.selection_strategy.is_some())
+            .field(
+                "child_outcome_count",
+                &self.child_outcomes.as_ref().map(Vec::len),
+            )
+            .field("selection", &self.selection.is_some())
+            .field("rejected_attempt_payloads", &self.rejected_attempt_payloads)
+            .finish()
+    }
 }
 
 /// Repo/campaign/manifest/run-shape/journal inputs have been collected.
