@@ -4,11 +4,15 @@ use ploke_records::ids::CampaignId;
 
 use crate::{
     cli::Prototype1StateCommand,
-    intervention::{CompleteBaseline, Prototype1ChildBudget, Prototype1SearchPolicy},
+    intervention::{
+        CompleteBaseline, Prototype1ChildBudget, Prototype1ChildScheduleMode,
+        Prototype1SearchPolicy,
+    },
 };
 
 use super::{
     super::{
+        cli_facing::ActiveSelectionStrategy,
         history::surface_attempt,
         inner::Received,
         invocation::SuccessorInvocation,
@@ -48,7 +52,11 @@ pub(crate) struct Facts {
     pub(crate) parent_baseline: Option<CompleteBaseline>,
     pub(crate) complete_search_policy: Option<Prototype1SearchPolicy>,
     pub(crate) plan_child_budget: Option<Prototype1ChildBudget>,
+    pub(crate) planned_child_count: Option<usize>,
+    pub(crate) child_budget: Option<Prototype1ChildBudget>,
+    pub(crate) child_schedule_mode: Option<Prototype1ChildScheduleMode>,
     pub(crate) child_plan: Option<ChildPlanFacts>,
+    pub(crate) selection_strategy: Option<ActiveSelectionStrategy>,
 }
 
 /// Concrete child-plan values after `Parent<Ready> -> Parent<Selectable>`.

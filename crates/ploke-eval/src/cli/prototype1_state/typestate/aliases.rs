@@ -1003,10 +1003,10 @@ pub(crate) type R8<RunShape = (), CampaignConfig = ()> = Runtime<
 ///
 /// No existing typestate island moves here, but the runnable child set has been
 /// budgeted/truncated and schedule mode has been selected.
-pub(crate) type R9 = Runtime<
+pub(crate) type R9<RunShape = (), CampaignConfig = ()> = Runtime<
     phase::R9,
     parent_role::Parent<parent_role::Selectable>,
-    Context<context::Collected>,
+    Context<context::Collected<RunShape, CampaignConfig>>,
     Plan<
         plan::authority::Received<Received<parent_role::ChildPlan>>,
         plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
@@ -1041,10 +1041,10 @@ pub(crate) type R9 = Runtime<
 /// Existing implementation type: `ActiveSelectionStrategy`, but it is private
 /// to `cli_facing.rs`. The local `evidence::selection::Strategy` marker stands
 /// in for that existing-but-not-reusable carrier.
-pub(crate) type R10 = Runtime<
+pub(crate) type R10<RunShape = (), CampaignConfig = ()> = Runtime<
     phase::R10,
     parent_role::Parent<parent_role::Selectable>,
-    Context<context::Collected>,
+    Context<context::Collected<RunShape, CampaignConfig>>,
     Plan<
         plan::authority::Received<Received<parent_role::ChildPlan>>,
         plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
@@ -1069,6 +1069,68 @@ pub(crate) type R10 = Runtime<
     >,
     Report<report::None>,
 >;
+
+macro_rules! selectable_state_impl {
+    ($alias:ident, $phase:expr) => {
+        impl<RunShape, CampaignConfig> $alias<RunShape, CampaignConfig> {
+            pub(crate) fn from_collected_parent(
+                collected: context::Collected<RunShape, CampaignConfig>,
+                parent: parent_role::Parent<parent_role::Selectable>,
+            ) -> Self {
+                Self {
+                    phase: $phase,
+                    role: parent,
+                    context: Context::new(collected),
+                    plan: Plan {
+                        _authority: PhantomData,
+                        _schedule: PhantomData,
+                        _private: Private,
+                    },
+                    children: Children {
+                        _set: PhantomData,
+                        _attempt: PhantomData,
+                        _private: Private,
+                    },
+                    history: History {
+                        _startup: PhantomData,
+                        _head: PhantomData,
+                        _epoch: PhantomData,
+                        _private: Private,
+                    },
+                    evidence: Evidence {
+                        _parent_start: PhantomData,
+                        _baseline: PhantomData,
+                        _policy: PhantomData,
+                        _selection: PhantomData,
+                        _completion: PhantomData,
+                        _private: Private,
+                    },
+                    continuation: Continuation {
+                        _selection: PhantomData,
+                        _decision: PhantomData,
+                        _handoff: PhantomData,
+                        _private: Private,
+                    },
+                    report: Report {
+                        _state: PhantomData,
+                        _private: Private,
+                    },
+                    _private: Private,
+                }
+            }
+
+            pub(crate) fn into_parts(self) -> SelectableParts<RunShape, CampaignConfig> {
+                SelectableParts {
+                    collected: self.context.into_state(),
+                    parent: self.role,
+                }
+            }
+        }
+    };
+}
+
+selectable_state_impl!(R9, phase::R9);
+selectable_state_impl!(R10, phase::R10);
 
 /// R11a: rejected-only branch projected into selection evidence.
 ///

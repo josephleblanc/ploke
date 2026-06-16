@@ -6236,7 +6236,7 @@ enum SelectionCandidateScope {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct ActiveSelectionStrategy {
+pub(crate) struct ActiveSelectionStrategy {
     candidate_scope: SelectionCandidateScope,
     traversal: StrategyKind,
     metrics_policy: crate::successor_selection::metrics::Policy,
@@ -7647,6 +7647,99 @@ fn r7_to_r8() -> impl AsyncStep<
     )
 }
 
+fn r8_to_r9() -> impl Step<
+    typestate::R8<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    To = typestate::R9<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    Error = PrepareError,
+> {
+    typestate::transition(
+        |r8: typestate::R8<Prototype1StateRunShape, ResolvedCampaignConfig>| -> Result<
+            typestate::R9<Prototype1StateRunShape, ResolvedCampaignConfig>,
+            PrepareError,
+        > {
+            let typestate::SelectableParts { collected, parent } = r8.into_parts();
+            let mut parts = collected.into_parts();
+            let plan_child_budget = parts.facts.plan_child_budget.ok_or_else(|| {
+                PrepareError::InvalidBatchSelection {
+                    detail: "R8 schedule transition missing plan child budget".to_string(),
+                }
+            })?;
+            let planned_child_count = parts
+                .facts
+                .child_plan
+                .as_ref()
+                .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                    detail: "R8 schedule transition missing child plan facts".to_string(),
+                })?
+                .plan
+                .body()
+                .children()
+                .len();
+            let (mut child_budget, mut child_schedule_mode) =
+                if let Some(policy) = parts.facts.complete_search_policy.as_ref() {
+                    (plan_child_budget, policy.child_schedule_mode)
+                } else {
+                    // Non-Complete modes intentionally run one child as a debug/inspection slice.
+                    (
+                        Prototype1ChildBudget::new(1, 1),
+                        Prototype1ChildScheduleMode::AdaptiveBatch,
+                    )
+                };
+            if parts.run_shape.stop_after != Prototype1StateStopAfter::Complete
+                && parts.command.node_id.is_some()
+            {
+                // Non-Complete + explicit node id is a single-node debug path.
+                child_budget = Prototype1ChildBudget::new(1, 1);
+                child_schedule_mode = Prototype1ChildScheduleMode::AdaptiveBatch;
+            }
+            if parts.command.node_id.is_none() {
+                let child_plan = parts.facts.child_plan.as_mut().ok_or_else(|| {
+                    PrepareError::InvalidBatchSelection {
+                        detail: "R8 schedule transition missing child plan facts".to_string(),
+                    }
+                })?;
+                child_plan.children.truncate(child_budget.max as usize);
+            }
+            parts.facts.planned_child_count = Some(planned_child_count);
+            parts.facts.child_budget = Some(child_budget);
+            parts.facts.child_schedule_mode = Some(child_schedule_mode);
+            Ok(typestate::R9::from_collected_parent(
+                parts.into_collected(),
+                parent,
+            ))
+        },
+    )
+}
+
+fn r9_to_r10() -> impl Step<
+    typestate::R9<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    To = typestate::R10<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    Error = PrepareError,
+> {
+    typestate::transition(
+        |r9: typestate::R9<Prototype1StateRunShape, ResolvedCampaignConfig>| -> Result<
+            typestate::R10<Prototype1StateRunShape, ResolvedCampaignConfig>,
+            PrepareError,
+        > {
+            let typestate::SelectableParts { collected, parent } = r9.into_parts();
+            let mut parts = collected.into_parts();
+            let metric_inputs =
+                traversal_metric_inputs(parts.run_shape.successor_selection_metrics);
+            let selection_strategy = parts.run_shape.successor_selection.active_strategy(
+                metric_inputs,
+                parts.run_shape.successor_oracle_mode,
+                parts.run_shape.successor_oracle_require_evidence,
+                parts.run_shape.successor_metrics_policy,
+            );
+            parts.facts.selection_strategy = Some(selection_strategy);
+            Ok(typestate::R10::from_collected_parent(
+                parts.into_collected(),
+                parent,
+            ))
+        },
+    )
+}
+
 #[instrument(
     target = "ploke_exec",
     level = "debug",
@@ -7713,7 +7806,9 @@ pub(crate) async fn run_prototype1_state_turn(
     let r6 = r5_to_r6().apply(r5).await?;
     let r7 = r6_to_r7().apply(r6)?;
     let r8 = r7_to_r8().apply(r7).await?;
-    let typestate::SelectableParts { collected, parent } = r8.into_parts();
+    let r9 = r8_to_r9().apply(r8)?;
+    let r10 = r9_to_r10().apply(r9)?;
+    let typestate::SelectableParts { collected, parent } = r10.into_parts();
     let typestate::context::CollectedParts {
         command,
         repo_root,
@@ -7735,48 +7830,38 @@ pub(crate) async fn run_prototype1_state_turn(
                 detail: "R8 extraction missing parent baseline".to_string(),
             })?;
     let complete_search_policy = facts.complete_search_policy;
-    let plan_child_budget =
+    let planned_child_count =
         facts
-            .plan_child_budget
+            .planned_child_count
             .ok_or_else(|| PrepareError::InvalidBatchSelection {
-                detail: "R8 extraction missing plan child budget".to_string(),
+                detail: "R10 extraction missing planned child count".to_string(),
+            })?;
+    let child_budget = facts
+        .child_budget
+        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+            detail: "R10 extraction missing child budget".to_string(),
+        })?;
+    let child_schedule_mode =
+        facts
+            .child_schedule_mode
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: "R10 extraction missing child schedule mode".to_string(),
+            })?;
+    let selection_strategy =
+        facts
+            .selection_strategy
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: "R10 extraction missing selection strategy".to_string(),
             })?;
     let typestate::context::ChildPlanFacts {
-        plan,
-        mut children,
+        plan: _,
+        children,
         rejected_surface_attempts,
     } = facts
         .child_plan
         .ok_or_else(|| PrepareError::InvalidBatchSelection {
-            detail: "R8 extraction missing child plan facts".to_string(),
+            detail: "R10 extraction missing child plan facts".to_string(),
         })?;
-    let planned_child_count = plan.body().children().len();
-    let (mut child_budget, mut child_schedule_mode) =
-        if let Some(policy) = complete_search_policy.as_ref() {
-            (plan_child_budget, policy.child_schedule_mode)
-        } else {
-            // Non-Complete modes intentionally run one child as a debug/inspection slice.
-            (
-                Prototype1ChildBudget::new(1, 1),
-                Prototype1ChildScheduleMode::AdaptiveBatch,
-            )
-        };
-    if run_shape.stop_after != Prototype1StateStopAfter::Complete && command.node_id.is_some() {
-        // Non-Complete + explicit node id is a single-node debug path.
-        child_budget = Prototype1ChildBudget::new(1, 1);
-        child_schedule_mode = Prototype1ChildScheduleMode::AdaptiveBatch;
-    }
-    if command.node_id.is_none() {
-        children.truncate(child_budget.max as usize);
-    }
-
-    let metric_inputs = traversal_metric_inputs(run_shape.successor_selection_metrics);
-    let selection_strategy = run_shape.successor_selection.active_strategy(
-        metric_inputs,
-        run_shape.successor_oracle_mode,
-        run_shape.successor_oracle_require_evidence,
-        run_shape.successor_metrics_policy,
-    );
     let rejected_only_plan = run_shape.stop_after == Prototype1StateStopAfter::Complete
         && children.is_empty()
         && !rejected_surface_attempts.is_empty();
