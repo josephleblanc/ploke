@@ -5,13 +5,14 @@ use ploke_records::{identity::ParentIdentityRecord, ids::CampaignId};
 use crate::cli::prototype1_state::{
     identity::{PARENT_IDENTITY_SCHEMA_VERSION, ParentIdentity},
     journal::PrototypeJournal,
+    parent::{Parent, Unchecked},
 };
 use crate::cli::{
     InspectOutputFormat, Prototype1CandidateGenerator, Prototype1StateCommand,
     Prototype1StateStopAfter, Prototype1SuccessorSelection, Prototype1TraversalMetrics,
 };
 
-use super::{R1, R2a, R3, Step, context, transition};
+use super::{R1, R2a, R3, R4a, Step, context, transition};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct S0(u8);
@@ -156,6 +157,25 @@ fn r3_carries_resolved_parent_identity_payload() {
     let parts = r3.into_parts();
 
     assert_eq!(parts.parent_identity, parent_identity);
+    assert_eq!(
+        parts.collected.into_parts().campaign_id,
+        CampaignId::from("campaign")
+    );
+}
+
+#[test]
+fn r4a_carries_existing_unchecked_parent_carrier() {
+    let parent_identity = parent_identity_for_typestate_test("parent-r4a");
+    let parent = Parent::<Unchecked>::load(
+        &PathBuf::from("/tmp/prototype1-typestate-test/campaign.json"),
+        parent_identity.clone(),
+    )
+    .expect("unchecked parent loads from identity projection");
+
+    let r4a = R4a::from_collected_parent(collected_for_typestate_test(), parent);
+    let parts = r4a.into_parts();
+
+    assert_eq!(parts.parent.identity(), &parent_identity);
     assert_eq!(
         parts.collected.into_parts().campaign_id,
         CampaignId::from("campaign")

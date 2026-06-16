@@ -88,9 +88,7 @@ use crate::{
                 parent_identity_relpath, write_parent_identity,
             },
             inner::{Locked, Open, Received},
-            invocation::{
-                self, InvocationAuthority, SuccessorCompletionStatus, SuccessorInvocation,
-            },
+            invocation::{self, InvocationAuthority, SuccessorCompletionStatus},
             journal::{
                 self, JournalEntry, ParentStartedEntry, PrototypeJournal,
                 prototype1_transition_journal_path,
@@ -6986,101 +6984,6 @@ fn resolve_prototype1_parent_identity(
     })
 }
 
-fn acknowledge_prototype1_state_handoff(
-    command: &Prototype1StateCommand,
-    campaign_id: &CampaignId,
-    parent: Parent<Unchecked>,
-    manifest_path: &Path,
-    repo_root: &Path,
-) -> Result<(Parent<Ready>, Option<SuccessorInvocation>), PrepareError> {
-    let Some(invocation_path) = command.handoff_invocation.as_deref() else {
-        let backend = GitWorktreeBackend;
-        let parent = parent.check(
-            &backend,
-            manifest_path,
-            Check {
-                campaign_id,
-                active_root: repo_root,
-            },
-        )?;
-        let startup = Startup::<Genesis>::from_history(parent.identity(), manifest_path)?;
-        return Ok((parent.ready(startup)?, None));
-    };
-    let invocation = match invocation::load_executable(invocation_path)? {
-        InvocationAuthority::Successor(invocation) => invocation,
-        InvocationAuthority::Child(_) => {
-            return Err(PrepareError::InvalidBatchSelection {
-                detail: format!(
-                    "handoff invocation '{}' is a child invocation, expected successor",
-                    invocation_path.display()
-                ),
-            });
-        }
-    };
-    let identity = parent.identity();
-
-    let invocation_campaign_id = invocation.campaign_id().clone();
-    if &invocation_campaign_id != campaign_id {
-        return Err(PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "handoff invocation campaign '{}' does not match command campaign '{}'",
-                invocation_campaign_id, campaign_id
-            ),
-        });
-    }
-    if invocation.node_id() != identity.node_id() {
-        return Err(PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "handoff invocation node '{}' does not match parent identity node '{}'",
-                invocation.node_id(),
-                identity.node_id()
-            ),
-        });
-    }
-    let active_parent_root =
-        invocation
-            .active_parent_root()
-            .ok_or_else(|| PrepareError::InvalidBatchSelection {
-                detail: format!(
-                    "handoff invocation '{}' is missing active_parent_root",
-                    invocation_path.display()
-                ),
-            })?;
-    if !same_existing_path(active_parent_root, repo_root) {
-        return Err(PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "handoff invocation active_parent_root '{}' does not match command repo_root '{}'",
-                active_parent_root.display(),
-                repo_root.display()
-            ),
-        });
-    }
-
-    let sealed_identity = validate_prototype1_successor_continuation(&invocation, manifest_path)?;
-    if &sealed_identity != identity {
-        return Err(PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "sealed successor parent identity for node '{}' does not match loaded parent identity",
-                invocation.node_id()
-            ),
-        });
-    }
-    let startup = Startup::<Predecessor>::from_history(identity, manifest_path, repo_root)?;
-    let parent = parent.ready_from_predecessor_startup(startup)?;
-    let ready = record_prototype1_successor_ready(&invocation)?;
-    debug!(
-        target: EXECUTION_DEBUG_TARGET,
-        campaign = %invocation.campaign_id(),
-        node_id = %invocation.node_id(),
-        runtime_id = %invocation.runtime_id(),
-        pid = ready.pid,
-        invocation_path = %invocation_path.display(),
-        active_parent_root = %active_parent_root.display(),
-        "prototype1 successor acknowledged handoff before entering typed parent run"
-    );
-    Ok((parent, Some(invocation)))
-}
-
 pub(crate) fn record_failed_successor_turn(invocation_path: &Path, error: &PrepareError) {
     let Ok(InvocationAuthority::Successor(invocation)) =
         invocation::load_executable(invocation_path)
@@ -7329,6 +7232,211 @@ fn r1_to_r2a_or_r3() -> impl Step<
     )
 }
 
+fn r3_to_r4a() -> impl Step<
+    typestate::R3<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    To = typestate::R4a<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    Error = PrepareError,
+> {
+    typestate::transition(
+        |r3: typestate::R3<Prototype1StateRunShape, ResolvedCampaignConfig>| -> Result<
+            typestate::R4a<Prototype1StateRunShape, ResolvedCampaignConfig>,
+            PrepareError,
+        > {
+            let typestate::R3Parts {
+                collected,
+                parent_identity,
+            } = r3.into_parts();
+            let parts = collected.into_parts();
+            let parent = if let Some(invocation_path) = parts.command.handoff_invocation.as_deref()
+            {
+                let runtime_id = match invocation::load_executable(invocation_path)? {
+                    InvocationAuthority::Successor(invocation) => {
+                        let invocation_campaign_id = invocation.campaign_id().clone();
+                        if invocation_campaign_id != parts.campaign_id {
+                            return Err(PrepareError::InvalidBatchSelection {
+                                detail: format!(
+                                    "handoff invocation campaign '{}' does not match command campaign '{}'",
+                                    invocation_campaign_id, parts.campaign_id
+                                ),
+                            });
+                        }
+                        if invocation.node_id() != parent_identity.node_id() {
+                            return Err(PrepareError::InvalidBatchSelection {
+                                detail: format!(
+                                    "handoff invocation node '{}' does not match parent identity node '{}'",
+                                    invocation.node_id(),
+                                    parent_identity.node_id()
+                                ),
+                            });
+                        }
+                        invocation.runtime_id()
+                    }
+                    InvocationAuthority::Child(_) => {
+                        return Err(PrepareError::InvalidBatchSelection {
+                            detail: format!(
+                                "handoff invocation '{}' is a child invocation, expected successor",
+                                invocation_path.display()
+                            ),
+                        });
+                    }
+                };
+                Parent::<Unchecked>::load_with_runtime_id(
+                    &parts.manifest_path,
+                    parent_identity,
+                    runtime_id,
+                )?
+            } else {
+                Parent::<Unchecked>::load(&parts.manifest_path, parent_identity)?
+            };
+            Ok(typestate::R4a::from_collected_parent(
+                parts.into_collected(),
+                parent,
+            ))
+        },
+    )
+}
+
+fn r4a_to_r4b_or_r4c() -> impl Step<
+    typestate::R4a<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    To = typestate::R4aStartupBranch<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    Error = PrepareError,
+> {
+    typestate::transition(
+        |r4a: typestate::R4a<Prototype1StateRunShape, ResolvedCampaignConfig>| -> Result<
+            typestate::R4aStartupBranch<Prototype1StateRunShape, ResolvedCampaignConfig>,
+            PrepareError,
+        > {
+            let typestate::R4aParts { collected, parent } = r4a.into_parts();
+            let parts = collected.into_parts();
+            let Some(invocation_path) = parts.command.handoff_invocation.as_deref() else {
+                let backend = GitWorktreeBackend;
+                let parent = parent.check(
+                    &backend,
+                    &parts.manifest_path,
+                    Check {
+                        campaign_id: &parts.campaign_id,
+                        active_root: &parts.repo_root,
+                    },
+                )?;
+                return Ok(typestate::R4aStartupBranch::GenesisChecked(
+                    typestate::R4bGenesisChecked::from_collected_parent(
+                        parts.into_collected(),
+                        parent,
+                    ),
+                ));
+            };
+
+            let invocation = match invocation::load_executable(invocation_path)? {
+                InvocationAuthority::Successor(invocation) => invocation,
+                InvocationAuthority::Child(_) => {
+                    return Err(PrepareError::InvalidBatchSelection {
+                        detail: format!(
+                            "handoff invocation '{}' is a child invocation, expected successor",
+                            invocation_path.display()
+                        ),
+                    });
+                }
+            };
+            let identity = parent.identity().clone();
+
+            let invocation_campaign_id = invocation.campaign_id().clone();
+            if invocation_campaign_id != parts.campaign_id {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "handoff invocation campaign '{}' does not match command campaign '{}'",
+                        invocation_campaign_id, parts.campaign_id
+                    ),
+                });
+            }
+            if invocation.node_id() != identity.node_id() {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "handoff invocation node '{}' does not match parent identity node '{}'",
+                        invocation.node_id(),
+                        identity.node_id()
+                    ),
+                });
+            }
+            let active_parent_root = invocation
+                .active_parent_root()
+                .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "handoff invocation '{}' is missing active_parent_root",
+                        invocation_path.display()
+                    ),
+                })?
+                .to_path_buf();
+            if !same_existing_path(&active_parent_root, &parts.repo_root) {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "handoff invocation active_parent_root '{}' does not match command repo_root '{}'",
+                        active_parent_root.display(),
+                        parts.repo_root.display()
+                    ),
+                });
+            }
+
+            let sealed_identity =
+                validate_prototype1_successor_continuation(&invocation, &parts.manifest_path)?;
+            if sealed_identity != identity {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "sealed successor parent identity for node '{}' does not match loaded parent identity",
+                        invocation.node_id()
+                    ),
+                });
+            }
+            let startup = Startup::<Predecessor>::from_history(
+                &identity,
+                &parts.manifest_path,
+                &parts.repo_root,
+            )?;
+            let parent = parent.ready_from_predecessor_startup(startup)?;
+            let ready = record_prototype1_successor_ready(&invocation)?;
+            debug!(
+                target: EXECUTION_DEBUG_TARGET,
+                campaign = %invocation.campaign_id(),
+                node_id = %invocation.node_id(),
+                runtime_id = %invocation.runtime_id(),
+                pid = ready.pid,
+                invocation_path = %invocation_path.display(),
+                active_parent_root = %active_parent_root.display(),
+                "prototype1 successor acknowledged handoff before entering typed parent run"
+            );
+            Ok(typestate::R4aStartupBranch::PredecessorReady {
+                ready: typestate::R4cPredecessorReady::from_collected_parent(
+                    parts.into_collected(),
+                    parent,
+                ),
+                handoff_invocation: invocation,
+            })
+        },
+    )
+}
+
+fn r4b_to_r4c_genesis() -> impl Step<
+    typestate::R4bGenesisChecked<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    To = typestate::R4cGenesisReady<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    Error = PrepareError,
+> {
+    typestate::transition(
+        |r4b: typestate::R4bGenesisChecked<Prototype1StateRunShape, ResolvedCampaignConfig>| -> Result<
+            typestate::R4cGenesisReady<Prototype1StateRunShape, ResolvedCampaignConfig>,
+            PrepareError,
+        > {
+            let typestate::R4bParts { collected, parent } = r4b.into_parts();
+            let parts = collected.into_parts();
+            let startup =
+                Startup::<Genesis>::from_history(parent.identity(), &parts.manifest_path)?;
+            let parent = parent.ready(startup)?;
+            Ok(typestate::R4cGenesisReady::from_collected_parent(
+                parts.into_collected(),
+                parent,
+            ))
+        },
+    )
+}
+
 #[instrument(
     target = "ploke_exec",
     level = "debug",
@@ -7339,9 +7447,9 @@ pub(crate) async fn run_prototype1_state_turn(
     command: Prototype1StateCommand,
 ) -> Result<(), PrepareError> {
     // First live use of the global typestate map: construct R0 from the raw
-    // command, then run the R0 -> R1 collection edge. The branch immediately
-    // after R1 is now typed as `R1Branch::{R2a, R3}`; the extraction below is a
-    // temporary migration seam until parent loading moves behind R3 -> R4a.
+    // command, then advance through the typed setup and parent-startup edges.
+    // The extraction after R4c is a temporary migration seam until parent-start
+    // journaling moves behind R4c -> R5.
     let r0 = typestate::R0::new(command);
     let r1 = r0_to_r1().apply(r0)?;
     let span_campaign_id = r1.campaign_id().clone();
@@ -7386,10 +7494,17 @@ pub(crate) async fn run_prototype1_state_turn(
         }
         typestate::R1Branch::R3(r3) => r3,
     };
-    let typestate::R3Parts {
-        collected,
-        parent_identity,
-    } = r3.into_parts();
+    let r4a = r3_to_r4a().apply(r3)?;
+    let (r4c_parts, handoff_invocation) = match r4a_to_r4b_or_r4c().apply(r4a)? {
+        typestate::R4aStartupBranch::GenesisChecked(r4b) => {
+            (r4b_to_r4c_genesis().apply(r4b)?.into_parts(), None)
+        }
+        typestate::R4aStartupBranch::PredecessorReady {
+            ready,
+            handoff_invocation,
+        } => (ready.into_parts(), Some(handoff_invocation)),
+    };
+    let typestate::R4cParts { collected, parent } = r4c_parts;
     let typestate::context::CollectedParts {
         command,
         repo_root,
@@ -7401,49 +7516,6 @@ pub(crate) async fn run_prototype1_state_turn(
         journal,
     } = collected.into_parts();
     let mut journal = journal;
-    let parent = if let Some(invocation_path) = command.handoff_invocation.as_deref() {
-        let runtime_id = match invocation::load_executable(invocation_path)? {
-            InvocationAuthority::Successor(invocation) => {
-                let invocation_campaign_id = invocation.campaign_id().clone();
-                if invocation_campaign_id != campaign_id {
-                    return Err(PrepareError::InvalidBatchSelection {
-                        detail: format!(
-                            "handoff invocation campaign '{}' does not match command campaign '{}'",
-                            invocation_campaign_id, campaign_id
-                        ),
-                    });
-                }
-                if invocation.node_id() != parent_identity.node_id() {
-                    return Err(PrepareError::InvalidBatchSelection {
-                        detail: format!(
-                            "handoff invocation node '{}' does not match parent identity node '{}'",
-                            invocation.node_id(),
-                            parent_identity.node_id()
-                        ),
-                    });
-                }
-                invocation.runtime_id()
-            }
-            InvocationAuthority::Child(_) => {
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: format!(
-                        "handoff invocation '{}' is a child invocation, expected successor",
-                        invocation_path.display()
-                    ),
-                });
-            }
-        };
-        Parent::<Unchecked>::load_with_runtime_id(&manifest_path, parent_identity, runtime_id)?
-    } else {
-        Parent::<Unchecked>::load(&manifest_path, parent_identity)?
-    };
-    let (parent, handoff_invocation) = acknowledge_prototype1_state_handoff(
-        &command,
-        &campaign_id,
-        parent,
-        &manifest_path,
-        &repo_root,
-    )?;
     let parent_identity = parent.identity().clone();
     info!(
         target: EXECUTION_DEBUG_TARGET,

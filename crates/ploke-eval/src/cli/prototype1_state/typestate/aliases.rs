@@ -19,6 +19,7 @@ use super::super::{
     history::{self as history_model, Block, LineageState},
     identity::ParentIdentity,
     inner::{self, Crown, Received},
+    invocation::SuccessorInvocation,
     journal::ParentStartedEntry,
     parent as parent_role, successor,
 };
@@ -430,6 +431,29 @@ impl<RunShape, CampaignConfig> R3<RunShape, CampaignConfig> {
     }
 }
 
+pub(crate) struct R4aParts<RunShape, CampaignConfig> {
+    pub(crate) collected: context::Collected<RunShape, CampaignConfig>,
+    pub(crate) parent: parent_role::Parent<parent_role::Unchecked>,
+}
+
+pub(crate) struct R4bParts<RunShape, CampaignConfig> {
+    pub(crate) collected: context::Collected<RunShape, CampaignConfig>,
+    pub(crate) parent: parent_role::Parent<parent_role::Checked>,
+}
+
+pub(crate) struct R4cParts<RunShape, CampaignConfig> {
+    pub(crate) collected: context::Collected<RunShape, CampaignConfig>,
+    pub(crate) parent: parent_role::Parent<parent_role::Ready>,
+}
+
+pub(crate) enum R4aStartupBranch<RunShape, CampaignConfig> {
+    GenesisChecked(R4bGenesisChecked<RunShape, CampaignConfig>),
+    PredecessorReady {
+        ready: R4cPredecessorReady<RunShape, CampaignConfig>,
+        handoff_invocation: SuccessorInvocation,
+    },
+}
+
 /// R4a: parent loaded/constructed as unchecked.
 ///
 /// Axis changes:
@@ -439,10 +463,10 @@ impl<RunShape, CampaignConfig> R3<RunShape, CampaignConfig> {
 /// First concrete parent role carrier. This corresponds to the diagram edge
 /// `load parent -> parent unchecked` and the code transition
 /// `ParentIdentity -> Parent<Unchecked>`.
-pub(crate) type R4a = Runtime<
+pub(crate) type R4a<RunShape = (), CampaignConfig = ()> = Runtime<
     phase::R4a,
     parent_role::Parent<parent_role::Unchecked>,
-    Context<context::Collected>,
+    Context<context::Collected<RunShape, CampaignConfig>>,
     Plan<plan::authority::None, plan::schedule::None>,
     Children<children::set::None, children::attempt::None>,
     History<
@@ -473,10 +497,10 @@ pub(crate) type R4a = Runtime<
 /// Genesis path only: `Parent<Unchecked> -> Parent<Checked>` after active
 /// checkout validation. Predecessor startup does not pass through this parent
 /// state in the current code.
-pub(crate) type R4bGenesisChecked = Runtime<
+pub(crate) type R4bGenesisChecked<RunShape = (), CampaignConfig = ()> = Runtime<
     phase::R4b,
     parent_role::Parent<parent_role::Checked>,
-    Context<context::Collected>,
+    Context<context::Collected<RunShape, CampaignConfig>>,
     Plan<plan::authority::None, plan::schedule::None>,
     Children<children::set::None, children::attempt::None>,
     History<
@@ -511,10 +535,10 @@ pub(crate) type R4bGenesisChecked = Runtime<
 /// intended History-docs `Parent<Ruling>` state. The `Kind` parameter records
 /// which startup branch produced readiness, because existing `Startup<Validated>`
 /// erases that once consumed.
-pub(crate) type R4cReady<Kind> = Runtime<
+pub(crate) type R4cReady<Kind, RunShape = (), CampaignConfig = ()> = Runtime<
     phase::R4c,
     parent_role::Parent<parent_role::Ready>,
-    Context<context::Collected>,
+    Context<context::Collected<RunShape, CampaignConfig>>,
     Plan<plan::authority::None, plan::schedule::None>,
     Children<children::set::None, children::attempt::None>,
     History<
@@ -537,8 +561,175 @@ pub(crate) type R4cReady<Kind> = Runtime<
     Report<report::None>,
 >;
 
-pub(crate) type R4cGenesisReady = R4cReady<parent_role::Genesis>;
-pub(crate) type R4cPredecessorReady = R4cReady<parent_role::Predecessor>;
+pub(crate) type R4cGenesisReady<RunShape = (), CampaignConfig = ()> =
+    R4cReady<parent_role::Genesis, RunShape, CampaignConfig>;
+pub(crate) type R4cPredecessorReady<RunShape = (), CampaignConfig = ()> =
+    R4cReady<parent_role::Predecessor, RunShape, CampaignConfig>;
+
+impl<RunShape, CampaignConfig> R4a<RunShape, CampaignConfig> {
+    pub(crate) fn from_collected_parent(
+        collected: context::Collected<RunShape, CampaignConfig>,
+        parent: parent_role::Parent<parent_role::Unchecked>,
+    ) -> Self {
+        Self {
+            phase: phase::R4a,
+            role: parent,
+            context: Context::new(collected),
+            plan: Plan {
+                _authority: PhantomData,
+                _schedule: PhantomData,
+                _private: Private,
+            },
+            children: Children {
+                _set: PhantomData,
+                _attempt: PhantomData,
+                _private: Private,
+            },
+            history: History {
+                _startup: PhantomData,
+                _head: PhantomData,
+                _epoch: PhantomData,
+                _private: Private,
+            },
+            evidence: Evidence {
+                _parent_start: PhantomData,
+                _baseline: PhantomData,
+                _policy: PhantomData,
+                _selection: PhantomData,
+                _completion: PhantomData,
+                _private: Private,
+            },
+            continuation: Continuation {
+                _selection: PhantomData,
+                _decision: PhantomData,
+                _handoff: PhantomData,
+                _private: Private,
+            },
+            report: Report {
+                _state: PhantomData,
+                _private: Private,
+            },
+            _private: Private,
+        }
+    }
+
+    pub(crate) fn into_parts(self) -> R4aParts<RunShape, CampaignConfig> {
+        R4aParts {
+            collected: self.context.into_state(),
+            parent: self.role,
+        }
+    }
+}
+
+impl<RunShape, CampaignConfig> R4bGenesisChecked<RunShape, CampaignConfig> {
+    pub(crate) fn from_collected_parent(
+        collected: context::Collected<RunShape, CampaignConfig>,
+        parent: parent_role::Parent<parent_role::Checked>,
+    ) -> Self {
+        Self {
+            phase: phase::R4b,
+            role: parent,
+            context: Context::new(collected),
+            plan: Plan {
+                _authority: PhantomData,
+                _schedule: PhantomData,
+                _private: Private,
+            },
+            children: Children {
+                _set: PhantomData,
+                _attempt: PhantomData,
+                _private: Private,
+            },
+            history: History {
+                _startup: PhantomData,
+                _head: PhantomData,
+                _epoch: PhantomData,
+                _private: Private,
+            },
+            evidence: Evidence {
+                _parent_start: PhantomData,
+                _baseline: PhantomData,
+                _policy: PhantomData,
+                _selection: PhantomData,
+                _completion: PhantomData,
+                _private: Private,
+            },
+            continuation: Continuation {
+                _selection: PhantomData,
+                _decision: PhantomData,
+                _handoff: PhantomData,
+                _private: Private,
+            },
+            report: Report {
+                _state: PhantomData,
+                _private: Private,
+            },
+            _private: Private,
+        }
+    }
+
+    pub(crate) fn into_parts(self) -> R4bParts<RunShape, CampaignConfig> {
+        R4bParts {
+            collected: self.context.into_state(),
+            parent: self.role,
+        }
+    }
+}
+
+impl<Kind, RunShape, CampaignConfig> R4cReady<Kind, RunShape, CampaignConfig> {
+    pub(crate) fn from_collected_parent(
+        collected: context::Collected<RunShape, CampaignConfig>,
+        parent: parent_role::Parent<parent_role::Ready>,
+    ) -> Self {
+        Self {
+            phase: phase::R4c,
+            role: parent,
+            context: Context::new(collected),
+            plan: Plan {
+                _authority: PhantomData,
+                _schedule: PhantomData,
+                _private: Private,
+            },
+            children: Children {
+                _set: PhantomData,
+                _attempt: PhantomData,
+                _private: Private,
+            },
+            history: History {
+                _startup: PhantomData,
+                _head: PhantomData,
+                _epoch: PhantomData,
+                _private: Private,
+            },
+            evidence: Evidence {
+                _parent_start: PhantomData,
+                _baseline: PhantomData,
+                _policy: PhantomData,
+                _selection: PhantomData,
+                _completion: PhantomData,
+                _private: Private,
+            },
+            continuation: Continuation {
+                _selection: PhantomData,
+                _decision: PhantomData,
+                _handoff: PhantomData,
+                _private: Private,
+            },
+            report: Report {
+                _state: PhantomData,
+                _private: Private,
+            },
+            _private: Private,
+        }
+    }
+
+    pub(crate) fn into_parts(self) -> R4cParts<RunShape, CampaignConfig> {
+        R4cParts {
+            collected: self.context.into_state(),
+            parent: self.role,
+        }
+    }
+}
 
 /// R5: parent-start evidence recorded.
 ///

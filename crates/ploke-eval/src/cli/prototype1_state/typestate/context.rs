@@ -62,6 +62,21 @@ pub(crate) struct CollectedParts<RunShape, CampaignConfig> {
     pub(crate) journal: PrototypeJournal,
 }
 
+impl<RunShape, CampaignConfig> CollectedParts<RunShape, CampaignConfig> {
+    pub(crate) fn into_collected(self) -> Collected<RunShape, CampaignConfig> {
+        Collected::new(
+            self.command,
+            self.repo_root,
+            self.campaign_id,
+            self.manifest_path,
+            self.run_shape,
+            self.campaign_config,
+            self.journal_path,
+            self.journal,
+        )
+    }
+}
+
 impl<RunShape, CampaignConfig> Collected<RunShape, CampaignConfig> {
     pub(crate) fn new(
         command: Prototype1StateCommand,
