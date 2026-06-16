@@ -25,6 +25,9 @@
 //! records the current live path while keeping the intended History model visible
 //! in the `History<Startup, Head, Epoch>` axis.
 
+#[cfg(test)]
+mod tests;
+
 use std::{marker::PhantomData, path::PathBuf};
 
 use ploke_records::ids::CampaignId;
