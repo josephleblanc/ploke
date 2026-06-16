@@ -7867,6 +7867,84 @@ fn r10_to_r11() -> impl AsyncStep<
     )
 }
 
+fn r11_to_r12() -> impl Step<
+    typestate::R10FanoutBranch<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    To = typestate::R12<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    Error = PrepareError,
+> {
+    typestate::transition(
+        |r11: typestate::R10FanoutBranch<Prototype1StateRunShape, ResolvedCampaignConfig>| -> Result<
+            typestate::R12<Prototype1StateRunShape, ResolvedCampaignConfig>,
+            PrepareError,
+        > {
+            let typestate::SelectableParts { collected, parent } = match r11 {
+                typestate::R10FanoutBranch::RejectedOnly(r11a) => r11a.into_parts(),
+                typestate::R10FanoutBranch::FanoutComplete(r11) => r11.into_parts(),
+            };
+            let mut parts = collected.into_parts();
+            let fallback_node = parent.node().clone();
+            let planned_child_count = parts.facts.planned_child_count.ok_or_else(|| {
+                PrepareError::InvalidBatchSelection {
+                    detail: "R11 report transition missing planned child count".to_string(),
+                }
+            })?;
+            let child_outcomes = parts.facts.child_outcomes.as_ref().ok_or_else(|| {
+                PrepareError::InvalidBatchSelection {
+                    detail: "R11 report transition missing child outcomes".to_string(),
+                }
+            })?;
+            let report_child = if parts.facts.rejected_attempt_payloads.is_some() {
+                None
+            } else {
+                let selected_node_id = parts
+                    .facts
+                    .selection
+                    .as_ref()
+                    .map(|(decision, _)| decision.candidate_node_id.as_str());
+                outcome_for_report(child_outcomes, selected_node_id)
+            };
+            let report = if let Some(payloads) = parts.facts.rejected_attempt_payloads {
+                typestate::context::ReportFacts {
+                    outcome: format!(
+                        "rejected_surface_attempts_only;children_ran=0;children_planned={};rejected_attempt_payloads={payloads}",
+                        planned_child_count
+                    ),
+                    node_id: fallback_node.node_id.clone(),
+                    node_status: fallback_node.status,
+                    workspace_root: fallback_node.workspace_root.clone(),
+                    binary_path: fallback_node.binary_path.clone(),
+                    child_runtime: None,
+                }
+            } else {
+                let report_child =
+                    report_child
+                        .as_ref()
+                        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                            detail: "child fanout completed without any child outcome".to_string(),
+                        })?;
+                typestate::context::ReportFacts {
+                    outcome: format!(
+                        "{};children_ran={};children_planned={}",
+                        report_child.outcome,
+                        child_outcomes.len(),
+                        planned_child_count
+                    ),
+                    node_id: report_child.node_id.clone(),
+                    node_status: report_child.node_status,
+                    workspace_root: report_child.workspace_root.clone(),
+                    binary_path: report_child.binary_path.clone(),
+                    child_runtime: report_child.child_runtime.clone(),
+                }
+            };
+            parts.facts.report = Some(report);
+            Ok(typestate::R12::from_collected_parent(
+                parts.into_collected(),
+                parent,
+            ))
+        },
+    )
+}
+
 #[instrument(
     target = "ploke_exec",
     level = "debug",
@@ -7936,10 +8014,8 @@ pub(crate) async fn run_prototype1_state_turn(
     let r9 = r8_to_r9().apply(r8)?;
     let r10 = r9_to_r10().apply(r9)?;
     let r11 = r10_to_r11().apply(r10).await?;
-    let typestate::SelectableParts { collected, parent } = match r11 {
-        typestate::R10FanoutBranch::RejectedOnly(r11a) => r11a.into_parts(),
-        typestate::R10FanoutBranch::FanoutComplete(r11) => r11.into_parts(),
-    };
+    let r12 = r11_to_r12().apply(r11)?;
+    let typestate::SelectableParts { collected, parent } = r12.into_parts();
     let typestate::context::CollectedParts {
         command,
         repo_root,
@@ -7955,54 +8031,19 @@ pub(crate) async fn run_prototype1_state_turn(
     let mut journal = journal;
     let parent_identity = parent.identity().clone();
     let complete_search_policy = facts.complete_search_policy;
-    let planned_child_count =
-        facts
-            .planned_child_count
-            .ok_or_else(|| PrepareError::InvalidBatchSelection {
-                detail: "R11 extraction missing planned child count".to_string(),
-            })?;
-    let child_outcomes =
-        facts
-            .child_outcomes
-            .ok_or_else(|| PrepareError::InvalidBatchSelection {
-                detail: "R11 extraction missing child outcomes".to_string(),
-            })?;
     let selection = facts.selection;
-    let rejected_attempt_payloads = facts.rejected_attempt_payloads;
-    let fallback_node = parent.node().clone();
-    let report_child = if rejected_attempt_payloads.is_some() {
-        None
-    } else {
-        let selected_node_id = selection
-            .as_ref()
-            .map(|(decision, _)| decision.candidate_node_id.as_str());
-        outcome_for_report(&child_outcomes, selected_node_id)
-    };
-    let (mut outcome, child_runtime) = if let Some(payloads) = rejected_attempt_payloads {
-        (
-            format!(
-                "rejected_surface_attempts_only;children_ran=0;children_planned={};rejected_attempt_payloads={payloads}",
-                planned_child_count
-            ),
-            None,
-        )
-    } else {
-        let report_child =
-            report_child
-                .as_ref()
-                .ok_or_else(|| PrepareError::InvalidBatchSelection {
-                    detail: "child fanout completed without any child outcome".to_string(),
-                })?;
-        (
-            format!(
-                "{};children_ran={};children_planned={}",
-                report_child.outcome,
-                child_outcomes.len(),
-                planned_child_count
-            ),
-            report_child.child_runtime.clone(),
-        )
-    };
+    let typestate::context::ReportFacts {
+        mut outcome,
+        node_id: report_node_id,
+        node_status: report_node_status,
+        workspace_root: report_workspace,
+        binary_path: report_binary,
+        child_runtime,
+    } = facts
+        .report
+        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+            detail: "R12 extraction missing report facts".to_string(),
+        })?;
     let mut successor_runtime = None;
     let mut successor_pid = None;
     let mut successor_ready_path = None;
@@ -8117,26 +8158,14 @@ pub(crate) async fn run_prototype1_state_turn(
     );
     let report = Prototype1StateReport {
         campaign_id,
-        node_id: report_child
-            .as_ref()
-            .map(|child| child.node_id.clone())
-            .unwrap_or_else(|| fallback_node.node_id.clone()),
+        node_id: report_node_id,
         repo_root,
         journal_path,
         stop_after: run_shape.stop_after,
         outcome,
-        node_status: report_child
-            .as_ref()
-            .map(|child| child.node_status)
-            .unwrap_or(fallback_node.status),
-        workspace_root: report_child
-            .as_ref()
-            .map(|child| child.workspace_root.clone())
-            .unwrap_or_else(|| fallback_node.workspace_root.clone()),
-        binary_path: report_child
-            .as_ref()
-            .map(|child| child.binary_path.clone())
-            .unwrap_or_else(|| fallback_node.binary_path.clone()),
+        node_status: report_node_status,
+        workspace_root: report_workspace,
+        binary_path: report_binary,
         child_runtime,
         successor_runtime,
         successor_pid,

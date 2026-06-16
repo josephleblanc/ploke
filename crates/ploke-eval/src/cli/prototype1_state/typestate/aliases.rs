@@ -1226,10 +1226,10 @@ pub(crate) enum R10FanoutBranch<RunShape, CampaignConfig> {
 ///
 /// Existing final report carrier is `Prototype1StateReport`, but Stage 12 only
 /// has report facts. The actual report is assembled/emitted at R14.
-pub(crate) type R12 = Runtime<
+pub(crate) type R12<RunShape = (), CampaignConfig = ()> = Runtime<
     phase::R12,
     parent_role::Parent<parent_role::Selectable>,
-    Context<context::Collected>,
+    Context<context::Collected<RunShape, CampaignConfig>>,
     Plan<
         plan::authority::Received<Received<parent_role::ChildPlan>>,
         plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
@@ -1254,6 +1254,8 @@ pub(crate) type R12 = Runtime<
     >,
     Report<report::Facts>,
 >;
+
+selectable_state_impl!(R12, phase::R12);
 
 /// R13a: successor decision stops or selects no successor.
 ///

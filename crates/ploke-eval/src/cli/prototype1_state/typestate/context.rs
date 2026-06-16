@@ -5,7 +5,7 @@ use ploke_records::ids::CampaignId;
 use crate::{
     cli::Prototype1StateCommand,
     intervention::{
-        CompleteBaseline, Prototype1ChildBudget, Prototype1ChildScheduleMode,
+        CompleteBaseline, Prototype1ChildBudget, Prototype1ChildScheduleMode, Prototype1NodeStatus,
         Prototype1SearchPolicy,
     },
     successor_selection::SuccessorDecision,
@@ -61,6 +61,7 @@ pub(crate) struct Facts {
     pub(crate) child_outcomes: Option<Vec<PlannedChildOutcome>>,
     pub(crate) selection: Option<(SuccessorDecision, SelectionSealMaterial)>,
     pub(crate) rejected_attempt_payloads: Option<usize>,
+    pub(crate) report: Option<ReportFacts>,
 }
 
 /// Concrete child-plan values after `Parent<Ready> -> Parent<Selectable>`.
@@ -68,6 +69,15 @@ pub(crate) struct ChildPlanFacts {
     pub(crate) plan: Received<ChildPlan>,
     pub(crate) children: Vec<ChildFiles>,
     pub(crate) rejected_surface_attempts: Vec<surface_attempt::Evidence>,
+}
+
+pub(crate) struct ReportFacts {
+    pub(crate) outcome: String,
+    pub(crate) node_id: String,
+    pub(crate) node_status: Prototype1NodeStatus,
+    pub(crate) workspace_root: PathBuf,
+    pub(crate) binary_path: PathBuf,
+    pub(crate) child_runtime: Option<String>,
 }
 
 impl fmt::Debug for ChildPlanFacts {
@@ -103,6 +113,7 @@ impl fmt::Debug for Facts {
             )
             .field("selection", &self.selection.is_some())
             .field("rejected_attempt_payloads", &self.rejected_attempt_payloads)
+            .field("report", &self.report.is_some())
             .finish()
     }
 }
