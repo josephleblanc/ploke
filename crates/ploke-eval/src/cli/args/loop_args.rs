@@ -4,9 +4,10 @@ use ploke_records::ids::CampaignId;
 
 use clap::{ArgAction, Parser, Subcommand};
 use ploke_llm::request::models::ModelRouteSource;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::common::{InspectOutputFormat, parse_model_route_source};
+use crate::cli::prototype1_state::walk::phase::WalkPhase;
 
 #[derive(Debug, Parser)]
 #[command(about = "Run higher-level loop wrappers over eval, protocol, and intervention stages")]
@@ -31,6 +32,8 @@ pub enum LoopSubcommand {
     Prototype1Step(Prototype1ControlCommand),
     /// Drive the typed Prototype 1 parent runtime path.
     Prototype1State(Prototype1StateCommand),
+    /// Debug-only local server for stepping Prototype 1 typestate transitions.
+    Prototype1StateWalk(Prototype1StateWalkCommand),
     /// Inspect or execute one staged Prototype 1 runner invocation.
     #[command(hide = true)]
     Prototype1Runner(Prototype1RunnerCommand),
@@ -39,7 +42,7 @@ pub enum LoopSubcommand {
     Prototype1Harness(Prototype1HarnessCommand),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum Prototype1StateStopAfter {
     Materialize,
@@ -48,7 +51,7 @@ pub enum Prototype1StateStopAfter {
     Complete,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum Prototype1SuccessorSelection {
     GenerationLocal,
@@ -56,14 +59,14 @@ pub enum Prototype1SuccessorSelection {
     HistoryScoreChildProp,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum Prototype1TraversalMetrics {
     Operational,
     OperationalAndProtocol,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum Prototype1CandidateGenerator {
     Legacy,
@@ -127,6 +130,133 @@ pub struct Prototype1StateCommand {
     /// Candidate generator used before publishing the child plan.
     #[arg(long, value_enum, default_value_t = Prototype1CandidateGenerator::BroadHarnessRequest)]
     pub candidate_generator: Prototype1CandidateGenerator,
+
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Parser)]
+#[command(about = "Debug-step Prototype 1 typestate transitions through a local walk server")]
+pub struct Prototype1StateWalkCommand {
+    #[command(subcommand)]
+    pub command: Prototype1StateWalkSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Prototype1StateWalkSubcommand {
+    /// Run the local walk server on a Unix socket.
+    Serve(Prototype1StateWalkServeCommand),
+    /// Start a new in-memory walk, defaulting to R0.
+    Start(Prototype1StateWalkStartCommand),
+    /// Advance the current in-memory walk by one step or until a target early phase.
+    Step(Prototype1StateWalkStepCommand),
+    /// Show current in-memory walk state.
+    Show(Prototype1StateWalkControlCommand),
+    /// Check whether the local walk server is alive.
+    Status(Prototype1StateWalkControlCommand),
+    /// Stop the local walk server.
+    Stop(Prototype1StateWalkControlCommand),
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkServeCommand {
+    /// Parent checkout root. Defaults to the current directory.
+    #[arg(long, value_name = "PATH")]
+    pub repo_root: Option<PathBuf>,
+
+    /// Explicit Unix socket path. Defaults to a repo-hashed path under the runtime directory.
+    #[arg(long, value_name = "PATH")]
+    pub socket: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkControlCommand {
+    /// Parent checkout root. Defaults to the current directory.
+    #[arg(long, value_name = "PATH")]
+    pub repo_root: Option<PathBuf>,
+
+    /// Explicit Unix socket path. Defaults to a repo-hashed path under the runtime directory.
+    #[arg(long, value_name = "PATH")]
+    pub socket: Option<PathBuf>,
+
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkStepCommand {
+    /// Parent checkout root. Defaults to the current directory.
+    #[arg(long, value_name = "PATH")]
+    pub repo_root: Option<PathBuf>,
+
+    /// Explicit Unix socket path. Defaults to a repo-hashed path under the runtime directory.
+    #[arg(long, value_name = "PATH")]
+    pub socket: Option<PathBuf>,
+
+    /// Advance repeatedly until this early phase instead of exactly one step.
+    #[arg(long, value_enum)]
+    pub until: Option<WalkPhase>,
+
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkStartCommand {
+    /// Campaign id. Defaults to parent identity, then active `select campaign`.
+    #[arg(long)]
+    pub campaign: Option<CampaignId>,
+
+    /// Candidate node id to materialize/evaluate. During --init-parent-identity only, this is the generation-0 parent node.
+    #[arg(long)]
+    pub node_id: Option<String>,
+
+    /// Parent checkout root. Defaults to the current directory.
+    #[arg(long, value_name = "PATH")]
+    pub repo_root: Option<PathBuf>,
+
+    /// Explicit Unix socket path. Defaults to a repo-hashed path under the runtime directory.
+    #[arg(long, value_name = "PATH")]
+    pub socket: Option<PathBuf>,
+
+    /// Bootstrap the active checkout by writing and committing parent identity.
+    #[arg(long)]
+    pub init_parent_identity: bool,
+
+    /// Branch to create or switch to before writing initial parent identity.
+    #[arg(long, value_name = "BRANCH", requires = "init_parent_identity")]
+    pub identity_branch: Option<String>,
+
+    /// Prepared instance id for the generation-0 parent identity.
+    #[arg(long, value_name = "INSTANCE", requires = "init_parent_identity")]
+    pub identity_instance: Option<String>,
+
+    /// Successor handoff token written by the previous parent runtime.
+    #[arg(long, value_name = "PATH")]
+    pub handoff_invocation: Option<PathBuf>,
+
+    #[arg(long, value_enum, default_value_t = Prototype1StateStopAfter::Complete)]
+    pub stop_after: Prototype1StateStopAfter,
+
+    /// Successor-selection strategy. Active selection defaults to History traversal with current-generation candidates appended before scoring.
+    #[arg(long, value_enum, default_value_t = Prototype1SuccessorSelection::HistoryScoreChildProp)]
+    pub successor_selection: Prototype1SuccessorSelection,
+
+    /// Replay seed committed by History-backed traversal selection.
+    #[arg(long, default_value_t = 0)]
+    pub successor_selection_seed: u64,
+
+    /// Metric-bearing states used by History-backed traversal scoring.
+    #[arg(long, value_enum, default_value_t = Prototype1TraversalMetrics::Operational)]
+    pub successor_selection_metrics: Prototype1TraversalMetrics,
+
+    /// Candidate generator used before publishing the child plan.
+    #[arg(long, value_enum, default_value_t = Prototype1CandidateGenerator::BroadHarnessRequest)]
+    pub candidate_generator: Prototype1CandidateGenerator,
+
+    /// Stop after this early typestate phase. Defaults to R0.
+    #[arg(long, value_enum, default_value_t = WalkPhase::R0)]
+    pub until: WalkPhase,
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,

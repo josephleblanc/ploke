@@ -12,6 +12,7 @@ impl LoopCommand {
             LoopSubcommand::Prototype1Continue(cmd) => run::resume(cmd).await,
             LoopSubcommand::Prototype1Step(cmd) => run::step(cmd).await,
             LoopSubcommand::Prototype1State(cmd) => cmd.run().await,
+            LoopSubcommand::Prototype1StateWalk(cmd) => run::state_walk(cmd).await,
             LoopSubcommand::Prototype1Runner(cmd) => cmd.run().await,
             LoopSubcommand::Prototype1Harness(cmd) => cmd.run().await,
         }

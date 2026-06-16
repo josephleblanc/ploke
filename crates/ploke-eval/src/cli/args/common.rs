@@ -1,6 +1,8 @@
 use ploke_llm::request::models::ModelRouteSource;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
 pub enum InspectOutputFormat {
     Table,
     Json,

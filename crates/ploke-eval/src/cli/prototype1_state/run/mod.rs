@@ -214,3 +214,9 @@ mod loop_cmd;
 mod state_cmd;
 
 pub(crate) use core::{doctor, prompt, resume, step};
+
+pub(crate) async fn state_walk(
+    command: crate::cli::Prototype1StateWalkCommand,
+) -> Result<(), crate::spec::PrepareError> {
+    crate::cli::prototype1_state::walk::run(command).await
+}
