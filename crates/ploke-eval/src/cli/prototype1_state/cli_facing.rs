@@ -7914,6 +7914,9 @@ fn r11_to_r12() -> impl Step<
                     workspace_root: fallback_node.workspace_root.clone(),
                     binary_path: fallback_node.binary_path.clone(),
                     child_runtime: None,
+                    successor_runtime: None,
+                    successor_pid: None,
+                    successor_ready_path: None,
                 }
             } else {
                 let report_child =
@@ -7934,6 +7937,9 @@ fn r11_to_r12() -> impl Step<
                     workspace_root: report_child.workspace_root.clone(),
                     binary_path: report_child.binary_path.clone(),
                     child_runtime: report_child.child_runtime.clone(),
+                    successor_runtime: None,
+                    successor_pid: None,
+                    successor_ready_path: None,
                 }
             };
             parts.facts.report = Some(report);
@@ -7941,6 +7947,192 @@ fn r11_to_r12() -> impl Step<
                 parts.into_collected(),
                 parent,
             ))
+        },
+    )
+}
+
+fn r12_to_r13() -> impl Step<
+    typestate::R12<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    To = typestate::R12ContinuationBranch<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    Error = PrepareError,
+> {
+    typestate::transition(
+        |r12: typestate::R12<Prototype1StateRunShape, ResolvedCampaignConfig>| -> Result<
+            typestate::R12ContinuationBranch<Prototype1StateRunShape, ResolvedCampaignConfig>,
+            PrepareError,
+        > {
+            let typestate::SelectableParts { collected, parent } = r12.into_parts();
+            let mut parts = collected.into_parts();
+            let parent_identity = parent.identity().clone();
+            parts.facts.parent_identity = Some(parent_identity.clone());
+
+            if let Some((selection_decision, selection_material)) = parts.facts.selection.take() {
+                let material = selection_material;
+                let artifact = material.selected_artifact()?;
+                let node = artifact.node().clone();
+                let search_policy = parts
+                    .facts
+                    .complete_search_policy
+                    .as_ref()
+                    .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                        detail:
+                            "successor selection reached handoff without an admitted or scheduler search policy"
+                                .to_string(),
+                    })?;
+                let decision = live_successor_continuation_decision(
+                    &parts.manifest_path,
+                    &parent_identity,
+                    search_policy,
+                    &selection_decision,
+                    &material,
+                    &node,
+                )?;
+                let handoff = if decision.disposition.allows_successor() {
+                    let selected_artifact =
+                        select_artifact_for_handoff(&selection_decision, &material)?;
+                    let selection_entry = material.into_entry(selection_decision.clone())?;
+                    Some((selected_artifact, selection_entry))
+                } else {
+                    None
+                };
+                observe::Step::start(observe::span!(
+                    "prototype1.parent.select_successor",
+                    campaign_id = %parts.campaign_id,
+                    node_id = %node.node_id,
+                    generation = node.generation,
+                    selection_procedure = %selection_decision.procedure_id,
+                    selection_outcome = ?selection_decision.outcome,
+                    disposition = ?decision.disposition,
+                    selected_next_branch_id = ?decision.selected_next_branch_id,
+                    next_generation = decision.next_generation,
+                    total_nodes_after_continue = decision.total_nodes_after_continue,
+                ))
+                .success();
+                parts
+                    .journal
+                    .append(JournalEntry::Successor(
+                        SuccessorRecord::selected_with_decision(
+                            parts.campaign_id.clone(),
+                            node.node_id.clone(),
+                            decision.clone(),
+                            selection_decision.clone(),
+                        ),
+                    ))
+                    .map_err(|err| {
+                        prototype1_state_transition_error(
+                            "prototype1_successor_selection",
+                            err.to_string(),
+                        )
+                    })?;
+                parts
+                    .facts
+                    .report
+                    .as_mut()
+                    .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                        detail: "R12 continuation transition missing report facts".to_string(),
+                    })?
+                    .outcome
+                    .push_str(&format!(
+                        ";selection={:?};successor={}",
+                        selection_decision.outcome, selection_decision.candidate_node_id
+                    ));
+
+                if let Some((selected_artifact, selection_entry)) = handoff {
+                    match spawn_and_handoff_prototype1_successor(
+                        &parts.campaign_id,
+                        selected_artifact,
+                        &parts.repo_root,
+                        parent,
+                        selection_entry,
+                        prototype1_state_successor_handoff_mode(),
+                    )? {
+                        (retired, Some(successor)) => {
+                            let report = parts.facts.report.as_mut().ok_or_else(|| {
+                                PrepareError::InvalidBatchSelection {
+                                    detail: "R12 handoff transition missing report facts"
+                                        .to_string(),
+                                }
+                            })?;
+                            report.successor_runtime = Some(successor.runtime_id.to_string());
+                            report.successor_pid = Some(successor.pid);
+                            report.successor_ready_path = Some(successor.ready_path);
+                            report.outcome.push_str(";successor_handoff=acknowledged");
+                            Ok(typestate::R12ContinuationBranch::HandoffCommitted(
+                                typestate::R13bHandoffCommitted::from_collected_parent(
+                                    parts.into_collected(),
+                                    retired,
+                                ),
+                            ))
+                        }
+                        (retired, None) => {
+                            parts
+                                .facts
+                                .report
+                                .as_mut()
+                                .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                                    detail: "R12 handoff transition missing report facts"
+                                        .to_string(),
+                                })?
+                                .outcome
+                                .push_str(";successor_handoff=timed_out");
+                            Ok(typestate::R12ContinuationBranch::HandoffCommitted(
+                                typestate::R13bHandoffCommitted::from_collected_parent(
+                                    parts.into_collected(),
+                                    retired,
+                                ),
+                            ))
+                        }
+                    }
+                } else {
+                    parts
+                        .journal
+                        .append(JournalEntry::Successor(SuccessorRecord::stopped(
+                            parts.campaign_id.clone(),
+                            node.node_id.clone(),
+                            decision.clone(),
+                            selection_decision.clone(),
+                        )))
+                        .map_err(|err| {
+                            prototype1_state_transition_error(
+                                "prototype1_successor_stopped",
+                                err.to_string(),
+                            )
+                        })?;
+                    parts
+                        .facts
+                        .report
+                        .as_mut()
+                        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                            detail: "R12 stopped transition missing report facts".to_string(),
+                        })?
+                        .outcome
+                        .push_str(&format!(
+                            ";successor_handoff=skipped:{:?}",
+                            decision.disposition
+                        ));
+                    Ok(typestate::R12ContinuationBranch::Stopped(
+                        typestate::R13aStopped::from_collected_parent(
+                            parts.into_collected(),
+                            parent,
+                        ),
+                    ))
+                }
+            } else {
+                if parts.run_shape.stop_after == Prototype1StateStopAfter::Complete {
+                    parts
+                        .facts
+                        .report
+                        .as_mut()
+                        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                            detail: "R12 no-selection transition missing report facts".to_string(),
+                        })?
+                        .outcome
+                        .push_str(";selection=none");
+                }
+                Ok(typestate::R12ContinuationBranch::Stopped(
+                    typestate::R13aStopped::from_collected_parent(parts.into_collected(), parent),
+                ))
+            }
         },
     )
 }
@@ -8015,7 +8207,17 @@ pub(crate) async fn run_prototype1_state_turn(
     let r10 = r9_to_r10().apply(r9)?;
     let r11 = r10_to_r11().apply(r10).await?;
     let r12 = r11_to_r12().apply(r11)?;
-    let typestate::SelectableParts { collected, parent } = r12.into_parts();
+    let r13 = r12_to_r13().apply(r12)?;
+    let collected = match r13 {
+        typestate::R12ContinuationBranch::Stopped(r13a) => r13a.into_parts().collected,
+        typestate::R12ContinuationBranch::HandoffCommitted(r13b) => {
+            let typestate::RetiredParts {
+                collected,
+                parent: _,
+            } = r13b.into_parts();
+            collected
+        }
+    };
     let typestate::context::CollectedParts {
         command,
         repo_root,
@@ -8029,122 +8231,27 @@ pub(crate) async fn run_prototype1_state_turn(
         facts,
     } = collected.into_parts();
     let mut journal = journal;
-    let parent_identity = parent.identity().clone();
-    let complete_search_policy = facts.complete_search_policy;
-    let selection = facts.selection;
+    let parent_identity =
+        facts
+            .parent_identity
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: "R13 extraction missing parent identity".to_string(),
+            })?;
     let typestate::context::ReportFacts {
-        mut outcome,
+        outcome,
         node_id: report_node_id,
         node_status: report_node_status,
         workspace_root: report_workspace,
         binary_path: report_binary,
         child_runtime,
+        successor_runtime,
+        successor_pid,
+        successor_ready_path,
     } = facts
         .report
         .ok_or_else(|| PrepareError::InvalidBatchSelection {
-            detail: "R12 extraction missing report facts".to_string(),
+            detail: "R13 extraction missing report facts".to_string(),
         })?;
-    let mut successor_runtime = None;
-    let mut successor_pid = None;
-    let mut successor_ready_path = None;
-
-    if let Some((selection_decision, selection_material)) = selection {
-        let material = selection_material;
-        let artifact = material.selected_artifact()?;
-        let node = artifact.node().clone();
-        let search_policy =
-                complete_search_policy
-                    .as_ref()
-                    .ok_or_else(|| PrepareError::InvalidBatchSelection {
-                        detail:
-                            "successor selection reached handoff without an admitted or scheduler search policy"
-                                .to_string(),
-                    })?;
-        let decision = live_successor_continuation_decision(
-            &manifest_path,
-            &parent_identity,
-            search_policy,
-            &selection_decision,
-            &material,
-            &node,
-        )?;
-        let handoff = if decision.disposition.allows_successor() {
-            let selected_artifact = select_artifact_for_handoff(&selection_decision, &material)?;
-            let selection_entry = material.into_entry(selection_decision.clone())?;
-            Some((selected_artifact, selection_entry))
-        } else {
-            None
-        };
-        observe::Step::start(observe::span!(
-            "prototype1.parent.select_successor",
-            campaign_id = %campaign_id,
-            node_id = %node.node_id,
-            generation = node.generation,
-            selection_procedure = %selection_decision.procedure_id,
-            selection_outcome = ?selection_decision.outcome,
-            disposition = ?decision.disposition,
-            selected_next_branch_id = ?decision.selected_next_branch_id,
-            next_generation = decision.next_generation,
-            total_nodes_after_continue = decision.total_nodes_after_continue,
-        ))
-        .success();
-        journal
-            .append(JournalEntry::Successor(
-                SuccessorRecord::selected_with_decision(
-                    campaign_id.clone(),
-                    node.node_id.clone(),
-                    decision.clone(),
-                    selection_decision.clone(),
-                ),
-            ))
-            .map_err(|err| {
-                prototype1_state_transition_error("prototype1_successor_selection", err.to_string())
-            })?;
-        outcome.push_str(&format!(
-            ";selection={:?};successor={}",
-            selection_decision.outcome, selection_decision.candidate_node_id
-        ));
-        if let Some((selected_artifact, selection_entry)) = handoff {
-            match spawn_and_handoff_prototype1_successor(
-                &campaign_id,
-                selected_artifact,
-                &repo_root,
-                parent,
-                selection_entry,
-                prototype1_state_successor_handoff_mode(),
-            )? {
-                (_retired, Some(successor)) => {
-                    successor_runtime = Some(successor.runtime_id.to_string());
-                    successor_pid = Some(successor.pid);
-                    successor_ready_path = Some(successor.ready_path);
-                    outcome.push_str(";successor_handoff=acknowledged");
-                }
-                (_retired, None) => {
-                    outcome.push_str(";successor_handoff=timed_out");
-                }
-            }
-        } else {
-            journal
-                .append(JournalEntry::Successor(SuccessorRecord::stopped(
-                    campaign_id.clone(),
-                    node.node_id.clone(),
-                    decision.clone(),
-                    selection_decision.clone(),
-                )))
-                .map_err(|err| {
-                    prototype1_state_transition_error(
-                        "prototype1_successor_stopped",
-                        err.to_string(),
-                    )
-                })?;
-            outcome.push_str(&format!(
-                ";successor_handoff=skipped:{:?}",
-                decision.disposition
-            ));
-        }
-    } else if run_shape.stop_after == Prototype1StateStopAfter::Complete {
-        outcome.push_str(";selection=none");
-    }
 
     append_parent_target_sample(
         &mut journal,

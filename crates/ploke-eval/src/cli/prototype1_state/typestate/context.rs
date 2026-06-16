@@ -15,6 +15,7 @@ use super::{
     super::{
         cli_facing::{ActiveSelectionStrategy, PlannedChildOutcome, SelectionSealMaterial},
         history::surface_attempt,
+        identity::ParentIdentity,
         inner::Received,
         invocation::SuccessorInvocation,
         journal::PrototypeJournal,
@@ -62,6 +63,7 @@ pub(crate) struct Facts {
     pub(crate) selection: Option<(SuccessorDecision, SelectionSealMaterial)>,
     pub(crate) rejected_attempt_payloads: Option<usize>,
     pub(crate) report: Option<ReportFacts>,
+    pub(crate) parent_identity: Option<ParentIdentity>,
 }
 
 /// Concrete child-plan values after `Parent<Ready> -> Parent<Selectable>`.
@@ -78,6 +80,9 @@ pub(crate) struct ReportFacts {
     pub(crate) workspace_root: PathBuf,
     pub(crate) binary_path: PathBuf,
     pub(crate) child_runtime: Option<String>,
+    pub(crate) successor_runtime: Option<String>,
+    pub(crate) successor_pid: Option<u32>,
+    pub(crate) successor_ready_path: Option<PathBuf>,
 }
 
 impl fmt::Debug for ChildPlanFacts {
@@ -114,6 +119,7 @@ impl fmt::Debug for Facts {
             .field("selection", &self.selection.is_some())
             .field("rejected_attempt_payloads", &self.rejected_attempt_payloads)
             .field("report", &self.report.is_some())
+            .field("parent_identity", &self.parent_identity.is_some())
             .finish()
     }
 }

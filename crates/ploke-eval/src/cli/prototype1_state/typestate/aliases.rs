@@ -1265,10 +1265,10 @@ selectable_state_impl!(R12, phase::R12);
 /// - `Continuation<selection::Maybe<_>, decision::None, handoff::None>`
 ///   `-> Continuation<selection::Maybe<_>, decision::Stopped<_>, handoff::None>`.
 ///
-pub(crate) type R13aStopped = Runtime<
+pub(crate) type R13aStopped<RunShape = (), CampaignConfig = ()> = Runtime<
     phase::R13a,
     parent_role::Parent<parent_role::Selectable>,
-    Context<context::Collected>,
+    Context<context::Collected<RunShape, CampaignConfig>>,
     Plan<
         plan::authority::Received<Received<parent_role::ChildPlan>>,
         plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
@@ -1309,10 +1309,10 @@ pub(crate) type R13aStopped = Runtime<
 /// Existing carriers involved inside this phase include `LineageState`,
 /// `Block<Open>`, `Crown<Locked>`, `Block<Sealed>`, successor journal records,
 /// and `Parent<Retired>`. This alias represents the post-commit state.
-pub(crate) type R13bHandoffCommitted = Runtime<
+pub(crate) type R13bHandoffCommitted<RunShape = (), CampaignConfig = ()> = Runtime<
     phase::R13b,
     parent_role::Parent<parent_role::Retired>,
-    Context<context::Collected>,
+    Context<context::Collected<RunShape, CampaignConfig>>,
     Plan<
         plan::authority::Received<Received<parent_role::ChildPlan>>,
         plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
@@ -1337,6 +1337,73 @@ pub(crate) type R13bHandoffCommitted = Runtime<
     >,
     Report<report::Facts>,
 >;
+
+selectable_state_impl!(R13aStopped, phase::R13a);
+
+pub(crate) struct RetiredParts<RunShape, CampaignConfig> {
+    pub(crate) collected: context::Collected<RunShape, CampaignConfig>,
+    pub(crate) parent: parent_role::Parent<parent_role::Retired>,
+}
+
+impl<RunShape, CampaignConfig> R13bHandoffCommitted<RunShape, CampaignConfig> {
+    pub(crate) fn from_collected_parent(
+        collected: context::Collected<RunShape, CampaignConfig>,
+        parent: parent_role::Parent<parent_role::Retired>,
+    ) -> Self {
+        Self {
+            phase: phase::R13b,
+            role: parent,
+            context: Context::new(collected),
+            plan: Plan {
+                _authority: PhantomData,
+                _schedule: PhantomData,
+                _private: Private,
+            },
+            children: Children {
+                _set: PhantomData,
+                _attempt: PhantomData,
+                _private: Private,
+            },
+            history: History {
+                _startup: PhantomData,
+                _head: PhantomData,
+                _epoch: PhantomData,
+                _private: Private,
+            },
+            evidence: Evidence {
+                _parent_start: PhantomData,
+                _baseline: PhantomData,
+                _policy: PhantomData,
+                _selection: PhantomData,
+                _completion: PhantomData,
+                _private: Private,
+            },
+            continuation: Continuation {
+                _selection: PhantomData,
+                _decision: PhantomData,
+                _handoff: PhantomData,
+                _private: Private,
+            },
+            report: Report {
+                _state: PhantomData,
+                _private: Private,
+            },
+            _private: Private,
+        }
+    }
+
+    pub(crate) fn into_parts(self) -> RetiredParts<RunShape, CampaignConfig> {
+        RetiredParts {
+            collected: self.context.into_state(),
+            parent: self.role,
+        }
+    }
+}
+
+pub(crate) enum R12ContinuationBranch<RunShape, CampaignConfig> {
+    Stopped(R13aStopped<RunShape, CampaignConfig>),
+    HandoffCommitted(R13bHandoffCommitted<RunShape, CampaignConfig>),
+}
 
 /// R14a: final report after stopped/no-selection continuation.
 ///
