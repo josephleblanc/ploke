@@ -801,4 +801,5 @@ pub(crate) mod score;
 pub(crate) mod selection;
 pub(crate) mod successor;
 pub(crate) mod telemetry;
+pub(crate) mod typestate;
 pub(crate) mod workspace;

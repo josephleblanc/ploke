@@ -104,6 +104,7 @@ use crate::{
             profile, selection as state_selection,
             successor::Record as SuccessorRecord,
             telemetry::RuntimeTelemetry,
+            typestate::{self, Step},
         },
         resolve_batch_manifest, resolve_protocol_model_id, resolve_protocol_provider_slug,
         sanitize_batch_component, serde_name, write_json_file_pretty, yes_no,
@@ -7204,20 +7205,58 @@ fn prototype1_state_successor_handoff_mode() -> SuccessorHandoffMode {
 pub(crate) async fn run_prototype1_state_turn(
     command: Prototype1StateCommand,
 ) -> Result<(), PrepareError> {
-    let repo_root = if let Some(path) = command.repo_root.clone() {
-        path
-    } else {
-        current_dir_as_repo_root()?
-    };
-    let campaign_id = resolve_prototype1_state_campaign(&command, &repo_root)?;
-    record_active_prototype1_monitor_target(&campaign_id, &repo_root);
-    let manifest_path = campaign_manifest_path_for_id(&campaign_id)?;
-    let run_shape = Prototype1StateRunShape::resolve(&command, &manifest_path)?;
-    let resolved_campaign =
-        resolve_campaign_config_for_id(&campaign_id, &CampaignOverrides::default())?;
-    ensure_prototype1_baseline_closure_state(&resolved_campaign)?;
-    let journal_path = prototype1_transition_journal_path(&manifest_path);
-    let mut journal = PrototypeJournal::new(journal_path.clone());
+    // First live use of the global typestate map: construct R0 from the raw
+    // command, then run the R0 -> R1 collection edge. The unpack below is a
+    // temporary migration seam so the rest of the live controller can keep its
+    // current locals until later phases are moved behind typed transitions.
+    let r0 = typestate::R0::new(command);
+    let r1 = typestate::transition(
+        |r0: typestate::R0| -> Result<
+            typestate::R1<Prototype1StateRunShape, ResolvedCampaignConfig>,
+            PrepareError,
+        > {
+            let command = r0.into_command();
+            let repo_root = if let Some(path) = command.repo_root.clone() {
+                path
+            } else {
+                current_dir_as_repo_root()?
+            };
+            let campaign_id = resolve_prototype1_state_campaign(&command, &repo_root)?;
+            record_active_prototype1_monitor_target(&campaign_id, &repo_root);
+            let manifest_path = campaign_manifest_path_for_id(&campaign_id)?;
+            let run_shape = Prototype1StateRunShape::resolve(&command, &manifest_path)?;
+            let resolved_campaign =
+                resolve_campaign_config_for_id(&campaign_id, &CampaignOverrides::default())?;
+            ensure_prototype1_baseline_closure_state(&resolved_campaign)?;
+            let journal_path = prototype1_transition_journal_path(&manifest_path);
+            let journal = PrototypeJournal::new(journal_path.clone());
+
+            Ok(typestate::R1::from_collected(
+                typestate::context::Collected::new(
+                    command,
+                    repo_root,
+                    campaign_id,
+                    manifest_path,
+                    run_shape,
+                    resolved_campaign,
+                    journal_path,
+                    journal,
+                ),
+            ))
+        },
+    )
+    .apply(r0)?;
+    let typestate::context::CollectedParts {
+        command,
+        repo_root,
+        campaign_id,
+        manifest_path,
+        run_shape,
+        campaign_config: resolved_campaign,
+        journal_path,
+        journal,
+    } = r1.into_collected().into_parts();
+    let mut journal = journal;
     let turn_span = tracing::info_span!(
         target: EXECUTION_DEBUG_TARGET,
         "prototype1.parent.turn",
