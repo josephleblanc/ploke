@@ -8137,6 +8137,143 @@ fn r12_to_r13() -> impl Step<
     )
 }
 
+fn emit_final_report_from_parts(
+    mut parts: typestate::context::CollectedParts<Prototype1StateRunShape, ResolvedCampaignConfig>,
+) -> Result<
+    typestate::context::Collected<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    PrepareError,
+> {
+    let parent_identity = parts.facts.parent_identity.as_ref().ok_or_else(|| {
+        PrepareError::InvalidBatchSelection {
+            detail: "R14 final transition missing parent identity".to_string(),
+        }
+    })?;
+    append_parent_target_sample(
+        &mut parts.journal,
+        &parts.campaign_id,
+        parent_identity,
+        parts
+            .handoff_invocation
+            .as_ref()
+            .map(|invocation| invocation.runtime_id()),
+        &parts.repo_root,
+        journal::resource::Phase::ParentComplete,
+    );
+    let report_facts =
+        parts
+            .facts
+            .report
+            .as_ref()
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: "R14 final transition missing report facts".to_string(),
+            })?;
+    let report = Prototype1StateReport {
+        campaign_id: parts.campaign_id.clone(),
+        node_id: report_facts.node_id.clone(),
+        repo_root: parts.repo_root.clone(),
+        journal_path: parts.journal_path.clone(),
+        stop_after: parts.run_shape.stop_after,
+        outcome: report_facts.outcome.clone(),
+        node_status: report_facts.node_status,
+        workspace_root: report_facts.workspace_root.clone(),
+        binary_path: report_facts.binary_path.clone(),
+        child_runtime: report_facts.child_runtime.clone(),
+        successor_runtime: report_facts.successor_runtime.clone(),
+        successor_pid: report_facts.successor_pid,
+        successor_ready_path: report_facts.successor_ready_path.clone(),
+    };
+
+    #[cfg(not(feature = "demo"))]
+    {
+        match parts.command.format {
+            InspectOutputFormat::Json => {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
+                );
+            }
+            InspectOutputFormat::Table => {
+                println!("prototype1 state");
+                println!("{}", "-".repeat(40));
+                println!("campaign_id: {}", report.campaign_id);
+                println!("node_id: {}", report.node_id);
+                println!("repo_root: {}", report.repo_root.display());
+                println!("journal_path: {}", report.journal_path.display());
+                println!("stop_after: {:?}", report.stop_after);
+                println!("outcome: {}", report.outcome);
+                println!("node_status: {:?}", report.node_status);
+                println!("workspace_root: {}", report.workspace_root.display());
+                println!("binary_path: {}", report.binary_path.display());
+                println!(
+                    "child_runtime: {}",
+                    report.child_runtime.as_deref().unwrap_or("-")
+                );
+                println!(
+                    "successor_runtime: {}",
+                    report.successor_runtime.as_deref().unwrap_or("-")
+                );
+                println!(
+                    "successor_pid: {}",
+                    report
+                        .successor_pid
+                        .map(|pid| pid.to_string())
+                        .unwrap_or_else(|| "-".to_string())
+                );
+                println!(
+                    "successor_ready_path: {}",
+                    report
+                        .successor_ready_path
+                        .as_ref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| "-".to_string())
+                );
+            }
+        }
+    }
+    #[cfg(feature = "demo")]
+    let _ = report;
+    if let Some(invocation) = parts.handoff_invocation.as_ref() {
+        let _ = record_prototype1_successor_completion(
+            invocation,
+            &parts.manifest_path,
+            SuccessorCompletionStatus::Succeeded,
+            None,
+            None,
+        )?;
+    }
+    Ok(parts.into_collected())
+}
+
+fn r13_to_r14() -> impl Step<
+    typestate::R12ContinuationBranch<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    To = typestate::R14FinalBranch<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    Error = PrepareError,
+> {
+    typestate::transition(
+        |r13: typestate::R12ContinuationBranch<Prototype1StateRunShape, ResolvedCampaignConfig>| -> Result<
+            typestate::R14FinalBranch<Prototype1StateRunShape, ResolvedCampaignConfig>,
+            PrepareError,
+        > {
+            match r13 {
+                typestate::R12ContinuationBranch::Stopped(r13a) => {
+                    let typestate::SelectableParts { collected, parent } = r13a.into_parts();
+                    let collected = emit_final_report_from_parts(collected.into_parts())?;
+                    Ok(typestate::R14FinalBranch::Stopped(
+                        typestate::R14aFinalStopped::from_collected_parent(collected, parent),
+                    ))
+                }
+                typestate::R12ContinuationBranch::HandoffCommitted(r13b) => {
+                    let typestate::RetiredParts { collected, parent } = r13b.into_parts();
+                    let collected = emit_final_report_from_parts(collected.into_parts())?;
+                    Ok(typestate::R14FinalBranch::Handoff(
+                        typestate::R14bFinalHandoff::from_collected_parent(collected, parent),
+                    ))
+                }
+            }
+        },
+    )
+}
+
 #[instrument(
     target = "ploke_exec",
     level = "debug",
@@ -8208,135 +8345,7 @@ pub(crate) async fn run_prototype1_state_turn(
     let r11 = r10_to_r11().apply(r10).await?;
     let r12 = r11_to_r12().apply(r11)?;
     let r13 = r12_to_r13().apply(r12)?;
-    let collected = match r13 {
-        typestate::R12ContinuationBranch::Stopped(r13a) => r13a.into_parts().collected,
-        typestate::R12ContinuationBranch::HandoffCommitted(r13b) => {
-            let typestate::RetiredParts {
-                collected,
-                parent: _,
-            } = r13b.into_parts();
-            collected
-        }
-    };
-    let typestate::context::CollectedParts {
-        command,
-        repo_root,
-        campaign_id,
-        manifest_path,
-        run_shape,
-        campaign_config: _,
-        journal_path,
-        journal,
-        handoff_invocation,
-        facts,
-    } = collected.into_parts();
-    let mut journal = journal;
-    let parent_identity =
-        facts
-            .parent_identity
-            .ok_or_else(|| PrepareError::InvalidBatchSelection {
-                detail: "R13 extraction missing parent identity".to_string(),
-            })?;
-    let typestate::context::ReportFacts {
-        outcome,
-        node_id: report_node_id,
-        node_status: report_node_status,
-        workspace_root: report_workspace,
-        binary_path: report_binary,
-        child_runtime,
-        successor_runtime,
-        successor_pid,
-        successor_ready_path,
-    } = facts
-        .report
-        .ok_or_else(|| PrepareError::InvalidBatchSelection {
-            detail: "R13 extraction missing report facts".to_string(),
-        })?;
-
-    append_parent_target_sample(
-        &mut journal,
-        &campaign_id,
-        &parent_identity,
-        handoff_invocation
-            .as_ref()
-            .map(|invocation| invocation.runtime_id()),
-        &repo_root,
-        journal::resource::Phase::ParentComplete,
-    );
-    let report = Prototype1StateReport {
-        campaign_id,
-        node_id: report_node_id,
-        repo_root,
-        journal_path,
-        stop_after: run_shape.stop_after,
-        outcome,
-        node_status: report_node_status,
-        workspace_root: report_workspace,
-        binary_path: report_binary,
-        child_runtime,
-        successor_runtime,
-        successor_pid,
-        successor_ready_path,
-    };
-
-    #[cfg(not(feature = "demo"))]
-    {
-        match command.format {
-            InspectOutputFormat::Json => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
-                );
-            }
-            InspectOutputFormat::Table => {
-                println!("prototype1 state");
-                println!("{}", "-".repeat(40));
-                println!("campaign_id: {}", report.campaign_id);
-                println!("node_id: {}", report.node_id);
-                println!("repo_root: {}", report.repo_root.display());
-                println!("journal_path: {}", report.journal_path.display());
-                println!("stop_after: {:?}", report.stop_after);
-                println!("outcome: {}", report.outcome);
-                println!("node_status: {:?}", report.node_status);
-                println!("workspace_root: {}", report.workspace_root.display());
-                println!("binary_path: {}", report.binary_path.display());
-                println!(
-                    "child_runtime: {}",
-                    report.child_runtime.as_deref().unwrap_or("-")
-                );
-                println!(
-                    "successor_runtime: {}",
-                    report.successor_runtime.as_deref().unwrap_or("-")
-                );
-                println!(
-                    "successor_pid: {}",
-                    report
-                        .successor_pid
-                        .map(|pid| pid.to_string())
-                        .unwrap_or_else(|| "-".to_string())
-                );
-                println!(
-                    "successor_ready_path: {}",
-                    report
-                        .successor_ready_path
-                        .as_ref()
-                        .map(|path| path.display().to_string())
-                        .unwrap_or_else(|| "-".to_string())
-                );
-            }
-        }
-    }
-    #[cfg(feature = "demo")]
-    let _ = report;
-    if let Some(invocation) = handoff_invocation {
-        let _ = record_prototype1_successor_completion(
-            &invocation,
-            &manifest_path,
-            SuccessorCompletionStatus::Succeeded,
-            None,
-            None,
-        )?;
-    }
+    let _r14 = r13_to_r14().apply(r13)?;
     Ok(())
 }
 

@@ -1413,10 +1413,10 @@ pub(crate) enum R12ContinuationBranch<RunShape, CampaignConfig> {
 /// - `Evidence<..., completion::None> -> Evidence<..., completion::Recorded>`.
 /// - `Report<Facts> -> Report<Emitted<Prototype1StateReport>>`.
 ///
-pub(crate) type R14aFinalStopped = Runtime<
+pub(crate) type R14aFinalStopped<RunShape = (), CampaignConfig = ()> = Runtime<
     phase::R14,
     parent_role::Parent<parent_role::Selectable>,
-    Context<context::Collected>,
+    Context<context::Collected<RunShape, CampaignConfig>>,
     Plan<
         plan::authority::Received<Received<parent_role::ChildPlan>>,
         plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
@@ -1448,10 +1448,10 @@ pub(crate) type R14aFinalStopped = Runtime<
 /// - `Evidence<..., completion::None> -> Evidence<..., completion::Recorded>`.
 /// - `Report<Facts> -> Report<Emitted<Prototype1StateReport>>`.
 ///
-pub(crate) type R14bFinalHandoff = Runtime<
+pub(crate) type R14bFinalHandoff<RunShape = (), CampaignConfig = ()> = Runtime<
     phase::R14,
     parent_role::Parent<parent_role::Retired>,
-    Context<context::Collected>,
+    Context<context::Collected<RunShape, CampaignConfig>>,
     Plan<
         plan::authority::Received<Received<parent_role::ChildPlan>>,
         plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
@@ -1476,6 +1476,61 @@ pub(crate) type R14bFinalHandoff = Runtime<
     >,
     Report<report::Emitted<Prototype1StateReport>>,
 >;
+
+selectable_state_impl!(R14aFinalStopped, phase::R14);
+
+impl<RunShape, CampaignConfig> R14bFinalHandoff<RunShape, CampaignConfig> {
+    pub(crate) fn from_collected_parent(
+        collected: context::Collected<RunShape, CampaignConfig>,
+        parent: parent_role::Parent<parent_role::Retired>,
+    ) -> Self {
+        Self {
+            phase: phase::R14,
+            role: parent,
+            context: Context::new(collected),
+            plan: Plan {
+                _authority: PhantomData,
+                _schedule: PhantomData,
+                _private: Private,
+            },
+            children: Children {
+                _set: PhantomData,
+                _attempt: PhantomData,
+                _private: Private,
+            },
+            history: History {
+                _startup: PhantomData,
+                _head: PhantomData,
+                _epoch: PhantomData,
+                _private: Private,
+            },
+            evidence: Evidence {
+                _parent_start: PhantomData,
+                _baseline: PhantomData,
+                _policy: PhantomData,
+                _selection: PhantomData,
+                _completion: PhantomData,
+                _private: Private,
+            },
+            continuation: Continuation {
+                _selection: PhantomData,
+                _decision: PhantomData,
+                _handoff: PhantomData,
+                _private: Private,
+            },
+            report: Report {
+                _state: PhantomData,
+                _private: Private,
+            },
+            _private: Private,
+        }
+    }
+}
+
+pub(crate) enum R14FinalBranch<RunShape, CampaignConfig> {
+    Stopped(R14aFinalStopped<RunShape, CampaignConfig>),
+    Handoff(R14bFinalHandoff<RunShape, CampaignConfig>),
+}
 
 /// Child-attempt typestate chain used within R11 fanout.
 ///
