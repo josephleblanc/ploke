@@ -791,6 +791,7 @@ pub(crate) mod identity;
 pub(crate) mod inner;
 pub(crate) mod invocation;
 pub(crate) mod journal;
+pub(crate) mod live_edges;
 pub(crate) mod metrics;
 pub(crate) mod observe;
 pub(crate) mod parent;
