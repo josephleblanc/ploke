@@ -40,10 +40,9 @@ pub(crate) use aliases::{
     ChildAttemptC1, ChildAttemptC2, ChildAttemptC3, ChildAttemptC4, ChildAttemptC5,
     HandoffBlockOpen, HandoffBlockSealed, HandoffCrownLocked, HandoffLineageObserved, R0, R1,
     R1Branch, R2a, R2aParts, R3, R3Parts, R4a, R4aParts, R4aStartupBranch, R4bGenesisChecked,
-    R4bParts, R4cGenesisReady, R4cParts, R4cPredecessorReady, R4cReady, R5, R6, R7, R8, R9, R10,
-    R10FanoutBranch, R11FanoutComplete, R11aRejectedOnly, R12, R12ContinuationBranch, R13aStopped,
-    R13bHandoffCommitted, R14FinalBranch, R14aFinalStopped, R14bFinalHandoff, ReadyParts,
-    RetiredParts, SelectableParts,
+    R4bParts, R4cParts, R4cReady, R5, R6, R7, R8, R9, R10, R10FanoutBranch, R11FanoutComplete,
+    R11aRejectedOnly, R12, R12ContinuationBranch, R13aStopped, R13bHandoffCommitted,
+    R14FinalBranch, R14aFinalStopped, R14bFinalHandoff, ReadyParts, RetiredParts, SelectableParts,
 };
 pub(crate) use axes::{children, continuation, evidence, history_axis, phase, plan, report, role};
 #[allow(unused_imports)]

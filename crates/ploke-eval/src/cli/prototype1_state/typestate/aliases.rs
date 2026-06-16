@@ -555,11 +555,6 @@ pub(crate) type R4cReady<RunShape = (), CampaignConfig = ()> = Runtime<
     Report<report::None>,
 >;
 
-pub(crate) type R4cGenesisReady<RunShape = (), CampaignConfig = ()> =
-    R4cReady<RunShape, CampaignConfig>;
-pub(crate) type R4cPredecessorReady<RunShape = (), CampaignConfig = ()> =
-    R4cReady<RunShape, CampaignConfig>;
-
 impl<RunShape, CampaignConfig> R4a<RunShape, CampaignConfig> {
     pub(crate) fn from_collected_parent(
         collected: context::Collected<RunShape, CampaignConfig>,

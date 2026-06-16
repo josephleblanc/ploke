@@ -8283,10 +8283,7 @@ fn r13_to_r14() -> impl Step<
 pub(crate) async fn run_prototype1_state_turn(
     command: Prototype1StateCommand,
 ) -> Result<(), PrepareError> {
-    // First live use of the global typestate map: construct R0 from the raw
-    // command, then advance through the typed setup and parent-startup edges.
-    // The extraction after R4c is a temporary migration seam until parent-start
-    // journaling moves behind R4c -> R5.
+    // Construct R0 from the raw command, then advance through typed parent-turn edges.
     let r0 = typestate::R0::new(command);
     let r1 = r0_to_r1().apply(r0)?;
     let span_campaign_id = r1.campaign_id().clone();
@@ -8340,11 +8337,9 @@ pub(crate) async fn run_prototype1_state_turn(
     let r6 = r5_to_r6().apply(r5).await?;
     let r7 = r6_to_r7().apply(r6)?;
     let r8 = r7_to_r8().apply(r7).await?;
-    let r9 = r8_to_r9().apply(r8)?;
-    let r10 = r9_to_r10().apply(r9)?;
+    let r10 = r8_to_r9().then(r9_to_r10()).apply(r8)?;
     let r11 = r10_to_r11().apply(r10).await?;
-    let r12 = r11_to_r12().apply(r11)?;
-    let r13 = r12_to_r13().apply(r12)?;
+    let r13 = r11_to_r12().then(r12_to_r13()).apply(r11)?;
     let _r14 = r13_to_r14().apply(r13)?;
     Ok(())
 }

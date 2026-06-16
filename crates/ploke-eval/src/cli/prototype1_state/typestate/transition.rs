@@ -180,8 +180,8 @@ where
 ///
 /// ```ignore
 /// enum StartupBranch {
-///     Genesis(R4bGenesisChecked),
-///     Predecessor(R4cPredecessorReady),
+///     GenesisChecked(R4bGenesisChecked),
+///     Ready(R4cReady),
 /// }
 ///
 /// let startup = transition(|r4a: R4a| -> Result<StartupBranch, PrepareError> {
