@@ -70,8 +70,10 @@ pub(in crate::cli::prototype1_state::typestate) struct Private;
 //   directly until those concepts move to a shared module or get replacement
 //   carriers.
 // - `history/mod.rs` names the intended authority sequence as
-//   `Startup<Observed> -> Startup<Genesis | Predecessor> -> Startup<Validated>
-//   -> Parent<Ruling>`. The current live path is weaker/different: it enters
+//   `Startup<Observed>
+//      -> Startup<Genesis | Predecessor> -> Startup<Validated>
+//      -> Parent<Ruling>`.
+//   The current live path is weaker/different: it enters
 //   `Parent<Ready>` and later `Parent<Selectable>`.
 // - `Startup<Validated>` is the live startup gate, but it erases whether the
 //   validated startup came from genesis or predecessor. This map preserves that
