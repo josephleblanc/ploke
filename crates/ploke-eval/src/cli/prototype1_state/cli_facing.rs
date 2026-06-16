@@ -7196,21 +7196,12 @@ fn prototype1_state_successor_handoff_mode() -> SuccessorHandoffMode {
     SuccessorHandoffMode::Detached
 }
 
-#[instrument(
-    target = "ploke_exec",
-    level = "debug",
-    skip(command),
-    fields(phase = "prototype1_state")
-)]
-pub(crate) async fn run_prototype1_state_turn(
-    command: Prototype1StateCommand,
-) -> Result<(), PrepareError> {
-    // First live use of the global typestate map: construct R0 from the raw
-    // command, then run the R0 -> R1 collection edge. The unpack below is a
-    // temporary migration seam so the rest of the live controller can keep its
-    // current locals until later phases are moved behind typed transitions.
-    let r0 = typestate::R0::new(command);
-    let r1 = typestate::transition(
+fn r0_to_r1() -> impl Step<
+    typestate::R0,
+    To = typestate::R1<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    Error = PrepareError,
+> {
+    typestate::transition(
         |r0: typestate::R0| -> Result<
             typestate::R1<Prototype1StateRunShape, ResolvedCampaignConfig>,
             PrepareError,
@@ -7245,7 +7236,23 @@ pub(crate) async fn run_prototype1_state_turn(
             ))
         },
     )
-    .apply(r0)?;
+}
+
+#[instrument(
+    target = "ploke_exec",
+    level = "debug",
+    skip(command),
+    fields(phase = "prototype1_state")
+)]
+pub(crate) async fn run_prototype1_state_turn(
+    command: Prototype1StateCommand,
+) -> Result<(), PrepareError> {
+    // First live use of the global typestate map: construct R0 from the raw
+    // command, then run the R0 -> R1 collection edge. The unpack below is a
+    // temporary migration seam so the rest of the live controller can keep its
+    // current locals until later phases are moved behind typed transitions.
+    let r0 = typestate::R0::new(command);
+    let r1 = r0_to_r1().apply(r0)?;
     let typestate::context::CollectedParts {
         command,
         repo_root,

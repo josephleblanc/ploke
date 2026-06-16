@@ -5,6 +5,7 @@ use crate::cli::prototype1_state::edit_surface::harness_request::{
     PublishedBroadHarnessRequest, RequestAdmissionBinding,
 };
 use crate::cli::prototype1_state::edit_surface::surface::SurfacePolicyId;
+use crate::cli::prototype1_state::typestate::{self, Step};
 use crate::cli::{
     InspectOutputFormat, Prototype1CandidateGenerator,
     Prototype1ChildScheduleMode as CliPrototype1ChildScheduleMode, Prototype1LoopCommand,
@@ -174,6 +175,26 @@ fn state_command_without_ids() -> Prototype1StateCommand {
         successor_selection_metrics: Prototype1TraversalMetrics::Operational,
         candidate_generator: Prototype1CandidateGenerator::BroadHarnessRequest,
         format: InspectOutputFormat::Table,
+    }
+}
+
+#[test]
+fn r0_to_r1_requires_campaign_or_parent_identity() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut command = state_command_without_ids();
+    command.repo_root = Some(tmp.path().to_path_buf());
+
+    let error = r0_to_r1()
+        .apply(typestate::R0::new(command))
+        .expect_err("missing campaign and parent identity should fail during R0 -> R1");
+
+    match error {
+        PrepareError::InvalidBatchSelection { detail } => {
+            assert!(detail.contains("--campaign was omitted"));
+            assert!(detail.contains("no parent identity exists"));
+            assert!(detail.contains("parent_identity.json"));
+        }
+        other => panic!("unexpected R0 -> R1 error: {other:?}"),
     }
 }
 
