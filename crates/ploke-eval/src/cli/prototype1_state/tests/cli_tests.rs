@@ -5,7 +5,7 @@ use crate::cli::prototype1_state::edit_surface::harness_request::{
     PublishedBroadHarnessRequest, RequestAdmissionBinding,
 };
 use crate::cli::prototype1_state::edit_surface::surface::SurfacePolicyId;
-use crate::cli::prototype1_state::typestate::{self, Step};
+use crate::cli::prototype1_state::typestate::{self, StepInput};
 use crate::cli::{
     InspectOutputFormat, Prototype1CandidateGenerator,
     Prototype1ChildScheduleMode as CliPrototype1ChildScheduleMode, Prototype1LoopCommand,
@@ -184,8 +184,8 @@ fn r0_to_r1_requires_campaign_or_parent_identity() {
     let mut command = state_command_without_ids();
     command.repo_root = Some(tmp.path().to_path_buf());
 
-    let error = r0_to_r1()
-        .apply(typestate::R0::new(command))
+    let error = typestate::R0::new(command)
+        .advance(r0_to_r1)
         .expect_err("missing campaign and parent identity should fail during R0 -> R1");
 
     match error {

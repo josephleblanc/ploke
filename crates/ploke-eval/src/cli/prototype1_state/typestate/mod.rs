@@ -51,7 +51,8 @@ pub(crate) use runtime::{
 };
 #[allow(unused_imports)]
 pub(crate) use transition::{
-    AsyncStep, AsyncTransition, Chain, Step, Transition, async_transition, transition,
+    AsyncStep, AsyncStepInput, AsyncTransition, Chain, Step, StepInput, Transition,
+    async_transition, transition,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

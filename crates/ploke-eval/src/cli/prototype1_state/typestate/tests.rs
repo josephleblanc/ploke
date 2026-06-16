@@ -12,7 +12,10 @@ use crate::cli::{
     Prototype1StateStopAfter, Prototype1SuccessorSelection, Prototype1TraversalMetrics,
 };
 
-use super::{AsyncStep, R1, R2a, R3, R4a, Step, async_transition, context, transition};
+use super::{
+    AsyncStep, AsyncStepInput, R1, R2a, R3, R4a, Step, StepInput, async_transition, context,
+    transition,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct S0(u8);
@@ -31,6 +34,18 @@ enum TestError {
     Stop,
 }
 
+fn direct_s0_to_s1(state: S0) -> Result<S1, TestError> {
+    Ok(S1(state.0 + 1))
+}
+
+fn direct_s1_to_s2(state: S1) -> Result<S2, TestError> {
+    Ok(S2(state.0 * 2))
+}
+
+async fn async_direct_s0_to_s1(state: S0) -> Result<S1, TestError> {
+    Ok(S1(state.0 + 1))
+}
+
 #[test]
 fn transition_applies_single_typed_edge() {
     let edge = transition(|state: S0| -> Result<S1, TestError> { Ok(S1(state.0 + 1)) });
@@ -38,6 +53,29 @@ fn transition_applies_single_typed_edge() {
     let result = edge.apply(S0(10));
 
     assert_eq!(result, Ok(S1(11)));
+}
+
+#[test]
+fn function_item_applies_as_typed_step() {
+    let result = direct_s0_to_s1.apply(S0(10));
+
+    assert_eq!(result, Ok(S1(11)));
+}
+
+#[test]
+fn advance_applies_direct_function_edge_value_first() {
+    let result = S0(10).advance(direct_s0_to_s1);
+
+    assert_eq!(result, Ok(S1(11)));
+}
+
+#[test]
+fn direct_function_edges_compose_with_then() {
+    let pipeline = direct_s0_to_s1.then(direct_s1_to_s2);
+
+    let result = S0(10).advance(pipeline);
+
+    assert_eq!(result, Ok(S2(22)));
 }
 
 #[test]
@@ -80,6 +118,13 @@ fn chain_short_circuits_on_error() {
 
     assert_eq!(result, Err(TestError::Stop));
     assert!(!ran_second.get());
+}
+
+#[tokio::test]
+async fn advance_async_applies_direct_function_edge_value_first() {
+    let result = S0(10).advance_async(async_direct_s0_to_s1).await;
+
+    assert_eq!(result, Ok(S1(11)));
 }
 
 #[tokio::test]

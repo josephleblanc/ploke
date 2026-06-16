@@ -106,7 +106,7 @@ use crate::{
             },
             profile, selection as state_selection,
             telemetry::RuntimeTelemetry,
-            typestate::{self, AsyncStep, Step},
+            typestate::{self, AsyncStepInput, Step, StepInput},
         },
         resolve_batch_manifest, resolve_protocol_model_id, resolve_protocol_provider_slug,
         sanitize_batch_component, serde_name, write_json_file_pretty, yes_no,
@@ -7120,7 +7120,7 @@ pub(crate) async fn run_prototype1_state_turn(
 ) -> Result<(), PrepareError> {
     // Construct R0 from the raw command, then advance through typed parent-turn edges.
     let r0 = typestate::R0::new(command);
-    let r1 = r0_to_r1().apply(r0)?;
+    let r1 = r0.advance(r0_to_r1)?;
     let span_campaign_id = r1.campaign_id().clone();
     let turn_span = tracing::info_span!(
         target: EXECUTION_DEBUG_TARGET,
@@ -7131,7 +7131,7 @@ pub(crate) async fn run_prototype1_state_turn(
     );
     let _turn_entered = turn_span.enter();
 
-    let r3 = match r1_to_r2a_or_r3().apply(r1)? {
+    let r3 = match r1.advance(r1_to_r2a_or_r3)? {
         typestate::R1Branch::R2a(r2a) => {
             let typestate::R2aParts {
                 collected,
@@ -7163,19 +7163,19 @@ pub(crate) async fn run_prototype1_state_turn(
         }
         typestate::R1Branch::R3(r3) => r3,
     };
-    let r4a = r3_to_r4a().apply(r3)?;
-    let r4c = match r4a_to_r4b_or_r4c().apply(r4a)? {
-        typestate::R4aStartupBranch::GenesisChecked(r4b) => r4b_to_r4c_genesis().apply(r4b)?,
+    let r4a = r3.advance(r3_to_r4a)?;
+    let r4c = match r4a.advance(r4a_to_r4b_or_r4c)? {
+        typestate::R4aStartupBranch::GenesisChecked(r4b) => r4b.advance(r4b_to_r4c_genesis)?,
         typestate::R4aStartupBranch::PredecessorReady(r4c) => r4c,
     };
-    let r5 = r4c_to_r5().apply(r4c)?;
-    let r6 = r5_to_r6().apply(r5).await?;
-    let r7 = r6_to_r7().apply(r6)?;
-    let r8 = r7_to_r8().apply(r7).await?;
-    let r10 = r8_to_r9().then(r9_to_r10()).apply(r8)?;
-    let r11 = r10_to_r11().apply(r10).await?;
-    let r13 = r11_to_r12().then(r12_to_r13()).apply(r11)?;
-    let _r14 = r13_to_r14().apply(r13)?;
+    let r5 = r4c.advance(r4c_to_r5)?;
+    let r6 = r5.advance_async(r5_to_r6).await?;
+    let r7 = r6.advance(r6_to_r7)?;
+    let r8 = r7.advance_async(r7_to_r8).await?;
+    let r10 = r8.advance(r8_to_r9.then(r9_to_r10))?;
+    let r11 = r10.advance_async(r10_to_r11).await?;
+    let r13 = r11.advance(r11_to_r12.then(r12_to_r13))?;
+    let _r14 = r13.advance(r13_to_r14)?;
     Ok(())
 }
 

@@ -141,6 +141,34 @@ where
     }
 }
 
+impl<From, To, F, Error> Step<From> for F
+where
+    F: FnOnce(From) -> Result<To, Error>,
+{
+    type To = To;
+    type Error = Error;
+
+    fn apply(self, from: From) -> Result<Self::To, Self::Error> {
+        self(from)
+    }
+}
+
+/// Value-first helper for applying a typed step.
+///
+/// This is the typestate analogue of calling `x.map(f)`: the state value owns
+/// the receiver position, while the edge function or transition value is passed
+/// in as data.
+pub(crate) trait StepInput: Sized {
+    fn advance<S>(self, step: S) -> Result<S::To, S::Error>
+    where
+        S: Step<Self>,
+    {
+        step.apply(self)
+    }
+}
+
+impl<T> StepInput for T {}
+
 /// A composed pair of adjacent steps.
 ///
 /// `Chain<A, B, Mid>` represents:
@@ -260,3 +288,29 @@ where
         (self.f)(from)
     }
 }
+
+impl<From, To, F, Fut, Error> AsyncStep<From> for F
+where
+    F: FnOnce(From) -> Fut,
+    Fut: Future<Output = Result<To, Error>>,
+{
+    type To = To;
+    type Error = Error;
+    type Fut = Fut;
+
+    fn apply(self, from: From) -> Self::Fut {
+        self(from)
+    }
+}
+
+/// Value-first helper for applying an async typed step.
+pub(crate) trait AsyncStepInput: Sized {
+    fn advance_async<S>(self, step: S) -> S::Fut
+    where
+        S: AsyncStep<Self>,
+    {
+        step.apply(self)
+    }
+}
+
+impl<T> AsyncStepInput for T {}
