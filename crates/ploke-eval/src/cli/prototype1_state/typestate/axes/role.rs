@@ -1,5 +1,3 @@
-use std::marker::PhantomData;
-
 use super::super::Private;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,18 +21,42 @@ pub(crate) struct Successor {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Unresolved {
-    _private: Private,
-}
+pub(crate) struct Unresolved;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Identity<T> {
-    _carrier: PhantomData<T>,
+    value: T,
     _private: Private,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+impl<T> Identity<T> {
+    pub(in crate::cli::prototype1_state::typestate) fn new(value: T) -> Self {
+        Self {
+            value,
+            _private: Private,
+        }
+    }
+
+    pub(in crate::cli::prototype1_state::typestate) fn into_inner(self) -> T {
+        self.value
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Initialized<T> {
-    _carrier: PhantomData<T>,
+    value: T,
     _private: Private,
+}
+
+impl<T> Initialized<T> {
+    pub(in crate::cli::prototype1_state::typestate) fn new(value: T) -> Self {
+        Self {
+            value,
+            _private: Private,
+        }
+    }
+
+    pub(in crate::cli::prototype1_state::typestate) fn into_inner(self) -> T {
+        self.value
+    }
 }

@@ -31,11 +31,25 @@ pub(crate) struct Runtime<
 ///
 /// Once the parent role is constructed, the `Runtime` role parameter uses the
 /// existing `parent::Parent<S>` carrier directly instead of wrapping it again.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RuntimeRole<Kind, State> {
+    pub(super) state: State,
     pub(super) _kind: PhantomData<Kind>,
-    pub(super) _state: PhantomData<State>,
     pub(super) _private: Private,
+}
+
+impl<Kind, State> RuntimeRole<Kind, State> {
+    pub(super) fn new(state: State) -> Self {
+        Self {
+            state,
+            _kind: PhantomData,
+            _private: Private,
+        }
+    }
+
+    pub(super) fn into_state(self) -> State {
+        self.state
+    }
 }
 
 /// Run context axis: command-only first, then collected command-derived inputs.
@@ -51,6 +65,10 @@ impl<State> Context<State> {
             state,
             _private: Private,
         }
+    }
+
+    pub(super) fn state(&self) -> &State {
+        &self.state
     }
 
     pub(super) fn into_state(self) -> State {

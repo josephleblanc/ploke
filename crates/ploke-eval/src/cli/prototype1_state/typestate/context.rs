@@ -86,6 +86,10 @@ impl<RunShape, CampaignConfig> Collected<RunShape, CampaignConfig> {
         }
     }
 
+    pub(crate) fn campaign_id(&self) -> &CampaignId {
+        &self.campaign_id
+    }
+
     pub(crate) fn into_parts(self) -> CollectedParts<RunShape, CampaignConfig> {
         CollectedParts {
             command: self.command,

@@ -1,5 +1,7 @@
 use std::marker::PhantomData;
 
+use ploke_records::ids::CampaignId;
+
 use crate::{
     cli::Prototype1StateCommand,
     intervention::{
@@ -99,11 +101,7 @@ impl R0 {
     pub(crate) fn new(command: Prototype1StateCommand) -> Self {
         Self {
             phase: phase::R0,
-            role: RuntimeRole {
-                _kind: PhantomData,
-                _state: PhantomData,
-                _private: Private,
-            },
+            role: RuntimeRole::new(role::Unresolved),
             context: Context::new(context::Command::new(command)),
             plan: Plan {
                 _authority: PhantomData,
@@ -160,11 +158,7 @@ impl<RunShape, CampaignConfig> R1<RunShape, CampaignConfig> {
     pub(crate) fn from_collected(collected: context::Collected<RunShape, CampaignConfig>) -> Self {
         Self {
             phase: phase::R1,
-            role: RuntimeRole {
-                _kind: PhantomData,
-                _state: PhantomData,
-                _private: Private,
-            },
+            role: RuntimeRole::new(role::Unresolved),
             context: Context::new(collected),
             plan: Plan {
                 _authority: PhantomData,
@@ -208,9 +202,44 @@ impl<RunShape, CampaignConfig> R1<RunShape, CampaignConfig> {
     ///
     /// Once the subsequent R-states are wired, callers should advance through
     /// typed transitions instead of extracting the collected payload.
+    pub(crate) fn campaign_id(&self) -> &CampaignId {
+        self.context.state().campaign_id()
+    }
+
+    /// Temporary migration seam back to the existing live implementation.
+    ///
+    /// Once the subsequent R-states are wired, callers should advance through
+    /// typed transitions instead of extracting the collected payload.
     pub(crate) fn into_collected(self) -> context::Collected<RunShape, CampaignConfig> {
         self.context.into_state()
     }
+}
+
+/// Structural branch after R1.
+///
+/// This is the first authoritative fork in the live parent loop:
+///
+/// - `R2a` is the `--init-parent-identity` terminal path.
+/// - `R3` is the normal parent-runtime path with parent identity evidence.
+///
+/// The enum is intentionally named by the states it can produce, not by a
+/// semantic transition label. The transition remains `Transition<R1, R1Branch,
+/// _>`.
+pub(crate) enum R1Branch<RunShape, CampaignConfig> {
+    R2a(R2a<RunShape, CampaignConfig>),
+    R3(R3<RunShape, CampaignConfig>),
+}
+
+/// Owned payload extracted from the R2a terminal branch.
+pub(crate) struct R2aParts<RunShape, CampaignConfig> {
+    pub(crate) collected: context::Collected<RunShape, CampaignConfig>,
+    pub(crate) identity: ParentIdentity,
+}
+
+/// Owned payload extracted from the R3 normal parent-runtime branch.
+pub(crate) struct R3Parts<RunShape, CampaignConfig> {
+    pub(crate) collected: context::Collected<RunShape, CampaignConfig>,
+    pub(crate) parent_identity: ParentIdentity,
 }
 
 /// R2a: gen0 parent identity initialization terminal branch.
@@ -223,10 +252,10 @@ impl<RunShape, CampaignConfig> R1<RunShape, CampaignConfig> {
 /// This returns before the normal parent runtime path. ADR 007 says the future
 /// version should create a genesis History block; current code only writes and
 /// commits checkout parent identity.
-pub(crate) type R2a = Runtime<
+pub(crate) type R2a<RunShape = (), CampaignConfig = ()> = Runtime<
     phase::R2a,
     RuntimeRole<role::Parent, role::Initialized<ParentIdentity>>,
-    Context<context::Collected>,
+    Context<context::Collected<RunShape, CampaignConfig>>,
     Plan<plan::authority::None, plan::schedule::None>,
     Children<children::set::None, children::attempt::None>,
     History<
@@ -259,10 +288,10 @@ pub(crate) type R2a = Runtime<
 ///
 /// The concrete parent carrier has not been constructed yet. The role axis is a
 /// parent-role candidate with `ParentIdentity` evidence.
-pub(crate) type R3 = Runtime<
+pub(crate) type R3<RunShape = (), CampaignConfig = ()> = Runtime<
     phase::R3,
     RuntimeRole<role::Parent, role::Identity<ParentIdentity>>,
-    Context<context::Collected>,
+    Context<context::Collected<RunShape, CampaignConfig>>,
     Plan<plan::authority::None, plan::schedule::None>,
     Children<children::set::None, children::attempt::None>,
     History<
@@ -284,6 +313,122 @@ pub(crate) type R3 = Runtime<
     >,
     Report<report::None>,
 >;
+
+impl<RunShape, CampaignConfig> R2a<RunShape, CampaignConfig> {
+    /// Build the terminal identity-initialization state from R1 context and the
+    /// identity created by the live initialization path.
+    pub(crate) fn from_collected_identity(
+        collected: context::Collected<RunShape, CampaignConfig>,
+        identity: ParentIdentity,
+    ) -> Self {
+        Self {
+            phase: phase::R2a,
+            role: RuntimeRole::new(role::Initialized::new(identity)),
+            context: Context::new(collected),
+            plan: Plan {
+                _authority: PhantomData,
+                _schedule: PhantomData,
+                _private: Private,
+            },
+            children: Children {
+                _set: PhantomData,
+                _attempt: PhantomData,
+                _private: Private,
+            },
+            history: History {
+                _startup: PhantomData,
+                _head: PhantomData,
+                _epoch: PhantomData,
+                _private: Private,
+            },
+            evidence: Evidence {
+                _parent_start: PhantomData,
+                _baseline: PhantomData,
+                _policy: PhantomData,
+                _selection: PhantomData,
+                _completion: PhantomData,
+                _private: Private,
+            },
+            continuation: Continuation {
+                _selection: PhantomData,
+                _decision: PhantomData,
+                _handoff: PhantomData,
+                _private: Private,
+            },
+            report: Report {
+                _state: PhantomData,
+                _private: Private,
+            },
+            _private: Private,
+        }
+    }
+
+    /// Temporary extraction for the still-live terminal printing code.
+    pub(crate) fn into_parts(self) -> R2aParts<RunShape, CampaignConfig> {
+        R2aParts {
+            collected: self.context.into_state(),
+            identity: self.role.into_state().into_inner(),
+        }
+    }
+}
+
+impl<RunShape, CampaignConfig> R3<RunShape, CampaignConfig> {
+    /// Build the normal parent-runtime branch from R1 context and resolved
+    /// parent identity evidence.
+    pub(crate) fn from_collected_identity(
+        collected: context::Collected<RunShape, CampaignConfig>,
+        parent_identity: ParentIdentity,
+    ) -> Self {
+        Self {
+            phase: phase::R3,
+            role: RuntimeRole::new(role::Identity::new(parent_identity)),
+            context: Context::new(collected),
+            plan: Plan {
+                _authority: PhantomData,
+                _schedule: PhantomData,
+                _private: Private,
+            },
+            children: Children {
+                _set: PhantomData,
+                _attempt: PhantomData,
+                _private: Private,
+            },
+            history: History {
+                _startup: PhantomData,
+                _head: PhantomData,
+                _epoch: PhantomData,
+                _private: Private,
+            },
+            evidence: Evidence {
+                _parent_start: PhantomData,
+                _baseline: PhantomData,
+                _policy: PhantomData,
+                _selection: PhantomData,
+                _completion: PhantomData,
+                _private: Private,
+            },
+            continuation: Continuation {
+                _selection: PhantomData,
+                _decision: PhantomData,
+                _handoff: PhantomData,
+                _private: Private,
+            },
+            report: Report {
+                _state: PhantomData,
+                _private: Private,
+            },
+            _private: Private,
+        }
+    }
+
+    /// Temporary extraction for the still-live parent-loading code.
+    pub(crate) fn into_parts(self) -> R3Parts<RunShape, CampaignConfig> {
+        R3Parts {
+            collected: self.context.into_state(),
+            parent_identity: self.role.into_state().into_inner(),
+        }
+    }
+}
 
 /// R4a: parent loaded/constructed as unchecked.
 ///

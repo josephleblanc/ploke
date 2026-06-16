@@ -7238,6 +7238,97 @@ fn r0_to_r1() -> impl Step<
     )
 }
 
+fn r1_to_r2a_or_r3() -> impl Step<
+    typestate::R1<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    To = typestate::R1Branch<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    Error = PrepareError,
+> {
+    typestate::transition(
+        |r1: typestate::R1<Prototype1StateRunShape, ResolvedCampaignConfig>| -> Result<
+            typestate::R1Branch<Prototype1StateRunShape, ResolvedCampaignConfig>,
+            PrepareError,
+        > {
+            let typestate::context::CollectedParts {
+                command,
+                repo_root,
+                campaign_id,
+                manifest_path,
+                run_shape,
+                campaign_config: resolved_campaign,
+                journal_path,
+                journal,
+            } = r1.into_collected().into_parts();
+
+            if command.init_parent_identity {
+                let identity = initialize_prototype1_parent_identity(
+                    &command,
+                    &campaign_id,
+                    &manifest_path,
+                    &repo_root,
+                )?;
+                let collected = typestate::context::Collected::new(
+                    command,
+                    repo_root,
+                    campaign_id,
+                    manifest_path,
+                    run_shape,
+                    resolved_campaign,
+                    journal_path,
+                    journal,
+                );
+                return Ok(typestate::R1Branch::R2a(
+                    typestate::R2a::from_collected_identity(collected, identity),
+                ));
+            }
+
+            let parent_identity = if let Some(invocation_path) =
+                command.handoff_invocation.as_deref()
+            {
+                match invocation::load_executable(invocation_path)? {
+                    InvocationAuthority::Successor(invocation) => {
+                        validate_prototype1_successor_continuation(&invocation, &manifest_path)?
+                    }
+                    InvocationAuthority::Child(_) => {
+                        return Err(PrepareError::InvalidBatchSelection {
+                            detail: format!(
+                                "handoff invocation '{}' is a child invocation, expected successor",
+                                invocation_path.display()
+                            ),
+                        });
+                    }
+                }
+            } else {
+                resolve_prototype1_parent_identity(&campaign_id, &repo_root)?
+            };
+            info!(
+                target: EXECUTION_DEBUG_TARGET,
+                role = "parent",
+                authority = if command.handoff_invocation.is_some() { "successor_invocation" } else { "artifact_identity" },
+                transition = if command.handoff_invocation.is_some() { "SuccessorInvocation->ParentIdentity" } else { "active_checkout->ParentIdentity" },
+                campaign = %campaign_id,
+                parent_id = %parent_identity.parent_id(),
+                node_id = %parent_identity.node_id(),
+                generation = parent_identity.generation(),
+                branch_id = %parent_identity.branch_id(),
+                "resolved active parent identity"
+            );
+            let collected = typestate::context::Collected::new(
+                command,
+                repo_root,
+                campaign_id,
+                manifest_path,
+                run_shape,
+                resolved_campaign,
+                journal_path,
+                journal,
+            );
+            Ok(typestate::R1Branch::R3(
+                typestate::R3::from_collected_identity(collected, parent_identity),
+            ))
+        },
+    )
+}
+
 #[instrument(
     target = "ploke_exec",
     level = "debug",
@@ -7248,11 +7339,57 @@ pub(crate) async fn run_prototype1_state_turn(
     command: Prototype1StateCommand,
 ) -> Result<(), PrepareError> {
     // First live use of the global typestate map: construct R0 from the raw
-    // command, then run the R0 -> R1 collection edge. The unpack below is a
-    // temporary migration seam so the rest of the live controller can keep its
-    // current locals until later phases are moved behind typed transitions.
+    // command, then run the R0 -> R1 collection edge. The branch immediately
+    // after R1 is now typed as `R1Branch::{R2a, R3}`; the extraction below is a
+    // temporary migration seam until parent loading moves behind R3 -> R4a.
     let r0 = typestate::R0::new(command);
     let r1 = r0_to_r1().apply(r0)?;
+    let span_campaign_id = r1.campaign_id().clone();
+    let turn_span = tracing::info_span!(
+        target: EXECUTION_DEBUG_TARGET,
+        "prototype1.parent.turn",
+        role = "parent",
+        phase = "parent_turn",
+        campaign = %span_campaign_id,
+    );
+    let _turn_entered = turn_span.enter();
+
+    let r3 = match r1_to_r2a_or_r3().apply(r1)? {
+        typestate::R1Branch::R2a(r2a) => {
+            let typestate::R2aParts {
+                collected,
+                identity,
+            } = r2a.into_parts();
+            let command = collected.into_parts().command;
+            match command.format {
+                InspectOutputFormat::Json => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&identity).map_err(PrepareError::Serialize)?
+                    );
+                }
+                InspectOutputFormat::Table => {
+                    println!("prototype1 parent identity");
+                    println!("{}", "-".repeat(40));
+                    println!("campaign_id: {}", identity.campaign_id());
+                    println!("parent_id: {}", identity.parent_id());
+                    println!("node_id: {}", identity.node_id());
+                    println!("generation: {}", identity.generation());
+                    println!("branch_id: {}", identity.branch_id());
+                    println!(
+                        "artifact_branch: {}",
+                        identity.artifact_branch().unwrap_or("-")
+                    );
+                }
+            }
+            return Ok(());
+        }
+        typestate::R1Branch::R3(r3) => r3,
+    };
+    let typestate::R3Parts {
+        collected,
+        parent_identity,
+    } = r3.into_parts();
     let typestate::context::CollectedParts {
         command,
         repo_root,
@@ -7262,77 +7399,8 @@ pub(crate) async fn run_prototype1_state_turn(
         campaign_config: resolved_campaign,
         journal_path,
         journal,
-    } = r1.into_collected().into_parts();
+    } = collected.into_parts();
     let mut journal = journal;
-    let turn_span = tracing::info_span!(
-        target: EXECUTION_DEBUG_TARGET,
-        "prototype1.parent.turn",
-        role = "parent",
-        phase = "parent_turn",
-        campaign = %campaign_id,
-    );
-    let _turn_entered = turn_span.enter();
-
-    if command.init_parent_identity {
-        let identity = initialize_prototype1_parent_identity(
-            &command,
-            &campaign_id,
-            &manifest_path,
-            &repo_root,
-        )?;
-        match command.format {
-            InspectOutputFormat::Json => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&identity).map_err(PrepareError::Serialize)?
-                );
-            }
-            InspectOutputFormat::Table => {
-                println!("prototype1 parent identity");
-                println!("{}", "-".repeat(40));
-                println!("campaign_id: {}", identity.campaign_id());
-                println!("parent_id: {}", identity.parent_id());
-                println!("node_id: {}", identity.node_id());
-                println!("generation: {}", identity.generation());
-                println!("branch_id: {}", identity.branch_id());
-                println!(
-                    "artifact_branch: {}",
-                    identity.artifact_branch().unwrap_or("-")
-                );
-            }
-        }
-        return Ok(());
-    }
-
-    let parent_identity = if let Some(invocation_path) = command.handoff_invocation.as_deref() {
-        match invocation::load_executable(invocation_path)? {
-            InvocationAuthority::Successor(invocation) => {
-                validate_prototype1_successor_continuation(&invocation, &manifest_path)?
-            }
-            InvocationAuthority::Child(_) => {
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: format!(
-                        "handoff invocation '{}' is a child invocation, expected successor",
-                        invocation_path.display()
-                    ),
-                });
-            }
-        }
-    } else {
-        resolve_prototype1_parent_identity(&campaign_id, &repo_root)?
-    };
-    info!(
-        target: EXECUTION_DEBUG_TARGET,
-        role = "parent",
-        authority = if command.handoff_invocation.is_some() { "successor_invocation" } else { "artifact_identity" },
-        transition = if command.handoff_invocation.is_some() { "SuccessorInvocation->ParentIdentity" } else { "active_checkout->ParentIdentity" },
-        campaign = %campaign_id,
-        parent_id = %parent_identity.parent_id(),
-        node_id = %parent_identity.node_id(),
-        generation = parent_identity.generation(),
-        branch_id = %parent_identity.branch_id(),
-        "resolved active parent identity"
-    );
     let parent = if let Some(invocation_path) = command.handoff_invocation.as_deref() {
         let runtime_id = match invocation::load_executable(invocation_path)? {
             InvocationAuthority::Successor(invocation) => {
