@@ -1,3 +1,9 @@
+//! Short-lived CLI client for the typestate walk server.
+//!
+//! Client commands connect to one Unix socket, send one framed request, print
+//! one framed response, and exit. `start` is the only command that auto-spawns
+//! the server when health probing reports it offline.
+
 use std::{
     path::Path,
     process::{Command, Stdio},
@@ -18,6 +24,7 @@ use super::{
     protocol::{WalkRequest, WalkRequestBody, WalkResponse},
 };
 
+/// Execute a non-`serve` walk subcommand as a one-shot client request.
 pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), PrepareError> {
     match command {
         Prototype1StateWalkSubcommand::Serve(_) => {
@@ -93,6 +100,7 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
     }
 }
 
+/// Start the server if needed, then create a new in-memory walk.
 async fn start(command: Prototype1StateWalkStartCommand) -> Result<(), PrepareError> {
     let format = command.format;
     let until = command.until;
@@ -116,6 +124,7 @@ async fn start(command: Prototype1StateWalkStartCommand) -> Result<(), PrepareEr
     response_result(response)
 }
 
+/// Ensure a healthy server is listening at `socket`, spawning one if absent.
 async fn ensure_server(repo_root: &Path, socket: &Path) -> Result<(), PrepareError> {
     match health(socket).await? {
         Health::Online(_) => return Ok(()),
@@ -139,6 +148,11 @@ async fn ensure_server(repo_root: &Path, socket: &Path) -> Result<(), PrepareErr
     })
 }
 
+/// Spawn the same binary in `prototype1-state-walk serve` mode.
+///
+/// This is intentionally lighter than full daemonization in the first server
+/// slice: stdio is detached, the child gets its own process group on Unix, and
+/// the caller polls `Health` before sending the real request.
 fn spawn_server(repo_root: &Path, socket: &Path) -> Result<(), PrepareError> {
     let exe = std::env::current_exe().map_err(|source| PrepareError::DatabaseSetup {
         phase: "prototype1_state_walk_current_exe",
@@ -170,17 +184,20 @@ fn spawn_server(repo_root: &Path, socket: &Path) -> Result<(), PrepareError> {
     Ok(())
 }
 
+/// Send one request and wait for one response.
 async fn send_request(socket: &Path, request: WalkRequest) -> Result<WalkResponse, PrepareError> {
     let mut stream = ipc::connect(socket).await?;
     ipc::send(&mut stream, &request).await?;
     ipc::recv(&mut stream).await
 }
 
+/// Result of probing a walk socket without mutating state.
 enum Health {
     Online(WalkResponse),
     Offline,
 }
 
+/// Probe whether a server is online by sending `WalkRequestBody::Health`.
 async fn health(socket: &Path) -> Result<Health, PrepareError> {
     let mut stream = match UnixStream::connect(socket).await {
         Ok(stream) => stream,
@@ -214,6 +231,7 @@ async fn health(socket: &Path) -> Result<Health, PrepareError> {
     Ok(Health::Online(response))
 }
 
+/// Render one server response in table or JSON format.
 fn print_response(
     response: &WalkResponse,
     format: InspectOutputFormat,
@@ -270,6 +288,7 @@ fn print_response(
     Ok(())
 }
 
+/// Render an offline status without treating it as a command failure.
 fn print_offline(socket: &Path, format: InspectOutputFormat) -> Result<(), PrepareError> {
     match format {
         InspectOutputFormat::Json => {
@@ -292,6 +311,7 @@ fn print_offline(socket: &Path, format: InspectOutputFormat) -> Result<(), Prepa
     Ok(())
 }
 
+/// Convert a protocol response into the CLI process result.
 fn response_result(response: WalkResponse) -> Result<(), PrepareError> {
     if response.is_ok() {
         Ok(())

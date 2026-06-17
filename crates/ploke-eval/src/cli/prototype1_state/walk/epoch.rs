@@ -1,3 +1,10 @@
+//! Freshness guard for the long-running walk server.
+//!
+//! A self-editing loop can change the checkout while an older server binary is
+//! still holding typed state. `ServerEpoch` is the fail-closed guard that keeps
+//! mutating requests from applying stale transition semantics to a newer source
+//! tree.
+
 use std::{
     path::{Path, PathBuf},
     process::Command,
@@ -9,9 +16,18 @@ use sha2::{Digest, Sha256};
 
 use crate::spec::PrepareError;
 
+/// Wire-protocol version for framed JSON walk requests.
 pub(crate) const WALK_PROTOCOL_VERSION: u32 = 1;
+
+/// Semantic version for the currently admitted transition graph slice.
 pub(crate) const TRANSITION_GRAPH_VERSION: &str = "prototype1-state-walk-r0-r4c-v1";
 
+/// Repo paths whose dirty/clean status participates in the server epoch.
+///
+/// This is deliberately narrower than the entire repository. It covers the CLI,
+/// walk server, and Prototype 1 transition code that can change stepping
+/// semantics. See the active agent doc for the known limitation: this is a
+/// status hash, not a full content hash of every dirty file.
 const SOURCE_GUARD_PATHS: &[&str] = &[
     "Cargo.toml",
     "crates/ploke-eval/Cargo.toml",
@@ -20,6 +36,11 @@ const SOURCE_GUARD_PATHS: &[&str] = &[
     "crates/ploke-eval/src/cli/prototype1_state",
 ];
 
+/// Identity of the source/binary snapshot that owns one walk server instance.
+///
+/// Clients include their own freshly captured epoch on mutating requests. The
+/// server compares that client epoch with both its startup epoch and the current
+/// filesystem state before it advances typestate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ServerEpoch {
     pub(crate) protocol_version: u32,
@@ -32,6 +53,7 @@ pub(crate) struct ServerEpoch {
 }
 
 impl ServerEpoch {
+    /// Capture the epoch for `repo_root` and the currently running executable.
     pub(crate) fn capture(repo_root: &Path) -> Result<Self, PrepareError> {
         let repo_root = repo_root.to_path_buf();
         let exe_path = std::env::current_exe().map_err(|source| PrepareError::DatabaseSetup {
@@ -56,6 +78,10 @@ impl ServerEpoch {
         })
     }
 
+    /// Validate that a mutating request came from a compatible client binary.
+    ///
+    /// Read-only requests intentionally bypass this check so a stale server can
+    /// still be inspected and stopped.
     pub(crate) fn ensure_compatible_request(
         &self,
         request_epoch: Option<&ServerEpoch>,
@@ -94,6 +120,7 @@ impl ServerEpoch {
         Ok(())
     }
 
+    /// Re-capture the current epoch and reject mutation if the server went stale.
     pub(crate) fn ensure_not_stale_now(&self) -> Result<(), PrepareError> {
         let current = Self::capture(&self.repo_root)?;
         if current.exe_path != self.exe_path

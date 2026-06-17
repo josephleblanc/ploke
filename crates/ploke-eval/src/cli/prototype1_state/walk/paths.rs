@@ -1,3 +1,9 @@
+//! Socket path selection and filesystem hygiene for the walk server.
+//!
+//! This mirrors the important Zellij practice of using a short runtime-dir
+//! socket path with private permissions, while keeping the implementation local
+//! to the debug harness.
+
 use std::{
     env, fs, io,
     path::{Path, PathBuf},
@@ -12,6 +18,7 @@ const UNIX_SOCKET_PATH_MAX: usize = 104;
 #[cfg(not(target_os = "macos"))]
 const UNIX_SOCKET_PATH_MAX: usize = 108;
 
+/// Resolve the parent checkout root used for socket identity and epoch capture.
 pub(crate) fn resolve_repo_root(repo_root: Option<&Path>) -> Result<PathBuf, PrepareError> {
     match repo_root {
         Some(path) => Ok(path.to_path_buf()),
@@ -22,6 +29,10 @@ pub(crate) fn resolve_repo_root(repo_root: Option<&Path>) -> Result<PathBuf, Pre
     }
 }
 
+/// Compute the Unix socket path for a repo, honoring explicit overrides.
+///
+/// Default paths use a short hash of the canonical repo root so long checkout
+/// paths do not overflow `sockaddr_un.sun_path`.
 pub(crate) fn socket_path(
     repo_root: &Path,
     override_path: Option<&Path>,
@@ -37,6 +48,7 @@ pub(crate) fn socket_path(
     Ok(path)
 }
 
+/// Create the socket parent directory and restrict it to the current user.
 pub(crate) fn ensure_socket_parent(path: &Path) -> Result<(), PrepareError> {
     let Some(parent) = path.parent() else {
         return Err(PrepareError::DatabaseSetup {
@@ -55,6 +67,7 @@ pub(crate) fn ensure_socket_parent(path: &Path) -> Result<(), PrepareError> {
     Ok(())
 }
 
+/// Remove an old socket path, treating a missing file as success.
 pub(crate) fn remove_socket_file(path: &Path) -> Result<(), PrepareError> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),

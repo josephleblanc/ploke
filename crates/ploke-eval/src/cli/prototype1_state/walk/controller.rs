@@ -1,3 +1,9 @@
+//! In-memory typestate walker used by the local debug server.
+//!
+//! `WalkController` owns exactly one `WalkState` value. Each step consumes that
+//! state and calls the canonical direct edge functions from `live_edges`; this
+//! module should not duplicate transition semantics.
+
 use crate::{
     ResolvedCampaignConfig,
     cli::prototype1_state::{
@@ -13,11 +19,19 @@ use super::{phase::WalkPhase, protocol::WalkStartConfig};
 type RunShape = Prototype1StateRunShape;
 type CampaignConfig = ResolvedCampaignConfig;
 
+/// Single-session in-memory controller for early Prototype 1 typestate phases.
+///
+/// The first server slice admits only setup/startup phases through `R4c` so the
+/// socket lifecycle can be tested before exposing child fanout or handoff.
 pub(crate) struct WalkController {
     state: WalkState,
     steps: usize,
 }
 
+/// Owned typestate value currently held by the server.
+///
+/// The enum is intentionally private: external callers address state through
+/// `WalkPhase`, while only the controller can consume and replace typed values.
 enum WalkState {
     Empty,
     R0(R0),
@@ -27,10 +41,18 @@ enum WalkState {
     R4a(R4a<RunShape, CampaignConfig>),
     R4b(R4bGenesisChecked<RunShape, CampaignConfig>),
     R4c(R4cReady<RunShape, CampaignConfig>),
-    Failed { phase: WalkPhase, detail: String },
+    /// A consuming transition failed after the previous typed value was moved.
+    ///
+    /// Rust cannot restore the consumed value after an edge returns `Err`, so
+    /// the server keeps an inspectable failed cursor and requires a fresh walk.
+    Failed {
+        phase: WalkPhase,
+        detail: String,
+    },
 }
 
 impl WalkController {
+    /// Create an empty controller with no active walk.
     pub(crate) fn new() -> Self {
         Self {
             state: WalkState::Empty,
@@ -38,10 +60,12 @@ impl WalkController {
         }
     }
 
+    /// Return the current protocol-visible phase cursor.
     pub(crate) fn phase(&self) -> WalkPhase {
         self.state.phase()
     }
 
+    /// Produce a short human-readable summary for `show` and `health`.
     pub(crate) fn describe(&self) -> String {
         match &self.state {
             WalkState::Failed { phase, detail } => format!(
@@ -56,6 +80,7 @@ impl WalkController {
         }
     }
 
+    /// Start a new walk from `R0` and optionally advance to an early boundary.
     pub(crate) fn start(
         &mut self,
         config: WalkStartConfig,
@@ -76,6 +101,7 @@ impl WalkController {
         Ok(self.phase())
     }
 
+    /// Advance the current walk by one edge or until a requested early phase.
     pub(crate) fn step(&mut self, until: Option<WalkPhase>) -> Result<WalkPhase, PrepareError> {
         let target = until.unwrap_or_else(|| self.phase().next().unwrap_or(self.phase()));
         ensure_supported_target(target)?;

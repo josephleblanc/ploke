@@ -1,3 +1,8 @@
+//! Adapters between clap command structs and walk protocol DTOs.
+//!
+//! The public CLI structs live in `cli::args::loop_args`; this module keeps the
+//! socket/protocol conversion logic near the walk server implementation.
+
 use std::path::Path;
 
 use crate::cli::{
@@ -8,6 +13,7 @@ use crate::cli::{
 use super::{paths, protocol::WalkStartConfig};
 
 impl Prototype1StateWalkStartCommand {
+    /// Convert the start subcommand into the serializable start payload.
     pub(crate) fn start_config(self) -> WalkStartConfig {
         WalkStartConfig {
             campaign: self.campaign,
@@ -26,23 +32,27 @@ impl Prototype1StateWalkStartCommand {
         }
     }
 
+    /// Borrow the optional repo root before the command is consumed.
     pub(crate) fn repo_root_ref(&self) -> Option<&Path> {
         self.repo_root.as_deref()
     }
 }
 
 impl Prototype1StateWalkStepCommand {
+    /// Borrow the optional repo root used for socket discovery.
     pub(crate) fn repo_root_ref(&self) -> Option<&Path> {
         self.repo_root.as_deref()
     }
 }
 
 impl Prototype1StateWalkControlCommand {
+    /// Borrow the optional repo root used for socket discovery.
     pub(crate) fn repo_root_ref(&self) -> Option<&Path> {
         self.repo_root.as_deref()
     }
 }
 
+/// Resolve both repo root and socket path for a client command.
 pub(crate) fn resolve_socket(
     repo_root: Option<&Path>,
     socket: Option<&Path>,

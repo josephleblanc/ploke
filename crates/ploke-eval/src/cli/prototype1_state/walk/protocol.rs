@@ -1,3 +1,10 @@
+//! Request and response DTOs for the typestate walk socket protocol.
+//!
+//! The protocol is private to `ploke-eval` and intentionally uses serde JSON
+//! over explicit frame lengths. It mirrors the current CLI command surface just
+//! enough for the server to construct the real `Prototype1StateCommand` before
+//! entering `R0`.
+
 use std::path::PathBuf;
 
 use ploke_records::ids::CampaignId;
@@ -10,6 +17,11 @@ use crate::cli::{
 
 use super::{epoch::ServerEpoch, phase::WalkPhase};
 
+/// Serializable form of the arguments needed to create `typestate::R0`.
+///
+/// This is not a second source of command semantics: `into_state_command`
+/// immediately rebuilds the existing `Prototype1StateCommand`, and all later
+/// transitions use `live_edges`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WalkStartConfig {
     pub(crate) campaign: Option<CampaignId>,
@@ -28,6 +40,7 @@ pub(crate) struct WalkStartConfig {
 }
 
 impl WalkStartConfig {
+    /// Rehydrate the existing live command type consumed by `typestate::R0`.
     pub(crate) fn into_state_command(self) -> Prototype1StateCommand {
         Prototype1StateCommand {
             campaign: self.campaign,
@@ -47,44 +60,71 @@ impl WalkStartConfig {
     }
 }
 
+/// One framed client-to-server request.
+///
+/// Mutating requests include `client_epoch`; read-only requests may omit it so
+/// stale servers remain inspectable and stoppable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct WalkRequest {
     pub(crate) client_epoch: Option<ServerEpoch>,
     pub(crate) body: WalkRequestBody,
 }
 
+/// Operation requested over the walk socket.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum WalkRequestBody {
+    /// Probe liveness and receive the current phase without mutating state.
     Health,
+    /// Create a fresh in-memory walk and advance until an early target phase.
     Start {
+        /// Captured command arguments for the new walk.
         config: WalkStartConfig,
+        /// Early phase to stop at after creating `R0`.
         until: WalkPhase,
     },
+    /// Advance the existing in-memory walk.
     Step {
+        /// If present, advance repeatedly until this phase; otherwise one step.
         until: Option<WalkPhase>,
     },
+    /// Inspect current phase and summary without mutating state.
     Show,
+    /// Ask the server to reply and then exit.
     Stop,
 }
 
+/// One framed server-to-client response.
+///
+/// Every response carries the server epoch so clients and humans can see which
+/// binary/source snapshot is holding the in-memory state.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(crate) enum WalkResponse {
+    /// Successful request result.
     Ok {
+        /// Current phase after the request.
         phase: WalkPhase,
+        /// Human-readable summary for table output and debugging.
         message: String,
+        /// Server freshness identity.
         epoch: ServerEpoch,
     },
+    /// Failed request result.
     Error {
+        /// Stable-ish error class for clients.
         code: String,
+        /// Human-readable error detail.
         detail: String,
+        /// Best known phase when the error was produced.
         phase: Option<WalkPhase>,
+        /// Server freshness identity.
         epoch: ServerEpoch,
     },
 }
 
 impl WalkResponse {
+    /// Build a successful response at `phase`.
     pub(crate) fn ok(phase: WalkPhase, message: impl Into<String>, epoch: ServerEpoch) -> Self {
         Self::Ok {
             phase,
@@ -93,6 +133,7 @@ impl WalkResponse {
         }
     }
 
+    /// Build an error response with optional current phase.
     pub(crate) fn error(
         code: impl Into<String>,
         detail: impl Into<String>,
@@ -107,6 +148,7 @@ impl WalkResponse {
         }
     }
 
+    /// Return the response phase, if one was available.
     pub(crate) fn phase(&self) -> Option<WalkPhase> {
         match self {
             WalkResponse::Ok { phase, .. } => Some(*phase),
@@ -114,6 +156,7 @@ impl WalkResponse {
         }
     }
 
+    /// Return whether this response is `Ok`.
     pub(crate) fn is_ok(&self) -> bool {
         matches!(self, WalkResponse::Ok { .. })
     }

@@ -1,3 +1,9 @@
+//! Long-running local typestate walk server.
+//!
+//! The server binds one Unix socket, owns one `WalkController`, and handles one
+//! framed request at a time. Mutating requests pass through the epoch guard so
+//! stale binaries do not continue stepping after the checkout changes.
+
 use tokio::net::{UnixListener, UnixStream};
 use tracing::{debug, info, warn};
 
@@ -10,11 +16,13 @@ use super::{
     protocol::{WalkRequest, WalkRequestBody, WalkResponse},
 };
 
+/// Runtime state owned by one server process.
 struct WalkServer {
     epoch: ServerEpoch,
     controller: WalkController,
 }
 
+/// Run the server until it receives `Stop` or the listener fails.
 pub(crate) async fn serve(command: Prototype1StateWalkServeCommand) -> Result<(), PrepareError> {
     let repo_root = paths::resolve_repo_root(command.repo_root.as_deref())?;
     let socket_path = paths::socket_path(&repo_root, command.socket.as_deref())?;
@@ -45,6 +53,7 @@ pub(crate) async fn serve(command: Prototype1StateWalkServeCommand) -> Result<()
     result
 }
 
+/// Accept client connections serially and dispatch each request.
 async fn accept_loop(server: &mut WalkServer, listener: UnixListener) -> Result<(), PrepareError> {
     loop {
         let (stream, _) =
@@ -62,6 +71,7 @@ async fn accept_loop(server: &mut WalkServer, listener: UnixListener) -> Result<
     }
 }
 
+/// Read one request from a connected socket and write one response.
 async fn handle_stream(
     server: &mut WalkServer,
     mut stream: UnixStream,
@@ -85,6 +95,7 @@ async fn handle_stream(
 }
 
 impl WalkServer {
+    /// Dispatch one decoded request against the in-memory controller.
     fn handle(&mut self, request: WalkRequest) -> (WalkResponse, bool) {
         let phase = self.controller.phase();
         let stop_requested = matches!(request.body, WalkRequestBody::Stop);
@@ -138,6 +149,7 @@ impl WalkServer {
         }
     }
 
+    /// Run a mutating controller operation after client/server freshness checks.
     fn with_epoch_guard<F>(
         &mut self,
         client_epoch: Option<&ServerEpoch>,

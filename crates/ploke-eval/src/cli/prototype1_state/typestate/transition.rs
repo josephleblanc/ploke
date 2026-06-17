@@ -1,3 +1,15 @@
+//! Functional transition combinators for the Prototype 1 typestate graph.
+//!
+//! This module separates two concepts:
+//!
+//! - typed state values such as `R0`, `R1`, or `R4cReady`;
+//! - typed arrows that consume one state value and produce the next.
+//!
+//! Direct functions like `r0_to_r1(r0) -> Result<R1, PrepareError>` implement
+//! `Step<R0>` through the blanket impl below, while `Transition` remains
+//! available when a caller wants an explicit transition value or a closure with
+//! captured environment.
+
 use std::{future::Future, marker::PhantomData};
 
 use super::Private;
@@ -141,6 +153,10 @@ where
     }
 }
 
+/// Treat any compatible direct function or closure as a typed step.
+///
+/// This is what lets live edges be plain functions while preserving
+/// `Step::then` adjacency checks and `StepInput::advance` value-first syntax.
 impl<From, To, F, Error> Step<From> for F
 where
     F: FnOnce(From) -> Result<To, Error>,
@@ -159,6 +175,14 @@ where
 /// the receiver position, while the edge function or transition value is passed
 /// in as data.
 pub(crate) trait StepInput: Sized {
+    /// Consume `self` by applying a typed step.
+    ///
+    /// Prefer this at call sites that should read from the state outward:
+    ///
+    /// ```ignore
+    /// let r1 = r0.advance(r0_to_r1)?;
+    /// let r10 = r8.advance(r8_to_r9.then(r9_to_r10))?;
+    /// ```
     fn advance<S>(self, step: S) -> Result<S::To, S::Error>
     where
         S: Step<Self>,
@@ -167,6 +191,7 @@ pub(crate) trait StepInput: Sized {
     }
 }
 
+/// Every sized state value can be the receiver for `advance`.
 impl<T> StepInput for T {}
 
 /// A composed pair of adjacent steps.
@@ -268,10 +293,14 @@ where
 
 /// A value that can asynchronously advance one typed state to another.
 pub(crate) trait AsyncStep<From>: Sized {
+    /// The state produced when the returned future resolves successfully.
     type To;
+    /// The failure type for this async edge.
     type Error;
+    /// Future returned by applying this async edge.
     type Fut: Future<Output = Result<Self::To, Self::Error>>;
 
+    /// Consume `from` and return the future that attempts the transition.
     fn apply(self, from: From) -> Self::Fut;
 }
 
@@ -289,6 +318,7 @@ where
     }
 }
 
+/// Treat any compatible async function or closure as an async typed step.
 impl<From, To, F, Fut, Error> AsyncStep<From> for F
 where
     F: FnOnce(From) -> Fut,
@@ -305,6 +335,11 @@ where
 
 /// Value-first helper for applying an async typed step.
 pub(crate) trait AsyncStepInput: Sized {
+    /// Consume `self` by applying an async typed step and returning its future.
+    ///
+    /// ```ignore
+    /// let r6 = r5.advance_async(r5_to_r6).await?;
+    /// ```
     fn advance_async<S>(self, step: S) -> S::Fut
     where
         S: AsyncStep<Self>,
@@ -313,4 +348,5 @@ pub(crate) trait AsyncStepInput: Sized {
     }
 }
 
+/// Every sized state value can be the receiver for `advance_async`.
 impl<T> AsyncStepInput for T {}

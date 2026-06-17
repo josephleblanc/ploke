@@ -49,6 +49,10 @@ use crate::{
     spec::PrepareError,
 };
 
+/// Resolve command-derived context and open the transition journal.
+///
+/// This is the first live edge: it consumes raw CLI input (`R0`) and produces
+/// collected campaign/run context (`R1`) without admitting a parent yet.
 pub(crate) fn r0_to_r1(
     r0: typestate::R0,
 ) -> Result<typestate::R1<Prototype1StateRunShape, ResolvedCampaignConfig>, PrepareError> {
@@ -82,6 +86,10 @@ pub(crate) fn r0_to_r1(
     ))
 }
 
+/// Branch from collected context into parent-identity initialization or lookup.
+///
+/// `R2a` is the `--init-parent-identity` inspection/setup branch; `R3` carries
+/// an existing resolved `ParentIdentity` for a normal turn.
 pub(crate) fn r1_to_r2a_or_r3(
     r1: typestate::R1<Prototype1StateRunShape, ResolvedCampaignConfig>,
 ) -> Result<typestate::R1Branch<Prototype1StateRunShape, ResolvedCampaignConfig>, PrepareError> {
@@ -166,6 +174,10 @@ pub(crate) fn r1_to_r2a_or_r3(
     ))
 }
 
+/// Load the resolved parent identity as `Parent<Unchecked>`.
+///
+/// Successor handoff invocations contribute the runtime id; genesis/normal
+/// parent starts load from the active checkout identity.
 pub(crate) fn r3_to_r4a(
     r3: typestate::R3<Prototype1StateRunShape, ResolvedCampaignConfig>,
 ) -> Result<typestate::R4a<Prototype1StateRunShape, ResolvedCampaignConfig>, PrepareError> {
@@ -220,6 +232,10 @@ pub(crate) fn r3_to_r4a(
     ))
 }
 
+/// Validate startup evidence and branch to genesis-checked or ready-parent.
+///
+/// Genesis still needs the final `Startup<Genesis>` proof (`R4b -> R4c`), while
+/// successor handoff validation can enter the unified `Parent<Ready>` boundary.
 pub(crate) fn r4a_to_r4b_or_r4c(
     r4a: typestate::R4a<Prototype1StateRunShape, ResolvedCampaignConfig>,
 ) -> Result<
@@ -327,6 +343,7 @@ pub(crate) fn r4a_to_r4b_or_r4c(
     ))
 }
 
+/// Convert a checked genesis parent into the unified `Parent<Ready>` state.
 pub(crate) fn r4b_to_r4c_genesis(
     r4b: typestate::R4bGenesisChecked<Prototype1StateRunShape, ResolvedCampaignConfig>,
 ) -> Result<typestate::R4cReady<Prototype1StateRunShape, ResolvedCampaignConfig>, PrepareError> {
@@ -340,6 +357,10 @@ pub(crate) fn r4b_to_r4c_genesis(
     ))
 }
 
+/// Record parent-start evidence after `Parent<Ready>` is proven.
+///
+/// This edge writes the parent-start journal entry and resource sample, then
+/// advances to the baseline phase.
 pub(crate) fn r4c_to_r5(
     r4c: typestate::R4cReady<Prototype1StateRunShape, ResolvedCampaignConfig>,
 ) -> Result<typestate::R5<Prototype1StateRunShape, ResolvedCampaignConfig>, PrepareError> {
@@ -402,6 +423,7 @@ pub(crate) fn r4c_to_r5(
     ))
 }
 
+/// Establish or load the complete parent baseline used to compare children.
 pub(crate) async fn r5_to_r6(
     r5: typestate::R5<Prototype1StateRunShape, ResolvedCampaignConfig>,
 ) -> Result<typestate::R6<Prototype1StateRunShape, ResolvedCampaignConfig>, PrepareError> {
@@ -422,6 +444,7 @@ pub(crate) async fn r5_to_r6(
     ))
 }
 
+/// Load complete-run policy and reserve the child-planning budget.
 pub(crate) fn r6_to_r7(
     r6: typestate::R6<Prototype1StateRunShape, ResolvedCampaignConfig>,
 ) -> Result<typestate::R7<Prototype1StateRunShape, ResolvedCampaignConfig>, PrepareError> {
@@ -470,6 +493,7 @@ pub(crate) fn r6_to_r7(
     ))
 }
 
+/// Resolve and publish/load the child plan, carrying planned children forward.
 pub(crate) async fn r7_to_r8(
     r7: typestate::R7<Prototype1StateRunShape, ResolvedCampaignConfig>,
 ) -> Result<typestate::R8<Prototype1StateRunShape, ResolvedCampaignConfig>, PrepareError> {
@@ -512,6 +536,7 @@ pub(crate) async fn r7_to_r8(
     ))
 }
 
+/// Shape the planned children into the concrete child schedule and budget.
 pub(crate) fn r8_to_r9(
     r8: typestate::R8<Prototype1StateRunShape, ResolvedCampaignConfig>,
 ) -> Result<typestate::R9<Prototype1StateRunShape, ResolvedCampaignConfig>, PrepareError> {
@@ -572,6 +597,7 @@ pub(crate) fn r8_to_r9(
     ))
 }
 
+/// Resolve the active successor-selection strategy for this parent turn.
 pub(crate) fn r9_to_r10(
     r9: typestate::R9<Prototype1StateRunShape, ResolvedCampaignConfig>,
 ) -> Result<typestate::R10<Prototype1StateRunShape, ResolvedCampaignConfig>, PrepareError> {
@@ -591,6 +617,7 @@ pub(crate) fn r9_to_r10(
     ))
 }
 
+/// Run child fanout or rejected-only projection and carry selection evidence.
 pub(crate) async fn r10_to_r11(
     r10: typestate::R10<Prototype1StateRunShape, ResolvedCampaignConfig>,
 ) -> Result<typestate::R10FanoutBranch<Prototype1StateRunShape, ResolvedCampaignConfig>, PrepareError>
@@ -713,6 +740,7 @@ pub(crate) async fn r10_to_r11(
     ))
 }
 
+/// Project child outcomes into report facts before continuation handling.
 pub(crate) fn r11_to_r12(
     r11: typestate::R10FanoutBranch<Prototype1StateRunShape, ResolvedCampaignConfig>,
 ) -> Result<typestate::R12<Prototype1StateRunShape, ResolvedCampaignConfig>, PrepareError> {
@@ -793,6 +821,7 @@ pub(crate) fn r11_to_r12(
     ))
 }
 
+/// Decide stopped vs successor-handoff continuation and record the result.
 pub(crate) fn r12_to_r13(
     r12: typestate::R12<Prototype1StateRunShape, ResolvedCampaignConfig>,
 ) -> Result<
@@ -964,6 +993,7 @@ pub(crate) fn r12_to_r13(
     }
 }
 
+/// Emit the final CLI report and record parent completion side effects.
 pub(crate) fn emit_final_report_from_parts(
     mut parts: typestate::context::CollectedParts<Prototype1StateRunShape, ResolvedCampaignConfig>,
 ) -> Result<
@@ -1071,6 +1101,7 @@ pub(crate) fn emit_final_report_from_parts(
     Ok(parts.into_collected())
 }
 
+/// Finalize the stopped or handoff path after report emission.
 pub(crate) fn r13_to_r14(
     r13: typestate::R12ContinuationBranch<Prototype1StateRunShape, ResolvedCampaignConfig>,
 ) -> Result<typestate::R14FinalBranch<Prototype1StateRunShape, ResolvedCampaignConfig>, PrepareError>

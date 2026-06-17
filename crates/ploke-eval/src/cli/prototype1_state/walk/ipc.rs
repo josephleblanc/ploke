@@ -1,3 +1,10 @@
+//! Length-prefixed JSON IPC helpers for walk client/server messages.
+//!
+//! Unix sockets are byte streams, so every serde JSON payload is framed as a
+//! four-byte little-endian length followed by exactly that many payload bytes.
+//! This borrows Zellij's explicit framing discipline without adopting protobuf
+//! for this private debug-only protocol.
+
 use std::path::Path;
 
 use serde::{Serialize, de::DeserializeOwned};
@@ -8,8 +15,10 @@ use tokio::{
 
 use crate::spec::PrepareError;
 
+/// Hard cap for one request or response frame.
 const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 
+/// Connect to an existing walk socket.
 pub(crate) async fn connect(path: &Path) -> Result<UnixStream, PrepareError> {
     UnixStream::connect(path)
         .await
@@ -22,6 +31,7 @@ pub(crate) async fn connect(path: &Path) -> Result<UnixStream, PrepareError> {
         })
 }
 
+/// Serialize and send one framed JSON value.
 pub(crate) async fn send<T: Serialize>(
     stream: &mut UnixStream,
     value: &T,
@@ -46,6 +56,7 @@ pub(crate) async fn send<T: Serialize>(
     Ok(())
 }
 
+/// Receive and deserialize one framed JSON value.
 pub(crate) async fn recv<T: DeserializeOwned>(stream: &mut UnixStream) -> Result<T, PrepareError> {
     let mut len_bytes = [0_u8; 4];
     stream
