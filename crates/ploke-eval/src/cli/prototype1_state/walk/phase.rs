@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cli::prototype1_state::typestate::{
     R0_SHAPE, R1_SHAPE, R2A_SHAPE, R3_SHAPE, R4A_SHAPE, R4B_SHAPE, R4C_SHAPE, R5_SHAPE,
-    RuntimeShape,
+    RuntimeAxisDelta, RuntimeShape,
 };
 
 /// Serializable cursor for the early Prototype 1 typestate walk.
@@ -177,11 +177,11 @@ impl WalkPhase {
 
     /// Human typestate deltas for a transition between two admitted phases.
     pub(crate) fn changes_from(self, from: WalkPhase) -> Vec<String> {
-        let mut deltas = match (from.shape(), self.shape()) {
-            (Some(from), Some(to)) => to.render_deltas_from(from),
-            (None, Some(_)) | (Some(_), None) => vec![format!("phase: {from} -> {self}")],
-            (None, None) => Vec::new(),
-        };
+        let mut deltas = self
+            .axis_deltas_from(from)
+            .into_iter()
+            .map(|delta| render_axis_delta(&delta))
+            .collect::<Vec<_>>();
         if matches!((from, self), (WalkPhase::R4c, WalkPhase::R5)) {
             deltas.push(
                 "side effect: appends parent-start/resource entries to the transition journal"
@@ -192,6 +192,14 @@ impl WalkPhase {
             deltas.push("no admitted typestate delta for this phase pair".to_string());
         }
         deltas
+    }
+
+    /// Structured changed axes for a transition between two admitted phases.
+    pub(crate) fn axis_deltas_from(self, from: WalkPhase) -> Vec<RuntimeAxisDelta> {
+        match (from.shape(), self.shape()) {
+            (Some(from), Some(to)) => to.axis_deltas_from(from),
+            _ => Vec::new(),
+        }
     }
 
     /// Human-readable Rust typestate alias for the current phase.
@@ -223,5 +231,14 @@ impl WalkPhase {
 impl fmt::Display for WalkPhase {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
+    }
+}
+
+fn render_axis_delta(delta: &RuntimeAxisDelta) -> String {
+    let combined = format!("{}: {} -> {}", delta.label, delta.from, delta.to);
+    if combined.len() <= 96 {
+        combined
+    } else {
+        format!("{}:\n{}\n-> {}", delta.label, delta.from, delta.to)
     }
 }

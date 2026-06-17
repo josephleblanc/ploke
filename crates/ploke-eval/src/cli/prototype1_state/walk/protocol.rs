@@ -94,6 +94,13 @@ pub(crate) enum WalkRequestBody {
     Files,
     /// Inspect current phase and summary without mutating state.
     Show,
+    /// Inspect only the last successful step delta.
+    ShowDelta {
+        /// Include changed axis values plus added/removed nested type structures.
+        verbose: bool,
+        /// Use ANSI colors in the human-readable message.
+        color: bool,
+    },
     /// Ask the server to reply and then exit.
     Stop,
 }

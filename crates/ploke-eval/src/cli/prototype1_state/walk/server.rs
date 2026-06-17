@@ -15,7 +15,7 @@ use tracing::{debug, info, warn};
 use crate::{cli::Prototype1StateWalkServeCommand, spec::PrepareError};
 
 use super::{
-    controller::WalkController,
+    controller::{DeltaRenderStyle, WalkController},
     epoch::ServerEpoch,
     ipc, paths,
     protocol::{WalkRequest, WalkRequestBody, WalkResponse},
@@ -126,6 +126,12 @@ impl WalkServer {
             WalkRequestBody::Show => {
                 Ok(WalkResponse::ok(phase, self.describe(), self.epoch.clone()))
             }
+            WalkRequestBody::ShowDelta { verbose, color } => Ok(WalkResponse::ok(
+                phase,
+                self.controller
+                    .delta_report(DeltaRenderStyle { verbose, color }),
+                self.epoch.clone(),
+            )),
             WalkRequestBody::Stop => Ok(WalkResponse::ok(
                 phase,
                 "walk server stopping",

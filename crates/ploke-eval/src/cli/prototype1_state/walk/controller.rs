@@ -43,8 +43,9 @@ type CampaignConfig = ResolvedCampaignConfig;
 pub(crate) struct WalkController {
     state: WalkState,
     steps: usize,
-    history: WalkHistory,
+    previous: WalkPrevious,
     files: WalkFiles,
+    last_delta: Option<WalkAdvanceReport>,
 }
 
 /// Owned typestate value currently held by the server.
@@ -72,6 +73,7 @@ enum WalkState {
 }
 
 /// Human-facing summary of one `walk step` request.
+#[derive(Clone)]
 pub(crate) struct WalkAdvanceReport {
     from: WalkPhase,
     to: WalkPhase,
@@ -82,6 +84,12 @@ pub(crate) struct WalkAdvanceReport {
 struct WalkTransition {
     from: WalkPhase,
     to: WalkPhase,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct DeltaRenderStyle {
+    pub(crate) verbose: bool,
+    pub(crate) color: bool,
 }
 
 impl WalkAdvanceReport {
@@ -118,11 +126,53 @@ impl WalkAdvanceReport {
         push_next_steps(&mut lines, self.to);
         lines.join("\n")
     }
+
+    /// Render only the delta from this step request.
+    pub(crate) fn render_delta(&self, style: DeltaRenderStyle) -> String {
+        let mut lines = Vec::new();
+        lines.push(format!("from: {} - {}", self.from, self.from.detail()));
+        lines.push(format!("to: {} - {}", self.to, self.to.detail()));
+        if self.transitions.is_empty() {
+            lines.push("transition: already at requested phase".to_string());
+            return lines.join("\n");
+        }
+        if let [transition] = self.transitions.as_slice() {
+            transition.push_delta(&mut lines, style);
+        } else {
+            lines.push("transitions:".to_string());
+            for (index, transition) in self.transitions.iter().enumerate() {
+                lines.push(format!(
+                    "  {}. {} -> {} via {}",
+                    index + 1,
+                    transition.from,
+                    transition.to,
+                    transition.edge()
+                ));
+            }
+            if let Some(last) = self.transitions.last() {
+                lines.push("last transition delta:".to_string());
+                last.push_delta(&mut lines, style);
+            }
+        }
+        lines.join("\n")
+    }
 }
 
 impl WalkTransition {
     fn edge(self) -> &'static str {
         self.to.edge_from(self.from).unwrap_or("unknown_edge")
+    }
+
+    fn push_delta(self, lines: &mut Vec<String>, style: DeltaRenderStyle) {
+        lines.push(format!(
+            "edge: {}",
+            highlight_changed(self.edge(), style.color)
+        ));
+        if style.verbose {
+            push_verbose_changes(lines, self.from, self.to, style);
+        } else {
+            push_colored_changes(lines, self.from, self.to, style);
+        }
     }
 }
 
@@ -132,8 +182,9 @@ impl WalkController {
         Self {
             state: WalkState::Empty,
             steps: 0,
-            history: WalkHistory::default(),
+            previous: WalkPrevious::default(),
             files: WalkFiles::default(),
+            last_delta: None,
         }
     }
 
@@ -160,8 +211,8 @@ impl WalkController {
         let typestate = phase.typestate();
         lines.extend(indent_lines(&typestate, 2));
         push_next_steps(&mut lines, phase);
-        lines.push("history:".to_string());
-        lines.extend(self.history.lines());
+        lines.push("previous:".to_string());
+        lines.extend(self.previous.lines());
         lines.join("\n")
     }
 
@@ -170,12 +221,21 @@ impl WalkController {
         self.files.render()
     }
 
+    /// Render the last successful step delta, if any.
+    pub(crate) fn delta_report(&self, style: DeltaRenderStyle) -> String {
+        self.last_delta
+            .as_ref()
+            .map(|delta| delta.render_delta(style))
+            .unwrap_or_else(|| "no previous step delta; run `walk step` first".to_string())
+    }
+
     /// Reset the current in-memory walk without stopping the server process.
     pub(crate) fn reset(&mut self) -> WalkPhase {
         let previous = self.phase();
         self.state = WalkState::Empty;
         self.steps = 0;
         self.files.clear();
+        self.last_delta = None;
         self.record(format!("reset: cleared in-memory walk from {previous}"));
         self.phase()
     }
@@ -199,6 +259,7 @@ impl WalkController {
         self.files.reset(&repo_root);
         self.state = WalkState::R0(typestate::R0::new(config.into_state_command()));
         self.steps = 0;
+        self.last_delta = None;
         self.record(format!(
             "start: created r0 for repo_root '{}'",
             repo_root.display()
@@ -222,11 +283,13 @@ impl WalkController {
         } else {
             vec![self.step_once()?]
         };
-        Ok(WalkAdvanceReport {
+        let report = WalkAdvanceReport {
             from,
             to: self.phase(),
             transitions,
-        })
+        };
+        self.last_delta = Some(report.clone());
+        Ok(report)
     }
 
     fn advance_until(&mut self, target: WalkPhase) -> Result<Vec<WalkTransition>, PrepareError> {
@@ -318,7 +381,7 @@ impl WalkController {
     }
 
     fn record(&mut self, entry: impl Into<String>) {
-        self.history.push(entry.into());
+        self.previous.push(entry.into());
     }
 }
 
@@ -382,6 +445,113 @@ fn push_changes(lines: &mut Vec<String>, from: WalkPhase, to: WalkPhase, label: 
     }
 }
 
+fn push_colored_changes(
+    lines: &mut Vec<String>,
+    from: WalkPhase,
+    to: WalkPhase,
+    style: DeltaRenderStyle,
+) {
+    lines.push("typestate changes:".to_string());
+    for delta in to.axis_deltas_from(from) {
+        lines.push(format!(
+            "  - {}",
+            highlight_changed(delta.label, style.color)
+        ));
+        lines.push(format!(
+            "    {} {}",
+            highlight_removed("-", style.color),
+            highlight_removed(&delta.from, style.color)
+        ));
+        lines.push(format!(
+            "    {} {}",
+            highlight_added("+", style.color),
+            highlight_added(&delta.to, style.color)
+        ));
+    }
+    push_side_effects(lines, from, to, style);
+}
+
+fn push_verbose_changes(
+    lines: &mut Vec<String>,
+    from: WalkPhase,
+    to: WalkPhase,
+    style: DeltaRenderStyle,
+) {
+    lines.push("typestate changes:".to_string());
+    for delta in to.axis_deltas_from(from) {
+        lines.push(format!(
+            "  - {}",
+            highlight_changed(delta.label, style.color)
+        ));
+        lines.push("    removed:".to_string());
+        lines.push(format!(
+            "      {}",
+            highlight_removed(&delta.from, style.color)
+        ));
+        lines.push("    added:".to_string());
+        lines.push(format!("      {}", highlight_added(&delta.to, style.color)));
+        if delta.label != "phase" {
+            let removed = delta.removed_structures();
+            if !removed.is_empty() {
+                lines.push("    structures removed:".to_string());
+                for item in removed {
+                    lines.push(format!(
+                        "      {} {}",
+                        highlight_removed("-", style.color),
+                        highlight_removed(&item, style.color)
+                    ));
+                }
+            }
+            let added = delta.added_structures();
+            if !added.is_empty() {
+                lines.push("    structures added:".to_string());
+                for item in added {
+                    lines.push(format!(
+                        "      {} {}",
+                        highlight_added("+", style.color),
+                        highlight_added(&item, style.color)
+                    ));
+                }
+            }
+        }
+    }
+    push_side_effects(lines, from, to, style);
+}
+
+fn push_side_effects(
+    lines: &mut Vec<String>,
+    from: WalkPhase,
+    to: WalkPhase,
+    style: DeltaRenderStyle,
+) {
+    if matches!((from, to), (WalkPhase::R4c, WalkPhase::R5)) {
+        lines.push(format!(
+            "  - {}: appends parent-start/resource entries to the transition journal",
+            highlight_changed("side effect", style.color)
+        ));
+    }
+}
+
+fn highlight_removed(value: &str, color: bool) -> String {
+    paint(value, color, "31")
+}
+
+fn highlight_added(value: &str, color: bool) -> String {
+    paint(value, color, "32")
+}
+
+fn highlight_changed(value: &str, color: bool) -> String {
+    paint(value, color, "1;33")
+}
+
+fn paint(value: &str, color: bool, code: &str) -> String {
+    if color {
+        format!("\x1b[{code}m{value}\x1b[0m")
+    } else {
+        value.to_string()
+    }
+}
+
 fn push_next_steps(lines: &mut Vec<String>, phase: WalkPhase) {
     lines.push("next:".to_string());
     let steps = phase.next_steps();
@@ -406,11 +576,11 @@ fn indent_lines(value: &str, spaces: usize) -> Vec<String> {
 }
 
 #[derive(Default)]
-struct WalkHistory {
+struct WalkPrevious {
     entries: Vec<String>,
 }
 
-impl WalkHistory {
+impl WalkPrevious {
     fn push(&mut self, entry: String) {
         if self.entries.len() == MAX_HISTORY {
             self.entries.remove(0);

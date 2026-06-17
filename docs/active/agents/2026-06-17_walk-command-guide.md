@@ -138,13 +138,23 @@ ploke-eval loop walk step --until r5
 
 ### `show`
 
-Shows the current phase, server pid, root/tracking directories, tracked paths, current Rust typestate alias, next admitted edges, and server-local step history.
+Shows the current phase, server pid, root/tracking directories, tracked paths, current Rust typestate alias, next admitted edges, and server-local previous entries.
 
 ```text
 ploke-eval loop walk show
 ```
 
 Tracked paths are summarized with placeholders like `{root}/...` and `{tracking_dir}/...` to keep the output readable. This is the main command for reviewing what happened earlier in the server session.
+
+Show only the last successful step delta:
+
+```text
+ploke-eval loop walk show delta
+ploke-eval loop walk show delta --verbose
+ploke-eval loop walk show delta --no-color
+```
+
+`show delta` colors added/removed/changed type axes by default in table output. `--verbose` also lists nested type structures added or removed by the last step.
 
 ### `files`
 

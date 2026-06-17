@@ -162,8 +162,8 @@ pub enum Prototype1StateWalkSubcommand {
     Reset(Prototype1StateWalkControlCommand),
     /// Print tracked output files for the current walk.
     Files(Prototype1StateWalkControlCommand),
-    /// Show current in-memory walk state.
-    Show(Prototype1StateWalkControlCommand),
+    /// Show current in-memory walk state or the last step delta.
+    Show(Prototype1StateWalkShowCommand),
     /// Check whether the local walk server is alive.
     Status(Prototype1StateWalkControlCommand),
     /// Stop the local walk server.
@@ -219,6 +219,32 @@ pub struct Prototype1StateWalkControlCommand {
     /// Include protocol and transition-graph versions in table output.
     #[arg(long)]
     pub with_version: bool,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkShowCommand {
+    #[command(flatten)]
+    pub control: Prototype1StateWalkControlCommand,
+
+    #[command(subcommand)]
+    pub command: Option<Prototype1StateWalkShowSubcommand>,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum Prototype1StateWalkShowSubcommand {
+    /// Show only the last successful step delta.
+    Delta(Prototype1StateWalkShowDeltaCommand),
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkShowDeltaCommand {
+    /// Include changed axis values plus added/removed nested type structures.
+    #[arg(long)]
+    pub verbose: bool,
+
+    /// Disable ANSI colors in table output.
+    #[arg(long)]
+    pub no_color: bool,
 }
 
 #[derive(Debug, Clone, Parser)]

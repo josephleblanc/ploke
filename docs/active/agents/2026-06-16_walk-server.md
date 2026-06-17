@@ -73,10 +73,18 @@ Advance until a supported phase:
 ploke-eval loop walk step --until r5
 ```
 
-Show current state, root/tracking dirs, typestate alias, next admitted edges, and in-memory history:
+Show current state, root/tracking dirs, typestate alias, next admitted edges, and previous entries:
 
 ```text
 ploke-eval loop walk show
+```
+
+Show only the last successful step delta:
+
+```text
+ploke-eval loop walk show delta
+ploke-eval loop walk show delta --verbose
+ploke-eval loop walk show delta --no-color
 ```
 
 Print tracked output files for the current walk:
@@ -203,7 +211,8 @@ R4c -> R5
 
 - `R2a` and `R5` are current stops.
 - Later phases (`R6+`) are intentionally not admitted yet by the server slice.
-- `show` includes server-local step history, root/tracking directories, tracked file paths, current typestate alias, and next admitted edges.
+- `show` includes server-local previous entries, root/tracking directories, tracked file paths, current typestate alias, and next admitted edges.
+- `show delta` includes only the last successful step delta; `--verbose` also lists nested type structures, and `--no-color` disables ANSI colors.
 - `step` includes from/to phases, edge names, typestate axis deltas, and next admitted edges.
 - `files` prints parent identity, active monitor target, campaign manifest, and transition journal previews once those paths are known.
 

@@ -14,8 +14,8 @@ use tokio::net::UnixStream;
 
 use crate::{
     cli::{
-        InspectOutputFormat, Prototype1StateWalkStartCommand, Prototype1StateWalkSubcommand,
-        Prototype1StateWalkUseCommand,
+        InspectOutputFormat, Prototype1StateWalkShowSubcommand, Prototype1StateWalkStartCommand,
+        Prototype1StateWalkSubcommand, Prototype1StateWalkUseCommand,
     },
     spec::PrepareError,
 };
@@ -90,16 +90,25 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             response_result(response)
         }
         Prototype1StateWalkSubcommand::Show(command) => {
-            let format = command.format;
-            let with_version = command.with_version;
-            let socket_override = command.socket.clone();
+            let format = command.control.format;
+            let with_version = command.control.with_version;
+            let socket_override = command.control.socket.clone();
             let (_repo_root, socket) =
-                args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
+                args::resolve_socket(command.control.repo_root_ref(), socket_override.as_deref())?;
+            let body = match command.command {
+                Some(Prototype1StateWalkShowSubcommand::Delta(delta)) => {
+                    WalkRequestBody::ShowDelta {
+                        verbose: delta.verbose,
+                        color: format == InspectOutputFormat::Table && !delta.no_color,
+                    }
+                }
+                None => WalkRequestBody::Show,
+            };
             let response = send_request(
                 &socket,
                 WalkRequest {
                     client_epoch: None,
-                    body: WalkRequestBody::Show,
+                    body,
                 },
             )
             .await?;

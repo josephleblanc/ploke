@@ -1754,10 +1754,41 @@ fn loop_walk_show_with_version_command_parses() {
             command: LoopSubcommand::Prototype1StateWalk(cmd),
         }) => match cmd.command {
             Prototype1StateWalkSubcommand::Show(cmd) => {
-                assert_eq!(cmd.repo_root, Some(PathBuf::from("/tmp/parent")));
-                assert_eq!(cmd.format, InspectOutputFormat::Table);
-                assert!(cmd.with_version);
+                assert_eq!(cmd.control.repo_root, Some(PathBuf::from("/tmp/parent")));
+                assert_eq!(cmd.control.format, InspectOutputFormat::Table);
+                assert!(cmd.control.with_version);
+                assert!(cmd.command.is_none());
             }
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
+fn loop_walk_show_delta_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "show",
+        "delta",
+        "--verbose",
+        "--no-color",
+    ])
+    .expect("loop walk show delta should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Show(cmd) => match cmd.command {
+                Some(Prototype1StateWalkShowSubcommand::Delta(delta)) => {
+                    assert!(delta.verbose);
+                    assert!(delta.no_color);
+                }
+                other => panic!("unexpected show subcommand: {:?}", other),
+            },
             other => panic!("unexpected walk subcommand: {:?}", other),
         },
         other => panic!("unexpected command shape: {:?}", other),

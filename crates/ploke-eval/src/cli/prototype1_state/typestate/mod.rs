@@ -51,7 +51,7 @@ pub(crate) use axes::{children, continuation, evidence, history_axis, phase, pla
 pub(crate) use runtime::{
     Children, Context, Continuation, Evidence, History, Plan, Report, Runtime, RuntimeRole,
 };
-pub(crate) use shape::RuntimeShape;
+pub(crate) use shape::{RuntimeAxisDelta, RuntimeShape};
 #[allow(unused_imports)]
 pub(crate) use transition::{
     AsyncStep, AsyncStepInput, AsyncTransition, Chain, Step, StepInput, Transition,
