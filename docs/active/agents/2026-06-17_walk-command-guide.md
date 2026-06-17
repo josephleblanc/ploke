@@ -15,7 +15,7 @@ Related planning/code:
 It is **not** production loop authority. It calls the same live transition functions as `ploke-eval loop prototype1-state`, so later phases can perform real side effects. Today the admitted path is:
 
 ```text
-R0 -> R1 -> R3 -> R4a -> R4b -> R4c -> R5 -> R6
+R0 -> R1 -> R3 -> R4a -> R4b -> R4c -> R5 -> R6 -> R7
 ```
 
 `R2a` is the alternate parent-identity initialization boundary when started with `--init-parent-identity`.
@@ -24,7 +24,8 @@ R0 -> R1 -> R3 -> R4a -> R4b -> R4c -> R5 -> R6
 
 - `R5` is side-effectful: it appends `parent_started` and `resource` entries to the campaign transition journal.
 - `R5 -> R6` may establish/advance baseline closure state before loading the parent baseline; reconstruction uses durable baseline evidence when present.
-- `R4a -> R4b/R4c` may inspect/switch the active checkout. Use a clean Prototype 1 parent worktree when you want to reach `R6`.
+- `R6 -> R7` derives run policy and child-planning budget and preserves hard budget/max-generation stops.
+- `R4a -> R4b/R4c` may inspect/switch the active checkout. Use a clean Prototype 1 parent worktree when you want to reach `R7`.
 - If you run from a dirty development checkout, failing at `R4a` because local changes would block a checkout switch is expected.
 - The auto-started server exits after 30 idle minutes by default.
 - You can still stop it explicitly:
@@ -134,7 +135,7 @@ ploke-eval loop walk step
 Or advance repeatedly until a target phase:
 
 ```text
-ploke-eval loop walk step --until r6
+ploke-eval loop walk step --until r7
 ```
 
 ### `show`
@@ -201,7 +202,7 @@ ploke-eval loop walk serve --no-ttl
 
 ## Recommended review session
 
-Use a clean Prototype 1 parent worktree as `ROOT` if you want to reach `R6`.
+Use a clean Prototype 1 parent worktree as `ROOT` if you want to reach `R7`.
 
 ```text
 ploke-eval loop walk use /path/to/prototype1-parent-worktree
@@ -234,4 +235,4 @@ While reviewing, useful questions are:
 - Should `reset` preserve or clear history by default?
 - Should reaching `R5`/`R6` require an explicit `--live-debug` flag because these edges can write journal/baseline evidence?
 - Is 30 minutes the right default idle TTL?
-- What information should be added before admitting `R7+`?
+- What information should be added before admitting `R8+`?

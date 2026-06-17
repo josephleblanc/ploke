@@ -986,40 +986,43 @@ runtime_alias! {
     shape R6_SHAPE;
 }
 
-/// R7: policy and child budget ready.
-///
-/// Axis changes:
-/// - `Evidence<..., policy::None, ...>`
-///   `-> Evidence<..., policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>, ...>`.
-///
-/// Existing carriers: `Prototype1SearchPolicy`, `Prototype1ChildBudget`, and
-/// `Prototype1ChildScheduleMode`. The live code currently stores these in
-/// locals and sometimes derives them from an admitted run profile.
-pub(crate) type R7<RunShape = (), CampaignConfig = ()> = Runtime<
-    phase::R7,
-    parent_role::Parent<parent_role::Ready>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<plan::authority::None, plan::schedule::None>,
-    Children<children::set::None, children::attempt::None>,
-    History<
-        history_axis::startup::Validated<history_axis::startup::Any>,
-        history_axis::head::FromStartup,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::Recorded<ParentStartedEntry>,
-        evidence::baseline::Ready<CompleteBaseline>,
-        evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
-        evidence::selection::None,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::None,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::None>,
->;
+runtime_alias! {
+    /// R7: policy and child budget ready.
+    ///
+    /// Axis changes:
+    /// - `Evidence<..., policy::None, ...>`
+    ///   `-> Evidence<..., policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>, ...>`.
+    ///
+    /// Existing carriers: `Prototype1SearchPolicy`, `Prototype1ChildBudget`, and
+    /// `Prototype1ChildScheduleMode`. The live code currently stores these in
+    /// locals and sometimes derives them from an admitted run profile.
+    pub(crate) type R7<RunShape = (), CampaignConfig = ()> = Runtime<
+        phase::R7,
+        parent_role::Parent<parent_role::Ready>,
+        Context<context::Collected<RunShape, CampaignConfig>>,
+        Plan<plan::authority::None, plan::schedule::None>,
+        Children<children::set::None, children::attempt::None>,
+        History<
+            history_axis::startup::Validated<history_axis::startup::Any>,
+            history_axis::head::FromStartup,
+            history_axis::epoch::None,
+        >,
+        Evidence<
+            evidence::parent_start::Recorded<ParentStartedEntry>,
+            evidence::baseline::Ready<CompleteBaseline>,
+            evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
+            evidence::selection::None,
+            evidence::completion::None,
+        >,
+        Continuation<
+            continuation::selection::None,
+            continuation::decision::None,
+            continuation::handoff::None,
+        >,
+        Report<report::None>,
+    >;
+    shape R7_SHAPE;
+}
 
 /// R8: child-plan authority received and parent becomes selectable.
 ///

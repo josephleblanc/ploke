@@ -120,11 +120,11 @@ use crate::{
         Prototype1ContinuationDisposition, Prototype1NodeRecord, Prototype1NodeStatus,
         Prototype1SearchPolicy, RecordStore, TreatmentBranchNode, TreatmentBranchStatus,
         ValidationPolicy, branch_log, execute_intervention_apply, load_node_record,
-        load_runner_result, project_node_status, prototype1_branch_registry_path,
-        prototype1_node_id, prototype1_nodes_dir, prototype1_scheduler_path,
-        register_root_parent_node, resolved_treatment_branches_from_synthesis,
-        select_primary_issue, treatment_branch_id, write_node_projection,
-        write_treatment_evaluation_projection,
+        load_runner_result, load_scheduler_state, project_node_status,
+        prototype1_branch_registry_path, prototype1_node_id, prototype1_nodes_dir,
+        prototype1_scheduler_path, register_root_parent_node,
+        resolved_treatment_branches_from_synthesis, select_primary_issue, treatment_branch_id,
+        write_node_projection, write_treatment_evaluation_projection,
     },
     load_campaign_manifest, load_closure_state,
     model_registry::resolve_model_for_run,
@@ -6211,6 +6211,45 @@ pub(crate) fn persisted_prototype1_node_count(
         count = count.saturating_add(1);
     }
     Ok(count)
+}
+
+pub(crate) fn resolve_parent_policy_budget(
+    manifest_path: &Path,
+    run_shape: &Prototype1StateRunShape,
+    parent_identity: &ParentIdentity,
+) -> Result<(Option<Prototype1SearchPolicy>, Prototype1ChildBudget), PrepareError> {
+    let complete_search_policy = if run_shape.stop_after == Prototype1StateStopAfter::Complete {
+        Some(
+            if let Some(admitted) = profile::load_admitted_run_profile(manifest_path)? {
+                admitted.profile.search_policy()
+            } else {
+                load_scheduler_state(manifest_path, OperatorProjectionRead::cli_operator())?.policy
+            },
+        )
+    } else {
+        None
+    };
+    if run_shape.stop_after == Prototype1StateStopAfter::Complete {
+        run_shape
+            .candidate_generation
+            .ensure_live_complete_admitted()?;
+    }
+    let plan_child_budget = if let Some(policy) = complete_search_policy.as_ref() {
+        let current_node_count = persisted_prototype1_node_count(manifest_path)?;
+        if parent_identity.generation() >= policy.max_generations {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "prototype1 hard stop before child planning: parent generation {} has reached max_generations {}",
+                    parent_identity.generation(),
+                    policy.max_generations
+                ),
+            });
+        }
+        reserve_complete_child_budget(policy, current_node_count)?
+    } else {
+        Prototype1ChildBudget::new(1, 1)
+    };
+    Ok((complete_search_policy, plan_child_budget))
 }
 
 pub(crate) fn reserve_complete_child_budget(

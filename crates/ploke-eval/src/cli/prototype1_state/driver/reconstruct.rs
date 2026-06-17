@@ -1,8 +1,8 @@
 //! Side-effect-free reconstruction for early Prototype 1 parent typestates.
 //!
-//! This slice intentionally stops at R5. It rebuilds typed carriers from durable
-//! checkout/campaign/journal evidence without calling the live R4c -> R5 edge,
-//! because that edge appends transition evidence.
+//! This slice reconstructs setup through policy-ready parent typestates. It
+//! rebuilds typed carriers from durable checkout/campaign/journal evidence
+//! without calling side-effectful live edges when the evidence already exists.
 
 use std::path::{Path, PathBuf};
 
@@ -18,7 +18,7 @@ use crate::{
             cli_facing::{
                 Prototype1StateRunShape, campaign_manifest_path_for_id,
                 load_parent_baseline_for_id, prototype1_state_transition_error,
-                resolve_campaign_config_for_id, same_existing_path,
+                resolve_campaign_config_for_id, resolve_parent_policy_budget, same_existing_path,
             },
             identity::{ParentIdentity, load_parent_identity_optional, parent_identity_path},
             journal::{JournalEntry, PrototypeJournal, prototype1_transition_journal_path},
@@ -38,6 +38,7 @@ pub(crate) enum EarlyState {
     R4c(typestate::R4cReady<Prototype1StateRunShape, ResolvedCampaignConfig>),
     R5(typestate::R5<Prototype1StateRunShape, ResolvedCampaignConfig>),
     R6(typestate::R6<Prototype1StateRunShape, ResolvedCampaignConfig>),
+    R7(typestate::R7<Prototype1StateRunShape, ResolvedCampaignConfig>),
 }
 
 /// Result of an early durable reconstruction attempt.
@@ -178,15 +179,38 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
         )? {
             parts.facts.parent_baseline = Some(baseline);
             notes.push("reconstructed R6 from durable parent baseline evidence".into());
-            return Ok(EarlySnapshot {
-                state: Some(EarlyState::R6(typestate::R6::from_collected_parent(
-                    parts.into_collected(),
-                    parent,
-                ))),
-                campaign_id: Some(campaign_id),
-                notes,
-                blockers,
-            });
+            match resolve_parent_policy_budget(
+                &parts.manifest_path,
+                &parts.run_shape,
+                parent.identity(),
+            ) {
+                Ok((policy, budget)) => {
+                    parts.facts.complete_search_policy = policy;
+                    parts.facts.plan_child_budget = Some(budget);
+                    notes.push("reconstructed R7 from run policy and child budget inputs".into());
+                    return Ok(EarlySnapshot {
+                        state: Some(EarlyState::R7(typestate::R7::from_collected_parent(
+                            parts.into_collected(),
+                            parent,
+                        ))),
+                        campaign_id: Some(campaign_id),
+                        notes,
+                        blockers,
+                    });
+                }
+                Err(error) => {
+                    blockers.push(format!("blocked edge r6 -> r7: {error}"));
+                    return Ok(EarlySnapshot {
+                        state: Some(EarlyState::R6(typestate::R6::from_collected_parent(
+                            parts.into_collected(),
+                            parent,
+                        ))),
+                        campaign_id: Some(campaign_id),
+                        notes,
+                        blockers,
+                    });
+                }
+            }
         }
         Ok(EarlySnapshot {
             state: Some(EarlyState::R5(typestate::R5::from_collected_parent(

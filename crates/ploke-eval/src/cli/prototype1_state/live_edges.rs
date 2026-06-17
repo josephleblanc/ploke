@@ -22,12 +22,12 @@ use crate::{
                 current_dir_as_repo_root, ensure_prototype1_baseline_closure_state,
                 establish_parent_baseline_for_id, initialize_prototype1_parent_identity,
                 live_successor_continuation_decision, outcome_for_report,
-                persisted_prototype1_node_count, prototype1_state_successor_handoff_mode,
-                prototype1_state_transition_error, record_active_prototype1_monitor_target,
-                reserve_complete_child_budget, resolve_campaign_config_for_id,
-                resolve_child_plan_for_id, resolve_prototype1_parent_identity,
-                resolve_prototype1_state_campaign, run_adaptive_child_fanout, run_child_fanout,
-                same_existing_path, select_artifact_for_handoff, traversal_metric_inputs,
+                prototype1_state_successor_handoff_mode, prototype1_state_transition_error,
+                record_active_prototype1_monitor_target, resolve_campaign_config_for_id,
+                resolve_child_plan_for_id, resolve_parent_policy_budget,
+                resolve_prototype1_parent_identity, resolve_prototype1_state_campaign,
+                run_adaptive_child_fanout, run_child_fanout, same_existing_path,
+                select_artifact_for_handoff, traversal_metric_inputs,
             },
             event::RecordedAt,
             invocation::{self, InvocationAuthority, SuccessorCompletionStatus},
@@ -37,15 +37,11 @@ use crate::{
             },
             observe,
             parent::{Check, Genesis, Parent, Predecessor, Startup, Unchecked},
-            profile,
             successor::Record as SuccessorRecord,
             typestate,
         },
     },
-    intervention::{
-        Prototype1ChildBudget, Prototype1ChildScheduleMode, RecordStore, load_scheduler_state,
-    },
-    projection::OperatorProjectionRead,
+    intervention::{Prototype1ChildBudget, Prototype1ChildScheduleMode, RecordStore},
     spec::PrepareError,
 };
 
@@ -451,40 +447,8 @@ pub(crate) fn r6_to_r7(
     let typestate::ReadyParts { collected, parent } = r6.into_parts();
     let mut parts = collected.into_parts();
     let parent_identity = parent.identity().clone();
-    let complete_search_policy = if parts.run_shape.stop_after == Prototype1StateStopAfter::Complete
-    {
-        Some(
-            if let Some(admitted) = profile::load_admitted_run_profile(&parts.manifest_path)? {
-                admitted.profile.search_policy()
-            } else {
-                load_scheduler_state(&parts.manifest_path, OperatorProjectionRead::cli_operator())?
-                    .policy
-            },
-        )
-    } else {
-        None
-    };
-    if parts.run_shape.stop_after == Prototype1StateStopAfter::Complete {
-        parts
-            .run_shape
-            .candidate_generation
-            .ensure_live_complete_admitted()?;
-    }
-    let plan_child_budget = if let Some(policy) = complete_search_policy.as_ref() {
-        let current_node_count = persisted_prototype1_node_count(&parts.manifest_path)?;
-        if parent_identity.generation() >= policy.max_generations {
-            return Err(PrepareError::InvalidBatchSelection {
-                detail: format!(
-                    "prototype1 hard stop before child planning: parent generation {} has reached max_generations {}",
-                    parent_identity.generation(),
-                    policy.max_generations
-                ),
-            });
-        }
-        reserve_complete_child_budget(policy, current_node_count)?
-    } else {
-        Prototype1ChildBudget::new(1, 1)
-    };
+    let (complete_search_policy, plan_child_budget) =
+        resolve_parent_policy_budget(&parts.manifest_path, &parts.run_shape, &parent_identity)?;
     parts.facts.complete_search_policy = complete_search_policy;
     parts.facts.plan_child_budget = Some(plan_child_budget);
     Ok(typestate::R7::from_collected_parent(

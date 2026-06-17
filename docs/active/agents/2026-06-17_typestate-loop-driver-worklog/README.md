@@ -159,3 +159,42 @@ Smoke with isolated socket and clean parent worktree:
 ```
 
 Result: R6 typestate displayed as `Evidence<..., evidence::baseline::Ready<CompleteBaseline>, ...>`, and the single-step delta showed `r5_to_r6`.
+
+### Slice 4 — admit R7 policy/budget readiness in `walk`
+
+Implemented the next read-only driver edge:
+
+- converted the R7 alias to `runtime_alias!` and exported `R7_SHAPE`;
+- added shared `resolve_parent_policy_budget(...)` for the existing R6 -> R7 logic;
+- refactored canonical `r6_to_r7` to call the shared helper;
+- reconstruction now promotes R6 to R7 when policy and child-planning budget inputs can be derived;
+- `walk step` now admits canonical `r6_to_r7`;
+- walk output/deltas now include R7 as the current server boundary.
+
+Deliberate limitations:
+
+- if policy/budget validation fails, reconstruction stops at R6 and reports a blocked `r6 -> r7` edge rather than weakening budget or max-generation checks;
+- R8 remains blocked because child-plan authority can publish/receive messages and needs the next explicit live-admission slice.
+
+Validation:
+
+```text
+cargo check -p ploke-eval --all-targets
+cargo test -p ploke-eval loop_walk_ --all-targets
+cargo test -p ploke-eval shape --all-targets
+cargo test -p ploke-eval typestate --all-targets
+cargo test -p ploke-eval prototype1_state --all-targets
+```
+
+Smoke with isolated socket and clean parent worktree:
+
+```text
+./target/debug/ploke-eval loop walk start --repo-root /home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249 --socket <tmp>/walk.sock --until r7
+./target/debug/ploke-eval loop walk show --repo-root /home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249 --socket <tmp>/walk.sock
+./target/debug/ploke-eval loop walk reset --repo-root /home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249 --socket <tmp>/walk.sock
+./target/debug/ploke-eval loop walk start --repo-root /home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249 --socket <tmp>/walk.sock --until r6
+./target/debug/ploke-eval loop walk step --repo-root /home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249 --socket <tmp>/walk.sock
+./target/debug/ploke-eval loop walk show --repo-root /home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249 --socket <tmp>/walk.sock delta --no-color
+```
+
+Result: R7 typestate displayed `evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>`, and the single-step delta showed `r6_to_r7`.

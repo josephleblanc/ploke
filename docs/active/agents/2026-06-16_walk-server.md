@@ -208,10 +208,11 @@ R4a -> R4b | R4c
 R4b -> R4c
 R4c -> R5
 R5 -> R6
+R6 -> R7
 ```
 
-- `R2a` and `R6` are current stops.
-- Later phases (`R7+`) are intentionally not admitted yet by the server slice.
+- `R2a` and `R7` are current stops.
+- Later phases (`R8+`) are intentionally not admitted yet by the server slice.
 - `show` includes server-local previous entries, root/tracking directories, tracked file paths, current typestate alias, and next admitted edges.
 - `show delta` includes only the last successful step delta; `--verbose` also lists nested type structures, and `--no-color` disables ANSI colors.
 - `step` includes from/to phases, edge names, typestate axis deltas, and next admitted edges.
@@ -291,10 +292,11 @@ The live loop must remain capable of self-editing without being controlled by a 
 
 ## Known sharp edges
 
-- Only phases through `R6` are supported.
+- Only phases through `R7` are supported.
 - `R5` is live-effectful: it appends parent-start/resource entries to the transition journal.
 - `R5 -> R6` may establish/advance baseline closure state before loading the parent baseline; reconstruction uses durable baseline evidence when present.
-- Later async/live-effectful phases (`R7+`, child fanout, handoff, final report) are not yet exposed through the server.
+- `R6 -> R7` derives run policy and child-planning budget and preserves hard budget/max-generation stops.
+- Later async/live-effectful phases (`R8+`, child fanout, handoff, final report) are not yet exposed through the server.
 - Failed consuming transitions are recorded as `Failed`, not retryable from the exact consumed Rust state.
 - The current source freshness check is status-hash based, not full content-hash based.
 - Server stdout/stderr are redirected to null when auto-spawned. Add an explicit log path before relying on the server for long debugging sessions.
@@ -304,8 +306,8 @@ The live loop must remain capable of self-editing without being controlled by a 
 
 1. Add explicit server log file support.
 2. Add unit tests around `paths`, `protocol`, and `WalkController` failure-state behavior.
-3. Add automated `step --until r6` smoke coverage with a fixture checkout that has the required parent identity/campaign setup.
-4. Decide whether to expose `R7+` behind an explicit live/debug flag.
+3. Add automated `step --until r7` smoke coverage with a fixture checkout that has the required parent identity/campaign setup.
+4. Decide whether to expose `R8+` behind an explicit live/debug flag.
 5. Upgrade epoch source drift detection from `git status` hash to content hash if long-running server use becomes common.
 6. Only after the server is stable as a debug harness, consider parent/successor lifecycle integration:
    - parent server terminates or becomes read-only at handoff;
