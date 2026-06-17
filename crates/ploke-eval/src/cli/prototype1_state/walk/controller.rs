@@ -21,8 +21,12 @@ use crate::{
         journal::prototype1_transition_journal_path,
         live_edges::{
             r0_to_r1, r1_to_r2a_or_r3, r3_to_r4a, r4a_to_r4b_or_r4c, r4b_to_r4c_genesis, r4c_to_r5,
+            r5_to_r6,
         },
-        typestate::{self, R0, R1, R2a, R3, R4a, R4bGenesisChecked, R4cReady, R5, StepInput},
+        typestate::{
+            self, AsyncStepInput, R0, R1, R2a, R3, R4a, R4bGenesisChecked, R4cReady, R5, R6,
+            StepInput,
+        },
     },
     layout::prototype1_monitor_target_file,
     spec::PrepareError,
@@ -65,6 +69,7 @@ enum WalkState {
     R4b(R4bGenesisChecked<RunShape, CampaignConfig>),
     R4c(R4cReady<RunShape, CampaignConfig>),
     R5(R5<RunShape, CampaignConfig>),
+    R6(R6<RunShape, CampaignConfig>),
     /// A consuming transition failed after the previous typed value was moved.
     ///
     /// Rust cannot restore the consumed value after an edge returns `Err`, so
@@ -252,7 +257,7 @@ impl WalkController {
     }
 
     /// Start a new walk from `R0` and optionally advance to an admitted boundary.
-    pub(crate) fn start(
+    pub(crate) async fn start(
         &mut self,
         config: WalkStartConfig,
         until: WalkPhase,
@@ -277,12 +282,12 @@ impl WalkController {
             "start: created r0 for repo_root '{}'",
             repo_root.display()
         ));
-        self.advance_until(until)?;
+        self.advance_until(until).await?;
         Ok(self.phase())
     }
 
     /// Advance the current walk by one edge or until a requested phase.
-    pub(crate) fn step(
+    pub(crate) async fn step(
         &mut self,
         until: Option<WalkPhase>,
     ) -> Result<WalkAdvanceReport, PrepareError> {
@@ -293,9 +298,9 @@ impl WalkController {
         let transitions = if self.phase() == target {
             Vec::new()
         } else if until.is_some() {
-            self.advance_until(target)?
+            self.advance_until(target).await?
         } else {
-            vec![self.step_once()?]
+            vec![self.step_once().await?]
         };
         let report = WalkAdvanceReport {
             from,
@@ -329,7 +334,10 @@ impl WalkController {
         Ok(())
     }
 
-    fn advance_until(&mut self, target: WalkPhase) -> Result<Vec<WalkTransition>, PrepareError> {
+    async fn advance_until(
+        &mut self,
+        target: WalkPhase,
+    ) -> Result<Vec<WalkTransition>, PrepareError> {
         let mut guard = 0_u8;
         let mut transitions = Vec::new();
         while self.phase() != target {
@@ -339,12 +347,12 @@ impl WalkController {
                     detail: format!("walk exceeded early-step guard while advancing to {target}"),
                 });
             }
-            transitions.push(self.step_once()?);
+            transitions.push(self.step_once().await?);
         }
         Ok(transitions)
     }
 
-    fn step_once(&mut self) -> Result<WalkTransition, PrepareError> {
+    async fn step_once(&mut self) -> Result<WalkTransition, PrepareError> {
         let state = std::mem::replace(&mut self.state, WalkState::Empty);
         let previous = state.phase();
         let next = match state {
@@ -385,9 +393,10 @@ impl WalkController {
             }),
             WalkState::R4b(r4b) => r4b.advance(r4b_to_r4c_genesis).map(WalkState::R4c),
             WalkState::R4c(r4c) => r4c.advance(r4c_to_r5).map(WalkState::R5),
-            WalkState::R5(r5) => {
-                self.state = WalkState::R5(r5);
-                let detail = "walk reached R5 parent-start boundary; R6+ phases are not admitted by this debug server slice yet";
+            WalkState::R5(r5) => r5.advance_async(r5_to_r6).await.map(WalkState::R6),
+            WalkState::R6(r6) => {
+                self.state = WalkState::R6(r6);
+                let detail = "walk reached R6 parent-baseline boundary; R7+ phases are not admitted by this debug server slice yet";
                 self.record(format!("blocked at {previous}: {detail}"));
                 return Err(PrepareError::InvalidBatchSelection {
                     detail: detail.to_string(),
@@ -443,6 +452,7 @@ impl WalkState {
             WalkState::R4b(_) => WalkPhase::R4b,
             WalkState::R4c(_) => WalkPhase::R4c,
             WalkState::R5(_) => WalkPhase::R5,
+            WalkState::R6(_) => WalkPhase::R6,
             WalkState::Failed { phase, .. } => *phase,
         }
     }
@@ -455,6 +465,7 @@ impl WalkState {
             EarlyState::R4b(r4b) => WalkState::R4b(r4b),
             EarlyState::R4c(r4c) => WalkState::R4c(r4c),
             EarlyState::R5(r5) => WalkState::R5(r5),
+            EarlyState::R6(r6) => WalkState::R6(r6),
         }
     }
 }
@@ -467,6 +478,7 @@ fn phase_for_early(state: &EarlyState) -> WalkPhase {
         EarlyState::R4b(_) => WalkPhase::R4b,
         EarlyState::R4c(_) => WalkPhase::R4c,
         EarlyState::R5(_) => WalkPhase::R5,
+        EarlyState::R6(_) => WalkPhase::R6,
     }
 }
 
@@ -516,7 +528,8 @@ impl NextPhase for WalkPhase {
             WalkPhase::R4a => Some(WalkPhase::R4c),
             WalkPhase::R4b => Some(WalkPhase::R4c),
             WalkPhase::R4c => Some(WalkPhase::R5),
-            WalkPhase::R5 => None,
+            WalkPhase::R5 => Some(WalkPhase::R6),
+            WalkPhase::R6 => None,
         }
     }
 }
@@ -626,6 +639,12 @@ fn push_side_effects(
     if matches!((from, to), (WalkPhase::R4c, WalkPhase::R5)) {
         lines.push(format!(
             "  - {}: appends parent-start/resource entries to the transition journal",
+            highlight_changed("side effect", style.color)
+        ));
+    }
+    if matches!((from, to), (WalkPhase::R5, WalkPhase::R6)) {
+        lines.push(format!(
+            "  - {}: may advance eval/protocol closure before loading parent baseline",
             highlight_changed("side effect", style.color)
         ));
     }

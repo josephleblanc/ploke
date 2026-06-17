@@ -109,14 +109,14 @@ async fn handle_stream(
             return Ok(false);
         }
     };
-    let (response, stop) = server.handle(request);
+    let (response, stop) = server.handle(request).await;
     ipc::send(&mut stream, &response).await?;
     Ok(stop)
 }
 
 impl WalkServer {
     /// Dispatch one decoded request against the in-memory controller.
-    fn handle(&mut self, request: WalkRequest) -> (WalkResponse, bool) {
+    async fn handle(&mut self, request: WalkRequest) -> (WalkResponse, bool) {
         let phase = self.controller.phase();
         let stop_requested = matches!(request.body, WalkRequestBody::Stop);
         let result = match request.body {
@@ -138,16 +138,30 @@ impl WalkServer {
                 self.epoch.clone(),
             )),
             WalkRequestBody::Start { config, until } => {
-                self.with_epoch_guard(request.client_epoch.as_ref(), |controller| {
-                    let phase = controller.start(config, until)?;
-                    Ok(format!("started walk at {phase} - {}", phase.detail()))
-                })
+                match self.ensure_epoch_guard(request.client_epoch.as_ref()) {
+                    Ok(()) => match self.controller.start(config, until).await {
+                        Ok(phase) => Ok(WalkResponse::ok(
+                            self.controller.phase(),
+                            format!("started walk at {phase} - {}", phase.detail()),
+                            self.epoch.clone(),
+                        )),
+                        Err(error) => Err(error),
+                    },
+                    Err(error) => Err(error),
+                }
             }
             WalkRequestBody::Step { until } => {
-                self.with_epoch_guard(request.client_epoch.as_ref(), |controller| {
-                    let report = controller.step(until)?;
-                    Ok(report.render())
-                })
+                match self.ensure_epoch_guard(request.client_epoch.as_ref()) {
+                    Ok(()) => match self.controller.step(until).await {
+                        Ok(report) => Ok(WalkResponse::ok(
+                            self.controller.phase(),
+                            report.render(),
+                            self.epoch.clone(),
+                        )),
+                        Err(error) => Err(error),
+                    },
+                    Err(error) => Err(error),
+                }
             }
             WalkRequestBody::Reset => {
                 self.with_epoch_guard(request.client_epoch.as_ref(), |controller| {
@@ -190,6 +204,14 @@ impl WalkServer {
         )
     }
 
+    fn ensure_epoch_guard(
+        &mut self,
+        client_epoch: Option<&ServerEpoch>,
+    ) -> Result<(), PrepareError> {
+        self.epoch.ensure_compatible_request(client_epoch)?;
+        self.epoch.ensure_not_stale_now()
+    }
+
     /// Run a mutating controller operation after client/server freshness checks.
     fn with_epoch_guard<F>(
         &mut self,
@@ -199,8 +221,7 @@ impl WalkServer {
     where
         F: FnOnce(&mut WalkController) -> Result<String, PrepareError>,
     {
-        self.epoch.ensure_compatible_request(client_epoch)?;
-        self.epoch.ensure_not_stale_now()?;
+        self.ensure_epoch_guard(client_epoch)?;
         let message = f(&mut self.controller)?;
         Ok(WalkResponse::ok(
             self.controller.phase(),

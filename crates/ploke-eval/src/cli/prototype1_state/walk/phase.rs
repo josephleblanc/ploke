@@ -10,7 +10,7 @@ use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
 use crate::cli::prototype1_state::typestate::{
-    R0_SHAPE, R1_SHAPE, R2A_SHAPE, R3_SHAPE, R4A_SHAPE, R4B_SHAPE, R4C_SHAPE, R5_SHAPE,
+    R0_SHAPE, R1_SHAPE, R2A_SHAPE, R3_SHAPE, R4A_SHAPE, R4B_SHAPE, R4C_SHAPE, R5_SHAPE, R6_SHAPE,
     RuntimeAxisDelta, RuntimeShape,
 };
 
@@ -41,6 +41,8 @@ pub enum WalkPhase {
     R4c,
     /// Parent-start evidence recorded after `Parent<Ready>` is proven.
     R5,
+    /// Parent baseline established or loaded.
+    R6,
 }
 
 /// One admitted edge that can follow a phase in the current server slice.
@@ -107,6 +109,12 @@ const R4C_NEXT: &[WalkNextStep] = &[WalkNextStep {
     detail: "record parent-start evidence",
 }];
 
+const R5_NEXT: &[WalkNextStep] = &[WalkNextStep {
+    edge: "r5_to_r6",
+    phase: WalkPhase::R6,
+    detail: "establish or load parent baseline",
+}];
+
 const NO_NEXT: &[WalkNextStep] = &[];
 
 impl WalkPhase {
@@ -122,6 +130,7 @@ impl WalkPhase {
             WalkPhase::R4b => "r4b",
             WalkPhase::R4c => "r4c",
             WalkPhase::R5 => "r5",
+            WalkPhase::R6 => "r6",
         }
     }
 
@@ -137,6 +146,7 @@ impl WalkPhase {
             WalkPhase::R4b => "genesis checked",
             WalkPhase::R4c => "parent ready",
             WalkPhase::R5 => "parent start recorded",
+            WalkPhase::R6 => "parent baseline ready",
         }
     }
 
@@ -152,6 +162,7 @@ impl WalkPhase {
                 | WalkPhase::R4b
                 | WalkPhase::R4c
                 | WalkPhase::R5
+                | WalkPhase::R6
         )
     }
 
@@ -166,7 +177,8 @@ impl WalkPhase {
             WalkPhase::R4a => R4A_NEXT,
             WalkPhase::R4b => R4B_NEXT,
             WalkPhase::R4c => R4C_NEXT,
-            WalkPhase::R5 => NO_NEXT,
+            WalkPhase::R5 => R5_NEXT,
+            WalkPhase::R6 => NO_NEXT,
         }
     }
 
@@ -185,6 +197,12 @@ impl WalkPhase {
         if matches!((from, self), (WalkPhase::R4c, WalkPhase::R5)) {
             deltas.push(
                 "side effect: appends parent-start/resource entries to the transition journal"
+                    .to_string(),
+            );
+        }
+        if matches!((from, self), (WalkPhase::R5, WalkPhase::R6)) {
+            deltas.push(
+                "side effect: may advance eval/protocol closure before loading parent baseline"
                     .to_string(),
             );
         }
@@ -220,6 +238,7 @@ impl WalkPhase {
             WalkPhase::R4b => Some(R4B_SHAPE),
             WalkPhase::R4c => Some(R4C_SHAPE),
             WalkPhase::R5 => Some(R5_SHAPE),
+            WalkPhase::R6 => Some(R6_SHAPE),
         }
     }
 

@@ -17,8 +17,8 @@ use crate::{
             backend::GitWorktreeBackend,
             cli_facing::{
                 Prototype1StateRunShape, campaign_manifest_path_for_id,
-                prototype1_state_transition_error, resolve_campaign_config_for_id,
-                same_existing_path,
+                load_parent_baseline_for_id, prototype1_state_transition_error,
+                resolve_campaign_config_for_id, same_existing_path,
             },
             identity::{ParentIdentity, load_parent_identity_optional, parent_identity_path},
             journal::{JournalEntry, PrototypeJournal, prototype1_transition_journal_path},
@@ -37,6 +37,7 @@ pub(crate) enum EarlyState {
     R4b(typestate::R4bGenesisChecked<Prototype1StateRunShape, ResolvedCampaignConfig>),
     R4c(typestate::R4cReady<Prototype1StateRunShape, ResolvedCampaignConfig>),
     R5(typestate::R5<Prototype1StateRunShape, ResolvedCampaignConfig>),
+    R6(typestate::R6<Prototype1StateRunShape, ResolvedCampaignConfig>),
 }
 
 /// Result of an early durable reconstruction attempt.
@@ -168,9 +169,29 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
     let typestate::R4cParts { collected, parent } = r4c.into_parts();
     if parent_start_recorded(repo_root, &campaign_id, parent.identity())? {
         notes.push("reconstructed R5 from matching parent-start journal evidence".into());
+        let mut parts = collected.into_parts();
+        if let Some(baseline) = load_parent_baseline_for_id(
+            &parts.campaign_id,
+            &parts.campaign_config,
+            &parts.manifest_path,
+            parent.identity(),
+        )? {
+            parts.facts.parent_baseline = Some(baseline);
+            notes.push("reconstructed R6 from durable parent baseline evidence".into());
+            return Ok(EarlySnapshot {
+                state: Some(EarlyState::R6(typestate::R6::from_collected_parent(
+                    parts.into_collected(),
+                    parent,
+                ))),
+                campaign_id: Some(campaign_id),
+                notes,
+                blockers,
+            });
+        }
         Ok(EarlySnapshot {
             state: Some(EarlyState::R5(typestate::R5::from_collected_parent(
-                collected, parent,
+                parts.into_collected(),
+                parent,
             ))),
             campaign_id: Some(campaign_id),
             notes,

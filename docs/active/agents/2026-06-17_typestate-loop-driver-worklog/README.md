@@ -122,3 +122,40 @@ PLOKE_EVAL_WALK_SOCKET_DIR=<tmp> ./target/debug/ploke-eval loop walk step --repo
 ```
 
 Result: both commands preserved the hard R4a stop and printed active branch, expected artifact branch, dirty files, and recovery commands.
+
+### Slice 3 — admit R6 parent baseline in `walk`
+
+Implemented the next coarse driver edge:
+
+- converted the R6 alias to `runtime_alias!` and exported `R6_SHAPE`;
+- added read-only `load_parent_baseline_for_id(...)` beside the live baseline-establishment helpers;
+- reconstruction now promotes R5 to R6 when matching parent-start journal evidence and durable parent baseline evidence exist;
+- live `walk step` now admits the canonical async `r5_to_r6` direct edge;
+- walk output/deltas now include R6 and the R5 -> R6 side-effect note.
+
+Deliberate limitations:
+
+- R5 -> R6 may still run the existing live baseline establishment path when durable baseline evidence is missing; this preserves current `prototype1-state` behavior rather than inventing a weaker fallback;
+- R7+ remain blocked by the debug server slice until policy/budget reconstruction is added;
+- `walk start --until r6` advances through R5 -> R6 but does not create a last-step delta; single-step `walk step` from R5 does.
+
+Validation:
+
+```text
+cargo check -p ploke-eval --all-targets
+cargo test -p ploke-eval loop_walk_ --all-targets
+cargo test -p ploke-eval shape --all-targets
+cargo test -p ploke-eval typestate --all-targets
+```
+
+Smoke with isolated socket and clean parent worktree:
+
+```text
+./target/debug/ploke-eval loop walk start --repo-root /home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249 --socket <tmp>/walk.sock --until r6
+./target/debug/ploke-eval loop walk show --repo-root /home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249 --socket <tmp>/walk.sock
+./target/debug/ploke-eval loop walk start --repo-root /home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249 --socket <tmp>/walk.sock --until r5
+./target/debug/ploke-eval loop walk step --repo-root /home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249 --socket <tmp>/walk.sock
+./target/debug/ploke-eval loop walk show --repo-root /home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249 --socket <tmp>/walk.sock delta --no-color
+```
+
+Result: R6 typestate displayed as `Evidence<..., evidence::baseline::Ready<CompleteBaseline>, ...>`, and the single-step delta showed `r5_to_r6`.

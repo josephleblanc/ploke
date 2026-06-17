@@ -416,6 +416,30 @@ pub(crate) async fn establish_parent_baseline_for_id(
     establish_parent_baseline(campaign_id, config, manifest_path, parent).await
 }
 
+pub(crate) fn load_parent_baseline_for_id(
+    campaign_id: &CampaignId,
+    config: &ResolvedCampaignConfig,
+    manifest_path: &Path,
+    parent: &ParentIdentity,
+) -> Result<Option<CompleteBaseline>, PrepareError> {
+    let baseline = if parent.generation() == 0 {
+        let path = campaign_closure_state_path(campaign_id)?;
+        if !path.exists() {
+            return Ok(None);
+        }
+        let closure = load_closure_state(campaign_id)?;
+        complete_baseline_from_closure(parent, &closure, &config.eval)?
+    } else {
+        let report_path = prototype1_branch_evaluation_path(manifest_path, parent.branch_id());
+        if !report_path.exists() {
+            return Ok(None);
+        }
+        promote_selected_child_baseline(campaign_id, manifest_path, parent)?
+    };
+    baseline.validate_for_parent(campaign_id, parent.node_id(), parent.branch_id())?;
+    Ok(Some(baseline))
+}
+
 async fn establish_initial_parent_baseline(
     config: &ResolvedCampaignConfig,
     parent: &ParentIdentity,

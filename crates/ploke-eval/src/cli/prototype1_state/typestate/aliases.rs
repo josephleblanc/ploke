@@ -950,38 +950,41 @@ runtime_alias! {
     shape R5_SHAPE;
 }
 
-/// R6: parent baseline established.
-///
-/// Axis changes:
-/// - `Evidence<..., baseline::None, ...>`
-///   `-> Evidence<..., baseline::Ready<CompleteBaseline>, ...>`.
-///
-/// Existing carrier: `CompleteBaseline = Baseline<baseline::Complete>`.
-pub(crate) type R6<RunShape = (), CampaignConfig = ()> = Runtime<
-    phase::R6,
-    parent_role::Parent<parent_role::Ready>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<plan::authority::None, plan::schedule::None>,
-    Children<children::set::None, children::attempt::None>,
-    History<
-        history_axis::startup::Validated<history_axis::startup::Any>,
-        history_axis::head::FromStartup,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::Recorded<ParentStartedEntry>,
-        evidence::baseline::Ready<CompleteBaseline>,
-        evidence::policy::None,
-        evidence::selection::None,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::None,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::None>,
->;
+runtime_alias! {
+    /// R6: parent baseline established.
+    ///
+    /// Axis changes:
+    /// - `Evidence<..., baseline::None, ...>`
+    ///   `-> Evidence<..., baseline::Ready<CompleteBaseline>, ...>`.
+    ///
+    /// Existing carrier: `CompleteBaseline = Baseline<baseline::Complete>`.
+    pub(crate) type R6<RunShape = (), CampaignConfig = ()> = Runtime<
+        phase::R6,
+        parent_role::Parent<parent_role::Ready>,
+        Context<context::Collected<RunShape, CampaignConfig>>,
+        Plan<plan::authority::None, plan::schedule::None>,
+        Children<children::set::None, children::attempt::None>,
+        History<
+            history_axis::startup::Validated<history_axis::startup::Any>,
+            history_axis::head::FromStartup,
+            history_axis::epoch::None,
+        >,
+        Evidence<
+            evidence::parent_start::Recorded<ParentStartedEntry>,
+            evidence::baseline::Ready<CompleteBaseline>,
+            evidence::policy::None,
+            evidence::selection::None,
+            evidence::completion::None,
+        >,
+        Continuation<
+            continuation::selection::None,
+            continuation::decision::None,
+            continuation::handoff::None,
+        >,
+        Report<report::None>,
+    >;
+    shape R6_SHAPE;
+}
 
 /// R7: policy and child budget ready.
 ///
