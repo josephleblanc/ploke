@@ -21,11 +21,11 @@ use crate::{
         journal::prototype1_transition_journal_path,
         live_edges::{
             r0_to_r1, r1_to_r2a_or_r3, r3_to_r4a, r4a_to_r4b_or_r4c, r4b_to_r4c_genesis, r4c_to_r5,
-            r5_to_r6, r6_to_r7, r7_to_r8,
+            r5_to_r6, r6_to_r7, r7_to_r8, r8_to_r9,
         },
         typestate::{
             self, AsyncStepInput, R0, R1, R2a, R3, R4a, R4bGenesisChecked, R4cReady, R5, R6, R7,
-            R8, StepInput,
+            R8, R9, StepInput,
         },
     },
     layout::prototype1_monitor_target_file,
@@ -43,8 +43,8 @@ type CampaignConfig = ResolvedCampaignConfig;
 /// Single-session in-memory controller for early Prototype 1 typestate phases.
 ///
 /// The current server slice admits setup/startup and parent-start phases through
-/// live `R7` plus reconstructable `R8` so the socket lifecycle can be tested
-/// before exposing child fanout or handoff.
+/// live `R7`, watch-gated `R8`, and schedule-ready `R9` so the socket
+/// lifecycle can be tested before exposing child fanout or handoff.
 pub(crate) struct WalkController {
     repo_root: PathBuf,
     state: WalkState,
@@ -72,6 +72,7 @@ enum WalkState {
     R6(R6<RunShape, CampaignConfig>),
     R7(R7<RunShape, CampaignConfig>),
     R8(R8<RunShape, CampaignConfig>),
+    R9(R9<RunShape, CampaignConfig>),
     /// A consuming transition failed after the previous typed value was moved.
     ///
     /// Rust cannot restore the consumed value after an edge returns `Err`, so
@@ -417,9 +418,10 @@ impl WalkController {
                     });
                 }
             }
-            WalkState::R8(r8) => {
-                self.state = WalkState::R8(r8);
-                let detail = "walk reconstructed R8 child-plan authority boundary; R9+ phases are not admitted by this debug server slice yet";
+            WalkState::R8(r8) => r8.advance(r8_to_r9).map(WalkState::R9),
+            WalkState::R9(r9) => {
+                self.state = WalkState::R9(r9);
+                let detail = "walk reached R9 child-schedule boundary; R10+ phases are not admitted by this debug server slice yet";
                 self.record(format!("blocked at {previous}: {detail}"));
                 return Err(PrepareError::InvalidBatchSelection {
                     detail: detail.to_string(),
@@ -478,6 +480,7 @@ impl WalkState {
             WalkState::R6(_) => WalkPhase::R6,
             WalkState::R7(_) => WalkPhase::R7,
             WalkState::R8(_) => WalkPhase::R8,
+            WalkState::R9(_) => WalkPhase::R9,
             WalkState::Failed { phase, .. } => *phase,
         }
     }
@@ -560,7 +563,8 @@ impl NextPhase for WalkPhase {
             WalkPhase::R5 => Some(WalkPhase::R6),
             WalkPhase::R6 => Some(WalkPhase::R7),
             WalkPhase::R7 => None,
-            WalkPhase::R8 => None,
+            WalkPhase::R8 => Some(WalkPhase::R9),
+            WalkPhase::R9 => None,
         }
     }
 }

@@ -132,7 +132,7 @@ rm -rf "$sockdir"
 - Current supported phases are:
 
 ```text
-Empty, R0, R1, R2a, R3, R4a, R4b, R4c, R5
+Empty, R0, R1, R2a, R3, R4a, R4b, R4c, R5, R6, R7, R8, R9
 ```
 
 `walk/protocol.rs`
@@ -209,12 +209,14 @@ R4b -> R4c
 R4c -> R5
 R5 -> R6
 R6 -> R7
-# R8 can be reconstructed when existing child-plan evidence is present.
+R7 -> R8  # requires explicit walk step --watch for live child-plan work
+R8 -> R9  # pure schedule shaping
 ```
 
-- `R2a` and default live `R7` are current stops.
-- `R8` is reconstructable from existing child-plan authority, and live `R7 -> R8` requires explicit `walk step --watch`.
-- Later phases (`R9+`) are intentionally not admitted yet by the server slice.
+- `R2a` and `R9` are current stops.
+- Default live stepping at `R7` is a safe boundary; live `R7 -> R8` requires explicit `walk step --watch`.
+- `R8` is reconstructable from existing child-plan authority.
+- Later phases (`R10+`) are intentionally not admitted yet by the server slice.
 - `show` includes server-local previous entries, root/tracking directories, tracked file paths, current typestate alias, and next admitted edges.
 - `show delta` includes only the last successful step delta; `--verbose` also lists nested type structures, and `--no-color` disables ANSI colors.
 - `step` includes from/to phases, edge names, typestate axis deltas, and next admitted edges.

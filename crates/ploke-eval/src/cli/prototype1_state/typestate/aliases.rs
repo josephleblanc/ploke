@@ -1067,42 +1067,45 @@ runtime_alias! {
     shape R8_SHAPE;
 }
 
-/// R9: child schedule shaped.
-///
-/// Axis changes:
-/// - `Plan<authority::Received<_>, schedule::None>`
-///   `-> Plan<authority::Received<_>, schedule::Ready<Budget, Mode>>`.
-///
-/// No existing typestate island moves here, but the runnable child set has been
-/// budgeted/truncated and schedule mode has been selected.
-pub(crate) type R9<RunShape = (), CampaignConfig = ()> = Runtime<
-    phase::R9,
-    parent_role::Parent<parent_role::Selectable>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<
-        plan::authority::Received<Received<parent_role::ChildPlan>>,
-        plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
-    >,
-    Children<children::set::Planned<parent_role::ChildFiles>, children::attempt::None>,
-    History<
-        history_axis::startup::Validated<history_axis::startup::Any>,
-        history_axis::head::FromStartup,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::Recorded<ParentStartedEntry>,
-        evidence::baseline::Ready<CompleteBaseline>,
-        evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
-        evidence::selection::Plan<context::ChildPlanFacts>,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::None,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::None>,
->;
+runtime_alias! {
+    /// R9: child schedule shaped.
+    ///
+    /// Axis changes:
+    /// - `Plan<authority::Received<_>, schedule::None>`
+    ///   `-> Plan<authority::Received<_>, schedule::Ready<Budget, Mode>>`.
+    ///
+    /// No existing typestate island moves here, but the runnable child set has been
+    /// budgeted/truncated and schedule mode has been selected.
+    pub(crate) type R9<RunShape = (), CampaignConfig = ()> = Runtime<
+        phase::R9,
+        parent_role::Parent<parent_role::Selectable>,
+        Context<context::Collected<RunShape, CampaignConfig>>,
+        Plan<
+            plan::authority::Received<Received<parent_role::ChildPlan>>,
+            plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
+        >,
+        Children<children::set::Planned<parent_role::ChildFiles>, children::attempt::None>,
+        History<
+            history_axis::startup::Validated<history_axis::startup::Any>,
+            history_axis::head::FromStartup,
+            history_axis::epoch::None,
+        >,
+        Evidence<
+            evidence::parent_start::Recorded<ParentStartedEntry>,
+            evidence::baseline::Ready<CompleteBaseline>,
+            evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
+            evidence::selection::Plan<context::ChildPlanFacts>,
+            evidence::completion::None,
+        >,
+        Continuation<
+            continuation::selection::None,
+            continuation::decision::None,
+            continuation::handoff::None,
+        >,
+        Report<report::None>,
+    >;
+    shape R9_SHAPE;
+}
 
 /// R10: selection strategy ready.
 ///

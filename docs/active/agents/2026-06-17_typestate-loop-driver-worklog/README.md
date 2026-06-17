@@ -273,3 +273,55 @@ Smoke with isolated socket and clean parent worktree:
 Result: show advertised `r7_to_r8 --watch`, default step stayed at R7, and help listed `--watch`.
 
 GitNexus `detect-changes` risk: HIGH, because the slice intentionally changes walk client `run` dispatch, the walk protocol, and controller stepping. Affected flows are walk socket/context flows; no non-walk execution process was reported. The change was kept as a recoverable milestone and validated with focused tests plus isolated socket smokes.
+
+### Slice 7 — admit R9 schedule shaping in `walk`
+
+Admitted the pure schedule-shaping edge after child-plan authority:
+
+- converted the R9 alias to `runtime_alias!` and exported `R9_SHAPE`;
+- added `WalkState::R9` and `WalkPhase::R9`;
+- wired canonical `r8_to_r9` into `WalkController`;
+- `walk show` at R8 now advertises `r8_to_r9 -> r9`;
+- `walk step` from reconstructed/in-memory R8 advances to R9 without `--watch` because the edge is pure schedule shaping;
+- R9 has no admitted next edge in this slice, so R10+ child fanout/selection remains unavailable;
+- bumped the walk transition graph version to `walk-r0-r9-v1` so stale pre-R9 servers fail closed.
+
+Deliberate limitations:
+
+- no R10 selection-strategy construction yet;
+- no child fanout, rejected-only projection, successor decision, handoff, or final report admission yet;
+- no live `--watch` smoke was run for R7 -> R8 in this slice; the R9 smoke used existing child-plan evidence and did not invoke provider/harness work.
+
+Validation:
+
+```text
+cargo fmt --all
+cargo check -p ploke-eval --all-targets
+cargo test -p ploke-eval loop_walk_ --all-targets
+cargo test -p ploke-eval shape --all-targets
+cargo test -p ploke-eval typestate --all-targets
+```
+
+Focused test addition:
+
+- `walk::phase::tests::r8_advertises_r9_schedule_step`
+- `walk::phase::tests::r9_shape_records_schedule_ready_delta`
+
+Smoke with isolated socket and clean parent worktree that already has matching child-plan evidence:
+
+```text
+ROOT=/home/brasides/.ploke-eval/worktrees/p1-admissionfix-g35flash-p25flash-20260604-221908
+sockdir=$(mktemp -d /tmp/ploke-walk-r9.XXXXXX)
+chmod 700 "$sockdir"
+sock="$sockdir/walk.sock"
+
+./target/debug/ploke-eval loop walk show --repo-root "$ROOT" --socket "$sock" --with-version
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock"
+./target/debug/ploke-eval loop walk show --repo-root "$ROOT" --socket "$sock" delta --verbose --no-color
+./target/debug/ploke-eval loop walk stop --repo-root "$ROOT" --socket "$sock"
+rm -rf "$sockdir"
+```
+
+Result: `show` reconstructed R8 from existing child-plan message evidence, advertised `r8_to_r9 -> r9`, `step` advanced to `r9 - child schedule ready`, and verbose delta showed `Plan<..., plan::schedule::None>` changing to `Plan<..., plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>>`.
+
+GitNexus impact checks before edits were LOW for `WalkPhase`, `r8_to_r9`, `R9`, and `TRANSITION_GRAPH_VERSION` (0 indexed direct callers/processes reported for each checked target). Pre-commit `npx gitnexus detect-changes --repo ploke` reported LOW risk, 9 changed files, 31 changed symbols, and 0 affected processes.

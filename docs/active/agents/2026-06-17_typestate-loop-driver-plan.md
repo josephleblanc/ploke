@@ -154,7 +154,7 @@ The table below treats R0–R14 as the driver spine. The exact durable evidence 
 | R6 | Parent baseline established. | baseline closure state or selected-child promoted baseline evidence; campaign closure artifacts. | May advance eval/protocol closure for baseline. | Replay shows baseline source and completeness. | Current walk reaches/reconstructs R6 when durable baseline evidence exists and admits R6 -> R7. |
 | R7 | Policy and child budget ready. | admitted run profile, search policy, child budget, schedule mode, generation/node counts. | Reads profile and projections; may reserve/log budget if current code does. | Replay displays policy derivation. | Current walk reaches/reconstructs R7; live R7 -> R8 requires explicit `walk step --watch`. |
 | R8 | Child-plan authority received; parent becomes selectable. | `messages/child-plan/<parent-node-id>.json`, `Received<ChildPlan>`, child files, rejected attempts. | May publish broad-harness requests, collect/receive plan, write child-plan message. | Replay shows plan authority and rejected attempts. | Current walk reconstructs R8 from existing child-plan message evidence and can live-enter via blocking `--watch`. |
-| R9 | Child schedule shaped. | planned children, budget, schedule mode, runnable subset. | Usually no durable side effect beyond display/projection unless current code persists schedule choice. | Replay displays runnable set. | Avoid carrying schedule as loose locals. |
+| R9 | Child schedule shaped. | planned children, budget, schedule mode, runnable subset. | Usually no durable side effect beyond display/projection unless current code persists schedule choice. | Replay displays runnable set. | Current walk admits pure `R8 -> R9` schedule shaping and stops before R10+. Avoid carrying schedule as loose locals. |
 | R10 | Selection strategy ready. | successor-selection policy/strategy, seed, metrics mode, History traversal inputs. | Reads History/projections to build strategy. | Replay shows strategy inputs. | `ActiveSelectionStrategy` is still private to `cli_facing`; either move carrier or add typed public equivalent. |
 | R11a | Rejected-only branch projected. | rejected surface attempts and selection material. | Writes/report selection evidence if current path does. | Replay shows no-child selection evidence. | Branch from R10; must not require fake child outcomes. |
 | R11b/R11c | Child fanout complete. | per-child C1-C5 evidence: materialized artifact, binary, invocation, channel ready/result, runner result, branch evaluation. | Materialize/build/spawn/observe children; may call providers via child runner. | Replay should use channel/result evidence, not spawn. Back cursor does not kill/undo completed child work. | Admit one child sub-edge at a time; reuse existing C1-C5 carriers directly. |
@@ -307,6 +307,11 @@ Proofs:
 ### Slice 6 — R9/R10 scheduling and selection strategy
 
 Goal: schedule shaping and strategy construction become typed edges.
+
+Current implementation status:
+
+- R9 schedule shaping is admitted in `walk` as the pure `r8_to_r9` edge.
+- R10 selection-strategy construction is still pending and should remain blocked until the next slice explicitly admits it.
 
 Requirements:
 
@@ -537,7 +542,7 @@ Basically the same for the harness. This is under-used, but I want to leave the 
 
 Short-term:
 
-- `walk` can reconstruct R0–R8 after server restart where durable baseline/child-plan evidence exists.
+- `walk` can reconstruct R0–R8 after server restart where durable baseline/child-plan evidence exists, then step from R8 to R9 without provider/harness work.
 - R4a checkout mismatch displays as a typed blocker with recovery commands.
 - R6/R7 are admitted without duplicating baseline side effects when evidence already exists.
 

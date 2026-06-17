@@ -16,10 +16,11 @@ It is **not** production loop authority. It calls the same live transition funct
 
 ```text
 R0 -> R1 -> R3 -> R4a -> R4b -> R4c -> R5 -> R6 -> R7
-# R8 can be reconstructed when an existing child-plan message is present.
+R7 -> R8 requires walk step --watch for live child-plan work
+R8 -> R9 runs as pure schedule shaping when R8 is already held/reconstructed
 ```
 
-`R2a` is the alternate parent-identity initialization boundary when started with `--init-parent-identity`.
+`R8` can also be reconstructed when an existing child-plan message is present. `R2a` is the alternate parent-identity initialization boundary when started with `--init-parent-identity`.
 
 ## Important safety notes
 
@@ -27,7 +28,8 @@ R0 -> R1 -> R3 -> R4a -> R4b -> R4c -> R5 -> R6 -> R7
 - `R5 -> R6` may establish/advance baseline closure state before loading the parent baseline; reconstruction uses durable baseline evidence when present.
 - `R6 -> R7` derives run policy and child-planning budget and preserves hard budget/max-generation stops.
 - `R8` can be reconstructed from existing child-plan authority. Live `R7 -> R8` requires explicit `walk step --watch` because it may wait on provider/harness work.
-- `R4a -> R4b/R4c` may inspect/switch the active checkout. Use a clean Prototype 1 parent worktree when you want to reach `R7`.
+- `R8 -> R9` is pure schedule shaping and does not require `--watch`; R9 is the current stop before R10+ selection/fanout.
+- `R4a -> R4b/R4c` may inspect/switch the active checkout. Use a clean Prototype 1 parent worktree when you want to reach `R7` or reconstruct/step through `R9`.
 - If you run from a dirty development checkout, failing at `R4a` because local changes would block a checkout switch is expected.
 - The auto-started server exits after 30 idle minutes by default.
 - You can still stop it explicitly:
@@ -146,6 +148,15 @@ At R7, start the live child-plan authority edge only when you are ready to wait:
 ploke-eval loop walk step --watch
 ```
 
+At R8, the default next step is the pure schedule edge:
+
+```text
+ploke-eval loop walk step
+# r8_to_r9 -> r9
+```
+
+At R9, there is no admitted next step in the current server slice.
+
 ### `show`
 
 Shows the current phase, server pid, root/tracking directories, tracked paths, current Rust typestate alias, next admitted edges, and server-local previous entries.
@@ -210,7 +221,7 @@ ploke-eval loop walk serve --no-ttl
 
 ## Recommended review session
 
-Use a clean Prototype 1 parent worktree as `ROOT` if you want to reach `R7`.
+Use a clean Prototype 1 parent worktree as `ROOT` if you want to reach `R7`, or one with existing valid child-plan evidence if you want to reconstruct R8 and step to R9 without live provider/harness work.
 
 ```text
 ploke-eval loop walk use /path/to/prototype1-parent-worktree
@@ -242,5 +253,6 @@ While reviewing, useful questions are:
 - Should `files` print whole files, tails, JSON summaries, or selectable paths?
 - Should `reset` preserve or clear history by default?
 - Should reaching `R5`/`R6` require an explicit `--live-debug` flag because these edges can write journal/baseline evidence?
+- Should `R8 -> R9` remain a default step, or should all post-child-plan edges require an explicit mode even when they are pure?
 - Is 30 minutes the right default idle TTL?
 - Should `--watch` become a background progress stream with `walk show progress` for long R8+ edges?
