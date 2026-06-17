@@ -1301,43 +1301,46 @@ pub(crate) enum R10FanoutBranch<RunShape, CampaignConfig> {
     FanoutComplete(R11FanoutComplete<RunShape, CampaignConfig>),
 }
 
-/// R12: report-child/outcome projection ready.
-///
-/// Axis changes:
-/// - `Children<set::Outcomes<PlannedChildOutcome>, attempt::Complete>`
-///   `-> Children<set::Report<PlannedChildOutcome>, attempt::Complete>`.
-/// - `Report<None> -> Report<Facts>`.
-///
-/// Existing final report carrier is `Prototype1StateReport`, but Stage 12 only
-/// has report facts. The actual report is assembled/emitted at R14.
-pub(crate) type R12<RunShape = (), CampaignConfig = ()> = Runtime<
-    phase::R12,
-    parent_role::Parent<parent_role::Selectable>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<
-        plan::authority::Received<Received<parent_role::ChildPlan>>,
-        plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
-    >,
-    Children<children::set::Report<PlannedChildOutcome>, children::attempt::Complete>,
-    History<
-        history_axis::startup::Validated<history_axis::startup::Any>,
-        history_axis::head::FromStartup,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::Recorded<ParentStartedEntry>,
-        evidence::baseline::Ready<CompleteBaseline>,
-        evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
-        evidence::selection::Evidence<SelectionSealMaterial>,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::Maybe<SuccessorDecision>,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::Facts>,
->;
+runtime_alias! {
+    /// R12: report-child/outcome projection ready.
+    ///
+    /// Axis changes:
+    /// - `Children<set::Outcomes<PlannedChildOutcome>, attempt::Complete>`
+    ///   `-> Children<set::Report<PlannedChildOutcome>, attempt::Complete>`.
+    /// - `Report<None> -> Report<Facts>`.
+    ///
+    /// Existing final report carrier is `Prototype1StateReport`, but Stage 12 only
+    /// has report facts. The actual report is assembled/emitted at R14.
+    pub(crate) type R12<RunShape = (), CampaignConfig = ()> = Runtime<
+        phase::R12,
+        parent_role::Parent<parent_role::Selectable>,
+        Context<context::Collected<RunShape, CampaignConfig>>,
+        Plan<
+            plan::authority::Received<Received<parent_role::ChildPlan>>,
+            plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
+        >,
+        Children<children::set::Report<PlannedChildOutcome>, children::attempt::Complete>,
+        History<
+            history_axis::startup::Validated<history_axis::startup::Any>,
+            history_axis::head::FromStartup,
+            history_axis::epoch::None,
+        >,
+        Evidence<
+            evidence::parent_start::Recorded<ParentStartedEntry>,
+            evidence::baseline::Ready<CompleteBaseline>,
+            evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
+            evidence::selection::Evidence<SelectionSealMaterial>,
+            evidence::completion::None,
+        >,
+        Continuation<
+            continuation::selection::Maybe<SuccessorDecision>,
+            continuation::decision::None,
+            continuation::handoff::None,
+        >,
+        Report<report::Facts>,
+    >;
+    shape R12_SHAPE;
+}
 
 selectable_state_impl!(R12, phase::R12);
 

@@ -493,3 +493,58 @@ terminal child 'node-11fa531aab94448c' is missing branch evaluation report; run 
 This preserved the existing child terminal/evaluation invariant; no permissive fallback was added.
 
 GitNexus impact checks before edits were LOW for `R11aRejectedOnly`, `R11FanoutComplete`, `R10FanoutBranch`, `r10_to_r11`, `WalkPhase`, `WalkController`, and `TRANSITION_GRAPH_VERSION`. Pre-commit `npx gitnexus detect-changes --repo ploke` reported LOW risk, 9 changed files, 41 changed symbols, and 0 affected processes.
+
+### Slice 10 — admit R12 report-facts projection in `walk`
+
+Admitted the pure report-facts projection after R11 branches:
+
+- converted `R12` to `runtime_alias!` and exported `R12_SHAPE`;
+- added `WalkState::R12` and `WalkPhase::R12`;
+- wired canonical `r11_to_r12` into `WalkController` from both in-memory R11 branches by re-wrapping the typed `R10FanoutBranch` carrier;
+- `walk show` at R11a/R11 advertises `r11_to_r12 -> r12`;
+- default `walk step` from R11a/R11 advances to `r12 - report facts ready` because the edge only projects report facts and does not emit the final report;
+- R12 is the current stop; R13+ continuation/handoff remains unavailable;
+- bumped the walk transition graph version to `walk-r0-r12-v1` so stale pre-R12 servers fail closed.
+
+Deliberate limitations:
+
+- no R13 stopped/successor continuation yet;
+- no History head read, History sealing, checkout install, successor handoff, or final report emission yet;
+- R12 is not reconstructed directly from durable evidence yet. Restart recovery still reconstructs to R8 where child-plan evidence exists, then steps through R9/R10 and requires fresh in-memory R11 before R12;
+- missing report inputs still fail through the canonical `r11_to_r12` edge; no fake child outcomes are invented.
+
+Validation so far:
+
+```text
+cargo fmt --all
+cargo check -p ploke-eval --all-targets
+cargo test -p ploke-eval loop_walk_ --all-targets
+cargo test -p ploke-eval shape --all-targets
+cargo test -p ploke-eval typestate --all-targets
+cargo build -p ploke-eval
+```
+
+Focused test additions:
+
+- `walk::phase::tests::r11_branches_advertise_r12_report_projection`
+- `walk::phase::tests::r12_shape_records_report_facts_delta`
+
+Smoke with isolated socket and rejected-only branch evidence:
+
+```text
+ROOT=/home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249
+sockdir=$(mktemp -d /tmp/ploke-walk-r12.XXXXXX)
+chmod 700 "$sockdir"
+sock="$sockdir/walk.sock"
+
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock" --until r10
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock" --watch
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock"
+./target/debug/ploke-eval loop walk show --repo-root "$ROOT" --socket "$sock" delta --verbose --no-color
+./target/debug/ploke-eval loop walk stop --repo-root "$ROOT" --socket "$sock"
+rm -rf "$sockdir"
+```
+
+Result: R10 reached R11a with explicit `--watch`, then default `walk step` advanced `r11_to_r12` to `r12 - report facts ready`. The delta showed rejected children becoming report children, continuation becoming `Maybe<SuccessorDecision>`, and `Report<report::None>` becoming `Report<report::Facts>`. No final report was emitted.
+
+GitNexus impact checks before edits were LOW for `R12`, `r11_to_r12`, `WalkPhase`, `WalkController`, and `TRANSITION_GRAPH_VERSION` (0 indexed direct callers/processes reported for each checked target). Pre-commit `npx gitnexus detect-changes --repo ploke` reported LOW risk, 9 changed files, 31 changed symbols, and 0 affected processes.

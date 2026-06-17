@@ -11,15 +11,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::cli::prototype1_state::typestate::{
     R0_SHAPE, R1_SHAPE, R2A_SHAPE, R3_SHAPE, R4A_SHAPE, R4B_SHAPE, R4C_SHAPE, R5_SHAPE, R6_SHAPE,
-    R7_SHAPE, R8_SHAPE, R9_SHAPE, R10_SHAPE, R11_SHAPE, R11A_SHAPE, RuntimeAxisDelta, RuntimeShape,
+    R7_SHAPE, R8_SHAPE, R9_SHAPE, R10_SHAPE, R11_SHAPE, R11A_SHAPE, R12_SHAPE, RuntimeAxisDelta,
+    RuntimeShape,
 };
 
 /// Serializable cursor for the early Prototype 1 typestate walk.
 ///
-/// The current server slice intentionally stops live stepping at `R11` after the
-/// watch-gated child fanout edge. That is enough to validate socket
-/// lifecycle, in-memory stepping, branching, stale-server guards, and setup
-/// edges before report projection or successor handoff.
+/// The current server slice intentionally stops stepping at `R12` after report
+/// fact projection. That is enough to validate socket lifecycle, in-memory
+/// stepping, branching, stale-server guards, and setup edges before successor
+/// decision or handoff.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum WalkPhase {
@@ -55,6 +56,8 @@ pub enum WalkPhase {
     R11a,
     /// Child fanout complete.
     R11,
+    /// Report facts projected from rejected-only or child fanout evidence.
+    R12,
 }
 
 /// One admitted edge that can follow a phase in the current server slice.
@@ -164,6 +167,18 @@ const R10_NEXT: &[WalkNextStep] = &[
     },
 ];
 
+const R11A_NEXT: &[WalkNextStep] = &[WalkNextStep {
+    edge: "r11_to_r12",
+    phase: WalkPhase::R12,
+    detail: "project rejected-only report facts",
+}];
+
+const R11_NEXT: &[WalkNextStep] = &[WalkNextStep {
+    edge: "r11_to_r12",
+    phase: WalkPhase::R12,
+    detail: "project child outcome report facts",
+}];
+
 const NO_NEXT: &[WalkNextStep] = &[];
 
 impl WalkPhase {
@@ -186,6 +201,7 @@ impl WalkPhase {
             WalkPhase::R10 => "r10",
             WalkPhase::R11a => "r11a",
             WalkPhase::R11 => "r11",
+            WalkPhase::R12 => "r12",
         }
     }
 
@@ -208,6 +224,7 @@ impl WalkPhase {
             WalkPhase::R10 => "selection strategy ready",
             WalkPhase::R11a => "rejected-only selection evidence ready",
             WalkPhase::R11 => "child fanout complete",
+            WalkPhase::R12 => "report facts ready",
         }
     }
 
@@ -230,6 +247,7 @@ impl WalkPhase {
                 | WalkPhase::R10
                 | WalkPhase::R11a
                 | WalkPhase::R11
+                | WalkPhase::R12
         )
     }
 
@@ -250,8 +268,9 @@ impl WalkPhase {
             WalkPhase::R8 => R8_NEXT,
             WalkPhase::R9 => R9_NEXT,
             WalkPhase::R10 => R10_NEXT,
-            WalkPhase::R11a => NO_NEXT,
-            WalkPhase::R11 => NO_NEXT,
+            WalkPhase::R11a => R11A_NEXT,
+            WalkPhase::R11 => R11_NEXT,
+            WalkPhase::R12 => NO_NEXT,
         }
     }
 
@@ -297,6 +316,14 @@ impl WalkPhase {
                     .to_string(),
             );
         }
+        if matches!(
+            (from, self),
+            (WalkPhase::R11a | WalkPhase::R11, WalkPhase::R12)
+        ) {
+            deltas.push(
+                "projection: assembles report facts without emitting the final report".to_string(),
+            );
+        }
         if deltas.is_empty() {
             deltas.push("no admitted typestate delta for this phase pair".to_string());
         }
@@ -336,6 +363,7 @@ impl WalkPhase {
             WalkPhase::R10 => Some(R10_SHAPE),
             WalkPhase::R11a => Some(R11A_SHAPE),
             WalkPhase::R11 => Some(R11_SHAPE),
+            WalkPhase::R12 => Some(R12_SHAPE),
         }
     }
 
@@ -410,8 +438,8 @@ mod tests {
         assert_eq!(steps[0].phase, WalkPhase::R11a);
         assert_eq!(steps[1].edge, "r10_to_r11 --watch");
         assert_eq!(steps[1].phase, WalkPhase::R11);
-        assert!(WalkPhase::R11a.next_steps().is_empty());
-        assert!(WalkPhase::R11.next_steps().is_empty());
+        assert_eq!(WalkPhase::R11a.next_steps()[0].edge, "r11_to_r12");
+        assert_eq!(WalkPhase::R11.next_steps()[0].edge, "r11_to_r12");
     }
 
     #[test]
@@ -437,6 +465,29 @@ mod tests {
 
             assert!(evidence.from.contains("evidence::selection::Strategy"));
             assert!(evidence.to.contains("evidence::selection::Evidence"));
+        }
+    }
+
+    #[test]
+    fn r11_branches_advertise_r12_report_projection() {
+        assert_eq!(WalkPhase::R11a.next_steps().len(), 1);
+        assert_eq!(WalkPhase::R11a.next_steps()[0].phase, WalkPhase::R12);
+        assert_eq!(WalkPhase::R11.next_steps().len(), 1);
+        assert_eq!(WalkPhase::R11.next_steps()[0].phase, WalkPhase::R12);
+        assert!(WalkPhase::R12.next_steps().is_empty());
+    }
+
+    #[test]
+    fn r12_shape_records_report_facts_delta() {
+        for from in [WalkPhase::R11a, WalkPhase::R11] {
+            let deltas = WalkPhase::R12.axis_deltas_from(from);
+            let report = deltas
+                .iter()
+                .find(|delta| delta.label == "report")
+                .expect("R11 branch -> R12 should change the report axis");
+
+            assert!(report.from.contains("report::None"));
+            assert!(report.to.contains("report::Facts"));
         }
     }
 }

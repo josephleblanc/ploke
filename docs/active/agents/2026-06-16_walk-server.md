@@ -132,7 +132,7 @@ rm -rf "$sockdir"
 - Current supported phases are:
 
 ```text
-Empty, R0, R1, R2a, R3, R4a, R4b, R4c, R5, R6, R7, R8, R9, R10, R11a, R11
+Empty, R0, R1, R2a, R3, R4a, R4b, R4c, R5, R6, R7, R8, R9, R10, R11a, R11, R12
 ```
 
 `walk/protocol.rs`
@@ -213,13 +213,14 @@ R7 -> R8  # requires explicit walk step --watch for live child-plan work
 R8 -> R9  # pure schedule shaping
 R9 -> R10 # pure selection-strategy construction
 R10 -> R11a | R11 # requires explicit walk step --watch for rejected-only/fanout work
+R11a | R11 -> R12 # pure report-facts projection
 ```
 
-- `R2a`, `R11a`, and `R11` are current stops.
+- `R2a` and `R12` are current stops.
 - Default live stepping at `R7` is a safe boundary; live `R7 -> R8` requires explicit `walk step --watch`.
 - Default stepping at `R10` is also a safe boundary; live `R10 -> R11a | R11` requires explicit `walk step --watch`.
 - `R8` is reconstructable from existing child-plan authority.
-- Later phases (`R12+`) are intentionally not admitted yet by the server slice.
+- Later phases (`R13+`) are intentionally not admitted yet by the server slice.
 - `show` includes server-local previous entries, root/tracking directories, tracked file paths, current typestate alias, and next admitted edges.
 - `show delta` includes only the last successful step delta; `--verbose` also lists nested type structures, and `--no-color` disables ANSI colors.
 - `step` includes from/to phases, edge names, typestate axis deltas, and next admitted edges.
@@ -304,7 +305,7 @@ The live loop must remain capable of self-editing without being controlled by a 
 - `R5 -> R6` may establish/advance baseline closure state before loading the parent baseline; reconstruction uses durable baseline evidence when present.
 - `R6 -> R7` derives run policy and child-planning budget and preserves hard budget/max-generation stops.
 - Live `R7 -> R8` is exposed only through explicit `walk step --watch`; default step at R7 does not start provider/harness work.
-- Later async/live-effectful phases beyond R11 (report projection, successor decision, handoff, final report) are not yet exposed through the server.
+- Later async/live-effectful phases beyond R12 (successor decision, handoff, final report) are not yet exposed through the server.
 - Failed consuming transitions are recorded as `Failed`, not retryable from the exact consumed Rust state.
 - The current source freshness check is status-hash based, not full content-hash based.
 - Server stdout/stderr are redirected to null when auto-spawned. Add an explicit log path before relying on the server for long debugging sessions.

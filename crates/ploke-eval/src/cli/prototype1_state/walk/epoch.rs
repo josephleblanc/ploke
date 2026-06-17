@@ -20,7 +20,7 @@ use crate::spec::PrepareError;
 pub(crate) const WALK_PROTOCOL_VERSION: u32 = 3;
 
 /// Semantic version for the currently admitted transition graph slice.
-pub(crate) const TRANSITION_GRAPH_VERSION: &str = "walk-r0-r11-v1";
+pub(crate) const TRANSITION_GRAPH_VERSION: &str = "walk-r0-r12-v1";
 
 /// Repo paths whose dirty/clean status participates in the server epoch.
 ///

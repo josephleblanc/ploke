@@ -156,9 +156,9 @@ The table below treats R0–R14 as the driver spine. The exact durable evidence 
 | R8 | Child-plan authority received; parent becomes selectable. | `messages/child-plan/<parent-node-id>.json`, `Received<ChildPlan>`, child files, rejected attempts. | May publish broad-harness requests, collect/receive plan, write child-plan message. | Replay shows plan authority and rejected attempts. | Current walk reconstructs R8 from existing child-plan message evidence and can live-enter via blocking `--watch`. |
 | R9 | Child schedule shaped. | planned children, budget, schedule mode, runnable subset. | Usually no durable side effect beyond display/projection unless current code persists schedule choice. | Replay displays runnable set. | Current walk admits pure `R8 -> R9` schedule shaping. Avoid carrying schedule as loose locals. |
 | R10 | Selection strategy ready. | successor-selection policy/strategy, seed, metrics mode, History traversal inputs. | Reads History/projections to build strategy. | Replay shows strategy inputs. | Current walk admits pure `R9 -> R10`; live `R10 -> R11*` requires explicit `walk step --watch`. `ActiveSelectionStrategy` is still private to `cli_facing`; the typestate alias uses the public marker shape while runtime facts carry the value. |
-| R11a | Rejected-only branch projected. | rejected surface attempts and selection material. | Writes/report selection evidence if current path does. | Replay shows no-child selection evidence. | Current walk can reach R11a through explicit `--watch`; must not require fake child outcomes. |
-| R11b/R11c | Child fanout complete. | per-child C1-C5 evidence: materialized artifact, binary, invocation, channel ready/result, runner result, branch evaluation. | Materialize/build/spawn/observe children; may call providers via child runner. | Replay should use channel/result evidence, not spawn. Back cursor does not kill/undo completed child work. | Current walk exposes fanout only through explicit `--watch`; missing child terminal/evaluation evidence remains a hard blocker. |
-| R12 | Report-child/outcome projection ready. | child outcomes, fallback/report child, branch evaluation report, selection material. | Assembles report facts/projections. | Replay shows outcome projection. | Keep report facts separate from final emitted report. |
+| R11a | Rejected-only branch projected. | rejected surface attempts and selection material. | Writes/report selection evidence if current path does. | Replay shows no-child selection evidence. | Current walk can reach R11a through explicit `--watch`; default next step projects R12 report facts; must not require fake child outcomes. |
+| R11b/R11c | Child fanout complete. | per-child C1-C5 evidence: materialized artifact, binary, invocation, channel ready/result, runner result, branch evaluation. | Materialize/build/spawn/observe children; may call providers via child runner. | Replay should use channel/result evidence, not spawn. Back cursor does not kill/undo completed child work. | Current walk exposes fanout only through explicit `--watch`; missing child terminal/evaluation evidence remains a hard blocker; successful fanout can step to R12. |
+| R12 | Report-child/outcome projection ready. | child outcomes, fallback/report child, branch evaluation report, selection material. | Assembles report facts/projections. | Replay shows outcome projection. | Current walk admits pure `R11* -> R12` projection and stops before R13 continuation. Keep report facts separate from final emitted report. |
 | R13a | Continuation stopped/no successor. | successor decision/outcome, read History head, continuation decision stopped. | May append stopped successor/journal records. | Replay shows stop reason. | Branch from R12; no handoff side effects. |
 | R13b | Successor handoff committed. | selected child, selection seal material, open/locked/sealed/appended History block, retired parent, successor invocation/ready record. | Install selected artifact, seal/append History, retire parent, spawn successor, wait ready. | Replay can inspect sealed handoff. Branch-to-live later can start from here only with explicit new provenance. | Highest-risk slice; require focused proof before live full loop. |
 | R14a | Final report after stopped/no-selection. | completion resource sample and emitted `Prototype1StateReport`. | Appends completion sample and prints/writes report. | Replay displays final report. | No handoff continuation. |
@@ -358,7 +358,14 @@ Guardrails:
 
 Goal: report-child/outcome projection becomes typed and reconstructable.
 
-Requirements:
+Current implementation status:
+
+- `walk` admits pure `r11_to_r12` from in-memory R11a/R11 states.
+- Rejected-only R11a smoke reaches R12 and records fallback/report facts without emitting the final report.
+- Missing report inputs still fail through the canonical edge; no fake child outcomes are invented.
+- R13+ continuation remains blocked for the next slice.
+
+Original requirements:
 
 - select report child / fallback node deterministically;
 - carry report facts separately from final emitted report;
@@ -550,7 +557,7 @@ Basically the same for the harness. This is under-used, but I want to leave the 
 
 Short-term:
 
-- `walk` can reconstruct R0–R8 after server restart where durable baseline/child-plan evidence exists, step from R8 to R10 without additional provider/harness work, and enter R11 branches only with explicit `--watch`.
+- `walk` can reconstruct R0–R8 after server restart where durable baseline/child-plan evidence exists, step from R8 to R10 without additional provider/harness work, enter R11 branches only with explicit `--watch`, and project in-memory R11 states to R12 report facts.
 - R4a checkout mismatch displays as a typed blocker with recovery commands.
 - R6/R7 are admitted without duplicating baseline side effects when evidence already exists.
 

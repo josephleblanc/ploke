@@ -21,11 +21,11 @@ use crate::{
         journal::prototype1_transition_journal_path,
         live_edges::{
             r0_to_r1, r1_to_r2a_or_r3, r3_to_r4a, r4a_to_r4b_or_r4c, r4b_to_r4c_genesis, r4c_to_r5,
-            r5_to_r6, r6_to_r7, r7_to_r8, r8_to_r9, r9_to_r10, r10_to_r11,
+            r5_to_r6, r6_to_r7, r7_to_r8, r8_to_r9, r9_to_r10, r10_to_r11, r11_to_r12,
         },
         typestate::{
             self, AsyncStepInput, R0, R1, R2a, R3, R4a, R4bGenesisChecked, R4cReady, R5, R6, R7,
-            R8, R9, R10, R11FanoutComplete, R11aRejectedOnly, StepInput,
+            R8, R9, R10, R11FanoutComplete, R11aRejectedOnly, R12, StepInput,
         },
     },
     layout::prototype1_monitor_target_file,
@@ -44,8 +44,8 @@ type CampaignConfig = ResolvedCampaignConfig;
 ///
 /// The current server slice admits setup/startup and parent-start phases through
 /// live `R7`, watch-gated `R8`, schedule-ready `R9`, strategy-ready `R10`,
-/// and watch-gated `R11` so the socket lifecycle can be tested before exposing
-/// handoff.
+/// watch-gated `R11`, and report-ready `R12` so the socket lifecycle can be
+/// tested before exposing handoff.
 pub(crate) struct WalkController {
     repo_root: PathBuf,
     state: WalkState,
@@ -77,6 +77,7 @@ enum WalkState {
     R10(R10<RunShape, CampaignConfig>),
     R11a(R11aRejectedOnly<RunShape, CampaignConfig>),
     R11(R11FanoutComplete<RunShape, CampaignConfig>),
+    R12(R12<RunShape, CampaignConfig>),
     /// A consuming transition failed after the previous typed value was moved.
     ///
     /// Rust cannot restore the consumed value after an edge returns `Err`, so
@@ -443,16 +444,14 @@ impl WalkController {
                 }
             }
             WalkState::R11a(r11a) => {
-                self.state = WalkState::R11a(r11a);
-                let detail = "walk reached R11a rejected-only boundary; R12+ phases are not admitted by this debug server slice yet";
-                self.record(format!("blocked at {previous}: {detail}"));
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: detail.to_string(),
-                });
+                r11_to_r12(typestate::R10FanoutBranch::RejectedOnly(r11a)).map(WalkState::R12)
             }
             WalkState::R11(r11) => {
-                self.state = WalkState::R11(r11);
-                let detail = "walk reached R11 child-fanout boundary; R12+ phases are not admitted by this debug server slice yet";
+                r11_to_r12(typestate::R10FanoutBranch::FanoutComplete(r11)).map(WalkState::R12)
+            }
+            WalkState::R12(r12) => {
+                self.state = WalkState::R12(r12);
+                let detail = "walk reached R12 report-facts boundary; R13+ continuation phases are not admitted by this debug server slice yet";
                 self.record(format!("blocked at {previous}: {detail}"));
                 return Err(PrepareError::InvalidBatchSelection {
                     detail: detail.to_string(),
@@ -515,6 +514,7 @@ impl WalkState {
             WalkState::R10(_) => WalkPhase::R10,
             WalkState::R11a(_) => WalkPhase::R11a,
             WalkState::R11(_) => WalkPhase::R11,
+            WalkState::R12(_) => WalkPhase::R12,
             WalkState::Failed { phase, .. } => *phase,
         }
     }
@@ -600,8 +600,9 @@ impl NextPhase for WalkPhase {
             WalkPhase::R8 => Some(WalkPhase::R9),
             WalkPhase::R9 => Some(WalkPhase::R10),
             WalkPhase::R10 => None,
-            WalkPhase::R11a => None,
-            WalkPhase::R11 => None,
+            WalkPhase::R11a => Some(WalkPhase::R12),
+            WalkPhase::R11 => Some(WalkPhase::R12),
+            WalkPhase::R12 => None,
         }
     }
 }
@@ -724,6 +725,27 @@ fn push_side_effects(
         lines.push(format!(
             "  - {}: may publish or receive child-plan authority and wait on provider/harness work",
             highlight_changed("side effect", style.color)
+        ));
+    }
+    if matches!((from, to), (WalkPhase::R10, WalkPhase::R11a)) {
+        lines.push(format!(
+            "  - {}: projects rejected-only selection evidence without child fanout",
+            highlight_changed("side effect", style.color)
+        ));
+    }
+    if matches!((from, to), (WalkPhase::R10, WalkPhase::R11)) {
+        lines.push(format!(
+            "  - {}: runs live child fanout and may spawn or observe child runtimes",
+            highlight_changed("side effect", style.color)
+        ));
+    }
+    if matches!(
+        (from, to),
+        (WalkPhase::R11a | WalkPhase::R11, WalkPhase::R12)
+    ) {
+        lines.push(format!(
+            "  - {}: assembles report facts without emitting the final report",
+            highlight_changed("projection", style.color)
         ));
     }
 }
