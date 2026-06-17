@@ -157,7 +157,8 @@ impl WalkController {
         self.files.push_roots(&mut lines);
         self.files.push_tracked(&mut lines);
         lines.push("typestate:".to_string());
-        lines.extend(indent_lines(phase.typestate(), 2));
+        let typestate = phase.typestate();
+        lines.extend(indent_lines(&typestate, 2));
         push_next_steps(&mut lines, phase);
         lines.push("history:".to_string());
         lines.extend(self.history.lines());

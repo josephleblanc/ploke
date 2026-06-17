@@ -9,6 +9,11 @@ use std::fmt;
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
+use crate::cli::prototype1_state::typestate::{
+    R0_SHAPE, R1_SHAPE, R2A_SHAPE, R3_SHAPE, R4A_SHAPE, R4B_SHAPE, R4C_SHAPE, R5_SHAPE,
+    RuntimeShape,
+};
+
 /// Serializable cursor for the early Prototype 1 typestate walk.
 ///
 /// The current server slice intentionally stops at `R5`: parent-start evidence
@@ -170,63 +175,43 @@ impl WalkPhase {
         self.next_from(from).map(|step| step.edge)
     }
 
-    /// Human typestate delta for a transition between two admitted phases.
-    pub(crate) fn changes_from(self, from: WalkPhase) -> &'static [&'static str] {
-        match (from, self) {
-            (WalkPhase::R0, WalkPhase::R1) => &[
-                "phase: phase::R0 -> phase::R1",
-                "context:\nContext<context::Command<Prototype1StateCommand>>\n-> Context<context::Collected<RunShape, CampaignConfig>>",
-            ],
-            (WalkPhase::R1, WalkPhase::R2a) => &[
-                "phase: phase::R1 -> phase::R2a",
-                "role: RuntimeRole<role::Unknown, role::Unresolved> -> RuntimeRole<role::Parent, role::Initialized<ParentIdentity>>",
-                "history: History<startup::None, head::Unobserved, epoch::None> -> History<startup::Identity<ParentIdentity>, head::Unobserved, epoch::None>",
-                "report: Report<report::None> -> Report<report::Identity<ParentIdentity>>",
-            ],
-            (WalkPhase::R1, WalkPhase::R3) => &[
-                "phase: phase::R1 -> phase::R3",
-                "role: RuntimeRole<role::Unknown, role::Unresolved> -> RuntimeRole<role::Parent, role::Identity<ParentIdentity>>",
-                "history: History<startup::None, head::Unobserved, epoch::None> -> History<startup::Pending, head::Unobserved, epoch::None>",
-            ],
-            (WalkPhase::R3, WalkPhase::R4a) => &[
-                "phase: phase::R3 -> phase::R4a",
-                "role: RuntimeRole<role::Parent, role::Identity<ParentIdentity>> -> parent::Parent<parent::Unchecked>",
-            ],
-            (WalkPhase::R4a, WalkPhase::R4b) => &[
-                "phase: phase::R4a -> phase::R4b",
-                "role: parent::Parent<parent::Unchecked> -> parent::Parent<parent::Checked>",
-            ],
-            (WalkPhase::R4a, WalkPhase::R4c) => &[
-                "phase: phase::R4a -> phase::R4c",
-                "role: parent::Parent<parent::Unchecked> -> parent::Parent<parent::Ready>",
-                "history: History<startup::Pending, head::Unobserved, epoch::None> -> History<startup::Validated<Any>, head::FromStartup, epoch::None>",
-            ],
-            (WalkPhase::R4b, WalkPhase::R4c) => &[
-                "phase: phase::R4b -> phase::R4c",
-                "role: parent::Parent<parent::Checked> -> parent::Parent<parent::Ready>",
-                "history: History<startup::Pending, head::Unobserved, epoch::None> -> History<startup::Validated<Any>, head::FromStartup, epoch::None>",
-            ],
-            (WalkPhase::R4c, WalkPhase::R5) => &[
-                "phase: phase::R4c -> phase::R5",
-                "evidence: Evidence<parent_start::None, ...> -> Evidence<parent_start::Recorded<ParentStartedEntry>, ...>",
-                "side effect: appends parent-start/resource entries to the transition journal",
-            ],
-            _ => &["no admitted typestate delta for this phase pair"],
+    /// Human typestate deltas for a transition between two admitted phases.
+    pub(crate) fn changes_from(self, from: WalkPhase) -> Vec<String> {
+        let mut deltas = match (from.shape(), self.shape()) {
+            (Some(from), Some(to)) => to.render_deltas_from(from),
+            (None, Some(_)) | (Some(_), None) => vec![format!("phase: {from} -> {self}")],
+            (None, None) => Vec::new(),
+        };
+        if matches!((from, self), (WalkPhase::R4c, WalkPhase::R5)) {
+            deltas.push(
+                "side effect: appends parent-start/resource entries to the transition journal"
+                    .to_string(),
+            );
         }
+        if deltas.is_empty() {
+            deltas.push("no admitted typestate delta for this phase pair".to_string());
+        }
+        deltas
     }
 
     /// Human-readable Rust typestate alias for the current phase.
-    pub(crate) fn typestate(self) -> &'static str {
+    pub(crate) fn typestate(self) -> String {
+        self.shape()
+            .map(RuntimeShape::render)
+            .unwrap_or_else(|| "(no Runtime value is held yet)".to_string())
+    }
+
+    fn shape(self) -> Option<RuntimeShape> {
         match self {
-            WalkPhase::Empty => "(no Runtime value is held yet)",
-            WalkPhase::R0 => R0_TYPE,
-            WalkPhase::R1 => R1_TYPE,
-            WalkPhase::R2a => R2A_TYPE,
-            WalkPhase::R3 => R3_TYPE,
-            WalkPhase::R4a => R4A_TYPE,
-            WalkPhase::R4b => R4B_TYPE,
-            WalkPhase::R4c => R4C_TYPE,
-            WalkPhase::R5 => R5_TYPE,
+            WalkPhase::Empty => None,
+            WalkPhase::R0 => Some(R0_SHAPE),
+            WalkPhase::R1 => Some(R1_SHAPE),
+            WalkPhase::R2a => Some(R2A_SHAPE),
+            WalkPhase::R3 => Some(R3_SHAPE),
+            WalkPhase::R4a => Some(R4A_SHAPE),
+            WalkPhase::R4b => Some(R4B_SHAPE),
+            WalkPhase::R4c => Some(R4C_SHAPE),
+            WalkPhase::R5 => Some(R5_SHAPE),
         }
     }
 
@@ -240,211 +225,3 @@ impl fmt::Display for WalkPhase {
         f.write_str(self.as_str())
     }
 }
-
-const R0_TYPE: &str = r#"Runtime<
-    phase::R0,
-    RuntimeRole<role::Unknown, role::Unresolved>,
-    Context<context::Command<Prototype1StateCommand>>,
-    Plan<plan::authority::None, plan::schedule::None>,
-    Children<children::set::None, children::attempt::None>,
-    History<
-        history_axis::startup::None,
-        history_axis::head::Unobserved,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::None,
-        evidence::baseline::None,
-        evidence::policy::None,
-        evidence::selection::None,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::None,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::None>,
->;"#;
-
-const R1_TYPE: &str = r#"Runtime<
-    phase::R1,
-    RuntimeRole<role::Unknown, role::Unresolved>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<plan::authority::None, plan::schedule::None>,
-    Children<children::set::None, children::attempt::None>,
-    History<
-        history_axis::startup::None,
-        history_axis::head::Unobserved,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::None,
-        evidence::baseline::None,
-        evidence::policy::None,
-        evidence::selection::None,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::None,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::None>,
->;"#;
-
-const R2A_TYPE: &str = r#"Runtime<
-    phase::R2a,
-    RuntimeRole<role::Parent, role::Initialized<ParentIdentity>>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<plan::authority::None, plan::schedule::None>,
-    Children<children::set::None, children::attempt::None>,
-    History<
-        history_axis::startup::Identity<ParentIdentity>,
-        history_axis::head::Unobserved,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::None,
-        evidence::baseline::None,
-        evidence::policy::None,
-        evidence::selection::None,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::None,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::Identity<ParentIdentity>>,
->;"#;
-
-const R3_TYPE: &str = r#"Runtime<
-    phase::R3,
-    RuntimeRole<role::Parent, role::Identity<ParentIdentity>>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<plan::authority::None, plan::schedule::None>,
-    Children<children::set::None, children::attempt::None>,
-    History<
-        history_axis::startup::Pending,
-        history_axis::head::Unobserved,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::None,
-        evidence::baseline::None,
-        evidence::policy::None,
-        evidence::selection::None,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::None,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::None>,
->;"#;
-
-const R4A_TYPE: &str = r#"Runtime<
-    phase::R4a,
-    parent::Parent<parent::Unchecked>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<plan::authority::None, plan::schedule::None>,
-    Children<children::set::None, children::attempt::None>,
-    History<
-        history_axis::startup::Pending,
-        history_axis::head::Unobserved,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::None,
-        evidence::baseline::None,
-        evidence::policy::None,
-        evidence::selection::None,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::None,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::None>,
->;"#;
-
-const R4B_TYPE: &str = r#"Runtime<
-    phase::R4b,
-    parent::Parent<parent::Checked>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<plan::authority::None, plan::schedule::None>,
-    Children<children::set::None, children::attempt::None>,
-    History<
-        history_axis::startup::Pending,
-        history_axis::head::Unobserved,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::None,
-        evidence::baseline::None,
-        evidence::policy::None,
-        evidence::selection::None,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::None,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::None>,
->;"#;
-
-const R4C_TYPE: &str = r#"Runtime<
-    phase::R4c,
-    parent::Parent<parent::Ready>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<plan::authority::None, plan::schedule::None>,
-    Children<children::set::None, children::attempt::None>,
-    History<
-        history_axis::startup::Validated<history_axis::startup::Any>,
-        history_axis::head::FromStartup,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::None,
-        evidence::baseline::None,
-        evidence::policy::None,
-        evidence::selection::None,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::None,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::None>,
->;"#;
-
-const R5_TYPE: &str = r#"Runtime<
-    phase::R5,
-    parent::Parent<parent::Ready>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<plan::authority::None, plan::schedule::None>,
-    Children<children::set::None, children::attempt::None>,
-    History<
-        history_axis::startup::Validated<history_axis::startup::Any>,
-        history_axis::head::FromStartup,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::Recorded<ParentStartedEntry>,
-        evidence::baseline::None,
-        evidence::policy::None,
-        evidence::selection::None,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::None,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::None>,
->;"#;

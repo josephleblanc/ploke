@@ -25,70 +25,120 @@ use super::{
     runtime::{
         Children, Context, Continuation, Evidence, History, Plan, Report, Runtime, RuntimeRole,
     },
+    shape::RuntimeShape,
 };
 
-/// R0: CLI dispatch / failure hook.
-///
-/// Initial carrier:
-/// - `Prototype1StateCommand` enters `Context<Command<Prototype1StateCommand>>`.
-/// - Runtime role starts as `RuntimeRole<Unknown, Unresolved>`.
-///
-/// The process has started and received a `Prototype1StateCommand`, but the
-/// runtime role is not known yet in the evalnomicon `Role<State>` sense.
-pub(crate) type R0 = Runtime<
-    phase::R0,
-    RuntimeRole<role::Unknown, role::Unresolved>,
-    Context<context::Command<Prototype1StateCommand>>,
-    Plan<plan::authority::None, plan::schedule::None>,
-    Children<children::set::None, children::attempt::None>,
-    History<history_axis::startup::None, history_axis::head::Unobserved, history_axis::epoch::None>,
-    Evidence<
-        evidence::parent_start::None,
-        evidence::baseline::None,
-        evidence::policy::None,
-        evidence::selection::None,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::None,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::None>,
->;
+macro_rules! runtime_alias {
+    (
+        $(#[$meta:meta])*
+        $vis:vis type $name:ident $(<$($generic:ident $(= $default:ty)?),+ $(,)?>)? = Runtime<
+            $phase:ty,
+            $role:ty,
+            $context:ty,
+            $plan:ty,
+            $children:ty,
+            $history:ty,
+            $evidence:ty,
+            $continuation:ty,
+            $report:ty $(,)?
+        >;
+        shape $shape:ident;
+    ) => {
+        $(#[$meta])*
+        $vis type $name $(<$($generic $(= $default)?),+>)? = Runtime<
+            $phase,
+            $role,
+            $context,
+            $plan,
+            $children,
+            $history,
+            $evidence,
+            $continuation,
+            $report,
+        >;
 
-/// R1: prelude and coordinates.
-///
-/// Axis changes:
-/// - `Context<Command<Prototype1StateCommand>> -> Context<Collected>`.
-/// - Role remains `RuntimeRole<Unknown, Unresolved>`.
-///
-/// Existing code currently materializes these as loose locals: repo root,
-/// campaign id, manifest path, run shape, resolved campaign config, journal
-/// path/writer, and active monitor target. `Prototype1StateRunShape` exists but
-/// is private to `cli_facing.rs`; if this map becomes implementation, that
-/// shape should move behind this context axis instead of being duplicated.
-pub(crate) type R1<RunShape = (), CampaignConfig = ()> = Runtime<
-    phase::R1,
-    RuntimeRole<role::Unknown, role::Unresolved>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<plan::authority::None, plan::schedule::None>,
-    Children<children::set::None, children::attempt::None>,
-    History<history_axis::startup::None, history_axis::head::Unobserved, history_axis::epoch::None>,
-    Evidence<
-        evidence::parent_start::None,
-        evidence::baseline::None,
-        evidence::policy::None,
-        evidence::selection::None,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::None,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::None>,
->;
+        $vis const $shape: RuntimeShape = RuntimeShape {
+            phase: stringify!($phase),
+            role: stringify!($role),
+            context: stringify!($context),
+            plan: stringify!($plan),
+            children: stringify!($children),
+            history: stringify!($history),
+            evidence: stringify!($evidence),
+            continuation: stringify!($continuation),
+            report: stringify!($report),
+        };
+    };
+}
+
+runtime_alias! {
+    /// R0: CLI dispatch / failure hook.
+    ///
+    /// Initial carrier:
+    /// - `Prototype1StateCommand` enters `Context<Command<Prototype1StateCommand>>`.
+    /// - Runtime role starts as `RuntimeRole<Unknown, Unresolved>`.
+    ///
+    /// The process has started and received a `Prototype1StateCommand`, but the
+    /// runtime role is not known yet in the evalnomicon `Role<State>` sense.
+    pub(crate) type R0 = Runtime<
+        phase::R0,
+        RuntimeRole<role::Unknown, role::Unresolved>,
+        Context<context::Command<Prototype1StateCommand>>,
+        Plan<plan::authority::None, plan::schedule::None>,
+        Children<children::set::None, children::attempt::None>,
+        History<history_axis::startup::None, history_axis::head::Unobserved, history_axis::epoch::None>,
+        Evidence<
+            evidence::parent_start::None,
+            evidence::baseline::None,
+            evidence::policy::None,
+            evidence::selection::None,
+            evidence::completion::None,
+        >,
+        Continuation<
+            continuation::selection::None,
+            continuation::decision::None,
+            continuation::handoff::None,
+        >,
+        Report<report::None>,
+    >;
+    shape R0_SHAPE;
+}
+
+runtime_alias! {
+    /// R1: prelude and coordinates.
+    ///
+    /// Axis changes:
+    /// - `Context<Command<Prototype1StateCommand>> -> Context<Collected>`.
+    /// - Role remains `RuntimeRole<Unknown, Unresolved>`.
+    ///
+    /// Existing code currently materializes these as loose locals: repo root,
+    /// campaign id, manifest path, run shape, resolved campaign config, journal
+    /// path/writer, and active monitor target. `Prototype1StateRunShape` exists but
+    /// is private to `cli_facing.rs`; if this map becomes implementation, that
+    /// shape should move behind this context axis instead of being duplicated.
+    pub(crate) type R1<RunShape = (), CampaignConfig = ()> = Runtime<
+        phase::R1,
+        RuntimeRole<role::Unknown, role::Unresolved>,
+        Context<context::Collected<RunShape, CampaignConfig>>,
+        Plan<plan::authority::None, plan::schedule::None>,
+        Children<children::set::None, children::attempt::None>,
+        History<history_axis::startup::None, history_axis::head::Unobserved, history_axis::epoch::None>,
+        Evidence<
+            evidence::parent_start::None,
+            evidence::baseline::None,
+            evidence::policy::None,
+            evidence::selection::None,
+            evidence::completion::None,
+        >,
+        Continuation<
+            continuation::selection::None,
+            continuation::decision::None,
+            continuation::handoff::None,
+        >,
+        Report<report::None>,
+    >;
+    shape R1_SHAPE;
+}
 
 impl R0 {
     /// Construct the initial runtime-state carrier from the raw CLI command.
@@ -240,77 +290,83 @@ pub(crate) struct R3Parts<RunShape, CampaignConfig> {
     pub(crate) parent_identity: ParentIdentity,
 }
 
-/// R2a: gen0 parent identity initialization terminal branch.
-///
-/// Axis changes:
-/// - `RuntimeRole<Unknown, Unresolved>`
-///   `-> RuntimeRole<Parent, Initialized<ParentIdentity>>`.
-/// - `Report<None> -> Report<Identity<ParentIdentity>>`.
-///
-/// This returns before the normal parent runtime path. ADR 007 says the future
-/// version should create a genesis History block; current code only writes and
-/// commits checkout parent identity.
-pub(crate) type R2a<RunShape = (), CampaignConfig = ()> = Runtime<
-    phase::R2a,
-    RuntimeRole<role::Parent, role::Initialized<ParentIdentity>>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<plan::authority::None, plan::schedule::None>,
-    Children<children::set::None, children::attempt::None>,
-    History<
-        history_axis::startup::Identity<ParentIdentity>,
-        history_axis::head::Unobserved,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::None,
-        evidence::baseline::None,
-        evidence::policy::None,
-        evidence::selection::None,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::None,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::Identity<ParentIdentity>>,
->;
+runtime_alias! {
+    /// R2a: gen0 parent identity initialization terminal branch.
+    ///
+    /// Axis changes:
+    /// - `RuntimeRole<Unknown, Unresolved>`
+    ///   `-> RuntimeRole<Parent, Initialized<ParentIdentity>>`.
+    /// - `Report<None> -> Report<Identity<ParentIdentity>>`.
+    ///
+    /// This returns before the normal parent runtime path. ADR 007 says the future
+    /// version should create a genesis History block; current code only writes and
+    /// commits checkout parent identity.
+    pub(crate) type R2a<RunShape = (), CampaignConfig = ()> = Runtime<
+        phase::R2a,
+        RuntimeRole<role::Parent, role::Initialized<ParentIdentity>>,
+        Context<context::Collected<RunShape, CampaignConfig>>,
+        Plan<plan::authority::None, plan::schedule::None>,
+        Children<children::set::None, children::attempt::None>,
+        History<
+            history_axis::startup::Identity<ParentIdentity>,
+            history_axis::head::Unobserved,
+            history_axis::epoch::None,
+        >,
+        Evidence<
+            evidence::parent_start::None,
+            evidence::baseline::None,
+            evidence::policy::None,
+            evidence::selection::None,
+            evidence::completion::None,
+        >,
+        Continuation<
+            continuation::selection::None,
+            continuation::decision::None,
+            continuation::handoff::None,
+        >,
+        Report<report::Identity<ParentIdentity>>,
+    >;
+    shape R2A_SHAPE;
+}
 
-/// R3: parent identity source resolved.
-///
-/// Axis changes:
-/// - `RuntimeRole<Unknown, Unresolved>`
-///   `-> RuntimeRole<Parent, Identity<ParentIdentity>>`.
-/// - `History<startup::None, head::Unobserved, epoch::None>`
-///   `-> History<startup::Pending, head::Unobserved, epoch::None>`.
-///
-/// The concrete parent carrier has not been constructed yet. The role axis is a
-/// parent-role candidate with `ParentIdentity` evidence.
-pub(crate) type R3<RunShape = (), CampaignConfig = ()> = Runtime<
-    phase::R3,
-    RuntimeRole<role::Parent, role::Identity<ParentIdentity>>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<plan::authority::None, plan::schedule::None>,
-    Children<children::set::None, children::attempt::None>,
-    History<
-        history_axis::startup::Pending,
-        history_axis::head::Unobserved,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::None,
-        evidence::baseline::None,
-        evidence::policy::None,
-        evidence::selection::None,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::None,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::None>,
->;
+runtime_alias! {
+    /// R3: parent identity source resolved.
+    ///
+    /// Axis changes:
+    /// - `RuntimeRole<Unknown, Unresolved>`
+    ///   `-> RuntimeRole<Parent, Identity<ParentIdentity>>`.
+    /// - `History<startup::None, head::Unobserved, epoch::None>`
+    ///   `-> History<startup::Pending, head::Unobserved, epoch::None>`.
+    ///
+    /// The concrete parent carrier has not been constructed yet. The role axis is a
+    /// parent-role candidate with `ParentIdentity` evidence.
+    pub(crate) type R3<RunShape = (), CampaignConfig = ()> = Runtime<
+        phase::R3,
+        RuntimeRole<role::Parent, role::Identity<ParentIdentity>>,
+        Context<context::Collected<RunShape, CampaignConfig>>,
+        Plan<plan::authority::None, plan::schedule::None>,
+        Children<children::set::None, children::attempt::None>,
+        History<
+            history_axis::startup::Pending,
+            history_axis::head::Unobserved,
+            history_axis::epoch::None,
+        >,
+        Evidence<
+            evidence::parent_start::None,
+            evidence::baseline::None,
+            evidence::policy::None,
+            evidence::selection::None,
+            evidence::completion::None,
+        >,
+        Continuation<
+            continuation::selection::None,
+            continuation::decision::None,
+            continuation::handoff::None,
+        >,
+        Report<report::None>,
+    >;
+    shape R3_SHAPE;
+}
 
 impl<RunShape, CampaignConfig> R2a<RunShape, CampaignConfig> {
     /// Build the terminal identity-initialization state from R1 context and the
@@ -448,112 +504,121 @@ pub(crate) enum R4aStartupBranch<RunShape, CampaignConfig> {
     PredecessorReady(R4cReady<RunShape, CampaignConfig>),
 }
 
-/// R4a: parent loaded/constructed as unchecked.
-///
-/// Axis changes:
-/// - `RuntimeRole<Parent, Identity<ParentIdentity>>`
-///   `-> Parent<Unchecked>`.
-///
-/// First concrete parent role carrier. This corresponds to the diagram edge
-/// `load parent -> parent unchecked` and the code transition
-/// `ParentIdentity -> Parent<Unchecked>`.
-pub(crate) type R4a<RunShape = (), CampaignConfig = ()> = Runtime<
-    phase::R4a,
-    parent_role::Parent<parent_role::Unchecked>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<plan::authority::None, plan::schedule::None>,
-    Children<children::set::None, children::attempt::None>,
-    History<
-        history_axis::startup::Pending,
-        history_axis::head::Unobserved,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::None,
-        evidence::baseline::None,
-        evidence::policy::None,
-        evidence::selection::None,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::None,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::None>,
->;
+runtime_alias! {
+    /// R4a: parent loaded/constructed as unchecked.
+    ///
+    /// Axis changes:
+    /// - `RuntimeRole<Parent, Identity<ParentIdentity>>`
+    ///   `-> Parent<Unchecked>`.
+    ///
+    /// First concrete parent role carrier. This corresponds to the diagram edge
+    /// `load parent -> parent unchecked` and the code transition
+    /// `ParentIdentity -> Parent<Unchecked>`.
+    pub(crate) type R4a<RunShape = (), CampaignConfig = ()> = Runtime<
+        phase::R4a,
+        parent_role::Parent<parent_role::Unchecked>,
+        Context<context::Collected<RunShape, CampaignConfig>>,
+        Plan<plan::authority::None, plan::schedule::None>,
+        Children<children::set::None, children::attempt::None>,
+        History<
+            history_axis::startup::Pending,
+            history_axis::head::Unobserved,
+            history_axis::epoch::None,
+        >,
+        Evidence<
+            evidence::parent_start::None,
+            evidence::baseline::None,
+            evidence::policy::None,
+            evidence::selection::None,
+            evidence::completion::None,
+        >,
+        Continuation<
+            continuation::selection::None,
+            continuation::decision::None,
+            continuation::handoff::None,
+        >,
+        Report<report::None>,
+    >;
+    shape R4A_SHAPE;
+}
 
-/// R4b: genesis checkout validated.
-///
-/// Axis changes:
-/// - `Parent<Unchecked> -> Parent<Checked>`.
-///
-/// Genesis path only: `Parent<Unchecked> -> Parent<Checked>` after active
-/// checkout validation. Predecessor startup does not pass through this parent
-/// state in the current code.
-pub(crate) type R4bGenesisChecked<RunShape = (), CampaignConfig = ()> = Runtime<
-    phase::R4b,
-    parent_role::Parent<parent_role::Checked>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<plan::authority::None, plan::schedule::None>,
-    Children<children::set::None, children::attempt::None>,
-    History<
-        history_axis::startup::Pending,
-        history_axis::head::Unobserved,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::None,
-        evidence::baseline::None,
-        evidence::policy::None,
-        evidence::selection::None,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::None,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::None>,
->;
+runtime_alias! {
+    /// R4b: genesis checkout validated.
+    ///
+    /// Axis changes:
+    /// - `Parent<Unchecked> -> Parent<Checked>`.
+    ///
+    /// Genesis path only: `Parent<Unchecked> -> Parent<Checked>` after active
+    /// checkout validation. Predecessor startup does not pass through this parent
+    /// state in the current code.
+    pub(crate) type R4bGenesisChecked<RunShape = (), CampaignConfig = ()> = Runtime<
+        phase::R4b,
+        parent_role::Parent<parent_role::Checked>,
+        Context<context::Collected<RunShape, CampaignConfig>>,
+        Plan<plan::authority::None, plan::schedule::None>,
+        Children<children::set::None, children::attempt::None>,
+        History<
+            history_axis::startup::Pending,
+            history_axis::head::Unobserved,
+            history_axis::epoch::None,
+        >,
+        Evidence<
+            evidence::parent_start::None,
+            evidence::baseline::None,
+            evidence::policy::None,
+            evidence::selection::None,
+            evidence::completion::None,
+        >,
+        Continuation<
+            continuation::selection::None,
+            continuation::decision::None,
+            continuation::handoff::None,
+        >,
+        Report<report::None>,
+    >;
+    shape R4B_SHAPE;
+}
 
-/// R4c: parent startup complete in the current live implementation.
-///
-/// Axis changes:
-/// - Genesis: `Parent<Checked> -> Parent<Ready>`.
-/// - Predecessor: `Parent<Unchecked> -> Parent<Ready>`.
-/// - `History<startup::Pending, head::Unobserved, epoch::None>`
-///   `-> History<startup::Validated<Any>, head::FromStartup, epoch::None>`.
-///
-/// Both startup branches converge here as the same induction invariant:
-/// `Parent<Ready>`. The runtime does not need a different post-startup state for
-/// genesis vs predecessor. Predecessor bookkeeping, when present, is ordinary
-/// value metadata in `context::Collected::handoff_invocation`.
-pub(crate) type R4cReady<RunShape = (), CampaignConfig = ()> = Runtime<
-    phase::R4c,
-    parent_role::Parent<parent_role::Ready>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<plan::authority::None, plan::schedule::None>,
-    Children<children::set::None, children::attempt::None>,
-    History<
-        history_axis::startup::Validated<history_axis::startup::Any>,
-        history_axis::head::FromStartup,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::None,
-        evidence::baseline::None,
-        evidence::policy::None,
-        evidence::selection::None,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::None,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::None>,
->;
+runtime_alias! {
+    /// R4c: parent startup complete in the current live implementation.
+    ///
+    /// Axis changes:
+    /// - Genesis: `Parent<Checked> -> Parent<Ready>`.
+    /// - Predecessor: `Parent<Unchecked> -> Parent<Ready>`.
+    /// - `History<startup::Pending, head::Unobserved, epoch::None>`
+    ///   `-> History<startup::Validated<Any>, head::FromStartup, epoch::None>`.
+    ///
+    /// Both startup branches converge here as the same induction invariant:
+    /// `Parent<Ready>`. The runtime does not need a different post-startup state for
+    /// genesis vs predecessor. Predecessor bookkeeping, when present, is ordinary
+    /// value metadata in `context::Collected::handoff_invocation`.
+    pub(crate) type R4cReady<RunShape = (), CampaignConfig = ()> = Runtime<
+        phase::R4c,
+        parent_role::Parent<parent_role::Ready>,
+        Context<context::Collected<RunShape, CampaignConfig>>,
+        Plan<plan::authority::None, plan::schedule::None>,
+        Children<children::set::None, children::attempt::None>,
+        History<
+            history_axis::startup::Validated<history_axis::startup::Any>,
+            history_axis::head::FromStartup,
+            history_axis::epoch::None,
+        >,
+        Evidence<
+            evidence::parent_start::None,
+            evidence::baseline::None,
+            evidence::policy::None,
+            evidence::selection::None,
+            evidence::completion::None,
+        >,
+        Continuation<
+            continuation::selection::None,
+            continuation::decision::None,
+            continuation::handoff::None,
+        >,
+        Report<report::None>,
+    >;
+    shape R4C_SHAPE;
+}
 
 impl<RunShape, CampaignConfig> R4a<RunShape, CampaignConfig> {
     pub(crate) fn from_collected_parent(
@@ -848,39 +913,42 @@ impl<RunShape, CampaignConfig> R8<RunShape, CampaignConfig> {
     }
 }
 
-/// R5: parent-start evidence recorded.
-///
-/// Axis changes:
-/// - `Evidence<parent_start::None, ...>`
-///   `-> Evidence<parent_start::Recorded<ParentStartedEntry>, ...>`.
-///
-/// Existing carrier: `ParentStartedEntry` in the transition journal, plus a
-/// resource sample for `ParentStart`.
-pub(crate) type R5<RunShape = (), CampaignConfig = ()> = Runtime<
-    phase::R5,
-    parent_role::Parent<parent_role::Ready>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<plan::authority::None, plan::schedule::None>,
-    Children<children::set::None, children::attempt::None>,
-    History<
-        history_axis::startup::Validated<history_axis::startup::Any>,
-        history_axis::head::FromStartup,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::Recorded<ParentStartedEntry>,
-        evidence::baseline::None,
-        evidence::policy::None,
-        evidence::selection::None,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::None,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::None>,
->;
+runtime_alias! {
+    /// R5: parent-start evidence recorded.
+    ///
+    /// Axis changes:
+    /// - `Evidence<parent_start::None, ...>`
+    ///   `-> Evidence<parent_start::Recorded<ParentStartedEntry>, ...>`.
+    ///
+    /// Existing carrier: `ParentStartedEntry` in the transition journal, plus a
+    /// resource sample for `ParentStart`.
+    pub(crate) type R5<RunShape = (), CampaignConfig = ()> = Runtime<
+        phase::R5,
+        parent_role::Parent<parent_role::Ready>,
+        Context<context::Collected<RunShape, CampaignConfig>>,
+        Plan<plan::authority::None, plan::schedule::None>,
+        Children<children::set::None, children::attempt::None>,
+        History<
+            history_axis::startup::Validated<history_axis::startup::Any>,
+            history_axis::head::FromStartup,
+            history_axis::epoch::None,
+        >,
+        Evidence<
+            evidence::parent_start::Recorded<ParentStartedEntry>,
+            evidence::baseline::None,
+            evidence::policy::None,
+            evidence::selection::None,
+            evidence::completion::None,
+        >,
+        Continuation<
+            continuation::selection::None,
+            continuation::decision::None,
+            continuation::handoff::None,
+        >,
+        Report<report::None>,
+    >;
+    shape R5_SHAPE;
+}
 
 /// R6: parent baseline established.
 ///
