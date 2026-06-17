@@ -13,7 +13,10 @@ use std::{
 use tokio::net::UnixStream;
 
 use crate::{
-    cli::{InspectOutputFormat, Prototype1StateWalkStartCommand, Prototype1StateWalkSubcommand},
+    cli::{
+        InspectOutputFormat, Prototype1StateWalkStartCommand, Prototype1StateWalkSubcommand,
+        Prototype1StateWalkUseCommand,
+    },
     spec::PrepareError,
 };
 
@@ -30,6 +33,7 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
         Prototype1StateWalkSubcommand::Serve(_) => {
             unreachable!("serve is handled before client dispatch")
         }
+        Prototype1StateWalkSubcommand::Use(command) => use_context(command),
         Prototype1StateWalkSubcommand::Start(command) => start(command).await,
         Prototype1StateWalkSubcommand::Step(command) => {
             let format = command.format;
@@ -137,19 +141,19 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
 async fn start(command: Prototype1StateWalkStartCommand) -> Result<(), PrepareError> {
     let format = command.format;
     let until = command.until;
+    let idle_ttl = command.idle_ttl()?;
     let socket_override = command.socket.clone();
     let (repo_root, socket) =
         args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
-    ensure_server(&repo_root, &socket).await?;
+    ensure_server(&repo_root, &socket, idle_ttl).await?;
     let epoch = ServerEpoch::capture(&repo_root)?;
+    let mut config = command.start_config();
+    config.repo_root = Some(repo_root.clone());
     let response = send_request(
         &socket,
         WalkRequest {
             client_epoch: Some(epoch),
-            body: WalkRequestBody::Start {
-                config: command.start_config(),
-                until,
-            },
+            body: WalkRequestBody::Start { config, until },
         },
     )
     .await?;
@@ -157,15 +161,30 @@ async fn start(command: Prototype1StateWalkStartCommand) -> Result<(), PrepareEr
     response_result(response)
 }
 
+fn use_context(command: Prototype1StateWalkUseCommand) -> Result<(), PrepareError> {
+    let repo_root = paths::resolve_use_repo_root(command.repo_root.as_deref())?;
+    let socket = paths::socket_path(&repo_root, command.socket.as_deref())?;
+    let context = paths::WalkContext {
+        repo_root,
+        socket: Some(socket),
+    };
+    let context_path = paths::save_context(&context)?;
+    print_context(&context, &context_path, command.format)
+}
+
 /// Ensure a healthy server is listening at `socket`, spawning one if absent.
-async fn ensure_server(repo_root: &Path, socket: &Path) -> Result<(), PrepareError> {
+async fn ensure_server(
+    repo_root: &Path,
+    socket: &Path,
+    idle_ttl: Option<Duration>,
+) -> Result<(), PrepareError> {
     match health(socket).await? {
         Health::Online(_) => return Ok(()),
         Health::Offline => {}
     }
     paths::ensure_socket_parent(socket)?;
     paths::remove_socket_file(socket)?;
-    spawn_server(repo_root, socket)?;
+    spawn_server(repo_root, socket, idle_ttl)?;
     for _ in 0..100 {
         tokio::time::sleep(Duration::from_millis(50)).await;
         if let Health::Online(_) = health(socket).await? {
@@ -186,7 +205,11 @@ async fn ensure_server(repo_root: &Path, socket: &Path) -> Result<(), PrepareErr
 /// This is intentionally lighter than full daemonization in the first server
 /// slice: stdio is detached, the child gets its own process group on Unix, and
 /// the caller polls `Health` before sending the real request.
-fn spawn_server(repo_root: &Path, socket: &Path) -> Result<(), PrepareError> {
+fn spawn_server(
+    repo_root: &Path,
+    socket: &Path,
+    idle_ttl: Option<Duration>,
+) -> Result<(), PrepareError> {
     let exe = std::env::current_exe().map_err(|source| PrepareError::DatabaseSetup {
         phase: "prototype1_state_walk_current_exe",
         detail: source.to_string(),
@@ -199,7 +222,16 @@ fn spawn_server(repo_root: &Path, socket: &Path) -> Result<(), PrepareError> {
         .arg("--repo-root")
         .arg(repo_root)
         .arg("--socket")
-        .arg(socket)
+        .arg(socket);
+    match idle_ttl {
+        Some(ttl) => {
+            command.arg("--ttl-secs").arg(ttl.as_secs().to_string());
+        }
+        None => {
+            command.arg("--no-ttl");
+        }
+    }
+    command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -263,6 +295,44 @@ async fn health(socket: &Path) -> Result<Health, PrepareError> {
     Ok(Health::Online(response))
 }
 
+fn print_context(
+    context: &paths::WalkContext,
+    context_path: &Path,
+    format: InspectOutputFormat,
+) -> Result<(), PrepareError> {
+    match format {
+        InspectOutputFormat::Json => {
+            let value = serde_json::json!({
+                "type": "walk_context",
+                "status": "saved",
+                "repo_root": context.repo_root,
+                "socket": context.socket,
+                "context_path": context_path,
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&value).map_err(PrepareError::Serialize)?
+            );
+        }
+        InspectOutputFormat::Table => {
+            println!("walk context");
+            println!("{}", "-".repeat(40));
+            println!("status: saved");
+            println!("repo_root: {}", context.repo_root.display());
+            println!(
+                "socket: {}",
+                context
+                    .socket
+                    .as_ref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            );
+            println!("context: {}", context_path.display());
+        }
+    }
+    Ok(())
+}
+
 /// Render one server response in table or JSON format.
 fn print_response(
     response: &WalkResponse,
@@ -281,7 +351,7 @@ fn print_response(
                 message,
                 epoch,
             } => {
-                println!("prototype1-state walk");
+                println!("walk");
                 println!("{}", "-".repeat(40));
                 println!("status: ok");
                 println!("phase: {phase}");
@@ -298,7 +368,7 @@ fn print_response(
                 phase,
                 epoch,
             } => {
-                println!("prototype1-state walk");
+                println!("walk");
                 println!("{}", "-".repeat(40));
                 println!("status: error");
                 println!("code: {code}");
@@ -345,7 +415,7 @@ fn print_offline(socket: &Path, format: InspectOutputFormat) -> Result<(), Prepa
             );
         }
         InspectOutputFormat::Table => {
-            println!("prototype1-state walk");
+            println!("walk");
             println!("{}", "-".repeat(40));
             println!("status: offline");
             println!("socket: {}", socket.display());
@@ -360,10 +430,7 @@ fn response_result(response: WalkResponse) -> Result<(), PrepareError> {
         Ok(())
     } else {
         Err(PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "prototype1-state walk request failed at {:?}",
-                response.phase()
-            ),
+            detail: format!("walk request failed at {:?}", response.phase()),
         })
     }
 }

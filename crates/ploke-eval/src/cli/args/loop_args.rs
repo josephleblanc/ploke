@@ -33,6 +33,12 @@ pub enum LoopSubcommand {
     /// Drive the typed Prototype 1 parent runtime path.
     Prototype1State(Prototype1StateCommand),
     /// Debug-only local server for stepping Prototype 1 typestate transitions.
+    #[command(
+        name = "walk",
+        about = "Debug-step Prototype 1 typestate transitions through a local walk server",
+        long_about = "Debug-step Prototype 1 typestate transitions through a local walk server.\n\nThe walk server is a local debugging harness over the live Prototype 1 transition edges. It is not production loop authority. By default it uses the active walk context if one was set with `walk use`, otherwise the current directory, and a repo-hashed socket under the runtime directory.",
+        after_help = "Examples:\n  ploke-eval loop walk use /path/to/parent-worktree\n  ploke-eval loop walk start\n  ploke-eval loop walk step\n  ploke-eval loop walk show\n  ploke-eval loop walk files\n  ploke-eval loop walk stop\n\nR5 writes parent-start/resource entries to the transition journal. Use a clean Prototype 1 parent worktree when walking through R5."
+    )]
     Prototype1StateWalk(Prototype1StateWalkCommand),
     /// Inspect or execute one staged Prototype 1 runner invocation.
     #[command(hide = true)]
@@ -146,6 +152,8 @@ pub struct Prototype1StateWalkCommand {
 pub enum Prototype1StateWalkSubcommand {
     /// Run the local walk server on a Unix socket.
     Serve(Prototype1StateWalkServeCommand),
+    /// Save the active parent checkout for later walk commands.
+    Use(Prototype1StateWalkUseCommand),
     /// Start a new in-memory walk, defaulting to R0.
     Start(Prototype1StateWalkStartCommand),
     /// Advance the current in-memory walk by one step or until a target phase.
@@ -164,18 +172,40 @@ pub enum Prototype1StateWalkSubcommand {
 
 #[derive(Debug, Clone, Parser)]
 pub struct Prototype1StateWalkServeCommand {
-    /// Parent checkout root. Defaults to the current directory.
+    /// Parent checkout root. Defaults to active walk context, then current directory.
     #[arg(long, value_name = "PATH")]
     pub repo_root: Option<PathBuf>,
 
     /// Explicit Unix socket path. Defaults to a repo-hashed path under the runtime directory.
     #[arg(long, value_name = "PATH")]
     pub socket: Option<PathBuf>,
+
+    /// Idle seconds before the server exits. Defaults to 1800 seconds.
+    #[arg(long, value_name = "SECS", conflicts_with = "no_ttl")]
+    pub ttl_secs: Option<u64>,
+
+    /// Keep the server alive until an explicit stop request.
+    #[arg(long)]
+    pub no_ttl: bool,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkUseCommand {
+    /// Parent checkout root to remember. Defaults to the current directory.
+    #[arg(value_name = "PATH")]
+    pub repo_root: Option<PathBuf>,
+
+    /// Explicit Unix socket path to remember for this walk context.
+    #[arg(long, value_name = "PATH")]
+    pub socket: Option<PathBuf>,
+
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
 }
 
 #[derive(Debug, Clone, Parser)]
 pub struct Prototype1StateWalkControlCommand {
-    /// Parent checkout root. Defaults to the current directory.
+    /// Parent checkout root. Defaults to active walk context, then current directory.
     #[arg(long, value_name = "PATH")]
     pub repo_root: Option<PathBuf>,
 
@@ -189,7 +219,7 @@ pub struct Prototype1StateWalkControlCommand {
 
 #[derive(Debug, Clone, Parser)]
 pub struct Prototype1StateWalkStepCommand {
-    /// Parent checkout root. Defaults to the current directory.
+    /// Parent checkout root. Defaults to active walk context, then current directory.
     #[arg(long, value_name = "PATH")]
     pub repo_root: Option<PathBuf>,
 
@@ -215,13 +245,21 @@ pub struct Prototype1StateWalkStartCommand {
     #[arg(long)]
     pub node_id: Option<String>,
 
-    /// Parent checkout root. Defaults to the current directory.
+    /// Parent checkout root. Defaults to active walk context, then current directory.
     #[arg(long, value_name = "PATH")]
     pub repo_root: Option<PathBuf>,
 
     /// Explicit Unix socket path. Defaults to a repo-hashed path under the runtime directory.
     #[arg(long, value_name = "PATH")]
     pub socket: Option<PathBuf>,
+
+    /// Idle seconds before an auto-started server exits. Defaults to 1800 seconds.
+    #[arg(long, value_name = "SECS", conflicts_with = "no_ttl")]
+    pub ttl_secs: Option<u64>,
+
+    /// Keep an auto-started server alive until an explicit stop request.
+    #[arg(long)]
+    pub no_ttl: bool,
 
     /// Bootstrap the active checkout by writing and committing parent identity.
     #[arg(long)]

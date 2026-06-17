@@ -43,52 +43,58 @@ ploke-eval loop walk ...
 
 ## Operator commands
 
+Set an active parent checkout for short later commands:
+
+```text
+ploke-eval loop walk use /path/to/prototype1-parent-worktree
+```
+
 Check server status without starting it:
 
 ```text
-ploke-eval loop walk status --format json
+ploke-eval loop walk status
 ```
 
 Start a server if needed, create a new in-memory walk, and stop at R0:
 
 ```text
-ploke-eval loop walk start --until r0 --format json
+ploke-eval loop walk start
 ```
 
 Advance one step from the current in-memory state:
 
 ```text
-ploke-eval loop walk step --format json
+ploke-eval loop walk step
 ```
 
 Advance until a supported phase:
 
 ```text
-ploke-eval loop walk step --until r5 --format json
+ploke-eval loop walk step --until r5
 ```
 
 Show current state and in-memory history:
 
 ```text
-ploke-eval loop walk show --format json
+ploke-eval loop walk show
 ```
 
 Print tracked output files for the current walk:
 
 ```text
-ploke-eval loop walk files --format table
+ploke-eval loop walk files
 ```
 
 Reset the in-memory walk without stopping the server:
 
 ```text
-ploke-eval loop walk reset --format json
+ploke-eval loop walk reset
 ```
 
 Stop the server:
 
 ```text
-ploke-eval loop walk stop --format json
+ploke-eval loop walk stop
 ```
 
 For isolated smoke tests, pass an explicit short socket path:
@@ -97,10 +103,10 @@ For isolated smoke tests, pass an explicit short socket path:
 sockdir=$(mktemp -d /tmp/ploke-walk.XXXXXX)
 sock="$sockdir/walk.sock"
 
-cargo run -q -p ploke-eval -- loop walk start --socket "$sock" --until r0 --format json
-cargo run -q -p ploke-eval -- loop walk step  --socket "$sock" --format json
-cargo run -q -p ploke-eval -- loop walk show  --socket "$sock" --format json
-cargo run -q -p ploke-eval -- loop walk stop  --socket "$sock" --format json
+cargo run -q -p ploke-eval -- loop walk start --socket "$sock" --until r0
+cargo run -q -p ploke-eval -- loop walk step  --socket "$sock"
+cargo run -q -p ploke-eval -- loop walk show  --socket "$sock"
+cargo run -q -p ploke-eval -- loop walk stop  --socket "$sock"
 
 rm -rf "$sockdir"
 ```
@@ -148,7 +154,8 @@ $XDG_RUNTIME_DIR/ploke-eval/walk/p1walk-<repo-hash>.sock
 ```
 
 - If `XDG_RUNTIME_DIR` is unavailable, falls back under `/tmp/ploke-eval-$USER/walk/`.
-- Supports `PLOKE_EVAL_WALK_SOCKET_DIR` and explicit `--socket`.
+- Supports `PLOKE_EVAL_WALK_SOCKET_DIR`, explicit `--socket`, and saved `walk use --socket` context.
+- Saves active walk context at `context.json` under the same runtime socket directory.
 - Creates parent directory with `0700` permissions on Unix.
 - Checks Unix socket path length against platform limits.
 
@@ -216,6 +223,7 @@ Failure behavior:
 `walk/client.rs`
 
 - Implements short-lived CLI client behavior.
+- `use` saves the active repo/socket context for short later commands.
 - `start` probes health, cleans up a stale socket if offline, spawns the same binary in server mode, waits for health, then sends `Start`.
 - `status`, `show`, `files`, `step`, `reset`, and `stop` send one request and print one response.
 - Connection-refused health probes remove stale socket files, matching Zellij's stale-session cleanup pattern.
@@ -232,6 +240,7 @@ Borrowed from Zellij's client/server shape:
 - client commands are short-lived and communicate over a Unix socket;
 - server owns in-memory session state;
 - socket lives under a runtime directory with private permissions;
+- saved walk context also lives under that runtime directory;
 - socket path length is checked;
 - health/status and stop requests exist;
 - IPC messages are explicitly framed.
@@ -241,6 +250,7 @@ Differences from Zellij in this first slice:
 - Uses length-prefixed JSON, not protobuf.
 - Uses `tokio::net::UnixListener` / `UnixStream`, not the `interprocess` crate.
 - Uses a background child process with stdio redirected to null, not full Unix double-fork daemonization.
+- Auto-started servers have a 30-minute idle TTL by default; use `--ttl-secs` or `--no-ttl` to change it.
 - Supports one active walk per server, not multiple named sessions.
 - Processes requests serially, not via a router thread and central bus.
 
@@ -301,18 +311,19 @@ cargo check -p ploke-eval --all-targets
 Smoke commands run with a temp socket:
 
 ```text
-cargo run -q -p ploke-eval -- loop walk start --socket "$sock" --until r0 --format json
-cargo run -q -p ploke-eval -- loop walk step  --socket "$sock" --format json
-cargo run -q -p ploke-eval -- loop walk show  --socket "$sock" --format json
-cargo run -q -p ploke-eval -- loop walk stop  --socket "$sock" --format json
+cargo run -q -p ploke-eval -- loop walk start --socket "$sock" --until r0
+cargo run -q -p ploke-eval -- loop walk step  --socket "$sock"
+cargo run -q -p ploke-eval -- loop walk show  --socket "$sock"
+cargo run -q -p ploke-eval -- loop walk stop  --socket "$sock"
 ```
 
 Additional R5 smoke run after `5c121e73` used a clean existing parent worktree and an explicit socket:
 
 ```text
-ploke-eval loop walk start --repo-root "$ROOT" --socket "$SOCK" --until r0 --format json
-ploke-eval loop walk step --repo-root "$ROOT" --socket "$SOCK" --format json # repeated through r5
-ploke-eval loop walk files --repo-root "$ROOT" --socket "$SOCK" --format table
-ploke-eval loop walk reset --repo-root "$ROOT" --socket "$SOCK" --format table
-ploke-eval loop walk stop --repo-root "$ROOT" --socket "$SOCK" --format json
+ploke-eval loop walk use "$ROOT" --socket "$SOCK"
+ploke-eval loop walk start --until r0
+ploke-eval loop walk step # repeated through r5
+ploke-eval loop walk files
+ploke-eval loop walk reset
+ploke-eval loop walk stop
 ```

@@ -92,14 +92,10 @@ impl WalkController {
         let mut lines = Vec::new();
         match &self.state {
             WalkState::Failed { phase, detail } => lines.push(format!(
-                "prototype1-state walk failed while advancing from {phase}; steps={}; detail={detail}",
+                "walk failed while advancing from {phase}; steps={}; detail={detail}",
                 self.steps
             )),
-            _ => lines.push(format!(
-                "prototype1-state walk is at {}; steps={}",
-                self.phase(),
-                self.steps
-            )),
+            _ => lines.push(format!("walk is at {}; steps={}", self.phase(), self.steps)),
         }
         if !self.files.tracked.is_empty() {
             lines.push("tracked files:".to_string());
@@ -136,7 +132,7 @@ impl WalkController {
         if !matches!(self.state, WalkState::Empty | WalkState::Failed { .. }) {
             return Err(PrepareError::InvalidBatchSelection {
                 detail: format!(
-                    "prototype1-state walk is already started at {}; run reset or stop and restart the server to begin a new walk",
+                    "walk is already started at {}; run reset or stop and restart the server to begin a new walk",
                     self.phase()
                 ),
             });
@@ -175,9 +171,7 @@ impl WalkController {
             guard += 1;
             if guard > 16 {
                 return Err(PrepareError::InvalidBatchSelection {
-                    detail: format!(
-                        "prototype1-state walk exceeded early-step guard while advancing to {target}"
-                    ),
+                    detail: format!("walk exceeded early-step guard while advancing to {target}"),
                 });
             }
             self.step_once()?;
@@ -191,15 +185,13 @@ impl WalkController {
         let next = match state {
             WalkState::Empty => {
                 return Err(PrepareError::InvalidBatchSelection {
-                    detail: "prototype1-state walk has not been started; run start first"
-                        .to_string(),
+                    detail: "walk has not been started; run start first".to_string(),
                 });
             }
             WalkState::Failed { phase, detail } => {
                 self.state = WalkState::Failed { phase, detail };
                 return Err(PrepareError::InvalidBatchSelection {
-                    detail: "prototype1-state walk is failed; start a new walk to continue"
-                        .to_string(),
+                    detail: "walk is failed; start a new walk to continue".to_string(),
                 });
             }
             WalkState::R0(r0) => match r0.advance(r0_to_r1) {
@@ -215,7 +207,7 @@ impl WalkController {
             }),
             WalkState::R2a(r2a) => {
                 self.state = WalkState::R2a(r2a);
-                let detail = "prototype1-state walk reached R2a parent-identity initialization boundary; no next admitted step is defined";
+                let detail = "walk reached R2a parent-identity initialization boundary; no next admitted step is defined";
                 self.record(format!("blocked at {previous}: {detail}"));
                 return Err(PrepareError::InvalidBatchSelection {
                     detail: detail.to_string(),
@@ -230,7 +222,7 @@ impl WalkController {
             WalkState::R4c(r4c) => r4c.advance(r4c_to_r5).map(WalkState::R5),
             WalkState::R5(r5) => {
                 self.state = WalkState::R5(r5);
-                let detail = "prototype1-state walk reached R5 parent-start boundary; R6+ phases are not admitted by this debug server slice yet";
+                let detail = "walk reached R5 parent-start boundary; R6+ phases are not admitted by this debug server slice yet";
                 self.record(format!("blocked at {previous}: {detail}"));
                 return Err(PrepareError::InvalidBatchSelection {
                     detail: detail.to_string(),
@@ -304,9 +296,7 @@ fn ensure_supported_target(target: WalkPhase) -> Result<(), PrepareError> {
         Ok(())
     } else {
         Err(PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "prototype1-state walk target {target} is not supported by the current server slice"
-            ),
+            detail: format!("walk target {target} is not supported by the current server slice"),
         })
     }
 }

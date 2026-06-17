@@ -4,7 +4,12 @@
 //! framed request at a time. Mutating requests pass through the epoch guard so
 //! stale binaries do not continue stepping after the checkout changes.
 
-use tokio::net::{UnixListener, UnixStream};
+use std::time::Duration;
+
+use tokio::{
+    net::{UnixListener, UnixStream},
+    time,
+};
 use tracing::{debug, info, warn};
 
 use crate::{cli::Prototype1StateWalkServeCommand, spec::PrepareError};
@@ -22,8 +27,9 @@ struct WalkServer {
     controller: WalkController,
 }
 
-/// Run the server until it receives `Stop` or the listener fails.
+/// Run the server until it receives `Stop`, the listener fails, or idle TTL expires.
 pub(crate) async fn serve(command: Prototype1StateWalkServeCommand) -> Result<(), PrepareError> {
+    let idle_ttl = command.idle_ttl()?;
     let repo_root = paths::resolve_repo_root(command.repo_root.as_deref())?;
     let socket_path = paths::socket_path(&repo_root, command.socket.as_deref())?;
     paths::ensure_socket_parent(&socket_path)?;
@@ -40,13 +46,14 @@ pub(crate) async fn serve(command: Prototype1StateWalkServeCommand) -> Result<()
     info!(
         socket = %socket_path.display(),
         repo_root = %repo_root.display(),
-        "prototype1-state walk server listening"
+        idle_ttl_secs = ?idle_ttl.map(|ttl| ttl.as_secs()),
+        "walk server listening"
     );
     let mut server = WalkServer {
         epoch,
         controller: WalkController::new(),
     };
-    let result = accept_loop(&mut server, listener).await;
+    let result = accept_loop(&mut server, listener, idle_ttl).await;
     if let Err(error) = paths::remove_socket_file(&socket_path) {
         warn!(error = ?error, socket = %socket_path.display(), "failed to remove walk socket after server exit");
     }
@@ -54,16 +61,29 @@ pub(crate) async fn serve(command: Prototype1StateWalkServeCommand) -> Result<()
 }
 
 /// Accept client connections serially and dispatch each request.
-async fn accept_loop(server: &mut WalkServer, listener: UnixListener) -> Result<(), PrepareError> {
+async fn accept_loop(
+    server: &mut WalkServer,
+    listener: UnixListener,
+    idle_ttl: Option<Duration>,
+) -> Result<(), PrepareError> {
     loop {
-        let (stream, _) =
-            listener
-                .accept()
-                .await
-                .map_err(|source| PrepareError::DatabaseSetup {
-                    phase: "prototype1_state_walk_accept",
-                    detail: source.to_string(),
-                })?;
+        let accepted = match idle_ttl {
+            Some(ttl) => match time::timeout(ttl, listener.accept()).await {
+                Ok(accepted) => accepted,
+                Err(_) => {
+                    info!(
+                        idle_ttl_secs = ttl.as_secs(),
+                        "walk server idle TTL expired"
+                    );
+                    return Ok(());
+                }
+            },
+            None => listener.accept().await,
+        };
+        let (stream, _) = accepted.map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_state_walk_accept",
+            detail: source.to_string(),
+        })?;
         let stop = handle_stream(server, stream).await?;
         if stop {
             return Ok(());
@@ -108,25 +128,25 @@ impl WalkServer {
             }
             WalkRequestBody::Stop => Ok(WalkResponse::ok(
                 phase,
-                "prototype1-state walk server stopping",
+                "walk server stopping",
                 self.epoch.clone(),
             )),
             WalkRequestBody::Start { config, until } => {
                 self.with_epoch_guard(request.client_epoch.as_ref(), |controller| {
                     let phase = controller.start(config, until)?;
-                    Ok(format!("started prototype1-state walk at {phase}"))
+                    Ok(format!("started walk at {phase}"))
                 })
             }
             WalkRequestBody::Step { until } => {
                 self.with_epoch_guard(request.client_epoch.as_ref(), |controller| {
                     let phase = controller.step(until)?;
-                    Ok(format!("advanced prototype1-state walk to {phase}"))
+                    Ok(format!("advanced walk to {phase}"))
                 })
             }
             WalkRequestBody::Reset => {
                 self.with_epoch_guard(request.client_epoch.as_ref(), |controller| {
                     let phase = controller.reset();
-                    Ok(format!("reset prototype1-state walk to {phase}"))
+                    Ok(format!("reset walk to {phase}"))
                 })
             }
             WalkRequestBody::Files => Ok(WalkResponse::ok(
@@ -137,11 +157,11 @@ impl WalkServer {
         };
         match result {
             Ok(response) if stop_requested => {
-                debug!(phase = ?response.phase(), stop = true, "handled prototype1-state walk request");
+                debug!(phase = ?response.phase(), stop = true, "handled walk request");
                 (response, true)
             }
             Ok(response) => {
-                debug!(phase = ?response.phase(), stop = false, "handled prototype1-state walk request");
+                debug!(phase = ?response.phase(), stop = false, "handled walk request");
                 (response, false)
             }
             Err(error) => (

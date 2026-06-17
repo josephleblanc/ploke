@@ -1,4 +1,4 @@
-# 2026-06-17 Prototype 1 Walk Command Guide
+# 2026-06-17 Walk Command Guide
 
 Short description: quick operator guide for trying the debug-only `walk` server, reviewing behavior, and collecting feedback on the command surface.
 
@@ -10,7 +10,7 @@ Related planning/code:
 
 ## What this is
 
-`walk` starts a local debug server that holds one in-memory Prototype 1 typestate value and lets you advance it with short CLI commands.
+`ploke-eval loop walk` starts or talks to a local debug server that holds one in-memory Prototype 1 typestate value and lets you advance it with short CLI commands.
 
 It is **not** production loop authority. It calls the same live transition functions as `ploke-eval loop prototype1-state`, so later phases can perform real side effects. Today the admitted path is:
 
@@ -25,56 +25,94 @@ R0 -> R1 -> R3 -> R4a -> R4b -> R4c -> R5
 - `R5` is side-effectful: it appends `parent_started` and `resource` entries to the campaign transition journal.
 - `R4a -> R4b/R4c` may inspect/switch the active checkout. Use a clean Prototype 1 parent worktree when you want to reach `R5`.
 - If you run from a dirty development checkout, failing at `R4a` because local changes would block a checkout switch is expected.
-- Always stop the server when done:
+- The auto-started server exits after 30 idle minutes by default.
+- You can still stop it explicitly:
 
 ```text
 ploke-eval loop walk stop
 ```
 
-## Common flags
+## Defaults
+
+Human-readable table output is the default. Use JSON only when scripting:
 
 ```text
---repo-root PATH   Parent checkout to walk. Defaults to current directory.
---socket PATH      Explicit Unix socket. Useful for isolated experiments.
---format json      Machine-readable output.
---format table     Human-readable output, the default.
+ploke-eval loop walk status --format json
 ```
 
-Tip: use a short explicit socket while experimenting:
+Repo root resolution order:
+
+1. explicit `--repo-root PATH`;
+2. saved `walk use` context;
+3. current working directory.
+
+Socket resolution order:
+
+1. explicit `--socket PATH`;
+2. saved `walk use --socket PATH` context;
+3. repo-hashed socket under the runtime directory.
+
+The default socket follows the Zellij-style runtime-dir pattern:
 
 ```text
-sockdir=$(mktemp -d /tmp/ploke-walk.XXXXXX)
-sock="$sockdir/walk.sock"
+$XDG_RUNTIME_DIR/ploke-eval/walk/p1walk-<repo-hash>.sock
 ```
 
-## Commands
+If `XDG_RUNTIME_DIR` is unavailable, it falls back under:
+
+```text
+/tmp/ploke-eval-$USER/walk/
+```
+
+## First-time setup: `use`
+
+Remember a clean Prototype 1 parent worktree so later commands can be short:
+
+```text
+ploke-eval loop walk use /path/to/prototype1-parent-worktree
+```
+
+If you are already in the parent worktree:
+
+```text
+ploke-eval loop walk use
+```
+
+Optional explicit socket, mainly useful for isolated experiments:
+
+```text
+ploke-eval loop walk use /path/to/parent --socket /tmp/my-walk.sock
+```
+
+## Main commands
 
 ### `status`
 
 Checks whether a server is listening. It does not start one.
 
 ```text
-ploke-eval loop walk status --socket "$sock" --format json
+ploke-eval loop walk status
 ```
-
-Use this before and after experiments to make sure you do not leave background servers running.
 
 ### `start`
 
 Starts the server if needed, creates a fresh in-memory walk, and stops at the requested phase. Default is `R0`.
 
 ```text
-ploke-eval loop walk start \
-  --repo-root "$ROOT" \
-  --socket "$sock" \
-  --until r0 \
-  --format json
+ploke-eval loop walk start
 ```
 
-You can jump through admitted setup phases:
+Start and advance immediately:
 
 ```text
-ploke-eval loop walk start --repo-root "$ROOT" --socket "$sock" --until r4c
+ploke-eval loop walk start --until r4c
+```
+
+Server idle TTL controls for auto-started servers:
+
+```text
+ploke-eval loop walk start --ttl-secs 3600
+ploke-eval loop walk start --no-ttl
 ```
 
 ### `step`
@@ -82,13 +120,13 @@ ploke-eval loop walk start --repo-root "$ROOT" --socket "$sock" --until r4c
 Advances one typestate edge from the current in-memory state.
 
 ```text
-ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock" --format json
+ploke-eval loop walk step
 ```
 
 Or advance repeatedly until a target phase:
 
 ```text
-ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock" --until r5
+ploke-eval loop walk step --until r5
 ```
 
 ### `show`
@@ -96,7 +134,7 @@ ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock" --until r5
 Shows the current phase, server pid, tracked paths, and server-local step history.
 
 ```text
-ploke-eval loop walk show --repo-root "$ROOT" --socket "$sock"
+ploke-eval loop walk show
 ```
 
 This is the main command for reviewing what happened earlier in the server session.
@@ -106,7 +144,7 @@ This is the main command for reviewing what happened earlier in the server sessi
 Prints previews of known output files for the current walk.
 
 ```text
-ploke-eval loop walk files --repo-root "$ROOT" --socket "$sock"
+ploke-eval loop walk files
 ```
 
 Once `R1` has resolved the campaign, this includes:
@@ -121,7 +159,7 @@ Once `R1` has resolved the campaign, this includes:
 Clears the in-memory walk without stopping the server. The server-local history records that reset happened.
 
 ```text
-ploke-eval loop walk reset --repo-root "$ROOT" --socket "$sock"
+ploke-eval loop walk reset
 ```
 
 Use this when you want to try another start without spawning another server process.
@@ -131,7 +169,7 @@ Use this when you want to try another start without spawning another server proc
 Stops the server and removes its socket.
 
 ```text
-ploke-eval loop walk stop --repo-root "$ROOT" --socket "$sock" --format json
+ploke-eval loop walk stop
 ```
 
 ### `serve`
@@ -139,7 +177,8 @@ ploke-eval loop walk stop --repo-root "$ROOT" --socket "$sock" --format json
 Runs server mode directly. Normally you do not need this; `start` auto-spawns the same binary in `serve` mode when no healthy server exists.
 
 ```text
-ploke-eval loop walk serve --repo-root "$ROOT" --socket "$sock"
+ploke-eval loop walk serve --ttl-secs 1800
+ploke-eval loop walk serve --no-ttl
 ```
 
 ## Recommended review session
@@ -147,30 +186,25 @@ ploke-eval loop walk serve --repo-root "$ROOT" --socket "$sock"
 Use a clean Prototype 1 parent worktree as `ROOT` if you want to reach `R5`.
 
 ```text
-ROOT=/path/to/clean/prototype1-parent-worktree
-sockdir=$(mktemp -d /tmp/ploke-walk.XXXXXX)
-sock="$sockdir/walk.sock"
+ploke-eval loop walk use /path/to/prototype1-parent-worktree
+ploke-eval loop walk status
+ploke-eval loop walk start
 
-ploke-eval loop walk status --repo-root "$ROOT" --socket "$sock" --format json
-ploke-eval loop walk start  --repo-root "$ROOT" --socket "$sock" --until r0 --format json
+ploke-eval loop walk step
+ploke-eval loop walk status
+ploke-eval loop walk step
+ploke-eval loop walk status
+ploke-eval loop walk step
+ploke-eval loop walk step
+ploke-eval loop walk step
+ploke-eval loop walk step
 
-ploke-eval loop walk step   --repo-root "$ROOT" --socket "$sock" --format json
-ploke-eval loop walk status --repo-root "$ROOT" --socket "$sock" --format json
-ploke-eval loop walk step   --repo-root "$ROOT" --socket "$sock" --format json
-ploke-eval loop walk status --repo-root "$ROOT" --socket "$sock" --format json
-ploke-eval loop walk step   --repo-root "$ROOT" --socket "$sock" --format json
-ploke-eval loop walk step   --repo-root "$ROOT" --socket "$sock" --format json
-ploke-eval loop walk step   --repo-root "$ROOT" --socket "$sock" --format json
-ploke-eval loop walk step   --repo-root "$ROOT" --socket "$sock" --format json
-
-ploke-eval loop walk show   --repo-root "$ROOT" --socket "$sock"
-ploke-eval loop walk files  --repo-root "$ROOT" --socket "$sock"
-ploke-eval loop walk reset  --repo-root "$ROOT" --socket "$sock"
-ploke-eval loop walk show   --repo-root "$ROOT" --socket "$sock"
-ploke-eval loop walk stop   --repo-root "$ROOT" --socket "$sock" --format json
-ploke-eval loop walk status --repo-root "$ROOT" --socket "$sock" --format json
-
-rm -rf "$sockdir"
+ploke-eval loop walk show
+ploke-eval loop walk files
+ploke-eval loop walk reset
+ploke-eval loop walk show
+ploke-eval loop walk stop
+ploke-eval loop walk status
 ```
 
 ## Feedback prompts
@@ -181,4 +215,5 @@ While reviewing, useful questions are:
 - Should `files` print whole files, tails, JSON summaries, or selectable paths?
 - Should `reset` preserve or clear history by default?
 - Should reaching `R5` require an explicit `--live-debug` flag because it writes the journal?
+- Is 30 minutes the right default idle TTL?
 - What information should be added before admitting `R6+`?

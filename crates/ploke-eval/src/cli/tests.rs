@@ -1,4 +1,5 @@
 use super::*;
+use crate::cli::prototype1_state::walk::phase::WalkPhase;
 use crate::inner::core::{RegisteredRunRole, RunIntent, RunStorageRoots};
 use crate::inner::registry::RunRegistration;
 use crate::model_registry::save_parent_patcher_model;
@@ -1669,6 +1670,95 @@ fn loop_prototype1_state_command_parses() {
                 Prototype1CandidateGenerator::BroadHarnessRequest
             );
         }
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
+fn loop_walk_use_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "use",
+        "/tmp/parent",
+        "--socket",
+        "/tmp/walk.sock",
+    ])
+    .expect("loop walk use should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Use(cmd) => {
+                assert_eq!(cmd.repo_root, Some(PathBuf::from("/tmp/parent")));
+                assert_eq!(cmd.socket, Some(PathBuf::from("/tmp/walk.sock")));
+                assert_eq!(cmd.format, InspectOutputFormat::Table);
+            }
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
+fn loop_walk_start_ttl_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "start",
+        "--repo-root",
+        "/tmp/parent",
+        "--ttl-secs",
+        "60",
+        "--until",
+        "r5",
+    ])
+    .expect("loop walk start should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Start(cmd) => {
+                assert_eq!(cmd.repo_root, Some(PathBuf::from("/tmp/parent")));
+                assert_eq!(cmd.ttl_secs, Some(60));
+                assert!(!cmd.no_ttl);
+                assert_eq!(cmd.until, WalkPhase::R5);
+                assert_eq!(cmd.format, InspectOutputFormat::Table);
+            }
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
+fn loop_walk_serve_no_ttl_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "serve",
+        "--repo-root",
+        "/tmp/parent",
+        "--no-ttl",
+    ])
+    .expect("loop walk serve should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Serve(cmd) => {
+                assert_eq!(cmd.repo_root, Some(PathBuf::from("/tmp/parent")));
+                assert!(cmd.ttl_secs.is_none());
+                assert!(cmd.no_ttl);
+            }
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
         other => panic!("unexpected command shape: {:?}", other),
     }
 }
