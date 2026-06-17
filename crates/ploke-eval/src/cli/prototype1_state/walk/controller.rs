@@ -371,7 +371,13 @@ fn ensure_supported_target(target: WalkPhase) -> Result<(), PrepareError> {
 fn push_changes(lines: &mut Vec<String>, from: WalkPhase, to: WalkPhase, label: &str) {
     lines.push(format!("{label}:"));
     for change in to.changes_from(from) {
-        lines.push(format!("  - {change}"));
+        let mut change_lines = change.lines();
+        if let Some(first) = change_lines.next() {
+            lines.push(format!("  - {first}"));
+            for line in change_lines {
+                lines.push(format!("    {line}"));
+            }
+        }
     }
 }
 

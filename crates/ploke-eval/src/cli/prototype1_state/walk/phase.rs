@@ -175,7 +175,7 @@ impl WalkPhase {
         match (from, self) {
             (WalkPhase::R0, WalkPhase::R1) => &[
                 "phase: phase::R0 -> phase::R1",
-                "context: Context<context::Command<Prototype1StateCommand>> -> Context<context::Collected<RunShape, CampaignConfig>>",
+                "context:\nContext<context::Command<Prototype1StateCommand>>\n-> Context<context::Collected<RunShape, CampaignConfig>>",
             ],
             (WalkPhase::R1, WalkPhase::R2a) => &[
                 "phase: phase::R1 -> phase::R2a",
