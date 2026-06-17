@@ -76,11 +76,11 @@ pub(crate) struct WalkRequest {
 pub(crate) enum WalkRequestBody {
     /// Probe liveness and receive the current phase without mutating state.
     Health,
-    /// Create a fresh in-memory walk and advance until an early target phase.
+    /// Create a fresh in-memory walk and advance until an admitted target phase.
     Start {
         /// Captured command arguments for the new walk.
         config: WalkStartConfig,
-        /// Early phase to stop at after creating `R0`.
+        /// Phase to stop at after creating `R0`.
         until: WalkPhase,
     },
     /// Advance the existing in-memory walk.
@@ -88,6 +88,10 @@ pub(crate) enum WalkRequestBody {
         /// If present, advance repeatedly until this phase; otherwise one step.
         until: Option<WalkPhase>,
     },
+    /// Clear the in-memory walk while keeping the server process alive.
+    Reset,
+    /// Print tracked output files produced or touched by the current walk.
+    Files,
     /// Inspect current phase and summary without mutating state.
     Show,
     /// Ask the server to reply and then exit.

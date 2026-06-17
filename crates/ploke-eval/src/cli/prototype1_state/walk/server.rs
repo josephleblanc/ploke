@@ -100,16 +100,12 @@ impl WalkServer {
         let phase = self.controller.phase();
         let stop_requested = matches!(request.body, WalkRequestBody::Stop);
         let result = match request.body {
-            WalkRequestBody::Health => Ok(WalkResponse::ok(
-                phase,
-                self.controller.describe(),
-                self.epoch.clone(),
-            )),
-            WalkRequestBody::Show => Ok(WalkResponse::ok(
-                phase,
-                self.controller.describe(),
-                self.epoch.clone(),
-            )),
+            WalkRequestBody::Health => {
+                Ok(WalkResponse::ok(phase, self.describe(), self.epoch.clone()))
+            }
+            WalkRequestBody::Show => {
+                Ok(WalkResponse::ok(phase, self.describe(), self.epoch.clone()))
+            }
             WalkRequestBody::Stop => Ok(WalkResponse::ok(
                 phase,
                 "prototype1-state walk server stopping",
@@ -127,6 +123,17 @@ impl WalkServer {
                     Ok(format!("advanced prototype1-state walk to {phase}"))
                 })
             }
+            WalkRequestBody::Reset => {
+                self.with_epoch_guard(request.client_epoch.as_ref(), |controller| {
+                    let phase = controller.reset();
+                    Ok(format!("reset prototype1-state walk to {phase}"))
+                })
+            }
+            WalkRequestBody::Files => Ok(WalkResponse::ok(
+                phase,
+                self.controller.files_report(),
+                self.epoch.clone(),
+            )),
         };
         match result {
             Ok(response) if stop_requested => {
@@ -147,6 +154,14 @@ impl WalkServer {
                 false,
             ),
         }
+    }
+
+    fn describe(&self) -> String {
+        format!(
+            "server_pid={}\n{}",
+            std::process::id(),
+            self.controller.describe()
+        )
     }
 
     /// Run a mutating controller operation after client/server freshness checks.

@@ -148,8 +148,12 @@ pub enum Prototype1StateWalkSubcommand {
     Serve(Prototype1StateWalkServeCommand),
     /// Start a new in-memory walk, defaulting to R0.
     Start(Prototype1StateWalkStartCommand),
-    /// Advance the current in-memory walk by one step or until a target early phase.
+    /// Advance the current in-memory walk by one step or until a target phase.
     Step(Prototype1StateWalkStepCommand),
+    /// Reset the current in-memory walk without stopping the server.
+    Reset(Prototype1StateWalkControlCommand),
+    /// Print tracked output files for the current walk.
+    Files(Prototype1StateWalkControlCommand),
     /// Show current in-memory walk state.
     Show(Prototype1StateWalkControlCommand),
     /// Check whether the local walk server is alive.
@@ -193,7 +197,7 @@ pub struct Prototype1StateWalkStepCommand {
     #[arg(long, value_name = "PATH")]
     pub socket: Option<PathBuf>,
 
-    /// Advance repeatedly until this early phase instead of exactly one step.
+    /// Advance repeatedly until this phase instead of exactly one step.
     #[arg(long, value_enum)]
     pub until: Option<WalkPhase>,
 
@@ -254,7 +258,7 @@ pub struct Prototype1StateWalkStartCommand {
     #[arg(long, value_enum, default_value_t = Prototype1CandidateGenerator::BroadHarnessRequest)]
     pub candidate_generator: Prototype1CandidateGenerator,
 
-    /// Stop after this early typestate phase. Defaults to R0.
+    /// Stop after this admitted typestate phase. Defaults to R0.
     #[arg(long, value_enum, default_value_t = WalkPhase::R0)]
     pub until: WalkPhase,
 

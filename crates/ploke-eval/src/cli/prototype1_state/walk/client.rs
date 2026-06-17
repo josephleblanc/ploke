@@ -49,6 +49,39 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             print_response(&response, format)?;
             response_result(response)
         }
+        Prototype1StateWalkSubcommand::Reset(command) => {
+            let format = command.format;
+            let socket_override = command.socket.clone();
+            let (repo_root, socket) =
+                args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
+            let epoch = ServerEpoch::capture(&repo_root)?;
+            let response = send_request(
+                &socket,
+                WalkRequest {
+                    client_epoch: Some(epoch),
+                    body: WalkRequestBody::Reset,
+                },
+            )
+            .await?;
+            print_response(&response, format)?;
+            response_result(response)
+        }
+        Prototype1StateWalkSubcommand::Files(command) => {
+            let format = command.format;
+            let socket_override = command.socket.clone();
+            let (_repo_root, socket) =
+                args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
+            let response = send_request(
+                &socket,
+                WalkRequest {
+                    client_epoch: None,
+                    body: WalkRequestBody::Files,
+                },
+            )
+            .await?;
+            print_response(&response, format)?;
+            response_result(response)
+        }
         Prototype1StateWalkSubcommand::Show(command) => {
             let format = command.format;
             let socket_override = command.socket.clone();
@@ -201,12 +234,11 @@ enum Health {
 async fn health(socket: &Path) -> Result<Health, PrepareError> {
     let mut stream = match UnixStream::connect(socket).await {
         Ok(stream) => stream,
-        Err(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
-            ) =>
-        {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Health::Offline);
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {
+            let _ = paths::remove_socket_file(socket);
             return Ok(Health::Offline);
         }
         Err(source) => {
@@ -253,7 +285,7 @@ fn print_response(
                 println!("{}", "-".repeat(40));
                 println!("status: ok");
                 println!("phase: {phase}");
-                println!("message: {message}");
+                print_multiline("message", message);
                 println!("protocol_version: {}", epoch.protocol_version);
                 println!(
                     "transition_graph_version: {}",
@@ -276,7 +308,7 @@ fn print_response(
                         .map(|phase| phase.to_string())
                         .unwrap_or_else(|| "-".to_string())
                 );
-                println!("detail: {detail}");
+                print_multiline("detail", detail);
                 println!("protocol_version: {}", epoch.protocol_version);
                 println!(
                     "transition_graph_version: {}",
@@ -286,6 +318,17 @@ fn print_response(
         },
     }
     Ok(())
+}
+
+fn print_multiline(label: &str, value: &str) {
+    if value.contains('\n') {
+        println!("{label}:");
+        for line in value.lines() {
+            println!("  {line}");
+        }
+    } else {
+        println!("{label}: {value}");
+    }
 }
 
 /// Render an offline status without treating it as a command failure.

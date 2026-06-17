@@ -11,9 +11,10 @@ use serde::{Deserialize, Serialize};
 
 /// Serializable cursor for the early Prototype 1 typestate walk.
 ///
-/// The first server slice intentionally stops at `R4c`: ready-parent startup
-/// is enough to validate socket lifecycle, in-memory stepping, branching, and
-/// stale-server guards before admitting child fanout or successor handoff.
+/// The current server slice intentionally stops at `R5`: parent-start evidence
+/// is enough to validate socket lifecycle, in-memory stepping, branching,
+/// stale-server guards, and the first journal-writing live edge before child
+/// fanout or successor handoff.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum WalkPhase {
@@ -33,6 +34,8 @@ pub enum WalkPhase {
     R4b,
     /// Unified `Parent<Ready>` boundary for genesis or successor startup.
     R4c,
+    /// Parent-start evidence recorded after `Parent<Ready>` is proven.
+    R5,
 }
 
 impl WalkPhase {
@@ -47,10 +50,11 @@ impl WalkPhase {
             WalkPhase::R4a => "r4a",
             WalkPhase::R4b => "r4b",
             WalkPhase::R4c => "r4c",
+            WalkPhase::R5 => "r5",
         }
     }
 
-    /// Returns whether this target is admitted by the current early server slice.
+    /// Returns whether this target is admitted by the current server slice.
     pub(crate) fn is_early_boundary(self) -> bool {
         matches!(
             self,
@@ -61,6 +65,7 @@ impl WalkPhase {
                 | WalkPhase::R4a
                 | WalkPhase::R4b
                 | WalkPhase::R4c
+                | WalkPhase::R5
         )
     }
 }
