@@ -4459,7 +4459,7 @@ async fn succeeded_child_without_evaluation_recovers_from_terminal_channel() {
         Prototype1StateStopAfter::Build,
         Duration::from_secs(30),
         0,
-        child,
+        child.clone(),
     )
     .expect("recover missing branch evaluation from terminal channel");
 
@@ -4489,6 +4489,17 @@ async fn succeeded_child_without_evaluation_recovers_from_terminal_channel() {
                     }) if treatment_campaign_id == &treatment_id
                 )
     )));
+
+    let reconstructed = reconstruct_child_outcomes_from_store(
+        &campaign_id,
+        &manifest_path,
+        std::slice::from_ref(&child),
+    )
+    .expect("read-only child outcome reconstruction from terminal channel");
+    assert_eq!(reconstructed.len(), 1);
+    assert_eq!(reconstructed[0].outcome, "completed:Keep");
+    assert_eq!(reconstructed[0].child_runtime, Some(runtime_id.to_string()));
+    assert!(reconstructed[0].selection_input.is_some());
 }
 
 #[tokio::test]

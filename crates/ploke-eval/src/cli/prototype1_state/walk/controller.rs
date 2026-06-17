@@ -17,7 +17,7 @@ use crate::{
     cli::prototype1_state::{
         cli_facing::{Prototype1StateRunShape, campaign_manifest_path_for_id},
         driver::reconstruct::{self, EarlyState},
-        identity::parent_identity_path,
+        identity::{load_parent_identity_optional, parent_identity_path},
         journal::prototype1_transition_journal_path,
         live_edges::{
             r0_to_r1, r1_to_r2a_or_r3, r3_to_r4a, r4a_to_r4b_or_r4c, r4b_to_r4c_genesis, r4c_to_r5,
@@ -285,12 +285,31 @@ impl WalkController {
         }
         ensure_supported_target(until)?;
         let repo_root = paths::resolve_repo_root(config.repo_root.as_deref())?;
+        let init_parent_identity = config.init_parent_identity;
+        let requested_campaign = config.campaign.clone();
         self.repo_root = repo_root.clone();
         self.files.reset(&repo_root);
-        self.state = WalkState::R0(typestate::R0::new(config.into_state_command()));
         self.steps = 0;
         self.last_delta = None;
         self.reconstruction = None;
+
+        let reconstruct_matches_request = match requested_campaign.as_ref() {
+            Some(campaign_id) => load_parent_identity_optional(&repo_root)?
+                .is_some_and(|identity| identity.campaign_id() == campaign_id),
+            None => true,
+        };
+        if until != WalkPhase::R0 && !init_parent_identity && reconstruct_matches_request {
+            self.refresh_from_disk()?;
+            let reconstructed = self.phase();
+            if reconstructed != WalkPhase::Empty && phase_rank(reconstructed) <= phase_rank(until) {
+                self.advance_until(until, false).await?;
+                return Ok(self.phase());
+            }
+            self.state = WalkState::Empty;
+            self.reconstruction = None;
+        }
+
+        self.state = WalkState::R0(typestate::R0::new(config.into_state_command()));
         self.record(format!(
             "start: created r0 for repo_root '{}'",
             repo_root.display()
@@ -559,7 +578,8 @@ impl WalkState {
             EarlyState::R5(r5) => WalkState::R5(r5),
             EarlyState::R6(r6) => WalkState::R6(r6),
             EarlyState::R7(r7) => WalkState::R7(r7),
-            EarlyState::R8(r8) => WalkState::R8(r8),
+            EarlyState::R10(r10) => WalkState::R10(r10),
+            EarlyState::R12(r12) => WalkState::R12(r12),
         }
     }
 }
@@ -574,7 +594,8 @@ fn phase_for_early(state: &EarlyState) -> WalkPhase {
         EarlyState::R5(_) => WalkPhase::R5,
         EarlyState::R6(_) => WalkPhase::R6,
         EarlyState::R7(_) => WalkPhase::R7,
-        EarlyState::R8(_) => WalkPhase::R8,
+        EarlyState::R10(_) => WalkPhase::R10,
+        EarlyState::R12(_) => WalkPhase::R12,
     }
 }
 
@@ -606,6 +627,27 @@ fn push_wrapped_item(lines: &mut Vec<String>, value: &str, first_prefix: &str, r
         for line in item {
             lines.push(format!("{rest_prefix}{line}"));
         }
+    }
+}
+
+fn phase_rank(phase: WalkPhase) -> u8 {
+    match phase {
+        WalkPhase::Empty => 0,
+        WalkPhase::R0 => 1,
+        WalkPhase::R1 => 2,
+        WalkPhase::R2a | WalkPhase::R3 => 3,
+        WalkPhase::R4a => 4,
+        WalkPhase::R4b | WalkPhase::R4c => 5,
+        WalkPhase::R5 => 6,
+        WalkPhase::R6 => 7,
+        WalkPhase::R7 => 8,
+        WalkPhase::R8 => 9,
+        WalkPhase::R9 => 10,
+        WalkPhase::R10 => 11,
+        WalkPhase::R11a | WalkPhase::R11 => 12,
+        WalkPhase::R12 => 13,
+        WalkPhase::R13a => 14,
+        WalkPhase::R14a => 15,
     }
 }
 

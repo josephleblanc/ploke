@@ -704,3 +704,56 @@ ROOT=/home/brasides/.ploke-eval/worktrees/p1-gemini35-flash-direct-2g1x3-2026052
 Result: the previously blocked fanout advanced `r10_to_r11 --watch -> r11 - child fanout complete`. Recovery wrote the missing parent comparison report at `prototype1/evaluations/branch-ac56d600dd90b3ab.json`; the recovered branch disposition was `reject` over one compared instance. A follow-up isolated smoke stepped the same campaign through `r11_to_r12` and `r12_to_r13a`, preserving the current no-handoff guard.
 
 GitNexus impact checks before edits were LOW for `stored_child_outcome`, `run_planned_child`, `ObserveChild`, and `compare_observed_child_treatment` (0 indexed process impacts reported for each checked target).
+
+### Slice 14 — reconstruct R11/R12 from terminal child channel evidence
+
+Implemented direct durable reconstruction past child fanout without rerunning children:
+
+- added `reconstruct_child_outcomes_from_store(...)` for read-only reconstruction of `PlannedChildOutcome` values from stored child records;
+- each reconstructed terminal child now requires a stored terminal node, matching latest `runner-result.json`, a matching attempt-scoped result file, a valid child invocation authority, and a validated terminal child `Channel::recv_from_child` `ToParent::Result` payload;
+- successful children additionally require a branch evaluation report whose baseline campaign, branch id, and treatment campaign agree with the parent campaign, node record, and runner result;
+- `driver::reconstruct_early` now replays pure `R8 -> R9 -> R10`, reconstructs R11 from channel-derived outcomes or R11a from rejected attempts, then calls canonical `r11_to_r12` to rebuild report facts;
+- reconstruction stops at R10 with an explicit blocker when durable child terminal/comparison evidence is incomplete rather than spawning children or fabricating outcomes;
+- `walk start --until ...` now prefers durable reconstruction for existing matching parent checkouts instead of replaying live setup edges, avoiding duplicate parent-start/resource journal writes. Plain `walk start`/R0 and parent identity initialization remain live command paths.
+
+Deliberate limitations:
+
+- R13b/R14b selected-successor handoff is still blocked; reconstructed selected-successor R12 stops before R13a;
+- no provider, harness fanout, child C1-C3, or live child planning work is started by this reconstruction path;
+- parent-owned `runner-result.json` and evaluation files remain projections/caches unless tied back to the admitted child channel terminal result and matching report identity.
+
+Focused test update:
+
+- `succeeded_child_without_evaluation_recovers_from_terminal_channel` now also asserts read-only `reconstruct_child_outcomes_from_store(...)` after terminal-channel recovery writes the parent comparison report.
+
+Validation so far:
+
+```text
+cargo fmt --all
+cargo check -p ploke-eval --all-targets
+cargo test -p ploke-eval succeeded_child_without_evaluation_recovers_from_terminal_channel --all-targets -- --nocapture
+cargo build -p ploke-eval
+```
+
+Historical smokes with isolated `0700` socket dirs:
+
+```text
+ROOT=/home/brasides/.ploke-eval/worktrees/p1-gemini35-flash-direct-2g1x3-20260525-073410
+CID=p1-gemini35-flash-direct-2g1x3-20260525-073410
+
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock" --until r12 --format json
+./target/debug/ploke-eval loop walk start --repo-root "$ROOT" --socket "$sock" --until r12 --format json
+./target/debug/ploke-eval loop walk start --repo-root "$ROOT" --campaign "$CID" --socket "$sock" --until r12 --format json
+```
+
+Results:
+
+- all three commands reconstructed directly to `r12 - report facts ready` with `steps: 0` and notes through `reconstructed R11 from 2 channel-derived child outcomes`;
+- transition journal line count stayed unchanged at 39 for the read-only smokes;
+- `walk step --until r13a` from the reconstructed selected-successor R12 still failed with the intended guard: `walk reached R12 with selected-successor evidence; R13b handoff is not admitted by this debug server slice`.
+
+Incident/recovery note:
+
+- An initial smoke used `walk start --until r12` before the start-command guard was fixed; that path replayed live setup edges and appended two duplicate parent-start/resource journal entries to the historical campaign. Those two accidental tail entries were identified by timestamp/PID and removed immediately, restoring the journal line count from 41 to 39 before the read-only smokes above.
+
+GitNexus impact checks before edits were LOW for `reconstruct_early`, the disambiguated `WalkState`, `stored_child_outcome`, `ParentSelection`, and `WalkController.start` (exact indexed UID `Function:crates/ploke-eval/src/cli/prototype1_state/walk/controller.rs:WalkController.start#2`).

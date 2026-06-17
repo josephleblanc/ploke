@@ -6247,6 +6247,233 @@ fn validate_terminal_result(
     Ok(())
 }
 
+pub(crate) fn reconstruct_child_outcomes_from_store(
+    campaign_id: &CampaignId,
+    manifest_path: &Path,
+    children: &[ChildFiles],
+) -> Result<Vec<PlannedChildOutcome>, PrepareError> {
+    children
+        .iter()
+        .enumerate()
+        .map(|(plan_index, child)| {
+            read_only_child_outcome(campaign_id, manifest_path, plan_index, child)?.ok_or_else(
+                || PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "planned child '{}' has no terminal stored outcome for durable R11 reconstruction",
+                        child.node_id()
+                    ),
+                },
+            )
+        })
+        .collect()
+}
+
+fn read_only_child_outcome(
+    campaign_id: &CampaignId,
+    manifest_path: &Path,
+    plan_index: usize,
+    child: &ChildFiles,
+) -> Result<Option<PlannedChildOutcome>, PrepareError> {
+    let planned = child.node_record();
+    let stored = match load_node_record(
+        manifest_path,
+        &planned.node_id,
+        OperatorProjectionRead::cli_operator(),
+    ) {
+        Ok(node) => node,
+        Err(err) if manifest_not_found(&err) => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    if !is_terminal_child_status(stored.status) {
+        return Ok(None);
+    }
+    let runner_result = match load_runner_result(
+        manifest_path,
+        &planned.node_id,
+        OperatorProjectionRead::cli_operator(),
+    ) {
+        Ok(result) => result,
+        Err(err) if manifest_not_found(&err) => {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "terminal child '{}' is missing runner-result.json for durable R11 reconstruction",
+                    planned.node_id
+                ),
+            });
+        }
+        Err(err) => return Err(err),
+    };
+    if runner_result.branch_id != stored.branch_id
+        || runner_result.generation != stored.generation
+        || runner_result.status != stored.status
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "stored runner result for terminal child '{}' does not match node record: runner branch={} generation={} status={:?}, node branch={} generation={} status={:?}",
+                planned.node_id,
+                runner_result.branch_id,
+                runner_result.generation,
+                runner_result.status,
+                stored.branch_id,
+                stored.generation,
+                stored.status
+            ),
+        });
+    }
+    let runtime_id =
+        terminal_channel_runtime(campaign_id, manifest_path, &stored, child, &runner_result)?;
+    let report = branch_report(manifest_path, &stored.branch_id)?;
+    if let Some(report) = report.as_ref() {
+        validate_child_branch_report(campaign_id, &stored, &runner_result, report)?;
+    }
+    let outcome = match stored.status {
+        Prototype1NodeStatus::Succeeded => {
+            let report = report.as_ref().ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "terminal child '{}' is missing branch evaluation report; run observe recovery before durable R11 reconstruction",
+                    stored.node_id
+                ),
+            })?;
+            format!("completed:{:?}", report.overall_disposition)
+        }
+        Prototype1NodeStatus::Failed => "completed:Reject".to_string(),
+        _ => unreachable!("terminal status checked above"),
+    };
+    let selection_input = report
+        .as_ref()
+        .map(|report| selection_input_from_child_report(&stored, report));
+    let artifact_surface = if stored.workspace_root.exists() {
+        GitWorktreeBackend
+            .artifact_surface(&stored.workspace_root)
+            .ok()
+    } else {
+        None
+    };
+
+    Ok(Some(PlannedChildOutcome {
+        plan_index,
+        node_id: stored.node_id.clone(),
+        outcome,
+        node_status: stored.status,
+        workspace_root: stored.workspace_root.clone(),
+        binary_path: stored.binary_path.clone(),
+        resolved: child.resolved().clone(),
+        child_runtime: Some(runtime_id.to_string()),
+        evaluation_report: report,
+        selection_input,
+        surface: child.surface().cloned(),
+        artifact_surface,
+        node: stored,
+    }))
+}
+
+fn terminal_channel_runtime(
+    campaign_id: &CampaignId,
+    manifest_path: &Path,
+    stored: &Prototype1NodeRecord,
+    child: &ChildFiles,
+    latest: &Prototype1RunnerResult,
+) -> Result<RuntimeId, PrepareError> {
+    let dir = invocation::invocations_dir(&stored.node_dir);
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "terminal child '{}' is missing child invocation directory '{}' for durable R11 reconstruction",
+                    stored.node_id,
+                    dir.display()
+                ),
+            });
+        }
+        Err(source) => return Err(PrepareError::ReadManifest { path: dir, source }),
+    };
+
+    let mut diagnostics = Vec::new();
+    for entry in entries {
+        let path = entry
+            .map_err(|source| PrepareError::ReadManifest {
+                path: dir.clone(),
+                source,
+            })?
+            .path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let authority = invocation::load_authority(&path)?;
+        let InvocationAuthority::Child(invocation) = authority else {
+            continue;
+        };
+        validate_recovery_invocation(campaign_id, stored, child, &invocation, &path)?;
+        let runtime_id = invocation.runtime_id();
+        let runtime = recovered_c4(campaign_id, manifest_path, stored, child, runtime_id);
+        let Some(terminal) = channel_terminal(&runtime, &invocation)? else {
+            diagnostics.push(format!(
+                "runtime '{runtime_id}' had no terminal channel Result"
+            ));
+            continue;
+        };
+        if let Err(detail) =
+            validate_terminal_result(campaign_id, stored, runtime_id, latest, &terminal)
+        {
+            diagnostics.push(detail);
+            continue;
+        }
+        return Ok(runtime_id);
+    }
+    let suffix = if diagnostics.is_empty() {
+        String::new()
+    } else {
+        format!("; diagnostics: {}", diagnostics.join("; "))
+    };
+    Err(PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "terminal child '{}' has no valid terminal child channel Result for durable R11 reconstruction{}",
+            stored.node_id, suffix
+        ),
+    })
+}
+
+fn validate_child_branch_report(
+    campaign_id: &CampaignId,
+    stored: &Prototype1NodeRecord,
+    latest: &Prototype1RunnerResult,
+    report: &Prototype1BranchEvaluationReport,
+) -> Result<(), PrepareError> {
+    if report.baseline_campaign_id != *campaign_id
+        || report.branch_id != stored.branch_id
+        || latest
+            .treatment_campaign_id
+            .as_ref()
+            .is_some_and(|treatment| treatment != &report.treatment_campaign_id)
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "branch evaluation report for terminal child '{}' does not match child identity/treatment: report baseline={} branch={} treatment={}, node branch={}, runner treatment={}",
+                stored.node_id,
+                report.baseline_campaign_id,
+                report.branch_id,
+                report.treatment_campaign_id,
+                stored.branch_id,
+                latest
+                    .treatment_campaign_id
+                    .as_ref()
+                    .map(|id| id.as_str())
+                    .unwrap_or("<none>")
+            ),
+        });
+    }
+    if stored.status == Prototype1NodeStatus::Succeeded && latest.treatment_campaign_id.is_none() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "succeeded terminal child '{}' has a branch evaluation report but runner-result.json is missing treatment_campaign_id",
+                stored.node_id
+            ),
+        });
+    }
+    Ok(())
+}
+
 fn branch_report(
     manifest_path: &Path,
     branch_id: &str,

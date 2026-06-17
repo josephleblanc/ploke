@@ -25,7 +25,7 @@ R12 -> R13a records no-selection stopped continuation; selected-successor handof
 R13a -> R14a emits stopped/no-selection final report
 ```
 
-`R8` can also be reconstructed when an existing child-plan message is present. `R2a` is the alternate parent-identity initialization boundary when started with `--init-parent-identity`.
+`R8` can also be reconstructed when an existing child-plan message is present. `R11/R12` can be reconstructed after restart when all planned terminal children have validated channel `Result` evidence, matching runner results, and successful children have matching branch evaluation reports. `R2a` is the alternate parent-identity initialization boundary when started with `--init-parent-identity`.
 
 ## Important safety notes
 
@@ -35,10 +35,11 @@ R13a -> R14a emits stopped/no-selection final report
 - `R8` can be reconstructed from existing child-plan authority. Live `R7 -> R8` requires explicit `walk step --watch` because it may wait on provider/harness work.
 - `R8 -> R9` and `R9 -> R10` are pure in-process edges and do not require `--watch`.
 - `R10 -> R11a | R11` requires explicit `walk step --watch` because it may project rejected-only selection evidence or run live child fanout.
-- `R11a | R11 -> R12` is a pure projection of report facts and does not emit the final report.
+- `R11a | R11 -> R12` is a pure projection of report facts and does not emit the final report. Restart reconstruction can rebuild R12 from channel-derived terminal child outcomes without rerunning fanout.
 - `R12 -> R13a` is admitted only for no-selection stopped continuation; selected-successor R13b handoff remains blocked before consuming R12.
 - `R13a -> R14a` emits the stopped/no-selection final report and records parent-complete evidence; handoff-final R14b remains blocked.
 - If you run from a dirty development checkout, failing at `R4a` because local changes would block a checkout switch is expected.
+- `walk start --until ...` on an existing matching parent checkout prefers durable reconstruction before creating a fresh R0 walk, so historical `--until r12` smokes do not duplicate parent-start/resource journal entries.
 - The auto-started server exits after 30 idle minutes by default.
 - You can still stop it explicitly:
 
@@ -117,7 +118,7 @@ ploke-eval loop walk status
 
 ### `start`
 
-Starts the server if needed, creates a fresh in-memory walk, and stops at the requested phase. Default is `R0`.
+Starts the server if needed and stops at the requested phase. Default is `R0`. For `--until` targets beyond R0 on an existing parent checkout, `start` first attempts durable reconstruction and uses that state when it matches the requested campaign/checkout; otherwise it creates a fresh R0 walk.
 
 ```text
 ploke-eval loop walk start

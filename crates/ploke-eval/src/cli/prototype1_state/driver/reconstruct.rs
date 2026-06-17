@@ -16,15 +16,19 @@ use crate::{
         prototype1_state::{
             backend::GitWorktreeBackend,
             cli_facing::{
-                Prototype1StateRunShape, campaign_manifest_path_for_id,
+                ParentSelection, Prototype1StateRunShape, campaign_manifest_path_for_id,
                 child_plan_message_path_for_parent, load_existing_child_plan_for_id,
                 load_parent_baseline_for_id, prototype1_state_transition_error,
-                resolve_campaign_config_for_id, resolve_parent_policy_budget, same_existing_path,
+                reconstruct_child_outcomes_from_store, resolve_campaign_config_for_id,
+                resolve_parent_policy_budget, same_existing_path,
                 validate_existing_child_plan_for_id,
             },
             identity::{ParentIdentity, load_parent_identity_optional, parent_identity_path},
             journal::{JournalEntry, PrototypeJournal, prototype1_transition_journal_path},
-            live_edges::{r1_to_r2a_or_r3, r3_to_r4a, r4a_to_r4b_or_r4c, r4b_to_r4c_genesis},
+            live_edges::{
+                r1_to_r2a_or_r3, r3_to_r4a, r4a_to_r4b_or_r4c, r4b_to_r4c_genesis, r8_to_r9,
+                r9_to_r10, r11_to_r12,
+            },
             typestate::{self, StepInput},
         },
     },
@@ -41,7 +45,8 @@ pub(crate) enum EarlyState {
     R5(typestate::R5<Prototype1StateRunShape, ResolvedCampaignConfig>),
     R6(typestate::R6<Prototype1StateRunShape, ResolvedCampaignConfig>),
     R7(typestate::R7<Prototype1StateRunShape, ResolvedCampaignConfig>),
-    R8(typestate::R8<Prototype1StateRunShape, ResolvedCampaignConfig>),
+    R10(typestate::R10<Prototype1StateRunShape, ResolvedCampaignConfig>),
+    R12(typestate::R12<Prototype1StateRunShape, ResolvedCampaignConfig>),
 }
 
 /// Result of an early durable reconstruction attempt.
@@ -211,13 +216,13 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
                                     "reconstructed R8 from existing child-plan message evidence"
                                         .into(),
                                 );
+                                let r8 = typestate::R8::from_collected_parent(
+                                    parts.into_collected(),
+                                    parent,
+                                );
+                                let state = reconstruct_after_r8(r8, &mut notes, &mut blockers)?;
                                 return Ok(EarlySnapshot {
-                                    state: Some(EarlyState::R8(
-                                        typestate::R8::from_collected_parent(
-                                            parts.into_collected(),
-                                            parent,
-                                        ),
-                                    )),
+                                    state: Some(state),
                                     campaign_id: Some(campaign_id),
                                     notes,
                                     blockers,
@@ -272,6 +277,128 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
             blockers,
         })
     }
+}
+
+fn reconstruct_after_r8(
+    r8: typestate::R8<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    notes: &mut Vec<String>,
+    blockers: &mut Vec<String>,
+) -> Result<EarlyState, PrepareError> {
+    let r9 = r8.advance(r8_to_r9)?;
+    notes.push("reconstructed R9 by shaping existing child-plan schedule".into());
+    let r10 = r9.advance(r9_to_r10)?;
+    notes.push("reconstructed R10 by resolving selection strategy inputs".into());
+
+    let typestate::SelectableParts { collected, parent } = r10.into_parts();
+    let mut parts = collected.into_parts();
+    let child_plan = match parts.facts.child_plan.as_ref() {
+        Some(child_plan) => child_plan,
+        None => {
+            blockers.push("blocked edge r10 -> r11: missing child-plan facts".into());
+            return Ok(EarlyState::R10(typestate::R10::from_collected_parent(
+                parts.into_collected(),
+                parent,
+            )));
+        }
+    };
+    let children = child_plan.children.clone();
+    let rejected_surface_attempts = child_plan.rejected_surface_attempts.clone();
+    let parent_identity = parent.identity().clone();
+    let selection_strategy = match parts.facts.selection_strategy {
+        Some(strategy) => strategy,
+        None => {
+            blockers.push("blocked edge r10 -> r11: missing selection strategy".into());
+            return Ok(EarlyState::R10(typestate::R10::from_collected_parent(
+                parts.into_collected(),
+                parent,
+            )));
+        }
+    };
+
+    let rejected_only_plan = parts.run_shape.stop_after == Prototype1StateStopAfter::Complete
+        && children.is_empty()
+        && !rejected_surface_attempts.is_empty();
+    if rejected_only_plan {
+        let projection = match ParentSelection::new(
+            &parts.manifest_path,
+            &parent_identity,
+            &[],
+            &rejected_surface_attempts,
+        )
+        .current_generation_candidates()
+        {
+            Ok(projection) => projection,
+            Err(error) => {
+                blockers.push(format!(
+                    "blocked edge r10 -> r11a: rejected-only projection failed: {error}"
+                ));
+                return Ok(EarlyState::R10(typestate::R10::from_collected_parent(
+                    parts.into_collected(),
+                    parent,
+                )));
+            }
+        };
+        parts.facts.child_outcomes = Some(Vec::new());
+        parts.facts.selection = None;
+        parts.facts.rejected_attempt_payloads = Some(projection.considered.len());
+        let r11a =
+            typestate::R11aRejectedOnly::from_collected_parent(parts.into_collected(), parent);
+        notes.push("reconstructed R11a from rejected surface-attempt payloads".into());
+        let r12 = r11_to_r12(typestate::R10FanoutBranch::RejectedOnly(r11a))?;
+        notes.push("reconstructed R12 report facts from rejected-only evidence".into());
+        return Ok(EarlyState::R12(r12));
+    }
+
+    let child_outcomes = match reconstruct_child_outcomes_from_store(
+        &parts.campaign_id,
+        &parts.manifest_path,
+        &children,
+    ) {
+        Ok(outcomes) => outcomes,
+        Err(error) => {
+            blockers.push(format!(
+                "blocked edge r10 -> r11: durable child outcome reconstruction failed: {error}"
+            ));
+            return Ok(EarlyState::R10(typestate::R10::from_collected_parent(
+                parts.into_collected(),
+                parent,
+            )));
+        }
+    };
+    let selection = if parts.run_shape.stop_after == Prototype1StateStopAfter::Complete {
+        match ParentSelection::new(
+            &parts.manifest_path,
+            &parent_identity,
+            &child_outcomes,
+            &rejected_surface_attempts,
+        )
+        .select_successor(parts.run_shape.successor_selection_seed, selection_strategy)
+        {
+            Ok(selection) => selection,
+            Err(error) => {
+                blockers.push(format!(
+                    "blocked edge r10 -> r11: successor selection reconstruction failed: {error}"
+                ));
+                return Ok(EarlyState::R10(typestate::R10::from_collected_parent(
+                    parts.into_collected(),
+                    parent,
+                )));
+            }
+        }
+    } else {
+        None
+    };
+    let outcome_count = child_outcomes.len();
+    parts.facts.child_outcomes = Some(child_outcomes);
+    parts.facts.selection = selection;
+    parts.facts.rejected_attempt_payloads = None;
+    let r11 = typestate::R11FanoutComplete::from_collected_parent(parts.into_collected(), parent);
+    notes.push(format!(
+        "reconstructed R11 from {outcome_count} channel-derived child outcomes"
+    ));
+    let r12 = r11_to_r12(typestate::R10FanoutBranch::FanoutComplete(r11))?;
+    notes.push("reconstructed R12 report facts from child outcomes".into());
+    Ok(EarlyState::R12(r12))
 }
 
 fn reconstruct_r1(
