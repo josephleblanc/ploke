@@ -155,9 +155,9 @@ The table below treats R0–R14 as the driver spine. The exact durable evidence 
 | R7 | Policy and child budget ready. | admitted run profile, search policy, child budget, schedule mode, generation/node counts. | Reads profile and projections; may reserve/log budget if current code does. | Replay displays policy derivation. | Current walk reaches/reconstructs R7; live R7 -> R8 requires explicit `walk step --watch`. |
 | R8 | Child-plan authority received; parent becomes selectable. | `messages/child-plan/<parent-node-id>.json`, `Received<ChildPlan>`, child files, rejected attempts. | May publish broad-harness requests, collect/receive plan, write child-plan message. | Replay shows plan authority and rejected attempts. | Current walk reconstructs R8 from existing child-plan message evidence and can live-enter via blocking `--watch`. |
 | R9 | Child schedule shaped. | planned children, budget, schedule mode, runnable subset. | Usually no durable side effect beyond display/projection unless current code persists schedule choice. | Replay displays runnable set. | Current walk admits pure `R8 -> R9` schedule shaping. Avoid carrying schedule as loose locals. |
-| R10 | Selection strategy ready. | successor-selection policy/strategy, seed, metrics mode, History traversal inputs. | Reads History/projections to build strategy. | Replay shows strategy inputs. | Current walk admits pure `R9 -> R10` and stops before R11 fanout. `ActiveSelectionStrategy` is still private to `cli_facing`; the typestate alias uses the public marker shape while runtime facts carry the value. |
-| R11a | Rejected-only branch projected. | rejected surface attempts and selection material. | Writes/report selection evidence if current path does. | Replay shows no-child selection evidence. | Branch from R10; must not require fake child outcomes. |
-| R11b/R11c | Child fanout complete. | per-child C1-C5 evidence: materialized artifact, binary, invocation, channel ready/result, runner result, branch evaluation. | Materialize/build/spawn/observe children; may call providers via child runner. | Replay should use channel/result evidence, not spawn. Back cursor does not kill/undo completed child work. | Admit one child sub-edge at a time; reuse existing C1-C5 carriers directly. |
+| R10 | Selection strategy ready. | successor-selection policy/strategy, seed, metrics mode, History traversal inputs. | Reads History/projections to build strategy. | Replay shows strategy inputs. | Current walk admits pure `R9 -> R10`; live `R10 -> R11*` requires explicit `walk step --watch`. `ActiveSelectionStrategy` is still private to `cli_facing`; the typestate alias uses the public marker shape while runtime facts carry the value. |
+| R11a | Rejected-only branch projected. | rejected surface attempts and selection material. | Writes/report selection evidence if current path does. | Replay shows no-child selection evidence. | Current walk can reach R11a through explicit `--watch`; must not require fake child outcomes. |
+| R11b/R11c | Child fanout complete. | per-child C1-C5 evidence: materialized artifact, binary, invocation, channel ready/result, runner result, branch evaluation. | Materialize/build/spawn/observe children; may call providers via child runner. | Replay should use channel/result evidence, not spawn. Back cursor does not kill/undo completed child work. | Current walk exposes fanout only through explicit `--watch`; missing child terminal/evaluation evidence remains a hard blocker. |
 | R12 | Report-child/outcome projection ready. | child outcomes, fallback/report child, branch evaluation report, selection material. | Assembles report facts/projections. | Replay shows outcome projection. | Keep report facts separate from final emitted report. |
 | R13a | Continuation stopped/no successor. | successor decision/outcome, read History head, continuation decision stopped. | May append stopped successor/journal records. | Replay shows stop reason. | Branch from R12; no handoff side effects. |
 | R13b | Successor handoff committed. | selected child, selection seal material, open/locked/sealed/appended History block, retired parent, successor invocation/ready record. | Install selected artifact, seal/append History, retire parent, spawn successor, wait ready. | Replay can inspect sealed handoff. Branch-to-live later can start from here only with explicit new provenance. | Highest-risk slice; require focused proof before live full loop. |
@@ -312,7 +312,7 @@ Current implementation status:
 
 - R9 schedule shaping is admitted in `walk` as the pure `r8_to_r9` edge.
 - R10 selection-strategy construction is admitted in `walk` as the pure `r9_to_r10` edge.
-- R11 fanout/rejected-only branching is still pending and should remain blocked until the next slice explicitly admits it.
+- R11 fanout/rejected-only branching is admitted only behind explicit `walk step --watch` from R10; default R10 stepping remains safe/no-op.
 
 Requirements:
 
@@ -330,7 +330,13 @@ R10 -> R11aRejectedOnly
 R10 -> R11FanoutComplete
 ```
 
-Approach:
+Current implementation status:
+
+- `walk step --watch` from R10 admits canonical `r10_to_r11` and branches to R11a or R11.
+- Default `walk step` at R10 remains a safe/no-op boundary and does not spawn children.
+- Live smoke has proven R11a and strict fanout blockers; a successful fanout branch still needs a fixture/live run with complete terminal child evaluation evidence.
+
+Original approach:
 
 1. Implement rejected-only path first.
 2. Then admit child fanout one child sub-edge at a time:
@@ -544,7 +550,7 @@ Basically the same for the harness. This is under-used, but I want to leave the 
 
 Short-term:
 
-- `walk` can reconstruct R0–R8 after server restart where durable baseline/child-plan evidence exists, then step from R8 to R10 without additional provider/harness work.
+- `walk` can reconstruct R0–R8 after server restart where durable baseline/child-plan evidence exists, step from R8 to R10 without additional provider/harness work, and enter R11 branches only with explicit `--watch`.
 - R4a checkout mismatch displays as a typed blocker with recovery commands.
 - R6/R7 are admitted without duplicating baseline side effects when evidence already exists.
 

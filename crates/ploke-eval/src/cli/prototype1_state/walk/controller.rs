@@ -21,11 +21,11 @@ use crate::{
         journal::prototype1_transition_journal_path,
         live_edges::{
             r0_to_r1, r1_to_r2a_or_r3, r3_to_r4a, r4a_to_r4b_or_r4c, r4b_to_r4c_genesis, r4c_to_r5,
-            r5_to_r6, r6_to_r7, r7_to_r8, r8_to_r9, r9_to_r10,
+            r5_to_r6, r6_to_r7, r7_to_r8, r8_to_r9, r9_to_r10, r10_to_r11,
         },
         typestate::{
             self, AsyncStepInput, R0, R1, R2a, R3, R4a, R4bGenesisChecked, R4cReady, R5, R6, R7,
-            R8, R9, R10, StepInput,
+            R8, R9, R10, R11FanoutComplete, R11aRejectedOnly, StepInput,
         },
     },
     layout::prototype1_monitor_target_file,
@@ -43,8 +43,9 @@ type CampaignConfig = ResolvedCampaignConfig;
 /// Single-session in-memory controller for early Prototype 1 typestate phases.
 ///
 /// The current server slice admits setup/startup and parent-start phases through
-/// live `R7`, watch-gated `R8`, schedule-ready `R9`, and strategy-ready `R10`
-/// so the socket lifecycle can be tested before exposing child fanout or handoff.
+/// live `R7`, watch-gated `R8`, schedule-ready `R9`, strategy-ready `R10`,
+/// and watch-gated `R11` so the socket lifecycle can be tested before exposing
+/// handoff.
 pub(crate) struct WalkController {
     repo_root: PathBuf,
     state: WalkState,
@@ -74,6 +75,8 @@ enum WalkState {
     R8(R8<RunShape, CampaignConfig>),
     R9(R9<RunShape, CampaignConfig>),
     R10(R10<RunShape, CampaignConfig>),
+    R11a(R11aRejectedOnly<RunShape, CampaignConfig>),
+    R11(R11FanoutComplete<RunShape, CampaignConfig>),
     /// A consuming transition failed after the previous typed value was moved.
     ///
     /// Rust cannot restore the consumed value after an edge returns `Err`, so
@@ -298,6 +301,7 @@ impl WalkController {
     ) -> Result<WalkAdvanceReport, PrepareError> {
         self.refresh_from_disk()?;
         let from = self.phase();
+        let branch_step = until.is_none() && watch && self.phase() == WalkPhase::R10;
         let target = until.unwrap_or_else(|| {
             if watch && self.phase() == WalkPhase::R7 {
                 WalkPhase::R8
@@ -306,7 +310,7 @@ impl WalkController {
             }
         });
         ensure_supported_target(target)?;
-        let transitions = if self.phase() == target {
+        let transitions = if self.phase() == target && !branch_step {
             Vec::new()
         } else if until.is_some() {
             self.advance_until(target, watch).await?
@@ -422,8 +426,33 @@ impl WalkController {
             WalkState::R8(r8) => r8.advance(r8_to_r9).map(WalkState::R9),
             WalkState::R9(r9) => r9.advance(r9_to_r10).map(WalkState::R10),
             WalkState::R10(r10) => {
-                self.state = WalkState::R10(r10);
-                let detail = "walk reached R10 selection-strategy boundary; R11+ fanout phases are not admitted by this debug server slice yet";
+                if watch {
+                    r10.advance_async(r10_to_r11)
+                        .await
+                        .map(|branch| match branch {
+                            typestate::R10FanoutBranch::RejectedOnly(r11a) => WalkState::R11a(r11a),
+                            typestate::R10FanoutBranch::FanoutComplete(r11) => WalkState::R11(r11),
+                        })
+                } else {
+                    self.state = WalkState::R10(r10);
+                    let detail = "walk reached R10 selection-strategy boundary; rerun `walk step --watch` to admit the live R11 rejected-only/fanout edge";
+                    self.record(format!("blocked at {previous}: {detail}"));
+                    return Err(PrepareError::InvalidBatchSelection {
+                        detail: detail.to_string(),
+                    });
+                }
+            }
+            WalkState::R11a(r11a) => {
+                self.state = WalkState::R11a(r11a);
+                let detail = "walk reached R11a rejected-only boundary; R12+ phases are not admitted by this debug server slice yet";
+                self.record(format!("blocked at {previous}: {detail}"));
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: detail.to_string(),
+                });
+            }
+            WalkState::R11(r11) => {
+                self.state = WalkState::R11(r11);
+                let detail = "walk reached R11 child-fanout boundary; R12+ phases are not admitted by this debug server slice yet";
                 self.record(format!("blocked at {previous}: {detail}"));
                 return Err(PrepareError::InvalidBatchSelection {
                     detail: detail.to_string(),
@@ -484,6 +513,8 @@ impl WalkState {
             WalkState::R8(_) => WalkPhase::R8,
             WalkState::R9(_) => WalkPhase::R9,
             WalkState::R10(_) => WalkPhase::R10,
+            WalkState::R11a(_) => WalkPhase::R11a,
+            WalkState::R11(_) => WalkPhase::R11,
             WalkState::Failed { phase, .. } => *phase,
         }
     }
@@ -569,6 +600,8 @@ impl NextPhase for WalkPhase {
             WalkPhase::R8 => Some(WalkPhase::R9),
             WalkPhase::R9 => Some(WalkPhase::R10),
             WalkPhase::R10 => None,
+            WalkPhase::R11a => None,
+            WalkPhase::R11 => None,
         }
     }
 }

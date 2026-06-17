@@ -401,3 +401,95 @@ batch selection is invalid: broad harness admitted 4 child transaction(s), fewer
 Follow-up `walk show` from a fresh socket reconstructed R8 from the newly written child-plan message, and `walk step --until r10` advanced through `r8_to_r9` and `r9_to_r10`. The below-min admission invariant was not weakened.
 
 GitNexus impact checks before edits were LOW for `R10`, `r9_to_r10`, `WalkPhase`, `WalkController`, and `TRANSITION_GRAPH_VERSION` (0 indexed direct callers/processes reported for each checked target). Pre-commit `npx gitnexus detect-changes --repo ploke` reported LOW risk, 9 changed files, 31 changed symbols, and 0 affected processes.
+
+### Slice 9 — admit watch-gated R11 rejected-only/fanout branch in `walk`
+
+Admitted the first post-strategy branch only behind an explicit operator gate:
+
+- converted `R11aRejectedOnly` and `R11FanoutComplete` to `runtime_alias!` and exported `R11A_SHAPE` / `R11_SHAPE`;
+- added `WalkState::R11a`, `WalkState::R11`, `WalkPhase::R11a`, and `WalkPhase::R11`;
+- wired canonical async `r10_to_r11` into `WalkController`, but only when `walk step --watch` is present;
+- default `walk step` at R10 remains safe/no-op and does not project rejected-only evidence or run child fanout;
+- `walk show` / `walk step` at R10 advertise both possible `r10_to_r11 --watch` branches;
+- R11a and R11 are current stops; R12+ remains unavailable;
+- bumped the walk transition graph version to `walk-r0-r11-v1` so stale pre-R11 servers fail closed.
+
+Deliberate limitations:
+
+- no R12 report/outcome projection yet;
+- no successor decision, handoff, checkout install, History sealing, or final report admission yet;
+- live fanout keeps strict child terminal/evaluation requirements; missing branch evaluation reports block instead of being tolerated;
+- R11 states are not reconstructed directly from durable evidence yet. Restart recovery still reconstructs to R8 where child-plan evidence exists, then steps through R9/R10 before a fresh `--watch` R11 attempt.
+
+Validation:
+
+```text
+cargo fmt --all
+cargo check -p ploke-eval --all-targets
+cargo test -p ploke-eval loop_walk_ --all-targets
+cargo test -p ploke-eval shape --all-targets
+cargo test -p ploke-eval typestate --all-targets
+cargo build -p ploke-eval
+```
+
+Focused test additions:
+
+- `walk::phase::tests::r10_advertises_watch_gated_r11_steps`
+- `walk::phase::tests::r11_shapes_record_branch_deltas`
+
+Safe/default smoke with isolated socket and a clean parent worktree with child-plan evidence:
+
+```text
+ROOT=/home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249
+sockdir=$(mktemp -d /tmp/ploke-walk-r11-safe.XXXXXX)
+chmod 700 "$sockdir"
+sock="$sockdir/walk.sock"
+
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock" --until r10
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock"
+./target/debug/ploke-eval loop walk stop --repo-root "$ROOT" --socket "$sock"
+rm -rf "$sockdir"
+```
+
+Result: the first command reached `r10 - selection strategy ready` and advertised `r10_to_r11 --watch`; the default step stayed at R10 with `transition: already at requested phase` and did not start fanout.
+
+Explicit live R10 -> R11a smoke:
+
+```text
+ROOT=/home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249
+sockdir=$(mktemp -d /tmp/ploke-walk-live-r11.XXXXXX)
+chmod 700 "$sockdir"
+sock="$sockdir/walk.sock"
+
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock" --until r10
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock" --watch
+./target/debug/ploke-eval loop walk show --repo-root "$ROOT" --socket "$sock" delta --verbose --no-color
+./target/debug/ploke-eval loop walk stop --repo-root "$ROOT" --socket "$sock"
+rm -rf "$sockdir"
+```
+
+Result: `walk step --watch` advanced `r10_to_r11 --watch` to `r11a - rejected-only selection evidence ready`. The delta showed `Children<... Planned<ChildFiles> ...>` changing to `Children<children::set::Rejected, ...>` and `evidence::selection::Strategy` changing to `evidence::selection::Evidence<SelectionSealMaterial>`.
+
+Explicit live R10 -> R11 fanout attempt on a clean worktree with children:
+
+```text
+ROOT=/home/brasides/.ploke-eval/worktrees/p1-gemini35-flash-direct-2g1x3-20260525-073410
+sockdir=$(mktemp -d /tmp/ploke-walk-live-r11fanout.XXXXXX)
+chmod 700 "$sockdir"
+sock="$sockdir/walk.sock"
+
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock" --until r10
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock" --watch
+./target/debug/ploke-eval loop walk stop --repo-root "$ROOT" --socket "$sock"
+rm -rf "$sockdir"
+```
+
+Result: the fanout attempt reached R10 and then failed strictly with:
+
+```text
+terminal child 'node-11fa531aab94448c' is missing branch evaluation report; run observe recovery before direct prototype1-state re-entry
+```
+
+This preserved the existing child terminal/evaluation invariant; no permissive fallback was added.
+
+GitNexus impact checks before edits were LOW for `R11aRejectedOnly`, `R11FanoutComplete`, `R10FanoutBranch`, `r10_to_r11`, `WalkPhase`, `WalkController`, and `TRANSITION_GRAPH_VERSION`. Pre-commit `npx gitnexus detect-changes --repo ploke` reported LOW risk, 9 changed files, 41 changed symbols, and 0 affected processes.

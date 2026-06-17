@@ -19,6 +19,7 @@ R0 -> R1 -> R3 -> R4a -> R4b -> R4c -> R5 -> R6 -> R7
 R7 -> R8 requires walk step --watch for live child-plan work
 R8 -> R9 runs as pure schedule shaping when R8 is already held/reconstructed
 R9 -> R10 resolves successor-selection strategy
+R10 -> R11a | R11 requires walk step --watch for rejected-only/fanout work
 ```
 
 `R8` can also be reconstructed when an existing child-plan message is present. `R2a` is the alternate parent-identity initialization boundary when started with `--init-parent-identity`.
@@ -29,8 +30,8 @@ R9 -> R10 resolves successor-selection strategy
 - `R5 -> R6` may establish/advance baseline closure state before loading the parent baseline; reconstruction uses durable baseline evidence when present.
 - `R6 -> R7` derives run policy and child-planning budget and preserves hard budget/max-generation stops.
 - `R8` can be reconstructed from existing child-plan authority. Live `R7 -> R8` requires explicit `walk step --watch` because it may wait on provider/harness work.
-- `R8 -> R9` and `R9 -> R10` are pure in-process edges and do not require `--watch`; R10 is the current stop before R11 fanout/rejected-only projection.
-- `R4a -> R4b/R4c` may inspect/switch the active checkout. Use a clean Prototype 1 parent worktree when you want to reach `R7` or reconstruct/step through `R10`.
+- `R8 -> R9` and `R9 -> R10` are pure in-process edges and do not require `--watch`.
+- `R10 -> R11a | R11` requires explicit `walk step --watch` because it may project rejected-only selection evidence or run live child fanout.
 - If you run from a dirty development checkout, failing at `R4a` because local changes would block a checkout switch is expected.
 - The auto-started server exits after 30 idle minutes by default.
 - You can still stop it explicitly:
@@ -163,7 +164,12 @@ ploke-eval loop walk step
 # r9_to_r10 -> r10
 ```
 
-At R10, there is no admitted next step in the current server slice.
+At R10, the default step is intentionally safe/no-op. Use explicit watch mode to admit rejected-only/fanout work:
+
+```text
+ploke-eval loop walk step --watch
+# r10_to_r11 --watch -> r11a | r11
+```
 
 ### `show`
 
@@ -229,7 +235,7 @@ ploke-eval loop walk serve --no-ttl
 
 ## Recommended review session
 
-Use a clean Prototype 1 parent worktree as `ROOT` if you want to reach `R7`, or one with existing valid child-plan evidence if you want to reconstruct R8 and step to R10 without additional provider/harness work.
+Use a clean Prototype 1 parent worktree as `ROOT` if you want to reach `R7`, or one with existing valid child-plan evidence if you want to reconstruct R8 and step to R10 without additional provider/harness work. R10 -> R11 requires `--watch` and may run live child fanout.
 
 ```text
 ploke-eval loop walk use /path/to/prototype1-parent-worktree
@@ -262,5 +268,6 @@ While reviewing, useful questions are:
 - Should `reset` preserve or clear history by default?
 - Should reaching `R5`/`R6` require an explicit `--live-debug` flag because these edges can write journal/baseline evidence?
 - Should `R8 -> R9 -> R10` remain default steps, or should all post-child-plan edges require an explicit mode even when they are pure?
+- Should R10 fanout watches be split further so rejected-only projection and live child fanout have separate operator commands?
 - Is 30 minutes the right default idle TTL?
 - Should `--watch` become a background progress stream with `walk show progress` for long R8+ edges?

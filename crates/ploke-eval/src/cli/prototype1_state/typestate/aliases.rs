@@ -1210,82 +1210,88 @@ macro_rules! selectable_state_impl {
 selectable_state_impl!(R9, phase::R9);
 selectable_state_impl!(R10, phase::R10);
 
-/// R11a: rejected-only branch projected into selection evidence.
-///
-/// Axis changes:
-/// - `Children<set::Planned<ChildFiles>, attempt::None>`
-///   `-> Children<set::Rejected, attempt::None>`.
-/// - `Evidence<..., selection::Strategy, ...>`
-///   `-> Evidence<..., selection::Evidence<SelectionSealMaterial>, ...>`.
-///
-pub(crate) type R11aRejectedOnly<RunShape = (), CampaignConfig = ()> = Runtime<
-    phase::R11a,
-    parent_role::Parent<parent_role::Selectable>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<
-        plan::authority::Received<Received<parent_role::ChildPlan>>,
-        plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
-    >,
-    Children<children::set::Rejected, children::attempt::None>,
-    History<
-        history_axis::startup::Validated<history_axis::startup::Any>,
-        history_axis::head::FromStartup,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::Recorded<ParentStartedEntry>,
-        evidence::baseline::Ready<CompleteBaseline>,
-        evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
-        evidence::selection::Evidence<SelectionSealMaterial>,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::None,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::None>,
->;
+runtime_alias! {
+    /// R11a: rejected-only branch projected into selection evidence.
+    ///
+    /// Axis changes:
+    /// - `Children<set::Planned<ChildFiles>, attempt::None>`
+    ///   `-> Children<set::Rejected, attempt::None>`.
+    /// - `Evidence<..., selection::Strategy, ...>`
+    ///   `-> Evidence<..., selection::Evidence<SelectionSealMaterial>, ...>`.
+    ///
+    pub(crate) type R11aRejectedOnly<RunShape = (), CampaignConfig = ()> = Runtime<
+        phase::R11a,
+        parent_role::Parent<parent_role::Selectable>,
+        Context<context::Collected<RunShape, CampaignConfig>>,
+        Plan<
+            plan::authority::Received<Received<parent_role::ChildPlan>>,
+            plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
+        >,
+        Children<children::set::Rejected, children::attempt::None>,
+        History<
+            history_axis::startup::Validated<history_axis::startup::Any>,
+            history_axis::head::FromStartup,
+            history_axis::epoch::None,
+        >,
+        Evidence<
+            evidence::parent_start::Recorded<ParentStartedEntry>,
+            evidence::baseline::Ready<CompleteBaseline>,
+            evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
+            evidence::selection::Evidence<SelectionSealMaterial>,
+            evidence::completion::None,
+        >,
+        Continuation<
+            continuation::selection::None,
+            continuation::decision::None,
+            continuation::handoff::None,
+        >,
+        Report<report::None>,
+    >;
+    shape R11A_SHAPE;
+}
 
-/// R11b/R11c: child fanout complete.
-///
-/// Axis changes:
-/// - `Children<set::Planned<ChildFiles>, attempt::None>`
-///   `-> Children<set::Outcomes<PlannedChildOutcome>, attempt::Complete>`.
-/// - Per child: `ChildFiles -> C1 -> C2 -> C3 -> C4 -> C5`.
-/// - `Continuation<selection::None, ...>`
-///   `-> Continuation<selection::Maybe<SuccessorDecision>, ...>`.
-///
-/// Existing carrier: `PlannedChildOutcome`. Inside fanout, each child walks the
-/// C1-C5 chain listed below; after fanout the parent has a vector of outcomes.
-pub(crate) type R11FanoutComplete<RunShape = (), CampaignConfig = ()> = Runtime<
-    phase::R11,
-    parent_role::Parent<parent_role::Selectable>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<
-        plan::authority::Received<Received<parent_role::ChildPlan>>,
-        plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
-    >,
-    Children<children::set::Outcomes<PlannedChildOutcome>, children::attempt::Complete>,
-    History<
-        history_axis::startup::Validated<history_axis::startup::Any>,
-        history_axis::head::FromStartup,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::Recorded<ParentStartedEntry>,
-        evidence::baseline::Ready<CompleteBaseline>,
-        evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
-        evidence::selection::Evidence<SelectionSealMaterial>,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::Maybe<SuccessorDecision>,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::None>,
->;
+runtime_alias! {
+    /// R11b/R11c: child fanout complete.
+    ///
+    /// Axis changes:
+    /// - `Children<set::Planned<ChildFiles>, attempt::None>`
+    ///   `-> Children<set::Outcomes<PlannedChildOutcome>, attempt::Complete>`.
+    /// - Per child: `ChildFiles -> C1 -> C2 -> C3 -> C4 -> C5`.
+    /// - `Continuation<selection::None, ...>`
+    ///   `-> Continuation<selection::Maybe<SuccessorDecision>, ...>`.
+    ///
+    /// Existing carrier: `PlannedChildOutcome`. Inside fanout, each child walks the
+    /// C1-C5 chain listed below; after fanout the parent has a vector of outcomes.
+    pub(crate) type R11FanoutComplete<RunShape = (), CampaignConfig = ()> = Runtime<
+        phase::R11,
+        parent_role::Parent<parent_role::Selectable>,
+        Context<context::Collected<RunShape, CampaignConfig>>,
+        Plan<
+            plan::authority::Received<Received<parent_role::ChildPlan>>,
+            plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
+        >,
+        Children<children::set::Outcomes<PlannedChildOutcome>, children::attempt::Complete>,
+        History<
+            history_axis::startup::Validated<history_axis::startup::Any>,
+            history_axis::head::FromStartup,
+            history_axis::epoch::None,
+        >,
+        Evidence<
+            evidence::parent_start::Recorded<ParentStartedEntry>,
+            evidence::baseline::Ready<CompleteBaseline>,
+            evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
+            evidence::selection::Evidence<SelectionSealMaterial>,
+            evidence::completion::None,
+        >,
+        Continuation<
+            continuation::selection::Maybe<SuccessorDecision>,
+            continuation::decision::None,
+            continuation::handoff::None,
+        >,
+        Report<report::None>,
+    >;
+    shape R11_SHAPE;
+}
 
 selectable_state_impl!(R11aRejectedOnly, phase::R11a);
 selectable_state_impl!(R11FanoutComplete, phase::R11);
