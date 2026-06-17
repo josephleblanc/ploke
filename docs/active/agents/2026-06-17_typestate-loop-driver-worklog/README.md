@@ -325,3 +325,79 @@ rm -rf "$sockdir"
 Result: `show` reconstructed R8 from existing child-plan message evidence, advertised `r8_to_r9 -> r9`, `step` advanced to `r9 - child schedule ready`, and verbose delta showed `Plan<..., plan::schedule::None>` changing to `Plan<..., plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>>`.
 
 GitNexus impact checks before edits were LOW for `WalkPhase`, `r8_to_r9`, `R9`, and `TRANSITION_GRAPH_VERSION` (0 indexed direct callers/processes reported for each checked target). Pre-commit `npx gitnexus detect-changes --repo ploke` reported LOW risk, 9 changed files, 31 changed symbols, and 0 affected processes.
+
+### Slice 8 — admit R10 selection strategy in `walk`
+
+Admitted the next pure strategy-construction edge:
+
+- converted the R10 alias to `runtime_alias!` and exported `R10_SHAPE`;
+- added `WalkState::R10` and `WalkPhase::R10`;
+- wired canonical `r9_to_r10` into `WalkController`;
+- `walk show` at R9 now advertises `r9_to_r10 -> r10`;
+- `walk step` from R9 advances to `r10 - selection strategy ready` without `--watch` because the edge is pure in-process strategy construction;
+- R10 has no admitted next edge in this slice, so R11+ fanout/rejected-only phases remain unavailable;
+- bumped the walk transition graph version to `walk-r0-r10-v1` so stale pre-R10 servers fail closed.
+
+Deliberate limitations:
+
+- no R11 rejected-only branch or child fanout admission yet;
+- no child spawning, checkout install, History sealing, successor decision, handoff, or final report admission yet;
+- R10 is not yet reconstructed directly from durable evidence; after restart, current behavior reconstructs R8 from child-plan evidence, then steps through R9/R10.
+
+Validation:
+
+```text
+cargo fmt --all
+cargo check -p ploke-eval --all-targets
+cargo test -p ploke-eval loop_walk_ --all-targets
+cargo test -p ploke-eval shape --all-targets
+cargo test -p ploke-eval typestate --all-targets
+cargo build -p ploke-eval
+```
+
+Focused test addition:
+
+- `walk::phase::tests::r9_advertises_r10_strategy_step`
+- `walk::phase::tests::r10_shape_records_selection_strategy_delta`
+
+Smoke with isolated socket and clean parent worktree that already has matching child-plan evidence:
+
+```text
+ROOT=/home/brasides/.ploke-eval/worktrees/p1-admissionfix-g35flash-p25flash-20260604-221908
+sockdir=$(mktemp -d /tmp/ploke-walk-r10.XXXXXX)
+chmod 700 "$sockdir"
+sock="$sockdir/walk.sock"
+
+./target/debug/ploke-eval loop walk show --repo-root "$ROOT" --socket "$sock" --with-version
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock"
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock"
+./target/debug/ploke-eval loop walk show --repo-root "$ROOT" --socket "$sock" delta --verbose --no-color
+./target/debug/ploke-eval loop walk stop --repo-root "$ROOT" --socket "$sock"
+rm -rf "$sockdir"
+```
+
+Result: `show` reconstructed R8, first `step` advanced `r8_to_r9`, second `step` advanced `r9_to_r10`, and verbose delta showed `evidence::selection::Plan<context::ChildPlanFacts>` changing to `evidence::selection::Strategy` with no admitted next step.
+
+Explicit live API smoke after user clarified live calls should be used:
+
+```text
+ROOT=/home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249
+sockdir=$(mktemp -d /tmp/ploke-walk-live-r8.XXXXXX)
+chmod 700 "$sockdir"
+sock="$sockdir/walk.sock"
+
+./target/debug/ploke-eval loop walk show --repo-root "$ROOT" --socket "$sock" --with-version
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock" --watch
+./target/debug/ploke-eval loop walk stop --repo-root "$ROOT" --socket "$sock"
+rm -rf "$sockdir"
+```
+
+Result: the live R7 -> R8 child-planning path ran and produced child-plan/harness artifacts, but the request returned a strict error because broad harness admitted 4 child transactions, below required minimum 5:
+
+```text
+batch selection is invalid: broad harness admitted 4 child transaction(s), fewer than required minimum 5
+```
+
+Follow-up `walk show` from a fresh socket reconstructed R8 from the newly written child-plan message, and `walk step --until r10` advanced through `r8_to_r9` and `r9_to_r10`. The below-min admission invariant was not weakened.
+
+GitNexus impact checks before edits were LOW for `R10`, `r9_to_r10`, `WalkPhase`, `WalkController`, and `TRANSITION_GRAPH_VERSION` (0 indexed direct callers/processes reported for each checked target). Pre-commit `npx gitnexus detect-changes --repo ploke` reported LOW risk, 9 changed files, 31 changed symbols, and 0 affected processes.

@@ -1107,43 +1107,46 @@ runtime_alias! {
     shape R9_SHAPE;
 }
 
-/// R10: selection strategy ready.
-///
-/// Axis changes:
-/// - `Evidence<..., selection::Plan<PlannedChildren>, ...>`
-///   `-> Evidence<..., selection::Strategy, ...>`.
-///
-/// Existing implementation type: `ActiveSelectionStrategy`, but it is private
-/// to `cli_facing.rs`. The local `evidence::selection::Strategy` marker stands
-/// in for that existing-but-not-reusable carrier.
-pub(crate) type R10<RunShape = (), CampaignConfig = ()> = Runtime<
-    phase::R10,
-    parent_role::Parent<parent_role::Selectable>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<
-        plan::authority::Received<Received<parent_role::ChildPlan>>,
-        plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
-    >,
-    Children<children::set::Planned<parent_role::ChildFiles>, children::attempt::None>,
-    History<
-        history_axis::startup::Validated<history_axis::startup::Any>,
-        history_axis::head::FromStartup,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::Recorded<ParentStartedEntry>,
-        evidence::baseline::Ready<CompleteBaseline>,
-        evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
-        evidence::selection::Strategy,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::None,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::None>,
->;
+runtime_alias! {
+    /// R10: selection strategy ready.
+    ///
+    /// Axis changes:
+    /// - `Evidence<..., selection::Plan<PlannedChildren>, ...>`
+    ///   `-> Evidence<..., selection::Strategy, ...>`.
+    ///
+    /// Existing implementation type: `ActiveSelectionStrategy`, but it is private
+    /// to `cli_facing.rs`. The local `evidence::selection::Strategy` marker stands
+    /// in for that existing-but-not-reusable carrier.
+    pub(crate) type R10<RunShape = (), CampaignConfig = ()> = Runtime<
+        phase::R10,
+        parent_role::Parent<parent_role::Selectable>,
+        Context<context::Collected<RunShape, CampaignConfig>>,
+        Plan<
+            plan::authority::Received<Received<parent_role::ChildPlan>>,
+            plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
+        >,
+        Children<children::set::Planned<parent_role::ChildFiles>, children::attempt::None>,
+        History<
+            history_axis::startup::Validated<history_axis::startup::Any>,
+            history_axis::head::FromStartup,
+            history_axis::epoch::None,
+        >,
+        Evidence<
+            evidence::parent_start::Recorded<ParentStartedEntry>,
+            evidence::baseline::Ready<CompleteBaseline>,
+            evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
+            evidence::selection::Strategy,
+            evidence::completion::None,
+        >,
+        Continuation<
+            continuation::selection::None,
+            continuation::decision::None,
+            continuation::handoff::None,
+        >,
+        Report<report::None>,
+    >;
+    shape R10_SHAPE;
+}
 
 macro_rules! selectable_state_impl {
     ($alias:ident, $phase:expr) => {

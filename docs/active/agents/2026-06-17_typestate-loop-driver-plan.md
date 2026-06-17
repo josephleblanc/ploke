@@ -154,8 +154,8 @@ The table below treats R0–R14 as the driver spine. The exact durable evidence 
 | R6 | Parent baseline established. | baseline closure state or selected-child promoted baseline evidence; campaign closure artifacts. | May advance eval/protocol closure for baseline. | Replay shows baseline source and completeness. | Current walk reaches/reconstructs R6 when durable baseline evidence exists and admits R6 -> R7. |
 | R7 | Policy and child budget ready. | admitted run profile, search policy, child budget, schedule mode, generation/node counts. | Reads profile and projections; may reserve/log budget if current code does. | Replay displays policy derivation. | Current walk reaches/reconstructs R7; live R7 -> R8 requires explicit `walk step --watch`. |
 | R8 | Child-plan authority received; parent becomes selectable. | `messages/child-plan/<parent-node-id>.json`, `Received<ChildPlan>`, child files, rejected attempts. | May publish broad-harness requests, collect/receive plan, write child-plan message. | Replay shows plan authority and rejected attempts. | Current walk reconstructs R8 from existing child-plan message evidence and can live-enter via blocking `--watch`. |
-| R9 | Child schedule shaped. | planned children, budget, schedule mode, runnable subset. | Usually no durable side effect beyond display/projection unless current code persists schedule choice. | Replay displays runnable set. | Current walk admits pure `R8 -> R9` schedule shaping and stops before R10+. Avoid carrying schedule as loose locals. |
-| R10 | Selection strategy ready. | successor-selection policy/strategy, seed, metrics mode, History traversal inputs. | Reads History/projections to build strategy. | Replay shows strategy inputs. | `ActiveSelectionStrategy` is still private to `cli_facing`; either move carrier or add typed public equivalent. |
+| R9 | Child schedule shaped. | planned children, budget, schedule mode, runnable subset. | Usually no durable side effect beyond display/projection unless current code persists schedule choice. | Replay displays runnable set. | Current walk admits pure `R8 -> R9` schedule shaping. Avoid carrying schedule as loose locals. |
+| R10 | Selection strategy ready. | successor-selection policy/strategy, seed, metrics mode, History traversal inputs. | Reads History/projections to build strategy. | Replay shows strategy inputs. | Current walk admits pure `R9 -> R10` and stops before R11 fanout. `ActiveSelectionStrategy` is still private to `cli_facing`; the typestate alias uses the public marker shape while runtime facts carry the value. |
 | R11a | Rejected-only branch projected. | rejected surface attempts and selection material. | Writes/report selection evidence if current path does. | Replay shows no-child selection evidence. | Branch from R10; must not require fake child outcomes. |
 | R11b/R11c | Child fanout complete. | per-child C1-C5 evidence: materialized artifact, binary, invocation, channel ready/result, runner result, branch evaluation. | Materialize/build/spawn/observe children; may call providers via child runner. | Replay should use channel/result evidence, not spawn. Back cursor does not kill/undo completed child work. | Admit one child sub-edge at a time; reuse existing C1-C5 carriers directly. |
 | R12 | Report-child/outcome projection ready. | child outcomes, fallback/report child, branch evaluation report, selection material. | Assembles report facts/projections. | Replay shows outcome projection. | Keep report facts separate from final emitted report. |
@@ -311,7 +311,8 @@ Goal: schedule shaping and strategy construction become typed edges.
 Current implementation status:
 
 - R9 schedule shaping is admitted in `walk` as the pure `r8_to_r9` edge.
-- R10 selection-strategy construction is still pending and should remain blocked until the next slice explicitly admits it.
+- R10 selection-strategy construction is admitted in `walk` as the pure `r9_to_r10` edge.
+- R11 fanout/rejected-only branching is still pending and should remain blocked until the next slice explicitly admits it.
 
 Requirements:
 
@@ -345,7 +346,7 @@ Guardrails:
 - no fake successful child results;
 - no scheduler-only finality;
 - terminal child evidence comes from channel/result files;
-- live child model/provider tests stay gated.
+- live child model/provider tests should be exercised during implementation when credentials are available, using explicit operator-smoke commands or existing live-test gates rather than hidden/background calls.
 
 ### Slice 8 — R12 report facts
 
@@ -442,9 +443,10 @@ cargo test -p ploke-eval prototype1_state --all-targets
 ```
 
 4. Smoke through `walk` with an isolated runtime socket.
-5. If the slice touches backup fixtures, check `docs/testing/BACKUP_DB_FIXTURES.md` before changing fixtures.
-6. Use live provider tests only behind existing feature flags or explicit ignored tests.
-7. Commit after each working slice.
+5. For any slice whose admitted edge can call a provider, harness, or live child-planning API, run at least one explicit live smoke when credentials are available. Do not hide live calls behind default/no-op smokes; make the command and evidence explicit in the worklog.
+6. If the slice touches backup fixtures, check `docs/testing/BACKUP_DB_FIXTURES.md` before changing fixtures.
+7. Keep automated live provider tests behind existing feature flags or explicit ignored tests, but do use live API smokes during this implementation rather than avoiding them by default.
+8. Commit after each working slice.
 
 Operator smoke pattern:
 
@@ -542,7 +544,7 @@ Basically the same for the harness. This is under-used, but I want to leave the 
 
 Short-term:
 
-- `walk` can reconstruct R0–R8 after server restart where durable baseline/child-plan evidence exists, then step from R8 to R9 without provider/harness work.
+- `walk` can reconstruct R0–R8 after server restart where durable baseline/child-plan evidence exists, then step from R8 to R10 without additional provider/harness work.
 - R4a checkout mismatch displays as a typed blocker with recovery commands.
 - R6/R7 are admitted without duplicating baseline side effects when evidence already exists.
 

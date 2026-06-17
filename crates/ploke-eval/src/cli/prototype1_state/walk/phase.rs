@@ -11,12 +11,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::cli::prototype1_state::typestate::{
     R0_SHAPE, R1_SHAPE, R2A_SHAPE, R3_SHAPE, R4A_SHAPE, R4B_SHAPE, R4C_SHAPE, R5_SHAPE, R6_SHAPE,
-    R7_SHAPE, R8_SHAPE, R9_SHAPE, RuntimeAxisDelta, RuntimeShape,
+    R7_SHAPE, R8_SHAPE, R9_SHAPE, R10_SHAPE, RuntimeAxisDelta, RuntimeShape,
 };
 
 /// Serializable cursor for the early Prototype 1 typestate walk.
 ///
-/// The current server slice intentionally stops live stepping at `R9` after the
+/// The current server slice intentionally stops live stepping at `R10` after the
 /// watch-gated child-plan authority edge. That is enough to validate socket
 /// lifecycle, in-memory stepping, branching, stale-server guards, and setup
 /// edges before child fanout or successor handoff.
@@ -49,6 +49,8 @@ pub enum WalkPhase {
     R8,
     /// Child schedule and budget are shaped.
     R9,
+    /// Successor-selection strategy is ready.
+    R10,
 }
 
 /// One admitted edge that can follow a phase in the current server slice.
@@ -139,6 +141,12 @@ const R8_NEXT: &[WalkNextStep] = &[WalkNextStep {
     detail: "shape child schedule and budget",
 }];
 
+const R9_NEXT: &[WalkNextStep] = &[WalkNextStep {
+    edge: "r9_to_r10",
+    phase: WalkPhase::R10,
+    detail: "resolve successor-selection strategy",
+}];
+
 const NO_NEXT: &[WalkNextStep] = &[];
 
 impl WalkPhase {
@@ -158,6 +166,7 @@ impl WalkPhase {
             WalkPhase::R7 => "r7",
             WalkPhase::R8 => "r8",
             WalkPhase::R9 => "r9",
+            WalkPhase::R10 => "r10",
         }
     }
 
@@ -177,6 +186,7 @@ impl WalkPhase {
             WalkPhase::R7 => "policy and child budget ready",
             WalkPhase::R8 => "child-plan authority received",
             WalkPhase::R9 => "child schedule ready",
+            WalkPhase::R10 => "selection strategy ready",
         }
     }
 
@@ -196,6 +206,7 @@ impl WalkPhase {
                 | WalkPhase::R7
                 | WalkPhase::R8
                 | WalkPhase::R9
+                | WalkPhase::R10
         )
     }
 
@@ -214,7 +225,8 @@ impl WalkPhase {
             WalkPhase::R6 => R6_NEXT,
             WalkPhase::R7 => R7_NEXT,
             WalkPhase::R8 => R8_NEXT,
-            WalkPhase::R9 => NO_NEXT,
+            WalkPhase::R9 => R9_NEXT,
+            WalkPhase::R10 => NO_NEXT,
         }
     }
 
@@ -284,6 +296,7 @@ impl WalkPhase {
             WalkPhase::R7 => Some(R7_SHAPE),
             WalkPhase::R8 => Some(R8_SHAPE),
             WalkPhase::R9 => Some(R9_SHAPE),
+            WalkPhase::R10 => Some(R10_SHAPE),
         }
     }
 
@@ -319,7 +332,7 @@ mod tests {
         assert_eq!(steps[0].edge, "r8_to_r9");
         assert_eq!(steps[0].phase, WalkPhase::R9);
         assert_eq!(steps[0].detail, "shape child schedule and budget");
-        assert!(WalkPhase::R9.next_steps().is_empty());
+        assert_eq!(WalkPhase::R9.next_steps()[0].edge, "r9_to_r10");
     }
 
     #[test]
@@ -336,5 +349,28 @@ mod tests {
                 "plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>"
             )
         );
+    }
+
+    #[test]
+    fn r9_advertises_r10_strategy_step() {
+        let steps = WalkPhase::R9.next_steps();
+
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].edge, "r9_to_r10");
+        assert_eq!(steps[0].phase, WalkPhase::R10);
+        assert_eq!(steps[0].detail, "resolve successor-selection strategy");
+        assert!(WalkPhase::R10.next_steps().is_empty());
+    }
+
+    #[test]
+    fn r10_shape_records_selection_strategy_delta() {
+        let deltas = WalkPhase::R10.axis_deltas_from(WalkPhase::R9);
+        let evidence = deltas
+            .iter()
+            .find(|delta| delta.label == "evidence")
+            .expect("R9 -> R10 should change the evidence axis");
+
+        assert!(evidence.from.contains("evidence::selection::Plan"));
+        assert!(evidence.to.contains("evidence::selection::Strategy"));
     }
 }
