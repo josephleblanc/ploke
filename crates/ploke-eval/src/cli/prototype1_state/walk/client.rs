@@ -39,6 +39,7 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             let format = command.format;
             let with_version = command.with_version;
             let until = command.until;
+            let watch = command.watch;
             let socket_override = command.socket.clone();
             let (repo_root, socket) =
                 args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
@@ -48,7 +49,7 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
                 &socket,
                 WalkRequest {
                     client_epoch: Some(epoch),
-                    body: WalkRequestBody::Step { until },
+                    body: WalkRequestBody::Step { until, watch },
                 },
             )
             .await?;

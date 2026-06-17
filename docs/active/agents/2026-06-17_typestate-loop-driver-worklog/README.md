@@ -235,3 +235,41 @@ Smoke with isolated socket and clean parent worktree without child-plan evidence
 ```
 
 Result: `walk` stayed at R7 and did not call the live R8 child-plan authority edge.
+
+### Slice 6 — add explicit `walk step --watch` for live R7 -> R8
+
+Added an explicit operator gate for the first long child-plan authority edge:
+
+- added `walk step --watch` to the public command;
+- extended the walk protocol `Step` request with `watch` and bumped protocol version to 3;
+- default `walk step` at R7 remains a no-op safe boundary and does not call providers or publish child-plan work;
+- `walk step --watch` admits canonical `r7_to_r8` and waits for it to complete;
+- `walk show` advertises `r7_to_r8 --watch -> r8` and `walk show delta` knows the R7 -> R8 side-effect text.
+
+Deliberate limitations:
+
+- this is a blocking watch, not yet a background progress task with `walk show progress`;
+- default return-after-~1s progress semantics are still pending for unattended live edges; the safer current behavior is to require `--watch` before starting R7 -> R8;
+- live `--watch` was not smoke-run in this slice to avoid invoking provider/harness work unexpectedly from the clean local parent worktree.
+
+Validation:
+
+```text
+cargo check -p ploke-eval --all-targets
+cargo test -p ploke-eval loop_walk_ --all-targets
+cargo test -p ploke-eval shape --all-targets
+cargo test -p ploke-eval typestate --all-targets
+```
+
+Smoke with isolated socket and clean parent worktree:
+
+```text
+./target/debug/ploke-eval loop walk start --repo-root /home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249 --socket <tmp>/walk.sock --until r7
+./target/debug/ploke-eval loop walk show --repo-root /home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249 --socket <tmp>/walk.sock
+./target/debug/ploke-eval loop walk step --repo-root /home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249 --socket <tmp>/walk.sock
+./target/debug/ploke-eval loop walk step --help | rg -- '--watch|--until'
+```
+
+Result: show advertised `r7_to_r8 --watch`, default step stayed at R7, and help listed `--watch`.
+
+GitNexus `detect-changes` risk: HIGH, because the slice intentionally changes walk client `run` dispatch, the walk protocol, and controller stepping. Affected flows are walk socket/context flows; no non-walk execution process was reported. The change was kept as a recoverable milestone and validated with focused tests plus isolated socket smokes.

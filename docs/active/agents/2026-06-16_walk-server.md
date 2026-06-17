@@ -212,8 +212,8 @@ R6 -> R7
 # R8 can be reconstructed when existing child-plan evidence is present.
 ```
 
-- `R2a` and live `R7` are current stops.
-- `R8` is reconstruct-only until async progress/watch support exists for live child-plan authority.
+- `R2a` and default live `R7` are current stops.
+- `R8` is reconstructable from existing child-plan authority, and live `R7 -> R8` requires explicit `walk step --watch`.
 - Later phases (`R9+`) are intentionally not admitted yet by the server slice.
 - `show` includes server-local previous entries, root/tracking directories, tracked file paths, current typestate alias, and next admitted edges.
 - `show delta` includes only the last successful step delta; `--verbose` also lists nested type structures, and `--no-color` disables ANSI colors.
@@ -294,11 +294,11 @@ The live loop must remain capable of self-editing without being controlled by a 
 
 ## Known sharp edges
 
-- Live stepping is supported through `R7`; `R8` is reconstruct-only from existing child-plan message evidence.
+- Default live stepping is supported through `R7`; `R8` is reconstructable from existing child-plan message evidence and live-entered only with `walk step --watch`.
 - `R5` is live-effectful: it appends parent-start/resource entries to the transition journal.
 - `R5 -> R6` may establish/advance baseline closure state before loading the parent baseline; reconstruction uses durable baseline evidence when present.
 - `R6 -> R7` derives run policy and child-planning budget and preserves hard budget/max-generation stops.
-- Live `R7 -> R8` is not exposed until async progress/watch support exists.
+- Live `R7 -> R8` is exposed only through explicit `walk step --watch`; default step at R7 does not start provider/harness work.
 - Later async/live-effectful phases (`R9+`, child fanout, handoff, final report) are not yet exposed through the server.
 - Failed consuming transitions are recorded as `Failed`, not retryable from the exact consumed Rust state.
 - The current source freshness check is status-hash based, not full content-hash based.
@@ -310,7 +310,7 @@ The live loop must remain capable of self-editing without being controlled by a 
 1. Add explicit server log file support.
 2. Add unit tests around `paths`, `protocol`, and `WalkController` failure-state behavior.
 3. Add automated `step --until r7` smoke coverage with a fixture checkout that has the required parent identity/campaign setup.
-4. Add async progress/watch support before exposing live `R7 -> R8` behind an explicit live/debug flag.
+4. Replace the blocking `--watch` implementation with background progress reporting before exposing more long R8+ live edges.
 5. Upgrade epoch source drift detection from `git status` hash to content hash if long-running server use becomes common.
 6. Only after the server is stable as a debug harness, consider parent/successor lifecycle integration:
    - parent server terminates or becomes read-only at handoff;

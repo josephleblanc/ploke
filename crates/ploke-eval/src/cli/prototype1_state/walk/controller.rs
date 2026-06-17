@@ -21,7 +21,7 @@ use crate::{
         journal::prototype1_transition_journal_path,
         live_edges::{
             r0_to_r1, r1_to_r2a_or_r3, r3_to_r4a, r4a_to_r4b_or_r4c, r4b_to_r4c_genesis, r4c_to_r5,
-            r5_to_r6, r6_to_r7,
+            r5_to_r6, r6_to_r7, r7_to_r8,
         },
         typestate::{
             self, AsyncStepInput, R0, R1, R2a, R3, R4a, R4bGenesisChecked, R4cReady, R5, R6, R7,
@@ -284,7 +284,7 @@ impl WalkController {
             "start: created r0 for repo_root '{}'",
             repo_root.display()
         ));
-        self.advance_until(until).await?;
+        self.advance_until(until, false).await?;
         Ok(self.phase())
     }
 
@@ -292,17 +292,24 @@ impl WalkController {
     pub(crate) async fn step(
         &mut self,
         until: Option<WalkPhase>,
+        watch: bool,
     ) -> Result<WalkAdvanceReport, PrepareError> {
         self.refresh_from_disk()?;
         let from = self.phase();
-        let target = until.unwrap_or_else(|| self.phase().next().unwrap_or(self.phase()));
+        let target = until.unwrap_or_else(|| {
+            if watch && self.phase() == WalkPhase::R7 {
+                WalkPhase::R8
+            } else {
+                self.phase().next().unwrap_or(self.phase())
+            }
+        });
         ensure_supported_target(target)?;
         let transitions = if self.phase() == target {
             Vec::new()
         } else if until.is_some() {
-            self.advance_until(target).await?
+            self.advance_until(target, watch).await?
         } else {
-            vec![self.step_once().await?]
+            vec![self.step_once(watch).await?]
         };
         let report = WalkAdvanceReport {
             from,
@@ -339,6 +346,7 @@ impl WalkController {
     async fn advance_until(
         &mut self,
         target: WalkPhase,
+        watch: bool,
     ) -> Result<Vec<WalkTransition>, PrepareError> {
         let mut guard = 0_u8;
         let mut transitions = Vec::new();
@@ -349,12 +357,12 @@ impl WalkController {
                     detail: format!("walk exceeded early-step guard while advancing to {target}"),
                 });
             }
-            transitions.push(self.step_once().await?);
+            transitions.push(self.step_once(watch).await?);
         }
         Ok(transitions)
     }
 
-    async fn step_once(&mut self) -> Result<WalkTransition, PrepareError> {
+    async fn step_once(&mut self, watch: bool) -> Result<WalkTransition, PrepareError> {
         let state = std::mem::replace(&mut self.state, WalkState::Empty);
         let previous = state.phase();
         let next = match state {
@@ -398,12 +406,16 @@ impl WalkController {
             WalkState::R5(r5) => r5.advance_async(r5_to_r6).await.map(WalkState::R6),
             WalkState::R6(r6) => r6.advance(r6_to_r7).map(WalkState::R7),
             WalkState::R7(r7) => {
-                self.state = WalkState::R7(r7);
-                let detail = "walk reached R7 policy-ready boundary; live R8 child-plan authority needs async progress/watch support before admission";
-                self.record(format!("blocked at {previous}: {detail}"));
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: detail.to_string(),
-                });
+                if watch {
+                    r7.advance_async(r7_to_r8).await.map(WalkState::R8)
+                } else {
+                    self.state = WalkState::R7(r7);
+                    let detail = "walk reached R7 policy-ready boundary; rerun `walk step --watch` to admit the live R8 child-plan authority edge";
+                    self.record(format!("blocked at {previous}: {detail}"));
+                    return Err(PrepareError::InvalidBatchSelection {
+                        detail: detail.to_string(),
+                    });
+                }
             }
             WalkState::R8(r8) => {
                 self.state = WalkState::R8(r8);
@@ -664,6 +676,12 @@ fn push_side_effects(
     if matches!((from, to), (WalkPhase::R5, WalkPhase::R6)) {
         lines.push(format!(
             "  - {}: may advance eval/protocol closure before loading parent baseline",
+            highlight_changed("side effect", style.color)
+        ));
+    }
+    if matches!((from, to), (WalkPhase::R7, WalkPhase::R8)) {
+        lines.push(format!(
+            "  - {}: may publish or receive child-plan authority and wait on provider/harness work",
             highlight_changed("side effect", style.color)
         ));
     }

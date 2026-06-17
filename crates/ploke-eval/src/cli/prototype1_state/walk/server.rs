@@ -150,9 +150,9 @@ impl WalkServer {
                     Err(error) => Err(error),
                 }
             }
-            WalkRequestBody::Step { until } => {
+            WalkRequestBody::Step { until, watch } => {
                 match self.ensure_epoch_guard(request.client_epoch.as_ref()) {
-                    Ok(()) => match self.controller.step(until).await {
+                    Ok(()) => match self.controller.step(until, watch).await {
                         Ok(report) => Ok(WalkResponse::ok(
                             self.controller.phase(),
                             report.render(),

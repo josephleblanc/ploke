@@ -261,6 +261,10 @@ pub struct Prototype1StateWalkStepCommand {
     #[arg(long, value_enum)]
     pub until: Option<WalkPhase>,
 
+    /// Wait for a long live edge instead of returning at the safe boundary.
+    #[arg(long)]
+    pub watch: bool,
+
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
 

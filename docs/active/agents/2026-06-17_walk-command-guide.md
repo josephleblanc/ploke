@@ -26,7 +26,7 @@ R0 -> R1 -> R3 -> R4a -> R4b -> R4c -> R5 -> R6 -> R7
 - `R5` is side-effectful: it appends `parent_started` and `resource` entries to the campaign transition journal.
 - `R5 -> R6` may establish/advance baseline closure state before loading the parent baseline; reconstruction uses durable baseline evidence when present.
 - `R6 -> R7` derives run policy and child-planning budget and preserves hard budget/max-generation stops.
-- `R8` is reconstruct-only for now: `walk` can display existing child-plan authority, but live `R7 -> R8` needs async progress/watch support first.
+- `R8` can be reconstructed from existing child-plan authority. Live `R7 -> R8` requires explicit `walk step --watch` because it may wait on provider/harness work.
 - `R4a -> R4b/R4c` may inspect/switch the active checkout. Use a clean Prototype 1 parent worktree when you want to reach `R7`.
 - If you run from a dirty development checkout, failing at `R4a` because local changes would block a checkout switch is expected.
 - The auto-started server exits after 30 idle minutes by default.
@@ -140,6 +140,12 @@ Or advance repeatedly until a target phase:
 ploke-eval loop walk step --until r7
 ```
 
+At R7, start the live child-plan authority edge only when you are ready to wait:
+
+```text
+ploke-eval loop walk step --watch
+```
+
 ### `show`
 
 Shows the current phase, server pid, root/tracking directories, tracked paths, current Rust typestate alias, next admitted edges, and server-local previous entries.
@@ -237,4 +243,4 @@ While reviewing, useful questions are:
 - Should `reset` preserve or clear history by default?
 - Should reaching `R5`/`R6` require an explicit `--live-debug` flag because these edges can write journal/baseline evidence?
 - Is 30 minutes the right default idle TTL?
-- What async progress/watch information should be added before live-admitting `R7 -> R8`?
+- Should `--watch` become a background progress stream with `walk show progress` for long R8+ edges?

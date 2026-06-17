@@ -126,6 +126,12 @@ const R6_NEXT: &[WalkNextStep] = &[WalkNextStep {
     detail: "derive run policy and child-planning budget",
 }];
 
+const R7_NEXT: &[WalkNextStep] = &[WalkNextStep {
+    edge: "r7_to_r8 --watch",
+    phase: WalkPhase::R8,
+    detail: "resolve live child-plan authority; may wait on provider/harness work",
+}];
+
 const NO_NEXT: &[WalkNextStep] = &[];
 
 impl WalkPhase {
@@ -196,7 +202,7 @@ impl WalkPhase {
             WalkPhase::R4c => R4C_NEXT,
             WalkPhase::R5 => R5_NEXT,
             WalkPhase::R6 => R6_NEXT,
-            WalkPhase::R7 => NO_NEXT,
+            WalkPhase::R7 => R7_NEXT,
             WalkPhase::R8 => NO_NEXT,
         }
     }
@@ -222,6 +228,12 @@ impl WalkPhase {
         if matches!((from, self), (WalkPhase::R5, WalkPhase::R6)) {
             deltas.push(
                 "side effect: may advance eval/protocol closure before loading parent baseline"
+                    .to_string(),
+            );
+        }
+        if matches!((from, self), (WalkPhase::R7, WalkPhase::R8)) {
+            deltas.push(
+                "side effect: may publish or receive child-plan authority and wait on provider/harness work"
                     .to_string(),
             );
         }

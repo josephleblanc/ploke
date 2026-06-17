@@ -87,6 +87,9 @@ pub(crate) enum WalkRequestBody {
     Step {
         /// If present, advance repeatedly until this phase; otherwise one step.
         until: Option<WalkPhase>,
+        /// Allow long live edges to run to completion instead of stopping at a safe boundary.
+        #[serde(default)]
+        watch: bool,
     },
     /// Clear the in-memory walk while keeping the server process alive.
     Reset,
