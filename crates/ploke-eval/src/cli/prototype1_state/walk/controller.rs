@@ -16,6 +16,7 @@ use crate::{
     ResolvedCampaignConfig,
     cli::prototype1_state::{
         cli_facing::{Prototype1StateRunShape, campaign_manifest_path_for_id},
+        driver::reconstruct::{self, EarlyState},
         identity::parent_identity_path,
         journal::prototype1_transition_journal_path,
         live_edges::{
@@ -41,11 +42,13 @@ type CampaignConfig = ResolvedCampaignConfig;
 /// `R5` so the socket lifecycle can be tested before exposing child fanout or
 /// handoff.
 pub(crate) struct WalkController {
+    repo_root: PathBuf,
     state: WalkState,
     steps: usize,
     previous: WalkPrevious,
     files: WalkFiles,
     last_delta: Option<WalkAdvanceReport>,
+    reconstruction: Option<WalkReconstruction>,
 }
 
 /// Owned typestate value currently held by the server.
@@ -178,13 +181,17 @@ impl WalkTransition {
 
 impl WalkController {
     /// Create an empty controller with no active walk.
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(repo_root: PathBuf) -> Self {
+        let mut files = WalkFiles::default();
+        files.reset(&repo_root);
         Self {
+            repo_root,
             state: WalkState::Empty,
             steps: 0,
             previous: WalkPrevious::default(),
-            files: WalkFiles::default(),
+            files,
             last_delta: None,
+            reconstruction: None,
         }
     }
 
@@ -207,6 +214,9 @@ impl WalkController {
         lines.push(format!("steps: {}", self.steps));
         self.files.push_roots(&mut lines);
         self.files.push_tracked(&mut lines);
+        if let Some(reconstruction) = &self.reconstruction {
+            reconstruction.push_lines(&mut lines);
+        }
         lines.push("typestate:".to_string());
         let typestate = phase.typestate();
         lines.extend(indent_lines(&typestate, 2));
@@ -234,8 +244,9 @@ impl WalkController {
         let previous = self.phase();
         self.state = WalkState::Empty;
         self.steps = 0;
-        self.files.clear();
+        self.files.reset(&self.repo_root);
         self.last_delta = None;
+        self.reconstruction = None;
         self.record(format!("reset: cleared in-memory walk from {previous}"));
         self.phase()
     }
@@ -256,10 +267,12 @@ impl WalkController {
         }
         ensure_supported_target(until)?;
         let repo_root = paths::resolve_repo_root(config.repo_root.as_deref())?;
+        self.repo_root = repo_root.clone();
         self.files.reset(&repo_root);
         self.state = WalkState::R0(typestate::R0::new(config.into_state_command()));
         self.steps = 0;
         self.last_delta = None;
+        self.reconstruction = None;
         self.record(format!(
             "start: created r0 for repo_root '{}'",
             repo_root.display()
@@ -273,6 +286,7 @@ impl WalkController {
         &mut self,
         until: Option<WalkPhase>,
     ) -> Result<WalkAdvanceReport, PrepareError> {
+        self.refresh_from_disk()?;
         let from = self.phase();
         let target = until.unwrap_or_else(|| self.phase().next().unwrap_or(self.phase()));
         ensure_supported_target(target)?;
@@ -290,6 +304,29 @@ impl WalkController {
         };
         self.last_delta = Some(report.clone());
         Ok(report)
+    }
+
+    pub(crate) fn refresh_from_disk(&mut self) -> Result<(), PrepareError> {
+        if !matches!(self.state, WalkState::Empty) {
+            return Ok(());
+        }
+        let snapshot = reconstruct::reconstruct_early(&self.repo_root)?;
+        let reconstruct::EarlySnapshot {
+            state,
+            campaign_id,
+            notes,
+            blockers,
+        } = snapshot;
+        if let Some(campaign_id) = &campaign_id {
+            self.files.remember_campaign(campaign_id);
+        }
+        self.reconstruction = Some(WalkReconstruction { notes, blockers });
+        if let Some(state) = state {
+            let phase = phase_for_early(&state);
+            self.state = WalkState::from_early(state);
+            self.record(format!("reconstructed durable walk state at {phase}"));
+        }
+        Ok(())
     }
 
     fn advance_until(&mut self, target: WalkPhase) -> Result<Vec<WalkTransition>, PrepareError> {
@@ -362,6 +399,7 @@ impl WalkController {
                 let current = state.phase();
                 self.state = state;
                 self.steps += 1;
+                self.reconstruction = None;
                 self.record(format!("step {}: {previous} -> {current}", self.steps));
                 Ok(WalkTransition {
                     from: previous,
@@ -398,6 +436,49 @@ impl WalkState {
             WalkState::R4c(_) => WalkPhase::R4c,
             WalkState::R5(_) => WalkPhase::R5,
             WalkState::Failed { phase, .. } => *phase,
+        }
+    }
+
+    fn from_early(state: EarlyState) -> Self {
+        match state {
+            EarlyState::R1(r1) => WalkState::R1(r1),
+            EarlyState::R3(r3) => WalkState::R3(r3),
+            EarlyState::R4a(r4a) => WalkState::R4a(r4a),
+            EarlyState::R4b(r4b) => WalkState::R4b(r4b),
+            EarlyState::R4c(r4c) => WalkState::R4c(r4c),
+            EarlyState::R5(r5) => WalkState::R5(r5),
+        }
+    }
+}
+
+fn phase_for_early(state: &EarlyState) -> WalkPhase {
+    match state {
+        EarlyState::R1(_) => WalkPhase::R1,
+        EarlyState::R3(_) => WalkPhase::R3,
+        EarlyState::R4a(_) => WalkPhase::R4a,
+        EarlyState::R4b(_) => WalkPhase::R4b,
+        EarlyState::R4c(_) => WalkPhase::R4c,
+        EarlyState::R5(_) => WalkPhase::R5,
+    }
+}
+
+struct WalkReconstruction {
+    notes: Vec<String>,
+    blockers: Vec<String>,
+}
+
+impl WalkReconstruction {
+    fn push_lines(&self, lines: &mut Vec<String>) {
+        lines.push("reconstruction:".to_string());
+        if self.notes.is_empty() && self.blockers.is_empty() {
+            lines.push("  (no durable reconstruction notes)".to_string());
+            return;
+        }
+        for note in &self.notes {
+            lines.push(format!("  - {note}"));
+        }
+        for blocker in &self.blockers {
+            lines.push(format!("  - blocked: {blocker}"));
         }
     }
 }

@@ -42,6 +42,7 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             let socket_override = command.socket.clone();
             let (repo_root, socket) =
                 args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
+            ensure_server(&repo_root, &socket, default_idle_ttl()).await?;
             let epoch = ServerEpoch::capture(&repo_root)?;
             let response = send_request(
                 &socket,
@@ -93,8 +94,9 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             let format = command.control.format;
             let with_version = command.control.with_version;
             let socket_override = command.control.socket.clone();
-            let (_repo_root, socket) =
+            let (repo_root, socket) =
                 args::resolve_socket(command.control.repo_root_ref(), socket_override.as_deref())?;
+            ensure_server(&repo_root, &socket, default_idle_ttl()).await?;
             let body = match command.command {
                 Some(Prototype1StateWalkShowSubcommand::Delta(delta)) => {
                     WalkRequestBody::ShowDelta {
@@ -175,6 +177,10 @@ async fn start(command: Prototype1StateWalkStartCommand) -> Result<(), PrepareEr
     .await?;
     print_response(&response, format, with_version)?;
     response_result(response)
+}
+
+fn default_idle_ttl() -> Option<Duration> {
+    Some(Duration::from_secs(args::DEFAULT_IDLE_TTL_SECS))
 }
 
 fn use_context(command: Prototype1StateWalkUseCommand) -> Result<(), PrepareError> {

@@ -51,7 +51,7 @@ pub(crate) async fn serve(command: Prototype1StateWalkServeCommand) -> Result<()
     );
     let mut server = WalkServer {
         epoch,
-        controller: WalkController::new(),
+        controller: WalkController::new(repo_root.clone()),
     };
     let result = accept_loop(&mut server, listener, idle_ttl).await;
     if let Err(error) = paths::remove_socket_file(&socket_path) {
@@ -123,9 +123,9 @@ impl WalkServer {
             WalkRequestBody::Health => {
                 Ok(WalkResponse::ok(phase, self.describe(), self.epoch.clone()))
             }
-            WalkRequestBody::Show => {
-                Ok(WalkResponse::ok(phase, self.describe(), self.epoch.clone()))
-            }
+            WalkRequestBody::Show => self.controller.refresh_from_disk().map(|_| {
+                WalkResponse::ok(self.controller.phase(), self.describe(), self.epoch.clone())
+            }),
             WalkRequestBody::ShowDelta { verbose, color } => Ok(WalkResponse::ok(
                 phase,
                 self.controller
