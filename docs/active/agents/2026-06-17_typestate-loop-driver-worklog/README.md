@@ -603,3 +603,58 @@ rm -rf "$sockdir"
 Result: R10 reached R11a with explicit `--watch`, R11a projected R12 report facts, and default R12 step advanced `r12_to_r13` to `r13a - stopped continuation ready`. The delta showed History head `FromStartup -> Read` and continuation decision `None -> Stopped<Prototype1ContinuationDecision>`. No successor handoff was started.
 
 GitNexus impact checks before edits were LOW for `R13aStopped`, `R12ContinuationBranch`, `r12_to_r13`, `WalkPhase`, `WalkController`, `TRANSITION_GRAPH_VERSION`, and the added `Collected` accessor targets (0 indexed direct callers/processes reported for each checked target). Pre-commit `npx gitnexus detect-changes --repo ploke` reported LOW risk, 10 changed files, 29 changed symbols, and 0 affected processes.
+
+### Slice 12 — admit stopped/no-selection R14a final report in `walk`
+
+Admitted the stopped final-report edge after no-selection R13a:
+
+- converted `R14aFinalStopped` to `runtime_alias!` and exported `R14A_SHAPE`;
+- added `WalkState::R14a` and `WalkPhase::R14a`;
+- wired canonical `r13_to_r14` into `WalkController` only by wrapping the in-memory R13a state as `R12ContinuationBranch::Stopped`;
+- R14b handoff-final remains unreachable because selected-successor handoff is blocked earlier at R12 and the controller never constructs the handoff branch;
+- R14a is the current stop;
+- bumped the walk transition graph version to `walk-r0-r14a-v1` so stale pre-R14a servers fail closed.
+
+Deliberate limitations:
+
+- no R13b successor handoff or R14b handoff-final report admission yet;
+- no checkout install, History sealing, successor process spawn, or server transfer is admitted;
+- R14a is not reconstructed directly from durable evidence yet. Restart recovery still reconstructs to R8 where child-plan evidence exists, then steps through R9/R10 and requires fresh in-memory R11/R12/R13a before R14a.
+
+Validation so far:
+
+```text
+cargo fmt --all
+cargo check -p ploke-eval --all-targets
+cargo test -p ploke-eval loop_walk_ --all-targets
+cargo test -p ploke-eval shape --all-targets
+cargo test -p ploke-eval typestate --all-targets
+cargo build -p ploke-eval
+```
+
+Focused test additions:
+
+- `walk::phase::tests::r13a_advertises_r14a_final_report`
+- `walk::phase::tests::r14a_shape_records_final_report_delta`
+
+Smoke with isolated socket and rejected-only/no-selection path:
+
+```text
+ROOT=/home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249
+sockdir=$(mktemp -d /tmp/ploke-walk-r14a.XXXXXX)
+chmod 700 "$sockdir"
+sock="$sockdir/walk.sock"
+
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock" --until r10
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock" --watch
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock"
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock"
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock"
+./target/debug/ploke-eval loop walk show --repo-root "$ROOT" --socket "$sock" delta --verbose --no-color
+./target/debug/ploke-eval loop walk stop --repo-root "$ROOT" --socket "$sock"
+rm -rf "$sockdir"
+```
+
+Result: R10 reached R11a with explicit `--watch`, R11a projected R12 report facts, R12 reached no-selection R13a, and default R13a step advanced `r13_to_r14` to `r14a - final stopped report emitted`. The delta showed History head `Read -> Unchanged`, completion evidence `None -> Recorded`, and `Report<report::Facts> -> Report<report::Emitted<Prototype1StateReport>>`. No successor handoff or R14b path was started.
+
+GitNexus impact checks before edits were LOW for `R14aFinalStopped`, `R14FinalBranch`, `r13_to_r14`, `emit_final_report_from_parts`, `WalkPhase`, `WalkController`, and `TRANSITION_GRAPH_VERSION` (0 indexed process impacts; `emit_final_report_from_parts` had one direct caller, `r13_to_r14`). Final pre-commit validation also ran `git diff --check` and `npx gitnexus detect-changes --repo ploke`; detect reported LOW risk, 9 changed files, 27 changed symbols, and 0 affected processes.

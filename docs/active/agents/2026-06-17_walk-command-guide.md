@@ -22,6 +22,7 @@ R9 -> R10 resolves successor-selection strategy
 R10 -> R11a | R11 requires walk step --watch for rejected-only/fanout work
 R11a | R11 -> R12 projects report facts without emitting final report
 R12 -> R13a records no-selection stopped continuation; selected-successor handoff is blocked
+R13a -> R14a emits stopped/no-selection final report
 ```
 
 `R8` can also be reconstructed when an existing child-plan message is present. `R2a` is the alternate parent-identity initialization boundary when started with `--init-parent-identity`.
@@ -36,6 +37,7 @@ R12 -> R13a records no-selection stopped continuation; selected-successor handof
 - `R10 -> R11a | R11` requires explicit `walk step --watch` because it may project rejected-only selection evidence or run live child fanout.
 - `R11a | R11 -> R12` is a pure projection of report facts and does not emit the final report.
 - `R12 -> R13a` is admitted only for no-selection stopped continuation; selected-successor R13b handoff remains blocked before consuming R12.
+- `R13a -> R14a` emits the stopped/no-selection final report and records parent-complete evidence; handoff-final R14b remains blocked.
 - If you run from a dirty development checkout, failing at `R4a` because local changes would block a checkout switch is expected.
 - The auto-started server exits after 30 idle minutes by default.
 - You can still stop it explicitly:
@@ -189,6 +191,13 @@ ploke-eval loop walk step
 # r12_to_r13 -> r13a
 ```
 
+At R13a, the default next step emits the stopped/no-selection final report and stops at R14a:
+
+```text
+ploke-eval loop walk step
+# r13_to_r14 -> r14a
+```
+
 ### `show`
 
 Shows the current phase, server pid, root/tracking directories, tracked paths, current Rust typestate alias, next admitted edges, and server-local previous entries.
@@ -253,7 +262,7 @@ ploke-eval loop walk serve --no-ttl
 
 ## Recommended review session
 
-Use a clean Prototype 1 parent worktree as `ROOT` if you want to reach `R7`, or one with existing valid child-plan evidence if you want to reconstruct R8 and step to R10 without additional provider/harness work. R10 -> R11 requires `--watch` and may run live child fanout; R11 -> R12 is an in-memory report-facts projection; R12 -> R13a is no-selection only.
+Use a clean Prototype 1 parent worktree as `ROOT` if you want to reach `R7`, or one with existing valid child-plan evidence if you want to reconstruct R8 and step to R10 without additional provider/harness work. R10 -> R11 requires `--watch` and may run live child fanout; R11 -> R12 is an in-memory report-facts projection; R12 -> R13a is no-selection only; R13a -> R14a emits the stopped final report.
 
 ```text
 ploke-eval loop walk use /path/to/prototype1-parent-worktree

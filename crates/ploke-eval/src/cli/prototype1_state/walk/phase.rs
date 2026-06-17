@@ -12,13 +12,13 @@ use serde::{Deserialize, Serialize};
 use crate::cli::prototype1_state::typestate::{
     R0_SHAPE, R1_SHAPE, R2A_SHAPE, R3_SHAPE, R4A_SHAPE, R4B_SHAPE, R4C_SHAPE, R5_SHAPE, R6_SHAPE,
     R7_SHAPE, R8_SHAPE, R9_SHAPE, R10_SHAPE, R11_SHAPE, R11A_SHAPE, R12_SHAPE, R13A_SHAPE,
-    RuntimeAxisDelta, RuntimeShape,
+    R14A_SHAPE, RuntimeAxisDelta, RuntimeShape,
 };
 
 /// Serializable cursor for the early Prototype 1 typestate walk.
 ///
-/// The current server slice intentionally stops stepping at `R13a` after the
-/// no-selection stopped continuation. That is enough to validate socket
+/// The current server slice intentionally stops stepping at `R14a` after the
+/// stopped/no-selection final report. That is enough to validate socket
 /// lifecycle, in-memory stepping, branching, stale-server guards, and setup
 /// edges before successor handoff.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
@@ -60,6 +60,8 @@ pub enum WalkPhase {
     R12,
     /// Continuation stopped without successor handoff.
     R13a,
+    /// Final report emitted for stopped/no-selection continuation.
+    R14a,
 }
 
 /// One admitted edge that can follow a phase in the current server slice.
@@ -187,6 +189,12 @@ const R12_NEXT: &[WalkNextStep] = &[WalkNextStep {
     detail: "record no-selection stopped continuation; selected-successor handoff remains blocked",
 }];
 
+const R13A_NEXT: &[WalkNextStep] = &[WalkNextStep {
+    edge: "r13_to_r14",
+    phase: WalkPhase::R14a,
+    detail: "emit stopped/no-selection final report",
+}];
+
 const NO_NEXT: &[WalkNextStep] = &[];
 
 impl WalkPhase {
@@ -211,6 +219,7 @@ impl WalkPhase {
             WalkPhase::R11 => "r11",
             WalkPhase::R12 => "r12",
             WalkPhase::R13a => "r13a",
+            WalkPhase::R14a => "r14a",
         }
     }
 
@@ -235,6 +244,7 @@ impl WalkPhase {
             WalkPhase::R11 => "child fanout complete",
             WalkPhase::R12 => "report facts ready",
             WalkPhase::R13a => "stopped continuation ready",
+            WalkPhase::R14a => "final stopped report emitted",
         }
     }
 
@@ -259,6 +269,7 @@ impl WalkPhase {
                 | WalkPhase::R11
                 | WalkPhase::R12
                 | WalkPhase::R13a
+                | WalkPhase::R14a
         )
     }
 
@@ -282,7 +293,8 @@ impl WalkPhase {
             WalkPhase::R11a => R11A_NEXT,
             WalkPhase::R11 => R11_NEXT,
             WalkPhase::R12 => R12_NEXT,
-            WalkPhase::R13a => NO_NEXT,
+            WalkPhase::R13a => R13A_NEXT,
+            WalkPhase::R14a => NO_NEXT,
         }
     }
 
@@ -341,6 +353,11 @@ impl WalkPhase {
                 "side effect: may record no-selection stopped continuation; successor handoff is blocked in walk".to_string(),
             );
         }
+        if matches!((from, self), (WalkPhase::R13a, WalkPhase::R14a)) {
+            deltas.push(
+                "side effect: emits final report and records parent-complete evidence".to_string(),
+            );
+        }
         if deltas.is_empty() {
             deltas.push("no admitted typestate delta for this phase pair".to_string());
         }
@@ -382,6 +399,7 @@ impl WalkPhase {
             WalkPhase::R11 => Some(R11_SHAPE),
             WalkPhase::R12 => Some(R12_SHAPE),
             WalkPhase::R13a => Some(R13A_SHAPE),
+            WalkPhase::R14a => Some(R14A_SHAPE),
         }
     }
 
@@ -517,7 +535,7 @@ mod tests {
         assert_eq!(steps[0].edge, "r12_to_r13");
         assert_eq!(steps[0].phase, WalkPhase::R13a);
         assert!(steps[0].detail.contains("handoff remains blocked"));
-        assert!(WalkPhase::R13a.next_steps().is_empty());
+        assert_eq!(WalkPhase::R13a.next_steps()[0].edge, "r13_to_r14");
     }
 
     #[test]
@@ -530,5 +548,33 @@ mod tests {
 
         assert!(continuation.from.contains("continuation::decision::None"));
         assert!(continuation.to.contains("continuation::decision::Stopped"));
+    }
+
+    #[test]
+    fn r13a_advertises_r14a_final_report() {
+        let steps = WalkPhase::R13a.next_steps();
+
+        assert_eq!(steps.len(), 1);
+        assert_eq!(steps[0].edge, "r13_to_r14");
+        assert_eq!(steps[0].phase, WalkPhase::R14a);
+        assert!(WalkPhase::R14a.next_steps().is_empty());
+    }
+
+    #[test]
+    fn r14a_shape_records_final_report_delta() {
+        let deltas = WalkPhase::R14a.axis_deltas_from(WalkPhase::R13a);
+        let report = deltas
+            .iter()
+            .find(|delta| delta.label == "report")
+            .expect("R13a -> R14a should change the report axis");
+        let evidence = deltas
+            .iter()
+            .find(|delta| delta.label == "evidence")
+            .expect("R13a -> R14a should change completion evidence");
+
+        assert!(report.from.contains("report::Facts"));
+        assert!(report.to.contains("report::Emitted"));
+        assert!(evidence.from.contains("evidence::completion::None"));
+        assert!(evidence.to.contains("evidence::completion::Recorded"));
     }
 }

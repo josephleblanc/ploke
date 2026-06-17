@@ -159,9 +159,9 @@ The table below treats R0–R14 as the driver spine. The exact durable evidence 
 | R11a | Rejected-only branch projected. | rejected surface attempts and selection material. | Writes/report selection evidence if current path does. | Replay shows no-child selection evidence. | Current walk can reach R11a through explicit `--watch`; default next step projects R12 report facts; must not require fake child outcomes. |
 | R11b/R11c | Child fanout complete. | per-child C1-C5 evidence: materialized artifact, binary, invocation, channel ready/result, runner result, branch evaluation. | Materialize/build/spawn/observe children; may call providers via child runner. | Replay should use channel/result evidence, not spawn. Back cursor does not kill/undo completed child work. | Current walk exposes fanout only through explicit `--watch`; missing child terminal/evaluation evidence remains a hard blocker; successful fanout can step to R12. |
 | R12 | Report-child/outcome projection ready. | child outcomes, fallback/report child, branch evaluation report, selection material. | Assembles report facts/projections. | Replay shows outcome projection. | Current walk admits pure `R11* -> R12` projection; default R12 step reaches R13a only when no successor selection is present. Keep report facts separate from final emitted report. |
-| R13a | Continuation stopped/no successor. | successor decision/outcome, read History head, continuation decision stopped. | May append stopped successor/journal records. | Replay shows stop reason. | Current walk admits no-selection stopped path only and blocks selected-successor R13b handoff before consuming R12. |
+| R13a | Continuation stopped/no successor. | successor decision/outcome, read History head, continuation decision stopped. | May append stopped successor/journal records. | Replay shows stop reason. | Current walk admits no-selection stopped path only, then default step reaches R14a; selected-successor R13b handoff remains blocked before consuming R12. |
 | R13b | Successor handoff committed. | selected child, selection seal material, open/locked/sealed/appended History block, retired parent, successor invocation/ready record. | Install selected artifact, seal/append History, retire parent, spawn successor, wait ready. | Replay can inspect sealed handoff. Branch-to-live later can start from here only with explicit new provenance. | Still blocked in `walk`; highest-risk slice; require focused proof before live full loop. |
-| R14a | Final report after stopped/no-selection. | completion resource sample and emitted `Prototype1StateReport`. | Appends completion sample and prints/writes report. | Replay displays final report. | No handoff continuation. |
+| R14a | Final report after stopped/no-selection. | completion resource sample and emitted `Prototype1StateReport`. | Appends completion sample and prints/writes report. | Replay displays final report. | Current walk admits stopped/no-selection final report and stops at R14a. No handoff continuation. |
 | R14b | Final report after successor handoff. | completion sample, emitted report, successor completion record if bounded successor observed. | Records successor completion and final report. | Replay displays parent/successor closure. | Parent server should stop/become read-only; successor starts fresh context. |
 
 ## Proposed driver modules
@@ -380,7 +380,7 @@ Current implementation status:
 - `walk` admits R12 -> R13a only when the in-memory R12 facts have no selected successor.
 - If selected-successor evidence is present, `walk` remains at R12 and blocks before calling the canonical edge, so R13b handoff cannot start accidentally.
 - Rejected-only/no-selection smoke reaches R13a and shows History head `FromStartup -> Read` plus stopped continuation facts.
-- R14 final report emission remains blocked for the next slice.
+- Stopped/no-selection R14a final report emission is now admitted in the next slice; R13b handoff remains blocked.
 
 Original requirements:
 
@@ -411,7 +411,13 @@ Proof before live full loop:
 
 Goal: final report emission is a typed edge for both stopped and handoff branches.
 
-Requirements:
+Current implementation status:
+
+- `walk` admits only `R13a -> R14a` stopped/no-selection final report.
+- The edge uses canonical `r13_to_r14` wrapped with `R12ContinuationBranch::Stopped`, so R14b handoff-final remains unreachable from walk.
+- Smoke reaches R14a and records completion/report axes; selected-successor handoff remains blocked earlier at R12.
+
+Original requirements:
 
 - completion resource sample recorded exactly once;
 - final `Prototype1StateReport` emitted from `Report<Facts>`;
@@ -564,7 +570,7 @@ Basically the same for the harness. This is under-used, but I want to leave the 
 
 Short-term:
 
-- `walk` can reconstruct R0–R8 after server restart where durable baseline/child-plan evidence exists, step from R8 to R10 without additional provider/harness work, enter R11 branches only with explicit `--watch`, project in-memory R11 states to R12 report facts, and advance no-selection R12 states to R13a while blocking selected-successor handoff.
+- `walk` can reconstruct R0–R8 after server restart where durable baseline/child-plan evidence exists, step from R8 to R10 without additional provider/harness work, enter R11 branches only with explicit `--watch`, project in-memory R11 states to R12 report facts, advance no-selection R12 states to R13a while blocking selected-successor handoff, and emit stopped/no-selection R14a final reports.
 - R4a checkout mismatch displays as a typed blocker with recovery commands.
 - R6/R7 are admitted without duplicating baseline side effects when evidence already exists.
 

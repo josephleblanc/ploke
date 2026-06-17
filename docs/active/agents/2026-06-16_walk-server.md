@@ -132,7 +132,7 @@ rm -rf "$sockdir"
 - Current supported phases are:
 
 ```text
-Empty, R0, R1, R2a, R3, R4a, R4b, R4c, R5, R6, R7, R8, R9, R10, R11a, R11, R12, R13a
+Empty, R0, R1, R2a, R3, R4a, R4b, R4c, R5, R6, R7, R8, R9, R10, R11a, R11, R12, R13a, R14a
 ```
 
 `walk/protocol.rs`
@@ -215,13 +215,14 @@ R9 -> R10 # pure selection-strategy construction
 R10 -> R11a | R11 # requires explicit walk step --watch for rejected-only/fanout work
 R11a | R11 -> R12 # pure report-facts projection
 R12 -> R13a # no-selection stopped continuation only; selected-successor handoff blocked
+R13a -> R14a # stopped/no-selection final report emission
 ```
 
-- `R2a` and `R13a` are current stops.
+- `R2a` and `R14a` are current stops.
 - Default live stepping at `R7` is a safe boundary; live `R7 -> R8` requires explicit `walk step --watch`.
 - Default stepping at `R10` is also a safe boundary; live `R10 -> R11a | R11` requires explicit `walk step --watch`.
 - `R8` is reconstructable from existing child-plan authority.
-- Later phases (`R13b` handoff and `R14+` final report) are intentionally not admitted yet by the server slice.
+- Later phases (`R13b` handoff and `R14b` handoff-final report) are intentionally not admitted yet by the server slice.
 - `show` includes server-local previous entries, root/tracking directories, tracked file paths, current typestate alias, and next admitted edges.
 - `show delta` includes only the last successful step delta; `--verbose` also lists nested type structures, and `--no-color` disables ANSI colors.
 - `step` includes from/to phases, edge names, typestate axis deltas, and next admitted edges.
@@ -306,7 +307,7 @@ The live loop must remain capable of self-editing without being controlled by a 
 - `R5 -> R6` may establish/advance baseline closure state before loading the parent baseline; reconstruction uses durable baseline evidence when present.
 - `R6 -> R7` derives run policy and child-planning budget and preserves hard budget/max-generation stops.
 - Live `R7 -> R8` is exposed only through explicit `walk step --watch`; default step at R7 does not start provider/harness work.
-- Later async/live-effectful phases beyond no-selection R13a (successor handoff and final report) are not yet exposed through the server.
+- Later async/live-effectful phases beyond stopped R14a (successor handoff and handoff-final report) are not yet exposed through the server.
 - Failed consuming transitions are recorded as `Failed`, not retryable from the exact consumed Rust state.
 - The current source freshness check is status-hash based, not full content-hash based.
 - Server stdout/stderr are redirected to null when auto-spawned. Add an explicit log path before relying on the server for long debugging sessions.

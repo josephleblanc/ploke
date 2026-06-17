@@ -1501,42 +1501,45 @@ pub(crate) enum R12ContinuationBranch<RunShape, CampaignConfig> {
     HandoffCommitted(R13bHandoffCommitted<RunShape, CampaignConfig>),
 }
 
-/// R14a: final report after stopped/no-selection continuation.
-///
-/// Axis changes:
-/// - `History<startup::Validated<_>, head::Read, epoch::None>`
-///   `-> History<startup::Validated<_>, head::Unchanged, epoch::None>`.
-/// - `Evidence<..., completion::None> -> Evidence<..., completion::Recorded>`.
-/// - `Report<Facts> -> Report<Emitted<Prototype1StateReport>>`.
-///
-pub(crate) type R14aFinalStopped<RunShape = (), CampaignConfig = ()> = Runtime<
-    phase::R14,
-    parent_role::Parent<parent_role::Selectable>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<
-        plan::authority::Received<Received<parent_role::ChildPlan>>,
-        plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
-    >,
-    Children<children::set::Report<PlannedChildOutcome>, children::attempt::Complete>,
-    History<
-        history_axis::startup::Validated<history_axis::startup::Any>,
-        history_axis::head::Unchanged,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::Recorded<ParentStartedEntry>,
-        evidence::baseline::Ready<CompleteBaseline>,
-        evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
-        evidence::selection::Evidence<SelectionSealMaterial>,
-        evidence::completion::Recorded,
-    >,
-    Continuation<
-        continuation::selection::Maybe<SuccessorDecision>,
-        continuation::decision::Stopped<Prototype1ContinuationDecision>,
-        continuation::handoff::None,
-    >,
-    Report<report::Emitted<Prototype1StateReport>>,
->;
+runtime_alias! {
+    /// R14a: final report after stopped/no-selection continuation.
+    ///
+    /// Axis changes:
+    /// - `History<startup::Validated<_>, head::Read, epoch::None>`
+    ///   `-> History<startup::Validated<_>, head::Unchanged, epoch::None>`.
+    /// - `Evidence<..., completion::None> -> Evidence<..., completion::Recorded>`.
+    /// - `Report<Facts> -> Report<Emitted<Prototype1StateReport>>`.
+    ///
+    pub(crate) type R14aFinalStopped<RunShape = (), CampaignConfig = ()> = Runtime<
+        phase::R14,
+        parent_role::Parent<parent_role::Selectable>,
+        Context<context::Collected<RunShape, CampaignConfig>>,
+        Plan<
+            plan::authority::Received<Received<parent_role::ChildPlan>>,
+            plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
+        >,
+        Children<children::set::Report<PlannedChildOutcome>, children::attempt::Complete>,
+        History<
+            history_axis::startup::Validated<history_axis::startup::Any>,
+            history_axis::head::Unchanged,
+            history_axis::epoch::None,
+        >,
+        Evidence<
+            evidence::parent_start::Recorded<ParentStartedEntry>,
+            evidence::baseline::Ready<CompleteBaseline>,
+            evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
+            evidence::selection::Evidence<SelectionSealMaterial>,
+            evidence::completion::Recorded,
+        >,
+        Continuation<
+            continuation::selection::Maybe<SuccessorDecision>,
+            continuation::decision::Stopped<Prototype1ContinuationDecision>,
+            continuation::handoff::None,
+        >,
+        Report<report::Emitted<Prototype1StateReport>>,
+    >;
+    shape R14A_SHAPE;
+}
 
 /// R14b: final report after allowed successor handoff.
 ///
