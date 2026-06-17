@@ -362,7 +362,7 @@ fn print_response(
                 println!("walk");
                 println!("{}", "-".repeat(40));
                 println!("status: ok");
-                println!("phase: {phase}");
+                println!("phase: {phase} - {}", phase.detail());
                 print_multiline("message", message);
                 if with_version {
                     println!("protocol_version: {}", epoch.protocol_version);
@@ -385,7 +385,7 @@ fn print_response(
                 println!(
                     "phase: {}",
                     phase
-                        .map(|phase| phase.to_string())
+                        .map(|phase| format!("{phase} - {}", phase.detail()))
                         .unwrap_or_else(|| "-".to_string())
                 );
                 print_multiline("detail", detail);
