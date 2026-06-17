@@ -1728,6 +1728,35 @@ fn loop_walk_start_ttl_command_parses() {
                 assert!(!cmd.no_ttl);
                 assert_eq!(cmd.until, WalkPhase::R5);
                 assert_eq!(cmd.format, InspectOutputFormat::Table);
+                assert!(!cmd.with_version);
+            }
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
+fn loop_walk_show_with_version_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "show",
+        "--repo-root",
+        "/tmp/parent",
+        "--with-version",
+    ])
+    .expect("loop walk show should parse --with-version");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Show(cmd) => {
+                assert_eq!(cmd.repo_root, Some(PathBuf::from("/tmp/parent")));
+                assert_eq!(cmd.format, InspectOutputFormat::Table);
+                assert!(cmd.with_version);
             }
             other => panic!("unexpected walk subcommand: {:?}", other),
         },

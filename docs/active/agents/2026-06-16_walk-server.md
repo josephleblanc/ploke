@@ -73,7 +73,7 @@ Advance until a supported phase:
 ploke-eval loop walk step --until r5
 ```
 
-Show current state and in-memory history:
+Show current state, root/tracking dirs, typestate alias, next admitted edges, and in-memory history:
 
 ```text
 ploke-eval loop walk show
@@ -203,7 +203,8 @@ R4c -> R5
 
 - `R2a` and `R5` are current stops.
 - Later phases (`R6+`) are intentionally not admitted yet by the server slice.
-- `show` includes server-local step history and tracked file paths.
+- `show` includes server-local step history, root/tracking directories, tracked file paths, current typestate alias, and next admitted edges.
+- `step` includes from/to phases, edge names, typestate axis deltas, and next admitted edges.
 - `files` prints parent identity, active monitor target, campaign manifest, and transition journal previews once those paths are known.
 
 Failure behavior:
@@ -226,6 +227,7 @@ Failure behavior:
 - `use` saves the active repo/socket context for short later commands.
 - `start` probes health, cleans up a stale socket if offline, spawns the same binary in server mode, waits for health, then sends `Start`.
 - `status`, `show`, `files`, `step`, `reset`, and `stop` send one request and print one response.
+- Table output hides protocol/transition-graph versions unless `--with-version` is passed.
 - Connection-refused health probes remove stale socket files, matching Zellij's stale-session cleanup pattern.
 
 `walk/args.rs`

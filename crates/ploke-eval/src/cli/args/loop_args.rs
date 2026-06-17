@@ -215,6 +215,10 @@ pub struct Prototype1StateWalkControlCommand {
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
+
+    /// Include protocol and transition-graph versions in table output.
+    #[arg(long)]
+    pub with_version: bool,
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -233,6 +237,10 @@ pub struct Prototype1StateWalkStepCommand {
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
+
+    /// Include protocol and transition-graph versions in table output.
+    #[arg(long)]
+    pub with_version: bool,
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -302,6 +310,10 @@ pub struct Prototype1StateWalkStartCommand {
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
+
+    /// Include protocol and transition-graph versions in table output.
+    #[arg(long)]
+    pub with_version: bool,
 }
 
 #[derive(Debug, Clone, Parser)]

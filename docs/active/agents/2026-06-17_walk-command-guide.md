@@ -40,6 +40,13 @@ Human-readable table output is the default. Use JSON only when scripting:
 ploke-eval loop walk status --format json
 ```
 
+Protocol and transition-graph versions are hidden in table output by default. Show them when needed with:
+
+```text
+ploke-eval loop walk status --with-version
+ploke-eval loop walk show --with-version
+```
+
 Repo root resolution order:
 
 1. explicit `--repo-root PATH`;
@@ -117,7 +124,7 @@ ploke-eval loop walk start --no-ttl
 
 ### `step`
 
-Advances one typestate edge from the current in-memory state.
+Advances one typestate edge from the current in-memory state and prints the from/to phases, edge name, typestate axis changes, and next admitted edges.
 
 ```text
 ploke-eval loop walk step
@@ -131,13 +138,13 @@ ploke-eval loop walk step --until r5
 
 ### `show`
 
-Shows the current phase, server pid, tracked paths, and server-local step history.
+Shows the current phase, server pid, root/tracking directories, tracked paths, current Rust typestate alias, next admitted edges, and server-local step history.
 
 ```text
 ploke-eval loop walk show
 ```
 
-This is the main command for reviewing what happened earlier in the server session.
+Tracked paths are summarized with placeholders like `{root}/...` and `{tracking_dir}/...` to keep the output readable. This is the main command for reviewing what happened earlier in the server session.
 
 ### `files`
 

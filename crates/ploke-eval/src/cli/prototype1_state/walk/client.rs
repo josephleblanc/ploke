@@ -37,6 +37,7 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
         Prototype1StateWalkSubcommand::Start(command) => start(command).await,
         Prototype1StateWalkSubcommand::Step(command) => {
             let format = command.format;
+            let with_version = command.with_version;
             let until = command.until;
             let socket_override = command.socket.clone();
             let (repo_root, socket) =
@@ -50,11 +51,12 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
                 },
             )
             .await?;
-            print_response(&response, format)?;
+            print_response(&response, format, with_version)?;
             response_result(response)
         }
         Prototype1StateWalkSubcommand::Reset(command) => {
             let format = command.format;
+            let with_version = command.with_version;
             let socket_override = command.socket.clone();
             let (repo_root, socket) =
                 args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
@@ -67,11 +69,12 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
                 },
             )
             .await?;
-            print_response(&response, format)?;
+            print_response(&response, format, with_version)?;
             response_result(response)
         }
         Prototype1StateWalkSubcommand::Files(command) => {
             let format = command.format;
+            let with_version = command.with_version;
             let socket_override = command.socket.clone();
             let (_repo_root, socket) =
                 args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
@@ -83,11 +86,12 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
                 },
             )
             .await?;
-            print_response(&response, format)?;
+            print_response(&response, format, with_version)?;
             response_result(response)
         }
         Prototype1StateWalkSubcommand::Show(command) => {
             let format = command.format;
+            let with_version = command.with_version;
             let socket_override = command.socket.clone();
             let (_repo_root, socket) =
                 args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
@@ -99,17 +103,18 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
                 },
             )
             .await?;
-            print_response(&response, format)?;
+            print_response(&response, format, with_version)?;
             response_result(response)
         }
         Prototype1StateWalkSubcommand::Status(command) => {
             let format = command.format;
+            let with_version = command.with_version;
             let socket_override = command.socket.clone();
             let (_repo_root, socket) =
                 args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
             match health(&socket).await? {
                 Health::Online(response) => {
-                    print_response(&response, format)?;
+                    print_response(&response, format, with_version)?;
                     Ok(())
                 }
                 Health::Offline => {
@@ -120,6 +125,7 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
         }
         Prototype1StateWalkSubcommand::Stop(command) => {
             let format = command.format;
+            let with_version = command.with_version;
             let socket_override = command.socket.clone();
             let (_repo_root, socket) =
                 args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
@@ -131,7 +137,7 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
                 },
             )
             .await?;
-            print_response(&response, format)?;
+            print_response(&response, format, with_version)?;
             response_result(response)
         }
     }
@@ -140,6 +146,7 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
 /// Start the server if needed, then create a new in-memory walk.
 async fn start(command: Prototype1StateWalkStartCommand) -> Result<(), PrepareError> {
     let format = command.format;
+    let with_version = command.with_version;
     let until = command.until;
     let idle_ttl = command.idle_ttl()?;
     let socket_override = command.socket.clone();
@@ -157,7 +164,7 @@ async fn start(command: Prototype1StateWalkStartCommand) -> Result<(), PrepareEr
         },
     )
     .await?;
-    print_response(&response, format)?;
+    print_response(&response, format, with_version)?;
     response_result(response)
 }
 
@@ -337,6 +344,7 @@ fn print_context(
 fn print_response(
     response: &WalkResponse,
     format: InspectOutputFormat,
+    with_version: bool,
 ) -> Result<(), PrepareError> {
     match format {
         InspectOutputFormat::Json => {
@@ -356,11 +364,13 @@ fn print_response(
                 println!("status: ok");
                 println!("phase: {phase}");
                 print_multiline("message", message);
-                println!("protocol_version: {}", epoch.protocol_version);
-                println!(
-                    "transition_graph_version: {}",
-                    epoch.transition_graph_version
-                );
+                if with_version {
+                    println!("protocol_version: {}", epoch.protocol_version);
+                    println!(
+                        "transition_graph_version: {}",
+                        epoch.transition_graph_version
+                    );
+                }
             }
             WalkResponse::Error {
                 code,
@@ -379,11 +389,13 @@ fn print_response(
                         .unwrap_or_else(|| "-".to_string())
                 );
                 print_multiline("detail", detail);
-                println!("protocol_version: {}", epoch.protocol_version);
-                println!(
-                    "transition_graph_version: {}",
-                    epoch.transition_graph_version
-                );
+                if with_version {
+                    println!("protocol_version: {}", epoch.protocol_version);
+                    println!(
+                        "transition_graph_version: {}",
+                        epoch.transition_graph_version
+                    );
+                }
             }
         },
     }

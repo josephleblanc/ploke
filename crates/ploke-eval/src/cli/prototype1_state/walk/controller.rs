@@ -71,6 +71,61 @@ enum WalkState {
     },
 }
 
+/// Human-facing summary of one `walk step` request.
+pub(crate) struct WalkAdvanceReport {
+    from: WalkPhase,
+    to: WalkPhase,
+    transitions: Vec<WalkTransition>,
+}
+
+#[derive(Clone, Copy)]
+struct WalkTransition {
+    from: WalkPhase,
+    to: WalkPhase,
+}
+
+impl WalkAdvanceReport {
+    /// Render from/to, applied edges, typestate deltas, and next admitted steps.
+    pub(crate) fn render(&self) -> String {
+        let mut lines = Vec::new();
+        lines.push(format!("from: {} - {}", self.from, self.from.detail()));
+        lines.push(format!("to: {} - {}", self.to, self.to.detail()));
+        if self.transitions.is_empty() {
+            lines.push("transition: already at requested phase".to_string());
+        } else if let [transition] = self.transitions.as_slice() {
+            lines.push(format!("edge: {}", transition.edge()));
+            push_changes(
+                &mut lines,
+                transition.from,
+                transition.to,
+                "typestate changes",
+            );
+        } else {
+            lines.push("transitions:".to_string());
+            for (index, transition) in self.transitions.iter().enumerate() {
+                lines.push(format!(
+                    "  {}. {} -> {} via {}",
+                    index + 1,
+                    transition.from,
+                    transition.to,
+                    transition.edge()
+                ));
+            }
+            if let Some(last) = self.transitions.last() {
+                push_changes(&mut lines, last.from, last.to, "last typestate changes");
+            }
+        }
+        push_next_steps(&mut lines, self.to);
+        lines.join("\n")
+    }
+}
+
+impl WalkTransition {
+    fn edge(self) -> &'static str {
+        self.to.edge_from(self.from).unwrap_or("unknown_edge")
+    }
+}
+
 impl WalkController {
     /// Create an empty controller with no active walk.
     pub(crate) fn new() -> Self {
@@ -89,20 +144,21 @@ impl WalkController {
 
     /// Produce a human-readable summary for `show` and `health`.
     pub(crate) fn describe(&self) -> String {
+        let phase = self.phase();
         let mut lines = Vec::new();
         match &self.state {
             WalkState::Failed { phase, detail } => lines.push(format!(
                 "walk failed while advancing from {phase}; steps={}; detail={detail}",
                 self.steps
             )),
-            _ => lines.push(format!("walk is at {}; steps={}", self.phase(), self.steps)),
+            _ => lines.push(format!("phase: {phase} - {}", phase.detail())),
         }
-        if !self.files.tracked.is_empty() {
-            lines.push("tracked files:".to_string());
-            for file in &self.files.tracked {
-                lines.push(format!("  {}: {}", file.label, file.path.display()));
-            }
-        }
+        lines.push(format!("steps: {}", self.steps));
+        self.files.push_roots(&mut lines);
+        self.files.push_tracked(&mut lines);
+        lines.push("typestate:".to_string());
+        lines.extend(indent_lines(phase.typestate(), 2));
+        push_next_steps(&mut lines, phase);
         lines.push("history:".to_string());
         lines.extend(self.history.lines());
         lines.join("\n")
@@ -151,22 +207,30 @@ impl WalkController {
     }
 
     /// Advance the current walk by one edge or until a requested phase.
-    pub(crate) fn step(&mut self, until: Option<WalkPhase>) -> Result<WalkPhase, PrepareError> {
+    pub(crate) fn step(
+        &mut self,
+        until: Option<WalkPhase>,
+    ) -> Result<WalkAdvanceReport, PrepareError> {
+        let from = self.phase();
         let target = until.unwrap_or_else(|| self.phase().next().unwrap_or(self.phase()));
         ensure_supported_target(target)?;
-        if self.phase() == target {
-            return Ok(self.phase());
-        }
-        if until.is_some() {
-            self.advance_until(target)?;
+        let transitions = if self.phase() == target {
+            Vec::new()
+        } else if until.is_some() {
+            self.advance_until(target)?
         } else {
-            self.step_once()?;
-        }
-        Ok(self.phase())
+            vec![self.step_once()?]
+        };
+        Ok(WalkAdvanceReport {
+            from,
+            to: self.phase(),
+            transitions,
+        })
     }
 
-    fn advance_until(&mut self, target: WalkPhase) -> Result<(), PrepareError> {
+    fn advance_until(&mut self, target: WalkPhase) -> Result<Vec<WalkTransition>, PrepareError> {
         let mut guard = 0_u8;
+        let mut transitions = Vec::new();
         while self.phase() != target {
             guard += 1;
             if guard > 16 {
@@ -174,12 +238,12 @@ impl WalkController {
                     detail: format!("walk exceeded early-step guard while advancing to {target}"),
                 });
             }
-            self.step_once()?;
+            transitions.push(self.step_once()?);
         }
-        Ok(())
+        Ok(transitions)
     }
 
-    fn step_once(&mut self) -> Result<(), PrepareError> {
+    fn step_once(&mut self) -> Result<WalkTransition, PrepareError> {
         let state = std::mem::replace(&mut self.state, WalkState::Empty);
         let previous = state.phase();
         let next = match state {
@@ -235,7 +299,10 @@ impl WalkController {
                 self.state = state;
                 self.steps += 1;
                 self.record(format!("step {}: {previous} -> {current}", self.steps));
-                Ok(())
+                Ok(WalkTransition {
+                    from: previous,
+                    to: current,
+                })
             }
             Err(error) => {
                 let detail = error.to_string();
@@ -301,6 +368,36 @@ fn ensure_supported_target(target: WalkPhase) -> Result<(), PrepareError> {
     }
 }
 
+fn push_changes(lines: &mut Vec<String>, from: WalkPhase, to: WalkPhase, label: &str) {
+    lines.push(format!("{label}:"));
+    for change in to.changes_from(from) {
+        lines.push(format!("  - {change}"));
+    }
+}
+
+fn push_next_steps(lines: &mut Vec<String>, phase: WalkPhase) {
+    lines.push("next:".to_string());
+    let steps = phase.next_steps();
+    if steps.is_empty() {
+        lines.push("  (no admitted next step in this server slice)".to_string());
+        return;
+    }
+    for step in steps {
+        lines.push(format!(
+            "  {} -> {} - {}",
+            step.edge, step.phase, step.detail
+        ));
+    }
+}
+
+fn indent_lines(value: &str, spaces: usize) -> Vec<String> {
+    let prefix = " ".repeat(spaces);
+    value
+        .lines()
+        .map(|line| format!("{prefix}{line}"))
+        .collect()
+}
+
 #[derive(Default)]
 struct WalkHistory {
     entries: Vec<String>,
@@ -327,6 +424,8 @@ impl WalkHistory {
 
 #[derive(Default)]
 struct WalkFiles {
+    root: Option<PathBuf>,
+    tracking_dir: Option<PathBuf>,
     tracked: Vec<WalkFile>,
 }
 
@@ -338,13 +437,17 @@ struct WalkFile {
 
 impl WalkFiles {
     fn clear(&mut self) {
+        self.root = None;
+        self.tracking_dir = None;
         self.tracked.clear();
     }
 
     fn reset(&mut self, repo_root: &Path) {
-        self.tracked.clear();
+        self.clear();
+        self.root = Some(repo_root.to_path_buf());
         self.push("parent_identity", parent_identity_path(repo_root));
         if let Ok(path) = prototype1_monitor_target_file() {
+            self.tracking_dir = path.parent().map(Path::to_path_buf);
             self.push("active_monitor_target", path);
         }
     }
@@ -371,6 +474,38 @@ impl WalkFiles {
         self.tracked.push(WalkFile { label, path });
     }
 
+    fn push_roots(&self, lines: &mut Vec<String>) {
+        lines.push(format!(
+            "root: {}",
+            self.root
+                .as_deref()
+                .map(display_dir)
+                .unwrap_or_else(|| "-".to_string())
+        ));
+        lines.push(format!(
+            "tracking_dir: {}",
+            self.tracking_dir
+                .as_deref()
+                .map(display_dir)
+                .unwrap_or_else(|| "-".to_string())
+        ));
+    }
+
+    fn push_tracked(&self, lines: &mut Vec<String>) {
+        if self.tracked.is_empty() {
+            lines.push("tracked files: (none)".to_string());
+            return;
+        }
+        lines.push("tracked files:".to_string());
+        for file in &self.tracked {
+            lines.push(format!(
+                "  {}: {}",
+                file.label,
+                self.display_tracked(&file.path)
+            ));
+        }
+    }
+
     fn render(&self) -> String {
         if self.tracked.is_empty() {
             return "no tracked output files yet; start a walk first".to_string();
@@ -382,6 +517,28 @@ impl WalkFiles {
         }
         lines.join("\n")
     }
+
+    fn display_tracked(&self, path: &Path) -> String {
+        if let Some(root) = &self.root
+            && let Ok(stripped) = path.strip_prefix(root)
+        {
+            return format!("{{root}}/{}", stripped.display());
+        }
+        if let Some(dir) = &self.tracking_dir
+            && let Ok(stripped) = path.strip_prefix(dir)
+        {
+            return format!("{{tracking_dir}}/{}", stripped.display());
+        }
+        path.display().to_string()
+    }
+}
+
+fn display_dir(path: &Path) -> String {
+    let mut value = path.display().to_string();
+    if !value.ends_with(std::path::MAIN_SEPARATOR) {
+        value.push(std::path::MAIN_SEPARATOR);
+    }
+    value
 }
 
 fn preview_file(path: &Path) -> String {

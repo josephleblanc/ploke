@@ -134,19 +134,19 @@ impl WalkServer {
             WalkRequestBody::Start { config, until } => {
                 self.with_epoch_guard(request.client_epoch.as_ref(), |controller| {
                     let phase = controller.start(config, until)?;
-                    Ok(format!("started walk at {phase}"))
+                    Ok(format!("started walk at {phase} - {}", phase.detail()))
                 })
             }
             WalkRequestBody::Step { until } => {
                 self.with_epoch_guard(request.client_epoch.as_ref(), |controller| {
-                    let phase = controller.step(until)?;
-                    Ok(format!("advanced walk to {phase}"))
+                    let report = controller.step(until)?;
+                    Ok(report.render())
                 })
             }
             WalkRequestBody::Reset => {
                 self.with_epoch_guard(request.client_epoch.as_ref(), |controller| {
                     let phase = controller.reset();
-                    Ok(format!("reset walk to {phase}"))
+                    Ok(format!("reset walk to {phase} - {}", phase.detail()))
                 })
             }
             WalkRequestBody::Files => Ok(WalkResponse::ok(
