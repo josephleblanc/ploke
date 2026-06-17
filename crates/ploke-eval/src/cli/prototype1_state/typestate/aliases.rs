@@ -1344,42 +1344,51 @@ runtime_alias! {
 
 selectable_state_impl!(R12, phase::R12);
 
-/// R13a: successor decision stops or selects no successor.
-///
-/// Axis changes:
-/// - `History<startup::Validated<_>, head::FromStartup, epoch::None>`
-///   `-> History<startup::Validated<_>, head::Read, epoch::None>`.
-/// - `Continuation<selection::Maybe<_>, decision::None, handoff::None>`
-///   `-> Continuation<selection::Maybe<_>, decision::Stopped<_>, handoff::None>`.
-///
-pub(crate) type R13aStopped<RunShape = (), CampaignConfig = ()> = Runtime<
-    phase::R13a,
-    parent_role::Parent<parent_role::Selectable>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<
-        plan::authority::Received<Received<parent_role::ChildPlan>>,
-        plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
-    >,
-    Children<children::set::Report<PlannedChildOutcome>, children::attempt::Complete>,
-    History<
-        history_axis::startup::Validated<history_axis::startup::Any>,
-        history_axis::head::Read,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::Recorded<ParentStartedEntry>,
-        evidence::baseline::Ready<CompleteBaseline>,
-        evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
-        evidence::selection::Evidence<SelectionSealMaterial>,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::Maybe<SuccessorDecision>,
-        continuation::decision::Stopped<Prototype1ContinuationDecision>,
-        continuation::handoff::None,
-    >,
-    Report<report::Facts>,
->;
+impl<RunShape, CampaignConfig> R12<RunShape, CampaignConfig> {
+    pub(crate) fn has_successor_selection(&self) -> bool {
+        self.context.state().has_successor_selection()
+    }
+}
+
+runtime_alias! {
+    /// R13a: successor decision stops or selects no successor.
+    ///
+    /// Axis changes:
+    /// - `History<startup::Validated<_>, head::FromStartup, epoch::None>`
+    ///   `-> History<startup::Validated<_>, head::Read, epoch::None>`.
+    /// - `Continuation<selection::Maybe<_>, decision::None, handoff::None>`
+    ///   `-> Continuation<selection::Maybe<_>, decision::Stopped<_>, handoff::None>`.
+    ///
+    pub(crate) type R13aStopped<RunShape = (), CampaignConfig = ()> = Runtime<
+        phase::R13a,
+        parent_role::Parent<parent_role::Selectable>,
+        Context<context::Collected<RunShape, CampaignConfig>>,
+        Plan<
+            plan::authority::Received<Received<parent_role::ChildPlan>>,
+            plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
+        >,
+        Children<children::set::Report<PlannedChildOutcome>, children::attempt::Complete>,
+        History<
+            history_axis::startup::Validated<history_axis::startup::Any>,
+            history_axis::head::Read,
+            history_axis::epoch::None,
+        >,
+        Evidence<
+            evidence::parent_start::Recorded<ParentStartedEntry>,
+            evidence::baseline::Ready<CompleteBaseline>,
+            evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
+            evidence::selection::Evidence<SelectionSealMaterial>,
+            evidence::completion::None,
+        >,
+        Continuation<
+            continuation::selection::Maybe<SuccessorDecision>,
+            continuation::decision::Stopped<Prototype1ContinuationDecision>,
+            continuation::handoff::None,
+        >,
+        Report<report::Facts>,
+    >;
+    shape R13A_SHAPE;
+}
 
 /// R13b: successor handoff committed.
 ///

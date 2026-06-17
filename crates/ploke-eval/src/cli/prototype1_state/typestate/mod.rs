@@ -44,8 +44,8 @@ pub(crate) use aliases::{
     R4C_SHAPE, R4a, R4aParts, R4aStartupBranch, R4bGenesisChecked, R4bParts, R4cParts, R4cReady,
     R5, R5_SHAPE, R6, R6_SHAPE, R7, R7_SHAPE, R8, R8_SHAPE, R9, R9_SHAPE, R10, R10_SHAPE,
     R10FanoutBranch, R11_SHAPE, R11A_SHAPE, R11FanoutComplete, R11aRejectedOnly, R12, R12_SHAPE,
-    R12ContinuationBranch, R13aStopped, R13bHandoffCommitted, R14FinalBranch, R14aFinalStopped,
-    R14bFinalHandoff, ReadyParts, RetiredParts, SelectableParts,
+    R12ContinuationBranch, R13A_SHAPE, R13aStopped, R13bHandoffCommitted, R14FinalBranch,
+    R14aFinalStopped, R14bFinalHandoff, ReadyParts, RetiredParts, SelectableParts,
 };
 pub(crate) use axes::{children, continuation, evidence, history_axis, phase, plan, report, role};
 #[allow(unused_imports)]

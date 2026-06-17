@@ -224,6 +224,10 @@ impl<RunShape, CampaignConfig> Collected<RunShape, CampaignConfig> {
         &self.campaign_id
     }
 
+    pub(crate) fn has_successor_selection(&self) -> bool {
+        self.facts.selection.is_some()
+    }
+
     pub(crate) fn into_parts(self) -> CollectedParts<RunShape, CampaignConfig> {
         CollectedParts {
             command: self.command,

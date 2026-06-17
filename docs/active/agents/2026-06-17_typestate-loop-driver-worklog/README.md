@@ -548,3 +548,58 @@ rm -rf "$sockdir"
 Result: R10 reached R11a with explicit `--watch`, then default `walk step` advanced `r11_to_r12` to `r12 - report facts ready`. The delta showed rejected children becoming report children, continuation becoming `Maybe<SuccessorDecision>`, and `Report<report::None>` becoming `Report<report::Facts>`. No final report was emitted.
 
 GitNexus impact checks before edits were LOW for `R12`, `r11_to_r12`, `WalkPhase`, `WalkController`, and `TRANSITION_GRAPH_VERSION` (0 indexed direct callers/processes reported for each checked target). Pre-commit `npx gitnexus detect-changes --repo ploke` reported LOW risk, 9 changed files, 31 changed symbols, and 0 affected processes.
+
+### Slice 11 — admit no-selection R13a stopped continuation in `walk`
+
+Admitted only the no-selection stopped continuation path after R12:
+
+- converted `R13aStopped` to `runtime_alias!` and exported `R13A_SHAPE`;
+- added a narrow non-consuming `Collected::has_successor_selection()` accessor and `R12::has_successor_selection()` wrapper;
+- added `WalkState::R13a` and `WalkPhase::R13a`;
+- wired canonical `r12_to_r13` into `WalkController` only after checking that R12 has no selected-successor evidence;
+- if selected-successor evidence is present, `walk` restores R12 and blocks with a hard message before the handoff-capable canonical edge is called;
+- R13a is the current stop; R13b handoff and R14+ final report emission remain unavailable;
+- bumped the walk transition graph version to `walk-r0-r13a-v1` so stale pre-R13a servers fail closed.
+
+Deliberate limitations:
+
+- selected-successor stopped decisions and R13b handoff are not admitted in this slice, because the existing canonical `r12_to_r13` can spawn successor handoff when selection allows it;
+- no checkout install, History sealing, successor process spawn, or final report emission is admitted;
+- R13a is not reconstructed directly from durable evidence yet. Restart recovery still reconstructs to R8 where child-plan evidence exists, then steps through R9/R10 and requires fresh in-memory R11/R12 before R13a.
+
+Validation so far:
+
+```text
+cargo fmt --all
+cargo check -p ploke-eval --all-targets
+cargo test -p ploke-eval loop_walk_ --all-targets
+cargo test -p ploke-eval shape --all-targets
+cargo test -p ploke-eval typestate --all-targets
+cargo build -p ploke-eval
+```
+
+Focused test additions:
+
+- `walk::phase::tests::r12_advertises_stopped_continuation_only`
+- `walk::phase::tests::r13a_shape_records_stopped_continuation_delta`
+
+Smoke with isolated socket and rejected-only/no-selection path:
+
+```text
+ROOT=/home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249
+sockdir=$(mktemp -d /tmp/ploke-walk-r13a.XXXXXX)
+chmod 700 "$sockdir"
+sock="$sockdir/walk.sock"
+
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock" --until r10
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock" --watch
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock"
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock"
+./target/debug/ploke-eval loop walk show --repo-root "$ROOT" --socket "$sock" delta --verbose --no-color
+./target/debug/ploke-eval loop walk stop --repo-root "$ROOT" --socket "$sock"
+rm -rf "$sockdir"
+```
+
+Result: R10 reached R11a with explicit `--watch`, R11a projected R12 report facts, and default R12 step advanced `r12_to_r13` to `r13a - stopped continuation ready`. The delta showed History head `FromStartup -> Read` and continuation decision `None -> Stopped<Prototype1ContinuationDecision>`. No successor handoff was started.
+
+GitNexus impact checks before edits were LOW for `R13aStopped`, `R12ContinuationBranch`, `r12_to_r13`, `WalkPhase`, `WalkController`, `TRANSITION_GRAPH_VERSION`, and the added `Collected` accessor targets (0 indexed direct callers/processes reported for each checked target). Pre-commit `npx gitnexus detect-changes --repo ploke` reported LOW risk, 10 changed files, 29 changed symbols, and 0 affected processes.

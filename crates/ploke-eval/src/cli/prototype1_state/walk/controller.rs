@@ -21,11 +21,11 @@ use crate::{
         journal::prototype1_transition_journal_path,
         live_edges::{
             r0_to_r1, r1_to_r2a_or_r3, r3_to_r4a, r4a_to_r4b_or_r4c, r4b_to_r4c_genesis, r4c_to_r5,
-            r5_to_r6, r6_to_r7, r7_to_r8, r8_to_r9, r9_to_r10, r10_to_r11, r11_to_r12,
+            r5_to_r6, r6_to_r7, r7_to_r8, r8_to_r9, r9_to_r10, r10_to_r11, r11_to_r12, r12_to_r13,
         },
         typestate::{
             self, AsyncStepInput, R0, R1, R2a, R3, R4a, R4bGenesisChecked, R4cReady, R5, R6, R7,
-            R8, R9, R10, R11FanoutComplete, R11aRejectedOnly, R12, StepInput,
+            R8, R9, R10, R11FanoutComplete, R11aRejectedOnly, R12, R13aStopped, StepInput,
         },
     },
     layout::prototype1_monitor_target_file,
@@ -44,8 +44,8 @@ type CampaignConfig = ResolvedCampaignConfig;
 ///
 /// The current server slice admits setup/startup and parent-start phases through
 /// live `R7`, watch-gated `R8`, schedule-ready `R9`, strategy-ready `R10`,
-/// watch-gated `R11`, and report-ready `R12` so the socket lifecycle can be
-/// tested before exposing handoff.
+/// watch-gated `R11`, report-ready `R12`, and guarded no-selection `R13a` so
+/// the socket lifecycle can be tested before exposing handoff.
 pub(crate) struct WalkController {
     repo_root: PathBuf,
     state: WalkState,
@@ -78,6 +78,7 @@ enum WalkState {
     R11a(R11aRejectedOnly<RunShape, CampaignConfig>),
     R11(R11FanoutComplete<RunShape, CampaignConfig>),
     R12(R12<RunShape, CampaignConfig>),
+    R13a(R13aStopped<RunShape, CampaignConfig>),
     /// A consuming transition failed after the previous typed value was moved.
     ///
     /// Rust cannot restore the consumed value after an edge returns `Err`, so
@@ -450,8 +451,24 @@ impl WalkController {
                 r11_to_r12(typestate::R10FanoutBranch::FanoutComplete(r11)).map(WalkState::R12)
             }
             WalkState::R12(r12) => {
-                self.state = WalkState::R12(r12);
-                let detail = "walk reached R12 report-facts boundary; R13+ continuation phases are not admitted by this debug server slice yet";
+                if r12.has_successor_selection() {
+                    self.state = WalkState::R12(r12);
+                    let detail = "walk reached R12 with selected-successor evidence; R13b handoff is not admitted by this debug server slice";
+                    self.record(format!("blocked at {previous}: {detail}"));
+                    return Err(PrepareError::InvalidBatchSelection {
+                        detail: detail.to_string(),
+                    });
+                }
+                r12.advance(r12_to_r13).map(|branch| match branch {
+                    typestate::R12ContinuationBranch::Stopped(r13a) => WalkState::R13a(r13a),
+                    typestate::R12ContinuationBranch::HandoffCommitted(_) => {
+                        unreachable!("R12 selection guard prevents handoff branch")
+                    }
+                })
+            }
+            WalkState::R13a(r13a) => {
+                self.state = WalkState::R13a(r13a);
+                let detail = "walk reached R13a stopped-continuation boundary; R14+ final report phases are not admitted by this debug server slice yet";
                 self.record(format!("blocked at {previous}: {detail}"));
                 return Err(PrepareError::InvalidBatchSelection {
                     detail: detail.to_string(),
@@ -515,6 +532,7 @@ impl WalkState {
             WalkState::R11a(_) => WalkPhase::R11a,
             WalkState::R11(_) => WalkPhase::R11,
             WalkState::R12(_) => WalkPhase::R12,
+            WalkState::R13a(_) => WalkPhase::R13a,
             WalkState::Failed { phase, .. } => *phase,
         }
     }
@@ -602,7 +620,8 @@ impl NextPhase for WalkPhase {
             WalkPhase::R10 => None,
             WalkPhase::R11a => Some(WalkPhase::R12),
             WalkPhase::R11 => Some(WalkPhase::R12),
-            WalkPhase::R12 => None,
+            WalkPhase::R12 => Some(WalkPhase::R13a),
+            WalkPhase::R13a => None,
         }
     }
 }
@@ -746,6 +765,12 @@ fn push_side_effects(
         lines.push(format!(
             "  - {}: assembles report facts without emitting the final report",
             highlight_changed("projection", style.color)
+        ));
+    }
+    if matches!((from, to), (WalkPhase::R12, WalkPhase::R13a)) {
+        lines.push(format!(
+            "  - {}: may record no-selection stopped continuation; successor handoff is blocked in walk",
+            highlight_changed("side effect", style.color)
         ));
     }
 }
