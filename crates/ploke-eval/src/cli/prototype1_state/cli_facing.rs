@@ -6,6 +6,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     io::{self},
+    marker::PhantomData,
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, Mutex},
@@ -68,10 +69,14 @@ use crate::{
                 EVAL_CORE_SURFACE_ROOT, EditProposal, EditSurfaceAdmission, GitWorktreeBackend,
                 ProposedTouch, TuiAttemptOutcome, WorkspaceBackend, edit_surface_paths,
             },
-            c1::{C1, MaterializeBranch},
+            c1::{
+                Acknowledged, Artifact, Binary, C1, Child as ChildLineage, MaterializeBranch,
+                Parent as ParentLineage, Present, Prototype,
+            },
             c2::BuildChild,
-            c3::SpawnChild,
+            c3::{C4, SpawnChild},
             c4::{ObserveChild, ObservedChild},
+            channel::{Channel, Cursor, FileTransport, ToParent},
             edit_surface::{
                 harness_result::{
                     SubmittedBroadHarnessResult, SubmittedChangeSummary,
@@ -80,7 +85,7 @@ use crate::{
                 },
                 tui_adapter,
             },
-            event::RecordedAt,
+            event::{ContentHash, RecordedAt, RuntimeId},
             history::{
                 ArtifactSurface, CandidateArtifact, CandidateCoordinate, CandidateLifecycle,
                 CandidateMembershipId, CandidateOccurrenceId, CandidateSetCommitment,
@@ -118,13 +123,14 @@ use crate::{
         PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1ChildBudget,
         Prototype1ChildScheduleMode, Prototype1ContinuationDecision,
         Prototype1ContinuationDisposition, Prototype1NodeRecord, Prototype1NodeStatus,
-        Prototype1SearchPolicy, RecordStore, TreatmentBranchNode, TreatmentBranchStatus,
-        ValidationPolicy, branch_log, execute_intervention_apply, load_node_record,
-        load_runner_result, load_scheduler_state, project_node_status,
-        prototype1_branch_registry_path, prototype1_node_id, prototype1_nodes_dir,
-        prototype1_scheduler_path, register_root_parent_node,
-        resolved_treatment_branches_from_synthesis, select_primary_issue, treatment_branch_id,
-        write_node_projection, write_treatment_evaluation_projection,
+        Prototype1RunnerDisposition, Prototype1RunnerResult, Prototype1SearchPolicy, RecordStore,
+        TreatmentBranchNode, TreatmentBranchStatus, ValidationPolicy, branch_log,
+        execute_intervention_apply, load_node_record, load_runner_result, load_runner_result_at,
+        load_scheduler_state, project_node_status, prototype1_branch_registry_path,
+        prototype1_node_id, prototype1_nodes_dir, prototype1_scheduler_path,
+        register_root_parent_node, resolved_treatment_branches_from_synthesis,
+        select_primary_issue, treatment_branch_id, write_node_projection,
+        write_treatment_evaluation_projection,
     },
     load_campaign_manifest, load_closure_state,
     model_registry::resolve_model_for_run,
@@ -5495,7 +5501,14 @@ pub(crate) fn run_planned_child(
     let surface = child.surface().cloned();
     let harness = child.harness_evidence().cloned();
     let node_id = node.node_id.clone();
-    if let Some(outcome) = stored_child_outcome(&manifest_path, plan_index, &child)? {
+    if let Some(outcome) = stored_child_outcome(
+        &campaign_id,
+        &manifest_path,
+        &parent_baseline,
+        &branch_log_gate,
+        plan_index,
+        &child,
+    )? {
         return Ok(outcome);
     }
     let child_path_span = tracing::info_span!(
@@ -5791,7 +5804,10 @@ pub(crate) fn run_planned_child(
 }
 
 fn stored_child_outcome(
+    campaign_id: &CampaignId,
     manifest_path: &Path,
+    parent_baseline: &CompleteBaseline,
+    branch_log_gate: &Mutex<()>,
     plan_index: usize,
     child: &ChildFiles,
 ) -> Result<Option<PlannedChildOutcome>, PrepareError> {
@@ -5851,7 +5867,21 @@ fn stored_child_outcome(
         return Ok(None);
     }
 
-    let report = branch_report(manifest_path, &stored.branch_id)?;
+    let mut report = branch_report(manifest_path, &stored.branch_id)?;
+    let mut child_runtime = None;
+    if stored.status == Prototype1NodeStatus::Succeeded && report.is_none() {
+        let recovered = recover_child_report_from_channel(
+            campaign_id,
+            manifest_path,
+            parent_baseline,
+            branch_log_gate,
+            &stored,
+            child,
+            runner_result.as_ref(),
+        )?;
+        child_runtime = Some(recovered.runtime_id.to_string());
+        report = Some(recovered.report);
+    }
     let outcome = match stored.status {
         Prototype1NodeStatus::Succeeded => {
             let report = report.as_ref().ok_or_else(|| PrepareError::InvalidBatchSelection {
@@ -5884,13 +5914,337 @@ fn stored_child_outcome(
         workspace_root: stored.workspace_root.clone(),
         binary_path: stored.binary_path.clone(),
         resolved: child.resolved().clone(),
-        child_runtime: None,
+        child_runtime,
         evaluation_report: report,
         selection_input,
         surface: child.surface().cloned(),
         artifact_surface,
         node: stored,
     }))
+}
+
+#[derive(Debug)]
+struct RecoveredReport {
+    runtime_id: RuntimeId,
+    report: Prototype1BranchEvaluationReport,
+}
+
+#[derive(Debug)]
+struct ChannelTerminal {
+    result: Prototype1RunnerResult,
+    has_treatment: bool,
+}
+
+fn recover_child_report_from_channel(
+    campaign_id: &CampaignId,
+    manifest_path: &Path,
+    parent_baseline: &CompleteBaseline,
+    branch_log_gate: &Mutex<()>,
+    stored: &Prototype1NodeRecord,
+    child: &ChildFiles,
+    latest: Option<&Prototype1RunnerResult>,
+) -> Result<RecoveredReport, PrepareError> {
+    let latest = latest.ok_or_else(|| PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "terminal child '{}' is missing branch evaluation report and runner-result.json; observe recovery requires runner-result agreement",
+            stored.node_id
+        ),
+    })?;
+    let dir = invocation::invocations_dir(&stored.node_dir);
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "terminal child '{}' is missing branch evaluation report, but no child invocation directory exists at '{}'; run observe recovery before direct prototype1-state re-entry",
+                    stored.node_id,
+                    dir.display()
+                ),
+            });
+        }
+        Err(source) => return Err(PrepareError::ReadManifest { path: dir, source }),
+    };
+
+    let mut diagnostics = Vec::new();
+    for entry in entries {
+        let path = entry
+            .map_err(|source| PrepareError::ReadManifest {
+                path: dir.clone(),
+                source,
+            })?
+            .path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let authority = invocation::load_authority(&path)?;
+        let InvocationAuthority::Child(invocation) = authority else {
+            continue;
+        };
+        validate_recovery_invocation(campaign_id, stored, child, &invocation, &path)?;
+        let runtime_id = invocation.runtime_id();
+        let runtime = recovered_c4(campaign_id, manifest_path, stored, child, runtime_id);
+        let Some(terminal) = channel_terminal(&runtime, &invocation)? else {
+            diagnostics.push(format!(
+                "runtime '{runtime_id}' had no terminal channel Result"
+            ));
+            continue;
+        };
+        if let Err(detail) =
+            validate_terminal_result(campaign_id, stored, runtime_id, latest, &terminal)
+        {
+            diagnostics.push(detail);
+            continue;
+        }
+
+        let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(manifest_path));
+        let c5 = match ObserveChild::new(Duration::ZERO)
+            .transition(runtime, &mut journal)
+            .map_err(|err| PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "observe recovery failed for terminal child '{}' runtime '{}': {err:?}",
+                    stored.node_id, runtime_id
+                ),
+            })? {
+            Outcome::Advanced(c5) => c5,
+            Outcome::Rejected(never) => match never {},
+        };
+        let ObservedChild::Succeeded(successful) = &c5.observed else {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "observe recovery for terminal child '{}' runtime '{}' did not yield successful treatment evidence",
+                    stored.node_id, runtime_id
+                ),
+            });
+        };
+        let report = compare_observed_child_treatment(
+            campaign_id,
+            manifest_path,
+            parent_baseline,
+            c5.base.resolved(),
+            &successful.treatment,
+            branch_log_gate,
+        )?;
+        return Ok(RecoveredReport { runtime_id, report });
+    }
+
+    let suffix = if diagnostics.is_empty() {
+        String::new()
+    } else {
+        format!("; recovery diagnostics: {}", diagnostics.join("; "))
+    };
+    Err(PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "terminal child '{}' is missing branch evaluation report, and no valid terminal child channel Result was available for observe recovery{}",
+            stored.node_id, suffix
+        ),
+    })
+}
+
+fn validate_recovery_invocation(
+    campaign_id: &CampaignId,
+    stored: &Prototype1NodeRecord,
+    child: &ChildFiles,
+    invocation: &invocation::ChildInvocation,
+    path: &Path,
+) -> Result<(), PrepareError> {
+    if invocation.campaign_id() != campaign_id || invocation.node_id() != stored.node_id {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "child invocation '{}' does not match terminal child '{}': campaign={} node={}",
+                path.display(),
+                stored.node_id,
+                invocation.campaign_id(),
+                invocation.node_id()
+            ),
+        });
+    }
+    let payload = invocation.node_record()?;
+    if payload.node_id != stored.node_id
+        || payload.branch_id != stored.branch_id
+        || payload.generation != stored.generation
+        || payload.instance_id != stored.instance_id
+        || payload.source_state_id != stored.source_state_id
+        || payload.candidate_id != stored.candidate_id
+        || payload.workspace_root != stored.workspace_root
+        || payload.binary_path != stored.binary_path
+        || payload.node_dir != stored.node_dir
+        || payload.runner_request_path != stored.runner_request_path
+        || payload.runner_result_path != stored.runner_result_path
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "child invocation '{}' node payload does not match terminal child '{}'",
+                path.display(),
+                stored.node_id
+            ),
+        });
+    }
+    let request = invocation.runner_request()?;
+    let planned = child.runner_request();
+    if request.schema_version != planned.schema_version
+        || request.campaign_id != planned.campaign_id
+        || request.node_id != planned.node_id
+        || request.generation != planned.generation
+        || request.instance_id != planned.instance_id
+        || request.source_state_id != planned.source_state_id
+        || request.operation_target != planned.operation_target
+        || request.base_artifact_id != planned.base_artifact_id
+        || request.patch_id != planned.patch_id
+        || request.derived_artifact_id != planned.derived_artifact_id
+        || request.branch_id != planned.branch_id
+        || request.target_relpath != planned.target_relpath
+        || request.binary_path != stored.binary_path
+        || request.stop_on_error != planned.stop_on_error
+        || request.runner_args != planned.runner_args
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "child invocation '{}' runner request does not match child-plan identity for '{}'",
+                path.display(),
+                stored.node_id
+            ),
+        });
+    }
+    if invocation.resolved()? != child.resolved() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "child invocation '{}' resolved branch does not match child-plan payload for '{}'",
+                path.display(),
+                stored.node_id
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn recovered_c4(
+    campaign_id: &CampaignId,
+    manifest_path: &Path,
+    stored: &Prototype1NodeRecord,
+    child: &ChildFiles,
+    runtime_id: RuntimeId,
+) -> C4 {
+    Prototype {
+        campaign_id: campaign_id.clone(),
+        campaign_manifest_path: manifest_path.to_path_buf(),
+        node: stored.clone(),
+        request: child.runner_request().clone(),
+        resolved: child.resolved().clone(),
+        artifact: Artifact {
+            repo_root: stored.workspace_root.clone(),
+            target_relpath: child.resolved().target_relpath.clone(),
+            source_content_hash: ContentHash(child.resolved().source_content_hash.clone()),
+            current_content_hash: ContentHash(
+                child.resolved().branch.proposed_content_hash.clone(),
+            ),
+            proposed_content_hash: ContentHash(
+                child.resolved().branch.proposed_content_hash.clone(),
+            ),
+            _lineage: PhantomData::<ChildLineage>,
+        },
+        binary: Binary {
+            parent_running: true,
+            child_path: stored.binary_path.clone(),
+            child_runtime: Some(runtime_id),
+            _lineage: PhantomData::<ParentLineage>,
+            _child: PhantomData::<Present>,
+            _ack: PhantomData::<Acknowledged>,
+        },
+    }
+}
+
+fn channel_terminal(
+    runtime: &C4,
+    invocation: &invocation::ChildInvocation,
+) -> Result<Option<ChannelTerminal>, PrepareError> {
+    let endpoints =
+        invocation
+            .channel_endpoints()
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "child invocation for node '{}' runtime '{}' is missing channel endpoints",
+                    invocation.node_id(),
+                    invocation.runtime_id()
+                ),
+            })?;
+    let channel = Channel::for_role(runtime, endpoints, FileTransport);
+    let (_, messages) = channel.recv_from_child(Cursor::start()).map_err(|err| {
+        PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "failed to read child channel for node '{}' runtime '{}': {err:?}",
+                invocation.node_id(),
+                invocation.runtime_id()
+            ),
+        }
+    })?;
+    let mut terminal = None;
+    for message in messages {
+        if let ToParent::Result {
+            runner_result,
+            treatment,
+        } = message.body()
+        {
+            if terminal.is_some() {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "child channel for node '{}' runtime '{}' carried multiple terminal Result messages",
+                        invocation.node_id(),
+                        invocation.runtime_id()
+                    ),
+                });
+            }
+            terminal = Some(ChannelTerminal {
+                result: runner_result.clone(),
+                has_treatment: treatment.is_some(),
+            });
+        }
+    }
+    Ok(terminal)
+}
+
+fn validate_terminal_result(
+    campaign_id: &CampaignId,
+    stored: &Prototype1NodeRecord,
+    runtime_id: RuntimeId,
+    latest: &Prototype1RunnerResult,
+    terminal: &ChannelTerminal,
+) -> Result<(), String> {
+    let result = &terminal.result;
+    if result.campaign_id != *campaign_id
+        || result.node_id != stored.node_id
+        || result.branch_id != stored.branch_id
+        || result.generation != stored.generation
+        || result.status != stored.status
+    {
+        return Err(format!(
+            "runtime '{runtime_id}' terminal Result does not match stored child identity/status"
+        ));
+    }
+    if result.disposition == Prototype1RunnerDisposition::Succeeded && !terminal.has_treatment {
+        return Err(format!(
+            "runtime '{runtime_id}' succeeded terminal Result is missing treatment evidence"
+        ));
+    }
+    if result != latest {
+        return Err(format!(
+            "runtime '{runtime_id}' terminal Result does not match runner-result.json"
+        ));
+    }
+    let path = invocation::result_path(&stored.node_dir, runtime_id);
+    let attempt =
+        load_runner_result_at(&path, OperatorProjectionRead::cli_operator()).map_err(|err| {
+            format!(
+                "failed to read attempt runner result '{}': {err}",
+                path.display()
+            )
+        })?;
+    if attempt != *result {
+        return Err(format!(
+            "runtime '{runtime_id}' terminal Result does not match attempt runner result '{}'",
+            path.display()
+        ));
+    }
+    Ok(())
 }
 
 fn branch_report(

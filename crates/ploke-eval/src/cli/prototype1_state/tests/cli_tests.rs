@@ -4304,6 +4304,194 @@ async fn succeeded_child_without_evaluation_blocks_direct_reentry() {
 }
 
 #[tokio::test]
+async fn succeeded_child_without_evaluation_recovers_from_terminal_channel() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let campaign_id = CampaignId::from("campaign");
+
+    let allowed = write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "broad surface fixture");
+    let parent = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
+    let budget = Prototype1ChildBudget::new(1, 1);
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
+    submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
+    let receipt = admit_broad_harness_batch(
+        ChildPlanEnv {
+            campaign_id: &CLI_TEST_CAMPAIGN,
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
+        },
+        batch,
+    )
+    .await
+    .expect("admit one child");
+    let child = receipt.plan.body().children()[0].clone();
+    let node = child.node_record().clone();
+    let mut stored = project_node_status(&node, Prototype1NodeStatus::Succeeded);
+    stored.updated_at = "2026-06-09T18:04:04.433855206+00:00".to_string();
+    write_node_projection(&stored).expect("write terminal node projection");
+
+    let treatment_id = CampaignId::from("treatment");
+    let run_metrics = test_metrics(false, true, 0);
+    let treatment = Prototype1TreatmentEvidence {
+        baseline_campaign_id: campaign_id.clone(),
+        branch_id: node.branch_id.clone(),
+        treatment_campaign_id: treatment_id.clone(),
+        treatment_campaign_manifest: tmp.path().join("treatment/campaign.json"),
+        treatment_closure_state_path: tmp.path().join("treatment/closure-state.json"),
+        eval_policy: EvalCampaignPolicy::default(),
+        benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+        dataset_sources: Vec::new(),
+        instances: vec![Prototype1TreatmentInstanceEvidence {
+            instance_id: node.instance_id.clone(),
+            registration_path: None,
+            record_path: Some(tmp.path().join("treatment-record.json.gz")),
+            metrics: Some(run_metrics.clone()),
+            oracle_evaluation: None,
+            status: "complete".to_string(),
+        }],
+    };
+    let result = crate::intervention::Prototype1RunnerResult {
+        schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
+        campaign_id: campaign_id.clone(),
+        node_id: node.node_id.clone(),
+        generation: node.generation,
+        branch_id: node.branch_id.clone(),
+        status: Prototype1NodeStatus::Succeeded,
+        disposition: crate::intervention::Prototype1RunnerDisposition::Succeeded,
+        treatment_campaign_id: Some(treatment_id.clone()),
+        evaluation_artifact_path: None,
+        detail: None,
+        exit_code: Some(0),
+        stdout_excerpt: None,
+        stderr_excerpt: None,
+        recorded_at: "2026-06-09T17:55:54.420975107+00:00".to_string(),
+    };
+    crate::intervention::write_runner_result_at(&stored.runner_result_path, &result)
+        .expect("write terminal runner result");
+
+    let runtime_id = RuntimeId::new();
+    let runtime_path =
+        crate::cli::prototype1_state::invocation::result_path(&stored.node_dir, runtime_id);
+    crate::intervention::write_runner_result_at(&runtime_path, &result)
+        .expect("write attempt runner result");
+    let journal_path = prototype1_transition_journal_path(&manifest_path);
+    let channel_root =
+        crate::cli::prototype1_state::invocation::channel_root(&stored.node_dir, runtime_id);
+    let payload = project_node_status(&node, Prototype1NodeStatus::BinaryBuilt);
+    let invocation = crate::cli::prototype1_state::invocation::ChildInvocation::with_bootstrap(
+        campaign_id.clone(),
+        payload,
+        child.runner_request().clone(),
+        child.resolved().clone(),
+        runtime_id,
+        journal_path.clone(),
+        channel_root.clone(),
+    )
+    .expect("child invocation bootstrap");
+    let invocation_path =
+        crate::cli::prototype1_state::invocation::invocation_path(&stored.node_dir, runtime_id);
+    crate::cli::prototype1_state::invocation::write_child_invocation(&invocation_path, &invocation)
+        .expect("write child invocation");
+
+    let ready = crate::cli::prototype1_state::channel::ToParent::Ready;
+    let evaluating = crate::cli::prototype1_state::channel::ToParent::Evaluating;
+    let terminal = crate::cli::prototype1_state::channel::ToParent::Result {
+        runner_result: result.clone(),
+        treatment: Some(treatment),
+    };
+    let messages = [ready, evaluating, terminal];
+    let mut lines = Vec::new();
+    for (index, message) in messages.iter().enumerate() {
+        use sha2::{Digest, Sha256};
+
+        let bytes = serde_json::to_vec(message).expect("serialize channel body");
+        let body = String::from_utf8(bytes.clone()).expect("channel body utf8");
+        let hash = format!("{:x}", Sha256::digest(&bytes));
+        let message_id = format!("00000000-0000-4000-8000-{:012}", index + 1);
+        lines.push(format!(
+            r#"{{"schema_version":"prototype1-runtime-channel.v1","direction":"child_to_parent","campaign_id":"{campaign_id}","node_id":"{}","runtime_id":"{runtime_id}","message_id":"{message_id}","recorded_at":0,"body_hash":"{hash}","body":{body}}}"#,
+            node.node_id
+        ));
+    }
+    fs::create_dir_all(&channel_root).expect("create channel root");
+    fs::write(
+        channel_root.join("child-to-parent.jsonl"),
+        lines.join("\n") + "\n",
+    )
+    .expect("write terminal channel");
+
+    let baseline = CompleteBaseline::complete(
+        campaign_id.clone(),
+        parent_identity.node_id().to_string(),
+        parent_identity.branch_id().to_string(),
+        "eval-set".to_string(),
+        vec![BaselineInstance {
+            instance_id: node.instance_id.clone(),
+            registration_path: None,
+            record_path: tmp.path().join("baseline-record.json.gz"),
+            metrics: run_metrics,
+        }],
+    )
+    .expect("complete baseline");
+
+    let path = prototype1_branch_evaluation_path(&manifest_path, &node.branch_id);
+    assert!(!path.exists(), "test starts without branch evaluation");
+    let outcome = run_planned_child(
+        campaign_id.clone(),
+        manifest_path.clone(),
+        repo_root,
+        journal_path.clone(),
+        parent_identity,
+        baseline,
+        Arc::new(Mutex::new(())),
+        Prototype1StateStopAfter::Build,
+        Duration::from_secs(30),
+        0,
+        child,
+    )
+    .expect("recover missing branch evaluation from terminal channel");
+
+    assert_eq!(outcome.outcome, "completed:Keep");
+    assert_eq!(outcome.node_status, Prototype1NodeStatus::Succeeded);
+    assert_eq!(outcome.child_runtime, Some(runtime_id.to_string()));
+    assert!(outcome.evaluation_report.is_some());
+    assert!(outcome.selection_input.is_some());
+    assert!(path.exists(), "recovery writes parent comparison report");
+    assert!(
+        !stored.node_dir.join("target").exists(),
+        "stored terminal recovery must not create a child build target"
+    );
+    let entries = PrototypeJournal::new(journal_path)
+        .load_entries()
+        .expect("load recovery journal");
+    assert!(entries.iter().any(|entry| matches!(
+        entry,
+        JournalEntry::ObserveChild(observed)
+            if observed.refs.node_id == node.node_id
+                && observed.runtime_id == runtime_id
+                && observed.phase == CommitPhase::After
+                && matches!(
+                    &observed.result,
+                    Some(crate::cli::prototype1_state::journal::ObservedChildResult::TreatmentComplete {
+                        treatment_campaign_id,
+                    }) if treatment_campaign_id == &treatment_id
+                )
+    )));
+}
+
+#[tokio::test]
 async fn child_spawn_observes_ready() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");

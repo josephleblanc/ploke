@@ -658,3 +658,49 @@ rm -rf "$sockdir"
 Result: R10 reached R11a with explicit `--watch`, R11a projected R12 report facts, R12 reached no-selection R13a, and default R13a step advanced `r13_to_r14` to `r14a - final stopped report emitted`. The delta showed History head `Read -> Unchanged`, completion evidence `None -> Recorded`, and `Report<report::Facts> -> Report<report::Emitted<Prototype1StateReport>>`. No successor handoff or R14b path was started.
 
 GitNexus impact checks before edits were LOW for `R14aFinalStopped`, `R14FinalBranch`, `r13_to_r14`, `emit_final_report_from_parts`, `WalkPhase`, `WalkController`, and `TRANSITION_GRAPH_VERSION` (0 indexed process impacts; `emit_final_report_from_parts` had one direct caller, `r13_to_r14`). Final pre-commit validation also ran `git diff --check` and `npx gitnexus detect-changes --repo ploke`; detect reported LOW risk, 9 changed files, 27 changed symbols, and 0 affected processes.
+
+### Slice 13 — recover missing parent comparison from terminal child channel
+
+Implemented the first channel-authority recovery slice for terminal child results:
+
+- `run_planned_child` now gives stored terminal-child reconstruction enough parent baseline and branch-log context to repair a missing parent comparison report;
+- `stored_child_outcome` keeps the existing hard block for nonterminal node projections with terminal runner results;
+- succeeded terminal children with no branch evaluation report may recover only from a child invocation whose channel carries a validated terminal `ToParent::Result`;
+- recovery validates channel envelope/body hash through `Channel::recv_from_child`, checks child invocation/node identity, requires matching latest and attempt-scoped runner-result files, and requires inline treatment evidence for successful children;
+- the parent then replays the canonical `ObserveChild` transition and runs `compare_observed_child_treatment`, so selection input is derived only from the channel-sourced treatment evidence and the parent-owned comparison projection;
+- no child C1-C3 work, provider calls, or fake selection evidence are started by this recovery path.
+
+Deliberate limitations:
+
+- recovery repairs parent observe/comparison projections for the current stored terminal child path only; it does not yet reconstruct R11/R12 directly from durable evidence after server restart;
+- path-only `ResultWritten` remains diagnostic evidence and is not selectable without the terminal `Result` payload;
+- selected-successor handoff remains blocked by the current walk slice.
+
+Focused test additions:
+
+- `succeeded_child_without_evaluation_recovers_from_terminal_channel`
+
+Validation so far:
+
+```text
+cargo fmt --all
+cargo check -p ploke-eval --all-targets
+cargo test -p ploke-eval succeeded_child_without_evaluation --all-targets -- --nocapture
+cargo test -p ploke-eval loop_walk_ --all-targets
+cargo test -p ploke-eval typestate --all-targets
+cargo build -p ploke-eval
+```
+
+Historical smoke with isolated `0700` socket dirs:
+
+```text
+ROOT=/home/brasides/.ploke-eval/worktrees/p1-gemini35-flash-direct-2g1x3-20260525-073410
+./target/debug/ploke-eval loop walk start --repo-root "$ROOT" --socket "$sock" --until r7 --with-version
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock" --watch --with-version
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock" --until r10 --with-version
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock" --watch --with-version
+```
+
+Result: the previously blocked fanout advanced `r10_to_r11 --watch -> r11 - child fanout complete`. Recovery wrote the missing parent comparison report at `prototype1/evaluations/branch-ac56d600dd90b3ab.json`; the recovered branch disposition was `reject` over one compared instance. A follow-up isolated smoke stepped the same campaign through `r11_to_r12` and `r12_to_r13a`, preserving the current no-handoff guard.
+
+GitNexus impact checks before edits were LOW for `stored_child_outcome`, `run_planned_child`, `ObserveChild`, and `compare_observed_child_treatment` (0 indexed process impacts reported for each checked target).
