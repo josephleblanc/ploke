@@ -17,8 +17,10 @@ use crate::{
             backend::GitWorktreeBackend,
             cli_facing::{
                 Prototype1StateRunShape, campaign_manifest_path_for_id,
+                child_plan_message_path_for_parent, load_existing_child_plan_for_id,
                 load_parent_baseline_for_id, prototype1_state_transition_error,
                 resolve_campaign_config_for_id, resolve_parent_policy_budget, same_existing_path,
+                validate_existing_child_plan_for_id,
             },
             identity::{ParentIdentity, load_parent_identity_optional, parent_identity_path},
             journal::{JournalEntry, PrototypeJournal, prototype1_transition_journal_path},
@@ -39,6 +41,7 @@ pub(crate) enum EarlyState {
     R5(typestate::R5<Prototype1StateRunShape, ResolvedCampaignConfig>),
     R6(typestate::R6<Prototype1StateRunShape, ResolvedCampaignConfig>),
     R7(typestate::R7<Prototype1StateRunShape, ResolvedCampaignConfig>),
+    R8(typestate::R8<Prototype1StateRunShape, ResolvedCampaignConfig>),
 }
 
 /// Result of an early durable reconstruction attempt.
@@ -188,6 +191,43 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
                     parts.facts.complete_search_policy = policy;
                     parts.facts.plan_child_budget = Some(budget);
                     notes.push("reconstructed R7 from run policy and child budget inputs".into());
+                    let plan_path =
+                        child_plan_message_path_for_parent(&parts.manifest_path, parent.identity());
+                    if plan_path.exists() {
+                        match validate_existing_child_plan_for_id(
+                            &parts.manifest_path,
+                            parent.identity(),
+                        ) {
+                            Ok(()) => {
+                                let planned =
+                                    load_existing_child_plan_for_id(&parts.manifest_path, parent)?;
+                                let parent = planned.parent;
+                                parts.facts.child_plan = Some(typestate::context::ChildPlanFacts {
+                                    plan: planned.plan,
+                                    children: planned.children,
+                                    rejected_surface_attempts: planned.rejected_surface_attempts,
+                                });
+                                notes.push(
+                                    "reconstructed R8 from existing child-plan message evidence"
+                                        .into(),
+                                );
+                                return Ok(EarlySnapshot {
+                                    state: Some(EarlyState::R8(
+                                        typestate::R8::from_collected_parent(
+                                            parts.into_collected(),
+                                            parent,
+                                        ),
+                                    )),
+                                    campaign_id: Some(campaign_id),
+                                    notes,
+                                    blockers,
+                                });
+                            }
+                            Err(error) => {
+                                blockers.push(format!("blocked edge r7 -> r8: {error}"));
+                            }
+                        }
+                    }
                     return Ok(EarlySnapshot {
                         state: Some(EarlyState::R7(typestate::R7::from_collected_parent(
                             parts.into_collected(),

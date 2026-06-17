@@ -11,15 +11,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::cli::prototype1_state::typestate::{
     R0_SHAPE, R1_SHAPE, R2A_SHAPE, R3_SHAPE, R4A_SHAPE, R4B_SHAPE, R4C_SHAPE, R5_SHAPE, R6_SHAPE,
-    R7_SHAPE, RuntimeAxisDelta, RuntimeShape,
+    R7_SHAPE, R8_SHAPE, RuntimeAxisDelta, RuntimeShape,
 };
 
 /// Serializable cursor for the early Prototype 1 typestate walk.
 ///
-/// The current server slice intentionally stops at `R7`: policy/budget readiness
-/// is enough to validate socket lifecycle, in-memory stepping, branching,
-/// stale-server guards, and the first setup live edges before child fanout or
-/// successor handoff.
+/// The current server slice intentionally stops live stepping at `R7` and can
+/// reconstruct `R8` when child-plan message evidence already exists. That is
+/// enough to validate socket lifecycle, in-memory stepping, branching,
+/// stale-server guards, and setup edges before child fanout or successor
+/// handoff.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum WalkPhase {
@@ -45,6 +46,8 @@ pub enum WalkPhase {
     R6,
     /// Run policy and child-planning budget ready.
     R7,
+    /// Existing child-plan authority received; parent is selectable.
+    R8,
 }
 
 /// One admitted edge that can follow a phase in the current server slice.
@@ -140,6 +143,7 @@ impl WalkPhase {
             WalkPhase::R5 => "r5",
             WalkPhase::R6 => "r6",
             WalkPhase::R7 => "r7",
+            WalkPhase::R8 => "r8",
         }
     }
 
@@ -157,6 +161,7 @@ impl WalkPhase {
             WalkPhase::R5 => "parent start recorded",
             WalkPhase::R6 => "parent baseline ready",
             WalkPhase::R7 => "policy and child budget ready",
+            WalkPhase::R8 => "child-plan authority received",
         }
     }
 
@@ -174,6 +179,7 @@ impl WalkPhase {
                 | WalkPhase::R5
                 | WalkPhase::R6
                 | WalkPhase::R7
+                | WalkPhase::R8
         )
     }
 
@@ -191,6 +197,7 @@ impl WalkPhase {
             WalkPhase::R5 => R5_NEXT,
             WalkPhase::R6 => R6_NEXT,
             WalkPhase::R7 => NO_NEXT,
+            WalkPhase::R8 => NO_NEXT,
         }
     }
 
@@ -252,6 +259,7 @@ impl WalkPhase {
             WalkPhase::R5 => Some(R5_SHAPE),
             WalkPhase::R6 => Some(R6_SHAPE),
             WalkPhase::R7 => Some(R7_SHAPE),
+            WalkPhase::R8 => Some(R8_SHAPE),
         }
     }
 

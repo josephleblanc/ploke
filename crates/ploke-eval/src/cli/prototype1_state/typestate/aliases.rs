@@ -1024,45 +1024,48 @@ runtime_alias! {
     shape R7_SHAPE;
 }
 
-/// R8: child-plan authority received and parent becomes selectable.
-///
-/// Axis changes:
-/// - `Parent<Ready> -> Parent<Selectable>`.
-/// - `Plan<authority::None, schedule::None>`
-///   `-> Plan<authority::Received<Received<ChildPlan>>, schedule::None>`.
-/// - `Children<set::None, attempt::None>`
-///   `-> Children<set::Planned<ChildFiles>, attempt::None>`.
-///
-/// Existing carriers:
-/// - `Received<ChildPlan>` is the cross-runtime message capability.
-/// - `ChildFiles` is the per-child input before C1.
-/// - `PlannedChildren` currently bundles `Parent<Selectable>` with plan/child
-///   data; future implementation should likely split that bundle across axes.
-pub(crate) type R8<RunShape = (), CampaignConfig = ()> = Runtime<
-    phase::R8,
-    parent_role::Parent<parent_role::Selectable>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<plan::authority::Received<Received<parent_role::ChildPlan>>, plan::schedule::None>,
-    Children<children::set::Planned<parent_role::ChildFiles>, children::attempt::None>,
-    History<
-        history_axis::startup::Validated<history_axis::startup::Any>,
-        history_axis::head::FromStartup,
-        history_axis::epoch::None,
-    >,
-    Evidence<
-        evidence::parent_start::Recorded<ParentStartedEntry>,
-        evidence::baseline::Ready<CompleteBaseline>,
-        evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
-        evidence::selection::Plan<context::ChildPlanFacts>,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::None,
-        continuation::decision::None,
-        continuation::handoff::None,
-    >,
-    Report<report::None>,
->;
+runtime_alias! {
+    /// R8: child-plan authority received and parent becomes selectable.
+    ///
+    /// Axis changes:
+    /// - `Parent<Ready> -> Parent<Selectable>`.
+    /// - `Plan<authority::None, schedule::None>`
+    ///   `-> Plan<authority::Received<Received<ChildPlan>>, schedule::None>`.
+    /// - `Children<set::None, attempt::None>`
+    ///   `-> Children<set::Planned<ChildFiles>, attempt::None>`.
+    ///
+    /// Existing carriers:
+    /// - `Received<ChildPlan>` is the cross-runtime message capability.
+    /// - `ChildFiles` is the per-child input before C1.
+    /// - `PlannedChildren` currently bundles `Parent<Selectable>` with plan/child
+    ///   data; future implementation should likely split that bundle across axes.
+    pub(crate) type R8<RunShape = (), CampaignConfig = ()> = Runtime<
+        phase::R8,
+        parent_role::Parent<parent_role::Selectable>,
+        Context<context::Collected<RunShape, CampaignConfig>>,
+        Plan<plan::authority::Received<Received<parent_role::ChildPlan>>, plan::schedule::None>,
+        Children<children::set::Planned<parent_role::ChildFiles>, children::attempt::None>,
+        History<
+            history_axis::startup::Validated<history_axis::startup::Any>,
+            history_axis::head::FromStartup,
+            history_axis::epoch::None,
+        >,
+        Evidence<
+            evidence::parent_start::Recorded<ParentStartedEntry>,
+            evidence::baseline::Ready<CompleteBaseline>,
+            evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
+            evidence::selection::Plan<context::ChildPlanFacts>,
+            evidence::completion::None,
+        >,
+        Continuation<
+            continuation::selection::None,
+            continuation::decision::None,
+            continuation::handoff::None,
+        >,
+        Report<report::None>,
+    >;
+    shape R8_SHAPE;
+}
 
 /// R9: child schedule shaped.
 ///

@@ -3839,6 +3839,72 @@ fn comment_replacement_for(relpath: &Path, body: String) -> String {
     }
 }
 
+pub(crate) fn child_plan_message_path_for_parent(
+    manifest_path: &Path,
+    parent: &ParentIdentity,
+) -> PathBuf {
+    crate::cli::prototype1_state::inner::At::<ChildPlanFile>::resolve((
+        manifest_path.to_path_buf(),
+        parent.node_id().to_string(),
+    ))
+    .into_path()
+}
+
+pub(crate) fn validate_existing_child_plan_for_id(
+    manifest_path: &Path,
+    parent: &ParentIdentity,
+) -> Result<(), PrepareError> {
+    let at = crate::cli::prototype1_state::inner::At::<ChildPlanFile>::resolve((
+        manifest_path.to_path_buf(),
+        parent.node_id().to_string(),
+    ));
+    let body = read_child_plan_message(&at)?;
+    body.validate_receiver(parent)
+        .map_err(|source| PrepareError::InvalidBatchSelection {
+            detail: source.to_string(),
+        })
+}
+
+pub(crate) fn load_existing_child_plan_for_id(
+    manifest_path: &Path,
+    parent: Parent<Ready>,
+) -> Result<PlannedChildren, PrepareError> {
+    let parent_identity = parent.identity().clone();
+    let at = crate::cli::prototype1_state::inner::At::<ChildPlanFile>::resolve((
+        manifest_path.to_path_buf(),
+        parent_identity.node_id().to_string(),
+    ));
+    let observed_at = at.clone();
+    let locked = observe::transition::<LockChildPlan>(&parent_identity)
+        .stage(observe::Stage::RetryReplay)
+        .reads(observe::RecordRef::ChildPlanFile(&observed_at))
+        .try_commit(|| Locked::<ChildPlan>::from_box(at, read_child_plan_message))
+        .map_err(|err| {
+            let (_at, source) = err.into_parts();
+            source
+        })?;
+    let planned = parent.planned_from_locked_child_plan();
+    let observed_at = locked.at().clone();
+    let (parent, plan) = observe::transition::<UnlockChildPlan>(&parent_identity)
+        .stage(observe::Stage::MessageReceive)
+        .reads(observe::RecordRef::ChildPlanFile(&observed_at))
+        .try_commit(|| locked.unlock(planned))
+        .map_err(|err| {
+            let (_failed, source) = err.into_parts();
+            PrepareError::InvalidBatchSelection {
+                detail: source.to_string(),
+            }
+        })?;
+    let children = plan.body().children().to_vec();
+    let rejected_surface_attempts = plan.body().rejected_surface_attempts().to_vec();
+    Ok(PlannedChildren {
+        parent,
+        plan,
+        children,
+        rejected_surface_attempts,
+    })
+}
+
 fn receive_existing_child_plan(
     env: ChildPlanEnv<'_>,
     parent: Parent<Ready>,

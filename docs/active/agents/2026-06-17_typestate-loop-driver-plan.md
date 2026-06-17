@@ -152,8 +152,8 @@ The table below treats R0–R14 as the driver spine. The exact durable evidence 
 | R4c | Startup validated as `Parent<Ready>`. | genesis validation or predecessor sealed head + successor invocation/ready evidence. | Predecessor path records successor ready/ack evidence. | Replay can show startup validation path. | Genesis and predecessor converge to one ready state; branch kind should be value metadata, not separate post-ready type. |
 | R5 | Parent-start evidence recorded. | parent-start and resource journal entries. | Appends transition journal entries. | Replay shows parent-start evidence; back cursor can move before it but does not remove journal entries. | Current walk reconstructs R5 from matching journal evidence and admits R5 -> R6. |
 | R6 | Parent baseline established. | baseline closure state or selected-child promoted baseline evidence; campaign closure artifacts. | May advance eval/protocol closure for baseline. | Replay shows baseline source and completeness. | Current walk reaches/reconstructs R6 when durable baseline evidence exists and admits R6 -> R7. |
-| R7 | Policy and child budget ready. | admitted run profile, search policy, child budget, schedule mode, generation/node counts. | Reads profile and projections; may reserve/log budget if current code does. | Replay displays policy derivation. | Current walk reaches/reconstructs R7; next boundary is child-plan authority at R8. |
-| R8 | Child-plan authority received; parent becomes selectable. | `messages/child-plan/<parent-node-id>.json`, `Received<ChildPlan>`, child files, rejected attempts. | May publish broad-harness requests, collect/receive plan, write child-plan message. | Replay shows plan authority and rejected attempts. | This is the child-plan authority boundary; retry must recover from message box. |
+| R7 | Policy and child budget ready. | admitted run profile, search policy, child budget, schedule mode, generation/node counts. | Reads profile and projections; may reserve/log budget if current code does. | Replay displays policy derivation. | Current walk reaches/reconstructs R7; live R7 -> R8 waits for async progress/watch support. |
+| R8 | Child-plan authority received; parent becomes selectable. | `messages/child-plan/<parent-node-id>.json`, `Received<ChildPlan>`, child files, rejected attempts. | May publish broad-harness requests, collect/receive plan, write child-plan message. | Replay shows plan authority and rejected attempts. | Current walk reconstructs R8 from existing child-plan message evidence only. |
 | R9 | Child schedule shaped. | planned children, budget, schedule mode, runnable subset. | Usually no durable side effect beyond display/projection unless current code persists schedule choice. | Replay displays runnable set. | Avoid carrying schedule as loose locals. |
 | R10 | Selection strategy ready. | successor-selection policy/strategy, seed, metrics mode, History traversal inputs. | Reads History/projections to build strategy. | Replay shows strategy inputs. | `ActiveSelectionStrategy` is still private to `cli_facing`; either move carrier or add typed public equivalent. |
 | R11a | Rejected-only branch projected. | rejected surface attempts and selection material. | Writes/report selection evidence if current path does. | Replay shows no-child selection evidence. | Branch from R10; must not require fake child outcomes. |
@@ -537,7 +537,7 @@ Basically the same for the harness. This is under-used, but I want to leave the 
 
 Short-term:
 
-- `walk` can reconstruct R0–R7 after server restart where durable baseline evidence exists.
+- `walk` can reconstruct R0–R8 after server restart where durable baseline/child-plan evidence exists.
 - R4a checkout mismatch displays as a typed blocker with recovery commands.
 - R6/R7 are admitted without duplicating baseline side effects when evidence already exists.
 

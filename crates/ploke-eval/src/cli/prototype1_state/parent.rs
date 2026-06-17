@@ -176,7 +176,10 @@ impl ChildPlanFiles {
         self.children.iter().any(|child| child.node_id() == node_id)
     }
 
-    fn validate_receiver(&self, identity: &ParentIdentity) -> Result<(), ChildPlanReceiverError> {
+    pub(crate) fn validate_receiver(
+        &self,
+        identity: &ParentIdentity,
+    ) -> Result<(), ChildPlanReceiverError> {
         if identity.node_id() != self.parent_node_id {
             return Err(ChildPlanReceiverError::ParentNode {
                 expected_parent_node_id: self.parent_node_id.clone(),

@@ -198,3 +198,40 @@ Smoke with isolated socket and clean parent worktree:
 ```
 
 Result: R7 typestate displayed `evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>`, and the single-step delta showed `r6_to_r7`.
+
+### Slice 5 — reconstruct R8 child-plan authority only
+
+Implemented the next durable/replay boundary without admitting the long live child-plan edge yet:
+
+- converted the R8 alias to `runtime_alias!` and exported `R8_SHAPE`;
+- added read-only helpers to locate, validate, and load an existing child-plan message for a ready parent;
+- widened `ChildPlanFiles::validate_receiver` to `pub(crate)` so the same receiver invariant can be reused before consuming the parent typestate value;
+- reconstruction now promotes R7 to R8 when an existing child-plan message is present and valid;
+- `walk show` can display R8 typestate and R8 deltas from shape metadata;
+- live `walk step` still stops at R7 until async progress/watch semantics are implemented for `r7_to_r8`.
+
+Deliberate limitations:
+
+- no provider call, broad harness publication, or child-plan message creation is performed by `walk` in this slice;
+- malformed existing child-plan evidence blocks at R7 instead of being tolerated;
+- R9+ remain blocked.
+
+Validation:
+
+```text
+cargo check -p ploke-eval --all-targets
+cargo test -p ploke-eval loop_walk_ --all-targets
+cargo test -p ploke-eval shape --all-targets
+cargo test -p ploke-eval typestate --all-targets
+cargo test -p ploke-eval prototype1_state --all-targets
+```
+
+Smoke with isolated socket and clean parent worktree without child-plan evidence:
+
+```text
+./target/debug/ploke-eval loop walk start --repo-root /home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249 --socket <tmp>/walk.sock --until r7
+./target/debug/ploke-eval loop walk step --repo-root /home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249 --socket <tmp>/walk.sock
+./target/debug/ploke-eval loop walk show --repo-root /home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249 --socket <tmp>/walk.sock
+```
+
+Result: `walk` stayed at R7 and did not call the live R8 child-plan authority edge.
