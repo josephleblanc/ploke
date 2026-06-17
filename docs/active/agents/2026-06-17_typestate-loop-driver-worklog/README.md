@@ -88,3 +88,37 @@ PLOKE_EVAL_WALK_SOCKET_DIR=<tmp> ./target/debug/ploke-eval loop walk step --repo
 ```
 
 Result: auto-spawned server, reconstructed R5, and reported no next admitted step in the current server slice.
+
+### Slice 2 — R4a checkout blocker UX
+
+Implemented typed/operator-facing R4a blocker display without relaxing validation:
+
+- added read-only `GitWorktreeBackend::active_branch` and `GitWorktreeBackend::dirty_paths` accessors;
+- added `driver::reconstruct::format_r4a_blocker`;
+- reconstruction blockers now show:
+  - blocked edge;
+  - original strict reason;
+  - repo root;
+  - active branch;
+  - expected parent identity artifact branch;
+  - dirty paths when present;
+  - recovery commands;
+- live `walk step` failures from R4a return the same typed blocker detail.
+
+Validation:
+
+```text
+cargo check -p ploke-eval --all-targets
+cargo build -p ploke-eval
+cargo test -p ploke-eval loop_walk_ --all-targets
+cargo test -p ploke-eval prototype1_state --all-targets
+```
+
+Smoke:
+
+```text
+PLOKE_EVAL_WALK_SOCKET_DIR=<tmp> ./target/debug/ploke-eval loop walk show --repo-root /home/brasides/code/ploke
+PLOKE_EVAL_WALK_SOCKET_DIR=<tmp> ./target/debug/ploke-eval loop walk step --repo-root /home/brasides/code/ploke
+```
+
+Result: both commands preserved the hard R4a stop and printed active branch, expected artifact branch, dirty files, and recovery commands.

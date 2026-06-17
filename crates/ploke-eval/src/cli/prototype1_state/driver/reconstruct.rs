@@ -14,12 +14,13 @@ use crate::{
         InspectOutputFormat, Prototype1CandidateGenerator, Prototype1StateCommand,
         Prototype1StateStopAfter, Prototype1SuccessorSelection, Prototype1TraversalMetrics,
         prototype1_state::{
+            backend::GitWorktreeBackend,
             cli_facing::{
                 Prototype1StateRunShape, campaign_manifest_path_for_id,
                 prototype1_state_transition_error, resolve_campaign_config_for_id,
                 same_existing_path,
             },
-            identity::{load_parent_identity_optional, parent_identity_path},
+            identity::{ParentIdentity, load_parent_identity_optional, parent_identity_path},
             journal::{JournalEntry, PrototypeJournal, prototype1_transition_journal_path},
             live_edges::{r1_to_r2a_or_r3, r3_to_r4a, r4a_to_r4b_or_r4c, r4b_to_r4c_genesis},
             typestate::{self, StepInput},
@@ -132,7 +133,7 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
     let startup = match r4a.advance(r4a_to_r4b_or_r4c) {
         Ok(startup) => startup,
         Err(error) => {
-            blockers.push(format!("r4a_to_r4b_or_r4c blocked: {error}"));
+            blockers.push(format_r4a_blocker(repo_root, &error));
             return Ok(EarlySnapshot {
                 state: Some(reconstruct_r4a(repo_root, &campaign_id).map(EarlyState::R4a)?),
                 campaign_id: Some(campaign_id),
@@ -250,10 +251,49 @@ fn reconstruct_r4b(
     }
 }
 
+/// Render a checkout/startup guard failure as an operator-facing typed blocker.
+pub(crate) fn format_r4a_blocker(repo_root: &Path, error: &PrepareError) -> String {
+    let identity = load_parent_identity_optional(repo_root).ok().flatten();
+    let expected = identity
+        .as_ref()
+        .and_then(|identity| identity.artifact_branch())
+        .unwrap_or("-");
+    let backend = GitWorktreeBackend;
+    let active = backend
+        .active_branch(repo_root)
+        .unwrap_or_else(|error| format!("<unavailable: {error}>"));
+    let dirty = backend.dirty_paths(repo_root).unwrap_or_default();
+
+    let mut lines = vec![
+        "blocked edge: r4a_to_r4b_or_r4c".to_string(),
+        format!("reason: {error}"),
+        format!("repo_root: {}", repo_root.display()),
+        format!("active_branch: {active}"),
+        format!("expected_artifact_branch: {expected}"),
+    ];
+    if !dirty.is_empty() {
+        lines.push("dirty_paths:".to_string());
+        for path in dirty.iter().take(12) {
+            lines.push(format!("  - {}", path.display()));
+        }
+        if dirty.len() > 12 {
+            lines.push(format!("  - ... {} more", dirty.len() - 12));
+        }
+    }
+    lines.push("recovery:".to_string());
+    lines.push("  ploke-eval loop walk use /path/to/actual/parent-worktree".to_string());
+    lines.push("  ploke-eval loop walk reset".to_string());
+    lines.push("  ploke-eval loop walk start".to_string());
+    if expected != "-" {
+        lines.push(format!("  git worktree list | rg {expected}"));
+    }
+    lines.join("\n")
+}
+
 fn parent_start_recorded(
     repo_root: &Path,
     campaign_id: &CampaignId,
-    identity: &crate::cli::prototype1_state::identity::ParentIdentity,
+    identity: &ParentIdentity,
 ) -> Result<bool, PrepareError> {
     let manifest_path = campaign_manifest_path_for_id(campaign_id)?;
     let journal = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path));

@@ -407,6 +407,14 @@ impl WalkController {
                 })
             }
             Err(error) => {
+                let error = if previous == WalkPhase::R4a {
+                    PrepareError::DatabaseSetup {
+                        phase: "prototype1_parent_checkout",
+                        detail: reconstruct::format_r4a_blocker(&self.repo_root, &error),
+                    }
+                } else {
+                    error
+                };
                 let detail = error.to_string();
                 self.state = WalkState::Failed {
                     phase: previous,
@@ -475,10 +483,20 @@ impl WalkReconstruction {
             return;
         }
         for note in &self.notes {
-            lines.push(format!("  - {note}"));
+            push_wrapped_item(lines, note, "  - ", "    ");
         }
         for blocker in &self.blockers {
-            lines.push(format!("  - blocked: {blocker}"));
+            push_wrapped_item(lines, blocker, "  - blocked: ", "    ");
+        }
+    }
+}
+
+fn push_wrapped_item(lines: &mut Vec<String>, value: &str, first_prefix: &str, rest_prefix: &str) {
+    let mut item = value.lines();
+    if let Some(first) = item.next() {
+        lines.push(format!("{first_prefix}{first}"));
+        for line in item {
+            lines.push(format!("{rest_prefix}{line}"));
         }
     }
 }

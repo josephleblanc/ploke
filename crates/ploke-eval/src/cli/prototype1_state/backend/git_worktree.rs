@@ -124,6 +124,16 @@ impl GitWorktreeBackend {
         GitBranchRef(format!("refs/heads/{}", branch.0))
     }
 
+    /// Read the active branch for operator diagnostics without changing checkout state.
+    pub(crate) fn active_branch(&self, repo_root: &Path) -> Result<String, BackendError> {
+        self.current_branch(repo_root)
+    }
+
+    /// Read dirty paths for operator diagnostics without changing checkout state.
+    pub(crate) fn dirty_paths(&self, repo_root: &Path) -> Result<Vec<PathBuf>, BackendError> {
+        dirty_paths(repo_root)
+    }
+
     /// Find the git-managed worktree entry, if any, for one expected child
     /// workspace root.
     pub(crate) fn find_worktree(
