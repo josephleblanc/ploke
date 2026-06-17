@@ -301,8 +301,10 @@ impl WalkController {
         if until != WalkPhase::R0 && !init_parent_identity && reconstruct_matches_request {
             self.refresh_from_disk()?;
             let reconstructed = self.phase();
-            if reconstructed != WalkPhase::Empty && phase_rank(reconstructed) <= phase_rank(until) {
-                self.advance_until(until, false).await?;
+            if reconstructed != WalkPhase::Empty {
+                if phase_rank(reconstructed) < phase_rank(until) {
+                    self.advance_until(until, false).await?;
+                }
                 return Ok(self.phase());
             }
             self.state = WalkState::Empty;
@@ -580,6 +582,8 @@ impl WalkState {
             EarlyState::R7(r7) => WalkState::R7(r7),
             EarlyState::R10(r10) => WalkState::R10(r10),
             EarlyState::R12(r12) => WalkState::R12(r12),
+            EarlyState::R13a(r13a) => WalkState::R13a(r13a),
+            EarlyState::R14a(r14a) => WalkState::R14a(r14a),
         }
     }
 }
@@ -596,6 +600,8 @@ fn phase_for_early(state: &EarlyState) -> WalkPhase {
         EarlyState::R7(_) => WalkPhase::R7,
         EarlyState::R10(_) => WalkPhase::R10,
         EarlyState::R12(_) => WalkPhase::R12,
+        EarlyState::R13a(_) => WalkPhase::R13a,
+        EarlyState::R14a(_) => WalkPhase::R14a,
     }
 }
 

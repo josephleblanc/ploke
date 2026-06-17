@@ -757,3 +757,54 @@ Incident/recovery note:
 - An initial smoke used `walk start --until r12` before the start-command guard was fixed; that path replayed live setup edges and appended two duplicate parent-start/resource journal entries to the historical campaign. Those two accidental tail entries were identified by timestamp/PID and removed immediately, restoring the journal line count from 41 to 39 before the read-only smokes above.
 
 GitNexus impact checks before edits were LOW for `reconstruct_early`, the disambiguated `WalkState`, `stored_child_outcome`, `ParentSelection`, and `WalkController.start` (exact indexed UID `Function:crates/ploke-eval/src/cli/prototype1_state/walk/controller.rs:WalkController.start#2`).
+
+### Slice 15 — reconstruct stopped/no-selection R13a/R14a
+
+Implemented read-only durable reconstruction for the safe stopped branch after R12:
+
+- `reconstruct_after_r12(...)` now consumes reconstructed R12 facts and advances only when there is no selected-successor evidence;
+- selected-successor R12 still returns R12 with the existing explicit R13b handoff blocker;
+- no-selection R12 reconstructs R13a by appending the same `;selection=none` report fact used by the canonical edge and by carrying parent identity in runtime facts;
+- R14a reconstructs only when a matching parent-complete `JournalEntry::Resource` sample exists for the parent identity and checkout target directory;
+- R14a reconstruction builds the typed final stopped state directly and does not call `r13_to_r14`, so it does not print a report, append another parent-complete sample, or record successor completion;
+- `walk start --until ...` now returns a later reconstructed durable phase instead of falling back to live R0 replay when reconstruction is already past the requested target.
+
+Deliberate limitations:
+
+- selected-successor/stopped decisions and handoff-capable R13b remain blocked;
+- parent-complete resource samples are transition evidence, not sealed History finality;
+- final report reconstruction does not yet preserve a stored `Prototype1StateReport` payload because the current live edge prints it instead of writing a report artifact.
+
+Validation:
+
+```text
+cargo fmt --all
+cargo check -p ploke-eval --all-targets
+cargo build -p ploke-eval
+```
+
+Smokes with isolated `0700` socket dirs:
+
+```text
+ROOT=/home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249
+./target/debug/ploke-eval loop walk start --repo-root "$ROOT" --socket "$sock" --until r14a --format json
+./target/debug/ploke-eval loop walk show --repo-root "$ROOT" --socket "$sock" --format json
+```
+
+Result: reconstructed directly to `r14a - final stopped report emitted`, with notes through `reconstructed R14a stopped final report from parent-complete resource evidence`; transition journal line count stayed unchanged at 15.
+
+```text
+./target/debug/ploke-eval loop walk start --repo-root "$ROOT" --socket "$sock" --until r12 --format json
+```
+
+Result: returned the later reconstructed `r14a` instead of replaying live setup; transition journal line count stayed unchanged at 15.
+
+Selected-successor guard regression smoke:
+
+```text
+ROOT=/home/brasides/.ploke-eval/worktrees/p1-gemini35-flash-direct-2g1x3-20260525-073410
+./target/debug/ploke-eval loop walk start --repo-root "$ROOT" --socket "$sock" --until r12 --format json
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock" --until r13a --format json
+```
+
+Result: reconstructed selected-successor campaign to `r12`, then failed with `walk reached R12 with selected-successor evidence; R13b handoff is not admitted by this debug server slice`; transition journal line count stayed unchanged at 39.

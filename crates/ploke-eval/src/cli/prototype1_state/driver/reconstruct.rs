@@ -24,7 +24,7 @@ use crate::{
                 validate_existing_child_plan_for_id,
             },
             identity::{ParentIdentity, load_parent_identity_optional, parent_identity_path},
-            journal::{JournalEntry, PrototypeJournal, prototype1_transition_journal_path},
+            journal::{self, JournalEntry, PrototypeJournal, prototype1_transition_journal_path},
             live_edges::{
                 r1_to_r2a_or_r3, r3_to_r4a, r4a_to_r4b_or_r4c, r4b_to_r4c_genesis, r8_to_r9,
                 r9_to_r10, r11_to_r12,
@@ -47,6 +47,8 @@ pub(crate) enum EarlyState {
     R7(typestate::R7<Prototype1StateRunShape, ResolvedCampaignConfig>),
     R10(typestate::R10<Prototype1StateRunShape, ResolvedCampaignConfig>),
     R12(typestate::R12<Prototype1StateRunShape, ResolvedCampaignConfig>),
+    R13a(typestate::R13aStopped<Prototype1StateRunShape, ResolvedCampaignConfig>),
+    R14a(typestate::R14aFinalStopped<Prototype1StateRunShape, ResolvedCampaignConfig>),
 }
 
 /// Result of an early durable reconstruction attempt.
@@ -346,7 +348,7 @@ fn reconstruct_after_r8(
         notes.push("reconstructed R11a from rejected surface-attempt payloads".into());
         let r12 = r11_to_r12(typestate::R10FanoutBranch::RejectedOnly(r11a))?;
         notes.push("reconstructed R12 report facts from rejected-only evidence".into());
-        return Ok(EarlyState::R12(r12));
+        return reconstruct_after_r12(r12, notes, blockers);
     }
 
     let child_outcomes = match reconstruct_child_outcomes_from_store(
@@ -398,7 +400,57 @@ fn reconstruct_after_r8(
     ));
     let r12 = r11_to_r12(typestate::R10FanoutBranch::FanoutComplete(r11))?;
     notes.push("reconstructed R12 report facts from child outcomes".into());
-    Ok(EarlyState::R12(r12))
+    reconstruct_after_r12(r12, notes, blockers)
+}
+
+fn reconstruct_after_r12(
+    r12: typestate::R12<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    notes: &mut Vec<String>,
+    blockers: &mut Vec<String>,
+) -> Result<EarlyState, PrepareError> {
+    let typestate::SelectableParts { collected, parent } = r12.into_parts();
+    let mut parts = collected.into_parts();
+    if parts.facts.selection.is_some() {
+        blockers.push(
+            "blocked edge r12 -> r13a: selected-successor evidence present; R13b handoff is not admitted by this debug server slice"
+                .into(),
+        );
+        return Ok(EarlyState::R12(typestate::R12::from_collected_parent(
+            parts.into_collected(),
+            parent,
+        )));
+    }
+
+    if parts.run_shape.stop_after == Prototype1StateStopAfter::Complete {
+        parts
+            .facts
+            .report
+            .as_mut()
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: "R12 no-selection reconstruction missing report facts".to_string(),
+            })?
+            .outcome
+            .push_str(";selection=none");
+    }
+    let complete_recorded =
+        parent_complete_recorded(&parts.repo_root, &parts.campaign_id, parent.identity())?;
+    parts.facts.parent_identity = Some(parent.identity().clone());
+    let r13a = typestate::R13aStopped::from_collected_parent(parts.into_collected(), parent);
+    notes.push(
+        "reconstructed R13a no-selection stopped continuation from absent successor selection"
+            .into(),
+    );
+    if !complete_recorded {
+        return Ok(EarlyState::R13a(r13a));
+    }
+
+    let typestate::SelectableParts { collected, parent } = r13a.into_parts();
+    notes.push(
+        "reconstructed R14a stopped final report from parent-complete resource evidence".into(),
+    );
+    Ok(EarlyState::R14a(
+        typestate::R14aFinalStopped::from_collected_parent(collected, parent),
+    ))
 }
 
 fn reconstruct_r1(
@@ -500,6 +552,30 @@ pub(crate) fn format_r4a_blocker(repo_root: &Path, error: &PrepareError) -> Stri
         lines.push(format!("  git worktree list | rg {expected}"));
     }
     lines.join("\n")
+}
+
+fn parent_complete_recorded(
+    repo_root: &Path,
+    campaign_id: &CampaignId,
+    identity: &ParentIdentity,
+) -> Result<bool, PrepareError> {
+    let manifest_path = campaign_manifest_path_for_id(campaign_id)?;
+    let journal = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path));
+    let entries = journal.load_entries().map_err(|error| {
+        prototype1_state_transition_error("prototype1_reconstruct_journal", error.to_string())
+    })?;
+    let target_dir = repo_root.join("target");
+    Ok(entries.into_iter().any(|entry| match entry {
+        JournalEntry::Resource(sample) => {
+            sample.campaign_id == *campaign_id
+                && sample.parent_id == identity.parent_id()
+                && sample.node_id == identity.node_id()
+                && sample.generation == identity.generation()
+                && sample.phase == journal::resource::Phase::ParentComplete
+                && same_existing_path(&sample.path, &target_dir)
+        }
+        _ => false,
+    }))
 }
 
 fn parent_start_recorded(
