@@ -40,7 +40,7 @@ pub(crate) async fn send<T: Serialize>(
     if body.len() > MAX_FRAME_BYTES {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
-                "prototype1-state-walk IPC frame too large: {} bytes > {}",
+                "walk IPC frame too large: {} bytes > {}",
                 body.len(),
                 MAX_FRAME_BYTES
             ),
@@ -66,9 +66,7 @@ pub(crate) async fn recv<T: DeserializeOwned>(stream: &mut UnixStream) -> Result
     let len = u32::from_le_bytes(len_bytes) as usize;
     if len > MAX_FRAME_BYTES {
         return Err(PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "prototype1-state-walk IPC frame too large: {len} bytes > {MAX_FRAME_BYTES}"
-            ),
+            detail: format!("walk IPC frame too large: {len} bytes > {MAX_FRAME_BYTES}"),
         });
     }
     let mut body = vec![0_u8; len];

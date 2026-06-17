@@ -183,7 +183,7 @@ that boundary by making PlanReview and the Cozo mirror non-authoritative until
 their facts are admitted or referenced by existing History entries.
 
 The walkthrough worktree at
-`/home/brasides/code/ploke-prototype1-state-walkthrough` documents the live
+`/home/brasides/code/ploke-walkthrough` documents the live
 parent turn, config planes, broad-harness request path, turn-live replay, and
 model/API boundaries. This ADR follows its distinction between setup/admission
 and runtime parent turns, and it keeps model/provider provenance explicit:

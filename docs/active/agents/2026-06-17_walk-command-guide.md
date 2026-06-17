@@ -1,16 +1,16 @@
 # 2026-06-17 Prototype 1 Walk Command Guide
 
-Short description: quick operator guide for trying the debug-only `prototype1-state-walk` server, reviewing behavior, and collecting feedback on the command surface.
+Short description: quick operator guide for trying the debug-only `walk` server, reviewing behavior, and collecting feedback on the command surface.
 
 Related planning/code:
 
 - `crates/ploke-eval/src/cli/prototype1_state/walk/`
 - `crates/ploke-eval/src/cli/prototype1_state/live_edges.rs`
-- [`2026-06-16_prototype1-state-walk-server.md`](2026-06-16_prototype1-state-walk-server.md)
+- [`2026-06-16_walk-server.md`](2026-06-16_walk-server.md)
 
 ## What this is
 
-`prototype1-state-walk` starts a local debug server that holds one in-memory Prototype 1 typestate value and lets you advance it with short CLI commands.
+`walk` starts a local debug server that holds one in-memory Prototype 1 typestate value and lets you advance it with short CLI commands.
 
 It is **not** production loop authority. It calls the same live transition functions as `ploke-eval loop prototype1-state`, so later phases can perform real side effects. Today the admitted path is:
 
@@ -28,7 +28,7 @@ R0 -> R1 -> R3 -> R4a -> R4b -> R4c -> R5
 - Always stop the server when done:
 
 ```text
-ploke-eval loop prototype1-state-walk stop
+ploke-eval loop walk stop
 ```
 
 ## Common flags
@@ -54,7 +54,7 @@ sock="$sockdir/walk.sock"
 Checks whether a server is listening. It does not start one.
 
 ```text
-ploke-eval loop prototype1-state-walk status --socket "$sock" --format json
+ploke-eval loop walk status --socket "$sock" --format json
 ```
 
 Use this before and after experiments to make sure you do not leave background servers running.
@@ -64,7 +64,7 @@ Use this before and after experiments to make sure you do not leave background s
 Starts the server if needed, creates a fresh in-memory walk, and stops at the requested phase. Default is `R0`.
 
 ```text
-ploke-eval loop prototype1-state-walk start \
+ploke-eval loop walk start \
   --repo-root "$ROOT" \
   --socket "$sock" \
   --until r0 \
@@ -74,7 +74,7 @@ ploke-eval loop prototype1-state-walk start \
 You can jump through admitted setup phases:
 
 ```text
-ploke-eval loop prototype1-state-walk start --repo-root "$ROOT" --socket "$sock" --until r4c
+ploke-eval loop walk start --repo-root "$ROOT" --socket "$sock" --until r4c
 ```
 
 ### `step`
@@ -82,13 +82,13 @@ ploke-eval loop prototype1-state-walk start --repo-root "$ROOT" --socket "$sock"
 Advances one typestate edge from the current in-memory state.
 
 ```text
-ploke-eval loop prototype1-state-walk step --repo-root "$ROOT" --socket "$sock" --format json
+ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock" --format json
 ```
 
 Or advance repeatedly until a target phase:
 
 ```text
-ploke-eval loop prototype1-state-walk step --repo-root "$ROOT" --socket "$sock" --until r5
+ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock" --until r5
 ```
 
 ### `show`
@@ -96,7 +96,7 @@ ploke-eval loop prototype1-state-walk step --repo-root "$ROOT" --socket "$sock" 
 Shows the current phase, server pid, tracked paths, and server-local step history.
 
 ```text
-ploke-eval loop prototype1-state-walk show --repo-root "$ROOT" --socket "$sock"
+ploke-eval loop walk show --repo-root "$ROOT" --socket "$sock"
 ```
 
 This is the main command for reviewing what happened earlier in the server session.
@@ -106,7 +106,7 @@ This is the main command for reviewing what happened earlier in the server sessi
 Prints previews of known output files for the current walk.
 
 ```text
-ploke-eval loop prototype1-state-walk files --repo-root "$ROOT" --socket "$sock"
+ploke-eval loop walk files --repo-root "$ROOT" --socket "$sock"
 ```
 
 Once `R1` has resolved the campaign, this includes:
@@ -121,7 +121,7 @@ Once `R1` has resolved the campaign, this includes:
 Clears the in-memory walk without stopping the server. The server-local history records that reset happened.
 
 ```text
-ploke-eval loop prototype1-state-walk reset --repo-root "$ROOT" --socket "$sock"
+ploke-eval loop walk reset --repo-root "$ROOT" --socket "$sock"
 ```
 
 Use this when you want to try another start without spawning another server process.
@@ -131,7 +131,7 @@ Use this when you want to try another start without spawning another server proc
 Stops the server and removes its socket.
 
 ```text
-ploke-eval loop prototype1-state-walk stop --repo-root "$ROOT" --socket "$sock" --format json
+ploke-eval loop walk stop --repo-root "$ROOT" --socket "$sock" --format json
 ```
 
 ### `serve`
@@ -139,7 +139,7 @@ ploke-eval loop prototype1-state-walk stop --repo-root "$ROOT" --socket "$sock" 
 Runs server mode directly. Normally you do not need this; `start` auto-spawns the same binary in `serve` mode when no healthy server exists.
 
 ```text
-ploke-eval loop prototype1-state-walk serve --repo-root "$ROOT" --socket "$sock"
+ploke-eval loop walk serve --repo-root "$ROOT" --socket "$sock"
 ```
 
 ## Recommended review session
@@ -151,24 +151,24 @@ ROOT=/path/to/clean/prototype1-parent-worktree
 sockdir=$(mktemp -d /tmp/ploke-walk.XXXXXX)
 sock="$sockdir/walk.sock"
 
-ploke-eval loop prototype1-state-walk status --repo-root "$ROOT" --socket "$sock" --format json
-ploke-eval loop prototype1-state-walk start  --repo-root "$ROOT" --socket "$sock" --until r0 --format json
+ploke-eval loop walk status --repo-root "$ROOT" --socket "$sock" --format json
+ploke-eval loop walk start  --repo-root "$ROOT" --socket "$sock" --until r0 --format json
 
-ploke-eval loop prototype1-state-walk step   --repo-root "$ROOT" --socket "$sock" --format json
-ploke-eval loop prototype1-state-walk status --repo-root "$ROOT" --socket "$sock" --format json
-ploke-eval loop prototype1-state-walk step   --repo-root "$ROOT" --socket "$sock" --format json
-ploke-eval loop prototype1-state-walk status --repo-root "$ROOT" --socket "$sock" --format json
-ploke-eval loop prototype1-state-walk step   --repo-root "$ROOT" --socket "$sock" --format json
-ploke-eval loop prototype1-state-walk step   --repo-root "$ROOT" --socket "$sock" --format json
-ploke-eval loop prototype1-state-walk step   --repo-root "$ROOT" --socket "$sock" --format json
-ploke-eval loop prototype1-state-walk step   --repo-root "$ROOT" --socket "$sock" --format json
+ploke-eval loop walk step   --repo-root "$ROOT" --socket "$sock" --format json
+ploke-eval loop walk status --repo-root "$ROOT" --socket "$sock" --format json
+ploke-eval loop walk step   --repo-root "$ROOT" --socket "$sock" --format json
+ploke-eval loop walk status --repo-root "$ROOT" --socket "$sock" --format json
+ploke-eval loop walk step   --repo-root "$ROOT" --socket "$sock" --format json
+ploke-eval loop walk step   --repo-root "$ROOT" --socket "$sock" --format json
+ploke-eval loop walk step   --repo-root "$ROOT" --socket "$sock" --format json
+ploke-eval loop walk step   --repo-root "$ROOT" --socket "$sock" --format json
 
-ploke-eval loop prototype1-state-walk show   --repo-root "$ROOT" --socket "$sock"
-ploke-eval loop prototype1-state-walk files  --repo-root "$ROOT" --socket "$sock"
-ploke-eval loop prototype1-state-walk reset  --repo-root "$ROOT" --socket "$sock"
-ploke-eval loop prototype1-state-walk show   --repo-root "$ROOT" --socket "$sock"
-ploke-eval loop prototype1-state-walk stop   --repo-root "$ROOT" --socket "$sock" --format json
-ploke-eval loop prototype1-state-walk status --repo-root "$ROOT" --socket "$sock" --format json
+ploke-eval loop walk show   --repo-root "$ROOT" --socket "$sock"
+ploke-eval loop walk files  --repo-root "$ROOT" --socket "$sock"
+ploke-eval loop walk reset  --repo-root "$ROOT" --socket "$sock"
+ploke-eval loop walk show   --repo-root "$ROOT" --socket "$sock"
+ploke-eval loop walk stop   --repo-root "$ROOT" --socket "$sock" --format json
+ploke-eval loop walk status --repo-root "$ROOT" --socket "$sock" --format json
 
 rm -rf "$sockdir"
 ```

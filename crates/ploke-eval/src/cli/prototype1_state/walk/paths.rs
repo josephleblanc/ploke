@@ -84,14 +84,12 @@ fn socket_dir() -> PathBuf {
         return PathBuf::from(path);
     }
     if let Ok(path) = env::var("XDG_RUNTIME_DIR") {
-        return PathBuf::from(path)
-            .join("ploke-eval")
-            .join("prototype1-state-walk");
+        return PathBuf::from(path).join("ploke-eval").join("walk");
     }
     let user = env::var("USER").unwrap_or_else(|_| "unknown".to_string());
     env::temp_dir()
         .join(format!("ploke-eval-{user}"))
-        .join("prototype1-state-walk")
+        .join("walk")
 }
 
 fn repo_hash(repo_root: &Path) -> String {
@@ -121,7 +119,7 @@ fn check_socket_path(path: &Path) -> Result<(), PrepareError> {
     if len >= UNIX_SOCKET_PATH_MAX {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
-                "prototype1-state-walk socket path is too long ({} bytes, max {}): '{}'; set PLOKE_EVAL_WALK_SOCKET_DIR to a shorter private directory or pass --socket",
+                "walk socket path is too long ({} bytes, max {}): '{}'; set PLOKE_EVAL_WALK_SOCKET_DIR to a shorter private directory or pass --socket",
                 len,
                 UNIX_SOCKET_PATH_MAX - 1,
                 path.display()

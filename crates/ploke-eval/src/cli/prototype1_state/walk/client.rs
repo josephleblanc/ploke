@@ -181,7 +181,7 @@ async fn ensure_server(repo_root: &Path, socket: &Path) -> Result<(), PrepareErr
     })
 }
 
-/// Spawn the same binary in `prototype1-state-walk serve` mode.
+/// Spawn the same binary in `walk serve` mode.
 ///
 /// This is intentionally lighter than full daemonization in the first server
 /// slice: stdio is detached, the child gets its own process group on Unix, and
@@ -194,7 +194,7 @@ fn spawn_server(repo_root: &Path, socket: &Path) -> Result<(), PrepareError> {
     let mut command = Command::new(exe);
     command
         .arg("loop")
-        .arg("prototype1-state-walk")
+        .arg("walk")
         .arg("serve")
         .arg("--repo-root")
         .arg(repo_root)

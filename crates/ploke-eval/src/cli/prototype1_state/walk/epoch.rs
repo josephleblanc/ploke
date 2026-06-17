@@ -20,7 +20,7 @@ use crate::spec::PrepareError;
 pub(crate) const WALK_PROTOCOL_VERSION: u32 = 1;
 
 /// Semantic version for the currently admitted transition graph slice.
-pub(crate) const TRANSITION_GRAPH_VERSION: &str = "prototype1-state-walk-r0-r5-v1";
+pub(crate) const TRANSITION_GRAPH_VERSION: &str = "walk-r0-r5-v1";
 
 /// Repo paths whose dirty/clean status participates in the server epoch.
 ///
@@ -165,6 +165,6 @@ fn git_output(repo_root: &Path, args: &[&str]) -> Option<String> {
 
 fn stale_error(detail: impl Into<String>) -> PrepareError {
     PrepareError::InvalidBatchSelection {
-        detail: format!("stale prototype1-state-walk server: {}", detail.into()),
+        detail: format!("stale walk server: {}", detail.into()),
     }
 }

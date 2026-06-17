@@ -38,7 +38,7 @@ ploke-eval loop prototype1-state ...
 The new debug command is:
 
 ```text
-ploke-eval loop prototype1-state-walk ...
+ploke-eval loop walk ...
 ```
 
 ## Operator commands
@@ -46,49 +46,49 @@ ploke-eval loop prototype1-state-walk ...
 Check server status without starting it:
 
 ```text
-ploke-eval loop prototype1-state-walk status --format json
+ploke-eval loop walk status --format json
 ```
 
 Start a server if needed, create a new in-memory walk, and stop at R0:
 
 ```text
-ploke-eval loop prototype1-state-walk start --until r0 --format json
+ploke-eval loop walk start --until r0 --format json
 ```
 
 Advance one step from the current in-memory state:
 
 ```text
-ploke-eval loop prototype1-state-walk step --format json
+ploke-eval loop walk step --format json
 ```
 
 Advance until a supported phase:
 
 ```text
-ploke-eval loop prototype1-state-walk step --until r5 --format json
+ploke-eval loop walk step --until r5 --format json
 ```
 
 Show current state and in-memory history:
 
 ```text
-ploke-eval loop prototype1-state-walk show --format json
+ploke-eval loop walk show --format json
 ```
 
 Print tracked output files for the current walk:
 
 ```text
-ploke-eval loop prototype1-state-walk files --format table
+ploke-eval loop walk files --format table
 ```
 
 Reset the in-memory walk without stopping the server:
 
 ```text
-ploke-eval loop prototype1-state-walk reset --format json
+ploke-eval loop walk reset --format json
 ```
 
 Stop the server:
 
 ```text
-ploke-eval loop prototype1-state-walk stop --format json
+ploke-eval loop walk stop --format json
 ```
 
 For isolated smoke tests, pass an explicit short socket path:
@@ -97,10 +97,10 @@ For isolated smoke tests, pass an explicit short socket path:
 sockdir=$(mktemp -d /tmp/ploke-walk.XXXXXX)
 sock="$sockdir/walk.sock"
 
-cargo run -q -p ploke-eval -- loop prototype1-state-walk start --socket "$sock" --until r0 --format json
-cargo run -q -p ploke-eval -- loop prototype1-state-walk step  --socket "$sock" --format json
-cargo run -q -p ploke-eval -- loop prototype1-state-walk show  --socket "$sock" --format json
-cargo run -q -p ploke-eval -- loop prototype1-state-walk stop  --socket "$sock" --format json
+cargo run -q -p ploke-eval -- loop walk start --socket "$sock" --until r0 --format json
+cargo run -q -p ploke-eval -- loop walk step  --socket "$sock" --format json
+cargo run -q -p ploke-eval -- loop walk show  --socket "$sock" --format json
+cargo run -q -p ploke-eval -- loop walk stop  --socket "$sock" --format json
 
 rm -rf "$sockdir"
 ```
@@ -144,10 +144,10 @@ N bytes serde_json payload
 - Default location:
 
 ```text
-$XDG_RUNTIME_DIR/ploke-eval/prototype1-state-walk/p1walk-<repo-hash>.sock
+$XDG_RUNTIME_DIR/ploke-eval/walk/p1walk-<repo-hash>.sock
 ```
 
-- If `XDG_RUNTIME_DIR` is unavailable, falls back under `/tmp/ploke-eval-$USER/prototype1-state-walk/`.
+- If `XDG_RUNTIME_DIR` is unavailable, falls back under `/tmp/ploke-eval-$USER/walk/`.
 - Supports `PLOKE_EVAL_WALK_SOCKET_DIR` and explicit `--socket`.
 - Creates parent directory with `0700` permissions on Unix.
 - Checks Unix socket path length against platform limits.
@@ -301,18 +301,18 @@ cargo check -p ploke-eval --all-targets
 Smoke commands run with a temp socket:
 
 ```text
-cargo run -q -p ploke-eval -- loop prototype1-state-walk start --socket "$sock" --until r0 --format json
-cargo run -q -p ploke-eval -- loop prototype1-state-walk step  --socket "$sock" --format json
-cargo run -q -p ploke-eval -- loop prototype1-state-walk show  --socket "$sock" --format json
-cargo run -q -p ploke-eval -- loop prototype1-state-walk stop  --socket "$sock" --format json
+cargo run -q -p ploke-eval -- loop walk start --socket "$sock" --until r0 --format json
+cargo run -q -p ploke-eval -- loop walk step  --socket "$sock" --format json
+cargo run -q -p ploke-eval -- loop walk show  --socket "$sock" --format json
+cargo run -q -p ploke-eval -- loop walk stop  --socket "$sock" --format json
 ```
 
 Additional R5 smoke run after `5c121e73` used a clean existing parent worktree and an explicit socket:
 
 ```text
-ploke-eval loop prototype1-state-walk start --repo-root "$ROOT" --socket "$SOCK" --until r0 --format json
-ploke-eval loop prototype1-state-walk step --repo-root "$ROOT" --socket "$SOCK" --format json # repeated through r5
-ploke-eval loop prototype1-state-walk files --repo-root "$ROOT" --socket "$SOCK" --format table
-ploke-eval loop prototype1-state-walk reset --repo-root "$ROOT" --socket "$SOCK" --format table
-ploke-eval loop prototype1-state-walk stop --repo-root "$ROOT" --socket "$SOCK" --format json
+ploke-eval loop walk start --repo-root "$ROOT" --socket "$SOCK" --until r0 --format json
+ploke-eval loop walk step --repo-root "$ROOT" --socket "$SOCK" --format json # repeated through r5
+ploke-eval loop walk files --repo-root "$ROOT" --socket "$SOCK" --format table
+ploke-eval loop walk reset --repo-root "$ROOT" --socket "$SOCK" --format table
+ploke-eval loop walk stop --repo-root "$ROOT" --socket "$SOCK" --format json
 ```
