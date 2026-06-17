@@ -247,7 +247,11 @@ const R0_TYPE: &str = r#"Runtime<
     Context<context::Command<Prototype1StateCommand>>,
     Plan<plan::authority::None, plan::schedule::None>,
     Children<children::set::None, children::attempt::None>,
-    History<history_axis::startup::None, history_axis::head::Unobserved, history_axis::epoch::None>,
+    History<
+        history_axis::startup::None,
+        history_axis::head::Unobserved,
+        history_axis::epoch::None,
+    >,
     Evidence<
         evidence::parent_start::None,
         evidence::baseline::None,
@@ -269,7 +273,11 @@ const R1_TYPE: &str = r#"Runtime<
     Context<context::Collected<RunShape, CampaignConfig>>,
     Plan<plan::authority::None, plan::schedule::None>,
     Children<children::set::None, children::attempt::None>,
-    History<history_axis::startup::None, history_axis::head::Unobserved, history_axis::epoch::None>,
+    History<
+        history_axis::startup::None,
+        history_axis::head::Unobserved,
+        history_axis::epoch::None,
+    >,
     Evidence<
         evidence::parent_start::None,
         evidence::baseline::None,
