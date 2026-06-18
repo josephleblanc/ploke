@@ -13,6 +13,7 @@ use crate::{
     cli::{
         InspectOutputFormat, Prototype1CandidateGenerator, Prototype1StateCommand,
         Prototype1StateStopAfter, Prototype1SuccessorSelection, Prototype1TraversalMetrics,
+        prototype1_process::validate_prototype1_successor_continuation,
         prototype1_state::{
             backend::GitWorktreeBackend,
             cli_facing::{
@@ -24,11 +25,13 @@ use crate::{
                 validate_existing_child_plan_for_id,
             },
             identity::{ParentIdentity, load_parent_identity_optional, parent_identity_path},
+            invocation::{self, InvocationAuthority},
             journal::{self, JournalEntry, PrototypeJournal, prototype1_transition_journal_path},
             live_edges::{
                 r1_to_r2a_or_r3, r3_to_r4a, r4a_to_r4b_or_r4c, r4b_to_r4c_genesis, r8_to_r9,
                 r9_to_r10, r11_to_r12,
             },
+            parent::{Predecessor, Startup},
             typestate::{self, StepInput},
         },
     },
@@ -85,8 +88,20 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
         identity.generation(),
         identity.branch_id()
     ));
+    let handoff_invocation =
+        infer_successor_handoff_invocation(repo_root, &campaign_id, &identity)?;
+    if let Some(path) = handoff_invocation.as_ref() {
+        notes.push(format!(
+            "inferred successor handoff invocation from durable journal: {}",
+            path.display()
+        ));
+    }
 
-    let r1 = match reconstruct_r1(repo_root.to_path_buf(), &campaign_id) {
+    let r1 = match reconstruct_r1(
+        repo_root.to_path_buf(),
+        &campaign_id,
+        handoff_invocation.clone(),
+    ) {
         Ok(r1) => r1,
         Err(error) => {
             blockers.push(format!("r1 reconstruction blocked: {error}"));
@@ -106,7 +121,12 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
             blockers.push("durable reconstruction unexpectedly entered R2a init branch".into());
             return Ok(EarlySnapshot {
                 state: Some(
-                    reconstruct_r1(repo_root.to_path_buf(), &campaign_id).map(EarlyState::R1)?,
+                    reconstruct_r1(
+                        repo_root.to_path_buf(),
+                        &campaign_id,
+                        handoff_invocation.clone(),
+                    )
+                    .map(EarlyState::R1)?,
                 ),
                 campaign_id: Some(campaign_id),
                 notes,
@@ -118,7 +138,12 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
             blockers.push(format!("r1_to_r2a_or_r3 blocked: {error}"));
             return Ok(EarlySnapshot {
                 state: Some(
-                    reconstruct_r1(repo_root.to_path_buf(), &campaign_id).map(EarlyState::R1)?,
+                    reconstruct_r1(
+                        repo_root.to_path_buf(),
+                        &campaign_id,
+                        handoff_invocation.clone(),
+                    )
+                    .map(EarlyState::R1)?,
                 ),
                 campaign_id: Some(campaign_id),
                 notes,
@@ -133,7 +158,10 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
         Err(error) => {
             blockers.push(format!("r3_to_r4a blocked: {error}"));
             return Ok(EarlySnapshot {
-                state: Some(reconstruct_r3(repo_root, &campaign_id).map(EarlyState::R3)?),
+                state: Some(
+                    reconstruct_r3(repo_root, &campaign_id, handoff_invocation.clone())
+                        .map(EarlyState::R3)?,
+                ),
                 campaign_id: Some(campaign_id),
                 notes,
                 blockers,
@@ -142,12 +170,15 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
     };
     notes.push("reconstructed R4a by loading Parent<Unchecked>".into());
 
-    let startup = match r4a.advance(r4a_to_r4b_or_r4c) {
+    let startup = match reconstruct_startup(r4a, handoff_invocation.as_deref()) {
         Ok(startup) => startup,
         Err(error) => {
             blockers.push(format_r4a_blocker(repo_root, &error));
             return Ok(EarlySnapshot {
-                state: Some(reconstruct_r4a(repo_root, &campaign_id).map(EarlyState::R4a)?),
+                state: Some(
+                    reconstruct_r4a(repo_root, &campaign_id, handoff_invocation.clone())
+                        .map(EarlyState::R4a)?,
+                ),
                 campaign_id: Some(campaign_id),
                 notes,
                 blockers,
@@ -453,11 +484,166 @@ fn reconstruct_after_r12(
     ))
 }
 
+fn infer_successor_handoff_invocation(
+    repo_root: &Path,
+    campaign_id: &CampaignId,
+    identity: &ParentIdentity,
+) -> Result<Option<PathBuf>, PrepareError> {
+    if identity.generation() == 0 {
+        return Ok(None);
+    }
+    let manifest_path = campaign_manifest_path_for_id(campaign_id)?;
+    let journal = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path));
+    let entries = journal.load_entries().map_err(|error| {
+        prototype1_state_transition_error("prototype1_reconstruct_journal", error.to_string())
+    })?;
+    for entry in entries.into_iter().rev() {
+        let JournalEntry::SuccessorHandoff(handoff) = entry else {
+            continue;
+        };
+        if handoff.campaign_id != *campaign_id
+            || handoff.node_id != identity.node_id()
+            || !same_existing_path(&handoff.active_parent_root, repo_root)
+        {
+            continue;
+        }
+        let invocation = match invocation::load_authority(&handoff.invocation_path)? {
+            InvocationAuthority::Successor(invocation) => invocation,
+            InvocationAuthority::Child(_) => {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "successor handoff journal references child invocation '{}', expected successor",
+                        handoff.invocation_path.display()
+                    ),
+                });
+            }
+        };
+        if invocation.campaign_id() != campaign_id
+            || invocation.node_id() != identity.node_id()
+            || invocation.runtime_id() != handoff.runtime_id
+        {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "successor handoff invocation '{}' does not match active parent identity/runtime",
+                    handoff.invocation_path.display()
+                ),
+            });
+        }
+        let active_parent_root =
+            invocation
+                .active_parent_root()
+                .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "successor handoff invocation '{}' is missing active_parent_root",
+                        handoff.invocation_path.display()
+                    ),
+                })?;
+        if !same_existing_path(active_parent_root, repo_root) {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "successor handoff invocation active_parent_root '{}' does not match repo_root '{}'",
+                    active_parent_root.display(),
+                    repo_root.display()
+                ),
+            });
+        }
+        return Ok(Some(handoff.invocation_path));
+    }
+    Ok(None)
+}
+
+fn reconstruct_startup(
+    r4a: typestate::R4a<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    handoff_invocation: Option<&Path>,
+) -> Result<
+    typestate::R4aStartupBranch<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    PrepareError,
+> {
+    let Some(invocation_path) = handoff_invocation else {
+        return r4a.advance(r4a_to_r4b_or_r4c);
+    };
+
+    let typestate::R4aParts { collected, parent } = r4a.into_parts();
+    let parts = collected.into_parts();
+    let invocation = match invocation::load_executable(invocation_path)? {
+        InvocationAuthority::Successor(invocation) => invocation,
+        InvocationAuthority::Child(_) => {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "handoff invocation '{}' is a child invocation, expected successor",
+                    invocation_path.display()
+                ),
+            });
+        }
+    };
+    let identity = parent.identity().clone();
+
+    let invocation_campaign_id = invocation.campaign_id().clone();
+    if invocation_campaign_id != parts.campaign_id {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "handoff invocation campaign '{}' does not match command campaign '{}'",
+                invocation_campaign_id, parts.campaign_id
+            ),
+        });
+    }
+    if invocation.node_id() != identity.node_id() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "handoff invocation node '{}' does not match parent identity node '{}'",
+                invocation.node_id(),
+                identity.node_id()
+            ),
+        });
+    }
+    let active_parent_root = invocation
+        .active_parent_root()
+        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "handoff invocation '{}' is missing active_parent_root",
+                invocation_path.display()
+            ),
+        })?
+        .to_path_buf();
+    if !same_existing_path(&active_parent_root, &parts.repo_root) {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "handoff invocation active_parent_root '{}' does not match command repo_root '{}'",
+                active_parent_root.display(),
+                parts.repo_root.display()
+            ),
+        });
+    }
+
+    let sealed_identity =
+        validate_prototype1_successor_continuation(&invocation, &parts.manifest_path)?;
+    if sealed_identity != identity {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "sealed successor parent identity for node '{}' does not match loaded parent identity",
+                invocation.node_id()
+            ),
+        });
+    }
+    let startup =
+        Startup::<Predecessor>::from_history(&identity, &parts.manifest_path, &parts.repo_root)?;
+    let parent = parent.ready_from_predecessor_startup(startup)?;
+    Ok(typestate::R4aStartupBranch::PredecessorReady(
+        typestate::R4cReady::from_collected_parent(
+            parts
+                .into_collected()
+                .with_handoff_invocation(Some(invocation)),
+            parent,
+        ),
+    ))
+}
+
 fn reconstruct_r1(
     repo_root: PathBuf,
     campaign_id: &CampaignId,
+    handoff_invocation: Option<PathBuf>,
 ) -> Result<typestate::R1<Prototype1StateRunShape, ResolvedCampaignConfig>, PrepareError> {
-    let command = default_command(repo_root.clone(), campaign_id.clone());
+    let command = default_command(repo_root.clone(), campaign_id.clone(), handoff_invocation);
     let manifest_path = campaign_manifest_path_for_id(campaign_id)?;
     let run_shape = Prototype1StateRunShape::resolve(&command, &manifest_path)?;
     let config = resolve_campaign_config_for_id(campaign_id, &CampaignOverrides::default())?;
@@ -481,8 +667,11 @@ fn reconstruct_r1(
 fn reconstruct_r3(
     repo_root: &Path,
     campaign_id: &CampaignId,
+    handoff_invocation: Option<PathBuf>,
 ) -> Result<typestate::R3<Prototype1StateRunShape, ResolvedCampaignConfig>, PrepareError> {
-    match reconstruct_r1(repo_root.to_path_buf(), campaign_id)?.advance(r1_to_r2a_or_r3)? {
+    match reconstruct_r1(repo_root.to_path_buf(), campaign_id, handoff_invocation)?
+        .advance(r1_to_r2a_or_r3)?
+    {
         typestate::R1Branch::R2a(_) => Err(PrepareError::InvalidBatchSelection {
             detail: "durable reconstruction unexpectedly entered R2a init branch".to_string(),
         }),
@@ -493,8 +682,9 @@ fn reconstruct_r3(
 fn reconstruct_r4a(
     repo_root: &Path,
     campaign_id: &CampaignId,
+    handoff_invocation: Option<PathBuf>,
 ) -> Result<typestate::R4a<Prototype1StateRunShape, ResolvedCampaignConfig>, PrepareError> {
-    reconstruct_r3(repo_root, campaign_id)?.advance(r3_to_r4a)
+    reconstruct_r3(repo_root, campaign_id, handoff_invocation)?.advance(r3_to_r4a)
 }
 
 fn reconstruct_r4b(
@@ -504,7 +694,7 @@ fn reconstruct_r4b(
     typestate::R4bGenesisChecked<Prototype1StateRunShape, ResolvedCampaignConfig>,
     PrepareError,
 > {
-    match reconstruct_r4a(repo_root, campaign_id)?.advance(r4a_to_r4b_or_r4c)? {
+    match reconstruct_r4a(repo_root, campaign_id, None)?.advance(r4a_to_r4b_or_r4c)? {
         typestate::R4aStartupBranch::GenesisChecked(r4b) => Ok(r4b),
         typestate::R4aStartupBranch::PredecessorReady(_) => {
             Err(PrepareError::InvalidBatchSelection {
@@ -598,7 +788,11 @@ fn parent_start_recorded(
     }))
 }
 
-fn default_command(repo_root: PathBuf, campaign_id: CampaignId) -> Prototype1StateCommand {
+fn default_command(
+    repo_root: PathBuf,
+    campaign_id: CampaignId,
+    handoff_invocation: Option<PathBuf>,
+) -> Prototype1StateCommand {
     Prototype1StateCommand {
         campaign: Some(campaign_id),
         node_id: None,
@@ -606,7 +800,7 @@ fn default_command(repo_root: PathBuf, campaign_id: CampaignId) -> Prototype1Sta
         init_parent_identity: false,
         identity_branch: None,
         identity_instance: None,
-        handoff_invocation: None,
+        handoff_invocation,
         stop_after: Prototype1StateStopAfter::Complete,
         successor_selection: Prototype1SuccessorSelection::HistoryScoreChildProp,
         successor_selection_seed: 0,
