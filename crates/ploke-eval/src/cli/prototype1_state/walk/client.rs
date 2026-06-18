@@ -25,6 +25,7 @@ use super::{
     epoch::ServerEpoch,
     ipc, paths,
     protocol::{WalkRequest, WalkRequestBody, WalkResponse},
+    summary,
 };
 
 /// Execute a non-`serve` walk subcommand as a one-shot client request.
@@ -123,6 +124,7 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             print_response(&response, format, with_version)?;
             response_result(response)
         }
+        Prototype1StateWalkSubcommand::Summary(command) => summary::run(command),
         Prototype1StateWalkSubcommand::Replay(command) => {
             let format = command.control.format;
             let with_version = command.control.with_version;

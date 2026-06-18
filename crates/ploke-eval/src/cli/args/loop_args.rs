@@ -164,6 +164,8 @@ pub enum Prototype1StateWalkSubcommand {
     Files(Prototype1StateWalkControlCommand),
     /// Show current in-memory walk state or the last step delta.
     Show(Prototype1StateWalkShowCommand),
+    /// Summarize durable campaign progress without contacting the walk server.
+    Summary(Prototype1StateWalkSummaryCommand),
     /// Show or jump within the read-only historical replay cursor.
     Replay(Prototype1StateWalkReplayCommand),
     /// Move the read-only historical replay cursor backward without undoing side effects.
@@ -253,6 +255,16 @@ pub struct Prototype1StateWalkShowDeltaCommand {
     /// Disable ANSI colors in table output.
     #[arg(long)]
     pub no_color: bool,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkSummaryCommand {
+    /// Parent checkout root. Defaults to active walk context, then current directory.
+    #[arg(long, value_name = "PATH")]
+    pub repo_root: Option<PathBuf>,
+
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
 }
 
 #[derive(Debug, Clone, Parser)]

@@ -13,6 +13,7 @@ pub(crate) mod paths;
 pub(crate) mod phase;
 pub(crate) mod protocol;
 pub(crate) mod server;
+pub(crate) mod summary;
 
 use crate::cli::Prototype1StateWalkCommand;
 use crate::spec::PrepareError;
