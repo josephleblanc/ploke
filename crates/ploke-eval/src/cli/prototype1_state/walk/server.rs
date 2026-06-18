@@ -18,6 +18,7 @@ use super::{
     controller::{DeltaRenderStyle, WalkController},
     epoch::ServerEpoch,
     ipc, paths,
+    phase::WalkPhase,
     protocol::{WalkRequest, WalkRequestBody, WalkResponse},
 };
 
@@ -180,6 +181,14 @@ impl WalkServer {
         match result {
             Ok(response) if stop_requested => {
                 debug!(phase = ?response.phase(), stop = true, "handled walk request");
+                (response, true)
+            }
+            Ok(response) if response.is_ok() && response.phase() == Some(WalkPhase::R14b) => {
+                debug!(
+                    phase = ?response.phase(),
+                    stop = true,
+                    "handled walk request; stopping parent walk server after final handoff report"
+                );
                 (response, true)
             }
             Ok(response) => {
