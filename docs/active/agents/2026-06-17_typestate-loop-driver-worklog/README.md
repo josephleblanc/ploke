@@ -808,3 +808,57 @@ ROOT=/home/brasides/.ploke-eval/worktrees/p1-gemini35-flash-direct-2g1x3-2026052
 ```
 
 Result: reconstructed selected-successor campaign to `r12`, then failed with `walk reached R12 with selected-successor evidence; R13b handoff is not admitted by this debug server slice`; transition journal line count stayed unchanged at 39.
+
+## 2026-06-17 — Channel refs sealed into current-generation selection evidence
+
+Goal: move selected successor evidence closer to per-child `Channel` authority before admitting R13b handoff.
+
+Changes:
+
+- added typed `ChildChannelEvidenceRefs` to `PlannedChildOutcome` so child outcomes can carry transport-agnostic citations for:
+  - terminal child-to-parent `ToParent::Result` payloads;
+  - attempt-scoped child runner results named by that terminal channel result;
+  - child invocation/bootstrap authority;
+- durable R11 reconstruction and observe recovery now retain the validated channel refs instead of only retaining the runtime id;
+- live terminal child outcomes now re-read/validate the terminal channel result before exposing selection material;
+- current-generation `SealedRuntimeEvidence` now seals terminal channel citations, attempt-result citations, and invocation citations into `EvaluationPayload` source refs/hashes;
+- `EvaluationPayload::decision_grade_eligibility` now fails closed when the primary runtime has no matching terminal child-channel `Result` citation;
+- current-generation `select_artifact_for_handoff` now rejects selected candidates without a terminal child-channel `Result` citation before any R13b-capable handoff can consume them.
+
+Validation:
+
+```text
+cargo fmt --all
+cargo check -p ploke-eval --all-targets
+cargo test -p ploke-eval current_generation_selector_trace_follows_child_channel_evidence_path --all-targets -- --nocapture
+cargo test -p ploke-eval historical_node_150_channel_treatment_reaches_current_generation_handoff --all-targets -- --nocapture
+cargo test -p ploke-eval evaluation_payload_ --all-targets -- --nocapture
+cargo test -p ploke-eval succeeded_child_without_evaluation_recovers_from_terminal_channel --all-targets -- --nocapture
+cargo test -p ploke-eval loop_walk_ --all-targets
+cargo test -p ploke-eval typestate --all-targets
+cargo test -p ploke-eval shape --all-targets
+cargo test -p ploke-eval current_generation_candidates_without_channel_refs_are_not_decision_grade --all-targets -- --nocapture
+cargo build -p ploke-eval
+```
+
+Smokes with isolated `0700` socket dirs:
+
+```text
+ROOT=/home/brasides/.ploke-eval/worktrees/p1-gemini35-flash-direct-2g1x3-20260525-073410
+./target/debug/ploke-eval loop walk start --repo-root "$ROOT" --socket "$sock" --until r12 --format table
+./target/debug/ploke-eval loop walk step --repo-root "$ROOT" --socket "$sock" --until r13a --format table
+```
+
+Result: reconstructed selected-successor campaign to `r12`, then failed with the expected R13b blocker: `walk reached R12 with selected-successor evidence; R13b handoff is not admitted by this debug server slice`. The historical worktree remained clean.
+
+```text
+ROOT=/home/brasides/.ploke-eval/worktrees/p1-admissionfix-g31pro-p25flash-20260604-191249
+./target/debug/ploke-eval loop walk start --repo-root "$ROOT" --socket "$sock" --until r12 --format table
+```
+
+Result: reconstructed directly to `r14a - final stopped report emitted`. The historical worktree remained clean.
+
+Notes:
+
+- This is still not full R13b handoff admission. It only tightens current-generation selection material so a future handoff has channel-derived refs to validate.
+- Historical History candidates without terminal channel refs become decision-grade ineligible under the new check unless their sealed runtime evidence carries a terminal channel citation or they are otherwise migrated/admitted under a future History authority rule.

@@ -2654,6 +2654,7 @@ fn reconstruct_terminal_outcomes(
                 binary_path: snapshot.node.binary_path.clone(),
                 resolved: snapshot.plan_child.resolved().clone(),
                 child_runtime: snapshot.runtime_id.map(|id| id.to_string()),
+                channel_evidence: None,
                 evaluation_report: snapshot.evaluation_report.clone(),
                 selection_input: snapshot
                     .evaluation_report

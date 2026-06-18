@@ -87,15 +87,17 @@ use crate::{
             },
             event::{ContentHash, RecordedAt, RuntimeId},
             history::{
-                ArtifactSurface, CandidateArtifact, CandidateCoordinate, CandidateLifecycle,
-                CandidateMembershipId, CandidateOccurrenceId, CandidateSetCommitment,
-                EvaluationPayload, Generation, History, HistoryCandidates, HistoryHash,
-                ProcedureRef, Scope, ScopeFor, SealedBranchEvidence, SealedCandidateEvidence,
-                SealedComparedRunEvidence, SealedEvalSetIdentity, SealedEvaluationEvidence,
-                SealedEvaluatorIdentity, SealedEvidenceCitation, SealedRuntimeEvidence,
-                SelectionDecisionEntry, SelectionProjectionFailure, SelectionProjectionFailureKind,
-                SelectionScope, SubjectRef, SurfaceEvidence, TraversalCandidateSource,
-                TraversalEvidence, surface_attempt,
+                ArtifactSurface, CHILD_ATTEMPT_RUNNER_RESULT_RECORD,
+                CHILD_CHANNEL_TERMINAL_RESULT_RECORD, CHILD_INVOCATION_RECORD, CandidateArtifact,
+                CandidateCoordinate, CandidateLifecycle, CandidateMembershipId,
+                CandidateOccurrenceId, CandidateSetCommitment, EvaluationPayload, Generation,
+                History, HistoryCandidates, HistoryHash, ProcedureRef, Scope, ScopeFor,
+                SealedBranchEvidence, SealedCandidateEvidence, SealedComparedRunEvidence,
+                SealedEvalSetIdentity, SealedEvaluationEvidence, SealedEvaluatorIdentity,
+                SealedEvidenceCitation, SealedRuntimeEvidence, SelectionDecisionEntry,
+                SelectionProjectionFailure, SelectionProjectionFailureKind, SelectionScope,
+                SubjectRef, SurfaceEvidence, TraversalCandidateSource, TraversalEvidence,
+                is_child_channel_terminal_result, surface_attempt,
             },
             identity::{
                 ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
@@ -810,6 +812,14 @@ pub(crate) struct PlannedChildren {
     pub(crate) rejected_surface_attempts: Vec<surface_attempt::Evidence>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct ChildChannelEvidenceRefs {
+    pub(crate) runtime_id: String,
+    pub(crate) terminal_result: SealedEvidenceCitation,
+    pub(crate) attempt_result: Option<SealedEvidenceCitation>,
+    pub(crate) invocation: Option<SealedEvidenceCitation>,
+}
+
 #[derive(Debug)]
 pub(crate) struct PlannedChildOutcome {
     pub(crate) plan_index: usize,
@@ -821,6 +831,7 @@ pub(crate) struct PlannedChildOutcome {
     pub(crate) binary_path: PathBuf,
     pub(crate) resolved: crate::intervention::ResolvedTreatmentBranch,
     pub(crate) child_runtime: Option<String>,
+    pub(crate) channel_evidence: Option<ChildChannelEvidenceRefs>,
     pub(crate) evaluation_report: Option<Prototype1BranchEvaluationReport>,
     pub(crate) selection_input: Option<SelectionInput>,
     pub(crate) surface: Option<SurfaceEvidence>,
@@ -5780,6 +5791,20 @@ pub(crate) fn run_planned_child(
             }
         }
     };
+    let channel_evidence = if is_terminal_child_status(report_node.status) {
+        let latest = load_runner_result(
+            &manifest_path,
+            &report_node.node_id,
+            OperatorProjectionRead::cli_operator(),
+        )?;
+        let evidence =
+            terminal_channel_runtime(&campaign_id, &manifest_path, &report_node, &child, &latest)?;
+        child_runtime = Some(evidence.runtime_id.clone());
+        Some(evidence)
+    } else {
+        None
+    };
+
     if stop_after == Prototype1StateStopAfter::Complete {
         cleanup_prototype1_child_build_products(&manifest_path, &campaign_id, &report_node)?;
     }
@@ -5794,6 +5819,7 @@ pub(crate) fn run_planned_child(
         binary_path: report_node.binary_path,
         resolved: report_resolved,
         child_runtime,
+        channel_evidence,
         evaluation_report,
         selection_input,
         surface,
@@ -5868,6 +5894,7 @@ fn stored_child_outcome(
     }
 
     let mut report = branch_report(manifest_path, &stored.branch_id)?;
+    let mut channel_evidence = None;
     let mut child_runtime = None;
     if stored.status == Prototype1NodeStatus::Succeeded && report.is_none() {
         let recovered = recover_child_report_from_channel(
@@ -5879,7 +5906,8 @@ fn stored_child_outcome(
             child,
             runner_result.as_ref(),
         )?;
-        child_runtime = Some(recovered.runtime_id.to_string());
+        child_runtime = Some(recovered.channel_evidence.runtime_id.clone());
+        channel_evidence = Some(recovered.channel_evidence);
         report = Some(recovered.report);
     }
     let outcome = match stored.status {
@@ -5915,6 +5943,7 @@ fn stored_child_outcome(
         binary_path: stored.binary_path.clone(),
         resolved: child.resolved().clone(),
         child_runtime,
+        channel_evidence,
         evaluation_report: report,
         selection_input,
         surface: child.surface().cloned(),
@@ -5925,7 +5954,7 @@ fn stored_child_outcome(
 
 #[derive(Debug)]
 struct RecoveredReport {
-    runtime_id: RuntimeId,
+    channel_evidence: ChildChannelEvidenceRefs,
     report: Prototype1BranchEvaluationReport,
 }
 
@@ -5933,6 +5962,7 @@ struct RecoveredReport {
 struct ChannelTerminal {
     result: Prototype1RunnerResult,
     has_treatment: bool,
+    terminal_result: SealedEvidenceCitation,
 }
 
 fn recover_child_report_from_channel(
@@ -5989,12 +6019,15 @@ fn recover_child_report_from_channel(
             ));
             continue;
         };
-        if let Err(detail) =
-            validate_terminal_result(campaign_id, stored, runtime_id, latest, &terminal)
-        {
-            diagnostics.push(detail);
-            continue;
-        }
+        let attempt_result =
+            match validate_terminal_result(campaign_id, stored, runtime_id, latest, &terminal) {
+                Ok(citation) => citation,
+                Err(detail) => {
+                    diagnostics.push(detail);
+                    continue;
+                }
+            };
+        let channel_evidence = channel_refs(&invocation, &terminal, attempt_result)?;
 
         let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(manifest_path));
         let c5 = match ObserveChild::new(Duration::ZERO)
@@ -6024,7 +6057,10 @@ fn recover_child_report_from_channel(
             &successful.treatment,
             branch_log_gate,
         )?;
-        return Ok(RecoveredReport { runtime_id, report });
+        return Ok(RecoveredReport {
+            channel_evidence,
+            report,
+        });
     }
 
     let suffix = if diagnostics.is_empty() {
@@ -6193,13 +6229,84 @@ fn channel_terminal(
                     ),
                 });
             }
+            let terminal_result = terminal_result_citation(
+                invocation.node_id(),
+                invocation.runtime_id(),
+                message.body(),
+            )?;
             terminal = Some(ChannelTerminal {
                 result: runner_result.clone(),
                 has_treatment: treatment.is_some(),
+                terminal_result,
             });
         }
     }
     Ok(terminal)
+}
+
+fn terminal_result_citation(
+    node_id: &str,
+    runtime_id: RuntimeId,
+    body: &ToParent,
+) -> Result<SealedEvidenceCitation, PrepareError> {
+    let content_hash =
+        HistoryHash::of_domain_json("prototype1.history.child_channel_terminal_result.v1", body)
+            .map_err(|err| PrepareError::InvalidBatchSelection {
+                detail: format!("failed to hash child channel terminal Result: {err}"),
+            })?;
+    Ok(SealedEvidenceCitation {
+        ref_id: format!("channel:child-to-parent:terminal-result:{node_id}:{runtime_id}"),
+        content_hash: Some(content_hash),
+        record_name: Some(CHILD_CHANNEL_TERMINAL_RESULT_RECORD.to_string()),
+    })
+}
+
+fn attempt_result_citation(
+    node_id: &str,
+    runtime_id: RuntimeId,
+    result: &Prototype1RunnerResult,
+) -> Result<SealedEvidenceCitation, crate::cli::prototype1_state::history::HistoryError> {
+    let content_hash =
+        HistoryHash::of_domain_json("prototype1.history.child_attempt_runner_result.v1", result)?;
+    Ok(SealedEvidenceCitation {
+        ref_id: format!("child-store:attempt-runner-result:{node_id}:{runtime_id}"),
+        content_hash: Some(content_hash),
+        record_name: Some(CHILD_ATTEMPT_RUNNER_RESULT_RECORD.to_string()),
+    })
+}
+
+fn invocation_citation(
+    invocation: &invocation::ChildInvocation,
+) -> Result<SealedEvidenceCitation, PrepareError> {
+    let content_hash = HistoryHash::of_domain_json(
+        "prototype1.history.child_invocation.v1",
+        invocation.as_invocation(),
+    )
+    .map_err(|err| PrepareError::InvalidBatchSelection {
+        detail: format!("failed to hash child invocation: {err}"),
+    })?;
+    Ok(SealedEvidenceCitation {
+        ref_id: format!(
+            "bootstrap:child-invocation:{}:{}",
+            invocation.node_id(),
+            invocation.runtime_id()
+        ),
+        content_hash: Some(content_hash),
+        record_name: Some(CHILD_INVOCATION_RECORD.to_string()),
+    })
+}
+
+fn channel_refs(
+    invocation: &invocation::ChildInvocation,
+    terminal: &ChannelTerminal,
+    attempt_result: SealedEvidenceCitation,
+) -> Result<ChildChannelEvidenceRefs, PrepareError> {
+    Ok(ChildChannelEvidenceRefs {
+        runtime_id: invocation.runtime_id().to_string(),
+        terminal_result: terminal.terminal_result.clone(),
+        attempt_result: Some(attempt_result),
+        invocation: Some(invocation_citation(invocation)?),
+    })
 }
 
 fn validate_terminal_result(
@@ -6208,7 +6315,7 @@ fn validate_terminal_result(
     runtime_id: RuntimeId,
     latest: &Prototype1RunnerResult,
     terminal: &ChannelTerminal,
-) -> Result<(), String> {
+) -> Result<SealedEvidenceCitation, String> {
     let result = &terminal.result;
     if result.campaign_id != *campaign_id
         || result.node_id != stored.node_id
@@ -6244,7 +6351,8 @@ fn validate_terminal_result(
             path.display()
         ));
     }
-    Ok(())
+    attempt_result_citation(&stored.node_id, runtime_id, &attempt)
+        .map_err(|err| format!("failed to hash attempt runner result: {err}"))
 }
 
 pub(crate) fn reconstruct_child_outcomes_from_store(
@@ -6320,8 +6428,9 @@ fn read_only_child_outcome(
             ),
         });
     }
-    let runtime_id =
+    let channel_evidence =
         terminal_channel_runtime(campaign_id, manifest_path, &stored, child, &runner_result)?;
+    let runtime_id = channel_evidence.runtime_id.clone();
     let report = branch_report(manifest_path, &stored.branch_id)?;
     if let Some(report) = report.as_ref() {
         validate_child_branch_report(campaign_id, &stored, &runner_result, report)?;
@@ -6358,7 +6467,8 @@ fn read_only_child_outcome(
         workspace_root: stored.workspace_root.clone(),
         binary_path: stored.binary_path.clone(),
         resolved: child.resolved().clone(),
-        child_runtime: Some(runtime_id.to_string()),
+        child_runtime: Some(runtime_id),
+        channel_evidence: Some(channel_evidence),
         evaluation_report: report,
         selection_input,
         surface: child.surface().cloned(),
@@ -6373,7 +6483,7 @@ fn terminal_channel_runtime(
     stored: &Prototype1NodeRecord,
     child: &ChildFiles,
     latest: &Prototype1RunnerResult,
-) -> Result<RuntimeId, PrepareError> {
+) -> Result<ChildChannelEvidenceRefs, PrepareError> {
     let dir = invocation::invocations_dir(&stored.node_dir);
     let entries = match fs::read_dir(&dir) {
         Ok(entries) => entries,
@@ -6413,13 +6523,15 @@ fn terminal_channel_runtime(
             ));
             continue;
         };
-        if let Err(detail) =
-            validate_terminal_result(campaign_id, stored, runtime_id, latest, &terminal)
-        {
-            diagnostics.push(detail);
-            continue;
-        }
-        return Ok(runtime_id);
+        let attempt_result =
+            match validate_terminal_result(campaign_id, stored, runtime_id, latest, &terminal) {
+                Ok(citation) => citation,
+                Err(detail) => {
+                    diagnostics.push(detail);
+                    continue;
+                }
+            };
+        return channel_refs(&invocation, &terminal, attempt_result);
     }
     let suffix = if diagnostics.is_empty() {
         String::new()
@@ -7042,9 +7154,30 @@ fn current_generation_candidate_evidence(
                 .to_string(),
         );
     }
+    if let (Some(runtime_id), Some(channel)) = (
+        outcome.child_runtime.as_deref(),
+        outcome.channel_evidence.as_ref(),
+    ) && channel.runtime_id != runtime_id
+    {
+        child_diagnostics.push(format!(
+            "current_generation_candidate: channel evidence runtime mismatch: child_runtime={runtime_id}, channel={}",
+            channel.runtime_id
+        ));
+    }
+    if outcome.child_runtime.is_some() && outcome.channel_evidence.is_none() {
+        child_diagnostics.push(
+            "current_generation_candidate: missing terminal child channel evidence refs"
+                .to_string(),
+        );
+    }
 
+    let schema_version = if outcome.channel_evidence.is_some() {
+        4
+    } else {
+        3
+    };
     let evidence = SealedCandidateEvidence {
-        schema_version: 3,
+        schema_version,
         coordinate: CandidateCoordinate {
             node_id: outcome.node_id.clone(),
             parent_node_id: outcome.node.parent_node_id.clone(),
@@ -7067,10 +7200,27 @@ fn current_generation_candidate_evidence(
         runtimes: outcome
             .child_runtime
             .as_ref()
-            .map(|runtime_id| SealedRuntimeEvidence {
-                runtime_id: runtime_id.clone(),
-                document_citations: Vec::new(),
-                journal_citations: Vec::new(),
+            .map(|runtime_id| {
+                let mut document_citations = Vec::new();
+                let mut journal_citations = Vec::new();
+                if let Some(channel) = outcome
+                    .channel_evidence
+                    .as_ref()
+                    .filter(|channel| channel.runtime_id.as_str() == runtime_id.as_str())
+                {
+                    document_citations.push(channel.terminal_result.clone());
+                    if let Some(citation) = channel.attempt_result.clone() {
+                        document_citations.push(citation);
+                    }
+                    if let Some(citation) = channel.invocation.clone() {
+                        journal_citations.push(citation);
+                    }
+                }
+                SealedRuntimeEvidence {
+                    runtime_id: runtime_id.clone(),
+                    document_citations,
+                    journal_citations,
+                }
             })
             .into_iter()
             .collect(),
@@ -7587,6 +7737,32 @@ pub(crate) fn select_artifact_for_handoff(
                 material.selected_candidate.as_str()
             ),
         });
+    }
+    if material.selected_from_generation_outcomes {
+        let runtime_id = sealed.coordinate.primary_runtime_id.as_deref().ok_or_else(|| {
+            PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "selected current-generation candidate {} lacks sealed runtime identity for channel validation",
+                    material.selected_candidate.as_str()
+                ),
+            }
+        })?;
+        let has_terminal = sealed.runtimes.iter().any(|runtime| {
+            runtime.runtime_id == runtime_id
+                && runtime
+                    .document_citations
+                    .iter()
+                    .any(is_child_channel_terminal_result)
+        });
+        if !has_terminal {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "selected current-generation candidate {} lacks terminal child channel Result citation for runtime {}",
+                    material.selected_candidate.as_str(),
+                    runtime_id
+                ),
+            });
+        }
     }
     let primary_runtime_id = sealed.coordinate.primary_runtime_id.clone();
 

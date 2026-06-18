@@ -5615,6 +5615,24 @@ fn bind_test_tui_surface_fields(
     resolved.branch.derived_artifact_id = Some(after);
 }
 
+fn channel_refs_for_test(node_id: &str, runtime_id: &str) -> ChildChannelEvidenceRefs {
+    let terminal_hash = HistoryHash::of_domain_json(
+        "prototype1.test.child_channel_terminal_result",
+        &(node_id, runtime_id),
+    )
+    .expect("terminal hash");
+    ChildChannelEvidenceRefs {
+        runtime_id: runtime_id.to_string(),
+        terminal_result: SealedEvidenceCitation {
+            ref_id: format!("channel:child-to-parent:terminal-result:{node_id}:{runtime_id}"),
+            content_hash: Some(terminal_hash),
+            record_name: Some(CHILD_CHANNEL_TERMINAL_RESULT_RECORD.to_string()),
+        },
+        attempt_result: None,
+        invocation: None,
+    }
+}
+
 fn test_completed_outcome(
     mut node: Prototype1NodeRecord,
     resolved: crate::intervention::ResolvedTreatmentBranch,
@@ -5623,6 +5641,7 @@ fn test_completed_outcome(
     node.status = Prototype1NodeStatus::Succeeded;
     let report = test_evaluation_report(&node);
     let selection_input = selection_input_from_child_report(&node, &report);
+    let runtime_id = format!("runtime:{}", node.node_id);
     PlannedChildOutcome {
         plan_index,
         node_id: node.node_id.clone(),
@@ -5631,7 +5650,8 @@ fn test_completed_outcome(
         workspace_root: node.workspace_root.clone(),
         binary_path: node.binary_path.clone(),
         resolved,
-        child_runtime: Some(format!("runtime:{}", node.node_id)),
+        child_runtime: Some(runtime_id.clone()),
+        channel_evidence: Some(channel_refs_for_test(&node.node_id, &runtime_id)),
         evaluation_report: Some(report),
         selection_input: Some(selection_input),
         surface: None,
@@ -5864,6 +5884,42 @@ fn historical_node_150_channel_treatment_reaches_current_generation_handoff() {
     assert_eq!(report.branch_id, node.branch_id);
     assert_eq!(report.overall_disposition, BranchDisposition::Keep);
 
+    let terminal_body = crate::cli::prototype1_state::channel::ToParent::Result {
+        runner_result: terminal.1.clone(),
+        treatment: Some(terminal.2.clone()),
+    };
+    let channel_evidence = ChildChannelEvidenceRefs {
+        runtime_id: terminal.0.clone(),
+        terminal_result: SealedEvidenceCitation {
+            ref_id: format!(
+                "channel:child-to-parent:terminal-result:{}:{}",
+                node.node_id, terminal.0
+            ),
+            content_hash: Some(
+                HistoryHash::of_domain_json(
+                    "prototype1.history.child_channel_terminal_result.v1",
+                    &terminal_body,
+                )
+                .expect("terminal channel hash"),
+            ),
+            record_name: Some(CHILD_CHANNEL_TERMINAL_RESULT_RECORD.to_string()),
+        },
+        attempt_result: Some(SealedEvidenceCitation {
+            ref_id: format!(
+                "child-store:attempt-runner-result:{}:{}",
+                node.node_id, terminal.0
+            ),
+            content_hash: Some(
+                HistoryHash::of_domain_json(
+                    "prototype1.history.child_attempt_runner_result.v1",
+                    &terminal.1,
+                )
+                .expect("attempt result hash"),
+            ),
+            record_name: Some(CHILD_ATTEMPT_RUNNER_RESULT_RECORD.to_string()),
+        }),
+        invocation: None,
+    };
     let outcome = PlannedChildOutcome {
         plan_index,
         node_id: node.node_id.clone(),
@@ -5872,7 +5928,8 @@ fn historical_node_150_channel_treatment_reaches_current_generation_handoff() {
         workspace_root: node.workspace_root.clone(),
         binary_path: node.binary_path.clone(),
         resolved: child.resolved().clone(),
-        child_runtime: Some(terminal.0),
+        child_runtime: Some(terminal.0.clone()),
+        channel_evidence: Some(channel_evidence),
         evaluation_report: Some(report.clone()),
         selection_input: Some(selection_input_from_child_report(&node, &report)),
         surface: child.surface().cloned(),
@@ -5985,6 +6042,20 @@ fn current_generation_selector_trace_follows_child_channel_evidence_path() {
         sealed.evaluations[0].primary_report_citation.ref_id,
         "inline:child-channel:evaluation-report:branch-child"
     );
+    let runtime = sealed.runtimes.first().expect("runtime evidence");
+    assert_eq!(runtime.runtime_id, "runtime:node-child");
+    assert!(
+        runtime
+            .document_citations
+            .iter()
+            .any(is_child_channel_terminal_result)
+    );
+    assert!(
+        payload
+            .source_refs
+            .iter()
+            .any(|reference| reference.as_str().contains("terminal-result:node-child"))
+    );
 
     assert!(trace_contains(
         &trace,
@@ -6019,6 +6090,51 @@ fn current_generation_selector_trace_follows_child_channel_evidence_path() {
             .iter()
             .all(|line| !line.contains("FsEvidenceStore") && !line.contains("history_preview")),
         "trace should stay on the typed child outcome path: {trace:#?}"
+    );
+}
+
+#[test]
+fn current_generation_candidates_without_channel_refs_are_not_decision_grade() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let mut node = test_node(tmp.path(), "node-child", "branch-child", "candidate-1");
+    node.parent_node_id = Some("node-parent".to_string());
+    let mut outcome = test_completed_outcome(
+        node,
+        test_resolved(&test_node(
+            tmp.path(),
+            "node-child",
+            "branch-child",
+            "candidate-1",
+        )),
+        0,
+    );
+    outcome.channel_evidence = None;
+    let parent_identity = test_parent_identity();
+    let parent_selection = ParentSelection::new(
+        &manifest_path,
+        &parent_identity,
+        std::slice::from_ref(&outcome),
+        &[],
+    );
+
+    let projection = parent_selection
+        .current_generation_candidates()
+        .expect("current generation candidate projection");
+    let payload = &projection.considered[0];
+    let grade = payload.decision_grade_eligibility();
+
+    assert!(
+        !grade.eligible,
+        "payload must fail closed without channel refs"
+    );
+    assert!(
+        grade
+            .identity_gaps
+            .iter()
+            .any(|gap| gap.starts_with("primary_runtime_terminal_channel_citation_missing")),
+        "unexpected gaps: {:?}",
+        grade.identity_gaps
     );
 }
 

@@ -369,6 +369,7 @@ Current implementation status:
 
 - `walk` admits pure `r11_to_r12` from in-memory R11a/R11 states.
 - `walk` can reconstruct R12 after restart from existing child-plan authority plus per-child terminal channel `Result` evidence, latest/attempt runner results, and matching branch evaluation reports for successful children.
+- Current-generation selection material now seals transport-agnostic refs for the terminal child-channel `Result`, attempt runner result, and child invocation into `SealedRuntimeEvidence`; decision-grade replay fails closed when the primary runtime lacks a terminal channel citation.
 - Rejected-only R11a smoke reaches/reconstructs R12 and records fallback/report facts without emitting the final report.
 - Missing report inputs still fail through the canonical edge; no fake child outcomes are invented.
 - Selected-successor R12 remains blocked before R13b handoff; no-selection R12 can continue to R13a/R14a.
@@ -411,6 +412,7 @@ Requirements:
 
 Proof before live full loop:
 
+- selected current-generation handoff material must retain channel-derived terminal result refs before checkout/History handoff consumes it;
 - focused historical handoff reconstruction;
 - local no-provider handoff fixture if possible;
 - one gated live proof only after historical/local proofs pass.

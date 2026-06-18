@@ -1840,6 +1840,24 @@ mod tests {
         }
     }
 
+    fn test_runtime_evidence(runtime_id: &str) -> Vec<SealedRuntimeEvidence> {
+        vec![SealedRuntimeEvidence {
+            runtime_id: runtime_id.to_string(),
+            document_citations: vec![SealedEvidenceCitation {
+                ref_id: format!("channel:child-to-parent:terminal-result:n1:{runtime_id}"),
+                content_hash: Some(
+                    HistoryHash::of_domain_json(
+                        "prototype1.test.child_channel_terminal_result",
+                        &runtime_id,
+                    )
+                    .expect("terminal hash"),
+                ),
+                record_name: Some(CHILD_CHANNEL_TERMINAL_RESULT_RECORD.to_string()),
+            }],
+            journal_citations: Vec::new(),
+        }]
+    }
+
     fn test_metrics(
         oracle_eligible: bool,
         convergence: bool,
@@ -3671,7 +3689,7 @@ mod tests {
                 },
                 compared_runs: Vec::new(),
             }],
-            runtimes: Vec::new(),
+            runtimes: test_runtime_evidence("rt-a"),
             branches: Vec::new(),
             extra_document_citations: Vec::new(),
             extra_journal_citations: Vec::new(),
