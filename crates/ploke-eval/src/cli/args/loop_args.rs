@@ -258,6 +258,10 @@ pub struct Prototype1StateWalkShowDeltaCommand {
 }
 
 #[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Summarize durable campaign progress without contacting the walk server",
+    after_help = "Field guide:\n  branch: selected branch disposition when the final report recorded one.\n  decision: candidate-local selection outcome; decision=Stop does not necessarily mean the campaign stopped.\n  handoff: whether the selected successor handoff was acknowledged, skipped, or absent.\n\nUse --verbose/-v for run-specific notes and next inspection commands."
+)]
 pub struct Prototype1StateWalkSummaryCommand {
     /// Parent checkout root. Defaults to active walk context, then current directory.
     #[arg(long, value_name = "PATH")]
@@ -265,6 +269,10 @@ pub struct Prototype1StateWalkSummaryCommand {
 
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
+
+    /// Include field meanings and next typed inspection commands in table output.
+    #[arg(short, long)]
+    pub verbose: bool,
 }
 
 #[derive(Debug, Clone, Parser)]

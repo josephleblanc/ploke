@@ -103,8 +103,10 @@ struct GenerationSummary {
     child_count: usize,
     children: Vec<ChildSummary>,
     successor_node_id: Option<String>,
-    selection: Option<String>,
+    branch_disposition: Option<String>,
+    selection_outcome: Option<String>,
     handoff: Option<String>,
+    selection_row_hint: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -126,7 +128,8 @@ struct SummaryPaths {
 #[derive(Debug)]
 struct ReportSummary {
     successor: Option<String>,
-    selection: Option<String>,
+    branch_disposition: Option<String>,
+    selection_outcome: Option<String>,
     handoff: Option<String>,
 }
 
@@ -135,7 +138,7 @@ pub(crate) fn run(command: Prototype1StateWalkSummaryCommand) -> Result<(), Prep
     let repo_root = paths::resolve_repo_root(command.repo_root.as_deref())?;
     let summary = WalkSummary::load(&repo_root)?;
     match command.format {
-        InspectOutputFormat::Table => print_table(&summary),
+        InspectOutputFormat::Table => print_table(&summary, command.verbose),
         InspectOutputFormat::Json => print_json(&summary)?,
     }
     Ok(())
@@ -200,7 +203,7 @@ impl WalkSummary {
     }
 }
 
-fn print_table(summary: &WalkSummary) {
+fn print_table(summary: &WalkSummary, verbose: bool) {
     println!("walk summary");
     println!("----------------------------------------");
     println!("campaign_id: {}", summary.campaign_id);
@@ -263,15 +266,103 @@ fn print_table(summary: &WalkSummary) {
     }
     for generation in &summary.generations {
         println!(
-            "  gen{} parent={} children={} successor={} selection={} handoff={}",
+            "  gen{} parent={} children={} successor={} branch={} decision={} handoff={}",
             generation.child_generation,
             generation.parent_node_id,
             generation.child_count,
             generation.successor_node_id.as_deref().unwrap_or("-"),
-            generation.selection.as_deref().unwrap_or("-"),
+            generation.branch_disposition.as_deref().unwrap_or("-"),
+            generation.selection_outcome.as_deref().unwrap_or("-"),
             generation.handoff.as_deref().unwrap_or("-"),
         );
     }
+    if verbose {
+        print_verbose(summary);
+    }
+}
+
+fn print_verbose(summary: &WalkSummary) {
+    println!();
+    println!("field guide:");
+    println!("  branch: selected branch disposition from the parent final report when available.");
+    println!(
+        "  decision: candidate-local successor selection outcome; decision=Stop does not by itself mean the campaign stopped."
+    );
+    println!("  handoff: selected-successor handoff status from the parent final report.");
+    println!(
+        "  latest_cursor: latest durable transition-journal entry, not a per-operator replay cursor."
+    );
+    println!("  selection_row_hint: row index to try with the sealed History selection inspector.");
+    println!();
+    println!("selection context:");
+    if summary.generations.is_empty() {
+        println!("  (no generation selection context found)");
+    }
+    for generation in &summary.generations {
+        println!("  gen{}:", generation.child_generation);
+        println!(
+            "    selected_successor: {}",
+            generation.successor_node_id.as_deref().unwrap_or("-")
+        );
+        println!(
+            "    branch: {}",
+            generation.branch_disposition.as_deref().unwrap_or("-")
+        );
+        println!(
+            "    decision: {}",
+            generation.selection_outcome.as_deref().unwrap_or("-")
+        );
+        println!(
+            "    handoff: {}",
+            generation.handoff.as_deref().unwrap_or("-")
+        );
+        if rejected_handoff(generation) {
+            println!(
+                "    note: rejected selected branch still has acknowledged handoff; inspect sealed selection for the exact continuation disposition."
+            );
+        } else if accepted_handoff(generation) {
+            println!("    note: accepted selected branch has acknowledged handoff.");
+        }
+        if let Some(row) = generation.selection_row_hint {
+            println!("    selection_row_hint: {row}");
+            println!(
+                "    inspect_selection: ploke-eval history --repo-root {} selection-show --row {row} --replay",
+                summary.repo_root.display()
+            );
+        }
+        println!(
+            "    review_scores: ploke-eval history --repo-root {} score-selection-review --generation {}",
+            summary.repo_root.display(),
+            generation.child_generation
+        );
+    }
+    println!();
+    println!("storage note:");
+    println!(
+        "  Detailed selection evidence lives behind the typed history/evidence inspection commands; use the inspect commands above instead of opening artifact JSON by hand."
+    );
+}
+
+fn accepted_handoff(generation: &GenerationSummary) -> bool {
+    generation
+        .branch_disposition
+        .as_deref()
+        .is_some_and(|value| value.eq_ignore_ascii_case("keep"))
+        && generation
+            .handoff
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case("acknowledged"))
+}
+
+fn rejected_handoff(generation: &GenerationSummary) -> bool {
+    generation
+        .branch_disposition
+        .as_deref()
+        .is_some_and(|value| value.eq_ignore_ascii_case("reject"))
+        && generation
+            .handoff
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case("acknowledged"))
 }
 
 fn print_json(summary: &WalkSummary) -> Result<(), PrepareError> {
@@ -335,7 +426,8 @@ fn load_reports(root: &Path) -> Result<BTreeMap<String, ReportSummary>, PrepareE
             parent,
             ReportSummary {
                 successor: string_field(&value, "node_id"),
-                selection: parts.get("selection").cloned(),
+                branch_disposition: report_branch_disposition(outcome.as_deref()),
+                selection_outcome: parts.get("selection").cloned(),
                 handoff: parts.get("successor_handoff").cloned(),
             },
         );
@@ -387,11 +479,16 @@ fn load_generations(
             child_count: children.len(),
             children,
             successor_node_id: report.and_then(|report| report.successor.clone()),
-            selection: report.and_then(|report| report.selection.clone()),
+            branch_disposition: report.and_then(|report| report.branch_disposition.clone()),
+            selection_outcome: report.and_then(|report| report.selection_outcome.clone()),
             handoff: report.and_then(|report| report.handoff.clone()),
+            selection_row_hint: None,
         });
     }
     generations.sort_by_key(|generation| generation.child_generation);
+    for (index, generation) in generations.iter_mut().enumerate() {
+        generation.selection_row_hint = Some(index);
+    }
     Ok(generations)
 }
 
@@ -605,6 +702,16 @@ fn read_json(path: &Path) -> Result<JsonValue, PrepareError> {
         path: path.to_path_buf(),
         source: io::Error::new(io::ErrorKind::NotFound, "file not found"),
     })
+}
+
+fn report_branch_disposition(outcome: Option<&str>) -> Option<String> {
+    let prefix = outcome?.split(';').next()?;
+    let value = prefix.strip_prefix("completed:")?;
+    match value {
+        "Keep" => Some("keep".to_string()),
+        "Reject" => Some("reject".to_string()),
+        other => Some(other.to_ascii_lowercase()),
+    }
 }
 
 fn parse_outcome(outcome: &str) -> BTreeMap<String, String> {

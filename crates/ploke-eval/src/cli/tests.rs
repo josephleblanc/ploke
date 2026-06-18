@@ -1780,6 +1780,7 @@ fn loop_walk_summary_command_parses() {
         "/tmp/parent",
         "--format",
         "json",
+        "-v",
     ])
     .expect("loop walk summary should parse");
 
@@ -1790,6 +1791,7 @@ fn loop_walk_summary_command_parses() {
             Prototype1StateWalkSubcommand::Summary(cmd) => {
                 assert_eq!(cmd.repo_root, Some(PathBuf::from("/tmp/parent")));
                 assert_eq!(cmd.format, InspectOutputFormat::Json);
+                assert!(cmd.verbose);
             }
             other => panic!("unexpected walk subcommand: {:?}", other),
         },
