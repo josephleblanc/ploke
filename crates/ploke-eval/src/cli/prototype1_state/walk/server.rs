@@ -150,19 +150,21 @@ impl WalkServer {
                     Err(error) => Err(error),
                 }
             }
-            WalkRequestBody::Step { until, watch } => {
-                match self.ensure_epoch_guard(request.client_epoch.as_ref()) {
-                    Ok(()) => match self.controller.step(until, watch).await {
-                        Ok(report) => Ok(WalkResponse::ok(
-                            self.controller.phase(),
-                            report.render(),
-                            self.epoch.clone(),
-                        )),
-                        Err(error) => Err(error),
-                    },
+            WalkRequestBody::Step {
+                until,
+                watch,
+                allow_git_changes,
+            } => match self.ensure_epoch_guard(request.client_epoch.as_ref()) {
+                Ok(()) => match self.controller.step(until, watch, allow_git_changes).await {
+                    Ok(report) => Ok(WalkResponse::ok(
+                        self.controller.phase(),
+                        report.render(),
+                        self.epoch.clone(),
+                    )),
                     Err(error) => Err(error),
-                }
-            }
+                },
+                Err(error) => Err(error),
+            },
             WalkRequestBody::Reset => {
                 self.with_epoch_guard(request.client_epoch.as_ref(), |controller| {
                     let phase = controller.reset();

@@ -40,6 +40,7 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             let with_version = command.with_version;
             let until = command.until;
             let watch = command.watch;
+            let allow_git_changes = command.allow_git_changes();
             let socket_override = command.socket.clone();
             let (repo_root, socket) =
                 args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
@@ -49,7 +50,11 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
                 &socket,
                 WalkRequest {
                     client_epoch: Some(epoch),
-                    body: WalkRequestBody::Step { until, watch },
+                    body: WalkRequestBody::Step {
+                        until,
+                        watch,
+                        allow_git_changes,
+                    },
                 },
             )
             .await?;

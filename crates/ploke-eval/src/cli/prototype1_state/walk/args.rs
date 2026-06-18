@@ -60,6 +60,13 @@ impl Prototype1StateWalkStepCommand {
     pub(crate) fn repo_root_ref(&self) -> Option<&Path> {
         self.repo_root.as_deref()
     }
+
+    /// Whether this step request admits active checkout mutation.
+    pub(crate) fn allow_git_changes(&self) -> bool {
+        self.allow
+            .iter()
+            .any(|capability| capability == "git-changes")
+    }
 }
 
 impl Prototype1StateWalkControlCommand {

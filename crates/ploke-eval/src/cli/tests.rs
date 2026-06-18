@@ -1737,6 +1737,39 @@ fn loop_walk_start_ttl_command_parses() {
 }
 
 #[test]
+fn loop_walk_step_handoff_admission_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "step",
+        "--repo-root",
+        "/tmp/parent",
+        "--until",
+        "r13b",
+        "--watch",
+        "--allow",
+        "git-changes",
+    ])
+    .expect("loop walk step should parse handoff admission flags");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Step(cmd) => {
+                assert_eq!(cmd.repo_root, Some(PathBuf::from("/tmp/parent")));
+                assert_eq!(cmd.until, Some(WalkPhase::R13b));
+                assert!(cmd.watch);
+                assert_eq!(cmd.allow, vec!["git-changes".to_string()]);
+            }
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
 fn loop_walk_show_with_version_command_parses() {
     let parsed = Cli::try_parse_from([
         "ploke-eval",

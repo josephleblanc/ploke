@@ -265,6 +265,11 @@ pub struct Prototype1StateWalkStepCommand {
     #[arg(long)]
     pub watch: bool,
 
+    /// Admit typed edges that intentionally install the selected successor into
+    /// the active checkout. Required for R12 -> R13b handoff.
+    #[arg(long = "allow", value_name = "CAPABILITY", value_parser = ["git-changes"])]
+    pub allow: Vec<String>,
+
     #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
     pub format: InspectOutputFormat,
 

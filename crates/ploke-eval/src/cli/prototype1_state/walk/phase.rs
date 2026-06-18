@@ -12,15 +12,15 @@ use serde::{Deserialize, Serialize};
 use crate::cli::prototype1_state::typestate::{
     R0_SHAPE, R1_SHAPE, R2A_SHAPE, R3_SHAPE, R4A_SHAPE, R4B_SHAPE, R4C_SHAPE, R5_SHAPE, R6_SHAPE,
     R7_SHAPE, R8_SHAPE, R9_SHAPE, R10_SHAPE, R11_SHAPE, R11A_SHAPE, R12_SHAPE, R13A_SHAPE,
-    R14A_SHAPE, RuntimeAxisDelta, RuntimeShape,
+    R13B_SHAPE, R14A_SHAPE, R14B_SHAPE, RuntimeAxisDelta, RuntimeShape,
 };
 
-/// Serializable cursor for the early Prototype 1 typestate walk.
+/// Serializable cursor for the Prototype 1 typestate walk.
 ///
-/// The current server slice intentionally stops stepping at `R14a` after the
-/// stopped/no-selection final report. That is enough to validate socket
-/// lifecycle, in-memory stepping, branching, stale-server guards, and setup
-/// edges before successor handoff.
+/// The walk cursor is operator-facing state, not authority. Handoff phases are
+/// included so the operator can step across the parent/successor seam while the
+/// canonical typed edge performs History sealing, checkout install, parent
+/// retirement, and successor invocation/ready checks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum WalkPhase {
@@ -60,8 +60,12 @@ pub enum WalkPhase {
     R12,
     /// Continuation stopped without successor handoff.
     R13a,
+    /// Successor handoff committed; parent retired.
+    R13b,
     /// Final report emitted for stopped/no-selection continuation.
     R14a,
+    /// Final report emitted after successor handoff.
+    R14b,
 }
 
 /// One admitted edge that can follow a phase in the current server slice.
@@ -183,16 +187,29 @@ const R11_NEXT: &[WalkNextStep] = &[WalkNextStep {
     detail: "project child outcome report facts",
 }];
 
-const R12_NEXT: &[WalkNextStep] = &[WalkNextStep {
-    edge: "r12_to_r13",
-    phase: WalkPhase::R13a,
-    detail: "record no-selection stopped continuation; selected-successor handoff remains blocked",
-}];
+const R12_NEXT: &[WalkNextStep] = &[
+    WalkNextStep {
+        edge: "r12_to_r13",
+        phase: WalkPhase::R13a,
+        detail: "record no-selection stopped continuation",
+    },
+    WalkNextStep {
+        edge: "r12_to_r13 --watch --allow git-changes",
+        phase: WalkPhase::R13b,
+        detail: "seal History, install selected successor, retire parent, and wait for successor ready",
+    },
+];
 
 const R13A_NEXT: &[WalkNextStep] = &[WalkNextStep {
     edge: "r13_to_r14",
     phase: WalkPhase::R14a,
     detail: "emit stopped/no-selection final report",
+}];
+
+const R13B_NEXT: &[WalkNextStep] = &[WalkNextStep {
+    edge: "r13_to_r14",
+    phase: WalkPhase::R14b,
+    detail: "emit final report after successor handoff",
 }];
 
 const NO_NEXT: &[WalkNextStep] = &[];
@@ -219,7 +236,9 @@ impl WalkPhase {
             WalkPhase::R11 => "r11",
             WalkPhase::R12 => "r12",
             WalkPhase::R13a => "r13a",
+            WalkPhase::R13b => "r13b",
             WalkPhase::R14a => "r14a",
+            WalkPhase::R14b => "r14b",
         }
     }
 
@@ -244,7 +263,9 @@ impl WalkPhase {
             WalkPhase::R11 => "child fanout complete",
             WalkPhase::R12 => "report facts ready",
             WalkPhase::R13a => "stopped continuation ready",
+            WalkPhase::R13b => "successor handoff committed",
             WalkPhase::R14a => "final stopped report emitted",
+            WalkPhase::R14b => "final handoff report emitted",
         }
     }
 
@@ -269,7 +290,9 @@ impl WalkPhase {
                 | WalkPhase::R11
                 | WalkPhase::R12
                 | WalkPhase::R13a
+                | WalkPhase::R13b
                 | WalkPhase::R14a
+                | WalkPhase::R14b
         )
     }
 
@@ -294,7 +317,9 @@ impl WalkPhase {
             WalkPhase::R11 => R11_NEXT,
             WalkPhase::R12 => R12_NEXT,
             WalkPhase::R13a => R13A_NEXT,
+            WalkPhase::R13b => R13B_NEXT,
             WalkPhase::R14a => NO_NEXT,
+            WalkPhase::R14b => NO_NEXT,
         }
     }
 
@@ -349,13 +374,23 @@ impl WalkPhase {
             );
         }
         if matches!((from, self), (WalkPhase::R12, WalkPhase::R13a)) {
+            deltas.push("side effect: may record no-selection stopped continuation".to_string());
+        }
+        if matches!((from, self), (WalkPhase::R12, WalkPhase::R13b)) {
             deltas.push(
-                "side effect: may record no-selection stopped continuation; successor handoff is blocked in walk".to_string(),
+                "side effect: seals/appends History, installs selected successor checkout, retires parent, spawns successor, and waits for ready evidence"
+                    .to_string(),
             );
         }
         if matches!((from, self), (WalkPhase::R13a, WalkPhase::R14a)) {
             deltas.push(
                 "side effect: emits final report and records parent-complete evidence".to_string(),
+            );
+        }
+        if matches!((from, self), (WalkPhase::R13b, WalkPhase::R14b)) {
+            deltas.push(
+                "side effect: emits final handoff report and records parent-complete evidence"
+                    .to_string(),
             );
         }
         if deltas.is_empty() {
@@ -399,7 +434,9 @@ impl WalkPhase {
             WalkPhase::R11 => Some(R11_SHAPE),
             WalkPhase::R12 => Some(R12_SHAPE),
             WalkPhase::R13a => Some(R13A_SHAPE),
+            WalkPhase::R13b => Some(R13B_SHAPE),
             WalkPhase::R14a => Some(R14A_SHAPE),
+            WalkPhase::R14b => Some(R14B_SHAPE),
         }
     }
 
@@ -528,14 +565,17 @@ mod tests {
     }
 
     #[test]
-    fn r12_advertises_stopped_continuation_only() {
+    fn r12_advertises_stopped_and_handoff_continuations() {
         let steps = WalkPhase::R12.next_steps();
 
-        assert_eq!(steps.len(), 1);
+        assert_eq!(steps.len(), 2);
         assert_eq!(steps[0].edge, "r12_to_r13");
         assert_eq!(steps[0].phase, WalkPhase::R13a);
-        assert!(steps[0].detail.contains("handoff remains blocked"));
+        assert_eq!(steps[1].edge, "r12_to_r13 --watch --allow git-changes");
+        assert_eq!(steps[1].phase, WalkPhase::R13b);
+        assert!(steps[1].detail.contains("install selected successor"));
         assert_eq!(WalkPhase::R13a.next_steps()[0].edge, "r13_to_r14");
+        assert_eq!(WalkPhase::R13b.next_steps()[0].edge, "r13_to_r14");
     }
 
     #[test]
@@ -551,13 +591,34 @@ mod tests {
     }
 
     #[test]
-    fn r13a_advertises_r14a_final_report() {
-        let steps = WalkPhase::R13a.next_steps();
+    fn r13b_shape_records_handoff_delta() {
+        let deltas = WalkPhase::R13b.axis_deltas_from(WalkPhase::R12);
+        let continuation = deltas
+            .iter()
+            .find(|delta| delta.label == "continuation")
+            .expect("R12 -> R13b should record handoff continuation");
+        let history = deltas
+            .iter()
+            .find(|delta| delta.label == "history")
+            .expect("R12 -> R13b should advance History");
 
-        assert_eq!(steps.len(), 1);
-        assert_eq!(steps[0].edge, "r13_to_r14");
-        assert_eq!(steps[0].phase, WalkPhase::R14a);
+        assert!(continuation.to.contains("continuation::handoff::Recorded"));
+        assert!(history.to.contains("history_axis::head::Advanced"));
+    }
+
+    #[test]
+    fn r13_advertises_matching_final_report_branches() {
+        let stopped = WalkPhase::R13a.next_steps();
+        let handoff = WalkPhase::R13b.next_steps();
+
+        assert_eq!(stopped.len(), 1);
+        assert_eq!(stopped[0].edge, "r13_to_r14");
+        assert_eq!(stopped[0].phase, WalkPhase::R14a);
+        assert_eq!(handoff.len(), 1);
+        assert_eq!(handoff[0].edge, "r13_to_r14");
+        assert_eq!(handoff[0].phase, WalkPhase::R14b);
         assert!(WalkPhase::R14a.next_steps().is_empty());
+        assert!(WalkPhase::R14b.next_steps().is_empty());
     }
 
     #[test]
@@ -571,6 +632,24 @@ mod tests {
             .iter()
             .find(|delta| delta.label == "evidence")
             .expect("R13a -> R14a should change completion evidence");
+
+        assert!(report.from.contains("report::Facts"));
+        assert!(report.to.contains("report::Emitted"));
+        assert!(evidence.from.contains("evidence::completion::None"));
+        assert!(evidence.to.contains("evidence::completion::Recorded"));
+    }
+
+    #[test]
+    fn r14b_shape_records_final_handoff_report_delta() {
+        let deltas = WalkPhase::R14b.axis_deltas_from(WalkPhase::R13b);
+        let report = deltas
+            .iter()
+            .find(|delta| delta.label == "report")
+            .expect("R13b -> R14b should emit handoff report");
+        let evidence = deltas
+            .iter()
+            .find(|delta| delta.label == "evidence")
+            .expect("R13b -> R14b should record completion evidence");
 
         assert!(report.from.contains("report::Facts"));
         assert!(report.to.contains("report::Emitted"));

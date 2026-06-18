@@ -26,8 +26,8 @@ use crate::{
         },
         typestate::{
             self, AsyncStepInput, R0, R1, R2a, R3, R4a, R4bGenesisChecked, R4cReady, R5, R6, R7,
-            R8, R9, R10, R11FanoutComplete, R11aRejectedOnly, R12, R13aStopped, R14aFinalStopped,
-            StepInput,
+            R8, R9, R10, R11FanoutComplete, R11aRejectedOnly, R12, R13aStopped,
+            R13bHandoffCommitted, R14aFinalStopped, R14bFinalHandoff, StepInput,
         },
     },
     layout::prototype1_monitor_target_file,
@@ -42,13 +42,13 @@ const MAX_FILE_BYTES: usize = 128 * 1024;
 type RunShape = Prototype1StateRunShape;
 type CampaignConfig = ResolvedCampaignConfig;
 
-/// Single-session in-memory controller for early Prototype 1 typestate phases.
+/// Single-session in-memory controller for Prototype 1 typestate phases.
 ///
-/// The current server slice admits setup/startup and parent-start phases through
-/// live `R7`, watch-gated `R8`, schedule-ready `R9`, strategy-ready `R10`,
-/// watch-gated `R11`, report-ready `R12`, guarded no-selection `R13a`, and
-/// stopped final-report `R14a` so the socket lifecycle can be tested before
-/// exposing handoff.
+/// The server admits setup/startup and parent-start phases through live `R7`,
+/// watch-gated `R8`, schedule-ready `R9`, strategy-ready `R10`, watch-gated
+/// `R11`, report-ready `R12`, guarded handoff-capable `R13`, and final-report
+/// `R14`. Parent/successor handoff remains gated by explicit operator admission
+/// because it mutates the active checkout and spawns the successor runtime.
 pub(crate) struct WalkController {
     repo_root: PathBuf,
     state: WalkState,
@@ -82,7 +82,9 @@ enum WalkState {
     R11(R11FanoutComplete<RunShape, CampaignConfig>),
     R12(R12<RunShape, CampaignConfig>),
     R13a(R13aStopped<RunShape, CampaignConfig>),
+    R13b(R13bHandoffCommitted<RunShape, CampaignConfig>),
     R14a(R14aFinalStopped<RunShape, CampaignConfig>),
+    R14b(R14bFinalHandoff<RunShape, CampaignConfig>),
     /// A consuming transition failed after the previous typed value was moved.
     ///
     /// Rust cannot restore the consumed value after an edge returns `Err`, so
@@ -303,7 +305,7 @@ impl WalkController {
             let reconstructed = self.phase();
             if reconstructed != WalkPhase::Empty {
                 if phase_rank(reconstructed) < phase_rank(until) {
-                    self.advance_until(until, false).await?;
+                    self.advance_until(until, false, false).await?;
                 }
                 return Ok(self.phase());
             }
@@ -316,7 +318,7 @@ impl WalkController {
             "start: created r0 for repo_root '{}'",
             repo_root.display()
         ));
-        self.advance_until(until, false).await?;
+        self.advance_until(until, false, false).await?;
         Ok(self.phase())
     }
 
@@ -325,24 +327,30 @@ impl WalkController {
         &mut self,
         until: Option<WalkPhase>,
         watch: bool,
+        allow_git_changes: bool,
     ) -> Result<WalkAdvanceReport, PrepareError> {
         self.refresh_from_disk()?;
         let from = self.phase();
         let branch_step = until.is_none() && watch && self.phase() == WalkPhase::R10;
+        let r12_selected =
+            matches!(&self.state, WalkState::R12(r12) if r12.has_successor_selection());
         let target = until.unwrap_or_else(|| {
             if watch && self.phase() == WalkPhase::R7 {
                 WalkPhase::R8
+            } else if r12_selected {
+                WalkPhase::R13b
             } else {
                 self.phase().next().unwrap_or(self.phase())
             }
         });
         ensure_supported_target(target)?;
+        self.ensure_branch_target(target)?;
         let transitions = if self.phase() == target && !branch_step {
             Vec::new()
         } else if until.is_some() {
-            self.advance_until(target, watch).await?
+            self.advance_until(target, watch, allow_git_changes).await?
         } else {
-            vec![self.step_once(watch).await?]
+            vec![self.step_once(watch, allow_git_changes).await?]
         };
         let report = WalkAdvanceReport {
             from,
@@ -351,6 +359,27 @@ impl WalkController {
         };
         self.last_delta = Some(report.clone());
         Ok(report)
+    }
+
+    fn ensure_branch_target(&self, target: WalkPhase) -> Result<(), PrepareError> {
+        if let WalkState::R12(r12) = &self.state {
+            let selected = r12.has_successor_selection();
+            if selected && matches!(target, WalkPhase::R13a | WalkPhase::R14a) {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "target {target} is the stopped/no-selection branch, but R12 has selected-successor evidence; use --until r13b or --until r14b with --watch --allow git-changes"
+                    ),
+                });
+            }
+            if !selected && matches!(target, WalkPhase::R13b | WalkPhase::R14b) {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "target {target} is the successor-handoff branch, but R12 has no selected-successor evidence; use --until r13a or --until r14a"
+                    ),
+                });
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn refresh_from_disk(&mut self) -> Result<(), PrepareError> {
@@ -380,6 +409,7 @@ impl WalkController {
         &mut self,
         target: WalkPhase,
         watch: bool,
+        allow_git_changes: bool,
     ) -> Result<Vec<WalkTransition>, PrepareError> {
         let mut guard = 0_u8;
         let mut transitions = Vec::new();
@@ -390,12 +420,26 @@ impl WalkController {
                     detail: format!("walk exceeded early-step guard while advancing to {target}"),
                 });
             }
-            transitions.push(self.step_once(watch).await?);
+            transitions.push(self.step_once(watch, allow_git_changes).await?);
+            if phase_rank(self.phase()) > phase_rank(target)
+                || (phase_rank(self.phase()) == phase_rank(target) && self.phase() != target)
+            {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "walk reached branch {} while advancing to {target}; rerun with the matching --until target",
+                        self.phase()
+                    ),
+                });
+            }
         }
         Ok(transitions)
     }
 
-    async fn step_once(&mut self, watch: bool) -> Result<WalkTransition, PrepareError> {
+    async fn step_once(
+        &mut self,
+        watch: bool,
+        allow_git_changes: bool,
+    ) -> Result<WalkTransition, PrepareError> {
         let state = std::mem::replace(&mut self.state, WalkState::Empty);
         let previous = state.phase();
         let next = match state {
@@ -476,15 +520,25 @@ impl WalkController {
                 r11_to_r12(typestate::R10FanoutBranch::FanoutComplete(r11)).map(WalkState::R12)
             }
             WalkState::R12(r12) => {
-                // This guard means "a successor coordinate has been selected",
-                // not "the selected branch was kept". `explore_from_rejected`
-                // may select a rejected child as the next Parent coordinate;
-                // this debug server still blocks because R13b handoff, not
-                // rejection traversal, is outside the admitted walk slice. See
+                // A selected successor may be a rejected child when traversal
+                // policy admits `explore_from_rejected`; the selected coordinate
+                // is still the handoff target. The extra gates here are about
+                // handoff side effects: active checkout mutation, History seal,
+                // parent retirement, and successor spawn/ready evidence.
+                // See docs/active/agents/2026-06-17_typestate-loop-driver-plan.md
+                // Slice 10 and
                 // docs/workflow/evalnomicon/src/prototype1/selection-and-evaluation.md.
-                if r12.has_successor_selection() {
+                if r12.has_successor_selection() && !watch {
                     self.state = WalkState::R12(r12);
-                    let detail = "walk reached R12 with selected-successor evidence; R13b handoff is not admitted by this debug server slice";
+                    let detail = "walk reached R12 with selected-successor evidence; rerun `walk step --watch --allow git-changes` to admit R13b handoff";
+                    self.record(format!("blocked at {previous}: {detail}"));
+                    return Err(PrepareError::InvalidBatchSelection {
+                        detail: detail.to_string(),
+                    });
+                }
+                if r12.has_successor_selection() && !allow_git_changes {
+                    self.state = WalkState::R12(r12);
+                    let detail = "walk R13b handoff installs the selected successor into the active checkout; rerun with `--allow git-changes`";
                     self.record(format!("blocked at {previous}: {detail}"));
                     return Err(PrepareError::InvalidBatchSelection {
                         detail: detail.to_string(),
@@ -492,8 +546,8 @@ impl WalkController {
                 }
                 r12.advance(r12_to_r13).map(|branch| match branch {
                     typestate::R12ContinuationBranch::Stopped(r13a) => WalkState::R13a(r13a),
-                    typestate::R12ContinuationBranch::HandoffCommitted(_) => {
-                        unreachable!("R12 selection guard prevents handoff branch")
+                    typestate::R12ContinuationBranch::HandoffCommitted(r13b) => {
+                        WalkState::R13b(r13b)
                     }
                 })
             }
@@ -504,9 +558,27 @@ impl WalkController {
                         unreachable!("R13a stopped branch cannot produce handoff final state")
                     }
                 }),
+            WalkState::R13b(r13b) => {
+                r13_to_r14(typestate::R12ContinuationBranch::HandoffCommitted(r13b)).map(|branch| {
+                    match branch {
+                        typestate::R14FinalBranch::Stopped(_) => {
+                            unreachable!("R13b handoff branch cannot produce stopped final state")
+                        }
+                        typestate::R14FinalBranch::Handoff(r14b) => WalkState::R14b(r14b),
+                    }
+                })
+            }
             WalkState::R14a(r14a) => {
                 self.state = WalkState::R14a(r14a);
-                let detail = "walk reached R14a final stopped-report boundary; successor handoff/final-handoff phases are not admitted by this debug server slice yet";
+                let detail = "walk reached R14a final stopped-report boundary";
+                self.record(format!("blocked at {previous}: {detail}"));
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: detail.to_string(),
+                });
+            }
+            WalkState::R14b(r14b) => {
+                self.state = WalkState::R14b(r14b);
+                let detail = "walk reached R14b final successor-handoff report boundary";
                 self.record(format!("blocked at {previous}: {detail}"));
                 return Err(PrepareError::InvalidBatchSelection {
                     detail: detail.to_string(),
@@ -571,7 +643,9 @@ impl WalkState {
             WalkState::R11(_) => WalkPhase::R11,
             WalkState::R12(_) => WalkPhase::R12,
             WalkState::R13a(_) => WalkPhase::R13a,
+            WalkState::R13b(_) => WalkPhase::R13b,
             WalkState::R14a(_) => WalkPhase::R14a,
+            WalkState::R14b(_) => WalkPhase::R14b,
             WalkState::Failed { phase, .. } => *phase,
         }
     }
@@ -658,8 +732,8 @@ fn phase_rank(phase: WalkPhase) -> u8 {
         WalkPhase::R10 => 11,
         WalkPhase::R11a | WalkPhase::R11 => 12,
         WalkPhase::R12 => 13,
-        WalkPhase::R13a => 14,
-        WalkPhase::R14a => 15,
+        WalkPhase::R13a | WalkPhase::R13b => 14,
+        WalkPhase::R14a | WalkPhase::R14b => 15,
     }
 }
 
@@ -688,7 +762,9 @@ impl NextPhase for WalkPhase {
             WalkPhase::R11 => Some(WalkPhase::R12),
             WalkPhase::R12 => Some(WalkPhase::R13a),
             WalkPhase::R13a => Some(WalkPhase::R14a),
+            WalkPhase::R13b => Some(WalkPhase::R14b),
             WalkPhase::R14a => None,
+            WalkPhase::R14b => None,
         }
     }
 }
@@ -836,13 +912,25 @@ fn push_side_effects(
     }
     if matches!((from, to), (WalkPhase::R12, WalkPhase::R13a)) {
         lines.push(format!(
-            "  - {}: may record no-selection stopped continuation; successor handoff is blocked in walk",
+            "  - {}: may record no-selection stopped continuation",
+            highlight_changed("side effect", style.color)
+        ));
+    }
+    if matches!((from, to), (WalkPhase::R12, WalkPhase::R13b)) {
+        lines.push(format!(
+            "  - {}: seals/appends History, installs selected successor checkout, retires parent, spawns successor, and waits for ready evidence",
             highlight_changed("side effect", style.color)
         ));
     }
     if matches!((from, to), (WalkPhase::R13a, WalkPhase::R14a)) {
         lines.push(format!(
             "  - {}: emits final report and records parent-complete evidence",
+            highlight_changed("side effect", style.color)
+        ));
+    }
+    if matches!((from, to), (WalkPhase::R13b, WalkPhase::R14b)) {
+        lines.push(format!(
+            "  - {}: emits final handoff report and records parent-complete evidence",
             highlight_changed("side effect", style.color)
         ));
     }

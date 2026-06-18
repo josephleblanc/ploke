@@ -1390,49 +1390,52 @@ runtime_alias! {
     shape R13A_SHAPE;
 }
 
-/// R13b: successor handoff committed.
-///
-/// Axis changes:
-/// - `Parent<Selectable> -> Parent<Retired>`.
-/// - `Children<set::Report<_>, attempt::Complete>`
-///   `-> Children<set::Successor<_>, attempt::Complete>`.
-/// - `History<startup::Validated<_>, head::FromStartup, epoch::None>`
-///   `-> History<startup::Validated<_>, head::Advanced<Block<Sealed>>,`
-///   `   epoch::Sealed<Block<Sealed>>>`.
-/// - `Continuation<selection::Maybe<_>, decision::None, handoff::None>`
-///   `-> Continuation<selection::Selected<_>, decision::Allowed<_>, handoff::Recorded<_>>`.
-///
-/// Existing carriers involved inside this phase include `LineageState`,
-/// `Block<Open>`, `Crown<Locked>`, `Block<Sealed>`, successor journal records,
-/// and `Parent<Retired>`. This alias represents the post-commit state.
-pub(crate) type R13bHandoffCommitted<RunShape = (), CampaignConfig = ()> = Runtime<
-    phase::R13b,
-    parent_role::Parent<parent_role::Retired>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<
-        plan::authority::Received<Received<parent_role::ChildPlan>>,
-        plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
-    >,
-    Children<children::set::Successor<PlannedChildOutcome>, children::attempt::Complete>,
-    History<
-        history_axis::startup::Validated<history_axis::startup::Any>,
-        history_axis::head::Advanced<Block<history_model::block::Sealed>>,
-        history_axis::epoch::Sealed<Block<history_model::block::Sealed>>,
-    >,
-    Evidence<
-        evidence::parent_start::Recorded<ParentStartedEntry>,
-        evidence::baseline::Ready<CompleteBaseline>,
-        evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
-        evidence::selection::Seal<SelectionSealMaterial>,
-        evidence::completion::None,
-    >,
-    Continuation<
-        continuation::selection::Selected<SuccessorDecision>,
-        continuation::decision::Allowed<Prototype1ContinuationDecision>,
-        continuation::handoff::Recorded<successor::Record>,
-    >,
-    Report<report::Facts>,
->;
+runtime_alias! {
+    /// R13b: successor handoff committed.
+    ///
+    /// Axis changes:
+    /// - `Parent<Selectable> -> Parent<Retired>`.
+    /// - `Children<set::Report<_>, attempt::Complete>`
+    ///   `-> Children<set::Successor<_>, attempt::Complete>`.
+    /// - `History<startup::Validated<_>, head::FromStartup, epoch::None>`
+    ///   `-> History<startup::Validated<_>, head::Advanced<Block<Sealed>>,`
+    ///   `   epoch::Sealed<Block<Sealed>>>`.
+    /// - `Continuation<selection::Maybe<_>, decision::None, handoff::None>`
+    ///   `-> Continuation<selection::Selected<_>, decision::Allowed<_>, handoff::Recorded<_>>`.
+    ///
+    /// Existing carriers involved inside this phase include `LineageState`,
+    /// `Block<Open>`, `Crown<Locked>`, `Block<Sealed>`, successor journal records,
+    /// and `Parent<Retired>`. This alias represents the post-commit state.
+    pub(crate) type R13bHandoffCommitted<RunShape = (), CampaignConfig = ()> = Runtime<
+        phase::R13b,
+        parent_role::Parent<parent_role::Retired>,
+        Context<context::Collected<RunShape, CampaignConfig>>,
+        Plan<
+            plan::authority::Received<Received<parent_role::ChildPlan>>,
+            plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
+        >,
+        Children<children::set::Successor<PlannedChildOutcome>, children::attempt::Complete>,
+        History<
+            history_axis::startup::Validated<history_axis::startup::Any>,
+            history_axis::head::Advanced<Block<history_model::block::Sealed>>,
+            history_axis::epoch::Sealed<Block<history_model::block::Sealed>>,
+        >,
+        Evidence<
+            evidence::parent_start::Recorded<ParentStartedEntry>,
+            evidence::baseline::Ready<CompleteBaseline>,
+            evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
+            evidence::selection::Seal<SelectionSealMaterial>,
+            evidence::completion::None,
+        >,
+        Continuation<
+            continuation::selection::Selected<SuccessorDecision>,
+            continuation::decision::Allowed<Prototype1ContinuationDecision>,
+            continuation::handoff::Recorded<successor::Record>,
+        >,
+        Report<report::Facts>,
+    >;
+    shape R13B_SHAPE;
+}
 
 selectable_state_impl!(R13aStopped, phase::R13a);
 
@@ -1541,40 +1544,43 @@ runtime_alias! {
     shape R14A_SHAPE;
 }
 
-/// R14b: final report after allowed successor handoff.
-///
-/// Axis changes:
-/// - `Evidence<..., completion::None> -> Evidence<..., completion::Recorded>`.
-/// - `Report<Facts> -> Report<Emitted<Prototype1StateReport>>`.
-///
-pub(crate) type R14bFinalHandoff<RunShape = (), CampaignConfig = ()> = Runtime<
-    phase::R14,
-    parent_role::Parent<parent_role::Retired>,
-    Context<context::Collected<RunShape, CampaignConfig>>,
-    Plan<
-        plan::authority::Received<Received<parent_role::ChildPlan>>,
-        plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
-    >,
-    Children<children::set::Successor<PlannedChildOutcome>, children::attempt::Complete>,
-    History<
-        history_axis::startup::Validated<history_axis::startup::Any>,
-        history_axis::head::Advanced<Block<history_model::block::Sealed>>,
-        history_axis::epoch::Sealed<Block<history_model::block::Sealed>>,
-    >,
-    Evidence<
-        evidence::parent_start::Recorded<ParentStartedEntry>,
-        evidence::baseline::Ready<CompleteBaseline>,
-        evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
-        evidence::selection::Seal<SelectionSealMaterial>,
-        evidence::completion::Recorded,
-    >,
-    Continuation<
-        continuation::selection::Selected<SuccessorDecision>,
-        continuation::decision::Allowed<Prototype1ContinuationDecision>,
-        continuation::handoff::Recorded<successor::Record>,
-    >,
-    Report<report::Emitted<Prototype1StateReport>>,
->;
+runtime_alias! {
+    /// R14b: final report after allowed successor handoff.
+    ///
+    /// Axis changes:
+    /// - `Evidence<..., completion::None> -> Evidence<..., completion::Recorded>`.
+    /// - `Report<Facts> -> Report<Emitted<Prototype1StateReport>>`.
+    ///
+    pub(crate) type R14bFinalHandoff<RunShape = (), CampaignConfig = ()> = Runtime<
+        phase::R14,
+        parent_role::Parent<parent_role::Retired>,
+        Context<context::Collected<RunShape, CampaignConfig>>,
+        Plan<
+            plan::authority::Received<Received<parent_role::ChildPlan>>,
+            plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>,
+        >,
+        Children<children::set::Successor<PlannedChildOutcome>, children::attempt::Complete>,
+        History<
+            history_axis::startup::Validated<history_axis::startup::Any>,
+            history_axis::head::Advanced<Block<history_model::block::Sealed>>,
+            history_axis::epoch::Sealed<Block<history_model::block::Sealed>>,
+        >,
+        Evidence<
+            evidence::parent_start::Recorded<ParentStartedEntry>,
+            evidence::baseline::Ready<CompleteBaseline>,
+            evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>,
+            evidence::selection::Seal<SelectionSealMaterial>,
+            evidence::completion::Recorded,
+        >,
+        Continuation<
+            continuation::selection::Selected<SuccessorDecision>,
+            continuation::decision::Allowed<Prototype1ContinuationDecision>,
+            continuation::handoff::Recorded<successor::Record>,
+        >,
+        Report<report::Emitted<Prototype1StateReport>>,
+    >;
+    shape R14B_SHAPE;
+}
 
 selectable_state_impl!(R14aFinalStopped, phase::R14);
 

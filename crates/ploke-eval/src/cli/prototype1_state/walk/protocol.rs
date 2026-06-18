@@ -90,6 +90,9 @@ pub(crate) enum WalkRequestBody {
         /// Allow long live edges to run to completion instead of stopping at a safe boundary.
         #[serde(default)]
         watch: bool,
+        /// Admit typed edges that mutate the active checkout during handoff.
+        #[serde(default)]
+        allow_git_changes: bool,
     },
     /// Clear the in-memory walk while keeping the server process alive.
     Reset,
