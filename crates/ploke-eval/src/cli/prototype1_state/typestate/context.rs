@@ -224,6 +224,12 @@ impl<RunShape, CampaignConfig> Collected<RunShape, CampaignConfig> {
         &self.campaign_id
     }
 
+    /// Whether R12 facts contain a parent-selected successor coordinate.
+    ///
+    /// This intentionally follows selection evidence, not branch-evaluation
+    /// `keep`/`reject`. A rejected branch can be successor-selected when the
+    /// traversal policy admits exploration from rejected children; see
+    /// docs/workflow/evalnomicon/src/prototype1/selection-and-evaluation.md.
     pub(crate) fn has_successor_selection(&self) -> bool {
         self.facts.selection.is_some()
     }

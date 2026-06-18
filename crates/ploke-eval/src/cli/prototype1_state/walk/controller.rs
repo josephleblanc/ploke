@@ -476,6 +476,12 @@ impl WalkController {
                 r11_to_r12(typestate::R10FanoutBranch::FanoutComplete(r11)).map(WalkState::R12)
             }
             WalkState::R12(r12) => {
+                // This guard means "a successor coordinate has been selected",
+                // not "the selected branch was kept". `explore_from_rejected`
+                // may select a rejected child as the next Parent coordinate;
+                // this debug server still blocks because R13b handoff, not
+                // rejection traversal, is outside the admitted walk slice. See
+                // docs/workflow/evalnomicon/src/prototype1/selection-and-evaluation.md.
                 if r12.has_successor_selection() {
                     self.state = WalkState::R12(r12);
                     let detail = "walk reached R12 with selected-successor evidence; R13b handoff is not admitted by this debug server slice";

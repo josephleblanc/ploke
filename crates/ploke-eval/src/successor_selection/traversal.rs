@@ -1268,6 +1268,16 @@ fn decision_grade(candidate: Candidate) -> Result<CandidateGrade, HistoryError> 
 fn traversal_decision(case: &CandidateCase<'_>) -> Option<SuccessorDecision> {
     let input = case.selection_input()?;
     let mut decision = decide_candidate(input.clone());
+    // History traversal is the parent-selection layer, not just a replay of the
+    // branch-evaluation keep/reject gate. `decide_candidate` preserves the
+    // candidate-local outcome/disposition; if that outcome did not itself select
+    // a branch, the traversal-selected candidate still becomes the successor
+    // coordinate under policies such as `explore_from_rejected`.
+    //
+    // Evalnomicon refs:
+    // - docs/workflow/evalnomicon/src/prototype1/selection-and-evaluation.md
+    // - docs/workflow/evalnomicon/drafts/runtime/child.md
+    // - docs/workflow/evalnomicon/chat-history/on-hyper-agents.md
     if decision.selected_branch_id.is_none() {
         decision.selected_branch_id = Some(input.candidate.branch_id.clone());
         decision.rationale.push(format!(
