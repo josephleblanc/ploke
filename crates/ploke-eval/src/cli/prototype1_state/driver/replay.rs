@@ -115,9 +115,16 @@ impl ReplayCursor {
             ));
             lines.push(format!("detail: {}", current.detail));
         }
-        lines.push("recent entries:".to_string());
         let tail = tail.max(1);
         let start = self.steps.len().saturating_sub(tail);
+        let shown = self.steps.len().saturating_sub(start);
+        lines.push(format!(
+            "recent entries: last {shown} of {}",
+            self.steps.len()
+        ));
+        if shown < self.steps.len() {
+            lines.push("hint: expand this window with --tail N, for example --tail 20".to_string());
+        }
         for step in &self.steps[start..] {
             let marker = if Some(step.index) == self.cursor {
                 "*"

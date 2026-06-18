@@ -1869,8 +1869,6 @@ fn loop_walk_replay_and_back_commands_parse() {
         "/tmp/parent",
         "--index",
         "7",
-        "--tail",
-        "3",
     ])
     .expect("loop walk replay should parse");
 
@@ -1907,6 +1905,22 @@ fn loop_walk_replay_and_back_commands_parse() {
             Prototype1StateWalkSubcommand::Back(cmd) => {
                 assert_eq!(cmd.steps, 2);
                 assert_eq!(cmd.tail, 4);
+            }
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+
+    let forward = Cli::try_parse_from(["ploke-eval", "loop", "walk", "forward"])
+        .expect("loop walk forward should parse");
+
+    match forward.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Forward(cmd) => {
+                assert_eq!(cmd.steps, 1);
+                assert_eq!(cmd.tail, 3);
             }
             other => panic!("unexpected walk subcommand: {:?}", other),
         },

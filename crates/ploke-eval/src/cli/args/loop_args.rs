@@ -36,8 +36,8 @@ pub enum LoopSubcommand {
     #[command(
         name = "walk",
         about = "Debug-step Prototype 1 typestate transitions through a local walk server",
-        long_about = "Debug-step Prototype 1 typestate transitions through a local walk server.\n\nThe walk server is a local debugging harness over the live Prototype 1 transition edges. It is not production loop authority. By default it uses the active walk context if one was set with `walk use`, otherwise the current directory, and a repo-hashed socket under the runtime directory.",
-        after_help = "Examples:\n  ploke-eval loop walk use /path/to/parent-worktree\n  ploke-eval loop walk start\n  ploke-eval loop walk step\n  ploke-eval loop walk show\n  ploke-eval loop walk files\n  ploke-eval loop walk stop\n\nR5 writes parent-start/resource entries to the transition journal. Use a clean Prototype 1 parent worktree when walking through R5."
+        long_about = "Debug-step Prototype 1 typestate transitions through a local walk server.\n\nThe walk server is a local debugging harness over live Prototype 1 transition edges. It is not production loop authority. By default it uses the active walk context if one was set with `walk use`, otherwise the current directory, and a repo-hashed socket under the runtime directory.",
+        after_help = "Common workflows:\n  Set context:       ploke-eval loop walk use /path/to/parent-worktree\n  Start live walk:   ploke-eval loop walk start\n  Inspect progress:  ploke-eval loop walk summary -v\n  Replay history:    ploke-eval loop walk replay --index 0\n  Move replay:       ploke-eval loop walk forward --steps 10 --tail 20\n  Live step:         ploke-eval loop walk step --until r6\n\nSafety notes:\n  replay/back/forward are read-only historical cursor commands.\n  step drives live typestate edges; long live edges require --watch.\n  R12 -> R13b successor handoff mutates checkout state and requires --allow git-changes.\n  branch-live writes only explicit provenance and requires --allow provenance-record."
     )]
     Prototype1StateWalk(Prototype1StateWalkCommand),
     /// Inspect or execute one staged Prototype 1 runner invocation.
@@ -200,6 +200,10 @@ pub struct Prototype1StateWalkServeCommand {
 }
 
 #[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Remember the parent checkout/socket used by later walk commands",
+    after_help = "Examples:\n  ploke-eval loop walk use /path/to/parent-worktree\n  ploke-eval loop walk use /path/to/parent-worktree --socket /tmp/ploke-walk.sock\n\nLater walk commands default to this context when --repo-root/--socket are omitted."
+)]
 pub struct Prototype1StateWalkUseCommand {
     /// Parent checkout root to remember. Defaults to the current directory.
     #[arg(value_name = "PATH")]
@@ -232,6 +236,10 @@ pub struct Prototype1StateWalkControlCommand {
 }
 
 #[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Show current in-memory walk state or the last step delta",
+    after_help = "Examples:\n  ploke-eval loop walk show\n  ploke-eval loop walk show --with-version\n  ploke-eval loop walk show delta --verbose\n\nUse summary/replay for durable historical inspection after a run has completed."
+)]
 pub struct Prototype1StateWalkShowCommand {
     #[command(flatten)]
     pub control: Prototype1StateWalkControlCommand,
@@ -276,6 +284,10 @@ pub struct Prototype1StateWalkSummaryCommand {
 }
 
 #[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Show or jump within the read-only historical replay cursor",
+    after_help = "Examples:\n  ploke-eval loop walk replay\n  ploke-eval loop walk replay --index 0\n  ploke-eval loop walk replay --index 120 --tail 20\n\nThe recent-entry window shows the latest journal entries by default. Use --tail N to show more entries. This command does not undo or replay durable side effects."
+)]
 pub struct Prototype1StateWalkReplayCommand {
     #[command(flatten)]
     pub control: Prototype1StateWalkControlCommand,
@@ -285,11 +297,15 @@ pub struct Prototype1StateWalkReplayCommand {
     pub index: Option<usize>,
 
     /// Number of trailing journal entries to render.
-    #[arg(long, default_value_t = 12)]
+    #[arg(long, default_value_t = 3)]
     pub tail: usize,
 }
 
 #[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Move the read-only historical replay cursor backward or forward",
+    after_help = "Examples:\n  ploke-eval loop walk forward\n  ploke-eval loop walk forward --steps 10 --tail 20\n  ploke-eval loop walk back --steps 1\n\nCursor movement is read-only. It changes only the server's in-memory replay cursor and never mutates the parent checkout or journal. Use --tail N to expand the recent-entry window."
+)]
 pub struct Prototype1StateWalkReplayMoveCommand {
     #[command(flatten)]
     pub control: Prototype1StateWalkControlCommand,
@@ -299,11 +315,15 @@ pub struct Prototype1StateWalkReplayMoveCommand {
     pub steps: usize,
 
     /// Number of trailing journal entries to render.
-    #[arg(long, default_value_t = 12)]
+    #[arg(long, default_value_t = 3)]
     pub tail: usize,
 }
 
 #[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Record explicit provenance before leaving replay toward live work",
+    after_help = "Example:\n  ploke-eval loop walk branch-live --reason \"investigate cursor 42\" --allow provenance-record\n\nThis command records provenance only. It does not materialize a new live branch, run providers, or mutate checkout content."
+)]
 pub struct Prototype1StateWalkBranchLiveCommand {
     #[command(flatten)]
     pub control: Prototype1StateWalkControlCommand,
@@ -318,6 +338,10 @@ pub struct Prototype1StateWalkBranchLiveCommand {
 }
 
 #[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Advance the current in-memory walk by one live typestate edge",
+    after_help = "Examples:\n  ploke-eval loop walk step\n  ploke-eval loop walk step --until r6\n  ploke-eval loop walk step --until r8 --watch\n  ploke-eval loop walk step --until r13b --watch --allow git-changes\n\nUse replay/back/forward for read-only historical inspection. Use step only when you intend to drive live typestate edges. Long live edges require --watch; checkout-mutating successor handoff requires --allow git-changes."
+)]
 pub struct Prototype1StateWalkStepCommand {
     /// Parent checkout root. Defaults to active walk context, then current directory.
     #[arg(long, value_name = "PATH")]
@@ -349,6 +373,10 @@ pub struct Prototype1StateWalkStepCommand {
 }
 
 #[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Start a live in-memory walk, defaulting to R0",
+    after_help = "Examples:\n  ploke-eval loop walk start\n  ploke-eval loop walk start --until r6\n  ploke-eval loop walk start --no-ttl\n\nStart creates or contacts the local walk server for the selected parent checkout. Use summary/replay when you only need to inspect a completed historical run."
+)]
 pub struct Prototype1StateWalkStartCommand {
     /// Campaign id. Defaults to parent identity, then active `select campaign`.
     #[arg(long)]
