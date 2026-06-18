@@ -107,6 +107,34 @@ pub(crate) enum WalkRequestBody {
         /// Use ANSI colors in the human-readable message.
         color: bool,
     },
+    /// Show or position the read-only historical replay cursor.
+    Replay {
+        /// Optional absolute journal entry index to select.
+        index: Option<usize>,
+        /// Number of trailing entries to render.
+        tail: usize,
+    },
+    /// Move the read-only historical replay cursor backward.
+    ReplayBack {
+        /// Number of entries to move.
+        steps: usize,
+        /// Number of trailing entries to render.
+        tail: usize,
+    },
+    /// Move the read-only historical replay cursor forward.
+    ReplayForward {
+        /// Number of entries to move.
+        steps: usize,
+        /// Number of trailing entries to render.
+        tail: usize,
+    },
+    /// Record explicit provenance for leaving historical replay toward live work.
+    BranchLive {
+        /// Operator-supplied reason for leaving read-only replay.
+        reason: String,
+        /// Explicit admission that this request writes a provenance record.
+        allow_provenance_record: bool,
+    },
     /// Ask the server to reply and then exit.
     Stop,
 }

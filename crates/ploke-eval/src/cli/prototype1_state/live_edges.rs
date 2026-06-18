@@ -3,6 +3,8 @@
 //! These constructors are shared by the existing CLI path and the debug walk
 //! server so both advance through the same typed transitions.
 
+use std::fs;
+
 use ploke_core::EXECUTION_DEBUG_TARGET;
 use tracing::{debug, info};
 
@@ -22,12 +24,12 @@ use crate::{
                 current_dir_as_repo_root, ensure_prototype1_baseline_closure_state,
                 establish_parent_baseline_for_id, initialize_prototype1_parent_identity,
                 live_successor_continuation_decision, outcome_for_report,
-                prototype1_state_successor_handoff_mode, prototype1_state_transition_error,
-                record_active_prototype1_monitor_target, resolve_campaign_config_for_id,
-                resolve_child_plan_for_id, resolve_parent_policy_budget,
-                resolve_prototype1_parent_identity, resolve_prototype1_state_campaign,
-                run_adaptive_child_fanout, run_child_fanout, same_existing_path,
-                select_artifact_for_handoff, traversal_metric_inputs,
+                prototype1_state_report_path, prototype1_state_successor_handoff_mode,
+                prototype1_state_transition_error, record_active_prototype1_monitor_target,
+                resolve_campaign_config_for_id, resolve_child_plan_for_id,
+                resolve_parent_policy_budget, resolve_prototype1_parent_identity,
+                resolve_prototype1_state_campaign, run_adaptive_child_fanout, run_child_fanout,
+                same_existing_path, select_artifact_for_handoff, traversal_metric_inputs,
             },
             event::RecordedAt,
             invocation::{self, InvocationAuthority, SuccessorCompletionStatus},
@@ -1003,6 +1005,18 @@ pub(crate) fn emit_final_report_from_parts(
         successor_pid: report_facts.successor_pid,
         successor_ready_path: report_facts.successor_ready_path.clone(),
     };
+    let report_path = prototype1_state_report_path(&parts.manifest_path, parent_identity);
+    if let Some(parent) = report_path.parent() {
+        fs::create_dir_all(parent).map_err(|source| PrepareError::WriteManifest {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    let report_json = serde_json::to_vec_pretty(&report).map_err(PrepareError::Serialize)?;
+    fs::write(&report_path, report_json).map_err(|source| PrepareError::WriteManifest {
+        path: report_path,
+        source,
+    })?;
 
     #[cfg(not(feature = "demo"))]
     {

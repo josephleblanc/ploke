@@ -6040,7 +6040,14 @@ fn current_generation_selector_trace_follows_child_channel_evidence_path() {
     assert_eq!(sealed.evaluations.len(), 1);
     assert_eq!(
         sealed.evaluations[0].primary_report_citation.ref_id,
-        "inline:child-channel:evaluation-report:branch-child"
+        "parent-comparison:evaluation-report:branch-child"
+    );
+    assert!(
+        sealed.evaluations[0]
+            .primary_report_citation
+            .content_hash
+            .is_some(),
+        "parent comparison citation must carry a report hash"
     );
     let runtime = sealed.runtimes.first().expect("runtime evidence");
     assert_eq!(runtime.runtime_id, "runtime:node-child");

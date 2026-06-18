@@ -32,6 +32,7 @@ use crate::{
                 r9_to_r10, r11_to_r12,
             },
             parent::{Predecessor, Startup},
+            successor,
             typestate::{self, StepInput},
         },
     },
@@ -51,7 +52,9 @@ pub(crate) enum EarlyState {
     R10(typestate::R10<Prototype1StateRunShape, ResolvedCampaignConfig>),
     R12(typestate::R12<Prototype1StateRunShape, ResolvedCampaignConfig>),
     R13a(typestate::R13aStopped<Prototype1StateRunShape, ResolvedCampaignConfig>),
+    R13b(typestate::R13bHandoffCommitted<Prototype1StateRunShape, ResolvedCampaignConfig>),
     R14a(typestate::R14aFinalStopped<Prototype1StateRunShape, ResolvedCampaignConfig>),
+    R14b(typestate::R14bFinalHandoff<Prototype1StateRunShape, ResolvedCampaignConfig>),
 }
 
 /// Result of an early durable reconstruction attempt.
@@ -441,15 +444,108 @@ fn reconstruct_after_r12(
 ) -> Result<EarlyState, PrepareError> {
     let typestate::SelectableParts { collected, parent } = r12.into_parts();
     let mut parts = collected.into_parts();
-    if parts.facts.selection.is_some() {
-        blockers.push(
-            "blocked edge r12 -> r13a: selected-successor evidence present; R13b handoff is not admitted by this debug server slice"
-                .into(),
+    if let Some((selection_decision, selection_material)) = parts.facts.selection.as_ref() {
+        let selected_artifact = selection_material.selected_artifact()?;
+        let node = selected_artifact.node();
+        let policy = parts.facts.complete_search_policy.as_ref().ok_or_else(|| {
+            PrepareError::InvalidBatchSelection {
+                detail: "R12 handoff reconstruction missing search policy".to_string(),
+            }
+        })?;
+        let decision =
+            crate::cli::prototype1_state::cli_facing::live_successor_continuation_decision(
+                &parts.manifest_path,
+                parent.identity(),
+                policy,
+                selection_decision,
+                selection_material,
+                node,
+            )?;
+        let report =
+            parts
+                .facts
+                .report
+                .as_mut()
+                .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                    detail: "R12 handoff reconstruction missing report facts".to_string(),
+                })?;
+        report.outcome.push_str(&format!(
+            ";selection={:?};successor={}",
+            selection_decision.outcome, selection_decision.candidate_node_id
+        ));
+        parts.facts.parent_identity = Some(parent.identity().clone());
+        if decision.disposition.allows_successor() {
+            let Some(handoff) = successor_handoff_evidence(
+                &parts.repo_root,
+                &parts.campaign_id,
+                &selection_decision.candidate_node_id,
+            )?
+            else {
+                blockers.push(format!(
+                    "blocked edge r12 -> r13b: selected successor '{}' has no durable handoff/ready evidence for repo_root '{}'",
+                    selection_decision.candidate_node_id,
+                    parts.repo_root.display()
+                ));
+                return Ok(EarlyState::R12(typestate::R12::from_collected_parent(
+                    parts.into_collected(),
+                    parent,
+                )));
+            };
+            report.successor_runtime = Some(handoff.runtime_id.to_string());
+            report.successor_pid = Some(handoff.pid);
+            report.successor_ready_path = Some(handoff.ready_path);
+            report.outcome.push_str(";successor_handoff=acknowledged");
+            let complete_recorded =
+                parent_complete_recorded(&parts.repo_root, &parts.campaign_id, parent.identity())?;
+            let (retired, _lineage) = parent.into_retired_and_lineage();
+            let r13b = typestate::R13bHandoffCommitted::from_collected_parent(
+                parts.into_collected(),
+                retired,
+            );
+            notes.push(
+                "reconstructed R13b successor handoff from checkout/handoff journal evidence"
+                    .into(),
+            );
+            if !complete_recorded {
+                return Ok(EarlyState::R13b(r13b));
+            }
+            let typestate::RetiredParts { collected, parent } = r13b.into_parts();
+            notes.push(
+                "reconstructed R14b final handoff report from parent-complete resource evidence"
+                    .into(),
+            );
+            return Ok(EarlyState::R14b(
+                typestate::R14bFinalHandoff::from_collected_parent(collected, parent),
+            ));
+        }
+        if !successor_stopped_recorded(&parts.campaign_id, &selection_decision.candidate_node_id)? {
+            blockers.push(format!(
+                "blocked edge r12 -> r13a: selected successor '{}' stopped by policy but no durable stopped successor record exists",
+                selection_decision.candidate_node_id
+            ));
+            return Ok(EarlyState::R12(typestate::R12::from_collected_parent(
+                parts.into_collected(),
+                parent,
+            )));
+        }
+        report.outcome.push_str(&format!(
+            ";successor_handoff=skipped:{:?}",
+            decision.disposition
+        ));
+        let complete_recorded =
+            parent_complete_recorded(&parts.repo_root, &parts.campaign_id, parent.identity())?;
+        let r13a = typestate::R13aStopped::from_collected_parent(parts.into_collected(), parent);
+        notes.push("reconstructed R13a selected-successor stopped continuation from durable successor record".into());
+        if !complete_recorded {
+            return Ok(EarlyState::R13a(r13a));
+        }
+        let typestate::SelectableParts { collected, parent } = r13a.into_parts();
+        notes.push(
+            "reconstructed R14a stopped final report from parent-complete resource evidence".into(),
         );
-        return Ok(EarlyState::R12(typestate::R12::from_collected_parent(
-            parts.into_collected(),
-            parent,
-        )));
+        return Ok(EarlyState::R14a(
+            typestate::R14aFinalStopped::from_collected_parent(collected, parent),
+        ));
     }
 
     if parts.run_shape.stop_after == Prototype1StateStopAfter::Complete {
@@ -742,6 +838,92 @@ pub(crate) fn format_r4a_blocker(repo_root: &Path, error: &PrepareError) -> Stri
         lines.push(format!("  git worktree list | rg {expected}"));
     }
     lines.join("\n")
+}
+
+struct HandoffEvidence {
+    runtime_id: crate::cli::prototype1_state::event::RuntimeId,
+    pid: u32,
+    ready_path: PathBuf,
+}
+
+fn successor_handoff_evidence(
+    repo_root: &Path,
+    campaign_id: &CampaignId,
+    node_id: &str,
+) -> Result<Option<HandoffEvidence>, PrepareError> {
+    for entry in journal_entries(campaign_id)?.into_iter().rev() {
+        let JournalEntry::SuccessorHandoff(handoff) = entry else {
+            continue;
+        };
+        if handoff.campaign_id != *campaign_id
+            || handoff.node_id != node_id
+            || !same_existing_path(&handoff.active_parent_root, repo_root)
+        {
+            continue;
+        }
+        let invocation = match invocation::load_authority(&handoff.invocation_path)? {
+            InvocationAuthority::Successor(invocation) => invocation,
+            InvocationAuthority::Child(_) => {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "successor handoff journal references child invocation '{}', expected successor",
+                        handoff.invocation_path.display()
+                    ),
+                });
+            }
+        };
+        if invocation.campaign_id() != campaign_id
+            || invocation.node_id() != node_id
+            || invocation.runtime_id() != handoff.runtime_id
+        {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "successor handoff invocation '{}' does not match handoff journal entry for node '{}'",
+                    handoff.invocation_path.display(),
+                    node_id
+                ),
+            });
+        }
+        if !handoff.ready_path.exists() {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "successor handoff ready path '{}' is missing for node '{}'",
+                    handoff.ready_path.display(),
+                    node_id
+                ),
+            });
+        }
+        return Ok(Some(HandoffEvidence {
+            runtime_id: handoff.runtime_id,
+            pid: handoff.pid,
+            ready_path: handoff.ready_path,
+        }));
+    }
+    Ok(None)
+}
+
+fn successor_stopped_recorded(
+    campaign_id: &CampaignId,
+    node_id: &str,
+) -> Result<bool, PrepareError> {
+    Ok(journal_entries(campaign_id)?
+        .into_iter()
+        .any(|entry| match entry {
+            JournalEntry::Successor(record) => {
+                record.campaign_id == *campaign_id
+                    && record.node_id == node_id
+                    && matches!(record.state, successor::State::Stopped { .. })
+            }
+            _ => false,
+        }))
+}
+
+fn journal_entries(campaign_id: &CampaignId) -> Result<Vec<JournalEntry>, PrepareError> {
+    let manifest_path = campaign_manifest_path_for_id(campaign_id)?;
+    let journal = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path));
+    journal.load_entries().map_err(|error| {
+        prototype1_state_transition_error("prototype1_reconstruct_journal", error.to_string())
+    })
 }
 
 fn parent_complete_recorded(

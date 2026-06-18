@@ -123,6 +123,93 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             print_response(&response, format, with_version)?;
             response_result(response)
         }
+        Prototype1StateWalkSubcommand::Replay(command) => {
+            let format = command.control.format;
+            let with_version = command.control.with_version;
+            let socket_override = command.control.socket.clone();
+            let (repo_root, socket) =
+                args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
+            ensure_server(&repo_root, &socket, default_idle_ttl()).await?;
+            let response = send_request(
+                &socket,
+                WalkRequest {
+                    client_epoch: None,
+                    body: WalkRequestBody::Replay {
+                        index: command.index,
+                        tail: command.tail,
+                    },
+                },
+            )
+            .await?;
+            print_response(&response, format, with_version)?;
+            response_result(response)
+        }
+        Prototype1StateWalkSubcommand::Back(command) => {
+            let format = command.control.format;
+            let with_version = command.control.with_version;
+            let socket_override = command.control.socket.clone();
+            let (repo_root, socket) =
+                args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
+            ensure_server(&repo_root, &socket, default_idle_ttl()).await?;
+            let response = send_request(
+                &socket,
+                WalkRequest {
+                    client_epoch: None,
+                    body: WalkRequestBody::ReplayBack {
+                        steps: command.steps,
+                        tail: command.tail,
+                    },
+                },
+            )
+            .await?;
+            print_response(&response, format, with_version)?;
+            response_result(response)
+        }
+        Prototype1StateWalkSubcommand::Forward(command) => {
+            let format = command.control.format;
+            let with_version = command.control.with_version;
+            let socket_override = command.control.socket.clone();
+            let (repo_root, socket) =
+                args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
+            ensure_server(&repo_root, &socket, default_idle_ttl()).await?;
+            let response = send_request(
+                &socket,
+                WalkRequest {
+                    client_epoch: None,
+                    body: WalkRequestBody::ReplayForward {
+                        steps: command.steps,
+                        tail: command.tail,
+                    },
+                },
+            )
+            .await?;
+            print_response(&response, format, with_version)?;
+            response_result(response)
+        }
+        Prototype1StateWalkSubcommand::BranchLive(command) => {
+            let format = command.control.format;
+            let with_version = command.control.with_version;
+            let allow_provenance_record = command.allow_provenance_record();
+            let reason = command.reason.clone();
+            let socket_override = command.control.socket.clone();
+            let (repo_root, socket) =
+                args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
+            ensure_server(&repo_root, &socket, default_idle_ttl()).await?;
+            let epoch = ServerEpoch::capture(&repo_root)?;
+            let response = send_request(
+                &socket,
+                WalkRequest {
+                    client_epoch: Some(epoch),
+                    body: WalkRequestBody::BranchLive {
+                        reason,
+                        allow_provenance_record,
+                    },
+                },
+            )
+            .await?;
+            print_response(&response, format, with_version)?;
+            response_result(response)
+        }
         Prototype1StateWalkSubcommand::Status(command) => {
             let format = command.format;
             let with_version = command.with_version;

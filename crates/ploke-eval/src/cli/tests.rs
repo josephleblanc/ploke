@@ -1829,6 +1829,93 @@ fn loop_walk_show_delta_command_parses() {
 }
 
 #[test]
+fn loop_walk_replay_and_back_commands_parse() {
+    let replay = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "replay",
+        "--repo-root",
+        "/tmp/parent",
+        "--index",
+        "7",
+        "--tail",
+        "3",
+    ])
+    .expect("loop walk replay should parse");
+
+    match replay.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Replay(cmd) => {
+                assert_eq!(cmd.control.repo_root, Some(PathBuf::from("/tmp/parent")));
+                assert_eq!(cmd.index, Some(7));
+                assert_eq!(cmd.tail, 3);
+            }
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+
+    let back = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "back",
+        "--steps",
+        "2",
+        "--tail",
+        "4",
+    ])
+    .expect("loop walk back should parse");
+
+    match back.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Back(cmd) => {
+                assert_eq!(cmd.steps, 2);
+                assert_eq!(cmd.tail, 4);
+            }
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
+fn loop_walk_branch_live_requires_explicit_provenance_capability() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "branch-live",
+        "--repo-root",
+        "/tmp/parent",
+        "--reason",
+        "debug from historical cursor",
+        "--allow",
+        "provenance-record",
+    ])
+    .expect("loop walk branch-live should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::BranchLive(cmd) => {
+                assert_eq!(cmd.control.repo_root, Some(PathBuf::from("/tmp/parent")));
+                assert_eq!(cmd.reason, "debug from historical cursor");
+                assert_eq!(cmd.allow, vec!["provenance-record".to_string()]);
+            }
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
 fn loop_walk_serve_no_ttl_command_parses() {
     let parsed = Cli::try_parse_from([
         "ploke-eval",

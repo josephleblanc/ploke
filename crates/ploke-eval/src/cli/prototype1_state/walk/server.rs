@@ -133,6 +133,32 @@ impl WalkServer {
                     .delta_report(DeltaRenderStyle { verbose, color }),
                 self.epoch.clone(),
             )),
+            WalkRequestBody::Replay { index, tail } => self
+                .controller
+                .replay_report(index, tail)
+                .map(|message| WalkResponse::ok(phase, message, self.epoch.clone())),
+            WalkRequestBody::ReplayBack { steps, tail } => self
+                .controller
+                .replay_back(steps, tail)
+                .map(|message| WalkResponse::ok(phase, message, self.epoch.clone())),
+            WalkRequestBody::ReplayForward { steps, tail } => self
+                .controller
+                .replay_forward(steps, tail)
+                .map(|message| WalkResponse::ok(phase, message, self.epoch.clone())),
+            WalkRequestBody::BranchLive {
+                reason,
+                allow_provenance_record,
+            } => match self.ensure_epoch_guard(request.client_epoch.as_ref()) {
+                Ok(()) if allow_provenance_record => self
+                    .controller
+                    .record_replay_branch(reason)
+                    .map(|message| WalkResponse::ok(phase, message, self.epoch.clone())),
+                Ok(()) => Err(PrepareError::InvalidBatchSelection {
+                    detail: "walk branch-live writes a provenance record; rerun with `--allow provenance-record`"
+                        .to_string(),
+                }),
+                Err(error) => Err(error),
+            },
             WalkRequestBody::Stop => Ok(WalkResponse::ok(
                 phase,
                 "walk server stopping",

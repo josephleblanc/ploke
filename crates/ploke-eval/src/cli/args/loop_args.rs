@@ -164,6 +164,14 @@ pub enum Prototype1StateWalkSubcommand {
     Files(Prototype1StateWalkControlCommand),
     /// Show current in-memory walk state or the last step delta.
     Show(Prototype1StateWalkShowCommand),
+    /// Show or jump within the read-only historical replay cursor.
+    Replay(Prototype1StateWalkReplayCommand),
+    /// Move the read-only historical replay cursor backward without undoing side effects.
+    Back(Prototype1StateWalkReplayMoveCommand),
+    /// Move the read-only historical replay cursor forward.
+    Forward(Prototype1StateWalkReplayMoveCommand),
+    /// Record explicit provenance before branching from replay toward live work.
+    BranchLive(Prototype1StateWalkBranchLiveCommand),
     /// Check whether the local walk server is alive.
     Status(Prototype1StateWalkControlCommand),
     /// Stop the local walk server.
@@ -245,6 +253,48 @@ pub struct Prototype1StateWalkShowDeltaCommand {
     /// Disable ANSI colors in table output.
     #[arg(long)]
     pub no_color: bool,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkReplayCommand {
+    #[command(flatten)]
+    pub control: Prototype1StateWalkControlCommand,
+
+    /// Jump to this zero-based durable journal index before rendering.
+    #[arg(long)]
+    pub index: Option<usize>,
+
+    /// Number of trailing journal entries to render.
+    #[arg(long, default_value_t = 12)]
+    pub tail: usize,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkReplayMoveCommand {
+    #[command(flatten)]
+    pub control: Prototype1StateWalkControlCommand,
+
+    /// Number of replay entries to move.
+    #[arg(long, default_value_t = 1)]
+    pub steps: usize,
+
+    /// Number of trailing journal entries to render.
+    #[arg(long, default_value_t = 12)]
+    pub tail: usize,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkBranchLiveCommand {
+    #[command(flatten)]
+    pub control: Prototype1StateWalkControlCommand,
+
+    /// Operator reason for leaving read-only historical replay.
+    #[arg(long)]
+    pub reason: String,
+
+    /// Explicitly admit writing a replay-to-live provenance record.
+    #[arg(long = "allow", value_name = "CAPABILITY", value_parser = ["provenance-record"])]
+    pub allow: Vec<String>,
 }
 
 #[derive(Debug, Clone, Parser)]

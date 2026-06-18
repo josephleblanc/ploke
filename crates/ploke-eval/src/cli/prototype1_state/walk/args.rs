@@ -7,8 +7,10 @@ use std::{path::Path, time::Duration};
 
 use crate::{
     cli::{
-        Prototype1StateWalkControlCommand, Prototype1StateWalkServeCommand,
-        Prototype1StateWalkStartCommand, Prototype1StateWalkStepCommand,
+        Prototype1StateWalkBranchLiveCommand, Prototype1StateWalkControlCommand,
+        Prototype1StateWalkReplayCommand, Prototype1StateWalkReplayMoveCommand,
+        Prototype1StateWalkServeCommand, Prototype1StateWalkStartCommand,
+        Prototype1StateWalkStepCommand,
     },
     spec::PrepareError,
 };
@@ -73,6 +75,34 @@ impl Prototype1StateWalkControlCommand {
     /// Borrow the optional repo root used for socket discovery.
     pub(crate) fn repo_root_ref(&self) -> Option<&Path> {
         self.repo_root.as_deref()
+    }
+}
+
+impl Prototype1StateWalkReplayCommand {
+    /// Borrow the optional repo root used for socket discovery.
+    pub(crate) fn repo_root_ref(&self) -> Option<&Path> {
+        self.control.repo_root_ref()
+    }
+}
+
+impl Prototype1StateWalkReplayMoveCommand {
+    /// Borrow the optional repo root used for socket discovery.
+    pub(crate) fn repo_root_ref(&self) -> Option<&Path> {
+        self.control.repo_root_ref()
+    }
+}
+
+impl Prototype1StateWalkBranchLiveCommand {
+    /// Borrow the optional repo root used for socket discovery.
+    pub(crate) fn repo_root_ref(&self) -> Option<&Path> {
+        self.control.repo_root_ref()
+    }
+
+    /// Whether this branch provenance request admits writing a provenance record.
+    pub(crate) fn allow_provenance_record(&self) -> bool {
+        self.allow
+            .iter()
+            .any(|capability| capability == "provenance-record")
     }
 }
 

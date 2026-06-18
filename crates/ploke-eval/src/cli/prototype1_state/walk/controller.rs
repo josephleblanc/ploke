@@ -16,7 +16,10 @@ use crate::{
     ResolvedCampaignConfig,
     cli::prototype1_state::{
         cli_facing::{Prototype1StateRunShape, campaign_manifest_path_for_id},
-        driver::reconstruct::{self, EarlyState},
+        driver::{
+            reconstruct::{self, EarlyState},
+            replay::ReplayCursor,
+        },
         identity::{load_parent_identity_optional, parent_identity_path},
         journal::prototype1_transition_journal_path,
         live_edges::{
@@ -57,6 +60,7 @@ pub(crate) struct WalkController {
     files: WalkFiles,
     last_delta: Option<WalkAdvanceReport>,
     reconstruction: Option<WalkReconstruction>,
+    replay: Option<ReplayCursor>,
 }
 
 /// Owned typestate value currently held by the server.
@@ -212,6 +216,7 @@ impl WalkController {
             files,
             last_delta: None,
             reconstruction: None,
+            replay: None,
         }
     }
 
@@ -259,6 +264,51 @@ impl WalkController {
             .unwrap_or_else(|| "no previous step delta; run `walk step` first".to_string())
     }
 
+    /// Render or position the read-only historical replay cursor.
+    pub(crate) fn replay_report(
+        &mut self,
+        index: Option<usize>,
+        tail: usize,
+    ) -> Result<String, PrepareError> {
+        let cursor = self.replay_cursor_mut()?;
+        if let Some(index) = index {
+            cursor.jump(index)?;
+        }
+        Ok(cursor.render(tail))
+    }
+
+    /// Move the read-only replay cursor backward without mutating durable state.
+    pub(crate) fn replay_back(
+        &mut self,
+        steps: usize,
+        tail: usize,
+    ) -> Result<String, PrepareError> {
+        let cursor = self.replay_cursor_mut()?;
+        cursor.back(steps);
+        Ok(cursor.render(tail))
+    }
+
+    /// Move the read-only replay cursor forward without mutating durable state.
+    pub(crate) fn replay_forward(
+        &mut self,
+        steps: usize,
+        tail: usize,
+    ) -> Result<String, PrepareError> {
+        let cursor = self.replay_cursor_mut()?;
+        cursor.forward(steps);
+        Ok(cursor.render(tail))
+    }
+
+    /// Record explicit provenance before a future replay-to-live branch.
+    pub(crate) fn record_replay_branch(&mut self, reason: String) -> Result<String, PrepareError> {
+        let cursor = self.replay_cursor_mut()?;
+        let path = cursor.write_branch_provenance(reason)?;
+        Ok(format!(
+            "replay-to-live provenance recorded at {}\nno live worktree or provider call was started by this command",
+            path.display()
+        ))
+    }
+
     /// Reset the current in-memory walk without stopping the server process.
     pub(crate) fn reset(&mut self) -> WalkPhase {
         let previous = self.phase();
@@ -267,6 +317,7 @@ impl WalkController {
         self.files.reset(&self.repo_root);
         self.last_delta = None;
         self.reconstruction = None;
+        self.replay = None;
         self.record(format!("reset: cleared in-memory walk from {previous}"));
         self.phase()
     }
@@ -294,6 +345,7 @@ impl WalkController {
         self.steps = 0;
         self.last_delta = None;
         self.reconstruction = None;
+        self.replay = None;
 
         let reconstruct_matches_request = match requested_campaign.as_ref() {
             Some(campaign_id) => load_parent_identity_optional(&repo_root)?
@@ -617,6 +669,13 @@ impl WalkController {
         }
     }
 
+    fn replay_cursor_mut(&mut self) -> Result<&mut ReplayCursor, PrepareError> {
+        if self.replay.is_none() {
+            self.replay = Some(ReplayCursor::load(&self.repo_root)?);
+        }
+        Ok(self.replay.as_mut().expect("replay cursor was just loaded"))
+    }
+
     fn record(&mut self, entry: impl Into<String>) {
         self.previous.push(entry.into());
     }
@@ -663,7 +722,9 @@ impl WalkState {
             EarlyState::R10(r10) => WalkState::R10(r10),
             EarlyState::R12(r12) => WalkState::R12(r12),
             EarlyState::R13a(r13a) => WalkState::R13a(r13a),
+            EarlyState::R13b(r13b) => WalkState::R13b(r13b),
             EarlyState::R14a(r14a) => WalkState::R14a(r14a),
+            EarlyState::R14b(r14b) => WalkState::R14b(r14b),
         }
     }
 }
@@ -681,7 +742,9 @@ fn phase_for_early(state: &EarlyState) -> WalkPhase {
         EarlyState::R10(_) => WalkPhase::R10,
         EarlyState::R12(_) => WalkPhase::R12,
         EarlyState::R13a(_) => WalkPhase::R13a,
+        EarlyState::R13b(_) => WalkPhase::R13b,
         EarlyState::R14a(_) => WalkPhase::R14a,
+        EarlyState::R14b(_) => WalkPhase::R14b,
     }
 }
 
