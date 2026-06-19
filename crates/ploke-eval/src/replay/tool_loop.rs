@@ -263,6 +263,7 @@ pub(crate) trait ToolLoopStore {
     fn read_step(&self, session_id: &str, step_index: usize) -> Result<ToolLoopStep, PrepareError>;
     fn write_resume(&self, resume: &ToolLoopResume) -> Result<(), PrepareError>;
     fn read_resume(&self, session_id: &str) -> Result<ToolLoopResume, PrepareError>;
+    fn list_sessions(&self) -> Result<Vec<ToolLoopSession>, PrepareError>;
 }
 
 #[derive(Debug, Clone)]
@@ -299,6 +300,12 @@ impl FsToolLoopStore {
         self.steps_dir(session_id)
             .join(format!("{step_index:04}.json"))
     }
+
+    pub(crate) fn latest_session(&self) -> Result<Option<ToolLoopSession>, PrepareError> {
+        let mut sessions = self.list_sessions()?;
+        sessions.sort_by(|left, right| left.session_id.cmp(&right.session_id));
+        Ok(sessions.pop())
+    }
 }
 
 impl ToolLoopStore for FsToolLoopStore {
@@ -333,6 +340,31 @@ impl ToolLoopStore for FsToolLoopStore {
         let resume: ToolLoopResume = read_json(&self.resume_path(session_id))?;
         resume.validate_schema()?;
         Ok(resume)
+    }
+
+    fn list_sessions(&self) -> Result<Vec<ToolLoopSession>, PrepareError> {
+        if !self.root.is_dir() {
+            return Ok(Vec::new());
+        }
+        let entries = fs::read_dir(&self.root).map_err(|source| PrepareError::ReadManifest {
+            path: self.root.clone(),
+            source,
+        })?;
+        let mut sessions = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|source| PrepareError::ReadManifest {
+                path: self.root.clone(),
+                source,
+            })?;
+            let path = entry.path().join("session.json");
+            if path.is_file() {
+                let session: ToolLoopSession = read_json(&path)?;
+                session.validate_schema()?;
+                sessions.push(session);
+            }
+        }
+        sessions.sort_by(|left, right| left.session_id.cmp(&right.session_id));
+        Ok(sessions)
     }
 }
 
@@ -548,6 +580,14 @@ mod tests {
         assert_eq!(loaded_session.session_id, "session-1");
         assert_eq!(loaded_session.outer_phase.as_deref(), Some("r10"));
         assert_eq!(loaded_session.status, ToolLoopStatus::Paused);
+        let sessions = store.list_sessions().expect("list sessions");
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].session_id, "session-1");
+        let latest = store
+            .latest_session()
+            .expect("latest session")
+            .expect("session exists");
+        assert_eq!(latest.session_id, "session-1");
 
         let loaded_step = store.read_step("session-1", 0).expect("read step");
         assert_eq!(loaded_step.step_index, 0);

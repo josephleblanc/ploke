@@ -14,8 +14,9 @@ use tokio::net::UnixStream;
 
 use crate::{
     cli::{
-        InspectOutputFormat, Prototype1StateWalkShowSubcommand, Prototype1StateWalkStartCommand,
-        Prototype1StateWalkSubcommand, Prototype1StateWalkUseCommand,
+        InspectOutputFormat, Prototype1StateWalkLlmSubcommand, Prototype1StateWalkShowSubcommand,
+        Prototype1StateWalkStartCommand, Prototype1StateWalkSubcommand,
+        Prototype1StateWalkUseCommand,
     },
     spec::PrepareError,
 };
@@ -112,6 +113,30 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
                     }
                 }
                 None => WalkRequestBody::Show,
+            };
+            let response = send_request(
+                &socket,
+                WalkRequest {
+                    client_epoch: None,
+                    body,
+                },
+            )
+            .await?;
+            print_response(&response, format, with_version)?;
+            response_result(response)
+        }
+        Prototype1StateWalkSubcommand::Llm(command) => {
+            let format = command.control.format;
+            let with_version = command.control.with_version;
+            let socket_override = command.control.socket.clone();
+            let (repo_root, socket) =
+                args::resolve_socket(command.control.repo_root_ref(), socket_override.as_deref())?;
+            ensure_server(&repo_root, &socket, default_idle_ttl()).await?;
+            let body = match command.command {
+                Prototype1StateWalkLlmSubcommand::Show(show) => WalkRequestBody::LlmShow {
+                    session_id: show.session_id,
+                    step: show.step,
+                },
             };
             let response = send_request(
                 &socket,

@@ -164,6 +164,8 @@ pub enum Prototype1StateWalkSubcommand {
     Files(Prototype1StateWalkControlCommand),
     /// Show current in-memory walk state or the last step delta.
     Show(Prototype1StateWalkShowCommand),
+    /// Inspect nested LLM/tool-loop debugger checkpoints.
+    Llm(Prototype1StateWalkLlmCommand),
     /// Summarize durable campaign progress without contacting the walk server.
     Summary(Prototype1StateWalkSummaryCommand),
     /// Show or jump within the read-only historical replay cursor.
@@ -263,6 +265,36 @@ pub struct Prototype1StateWalkShowDeltaCommand {
     /// Disable ANSI colors in table output.
     #[arg(long)]
     pub no_color: bool,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Inspect nested LLM/tool-loop debugger checkpoints",
+    after_help = "Examples:\n  ploke-eval loop walk llm show\n  ploke-eval loop walk llm show --session-id tool-loop-...\n  ploke-eval loop walk llm show --step 3\n\nThis is a read-only checkpoint inspection surface. It does not call providers, execute tools, mutate the checkout, or advance the outer typestate walk."
+)]
+pub struct Prototype1StateWalkLlmCommand {
+    #[command(flatten)]
+    pub control: Prototype1StateWalkControlCommand,
+
+    #[command(subcommand)]
+    pub command: Prototype1StateWalkLlmSubcommand,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum Prototype1StateWalkLlmSubcommand {
+    /// Show the latest or selected LLM/tool-loop checkpoint.
+    Show(Prototype1StateWalkLlmShowCommand),
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkLlmShowCommand {
+    /// Specific tool-loop session id to inspect. Defaults to the latest session.
+    #[arg(long)]
+    pub session_id: Option<String>,
+
+    /// Specific response step to inspect. Defaults to the latest recorded step.
+    #[arg(long)]
+    pub step: Option<usize>,
 }
 
 #[derive(Debug, Clone, Parser)]

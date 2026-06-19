@@ -983,6 +983,88 @@ pub struct ChatSession<R: Router> {
     pub cancel_rx: watch::Receiver<CancelChatToken>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ChatDebugStep {
+    pub session_id: Uuid,
+    pub parent_id: Uuid,
+    pub assistant_message_id: Uuid,
+    pub step_index: usize,
+    pub request_messages: Vec<RequestMessage>,
+    pub response: OpenAiResponse,
+    pub tool_calls: Vec<ToolCall>,
+    pub tool_results: Vec<ChatDebugToolResult>,
+    pub final_messages: Vec<RequestMessage>,
+    pub terminal: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum ChatDebugToolResult {
+    Completed {
+        call_id: ploke_core::ArcStr,
+        tool: Option<String>,
+        content: String,
+        ui_payload: Option<ToolUiPayload>,
+    },
+    Failed {
+        call_id: ploke_core::ArcStr,
+        tool: Option<String>,
+        error: String,
+        ui_payload: Option<ToolUiPayload>,
+    },
+}
+
+pub trait ChatDebugSink: Send + Sync {
+    fn record_step(&self, step: ChatDebugStep) -> Result<(), String>;
+}
+
+#[cfg(feature = "test_harness")]
+static CHAT_DEBUG_SINK: std::sync::OnceLock<std::sync::Mutex<Option<Arc<dyn ChatDebugSink>>>> =
+    std::sync::OnceLock::new();
+
+#[cfg(feature = "test_harness")]
+pub struct ChatDebugSinkGuard;
+
+#[cfg(feature = "test_harness")]
+impl Drop for ChatDebugSinkGuard {
+    fn drop(&mut self) {
+        clear_chat_debug_sink();
+    }
+}
+
+#[cfg(feature = "test_harness")]
+pub fn install_chat_debug_sink(sink: Arc<dyn ChatDebugSink>) -> ChatDebugSinkGuard {
+    let mutex = CHAT_DEBUG_SINK.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *guard = Some(sink);
+    ChatDebugSinkGuard
+}
+
+#[cfg(feature = "test_harness")]
+pub fn clear_chat_debug_sink() {
+    if let Some(mutex) = CHAT_DEBUG_SINK.get() {
+        let mut guard = mutex
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = None;
+    }
+}
+
+#[cfg(feature = "test_harness")]
+fn active_chat_debug_sink() -> Option<Arc<dyn ChatDebugSink>> {
+    let mutex = CHAT_DEBUG_SINK.get()?;
+    let guard = mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard.clone()
+}
+
+#[cfg(not(feature = "test_harness"))]
+fn active_chat_debug_sink() -> Option<Arc<dyn ChatDebugSink>> {
+    None
+}
+
 async fn wait_for_cancel_signal(cancel_rx: &mut watch::Receiver<CancelChatToken>) {
     loop {
         if matches!(*cancel_rx.borrow(), CancelChatToken::Close) {
@@ -1057,6 +1139,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
     let mut loop_state = ChatLoopState::default();
     let model_key = req.model_key.clone();
     let session_id = Uuid::new_v4();
+    let debug_sink = active_chat_debug_sink();
     let mut report = ChatSessionReport::new(
         session_id,
         assistant_message_id,
@@ -1097,6 +1180,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                 "Outgoing chat request (truncated when large)"
             );
         }
+        let request_snapshot = req.core.messages.clone();
         let calibration_input = R::calibration_input(&req);
         let mut provider_timing = R::resolve_provider_timing(calibration_input);
         provider_timing.attempt_timeout = AttemptTimeout::fixed(http_timeout);
@@ -1322,6 +1406,8 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
         capture_response_for_tap(chain_index, &full_response);
 
         let token_usage = full_response.usage;
+        let mut debug_calls = Vec::new();
+        let mut debug_results = Vec::new();
         if let Some(resp_tokens) = token_usage {
             state_cmd_tx
                 .send(StateCommand::UpdateContextTokens {
@@ -1396,6 +1482,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                 } else {
                     None
                 };
+                debug_calls = calls.clone();
                 req.core
                     .messages
                     .push(RequestMessage::new_assistant_with_tool_calls(
@@ -1446,6 +1533,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                         ).await;
                     }
                 };
+                debug_results = debug_tool_results(&results, &call_name_by_id);
 
                 // 3) append tool results into req.core.messages for the next step
                 for (call_id, tool_json_result) in results.into_iter() {
@@ -1636,6 +1724,21 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                 } else if let Some(prompt) = continue_info.system_prompt {
                     req.core.messages.push(RequestMessage::new_system(prompt));
                 }
+                record_chat_debug_step(
+                    &debug_sink,
+                    ChatDebugStep {
+                        session_id,
+                        parent_id,
+                        assistant_message_id,
+                        step_index: chain_index,
+                        request_messages: request_snapshot,
+                        response: full_response.clone(),
+                        tool_calls: debug_calls,
+                        tool_results: debug_results,
+                        final_messages: req.core.messages.clone(),
+                        terminal: false,
+                    },
+                );
                 continue;
             }
             FinishDecision::Return(result) => match result {
@@ -1683,6 +1786,21 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                             })
                             .await;
                     }
+                    record_chat_debug_step(
+                        &debug_sink,
+                        ChatDebugStep {
+                            session_id,
+                            parent_id,
+                            assistant_message_id,
+                            step_index: chain_index,
+                            request_messages: request_snapshot,
+                            response: full_response.clone(),
+                            tool_calls: debug_calls,
+                            tool_results: debug_results,
+                            final_messages: req.core.messages.clone(),
+                            terminal: true,
+                        },
+                    );
                     report.outcome = SessionOutcome::Completed;
                     report.commit_phase = commit_phase;
                     report.attempts = attempts;
@@ -1725,6 +1843,21 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                         &loop_error,
                     )
                     .await;
+                    record_chat_debug_step(
+                        &debug_sink,
+                        ChatDebugStep {
+                            session_id,
+                            parent_id,
+                            assistant_message_id,
+                            step_index: chain_index,
+                            request_messages: request_snapshot,
+                            response: full_response.clone(),
+                            tool_calls: debug_calls,
+                            tool_results: debug_results,
+                            final_messages: req.core.messages.clone(),
+                            terminal: true,
+                        },
+                    );
                     report.record_error(loop_error.clone());
                     report.outcome = SessionOutcome::Exhausted {
                         error_id: loop_error.error_id,
@@ -1760,6 +1893,50 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
     report.commit_phase = commit_phase;
     report.attempts = attempts;
     report
+}
+
+fn debug_tool_results(
+    results: &[(
+        ploke_core::ArcStr,
+        Result<ToolCallUiResult, ToolCallUiError>,
+    )],
+    call_name_by_id: &HashMap<ploke_core::ArcStr, ploke_core::ArcStr>,
+) -> Vec<ChatDebugToolResult> {
+    results
+        .iter()
+        .map(|(call_id, result)| {
+            let tool = call_name_by_id
+                .get(call_id)
+                .map(std::string::ToString::to_string);
+            match result {
+                Ok(result) => ChatDebugToolResult::Completed {
+                    call_id: call_id.clone(),
+                    tool,
+                    content: result.content.clone(),
+                    ui_payload: result.ui_payload.clone(),
+                },
+                Err(error) => ChatDebugToolResult::Failed {
+                    call_id: call_id.clone(),
+                    tool,
+                    error: error.error.clone(),
+                    ui_payload: error.ui_payload.clone(),
+                },
+            }
+        })
+        .collect()
+}
+
+fn record_chat_debug_step(debug_sink: &Option<Arc<dyn ChatDebugSink>>, step: ChatDebugStep) {
+    let Some(sink) = debug_sink else {
+        return;
+    };
+    if let Err(error) = sink.record_step(step) {
+        tracing::warn!(
+            target = "chat-loop",
+            error,
+            "chat debug sink failed to persist response checkpoint"
+        );
+    }
 }
 
 fn emit_full_response_trace(
@@ -2309,6 +2486,22 @@ mod tests {
 
     const TEST_ROUTER_URL: &str = "http://127.0.0.1:39181/v1/chat/completions";
     const TEST_ROUTER_URL_ALT: &str = "http://127.0.0.1:39182/v1/chat/completions";
+
+    #[derive(Clone, Default)]
+    struct DebugSteps(StdArc<StdMutex<Vec<ChatDebugStep>>>);
+
+    impl DebugSteps {
+        fn snapshot(&self) -> Vec<ChatDebugStep> {
+            self.0.lock().expect("debug steps lock").clone()
+        }
+    }
+
+    impl ChatDebugSink for DebugSteps {
+        fn record_step(&self, step: ChatDebugStep) -> Result<(), String> {
+            self.0.lock().expect("debug steps lock").push(step);
+            Ok(())
+        }
+    }
 
     #[derive(Clone, Default)]
     struct TraceLines(StdArc<StdMutex<Vec<String>>>);
@@ -3472,6 +3665,8 @@ mod tests {
         let _request_tap = install_request_tap(request_tx);
         let (response_tx, response_rx) = std::sync::mpsc::channel();
         let _response_tap = install_response_tap(response_tx);
+        let debug_steps = DebugSteps::default();
+        let _debug_guard = install_chat_debug_sink(StdArc::new(debug_steps.clone()));
 
         let report = run_chat_session(
             ChatSession {
@@ -3519,6 +3714,17 @@ mod tests {
         );
         assert_eq!(captured_responses.len(), 1);
         assert_eq!(captured_responses[0].index(), 0);
+        let steps = debug_steps.snapshot();
+        assert_eq!(
+            steps.len(),
+            1,
+            "debug sink should pause after one response step"
+        );
+        assert_eq!(steps[0].step_index, 0);
+        assert_eq!(steps[0].tool_calls.len(), 1);
+        assert_eq!(steps[0].tool_results.len(), 1);
+        assert!(!steps[0].terminal);
+        assert_eq!(steps[0].final_messages.len(), 3);
         assert_eq!(report.final_messages.len(), 3);
         assert!(
             report

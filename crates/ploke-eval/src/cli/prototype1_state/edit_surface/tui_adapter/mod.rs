@@ -29,6 +29,7 @@ mod attempt;
 pub(crate) mod driver;
 pub(crate) mod harness;
 mod harness_io;
+mod tool_loop_debug;
 mod tui_bridge;
 #[cfg(test)]
 use tui_bridge::run_headless;

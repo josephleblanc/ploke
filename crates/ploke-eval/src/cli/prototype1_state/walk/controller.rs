@@ -37,6 +37,10 @@ use crate::{
         },
     },
     layout::prototype1_monitor_target_file,
+    replay::tool_loop::{
+        FsToolLoopStore, ToolLoopOutcome, ToolLoopResult, ToolLoopStatus, ToolLoopStore,
+        WorkspaceState,
+    },
     spec::PrepareError,
 };
 
@@ -257,6 +261,126 @@ impl WalkController {
     /// Render tracked output files for the current walk.
     pub(crate) fn files_report(&self) -> String {
         self.files.render()
+    }
+
+    /// Render nested LLM/tool-loop checkpoint state without mutating the walk.
+    pub(crate) fn llm_report(
+        &self,
+        session_id: Option<&str>,
+        step: Option<usize>,
+    ) -> Result<String, PrepareError> {
+        let store = self.tool_loop_store()?;
+        let session = match session_id {
+            Some(session_id) => store.read_session(session_id)?,
+            None => store
+                .latest_session()?
+                .ok_or_else(|| PrepareError::DatabaseSetup {
+                    phase: "walk_llm_show",
+                    detail: format!(
+                        "no tool-loop checkpoint sessions found under '{}'",
+                        store.root().display()
+                    ),
+                })?,
+        };
+        let resume = store.read_resume(&session.session_id).ok();
+        let selected = match step {
+            Some(step) => Some(step),
+            None => resume
+                .as_ref()
+                .and_then(|resume| resume.next_step.checked_sub(1)),
+        };
+        let loaded = selected
+            .map(|step| {
+                store
+                    .read_step(&session.session_id, step)
+                    .map(|record| (step, record))
+            })
+            .transpose()?;
+
+        let mut lines = Vec::new();
+        lines.push("llm tool-loop checkpoint".to_string());
+        lines.push(format!("root: {}", store.root().display()));
+        lines.push(format!("session: {}", session.session_id));
+        lines.push(format!("status: {}", status_label(session.status)));
+        lines.push(format!("harness: {}", session.harness));
+        lines.push(format!("workspace: {}", session.workspace.display()));
+        if let Some(model) = session.model.as_deref() {
+            lines.push(format!("model: {model}"));
+        }
+        if let Some(phase) = session.outer_phase.as_deref() {
+            lines.push(format!("outer_phase: {phase}"));
+        }
+        if let Some(edge) = session.outer_edge.as_deref() {
+            lines.push(format!("outer_edge: {edge}"));
+        }
+        match resume {
+            Some(resume) => {
+                lines.push(format!("next_step: {}", resume.next_step));
+                lines.push(format!(
+                    "resume_messages: {}",
+                    resume.request_messages.len()
+                ));
+                lines.push(format!("resume_terminal: {}", resume.terminal));
+            }
+            None => lines.push("resume: (missing)".to_string()),
+        }
+        match loaded {
+            Some((step, record)) => {
+                lines.push(format!("step: {step}"));
+                lines.push(format!(
+                    "response_index: {}",
+                    record.response.response_index().get()
+                ));
+                lines.push(format!("outcome: {}", outcome_label(&record.outcome)));
+                lines.push(format!("tool_requests: {}", record.tool_requests.len()));
+                lines.push(format!("tool_results: {}", record.tool_results.len()));
+                for result in record.tool_results.iter().take(6) {
+                    lines.push(format!("  {}", result_label(result)));
+                }
+                if record.tool_results.len() > 6 {
+                    lines.push(format!(
+                        "  ... {} more result(s)",
+                        record.tool_results.len() - 6
+                    ));
+                }
+                lines.push(format!("terminal: {}", record.terminal));
+                lines.push(format!(
+                    "workspace_before: {}",
+                    workspace_label(&record.workspace_before)
+                ));
+                lines.push(format!(
+                    "workspace_after: {}",
+                    workspace_label(&record.workspace_after)
+                ));
+            }
+            None => lines.push("step: (none recorded yet)".to_string()),
+        }
+        Ok(lines.join("\n"))
+    }
+
+    fn tool_loop_store(&self) -> Result<FsToolLoopStore, PrepareError> {
+        let identity = load_parent_identity_optional(&self.repo_root)?.ok_or_else(|| {
+            PrepareError::DatabaseSetup {
+                phase: "walk_llm_store",
+                detail: format!(
+                    "parent identity is required to locate campaign tool-loop checkpoints: {}",
+                    parent_identity_path(&self.repo_root).display()
+                ),
+            }
+        })?;
+        let manifest = campaign_manifest_path_for_id(identity.campaign_id())?;
+        let campaign_dir = manifest
+            .parent()
+            .ok_or_else(|| PrepareError::DatabaseSetup {
+                phase: "walk_llm_store",
+                detail: format!(
+                    "campaign manifest '{}' has no parent directory",
+                    manifest.display()
+                ),
+            })?;
+        Ok(FsToolLoopStore::new(
+            campaign_dir.join("prototype1/debug/tool-loop"),
+        ))
     }
 
     /// Render the last successful step delta, if any.
@@ -1045,6 +1169,67 @@ fn indent_lines(value: &str, spaces: usize) -> Vec<String> {
         .collect()
 }
 
+fn status_label(status: ToolLoopStatus) -> &'static str {
+    match status {
+        ToolLoopStatus::Active => "active",
+        ToolLoopStatus::Paused => "paused",
+        ToolLoopStatus::Terminal => "terminal",
+        ToolLoopStatus::Abandoned => "abandoned",
+    }
+}
+
+fn outcome_label(outcome: &ToolLoopOutcome) -> String {
+    match outcome {
+        ToolLoopOutcome::ToolCalls {
+            count,
+            finish_reason,
+            ..
+        } => format!("tool_calls count={count} finish_reason={finish_reason}"),
+        ToolLoopOutcome::Content { .. } => "content".to_string(),
+    }
+}
+
+fn result_label(result: &ToolLoopResult) -> String {
+    match result {
+        ToolLoopResult::Completed(record) => format!(
+            "completed tool={} call_id={} latency_ms={}",
+            record.tool, record.call_id, record.latency_ms
+        ),
+        ToolLoopResult::Failed(record) => format!(
+            "failed tool={} call_id={} latency_ms={} error={}",
+            record.tool.as_deref().unwrap_or("-"),
+            record.call_id,
+            record.latency_ms,
+            preview_inline(&record.error)
+        ),
+    }
+}
+
+fn workspace_label(state: &WorkspaceState) -> String {
+    match (state.dirty_paths.is_empty(), state.error.as_deref()) {
+        (true, None) => "clean".to_string(),
+        (dirty_empty, error) => {
+            let mut parts = Vec::new();
+            if !dirty_empty {
+                parts.push(format!("dirty_paths={}", state.dirty_paths.len()));
+            }
+            if let Some(error) = error {
+                parts.push(format!("error={}", preview_inline(error)));
+            }
+            parts.join(" ")
+        }
+    }
+}
+
+fn preview_inline(value: &str) -> String {
+    let mut preview = value.replace('\n', " ");
+    if preview.len() > 120 {
+        preview.truncate(117);
+        preview.push_str("...");
+    }
+    preview
+}
+
 #[derive(Default)]
 struct WalkPrevious {
     entries: Vec<String>,
@@ -1223,4 +1408,110 @@ fn preview_file(path: &Path) -> String {
         return format!("{header}\n(empty)");
     }
     format!("{header}\n{}", String::from_utf8_lossy(&bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+
+    use ploke_llm::manager::{RecordedResponse, RequestMessage, ResponseIndex};
+    use ploke_records::llm_response::RawFullResponseRecord;
+    use uuid::Uuid;
+
+    use crate::{
+        cli::prototype1_state::identity::{ParentIdentity, write_parent_identity},
+        replay::tool_loop::{
+            FsToolLoopStore, ToolLoopResume, ToolLoopSession, ToolLoopStep, ToolLoopStore,
+            WorkspaceState,
+        },
+        test_support::env_guard_os,
+    };
+
+    fn content_response(index: usize) -> RawFullResponseRecord {
+        let response = serde_json::from_value(serde_json::json!({
+            "id": format!("chatcmpl-walk-llm-{index}"),
+            "choices": [{
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {
+                    "role": "assistant",
+                    "content": "done"
+                }
+            }],
+            "created": index,
+            "model": "test/model",
+            "object": "chat.completion"
+        }))
+        .expect("response json");
+        RawFullResponseRecord {
+            assistant_message_id: Uuid::from_u128(0xbbbbbbbb_bbbb_bbbb_bbbb_bbbbbbbbbbbb),
+            recorded_response: RecordedResponse {
+                response_index: ResponseIndex::new(index),
+                response,
+            },
+        }
+    }
+
+    #[test]
+    fn llm_report_reads_latest_tool_loop_checkpoint() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let eval_home = tmp.path().join("eval-home");
+        let _guard = env_guard_os(vec![("PLOKE_EVAL_HOME", OsString::from(&eval_home))]);
+        let campaign_id = CampaignId::from("campaign-walk-llm-test");
+        let repo_root = tmp.path().join("repo");
+        fs::create_dir_all(&repo_root).expect("repo dir");
+        let identity = ParentIdentity::root_bootstrap(
+            campaign_id.clone(),
+            "node-root",
+            "instance-1",
+            "branch-1",
+            None,
+        );
+        write_parent_identity(&repo_root, &identity).expect("parent identity");
+
+        let store = FsToolLoopStore::new(
+            eval_home
+                .join("campaigns")
+                .join(campaign_id.as_str())
+                .join("prototype1/debug/tool-loop"),
+        );
+        let mut session = ToolLoopSession::new("session-1", "headless-tui", repo_root.clone());
+        session.outer_phase = Some("r10".to_string());
+        session.outer_edge = Some("r10->r11".to_string());
+        session.status = ToolLoopStatus::Paused;
+        store.write_session(&session).expect("write session");
+        let step = ToolLoopStep::new(
+            "session-1",
+            0,
+            vec![RequestMessage::new_user("hello".to_string())],
+            content_response(0),
+            WorkspaceState::default(),
+            WorkspaceState::default(),
+        )
+        .expect("step");
+        store.write_step(&step).expect("write step");
+        let mut resume = ToolLoopResume::new(
+            "session-1",
+            Uuid::from_u128(0xbbbbbbbb_bbbb_bbbb_bbbb_bbbbbbbbbbbb).to_string(),
+            "parent-1",
+            "request-1",
+            vec![RequestMessage::new_user("hello".to_string())],
+        );
+        resume.next_step = 1;
+        store.write_resume(&resume).expect("write resume");
+
+        let report = WalkController::new(repo_root)
+            .llm_report(None, None)
+            .expect("llm report");
+
+        assert!(report.contains("llm tool-loop checkpoint"));
+        assert!(report.contains("session: session-1"));
+        assert!(report.contains("status: paused"));
+        assert!(report.contains("outer_edge: r10->r11"));
+        assert!(report.contains("step: 0"));
+        assert!(report.contains("response_index: 0"));
+        assert!(report.contains("outcome: content"));
+        assert!(report.contains("workspace_after: clean"));
+    }
 }

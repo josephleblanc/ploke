@@ -107,6 +107,13 @@ pub(crate) enum WalkRequestBody {
         /// Use ANSI colors in the human-readable message.
         color: bool,
     },
+    /// Inspect nested LLM/tool-loop debugger checkpoints without mutating state.
+    LlmShow {
+        /// Specific checkpoint session id. Defaults to latest session.
+        session_id: Option<String>,
+        /// Specific provider-response step. Defaults to latest recorded step.
+        step: Option<usize>,
+    },
     /// Show or position the read-only historical replay cursor.
     Replay {
         /// Optional absolute journal entry index to select.

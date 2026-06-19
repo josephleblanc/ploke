@@ -13,8 +13,9 @@ pub(crate) mod events;
 pub use crate::llm::manager::session::CancelChatToken;
 #[cfg(feature = "test_harness")]
 pub use crate::llm::manager::session::{
-    RequestTapGuard, ResponseTapGuard, clear_recorded_response_tape, clear_request_tap,
-    clear_response_tap, install_recorded_response_prefix_then_live,
+    ChatDebugSink, ChatDebugSinkGuard, ChatDebugStep, ChatDebugToolResult, RequestTapGuard,
+    ResponseTapGuard, clear_chat_debug_sink, clear_recorded_response_tape, clear_request_tap,
+    clear_response_tap, install_chat_debug_sink, install_recorded_response_prefix_then_live,
     install_recorded_response_prefix_then_live_steps, install_recorded_response_tape,
     install_request_tap, install_response_tap,
 };

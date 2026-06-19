@@ -133,6 +133,10 @@ impl WalkServer {
                     .delta_report(DeltaRenderStyle { verbose, color }),
                 self.epoch.clone(),
             )),
+            WalkRequestBody::LlmShow { session_id, step } => self
+                .controller
+                .llm_report(session_id.as_deref(), step)
+                .map(|message| WalkResponse::ok(phase, message, self.epoch.clone())),
             WalkRequestBody::Replay { index, tail } => self
                 .controller
                 .replay_report(index, tail)
