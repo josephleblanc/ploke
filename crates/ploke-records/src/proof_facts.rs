@@ -5,6 +5,9 @@
 //! proof, admit History, grant Crown authority, or execute build/proc-macro
 //! code. Proof checking and authority transitions remain outside this module.
 
+use std::collections::HashMap;
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 pub const PROOF_FACT_SCHEMA_VERSION: &str = "ploke-proof-facts.v1";
@@ -58,6 +61,26 @@ string_id! {
 string_id! {
     /// Identity for one semantic effect seed attached to a call site.
     EffectSeedId
+}
+
+string_id! {
+    /// Identity for one normalized call edge.
+    CallEdgeId
+}
+
+string_id! {
+    /// Identity for one expanded item linked to an expansion boundary.
+    ExpandedItemId
+}
+
+string_id! {
+    /// Identity for one authority proof fact.
+    AuthorityFactId
+}
+
+string_id! {
+    /// Identity for one active validation blocker.
+    BlockerFactId
 }
 
 /// Source coordinate retained for proof facts and diagnostics.
@@ -147,6 +170,10 @@ pub enum ProofBlockerReason {
     ExternalCommandSummaryMissing,
     BuildScriptExecutionBlocked,
     ProcMacroExecutionBlocked,
+    CanonicalIdentityMismatch,
+    SchemaVersionMismatch,
+    AuthorityEvidenceMissing,
+    ProcessLifetimeEvidenceMissing,
 }
 
 /// Whether an evidence row may participate in proof, navigation, or both.
@@ -372,6 +399,7 @@ impl CallResolutionFact {
             ResolutionState::CandidateSet
                 | ResolutionState::Ambiguous
                 | ResolutionState::Unresolved
+                | ResolutionState::ExternallySummarized
                 | ResolutionState::Blocked
         ) || self.blocking_reason.is_some()
     }
@@ -431,6 +459,93 @@ impl EffectSeedFact {
             && self.blocker_if_unresolved
             && resolution.is_proof_blocking()
     }
+
+    pub fn requires_process_lifetime_evidence(&self) -> bool {
+        matches!(
+            self.effect_class,
+            EffectClass::OperatingSystemProcessCreate | EffectClass::OperatingSystemProcessReplace
+        )
+    }
+}
+
+/// Normalized executable call site with build-domain provenance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallSiteFact {
+    pub schema_version: String,
+    pub call_site_id: CallSiteId,
+    pub build_domain_id: BuildDomainId,
+    pub caller_def_id: DefinitionId,
+    pub source_span: SourceSpanRecord,
+    #[serde(default)]
+    pub evidence_use: EvidenceUse,
+}
+
+/// Normalized call edge from one call site to one resolved or candidate callee.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CallEdgeFact {
+    pub schema_version: String,
+    pub call_edge_id: CallEdgeId,
+    pub call_site_id: CallSiteId,
+    pub caller_def_id: DefinitionId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub callee_def_id: Option<DefinitionId>,
+    pub resolution_state: ResolutionState,
+    #[serde(default)]
+    pub evidence_use: EvidenceUse,
+}
+
+/// Expanded item linked to the boundary that produced or summarized it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExpandedItemFact {
+    pub schema_version: String,
+    pub expanded_item_id: ExpandedItemId,
+    pub boundary_id: ExpansionBoundaryId,
+    pub build_domain_id: BuildDomainId,
+    pub definition_id: DefinitionId,
+    pub source_span: SourceSpanRecord,
+    #[serde(default)]
+    pub evidence_use: EvidenceUse,
+}
+
+/// Authority-related fact. This is a passive label and cannot grant authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthorityFact {
+    pub schema_version: String,
+    pub authority_fact_id: AuthorityFactId,
+    pub build_domain_id: BuildDomainId,
+    pub source_span: SourceSpanRecord,
+    pub authority_term: AuthorityTerm,
+    pub status: ObligationStatus,
+    #[serde(default)]
+    pub evidence_use: EvidenceUse,
+}
+
+impl AuthorityFact {
+    /// Passive record vocabulary is inert and can never grant authority.
+    pub fn record_deserialization_grants_authority(&self) -> bool {
+        false
+    }
+}
+
+/// Active validation blocker produced from normalized proof facts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProofBlockerFact {
+    pub schema_version: String,
+    pub blocker_id: BlockerFactId,
+    pub reason: ProofBlockerReason,
+    pub status: ObligationStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_domain_id: Option<BuildDomainId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_site_id: Option<CallSiteId>,
+    pub detail: String,
+}
+
+/// Active validation report over a proof fact set.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProofValidationReport {
+    pub status: ObligationStatus,
+    pub blockers: Vec<ProofBlockerFact>,
 }
 
 /// JSONL-friendly wrapper for stable proof facts.
@@ -439,6 +554,531 @@ impl EffectSeedFact {
 pub enum ProofFactRecord {
     BuildDomain(BuildDomainFact),
     ExpansionBoundary(ExpansionBoundaryFact),
+    ExpandedItem(ExpandedItemFact),
+    CallSite(CallSiteFact),
+    CallEdge(CallEdgeFact),
     CallResolution(CallResolutionFact),
     EffectSeed(EffectSeedFact),
+    Authority(AuthorityFact),
+    ProofBlocker(ProofBlockerFact),
+}
+
+impl ProofFactRecord {
+    fn schema_version(&self) -> &str {
+        match self {
+            Self::BuildDomain(fact) => &fact.schema_version,
+            Self::ExpansionBoundary(fact) => &fact.schema_version,
+            Self::ExpandedItem(fact) => &fact.schema_version,
+            Self::CallSite(fact) => &fact.schema_version,
+            Self::CallEdge(fact) => &fact.schema_version,
+            Self::CallResolution(fact) => &fact.schema_version,
+            Self::EffectSeed(fact) => &fact.schema_version,
+            Self::Authority(fact) => &fact.schema_version,
+            Self::ProofBlocker(fact) => &fact.schema_version,
+        }
+    }
+}
+
+/// Error produced while importing proof facts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProofFactImportError {
+    pub line: usize,
+    pub message: String,
+}
+
+impl fmt::Display for ProofFactImportError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "proof fact import failed on line {}: {}",
+            self.line, self.message
+        )
+    }
+}
+
+impl std::error::Error for ProofFactImportError {}
+
+/// Imported proof facts plus an active validation/checker entrypoint.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProofFactSet {
+    records: Vec<ProofFactRecord>,
+}
+
+impl ProofFactSet {
+    /// Import proof facts from already deserialized passive records.
+    pub fn from_records(records: Vec<ProofFactRecord>) -> Result<Self, ProofFactImportError> {
+        Ok(Self { records })
+    }
+
+    /// Import newline-delimited proof facts.
+    pub fn from_jsonl(input: &str) -> Result<Self, ProofFactImportError> {
+        let mut records = Vec::new();
+        for (index, line) in input.lines().enumerate() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let record = serde_json::from_str::<ProofFactRecord>(line).map_err(|source| {
+                ProofFactImportError {
+                    line: index + 1,
+                    message: source.to_string(),
+                }
+            })?;
+            records.push(record);
+        }
+        Self::from_records(records)
+    }
+
+    /// Passive records retained by the import path.
+    pub fn records(&self) -> &[ProofFactRecord] {
+        &self.records
+    }
+
+    /// Iterate authority facts without granting authority.
+    pub fn authority_facts(&self) -> impl Iterator<Item = &AuthorityFact> {
+        self.records.iter().filter_map(|record| match record {
+            ProofFactRecord::Authority(fact) => Some(fact),
+            _ => None,
+        })
+    }
+
+    /// Active validation path used by checker scaffolding.
+    pub fn validate_for_proof(&self) -> ProofValidationReport {
+        let mut blockers = Vec::new();
+        let mut build_domains: HashMap<BuildDomainId, &BuildDomainFact> = HashMap::new();
+        let mut boundaries: HashMap<ExpansionBoundaryId, &ExpansionBoundaryFact> = HashMap::new();
+        let mut expanded_items: HashMap<ExpandedItemId, &ExpandedItemFact> = HashMap::new();
+        let mut call_sites: HashMap<CallSiteId, &CallSiteFact> = HashMap::new();
+        let mut proof_call_sites: HashMap<CallSiteId, &CallSiteFact> = HashMap::new();
+        let mut call_edges: HashMap<CallEdgeId, &CallEdgeFact> = HashMap::new();
+        let mut resolutions: HashMap<CallSiteId, &CallResolutionFact> = HashMap::new();
+        let mut effect_seeds: HashMap<EffectSeedId, &EffectSeedFact> = HashMap::new();
+        let mut authority_facts: HashMap<AuthorityFactId, &AuthorityFact> = HashMap::new();
+
+        for record in &self.records {
+            match record {
+                ProofFactRecord::BuildDomain(fact) => {
+                    if let Some(existing) = build_domains.insert(fact.build_domain_id.clone(), fact)
+                    {
+                        if existing != fact {
+                            blockers.push(blocker(
+                                ProofBlockerReason::CanonicalIdentityMismatch,
+                                ObligationStatus::Blocked,
+                                Some(fact.build_domain_id.clone()),
+                                None,
+                                "duplicate build domain id has conflicting payload".to_string(),
+                            ));
+                        }
+                    }
+                }
+                ProofFactRecord::ExpansionBoundary(fact) => {
+                    if let Some(existing) = boundaries.insert(fact.boundary_id.clone(), fact) {
+                        if existing != fact {
+                            blockers.push(blocker(
+                                ProofBlockerReason::CanonicalIdentityMismatch,
+                                ObligationStatus::Blocked,
+                                Some(fact.build_domain_id.clone()),
+                                None,
+                                "duplicate expansion boundary id has conflicting payload"
+                                    .to_string(),
+                            ));
+                        }
+                    }
+                }
+                ProofFactRecord::ExpandedItem(fact) => {
+                    if let Some(existing) =
+                        expanded_items.insert(fact.expanded_item_id.clone(), fact)
+                    {
+                        if existing != fact {
+                            blockers.push(blocker(
+                                ProofBlockerReason::CanonicalIdentityMismatch,
+                                ObligationStatus::Blocked,
+                                Some(fact.build_domain_id.clone()),
+                                None,
+                                "duplicate expanded item id has conflicting payload".to_string(),
+                            ));
+                        }
+                    }
+                }
+                ProofFactRecord::CallSite(fact) => {
+                    if let Some(existing) = call_sites.insert(fact.call_site_id.clone(), fact) {
+                        if existing != fact {
+                            blockers.push(blocker(
+                                ProofBlockerReason::CanonicalIdentityMismatch,
+                                ObligationStatus::Blocked,
+                                Some(fact.build_domain_id.clone()),
+                                Some(fact.call_site_id.clone()),
+                                "duplicate call site id has conflicting payload".to_string(),
+                            ));
+                        }
+                    }
+                    if fact.evidence_use.can_satisfy_proof() {
+                        proof_call_sites.insert(fact.call_site_id.clone(), fact);
+                    }
+                }
+                ProofFactRecord::CallEdge(fact) => {
+                    if let Some(existing) = call_edges.insert(fact.call_edge_id.clone(), fact) {
+                        if existing != fact {
+                            blockers.push(blocker(
+                                ProofBlockerReason::CanonicalIdentityMismatch,
+                                ObligationStatus::Blocked,
+                                None,
+                                Some(fact.call_site_id.clone()),
+                                "duplicate call edge id has conflicting payload".to_string(),
+                            ));
+                        }
+                    }
+                }
+                ProofFactRecord::CallResolution(fact) => {
+                    if let Some(existing) = resolutions.insert(fact.call_site_id.clone(), fact) {
+                        if existing != fact {
+                            blockers.push(blocker(
+                                ProofBlockerReason::CanonicalIdentityMismatch,
+                                ObligationStatus::Blocked,
+                                None,
+                                Some(fact.call_site_id.clone()),
+                                "duplicate call resolution id has conflicting payload".to_string(),
+                            ));
+                        }
+                    }
+                }
+                ProofFactRecord::EffectSeed(fact) => {
+                    if let Some(existing) = effect_seeds.insert(fact.effect_seed_id.clone(), fact) {
+                        if existing != fact {
+                            blockers.push(blocker(
+                                ProofBlockerReason::CanonicalIdentityMismatch,
+                                ObligationStatus::Blocked,
+                                None,
+                                Some(fact.call_site_id.clone()),
+                                "duplicate effect seed id has conflicting payload".to_string(),
+                            ));
+                        }
+                    }
+                }
+                ProofFactRecord::Authority(fact) => {
+                    if let Some(existing) =
+                        authority_facts.insert(fact.authority_fact_id.clone(), fact)
+                    {
+                        if existing != fact {
+                            blockers.push(blocker(
+                                ProofBlockerReason::CanonicalIdentityMismatch,
+                                ObligationStatus::Blocked,
+                                Some(fact.build_domain_id.clone()),
+                                None,
+                                "duplicate authority fact id has conflicting payload".to_string(),
+                            ));
+                        }
+                    }
+                }
+                ProofFactRecord::ProofBlocker(_) => {}
+            }
+        }
+
+        for record in &self.records {
+            if record.schema_version() != PROOF_FACT_SCHEMA_VERSION {
+                blockers.push(blocker(
+                    ProofBlockerReason::SchemaVersionMismatch,
+                    ObligationStatus::Blocked,
+                    None,
+                    None,
+                    format!("unsupported proof fact schema {}", record.schema_version()),
+                ));
+            }
+
+            match record {
+                ProofFactRecord::BuildDomain(_) => {}
+                ProofFactRecord::ExpansionBoundary(fact) => {
+                    if !build_domains.contains_key(&fact.build_domain_id) {
+                        blockers.push(blocker(
+                            ProofBlockerReason::CanonicalIdentityMismatch,
+                            ObligationStatus::Blocked,
+                            Some(fact.build_domain_id.clone()),
+                            None,
+                            "expansion boundary references missing build domain".to_string(),
+                        ));
+                    }
+                    if fact.is_proof_blocking() {
+                        blockers.push(blocker(
+                            fact.blocking_reason
+                                .unwrap_or(ProofBlockerReason::MacroExpansionNotAvailable),
+                            ObligationStatus::Blocked,
+                            Some(fact.build_domain_id.clone()),
+                            None,
+                            "expansion boundary blocks proof".to_string(),
+                        ));
+                    }
+                }
+                ProofFactRecord::ExpandedItem(fact) => {
+                    if fact.evidence_use.can_satisfy_proof() {
+                        match boundaries.get(&fact.boundary_id) {
+                            Some(boundary) if boundary.build_domain_id != fact.build_domain_id => {
+                                blockers.push(blocker(
+                                    ProofBlockerReason::CanonicalIdentityMismatch,
+                                    ObligationStatus::Blocked,
+                                    Some(fact.build_domain_id.clone()),
+                                    None,
+                                    "expanded item and expansion boundary use different build domains"
+                                        .to_string(),
+                                ));
+                            }
+                            Some(_) if !build_domains.contains_key(&fact.build_domain_id) => {
+                                blockers.push(blocker(
+                                    ProofBlockerReason::CanonicalIdentityMismatch,
+                                    ObligationStatus::Blocked,
+                                    Some(fact.build_domain_id.clone()),
+                                    None,
+                                    "expanded item references missing build domain".to_string(),
+                                ));
+                            }
+                            None => blockers.push(blocker(
+                                ProofBlockerReason::CanonicalIdentityMismatch,
+                                ObligationStatus::Blocked,
+                                Some(fact.build_domain_id.clone()),
+                                None,
+                                "expanded item references missing expansion boundary".to_string(),
+                            )),
+                            _ => {}
+                        }
+                    }
+                }
+                ProofFactRecord::CallSite(fact) => {
+                    if fact.evidence_use.can_satisfy_proof()
+                        && !build_domains.contains_key(&fact.build_domain_id)
+                    {
+                        blockers.push(blocker(
+                            ProofBlockerReason::CanonicalIdentityMismatch,
+                            ObligationStatus::Blocked,
+                            Some(fact.build_domain_id.clone()),
+                            Some(fact.call_site_id.clone()),
+                            "call site references missing build domain".to_string(),
+                        ));
+                    }
+                }
+                ProofFactRecord::CallEdge(fact) => {
+                    if fact.evidence_use.can_satisfy_proof() {
+                        match proof_call_sites.get(&fact.call_site_id) {
+                            Some(call_site) if call_site.caller_def_id != fact.caller_def_id => {
+                                blockers.push(blocker(
+                                    ProofBlockerReason::CanonicalIdentityMismatch,
+                                    ObligationStatus::Blocked,
+                                    Some(call_site.build_domain_id.clone()),
+                                    Some(fact.call_site_id.clone()),
+                                    "call edge caller does not match proof call site caller"
+                                        .to_string(),
+                                ));
+                            }
+                            None => blockers.push(blocker(
+                                ProofBlockerReason::CanonicalIdentityMismatch,
+                                ObligationStatus::Blocked,
+                                None,
+                                Some(fact.call_site_id.clone()),
+                                "proof call edge references missing or navigation-only call site"
+                                    .to_string(),
+                            )),
+                            _ => {}
+                        }
+                        if !fact.resolution_state.can_satisfy_proof(fact.evidence_use)
+                            || fact.callee_def_id.is_none()
+                        {
+                            blockers.push(blocker(
+                                ProofBlockerReason::TypeResolutionMissing,
+                                ObligationStatus::Blocked,
+                                None,
+                                Some(fact.call_site_id.clone()),
+                                "proof call edge is not resolved to a callee definition"
+                                    .to_string(),
+                            ));
+                        }
+                        if let Some(resolution) = resolutions.get(&fact.call_site_id) {
+                            if let (Some(edge_callee), Some(resolved_callee)) =
+                                (&fact.callee_def_id, &resolution.resolved_def_id)
+                            {
+                                if edge_callee != resolved_callee {
+                                    blockers.push(blocker(
+                                        ProofBlockerReason::CanonicalIdentityMismatch,
+                                        ObligationStatus::Blocked,
+                                        None,
+                                        Some(fact.call_site_id.clone()),
+                                        "call edge callee does not match call resolution callee"
+                                            .to_string(),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+                ProofFactRecord::CallResolution(fact) => {
+                    if !proof_call_sites.contains_key(&fact.call_site_id) {
+                        blockers.push(blocker(
+                            ProofBlockerReason::CanonicalIdentityMismatch,
+                            ObligationStatus::Blocked,
+                            None,
+                            Some(fact.call_site_id.clone()),
+                            "call resolution references missing or navigation-only proof call site"
+                                .to_string(),
+                        ));
+                    }
+                    let resolution_blocker = match fact.resolution_state {
+                        ResolutionState::ExternallySummarized => Some(
+                            fact.blocking_reason
+                                .unwrap_or(ProofBlockerReason::ExternalDependencySummaryMissing),
+                        ),
+                        ResolutionState::Resolved if fact.resolved_def_id.is_none() => {
+                            Some(ProofBlockerReason::TypeResolutionMissing)
+                        }
+                        _ if fact.is_proof_blocking() => Some(
+                            fact.blocking_reason
+                                .unwrap_or(ProofBlockerReason::TypeResolutionMissing),
+                        ),
+                        _ => None,
+                    };
+                    if let Some(reason) = resolution_blocker {
+                        blockers.push(blocker(
+                            reason,
+                            ObligationStatus::Blocked,
+                            None,
+                            Some(fact.call_site_id.clone()),
+                            "call resolution cannot satisfy proof".to_string(),
+                        ));
+                    }
+                }
+                ProofFactRecord::EffectSeed(fact) => {
+                    if fact.evidence_use.can_satisfy_proof()
+                        && !proof_call_sites.contains_key(&fact.call_site_id)
+                    {
+                        blockers.push(blocker(
+                            ProofBlockerReason::CanonicalIdentityMismatch,
+                            ObligationStatus::Blocked,
+                            None,
+                            Some(fact.call_site_id.clone()),
+                            "effect seed references missing or navigation-only proof call site"
+                                .to_string(),
+                        ));
+                    }
+                    if fact.evidence_use.can_satisfy_proof() && fact.blocker_if_unresolved {
+                        match resolutions.get(&fact.call_site_id) {
+                            Some(resolution) if fact.blocks_proof_if_unresolved(resolution) => {
+                                blockers.push(blocker(
+                                    if resolution.resolution_state
+                                        == ResolutionState::ExternallySummarized
+                                    {
+                                        resolution.blocking_reason.unwrap_or(
+                                            ProofBlockerReason::ExternalDependencySummaryMissing,
+                                        )
+                                    } else {
+                                        resolution
+                                            .blocking_reason
+                                            .unwrap_or(ProofBlockerReason::TypeResolutionMissing)
+                                    },
+                                    ObligationStatus::Blocked,
+                                    None,
+                                    Some(fact.call_site_id.clone()),
+                                    "proof effect is attached to unresolved call".to_string(),
+                                ));
+                            }
+                            None => blockers.push(blocker(
+                                ProofBlockerReason::TypeResolutionMissing,
+                                ObligationStatus::Blocked,
+                                None,
+                                Some(fact.call_site_id.clone()),
+                                "proof effect has no call resolution".to_string(),
+                            )),
+                            _ => {}
+                        }
+                    }
+                    if fact.evidence_use.can_satisfy_proof()
+                        && fact.requires_process_lifetime_evidence()
+                    {
+                        blockers.push(blocker(
+                            ProofBlockerReason::ProcessLifetimeEvidenceMissing,
+                            ObligationStatus::Blocked,
+                            None,
+                            Some(fact.call_site_id.clone()),
+                            "process effect has no runtime-bounded lifetime or admitted successor handoff evidence"
+                                .to_string(),
+                        ));
+                    }
+                }
+                ProofFactRecord::Authority(fact) => {
+                    if fact.evidence_use.can_satisfy_proof()
+                        && !build_domains.contains_key(&fact.build_domain_id)
+                    {
+                        blockers.push(blocker(
+                            ProofBlockerReason::CanonicalIdentityMismatch,
+                            ObligationStatus::Blocked,
+                            Some(fact.build_domain_id.clone()),
+                            None,
+                            "authority fact references missing build domain".to_string(),
+                        ));
+                    }
+                    if fact.evidence_use.can_satisfy_proof() && !fact.status.satisfies_proof() {
+                        blockers.push(blocker(
+                            ProofBlockerReason::AuthorityEvidenceMissing,
+                            fact.status,
+                            Some(fact.build_domain_id.clone()),
+                            None,
+                            "authority fact is not admitted".to_string(),
+                        ));
+                    }
+                }
+                ProofFactRecord::ProofBlocker(fact) => blockers.push(fact.clone()),
+            }
+        }
+
+        deduplicate_blocker_ids(&mut blockers);
+
+        let status = if blockers
+            .iter()
+            .any(|blocker| blocker.status.is_terminal_failure())
+        {
+            ObligationStatus::Rejected
+        } else if blockers.is_empty() {
+            ObligationStatus::Admitted
+        } else {
+            ObligationStatus::Blocked
+        };
+
+        ProofValidationReport { status, blockers }
+    }
+}
+
+fn blocker(
+    reason: ProofBlockerReason,
+    status: ObligationStatus,
+    build_domain_id: Option<BuildDomainId>,
+    call_site_id: Option<CallSiteId>,
+    detail: String,
+) -> ProofBlockerFact {
+    let build_domain_component = build_domain_id
+        .as_ref()
+        .map_or_else(|| "bd:<none>".to_string(), |id| format!("bd:{id}"));
+    let call_site_component = call_site_id
+        .as_ref()
+        .map_or_else(|| "call:<none>".to_string(), |id| format!("call:{id}"));
+
+    ProofBlockerFact {
+        schema_version: PROOF_FACT_SCHEMA_VERSION.to_string(),
+        blocker_id: BlockerFactId(format!(
+            "blocker:{reason:?}:{build_domain_component}:{call_site_component}"
+        )),
+        reason,
+        status,
+        build_domain_id,
+        call_site_id,
+        detail,
+    }
+}
+
+fn deduplicate_blocker_ids(blockers: &mut [ProofBlockerFact]) {
+    let mut reserved = HashMap::<String, ()>::new();
+    for blocker in blockers {
+        let base = blocker.blocker_id.0.clone();
+        let mut candidate = base.clone();
+        let mut suffix = 1usize;
+        while reserved.contains_key(&candidate) {
+            candidate = format!("{base}:duplicate:{suffix}");
+            suffix += 1;
+        }
+        blocker.blocker_id = BlockerFactId(candidate.clone());
+        reserved.insert(candidate, ());
+    }
 }
