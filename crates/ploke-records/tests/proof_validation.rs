@@ -1,10 +1,12 @@
 use ploke_records::proof_facts::{
     AuthorityFact, AuthorityFactId, AuthorityTerm, BlockerFactId, BuildDomainFact, BuildDomainId,
-    CallEdgeFact, CallEdgeId, CallResolutionFact, CallSiteFact, CallSiteId, DefinitionId,
+    BuildEvidenceSnapshot, BuildRustcInvocationCapture, CallEdgeFact, CallEdgeId,
+    CallResolutionFact, CallSiteFact, CallSiteId, CfgDomainFact, CfgDomainId, DefinitionId,
     EffectClass, EffectSeedFact, EffectSeedId, EvidenceUse, ExpandedItemFact, ExpandedItemId,
     ExpansionBoundaryFact, ExpansionBoundaryId, ExpansionBoundaryKind, ExpansionState,
     ObligationStatus, PROOF_FACT_SCHEMA_VERSION, ProofBlockerFact, ProofBlockerReason,
-    ProofFactRecord, ProofFactSet, ResolutionState, SourceSpanRecord, TargetKind,
+    ProofFactRecord, ProofFactSet, ResolutionState, RustcInvocationFact, SourceSpanRecord,
+    TargetKind,
 };
 
 fn span(file: &str) -> SourceSpanRecord {
@@ -17,12 +19,11 @@ fn span(file: &str) -> SourceSpanRecord {
     }
 }
 
-fn build_domain(id: &str) -> BuildDomainFact {
-    BuildDomainFact {
-        schema_version: PROOF_FACT_SCHEMA_VERSION.to_string(),
+fn build_snapshot(id: &str) -> BuildEvidenceSnapshot {
+    BuildEvidenceSnapshot {
         build_domain_id: BuildDomainId(id.to_string()),
-        cargo_metadata_hash: "sha256:metadata".to_string(),
-        cargo_lock_hash: "sha256:lock".to_string(),
+        cargo_metadata_json: br#"{"packages":[{"name":"ploke-eval"}]}"#.to_vec(),
+        cargo_lock: b"version = 4\n[[package]]\nname = \"ploke-eval\"\n".to_vec(),
         package_id: "path+file:///ploke#ploke-eval@0.1.0".to_string(),
         target_kind: TargetKind::Library,
         target_name: "ploke-eval".to_string(),
@@ -30,14 +31,21 @@ fn build_domain(id: &str) -> BuildDomainFact {
         target_triple: "x86_64-unknown-linux-gnu".to_string(),
         host_triple: "x86_64-unknown-linux-gnu".to_string(),
         profile: "dev".to_string(),
-        features_hash: "sha256:features".to_string(),
-        active_cfg_hash: "sha256:cfg".to_string(),
+        selected_features: vec!["default".to_string()],
+        active_cfg_atoms: vec![
+            "debug_assertions".to_string(),
+            "target_os=linux".to_string(),
+        ],
         rustc_version: "rustc 1.96.0".to_string(),
         rustc_commit_hash: Some("ac68faa20".to_string()),
         extractor_version: "ploke-rustc-extractor 0.1.0".to_string(),
         proof_policy_version: "detached-process-proof.v1".to_string(),
         immutable_surface_digest: Some("sha256:surface".to_string()),
     }
+}
+
+fn build_domain(id: &str) -> BuildDomainFact {
+    build_snapshot(id).build_domain_fact()
 }
 
 fn call_site(id: &str, build_domain_id: &str) -> CallSiteFact {
@@ -64,6 +72,25 @@ fn expansion_boundary(id: &str, build_domain_id: &str) -> ExpansionBoundaryFact 
         proc_macro_crate_id: None,
         build_script_package_id: None,
     }
+}
+
+fn cfg_domain(id: &str, build_domain_id: &str) -> CfgDomainFact {
+    let mut fact = build_snapshot(build_domain_id).cfg_domain_fact();
+    fact.cfg_domain_id = CfgDomainId(id.to_string());
+    fact
+}
+
+fn rustc_invocation(id: &str, build_domain_id: &str) -> RustcInvocationFact {
+    build_snapshot(build_domain_id).rustc_invocation_fact(BuildRustcInvocationCapture {
+        invocation_id: id.to_string(),
+        rustc_program: "rustc".to_string(),
+        working_directory: "/workspace/ploke".to_string(),
+        args: vec!["--crate-name".to_string(), "ploke_eval".to_string()],
+        environment: Vec::new(),
+        response_file_contents: None,
+        status: ObligationStatus::Admitted,
+        blocking_reason: None,
+    })
 }
 
 #[test]
@@ -452,6 +479,8 @@ fn validator_blocks_duplicate_effect_seed_id_conflicts() {
 fn validator_emits_distinct_blocker_ids_for_same_build_domain_expanded_items() {
     let records = vec![
         ProofFactRecord::BuildDomain(build_domain("bd:main")),
+        ProofFactRecord::CfgDomain(cfg_domain("cfg:main", "bd:main")),
+        ProofFactRecord::RustcInvocation(rustc_invocation("rustc:main", "bd:main")),
         ProofFactRecord::ExpandedItem(ExpandedItemFact {
             schema_version: PROOF_FACT_SCHEMA_VERSION.to_string(),
             expanded_item_id: ExpandedItemId("expanded:item:a".to_string()),
@@ -490,6 +519,8 @@ fn validator_avoids_blocker_id_suffix_collision_with_imported_blocker_ids() {
     let base = "blocker:CanonicalIdentityMismatch:bd:bd:main:call:<none>";
     let records = vec![
         ProofFactRecord::BuildDomain(build_domain("bd:main")),
+        ProofFactRecord::CfgDomain(cfg_domain("cfg:main", "bd:main")),
+        ProofFactRecord::RustcInvocation(rustc_invocation("rustc:main", "bd:main")),
         ProofFactRecord::ExpandedItem(ExpandedItemFact {
             schema_version: PROOF_FACT_SCHEMA_VERSION.to_string(),
             expanded_item_id: ExpandedItemId("expanded:item:a".to_string()),
@@ -657,4 +688,85 @@ fn validator_blocks_resolved_process_create_without_lifetime_or_handoff_evidence
             .iter()
             .any(|blocker| blocker.reason == ProofBlockerReason::ProcessLifetimeEvidenceMissing)
     );
+}
+
+#[test]
+fn validator_blocks_cfg_domain_hash_mismatch_against_build_domain() {
+    let mut cfg = cfg_domain("cfg:main", "bd:main");
+    cfg.active_cfg_hash = "sha256:other-cfg".to_string();
+    let records = vec![
+        ProofFactRecord::BuildDomain(build_domain("bd:main")),
+        ProofFactRecord::CfgDomain(cfg),
+    ];
+
+    let imported = ProofFactSet::from_records(records).expect("import proof facts");
+    let report = imported.validate_for_proof();
+
+    assert_eq!(report.status, ObligationStatus::Blocked);
+    assert!(
+        report
+            .blockers
+            .iter()
+            .any(|blocker| blocker.reason == ProofBlockerReason::CfgDomainNotMaterialized)
+    );
+}
+
+#[test]
+fn validator_blocks_cfg_domain_atoms_that_do_not_match_claimed_hash() {
+    let mut cfg = cfg_domain("cfg:main", "bd:main");
+    cfg.cfg_atoms = vec!["target_os=windows".to_string()];
+    let records = vec![
+        ProofFactRecord::BuildDomain(build_domain("bd:main")),
+        ProofFactRecord::CfgDomain(cfg),
+        ProofFactRecord::RustcInvocation(rustc_invocation("rustc:main", "bd:main")),
+    ];
+
+    let imported = ProofFactSet::from_records(records).expect("import proof facts");
+    let report = imported.validate_for_proof();
+
+    assert_eq!(report.status, ObligationStatus::Blocked);
+    assert!(
+        report
+            .blockers
+            .iter()
+            .any(|blocker| blocker.reason == ProofBlockerReason::CfgDomainNotMaterialized)
+    );
+}
+
+#[test]
+fn validator_blocks_rustc_invocation_without_admitted_argument_capture() {
+    let mut invocation = rustc_invocation("rustc:main", "bd:main");
+    invocation.status = ObligationStatus::Blocked;
+    invocation.blocking_reason = Some(ProofBlockerReason::RustcInvocationEvidenceMissing);
+    let records = vec![
+        ProofFactRecord::BuildDomain(build_domain("bd:main")),
+        ProofFactRecord::RustcInvocation(invocation),
+    ];
+
+    let imported = ProofFactSet::from_records(records).expect("import proof facts");
+    let report = imported.validate_for_proof();
+
+    assert_eq!(report.status, ObligationStatus::Blocked);
+    assert!(
+        report
+            .blockers
+            .iter()
+            .any(|blocker| blocker.reason == ProofBlockerReason::RustcInvocationEvidenceMissing)
+    );
+}
+
+#[test]
+fn validator_accepts_admitted_build_evidence_scaffold_without_raw_expanded_source() {
+    let records = vec![
+        ProofFactRecord::BuildDomain(build_domain("bd:main")),
+        ProofFactRecord::CfgDomain(cfg_domain("cfg:main", "bd:main")),
+        ProofFactRecord::RustcInvocation(rustc_invocation("rustc:main", "bd:main")),
+        ProofFactRecord::ExpansionBoundary(expansion_boundary("boundary:macro:1", "bd:main")),
+    ];
+
+    let imported = ProofFactSet::from_records(records).expect("import proof facts");
+    let report = imported.validate_for_proof();
+
+    assert_eq!(report.status, ObligationStatus::Admitted);
+    assert!(report.blockers.is_empty());
 }

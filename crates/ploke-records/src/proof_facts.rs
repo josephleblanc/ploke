@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 pub const PROOF_FACT_SCHEMA_VERSION: &str = "ploke-proof-facts.v1";
 
@@ -36,6 +37,16 @@ macro_rules! string_id {
 string_id! {
     /// Identity for one admitted Cargo/rustc proof boundary.
     BuildDomainId
+}
+
+string_id! {
+    /// Identity for one materialized cfg domain within a build domain.
+    CfgDomainId
+}
+
+string_id! {
+    /// Identity for one captured rustc invocation within a build domain.
+    RustcInvocationId
 }
 
 string_id! {
@@ -133,6 +144,182 @@ pub struct BuildDomainFact {
     pub immutable_surface_digest: Option<String>,
 }
 
+/// Materialized conditional-compilation domain for a build domain.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CfgDomainFact {
+    pub schema_version: String,
+    pub cfg_domain_id: CfgDomainId,
+    pub build_domain_id: BuildDomainId,
+    pub active_cfg_hash: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cfg_atoms: Vec<String>,
+    pub status: ObligationStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocking_reason: Option<ProofBlockerReason>,
+}
+
+/// Captured rustc invocation evidence for one build domain.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RustcInvocationFact {
+    pub schema_version: String,
+    pub invocation_id: RustcInvocationId,
+    pub build_domain_id: BuildDomainId,
+    pub rustc_program: String,
+    pub rustc_version: String,
+    pub working_directory: String,
+    pub argument_vector_hash: String,
+    pub environment_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub response_file_hash: Option<String>,
+    pub status: ObligationStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocking_reason: Option<ProofBlockerReason>,
+    #[serde(default)]
+    pub evidence_use: EvidenceUse,
+}
+
+/// Captured inputs for one Cargo/rustc build proof boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildEvidenceSnapshot {
+    pub build_domain_id: BuildDomainId,
+    pub cargo_metadata_json: Vec<u8>,
+    pub cargo_lock: Vec<u8>,
+    pub package_id: String,
+    pub target_kind: TargetKind,
+    pub target_name: String,
+    pub target_root: String,
+    pub target_triple: String,
+    pub host_triple: String,
+    pub profile: String,
+    pub selected_features: Vec<String>,
+    pub active_cfg_atoms: Vec<String>,
+    pub rustc_version: String,
+    pub rustc_commit_hash: Option<String>,
+    pub extractor_version: String,
+    pub proof_policy_version: String,
+    pub immutable_surface_digest: Option<String>,
+}
+
+/// Captured rustc invocation input. Raw arguments are reduced to stable hashes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildRustcInvocationCapture {
+    pub invocation_id: String,
+    pub rustc_program: String,
+    pub working_directory: String,
+    pub args: Vec<String>,
+    pub environment: Vec<(String, String)>,
+    pub response_file_contents: Option<Vec<u8>>,
+    pub status: ObligationStatus,
+    pub blocking_reason: Option<ProofBlockerReason>,
+}
+
+/// Captured macro/build/proc-macro/include boundary input.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpansionBoundaryCapture {
+    pub boundary_id: ExpansionBoundaryId,
+    pub boundary_kind: ExpansionBoundaryKind,
+    pub source_span: SourceSpanRecord,
+    pub expansion_state: ExpansionState,
+    pub blocking_reason: Option<ProofBlockerReason>,
+    pub macro_def_id: Option<DefinitionId>,
+    pub proc_macro_crate_id: Option<String>,
+    pub build_script_package_id: Option<String>,
+}
+
+impl BuildEvidenceSnapshot {
+    /// Convert captured build evidence into passive proof records consumed by validation.
+    pub fn proof_records(
+        &self,
+        rustc_invocation: BuildRustcInvocationCapture,
+        expansion_boundaries: Vec<ExpansionBoundaryCapture>,
+    ) -> Vec<ProofFactRecord> {
+        let mut records = vec![
+            ProofFactRecord::BuildDomain(self.build_domain_fact()),
+            ProofFactRecord::CfgDomain(self.cfg_domain_fact()),
+            ProofFactRecord::RustcInvocation(self.rustc_invocation_fact(rustc_invocation)),
+        ];
+        records.extend(expansion_boundaries.into_iter().map(|boundary| {
+            ProofFactRecord::ExpansionBoundary(self.expansion_boundary_fact(boundary))
+        }));
+        records
+    }
+
+    pub fn build_domain_fact(&self) -> BuildDomainFact {
+        BuildDomainFact {
+            schema_version: PROOF_FACT_SCHEMA_VERSION.to_string(),
+            build_domain_id: self.build_domain_id.clone(),
+            cargo_metadata_hash: hash_bytes(&self.cargo_metadata_json),
+            cargo_lock_hash: hash_bytes(&self.cargo_lock),
+            package_id: self.package_id.clone(),
+            target_kind: self.target_kind,
+            target_name: self.target_name.clone(),
+            target_root: self.target_root.clone(),
+            target_triple: self.target_triple.clone(),
+            host_triple: self.host_triple.clone(),
+            profile: self.profile.clone(),
+            features_hash: hash_unordered_strings(&self.selected_features),
+            active_cfg_hash: hash_unordered_strings(&self.active_cfg_atoms),
+            rustc_version: self.rustc_version.clone(),
+            rustc_commit_hash: self.rustc_commit_hash.clone(),
+            extractor_version: self.extractor_version.clone(),
+            proof_policy_version: self.proof_policy_version.clone(),
+            immutable_surface_digest: self.immutable_surface_digest.clone(),
+        }
+    }
+
+    pub fn cfg_domain_fact(&self) -> CfgDomainFact {
+        let mut cfg_atoms = self.active_cfg_atoms.clone();
+        cfg_atoms.sort();
+        CfgDomainFact {
+            schema_version: PROOF_FACT_SCHEMA_VERSION.to_string(),
+            cfg_domain_id: CfgDomainId(format!("cfg:{}", self.build_domain_id.as_str())),
+            build_domain_id: self.build_domain_id.clone(),
+            active_cfg_hash: hash_unordered_strings(&self.active_cfg_atoms),
+            cfg_atoms,
+            status: ObligationStatus::Admitted,
+            blocking_reason: None,
+        }
+    }
+
+    pub fn rustc_invocation_fact(
+        &self,
+        capture: BuildRustcInvocationCapture,
+    ) -> RustcInvocationFact {
+        RustcInvocationFact {
+            schema_version: PROOF_FACT_SCHEMA_VERSION.to_string(),
+            invocation_id: RustcInvocationId(capture.invocation_id),
+            build_domain_id: self.build_domain_id.clone(),
+            rustc_program: capture.rustc_program,
+            rustc_version: self.rustc_version.clone(),
+            working_directory: capture.working_directory,
+            argument_vector_hash: hash_string_sequence(&capture.args),
+            environment_hash: hash_environment(&capture.environment),
+            response_file_hash: capture.response_file_contents.as_deref().map(hash_bytes),
+            status: capture.status,
+            blocking_reason: capture.blocking_reason,
+            evidence_use: EvidenceUse::ProofOnly,
+        }
+    }
+
+    pub fn expansion_boundary_fact(
+        &self,
+        capture: ExpansionBoundaryCapture,
+    ) -> ExpansionBoundaryFact {
+        ExpansionBoundaryFact {
+            schema_version: PROOF_FACT_SCHEMA_VERSION.to_string(),
+            boundary_id: capture.boundary_id,
+            build_domain_id: self.build_domain_id.clone(),
+            boundary_kind: capture.boundary_kind,
+            source_span: capture.source_span,
+            expansion_state: capture.expansion_state,
+            blocking_reason: capture.blocking_reason,
+            macro_def_id: capture.macro_def_id,
+            proc_macro_crate_id: capture.proc_macro_crate_id,
+            build_script_package_id: capture.build_script_package_id,
+        }
+    }
+}
+
 /// Boundary category for expansion/provenance facts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -174,6 +361,7 @@ pub enum ProofBlockerReason {
     SchemaVersionMismatch,
     AuthorityEvidenceMissing,
     ProcessLifetimeEvidenceMissing,
+    RustcInvocationEvidenceMissing,
 }
 
 /// Whether an evidence row may participate in proof, navigation, or both.
@@ -553,6 +741,8 @@ pub struct ProofValidationReport {
 #[serde(tag = "fact_kind", rename_all = "snake_case")]
 pub enum ProofFactRecord {
     BuildDomain(BuildDomainFact),
+    CfgDomain(CfgDomainFact),
+    RustcInvocation(RustcInvocationFact),
     ExpansionBoundary(ExpansionBoundaryFact),
     ExpandedItem(ExpandedItemFact),
     CallSite(CallSiteFact),
@@ -567,6 +757,8 @@ impl ProofFactRecord {
     fn schema_version(&self) -> &str {
         match self {
             Self::BuildDomain(fact) => &fact.schema_version,
+            Self::CfgDomain(fact) => &fact.schema_version,
+            Self::RustcInvocation(fact) => &fact.schema_version,
             Self::ExpansionBoundary(fact) => &fact.schema_version,
             Self::ExpandedItem(fact) => &fact.schema_version,
             Self::CallSite(fact) => &fact.schema_version,
@@ -645,6 +837,9 @@ impl ProofFactSet {
     pub fn validate_for_proof(&self) -> ProofValidationReport {
         let mut blockers = Vec::new();
         let mut build_domains: HashMap<BuildDomainId, &BuildDomainFact> = HashMap::new();
+        let mut cfg_domains: HashMap<CfgDomainId, &CfgDomainFact> = HashMap::new();
+        let mut rustc_invocations: HashMap<RustcInvocationId, &RustcInvocationFact> =
+            HashMap::new();
         let mut boundaries: HashMap<ExpansionBoundaryId, &ExpansionBoundaryFact> = HashMap::new();
         let mut expanded_items: HashMap<ExpandedItemId, &ExpandedItemFact> = HashMap::new();
         let mut call_sites: HashMap<CallSiteId, &CallSiteFact> = HashMap::new();
@@ -666,6 +861,34 @@ impl ProofFactSet {
                                 Some(fact.build_domain_id.clone()),
                                 None,
                                 "duplicate build domain id has conflicting payload".to_string(),
+                            ));
+                        }
+                    }
+                }
+                ProofFactRecord::CfgDomain(fact) => {
+                    if let Some(existing) = cfg_domains.insert(fact.cfg_domain_id.clone(), fact) {
+                        if existing != fact {
+                            blockers.push(blocker(
+                                ProofBlockerReason::CanonicalIdentityMismatch,
+                                ObligationStatus::Blocked,
+                                Some(fact.build_domain_id.clone()),
+                                None,
+                                "duplicate cfg domain id has conflicting payload".to_string(),
+                            ));
+                        }
+                    }
+                }
+                ProofFactRecord::RustcInvocation(fact) => {
+                    if let Some(existing) =
+                        rustc_invocations.insert(fact.invocation_id.clone(), fact)
+                    {
+                        if existing != fact {
+                            blockers.push(blocker(
+                                ProofBlockerReason::CanonicalIdentityMismatch,
+                                ObligationStatus::Blocked,
+                                Some(fact.build_domain_id.clone()),
+                                None,
+                                "duplicate rustc invocation id has conflicting payload".to_string(),
                             ));
                         }
                     }
@@ -773,6 +996,41 @@ impl ProofFactSet {
             }
         }
 
+        for build_domain in build_domains.values() {
+            let admitted_cfg = cfg_domains.values().any(|cfg| {
+                cfg.build_domain_id == build_domain.build_domain_id
+                    && cfg.status.satisfies_proof()
+                    && cfg.active_cfg_hash == build_domain.active_cfg_hash
+            });
+            if !admitted_cfg {
+                blockers.push(blocker(
+                    ProofBlockerReason::CfgDomainNotMaterialized,
+                    ObligationStatus::Blocked,
+                    Some(build_domain.build_domain_id.clone()),
+                    None,
+                    "build domain has no admitted matching cfg-domain evidence".to_string(),
+                ));
+            }
+
+            let admitted_rustc = rustc_invocations.values().any(|invocation| {
+                invocation.evidence_use.can_satisfy_proof()
+                    && invocation.build_domain_id == build_domain.build_domain_id
+                    && invocation.status.satisfies_proof()
+                    && invocation.rustc_version == build_domain.rustc_version
+                    && !invocation.argument_vector_hash.is_empty()
+                    && !invocation.environment_hash.is_empty()
+            });
+            if !admitted_rustc {
+                blockers.push(blocker(
+                    ProofBlockerReason::RustcInvocationEvidenceMissing,
+                    ObligationStatus::Blocked,
+                    Some(build_domain.build_domain_id.clone()),
+                    None,
+                    "build domain has no admitted rustc invocation evidence".to_string(),
+                ));
+            }
+        }
+
         for record in &self.records {
             if record.schema_version() != PROOF_FACT_SCHEMA_VERSION {
                 blockers.push(blocker(
@@ -786,6 +1044,96 @@ impl ProofFactSet {
 
             match record {
                 ProofFactRecord::BuildDomain(_) => {}
+                ProofFactRecord::CfgDomain(fact) => {
+                    match build_domains.get(&fact.build_domain_id) {
+                        Some(build_domain)
+                            if build_domain.active_cfg_hash != fact.active_cfg_hash =>
+                        {
+                            blockers.push(blocker(
+                                ProofBlockerReason::CfgDomainNotMaterialized,
+                                ObligationStatus::Blocked,
+                                Some(fact.build_domain_id.clone()),
+                                None,
+                                "cfg domain hash does not match build domain active cfg hash"
+                                    .to_string(),
+                            ));
+                        }
+                        None => blockers.push(blocker(
+                            ProofBlockerReason::CanonicalIdentityMismatch,
+                            ObligationStatus::Blocked,
+                            Some(fact.build_domain_id.clone()),
+                            None,
+                            "cfg domain references missing build domain".to_string(),
+                        )),
+                        _ => {}
+                    }
+                    if hash_unordered_strings(&fact.cfg_atoms) != fact.active_cfg_hash {
+                        blockers.push(blocker(
+                            ProofBlockerReason::CfgDomainNotMaterialized,
+                            ObligationStatus::Blocked,
+                            Some(fact.build_domain_id.clone()),
+                            None,
+                            "cfg domain atoms do not match claimed active cfg hash".to_string(),
+                        ));
+                    }
+                    if !fact.status.satisfies_proof() {
+                        blockers.push(blocker(
+                            fact.blocking_reason
+                                .unwrap_or(ProofBlockerReason::CfgDomainNotMaterialized),
+                            fact.status,
+                            Some(fact.build_domain_id.clone()),
+                            None,
+                            "cfg domain is not admitted".to_string(),
+                        ));
+                    }
+                }
+                ProofFactRecord::RustcInvocation(fact) => {
+                    if fact.evidence_use.can_satisfy_proof() {
+                        match build_domains.get(&fact.build_domain_id) {
+                            Some(build_domain)
+                                if build_domain.rustc_version != fact.rustc_version =>
+                            {
+                                blockers.push(blocker(
+                                    ProofBlockerReason::CanonicalIdentityMismatch,
+                                    ObligationStatus::Blocked,
+                                    Some(fact.build_domain_id.clone()),
+                                    None,
+                                    "rustc invocation version does not match build domain"
+                                        .to_string(),
+                                ));
+                            }
+                            None => blockers.push(blocker(
+                                ProofBlockerReason::CanonicalIdentityMismatch,
+                                ObligationStatus::Blocked,
+                                Some(fact.build_domain_id.clone()),
+                                None,
+                                "rustc invocation references missing build domain".to_string(),
+                            )),
+                            _ => {}
+                        }
+                        if !fact.status.satisfies_proof() {
+                            blockers.push(blocker(
+                                fact.blocking_reason
+                                    .unwrap_or(ProofBlockerReason::RustcInvocationEvidenceMissing),
+                                fact.status,
+                                Some(fact.build_domain_id.clone()),
+                                None,
+                                "rustc invocation evidence is not admitted".to_string(),
+                            ));
+                        }
+                        if fact.argument_vector_hash.is_empty() || fact.environment_hash.is_empty()
+                        {
+                            blockers.push(blocker(
+                                ProofBlockerReason::RustcInvocationEvidenceMissing,
+                                ObligationStatus::Blocked,
+                                Some(fact.build_domain_id.clone()),
+                                None,
+                                "rustc invocation is missing argument or environment hash"
+                                    .to_string(),
+                            ));
+                        }
+                    }
+                }
                 ProofFactRecord::ExpansionBoundary(fact) => {
                     if !build_domains.contains_key(&fact.build_domain_id) {
                         blockers.push(blocker(
@@ -1081,4 +1429,41 @@ fn deduplicate_blocker_ids(blockers: &mut [ProofBlockerFact]) {
         blocker.blocker_id = BlockerFactId(candidate.clone());
         reserved.insert(candidate, ());
     }
+}
+
+fn hash_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn hash_string_sequence(values: &[String]) -> String {
+    let mut hasher = Sha256::new();
+    for value in values {
+        let bytes = value.as_bytes();
+        hasher.update((bytes.len() as u64).to_le_bytes());
+        hasher.update(bytes);
+    }
+    format!("sha256:{:x}", hasher.finalize())
+}
+
+fn hash_unordered_strings(values: &[String]) -> String {
+    let mut sorted = values.to_vec();
+    sorted.sort();
+    hash_string_sequence(&sorted)
+}
+
+fn hash_environment(values: &[(String, String)]) -> String {
+    let mut sorted = values.to_vec();
+    sorted.sort();
+    let mut hasher = Sha256::new();
+    for (key, value) in sorted {
+        let key = key.as_bytes();
+        let value = value.as_bytes();
+        hasher.update((key.len() as u64).to_le_bytes());
+        hasher.update(key);
+        hasher.update((value.len() as u64).to_le_bytes());
+        hasher.update(value);
+    }
+    format!("sha256:{:x}", hasher.finalize())
 }
