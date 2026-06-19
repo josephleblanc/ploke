@@ -62,6 +62,31 @@ fn call_edge_named(
     })
 }
 
+fn unresolved_call_edge_for(call_site_id: &str, evidence_use: &str) -> Value {
+    json!({
+        "fact_kind": "call_edge",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "call_edge_id": format!("edge:{call_site_id}:unresolved"),
+        "call_site_id": call_site_id,
+        "caller_def_id": "def:handoff",
+        "resolution_state": "unresolved",
+        "evidence_use": evidence_use
+    })
+}
+
+fn call_resolution_for(call_site_id: &str, resolution_state: &str, reason: Option<&str>) -> Value {
+    let mut value = json!({
+        "fact_kind": "call_resolution",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "call_site_id": call_site_id,
+        "resolution_state": resolution_state
+    });
+    if let Some(reason) = reason {
+        value["blocking_reason"] = json!(reason);
+    }
+    value
+}
+
 fn process_effect() -> Value {
     process_effect_named("effect:handoff-spawn", "call:handoff-spawn")
 }
@@ -77,6 +102,50 @@ fn process_effect_named(effect_seed_id: &str, call_site_id: &str) -> Value {
         "blocker_if_unresolved": true,
         "evidence_use": "proof_only"
     })
+}
+
+fn expansion_boundary(
+    boundary_id: &str,
+    build_domain_id: &str,
+    boundary_kind: &str,
+    expansion_state: &str,
+    blocking_reason: Option<&str>,
+    line: u32,
+) -> Value {
+    let mut value = json!({
+        "fact_kind": "expansion_boundary",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "boundary_id": boundary_id,
+        "build_domain_id": build_domain_id,
+        "boundary_kind": boundary_kind,
+        "source_span": {
+            "file": "build.rs",
+            "start_byte": line * 10,
+            "end_byte": line * 10 + 5,
+            "line_start": line,
+            "line_end": line
+        },
+        "expansion_state": expansion_state
+    });
+    if let Some(blocking_reason) = blocking_reason {
+        value["blocking_reason"] = json!(blocking_reason);
+    }
+    value
+}
+
+fn cfg_domain(build_domain_id: &str, status: &str, blocking_reason: Option<&str>) -> Value {
+    let mut value = json!({
+        "fact_kind": "cfg_domain",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "cfg_domain_id": format!("cfg:{build_domain_id}"),
+        "build_domain_id": build_domain_id,
+        "active_cfg_hash": "sha256:cfg",
+        "status": status
+    });
+    if let Some(blocking_reason) = blocking_reason {
+        value["blocking_reason"] = json!(blocking_reason);
+    }
+    value
 }
 
 fn authority(id: &str, term: &str, status: &str, line: u32) -> Value {
@@ -182,6 +251,18 @@ fn proof_and_navigation_handoff_records() -> Vec<Value> {
         }
     }
     records
+}
+
+fn navigation_only_unresolved_process_records() -> Vec<Value> {
+    let mut site = call_site_named("call:navigation-spawn", "bd:checker", "def:handoff", 70);
+    site["evidence_use"] = json!("navigation_only");
+    let mut effect = process_effect_named("effect:navigation-spawn", "call:navigation-spawn");
+    effect["evidence_use"] = json!("navigation_only");
+    vec![
+        site,
+        unresolved_call_edge_for("call:navigation-spawn", "navigation_only"),
+        effect,
+    ]
 }
 
 fn unscoped_legal_handoff_records_for(
@@ -525,6 +606,70 @@ fn proof_invariant_checker_blocks_incomplete_process_or_authority_evidence() {
 }
 
 #[test]
+fn proof_invariant_checker_blocks_macro_process_spawn_when_expansion_evidence_missing() {
+    let mut records = legal_handoff_records();
+    records.push(expansion_boundary(
+        "boundary:macro-spawn",
+        "bd:checker",
+        "macro_rules_invocation",
+        "unresolved",
+        Some("macro_expansion_not_available"),
+        60,
+    ));
+    let db = db_with(records);
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+    let finding = finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn");
+
+    assert_eq!(finding.status, ProofInvariantStatus::Blocked);
+    assert!(finding.reason.contains("macro_expansion_not_available"));
+}
+
+#[test]
+fn proof_invariant_checker_blocks_cfg_domain_evidence_gap_explicitly() {
+    let mut records = legal_handoff_records();
+    records.push(cfg_domain(
+        "bd:checker",
+        "blocked",
+        Some("cfg_domain_not_materialized"),
+    ));
+    let db = db_with(records);
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+    let finding = finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn");
+
+    assert_eq!(finding.status, ProofInvariantStatus::Blocked);
+    assert!(finding.reason.contains("cfg_domain_not_materialized"));
+}
+
+#[test]
+fn proof_invariant_checker_blocks_external_dependency_resolution_gap_explicitly() {
+    let mut records = legal_handoff_records();
+    records.push(call_resolution_for(
+        "call:handoff-spawn",
+        "externally_summarized",
+        Some("external_dependency_summary_missing"),
+    ));
+    let db = db_with(records);
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+    let finding = finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn");
+
+    assert_eq!(finding.status, ProofInvariantStatus::Blocked);
+    assert!(
+        finding
+            .reason
+            .contains("external_dependency_summary_missing")
+    );
+}
+
+#[test]
 fn proof_invariant_checker_blocks_authority_evidence_gap_without_demoting_to_fail() {
     let db = db_with(vec![
         call_site(),
@@ -664,6 +809,79 @@ fn proof_invariant_checker_requires_authority_build_domain_match_for_same_call_s
             .reason
             .contains("detached process create lacks admitted successor handoff")
     );
+}
+
+#[test]
+fn proof_invariant_checker_blocks_mismatched_call_site_identity_fail_closed() {
+    let mut mismatched_edge = call_edge();
+    mismatched_edge["caller_def_id"] = json!("def:other-caller");
+    let db = db_with(vec![
+        call_site(),
+        mismatched_edge,
+        process_effect(),
+        authority("authority:successor", "successor", "admitted", 7),
+        authority("authority:parent", "parent_lineage", "admitted", 8),
+        authority(
+            "authority:predecessor",
+            "predecessor_retired",
+            "admitted",
+            9,
+        ),
+        authority("authority:crown", "crown_ruling", "admitted", 10),
+    ]);
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+    let finding = finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn");
+
+    assert_eq!(finding.status, ProofInvariantStatus::Blocked);
+    assert!(finding.reason.contains("canonical_identity_mismatch"));
+}
+
+#[test]
+fn proof_invariant_checker_blocks_unresolved_proof_critical_call() {
+    let db = db_with(vec![
+        call_site(),
+        unresolved_call_edge_for("call:handoff-spawn", "proof_only"),
+        process_effect(),
+        authority("authority:successor", "successor", "admitted", 7),
+        authority("authority:parent", "parent_lineage", "admitted", 8),
+        authority(
+            "authority:predecessor",
+            "predecessor_retired",
+            "admitted",
+            9,
+        ),
+        authority("authority:crown", "crown_ruling", "admitted", 10),
+    ]);
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+    let finding = finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn");
+
+    assert_eq!(finding.status, ProofInvariantStatus::Blocked);
+    assert!(finding.reason.contains("type_resolution_missing"));
+}
+
+#[test]
+fn proof_invariant_checker_does_not_claim_success_for_navigation_only_unresolved_process_call() {
+    let db = db_with(navigation_only_unresolved_process_records());
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+
+    assert!(findings.iter().any(|finding| {
+        finding.invariant == DETACHED_INVARIANT
+            && finding.call_site_id.is_none()
+            && finding.status == ProofInvariantStatus::Blocked
+            && finding
+                .reason
+                .contains("navigation-only unresolved process call")
+    }));
+    assert_no_status(&findings, DETACHED_INVARIANT, ProofInvariantStatus::Pass);
 }
 
 #[test]
