@@ -4,7 +4,7 @@ use std::hash::{Hash, Hasher};
 use ploke_core::ArcStr;
 use ploke_llm::{
     ApiErrorSource, HttpBodyFailure, HttpPhase, HttpReceivePhase, HttpSendFailure, LlmError,
-    ProviderAttempt, ProviderTiming, response::FinishReason,
+    ProviderAttempt, ProviderTiming, manager::RequestMessage, response::FinishReason,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -152,6 +152,14 @@ pub struct ChatSessionReport {
     pub attempts: u32,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub chat_steps: Vec<ChatStepReport>,
+    /// Request-message state at the point the session returned.
+    ///
+    /// For response-stepped replay/debugger sessions this is the durable resume
+    /// seed: it contains the assistant tool-call message and all tool-result
+    /// messages that were appended before the replay boundary stopped the next
+    /// provider request. It is not a History authority record.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub final_messages: Vec<RequestMessage>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -178,6 +186,7 @@ impl ChatSessionReport {
             commit_phase: CommitPhase::PreCommit,
             attempts: 0,
             chat_steps: Vec::new(),
+            final_messages: Vec::new(),
         }
     }
 

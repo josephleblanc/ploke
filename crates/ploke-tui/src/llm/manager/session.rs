@@ -1135,6 +1135,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                     report.outcome = SessionOutcome::Completed;
                     report.commit_phase = commit_phase;
                     report.attempts = attempts;
+                    report.final_messages = req.core.messages.clone();
                     return report;
                 }
                 let allowed = allowed_tool_names();
@@ -1685,6 +1686,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                     report.outcome = SessionOutcome::Completed;
                     report.commit_phase = commit_phase;
                     report.attempts = attempts;
+                    report.final_messages = req.core.messages.clone();
                     match state_cmd_tx
                         .send(StateCommand::DecrementChatTtl {
                             included_message_ids: included_message_ids.clone(),
@@ -3517,6 +3519,21 @@ mod tests {
         );
         assert_eq!(captured_responses.len(), 1);
         assert_eq!(captured_responses[0].index(), 0);
+        assert_eq!(report.final_messages.len(), 3);
+        assert!(
+            report
+                .final_messages
+                .iter()
+                .any(|message| message.role == Role::Assistant && message.tool_calls.is_some()),
+            "resume state should include the assistant tool-call message"
+        );
+        assert!(
+            report
+                .final_messages
+                .iter()
+                .any(|message| message.role == Role::Tool),
+            "resume state should include the completed tool result"
+        );
     }
 
     #[tokio::test]
