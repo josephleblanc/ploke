@@ -10,6 +10,7 @@ pub mod get_by_id;
 pub mod helpers;
 mod index;
 pub mod observability;
+pub mod proof_graph;
 mod query;
 mod result;
 pub(crate) mod utils;
@@ -36,6 +37,10 @@ pub use observability::{
     Validity,
 };
 pub use ploke_error::PrettyDebug;
+pub use proof_graph::{
+    ProofBlockerRow, ProofCheckerEdgeRow, ProofGraphContextRow, ProofGraphStore,
+    ProofSourceProvenanceRow,
+};
 pub use query::{
     QueryBuilder,
     builder::FieldValue,
