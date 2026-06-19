@@ -107,12 +107,45 @@ pub(crate) enum WalkRequestBody {
         /// Use ANSI colors in the human-readable message.
         color: bool,
     },
+    /// List nested LLM/tool-loop fanout lanes without mutating state.
+    LlmLanes {
+        /// Include workspace and session ids for each lane.
+        verbose: bool,
+    },
+    /// Set the default nested LLM/tool-loop lane focus.
+    LlmFocus {
+        /// Lane id, usually the candidate workspace basename.
+        lane: String,
+    },
     /// Inspect nested LLM/tool-loop debugger checkpoints without mutating state.
     LlmShow {
-        /// Specific checkpoint session id. Defaults to latest session.
+        /// Specific checkpoint session id. Defaults to selected lane/latest session.
         session_id: Option<String>,
-        /// Specific provider-response step. Defaults to latest recorded step.
+        /// Lane id. Defaults to current focus.
+        lane: Option<String>,
+        /// Inspect the latest head rather than the read-only cursor.
+        head: bool,
+        /// Specific provider-response step. Defaults to lane cursor or latest recorded step.
         step: Option<usize>,
+    },
+    /// Move the nested LLM/tool-loop lane cursor backward without mutating state.
+    LlmBack {
+        /// Lane id. Defaults to current focus.
+        lane: Option<String>,
+        /// Number of recorded steps to move.
+        steps: usize,
+    },
+    /// Move the nested LLM/tool-loop lane cursor forward without mutating state.
+    LlmForward {
+        /// Lane id. Defaults to current focus.
+        lane: Option<String>,
+        /// Number of recorded steps to move.
+        steps: usize,
+    },
+    /// Move the nested LLM/tool-loop lane cursor to the latest checkpoint head.
+    LlmHead {
+        /// Lane id. Defaults to current focus.
+        lane: Option<String>,
     },
     /// Show or position the read-only historical replay cursor.
     Replay {

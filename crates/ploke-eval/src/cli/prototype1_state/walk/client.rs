@@ -133,10 +133,29 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
                 args::resolve_socket(command.control.repo_root_ref(), socket_override.as_deref())?;
             ensure_server(&repo_root, &socket, default_idle_ttl()).await?;
             let body = match command.command {
+                Prototype1StateWalkLlmSubcommand::Lanes(lanes) => WalkRequestBody::LlmLanes {
+                    verbose: lanes.verbose,
+                },
+                Prototype1StateWalkLlmSubcommand::Focus(focus) => {
+                    WalkRequestBody::LlmFocus { lane: focus.lane }
+                }
                 Prototype1StateWalkLlmSubcommand::Show(show) => WalkRequestBody::LlmShow {
                     session_id: show.session_id,
+                    lane: show.lane,
+                    head: show.head,
                     step: show.step,
                 },
+                Prototype1StateWalkLlmSubcommand::Back(back) => WalkRequestBody::LlmBack {
+                    lane: back.lane.lane,
+                    steps: back.steps,
+                },
+                Prototype1StateWalkLlmSubcommand::Forward(forward) => WalkRequestBody::LlmForward {
+                    lane: forward.lane.lane,
+                    steps: forward.steps,
+                },
+                Prototype1StateWalkLlmSubcommand::Head(head) => {
+                    WalkRequestBody::LlmHead { lane: head.lane }
+                }
             };
             let response = send_request(
                 &socket,

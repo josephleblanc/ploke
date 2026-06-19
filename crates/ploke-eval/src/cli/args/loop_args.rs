@@ -270,7 +270,7 @@ pub struct Prototype1StateWalkShowDeltaCommand {
 #[derive(Debug, Clone, Parser)]
 #[command(
     about = "Inspect nested LLM/tool-loop debugger checkpoints",
-    after_help = "Examples:\n  ploke-eval loop walk llm show\n  ploke-eval loop walk llm show --session-id tool-loop-...\n  ploke-eval loop walk llm show --step 3\n\nThis is a read-only checkpoint inspection surface. It does not call providers, execute tools, mutate the checkout, or advance the outer typestate walk."
+    after_help = "Examples:\n  ploke-eval loop walk llm lanes\n  ploke-eval loop walk llm focus node-...-r2\n  ploke-eval loop walk llm show --lane node-...-r2 --head\n  ploke-eval loop walk llm back --lane node-...-r2 --steps 3\n\nThis surface is read-only unless a future live step/finish subcommand says otherwise. Current lane/cursor commands do not call providers, execute tools, mutate the checkout, or advance the outer typestate walk."
 )]
 pub struct Prototype1StateWalkLlmCommand {
     #[command(flatten)]
@@ -282,17 +282,65 @@ pub struct Prototype1StateWalkLlmCommand {
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum Prototype1StateWalkLlmSubcommand {
+    /// List known fanout lanes and their latest checkpoint heads.
+    Lanes(Prototype1StateWalkLlmLanesCommand),
+    /// Set the default lane for subsequent LLM checkpoint commands on this server.
+    Focus(Prototype1StateWalkLlmFocusCommand),
     /// Show the latest or selected LLM/tool-loop checkpoint.
     Show(Prototype1StateWalkLlmShowCommand),
+    /// Move the focused/read-only lane cursor backward.
+    Back(Prototype1StateWalkLlmMoveCommand),
+    /// Move the focused/read-only lane cursor forward.
+    Forward(Prototype1StateWalkLlmMoveCommand),
+    /// Jump the focused/read-only lane cursor to the latest checkpoint head.
+    Head(Prototype1StateWalkLlmLaneCommand),
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkLlmLanesCommand {
+    /// Include workspace and session ids for each lane.
+    #[arg(long)]
+    pub verbose: bool,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkLlmFocusCommand {
+    /// Lane id to focus, usually the candidate workspace basename.
+    pub lane: String,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkLlmLaneCommand {
+    /// Lane id. Defaults to the current focus, then the latest lane.
+    #[arg(long)]
+    pub lane: Option<String>,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkLlmMoveCommand {
+    #[command(flatten)]
+    pub lane: Prototype1StateWalkLlmLaneCommand,
+
+    /// Number of recorded response steps to move.
+    #[arg(long, default_value_t = 1)]
+    pub steps: usize,
 }
 
 #[derive(Debug, Clone, Parser)]
 pub struct Prototype1StateWalkLlmShowCommand {
-    /// Specific tool-loop session id to inspect. Defaults to the latest session.
+    /// Specific tool-loop session id to inspect. Defaults to selected lane/latest session.
     #[arg(long)]
     pub session_id: Option<String>,
 
-    /// Specific response step to inspect. Defaults to the latest recorded step.
+    /// Lane id, usually the candidate workspace basename. Defaults to current focus.
+    #[arg(long)]
+    pub lane: Option<String>,
+
+    /// Inspect the selected lane's latest recorded head instead of its read-only cursor.
+    #[arg(long)]
+    pub head: bool,
+
+    /// Specific response step to inspect. Defaults to the lane cursor or latest recorded step.
     #[arg(long)]
     pub step: Option<usize>,
 }

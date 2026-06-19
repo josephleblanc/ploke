@@ -69,6 +69,8 @@ impl ToolLoopDebugSink {
         let session_id = step.session_id.to_string();
         let mut session = ToolLoopSession::new(&session_id, "headless-tui", self.workspace.clone());
         session.campaign_id = self.campaign_id.as_ref().map(ToString::to_string);
+        session.fanout_id = fanout_id_from_workspace(&self.workspace);
+        session.lane_id = lane_id_from_workspace(&self.workspace);
         session.model = self.model.clone();
         session.status = if step.terminal {
             ToolLoopStatus::Terminal
@@ -193,6 +195,21 @@ fn campaign_id_from_prototype_root(prototype_root: &Path) -> Option<CampaignId> 
         .and_then(Path::file_name)
         .and_then(|name| name.to_str())
         .map(CampaignId::from)
+}
+
+fn lane_id_from_workspace(workspace: &Path) -> Option<String> {
+    workspace
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(ToString::to_string)
+}
+
+fn fanout_id_from_workspace(workspace: &Path) -> Option<String> {
+    workspace
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .map(ToString::to_string)
 }
 
 #[cfg(test)]

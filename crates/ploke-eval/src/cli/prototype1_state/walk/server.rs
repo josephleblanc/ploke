@@ -133,9 +133,34 @@ impl WalkServer {
                     .delta_report(DeltaRenderStyle { verbose, color }),
                 self.epoch.clone(),
             )),
-            WalkRequestBody::LlmShow { session_id, step } => self
+            WalkRequestBody::LlmLanes { verbose } => self
                 .controller
-                .llm_report(session_id.as_deref(), step)
+                .llm_lanes_report(verbose)
+                .map(|message| WalkResponse::ok(phase, message, self.epoch.clone())),
+            WalkRequestBody::LlmFocus { lane } => self
+                .controller
+                .llm_focus(lane)
+                .map(|message| WalkResponse::ok(phase, message, self.epoch.clone())),
+            WalkRequestBody::LlmShow {
+                session_id,
+                lane,
+                head,
+                step,
+            } => self
+                .controller
+                .llm_report(session_id.as_deref(), lane.as_deref(), head, step)
+                .map(|message| WalkResponse::ok(phase, message, self.epoch.clone())),
+            WalkRequestBody::LlmBack { lane, steps } => self
+                .controller
+                .llm_move(lane.as_deref(), steps, super::controller::LlmMove::Back)
+                .map(|message| WalkResponse::ok(phase, message, self.epoch.clone())),
+            WalkRequestBody::LlmForward { lane, steps } => self
+                .controller
+                .llm_move(lane.as_deref(), steps, super::controller::LlmMove::Forward)
+                .map(|message| WalkResponse::ok(phase, message, self.epoch.clone())),
+            WalkRequestBody::LlmHead { lane } => self
+                .controller
+                .llm_head(lane.as_deref())
                 .map(|message| WalkResponse::ok(phase, message, self.epoch.clone())),
             WalkRequestBody::Replay { index, tail } => self
                 .controller

@@ -45,6 +45,12 @@ pub(crate) struct ToolLoopSession {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) generation: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) fanout_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) lane_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) request_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) outer_phase: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) outer_edge: Option<String>,
@@ -68,6 +74,9 @@ impl ToolLoopSession {
             parent_node_id: None,
             branch_id: None,
             generation: None,
+            fanout_id: None,
+            lane_id: None,
+            request_path: None,
             outer_phase: None,
             outer_edge: None,
             harness: harness.into(),
@@ -305,6 +314,41 @@ impl FsToolLoopStore {
         let mut sessions = self.list_sessions()?;
         sessions.sort_by(|left, right| left.session_id.cmp(&right.session_id));
         Ok(sessions.pop())
+    }
+
+    pub(crate) fn step_indices(&self, session_id: &str) -> Result<Vec<usize>, PrepareError> {
+        let dir = self.steps_dir(session_id);
+        if !dir.is_dir() {
+            return Ok(Vec::new());
+        }
+        let entries = fs::read_dir(&dir).map_err(|source| PrepareError::ReadManifest {
+            path: dir.clone(),
+            source,
+        })?;
+        let mut indices = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|source| PrepareError::ReadManifest {
+                path: dir.clone(),
+                source,
+            })?;
+            let path = entry.path();
+            if path.extension().is_some_and(|ext| ext == "json") {
+                if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
+                    if let Ok(index) = stem.parse::<usize>() {
+                        indices.push(index);
+                    }
+                }
+            }
+        }
+        indices.sort_unstable();
+        Ok(indices)
+    }
+
+    pub(crate) fn latest_step_index(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<usize>, PrepareError> {
+        Ok(self.step_indices(session_id)?.pop())
     }
 }
 

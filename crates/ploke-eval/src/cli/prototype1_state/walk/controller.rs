@@ -8,6 +8,7 @@
 //! or successor handoff finality.
 
 use std::{
+    collections::BTreeMap,
     fs,
     io::Read,
     path::{Path, PathBuf},
@@ -38,8 +39,8 @@ use crate::{
     },
     layout::prototype1_monitor_target_file,
     replay::tool_loop::{
-        FsToolLoopStore, ToolLoopOutcome, ToolLoopResult, ToolLoopStatus, ToolLoopStore,
-        WorkspaceState,
+        FsToolLoopStore, ToolLoopOutcome, ToolLoopResult, ToolLoopResume, ToolLoopSession,
+        ToolLoopStatus, ToolLoopStore, WorkspaceState,
     },
     spec::PrepareError,
 };
@@ -51,6 +52,12 @@ const MAX_FILE_BYTES: usize = 128 * 1024;
 
 type RunShape = Prototype1StateRunShape;
 type CampaignConfig = ResolvedCampaignConfig;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LlmMove {
+    Back,
+    Forward,
+}
 
 /// Single-session in-memory controller for Prototype 1 typestate phases.
 ///
@@ -68,6 +75,8 @@ pub(crate) struct WalkController {
     last_delta: Option<WalkAdvanceReport>,
     reconstruction: Option<WalkReconstruction>,
     replay: Option<ReplayCursor>,
+    llm_focus: Option<String>,
+    llm_cursors: BTreeMap<String, usize>,
 }
 
 /// Owned typestate value currently held by the server.
@@ -224,6 +233,8 @@ impl WalkController {
             last_delta: None,
             reconstruction: None,
             replay: None,
+            llm_focus: None,
+            llm_cursors: BTreeMap::new(),
         }
     }
 
@@ -263,57 +274,299 @@ impl WalkController {
         self.files.render()
     }
 
+    /// Render known nested LLM/tool-loop fanout lanes without mutating the walk.
+    pub(crate) fn llm_lanes_report(&self, verbose: bool) -> Result<String, PrepareError> {
+        let store = self.tool_loop_store()?;
+        let lanes = self.llm_lanes(&store)?;
+        let mut lines = Vec::new();
+        lines.push("llm fanout lanes".to_string());
+        lines.push(format!("root: {}", store.root().display()));
+        lines.push(format!(
+            "focus: {}",
+            self.llm_focus.as_deref().unwrap_or("-")
+        ));
+        if lanes.is_empty() {
+            lines.push("lanes: (none)".to_string());
+            lines.push(
+                "hint: run a live headless harness/fanout edge with response capture first"
+                    .to_string(),
+            );
+            return Ok(lines.join("\n"));
+        }
+        lines.push("lanes:".to_string());
+        for lane in lanes {
+            let marker = if self.llm_focus.as_deref() == Some(lane.lane_id.as_str()) {
+                "*"
+            } else {
+                " "
+            };
+            lines.push(format!(
+                "{marker} {} status={} cursor={} head={} next_step={} model={}",
+                lane.lane_id,
+                status_label(lane.session.status),
+                self.llm_cursors
+                    .get(&lane.lane_id)
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                lane.head
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                lane.resume
+                    .as_ref()
+                    .map(|resume| resume.next_step.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                lane.session.model.as_deref().unwrap_or("-")
+            ));
+            if verbose {
+                lines.push(format!("    session: {}", lane.session.session_id));
+                lines.push(format!(
+                    "    workspace: {}",
+                    lane.session.workspace.display()
+                ));
+            }
+        }
+        lines.push("hint: use `walk llm focus <lane>` then `walk llm show --head`".to_string());
+        Ok(lines.join("\n"))
+    }
+
+    /// Set the default LLM/tool-loop lane focus for this walk server.
+    pub(crate) fn llm_focus(&mut self, lane: String) -> Result<String, PrepareError> {
+        let store = self.tool_loop_store()?;
+        let lane_state = self.resolve_lane(&store, Some(lane.as_str()))?;
+        self.llm_focus = Some(lane_state.lane_id.clone());
+        if let Some(head) = lane_state.head {
+            self.llm_cursors
+                .entry(lane_state.lane_id.clone())
+                .or_insert(head);
+        }
+        Ok(format!(
+            "focused llm lane {} (session {} head={})",
+            lane_state.lane_id,
+            lane_state.session.session_id,
+            lane_state
+                .head
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string())
+        ))
+    }
+
     /// Render nested LLM/tool-loop checkpoint state without mutating the walk.
     pub(crate) fn llm_report(
         &self,
         session_id: Option<&str>,
+        lane: Option<&str>,
+        head: bool,
         step: Option<usize>,
     ) -> Result<String, PrepareError> {
         let store = self.tool_loop_store()?;
-        let session = match session_id {
-            Some(session_id) => store.read_session(session_id)?,
-            None => store
-                .latest_session()?
-                .ok_or_else(|| PrepareError::DatabaseSetup {
-                    phase: "walk_llm_show",
-                    detail: format!(
-                        "no tool-loop checkpoint sessions found under '{}'",
-                        store.root().display()
-                    ),
-                })?,
+        let lane_state = match session_id {
+            Some(session_id) => self.lane_for_session(&store, store.read_session(session_id)?)?,
+            None => self.resolve_lane(&store, lane)?,
         };
-        let resume = store.read_resume(&session.session_id).ok();
         let selected = match step {
             Some(step) => Some(step),
-            None => resume
-                .as_ref()
-                .and_then(|resume| resume.next_step.checked_sub(1)),
+            None if head => lane_state.head,
+            None => self
+                .llm_cursors
+                .get(&lane_state.lane_id)
+                .copied()
+                .or(lane_state.head),
         };
         let loaded = selected
             .map(|step| {
                 store
-                    .read_step(&session.session_id, step)
+                    .read_step(&lane_state.session.session_id, step)
                     .map(|record| (step, record))
             })
             .transpose()?;
 
+        Ok(self.render_llm_checkpoint(&store, lane_state, loaded))
+    }
+
+    /// Move a read-only lane cursor backward/forward without mutating durable state.
+    pub(crate) fn llm_move(
+        &mut self,
+        lane: Option<&str>,
+        steps: usize,
+        direction: LlmMove,
+    ) -> Result<String, PrepareError> {
+        let store = self.tool_loop_store()?;
+        let lane_state = self.resolve_lane(&store, lane)?;
+        let head = lane_state
+            .head
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "llm lane '{}' has no recorded response steps to move through",
+                    lane_state.lane_id
+                ),
+            })?;
+        let current = self
+            .llm_cursors
+            .get(&lane_state.lane_id)
+            .copied()
+            .unwrap_or(head);
+        let next = match direction {
+            LlmMove::Back => current.saturating_sub(steps),
+            LlmMove::Forward => current.saturating_add(steps).min(head),
+        };
+        self.llm_cursors.insert(lane_state.lane_id.clone(), next);
+        Ok(format!(
+            "llm lane {} cursor={} head={}",
+            lane_state.lane_id, next, head
+        ))
+    }
+
+    /// Move a read-only lane cursor to the latest checkpoint head.
+    pub(crate) fn llm_head(&mut self, lane: Option<&str>) -> Result<String, PrepareError> {
+        let store = self.tool_loop_store()?;
+        let lane_state = self.resolve_lane(&store, lane)?;
+        let head = lane_state
+            .head
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "llm lane '{}' has no recorded response steps to jump to",
+                    lane_state.lane_id
+                ),
+            })?;
+        self.llm_cursors.insert(lane_state.lane_id.clone(), head);
+        Ok(format!(
+            "llm lane {} cursor=head ({head})",
+            lane_state.lane_id
+        ))
+    }
+
+    fn tool_loop_store(&self) -> Result<FsToolLoopStore, PrepareError> {
+        let identity = load_parent_identity_optional(&self.repo_root)?.ok_or_else(|| {
+            PrepareError::DatabaseSetup {
+                phase: "walk_llm_store",
+                detail: format!(
+                    "parent identity is required to locate campaign tool-loop checkpoints: {}",
+                    parent_identity_path(&self.repo_root).display()
+                ),
+            }
+        })?;
+        let manifest = campaign_manifest_path_for_id(identity.campaign_id())?;
+        let campaign_dir = manifest
+            .parent()
+            .ok_or_else(|| PrepareError::DatabaseSetup {
+                phase: "walk_llm_store",
+                detail: format!(
+                    "campaign manifest '{}' has no parent directory",
+                    manifest.display()
+                ),
+            })?;
+        Ok(FsToolLoopStore::new(
+            campaign_dir.join("prototype1/debug/tool-loop"),
+        ))
+    }
+
+    fn llm_lanes(&self, store: &FsToolLoopStore) -> Result<Vec<LlmLane>, PrepareError> {
+        let mut by_lane = BTreeMap::<String, LlmLane>::new();
+        for session in store.list_sessions()? {
+            let lane = self.lane_for_session(store, session)?;
+            by_lane
+                .entry(lane.lane_id.clone())
+                .and_modify(|current| {
+                    if lane_sort_key(&lane) >= lane_sort_key(current) {
+                        *current = lane.clone();
+                    }
+                })
+                .or_insert(lane);
+        }
+        Ok(by_lane.into_values().collect())
+    }
+
+    fn resolve_lane(
+        &self,
+        store: &FsToolLoopStore,
+        requested: Option<&str>,
+    ) -> Result<LlmLane, PrepareError> {
+        let lanes = self.llm_lanes(store)?;
+        if lanes.is_empty() {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "walk_llm_lane",
+                detail: format!(
+                    "no tool-loop checkpoint sessions found under '{}'",
+                    store.root().display()
+                ),
+            });
+        }
+        let target = requested.or(self.llm_focus.as_deref());
+        if let Some(target) = target {
+            return lanes
+                .into_iter()
+                .find(|lane| lane.lane_id == target || lane.session.session_id == target)
+                .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "unknown llm lane '{target}'; run `walk llm lanes` to list available lanes"
+                    ),
+                });
+        }
+        lanes
+            .into_iter()
+            .max_by_key(lane_sort_key)
+            .ok_or_else(|| PrepareError::DatabaseSetup {
+                phase: "walk_llm_lane",
+                detail: "no llm lanes available".to_string(),
+            })
+    }
+
+    fn lane_for_session(
+        &self,
+        store: &FsToolLoopStore,
+        session: ToolLoopSession,
+    ) -> Result<LlmLane, PrepareError> {
+        let lane_id = lane_label(&session);
+        let resume = store.read_resume(&session.session_id).ok();
+        let head = store.latest_step_index(&session.session_id)?;
+        Ok(LlmLane {
+            lane_id,
+            session,
+            resume,
+            head,
+        })
+    }
+
+    fn render_llm_checkpoint(
+        &self,
+        store: &FsToolLoopStore,
+        lane: LlmLane,
+        loaded: Option<(usize, crate::replay::tool_loop::ToolLoopStep)>,
+    ) -> String {
         let mut lines = Vec::new();
         lines.push("llm tool-loop checkpoint".to_string());
         lines.push(format!("root: {}", store.root().display()));
-        lines.push(format!("session: {}", session.session_id));
-        lines.push(format!("status: {}", status_label(session.status)));
-        lines.push(format!("harness: {}", session.harness));
-        lines.push(format!("workspace: {}", session.workspace.display()));
-        if let Some(model) = session.model.as_deref() {
+        lines.push(format!("lane: {}", lane.lane_id));
+        lines.push(format!("session: {}", lane.session.session_id));
+        lines.push(format!("status: {}", status_label(lane.session.status)));
+        lines.push(format!("harness: {}", lane.session.harness));
+        lines.push(format!("workspace: {}", lane.session.workspace.display()));
+        if let Some(model) = lane.session.model.as_deref() {
             lines.push(format!("model: {model}"));
         }
-        if let Some(phase) = session.outer_phase.as_deref() {
+        if let Some(fanout) = lane.session.fanout_id.as_deref() {
+            lines.push(format!("fanout_id: {fanout}"));
+        }
+        if let Some(phase) = lane.session.outer_phase.as_deref() {
             lines.push(format!("outer_phase: {phase}"));
         }
-        if let Some(edge) = session.outer_edge.as_deref() {
+        if let Some(edge) = lane.session.outer_edge.as_deref() {
             lines.push(format!("outer_edge: {edge}"));
         }
-        match resume {
+        lines.push(format!(
+            "cursor: {}",
+            self.llm_cursors
+                .get(&lane.lane_id)
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string())
+        ));
+        lines.push(format!(
+            "head: {}",
+            lane.head
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string())
+        ));
+        match lane.resume {
             Some(resume) => {
                 lines.push(format!("next_step: {}", resume.next_step));
                 lines.push(format!(
@@ -355,32 +608,7 @@ impl WalkController {
             }
             None => lines.push("step: (none recorded yet)".to_string()),
         }
-        Ok(lines.join("\n"))
-    }
-
-    fn tool_loop_store(&self) -> Result<FsToolLoopStore, PrepareError> {
-        let identity = load_parent_identity_optional(&self.repo_root)?.ok_or_else(|| {
-            PrepareError::DatabaseSetup {
-                phase: "walk_llm_store",
-                detail: format!(
-                    "parent identity is required to locate campaign tool-loop checkpoints: {}",
-                    parent_identity_path(&self.repo_root).display()
-                ),
-            }
-        })?;
-        let manifest = campaign_manifest_path_for_id(identity.campaign_id())?;
-        let campaign_dir = manifest
-            .parent()
-            .ok_or_else(|| PrepareError::DatabaseSetup {
-                phase: "walk_llm_store",
-                detail: format!(
-                    "campaign manifest '{}' has no parent directory",
-                    manifest.display()
-                ),
-            })?;
-        Ok(FsToolLoopStore::new(
-            campaign_dir.join("prototype1/debug/tool-loop"),
-        ))
+        lines.join("\n")
     }
 
     /// Render the last successful step delta, if any.
@@ -445,6 +673,8 @@ impl WalkController {
         self.last_delta = None;
         self.reconstruction = None;
         self.replay = None;
+        self.llm_focus = None;
+        self.llm_cursors.clear();
         self.record(format!("reset: cleared in-memory walk from {previous}"));
         self.phase()
     }
@@ -473,6 +703,8 @@ impl WalkController {
         self.last_delta = None;
         self.reconstruction = None;
         self.replay = None;
+        self.llm_focus = None;
+        self.llm_cursors.clear();
 
         let reconstruct_matches_request = match requested_campaign.as_ref() {
             Some(campaign_id) => load_parent_identity_optional(&repo_root)?
@@ -1169,6 +1401,39 @@ fn indent_lines(value: &str, spaces: usize) -> Vec<String> {
         .collect()
 }
 
+#[derive(Debug, Clone)]
+struct LlmLane {
+    lane_id: String,
+    session: ToolLoopSession,
+    resume: Option<ToolLoopResume>,
+    head: Option<usize>,
+}
+
+fn lane_label(session: &ToolLoopSession) -> String {
+    session
+        .lane_id
+        .clone()
+        .or_else(|| {
+            session
+                .workspace
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(ToString::to_string)
+        })
+        .unwrap_or_else(|| session.session_id.clone())
+}
+
+fn lane_sort_key(lane: &LlmLane) -> (usize, usize, String) {
+    (
+        lane.head.unwrap_or(0),
+        lane.resume
+            .as_ref()
+            .map(|resume| resume.next_step)
+            .unwrap_or(0),
+        lane.session.session_id.clone(),
+    )
+}
+
 fn status_label(status: ToolLoopStatus) -> &'static str {
     match status {
         ToolLoopStatus::Active => "active",
@@ -1453,30 +1718,34 @@ mod tests {
         }
     }
 
-    #[test]
-    fn llm_report_reads_latest_tool_loop_checkpoint() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let eval_home = tmp.path().join("eval-home");
-        let _guard = env_guard_os(vec![("PLOKE_EVAL_HOME", OsString::from(&eval_home))]);
-        let campaign_id = CampaignId::from("campaign-walk-llm-test");
-        let repo_root = tmp.path().join("repo");
-        fs::create_dir_all(&repo_root).expect("repo dir");
+    fn write_test_identity(repo: &Path, campaign: &CampaignId) {
+        fs::create_dir_all(repo).expect("repo dir");
         let identity = ParentIdentity::root_bootstrap(
-            campaign_id.clone(),
+            campaign.clone(),
             "node-root",
             "instance-1",
             "branch-1",
             None,
         );
-        write_parent_identity(&repo_root, &identity).expect("parent identity");
+        write_parent_identity(repo, &identity).expect("parent identity");
+    }
+
+    #[test]
+    fn llm_report_reads_latest_tool_loop_checkpoint() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let eval_home = tmp.path().join("eval-home");
+        let _guard = env_guard_os(vec![("PLOKE_EVAL_HOME", OsString::from(&eval_home))]);
+        let campaign = CampaignId::from("campaign-walk-llm-test");
+        let repo = tmp.path().join("repo");
+        write_test_identity(&repo, &campaign);
 
         let store = FsToolLoopStore::new(
             eval_home
                 .join("campaigns")
-                .join(campaign_id.as_str())
+                .join(campaign.as_str())
                 .join("prototype1/debug/tool-loop"),
         );
-        let mut session = ToolLoopSession::new("session-1", "headless-tui", repo_root.clone());
+        let mut session = ToolLoopSession::new("session-1", "headless-tui", repo.clone());
         session.outer_phase = Some("r10".to_string());
         session.outer_edge = Some("r10->r11".to_string());
         session.status = ToolLoopStatus::Paused;
@@ -1501,8 +1770,8 @@ mod tests {
         resume.next_step = 1;
         store.write_resume(&resume).expect("write resume");
 
-        let report = WalkController::new(repo_root)
-            .llm_report(None, None)
+        let report = WalkController::new(repo)
+            .llm_report(None, None, false, None)
             .expect("llm report");
 
         assert!(report.contains("llm tool-loop checkpoint"));
@@ -1513,5 +1782,84 @@ mod tests {
         assert!(report.contains("response_index: 0"));
         assert!(report.contains("outcome: content"));
         assert!(report.contains("workspace_after: clean"));
+    }
+
+    #[test]
+    fn llm_lane_cursor_moves_read_only() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let eval_home = tmp.path().join("eval-home");
+        let _guard = env_guard_os(vec![("PLOKE_EVAL_HOME", OsString::from(&eval_home))]);
+        let campaign = CampaignId::from("campaign-walk-lanes-test");
+        let repo = tmp.path().join("repo");
+        write_test_identity(&repo, &campaign);
+
+        let store = FsToolLoopStore::new(
+            eval_home
+                .join("campaigns")
+                .join(campaign.as_str())
+                .join("prototype1/debug/tool-loop"),
+        );
+        let mut session = ToolLoopSession::new("session-a", "headless-tui", repo.join("lane-a"));
+        session.lane_id = Some("lane-a".to_string());
+        session.status = ToolLoopStatus::Paused;
+        store.write_session(&session).expect("write session");
+        for index in 0..3 {
+            let step = ToolLoopStep::new(
+                "session-a",
+                index,
+                vec![RequestMessage::new_user("hello".to_string())],
+                content_response(index),
+                WorkspaceState::default(),
+                WorkspaceState::default(),
+            )
+            .expect("step");
+            store.write_step(&step).expect("write step");
+        }
+        let mut resume = ToolLoopResume::new(
+            "session-a",
+            Uuid::from_u128(0xbbbbbbbb_bbbb_bbbb_bbbb_bbbbbbbbbbbb).to_string(),
+            "parent-1",
+            "request-1",
+            vec![RequestMessage::new_user("hello".to_string())],
+        );
+        resume.next_step = 3;
+        store.write_resume(&resume).expect("write resume");
+
+        let mut controller = WalkController::new(repo);
+        let lanes = controller.llm_lanes_report(false).expect("lanes");
+        assert!(lanes.contains("lane-a status=paused cursor=- head=2 next_step=3"));
+
+        let focus = controller.llm_focus("lane-a".to_string()).expect("focus");
+        assert!(focus.contains("focused llm lane lane-a"));
+
+        let moved = controller
+            .llm_move(Some("lane-a"), 1, LlmMove::Back)
+            .expect("back");
+        assert!(moved.contains("cursor=1 head=2"));
+        let report = controller
+            .llm_report(None, None, false, None)
+            .expect("cursor report");
+        assert!(report.contains("cursor: 1"));
+        assert!(report.contains("step: 1"));
+
+        controller
+            .llm_move(Some("lane-a"), 1, LlmMove::Forward)
+            .expect("forward");
+        let report = controller
+            .llm_report(None, Some("lane-a"), false, None)
+            .expect("forward report");
+        assert!(report.contains("cursor: 2"));
+        assert!(report.contains("step: 2"));
+
+        controller
+            .llm_move(Some("lane-a"), 1, LlmMove::Back)
+            .expect("back again");
+        let head = controller.llm_head(Some("lane-a")).expect("head");
+        assert!(head.contains("cursor=head (2)"));
+        let report = controller
+            .llm_report(None, Some("lane-a"), true, None)
+            .expect("head report");
+        assert!(report.contains("cursor: 2"));
+        assert!(report.contains("step: 2"));
     }
 }
