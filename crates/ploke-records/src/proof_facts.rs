@@ -496,6 +496,8 @@ impl ProcessLifetime {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthorityTerm {
+    /// Parent lineage authority or constructor boundary.
+    ParentLineage,
     /// Permissioned lineage authority currently allowed to rule.
     CrownRuling,
     /// Code boundary that can construct or move authority tokens.
@@ -504,17 +506,22 @@ pub enum AuthorityTerm {
     Successor,
     /// Predecessor has retired or locked authority before successor admission.
     PredecessorRetired,
+    /// Immutable-surface digest admission boundary for successor authorization.
+    ImmutableSurfaceDigestAdmission,
 }
 
 impl AuthorityTerm {
     /// True for the vocabulary term representing permissioned active authority.
     pub fn is_permissioned_authority(self) -> bool {
-        matches!(self, Self::CrownRuling)
+        matches!(self, Self::CrownRuling | Self::ParentLineage)
     }
 
     /// True for terms that identify authority-construction proof boundaries.
     pub fn is_authority_boundary(self) -> bool {
-        matches!(self, Self::AuthorityTokenConstructor)
+        matches!(
+            self,
+            Self::AuthorityTokenConstructor | Self::ImmutableSurfaceDigestAdmission
+        )
     }
 
     /// Passive record vocabulary is inert and can never grant authority.

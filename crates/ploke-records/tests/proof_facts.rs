@@ -161,16 +161,20 @@ fn lifetime_vocabulary_requires_full_handoff_evidence_for_detached_processes() {
 
 #[test]
 fn authority_vocabulary_labels_boundaries_without_granting_authority() {
+    assert!(AuthorityTerm::ParentLineage.is_permissioned_authority());
     assert!(AuthorityTerm::CrownRuling.is_permissioned_authority());
     assert!(AuthorityTerm::AuthorityTokenConstructor.is_authority_boundary());
+    assert!(AuthorityTerm::ImmutableSurfaceDigestAdmission.is_authority_boundary());
     assert!(!AuthorityTerm::Successor.is_permissioned_authority());
     assert!(!AuthorityTerm::PredecessorRetired.is_permissioned_authority());
 
     for term in [
+        AuthorityTerm::ParentLineage,
         AuthorityTerm::CrownRuling,
         AuthorityTerm::AuthorityTokenConstructor,
         AuthorityTerm::Successor,
         AuthorityTerm::PredecessorRetired,
+        AuthorityTerm::ImmutableSurfaceDigestAdmission,
     ] {
         assert!(
             !term.record_deserialization_grants_authority(),
