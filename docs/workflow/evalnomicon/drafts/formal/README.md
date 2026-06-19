@@ -20,6 +20,10 @@
   Implementation-target design for extending the current parser/transform/database
   stack into a typed effect, lifetime, authority, and proof-artifact graph capable
   of supporting the detached-process and Crown/Ruler invariants.
+- [`detached-process-crown-symbolic-invariant-outline.md`](detached-process-crown-symbolic-invariant-outline.md)
+  Draft symbolic proposition outline for the Ploke-loop invariant track,
+  separating construction facts, admissibility assumptions, and empirical evidence
+  for immutable surface induction, detached-process safety, and Crown/Ruler uniqueness.
 - [`macro-buildrs-callgraph-sequencing-survey.md`](macro-buildrs-callgraph-sequencing-survey.md)
   Survey and sequencing recommendation for macro/build-script provenance versus
   immediate call/effect graph implementation.
