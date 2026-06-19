@@ -28,6 +28,11 @@
   Ordered proposition and lemma sequence for the Ploke-loop proof track, with
   explicit assumptions, acyclic dependencies, proof sketches, claim status labels,
   and a dependency graph for the detached-process and Crown invariant target.
+- [`detached-process-crown-final-formal-draft.md`](detached-process-crown-final-formal-draft.md)
+  Integrated formal draft that assembles the survey findings, definitions,
+  assumptions, proposition sequence, dependency graph, proof sketches, gap
+  analysis, critical/speculative review, and open formal obligations while
+  preserving the construction-versus-evidence boundary.
 - [`macro-buildrs-callgraph-sequencing-survey.md`](macro-buildrs-callgraph-sequencing-survey.md)
   Survey and sequencing recommendation for macro/build-script provenance versus
   immediate call/effect graph implementation.
