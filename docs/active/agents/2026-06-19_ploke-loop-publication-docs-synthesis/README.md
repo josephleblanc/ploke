@@ -21,6 +21,12 @@ This inventory collects the currently discovered Ploke-loop documentation and co
 
 Critical assumption to preserve: typestate transitions may be complete on the user's home machine but not pushed to this VM. Do not treat current VM `prototype1_state` typestate code, module docs, or active docs as final authority for the typestate story. In this inventory, VM code can be implementation-grounded evidence for what is currently pushed, while home-machine typestate completion is classified as missing/blocked until pushed or otherwise supplied.
 
+## Derived strategy artifacts
+
+- [`implementation-invariants-source-slice.md`](implementation-invariants-source-slice.md) — implementation-grounded source slice for authority, History/Crown, edit surface, passive records, proof facts, schema/GraphRAG/config, and source-corpus citation priority.
+- [`graphrag-history-adapter-note.md`](graphrag-history-adapter-note.md) — reference note mapping the code graph / RAG pipeline to Prototype 1 History and identifying the evidence-payload adapter seam.
+- [`paper-portfolio-and-experiment-strategy.md`](paper-portfolio-and-experiment-strategy.md) — research-paper-track strategy with an arXiv-style outline, publishable-vs-speculative claim boundaries, executable experiment hooks, implementation dependencies, and home-machine typestate blockers.
+
 ## Authority/classification legend
 
 | Classification | Meaning for synthesis |
