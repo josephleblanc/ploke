@@ -39,7 +39,7 @@ pub use observability::{
 pub use ploke_error::PrettyDebug;
 pub use proof_graph::{
     ProofBlockerRow, ProofCheckerEdgeRow, ProofGraphContextRow, ProofGraphStore,
-    ProofSourceProvenanceRow,
+    ProofInvariantFinding, ProofInvariantStatus, ProofSourceProvenanceRow,
 };
 pub use query::{
     QueryBuilder,

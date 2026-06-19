@@ -1,0 +1,705 @@
+use std::collections::BTreeMap;
+
+use cozo::{DataValue, JsonData, ScriptMutability};
+use ploke_db::{Database, ProofGraphStore, ProofInvariantFinding, ProofInvariantStatus};
+use serde_json::{Value, json};
+
+const PROOF_FACT_SCHEMA_VERSION: &str = "ploke-proof-facts.v1";
+const DETACHED_INVARIANT: &str = "detached_process_successor_handoff";
+const CROWN_INVARIANT: &str = "crown_ruling_lineage_uniqueness";
+
+fn call_site() -> Value {
+    call_site_named("call:handoff-spawn", "bd:checker", "def:handoff", 4)
+}
+
+fn call_site_named(
+    call_site_id: &str,
+    build_domain_id: &str,
+    caller_def_id: &str,
+    line: u32,
+) -> Value {
+    json!({
+        "fact_kind": "call_site",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "call_site_id": call_site_id,
+        "build_domain_id": build_domain_id,
+        "caller_def_id": caller_def_id,
+        "source_span": {
+            "file": "src/handoff.rs",
+            "start_byte": line * 10,
+            "end_byte": line * 10 + 20,
+            "line_start": line,
+            "line_end": line
+        },
+        "evidence_use": "proof_only"
+    })
+}
+
+fn call_edge() -> Value {
+    call_edge_named(
+        "edge:handoff-spawn",
+        "call:handoff-spawn",
+        "def:handoff",
+        "def:spawn-successor",
+    )
+}
+
+fn call_edge_named(
+    call_edge_id: &str,
+    call_site_id: &str,
+    caller_def_id: &str,
+    callee_def_id: &str,
+) -> Value {
+    json!({
+        "fact_kind": "call_edge",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "call_edge_id": call_edge_id,
+        "call_site_id": call_site_id,
+        "caller_def_id": caller_def_id,
+        "callee_def_id": callee_def_id,
+        "resolution_state": "resolved",
+        "evidence_use": "proof_only"
+    })
+}
+
+fn process_effect() -> Value {
+    process_effect_named("effect:handoff-spawn", "call:handoff-spawn")
+}
+
+fn process_effect_named(effect_seed_id: &str, call_site_id: &str) -> Value {
+    json!({
+        "fact_kind": "effect_seed",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "effect_seed_id": effect_seed_id,
+        "call_site_id": call_site_id,
+        "effect_class": "operating_system_process_create",
+        "confidence": "command-spawn",
+        "blocker_if_unresolved": true,
+        "evidence_use": "proof_only"
+    })
+}
+
+fn authority(id: &str, term: &str, status: &str, line: u32) -> Value {
+    authority_with_scope(
+        id,
+        term,
+        status,
+        "bd:checker",
+        Some("call:handoff-spawn"),
+        "proof_only",
+        line,
+    )
+}
+
+fn authority_with_scope(
+    id: &str,
+    term: &str,
+    status: &str,
+    build_domain_id: &str,
+    call_site_id: Option<&str>,
+    evidence_use: &str,
+    line: u32,
+) -> Value {
+    let mut value = json!({
+        "fact_kind": "authority",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "authority_fact_id": id,
+        "build_domain_id": build_domain_id,
+        "source_span": {
+            "file": "src/handoff.rs",
+            "start_byte": line * 10,
+            "end_byte": line * 10 + 5,
+            "line_start": line,
+            "line_end": line
+        },
+        "authority_term": term,
+        "status": status,
+        "evidence_use": evidence_use
+    });
+    if let Some(call_site_id) = call_site_id {
+        value["call_site_id"] = json!(call_site_id);
+    }
+    value
+}
+
+fn domain_authority(id: &str, term: &str, status: &str, build_domain_id: &str, line: u32) -> Value {
+    authority_with_scope(id, term, status, build_domain_id, None, "proof_only", line)
+}
+
+fn blocker(reason: &str) -> Value {
+    blocker_for(reason, "bd:checker", Some("call:handoff-spawn"))
+}
+
+fn blocker_for(reason: &str, build_domain_id: &str, call_site_id: Option<&str>) -> Value {
+    let mut value = json!({
+        "fact_kind": "proof_blocker",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "blocker_id": format!("blocker:{reason}"),
+        "reason": reason,
+        "status": "blocked",
+        "build_domain_id": build_domain_id,
+        "detail": "fixture blocker"
+    });
+    if let Some(call_site_id) = call_site_id {
+        value["call_site_id"] = json!(call_site_id);
+    }
+    value
+}
+
+fn unscoped_blocker(reason: &str) -> Value {
+    json!({
+        "fact_kind": "proof_blocker",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "blocker_id": format!("blocker:{reason}"),
+        "reason": reason,
+        "status": "blocked",
+        "detail": "fixture blocker"
+    })
+}
+
+fn legal_handoff_records() -> Vec<Value> {
+    vec![
+        call_site(),
+        call_edge(),
+        process_effect(),
+        authority("authority:successor", "successor", "admitted", 7),
+        authority("authority:parent", "parent_lineage", "admitted", 8),
+        authority(
+            "authority:predecessor",
+            "predecessor_retired",
+            "admitted",
+            9,
+        ),
+        authority("authority:crown", "crown_ruling", "admitted", 10),
+    ]
+}
+
+fn unscoped_legal_handoff_records_for(
+    label: &str,
+    build_domain_id: &str,
+    line_base: u32,
+) -> Vec<Value> {
+    let call_site_id = format!("call:{label}-spawn");
+    let call_edge_id = format!("edge:{label}-spawn");
+    let effect_seed_id = format!("effect:{label}-spawn");
+    let caller_def_id = format!("def:{label}-handoff");
+    let callee_def_id = format!("def:{label}-successor");
+    vec![
+        call_site_named(&call_site_id, build_domain_id, &caller_def_id, line_base),
+        call_edge_named(&call_edge_id, &call_site_id, &caller_def_id, &callee_def_id),
+        process_effect_named(&effect_seed_id, &call_site_id),
+        domain_authority(
+            &format!("authority:{label}:successor"),
+            "successor",
+            "admitted",
+            build_domain_id,
+            line_base + 1,
+        ),
+        domain_authority(
+            &format!("authority:{label}:parent"),
+            "parent_lineage",
+            "admitted",
+            build_domain_id,
+            line_base + 2,
+        ),
+        domain_authority(
+            &format!("authority:{label}:predecessor"),
+            "predecessor_retired",
+            "admitted",
+            build_domain_id,
+            line_base + 3,
+        ),
+        domain_authority(
+            &format!("authority:{label}:crown"),
+            "crown_ruling",
+            "admitted",
+            build_domain_id,
+            line_base + 4,
+        ),
+    ]
+}
+
+fn db_with(records: Vec<Value>) -> Database {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    db.upsert_proof_fact_values(&records)
+        .expect("import proof facts");
+    db
+}
+
+fn db_with_raw_unscoped_process_effect() -> Database {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    let mut params = BTreeMap::new();
+    params.insert(
+        "fact_id".to_string(),
+        data_string(Some("effect:missing-site")),
+    );
+    params.insert("kind".to_string(), data_string(Some("effect_seed")));
+    params.insert(
+        "schema_version".to_string(),
+        data_string(Some(PROOF_FACT_SCHEMA_VERSION)),
+    );
+    params.insert("json".to_string(), DataValue::Json(JsonData(json!({}))));
+    params.insert("evidence_use".to_string(), data_string(Some("proof_only")));
+    params.insert("build_domain_id".to_string(), DataValue::Null);
+    params.insert("call_site_id".to_string(), DataValue::Null);
+    params.insert("call_edge_id".to_string(), DataValue::Null);
+    params.insert("caller_def_id".to_string(), DataValue::Null);
+    params.insert("callee_def_id".to_string(), DataValue::Null);
+    params.insert("resolution_state".to_string(), DataValue::Null);
+    params.insert("source_file".to_string(), DataValue::Null);
+    params.insert("start_byte".to_string(), DataValue::Null);
+    params.insert("end_byte".to_string(), DataValue::Null);
+    params.insert("line_start".to_string(), DataValue::Null);
+    params.insert("line_end".to_string(), DataValue::Null);
+    params.insert(
+        "effect_class".to_string(),
+        data_string(Some("operating_system_process_create")),
+    );
+    params.insert("blocker_reason".to_string(), DataValue::Null);
+    params.insert("status".to_string(), DataValue::Null);
+    params.insert("detail".to_string(), data_string(Some("command-spawn")));
+
+    let script = r#"
+{
+    ?[fact_id, kind, schema_version, json, evidence_use, build_domain_id, call_site_id, call_edge_id, caller_def_id, callee_def_id, resolution_state, source_file, start_byte, end_byte, line_start, line_end, effect_class, blocker_reason, status, detail] :=
+        fact_id = $fact_id,
+        kind = $kind,
+        schema_version = $schema_version,
+        json = $json,
+        evidence_use = $evidence_use,
+        build_domain_id = $build_domain_id,
+        call_site_id = $call_site_id,
+        call_edge_id = $call_edge_id,
+        caller_def_id = $caller_def_id,
+        callee_def_id = $callee_def_id,
+        resolution_state = $resolution_state,
+        source_file = $source_file,
+        start_byte = $start_byte,
+        end_byte = $end_byte,
+        line_start = $line_start,
+        line_end = $line_end,
+        effect_class = $effect_class,
+        blocker_reason = $blocker_reason,
+        status = $status,
+        detail = $detail
+    :put proof_fact { fact_id => kind, schema_version, json, evidence_use, build_domain_id, call_site_id, call_edge_id, caller_def_id, callee_def_id, resolution_state, source_file, start_byte, end_byte, line_start, line_end, effect_class, blocker_reason, status, detail }
+}
+"#;
+    db.run_script(script, params, ScriptMutability::Mutable)
+        .expect("insert raw unscoped process effect");
+    db
+}
+
+fn data_string(value: Option<&str>) -> DataValue {
+    value
+        .map(|value| DataValue::Str(value.into()))
+        .unwrap_or(DataValue::Null)
+}
+
+fn finding_for<'a>(
+    findings: &'a [ProofInvariantFinding],
+    invariant: &str,
+    call_site_id: &str,
+) -> &'a ProofInvariantFinding {
+    let mut matching = findings.iter().filter(|finding| {
+        finding.invariant == invariant && finding.call_site_id.as_deref() == Some(call_site_id)
+    });
+    let finding = matching.next().expect("expected scoped finding");
+    assert!(
+        matching.next().is_none(),
+        "duplicate scoped finding for {invariant} at {call_site_id}: {findings:?}"
+    );
+    finding
+}
+
+fn assert_no_status(
+    findings: &[ProofInvariantFinding],
+    invariant: &str,
+    status: ProofInvariantStatus,
+) {
+    assert!(
+        findings
+            .iter()
+            .filter(|finding| finding.invariant == invariant)
+            .all(|finding| finding.status != status),
+        "unexpected {status:?} finding for {invariant}: {findings:?}"
+    );
+}
+
+#[test]
+fn proof_invariant_checker_passes_legal_successor_handoff_fixture() {
+    let db = db_with(legal_handoff_records());
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+
+    assert_eq!(
+        finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn").status,
+        ProofInvariantStatus::Pass
+    );
+    assert_eq!(
+        finding_for(&findings, CROWN_INVARIANT, "call:handoff-spawn").status,
+        ProofInvariantStatus::Pass
+    );
+    assert_no_status(&findings, DETACHED_INVARIANT, ProofInvariantStatus::Fail);
+    assert_no_status(&findings, DETACHED_INVARIANT, ProofInvariantStatus::Blocked);
+    assert_no_status(&findings, CROWN_INVARIANT, ProofInvariantStatus::Fail);
+    assert_no_status(&findings, CROWN_INVARIANT, ProofInvariantStatus::Blocked);
+}
+
+#[test]
+fn proof_invariant_checker_fails_illegal_detached_spawn_without_successor() {
+    let db = db_with(vec![call_site(), call_edge(), process_effect()]);
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+    let finding = finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn");
+
+    assert_eq!(finding.status, ProofInvariantStatus::Fail);
+    assert!(
+        finding
+            .reason
+            .contains("detached process create lacks admitted successor handoff")
+    );
+}
+
+#[test]
+fn proof_invariant_checker_fails_two_crown_ruling_parents_in_one_lineage() {
+    let mut records = legal_handoff_records();
+    records.push(authority(
+        "authority:crown:second",
+        "crown_ruling",
+        "admitted",
+        11,
+    ));
+    let db = db_with(records);
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+    let finding = finding_for(&findings, CROWN_INVARIANT, "call:handoff-spawn");
+
+    assert_eq!(finding.status, ProofInvariantStatus::Fail);
+    assert!(finding.reason.contains("multiple Crown<Ruling>"));
+}
+
+#[test]
+fn proof_invariant_checker_blocks_incomplete_process_or_authority_evidence() {
+    let db = db_with(vec![
+        call_site(),
+        call_edge(),
+        process_effect(),
+        authority("authority:successor:blocked", "successor", "blocked", 7),
+        blocker("process_lifetime_evidence_missing"),
+    ]);
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+    let detached = finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn");
+    let crown = finding_for(&findings, CROWN_INVARIANT, "call:handoff-spawn");
+
+    assert_eq!(detached.status, ProofInvariantStatus::Blocked);
+    assert!(
+        detached
+            .reason
+            .contains("process_lifetime_evidence_missing")
+    );
+    assert_eq!(crown.status, ProofInvariantStatus::Blocked);
+    assert!(crown.reason.contains("authority evidence is blocked"));
+}
+
+#[test]
+fn proof_invariant_checker_blocks_authority_evidence_gap_without_demoting_to_fail() {
+    let db = db_with(vec![
+        call_site(),
+        call_edge(),
+        process_effect(),
+        authority("authority:successor:blocked", "successor", "blocked", 7),
+    ]);
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+    let finding = finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn");
+
+    assert_eq!(finding.status, ProofInvariantStatus::Blocked);
+    assert!(finding.reason.contains("authority evidence is blocked"));
+}
+
+#[test]
+fn proof_invariant_checker_ignores_navigation_only_authority_for_detached_handoff() {
+    let db = db_with(vec![
+        call_site(),
+        call_edge(),
+        process_effect(),
+        authority_with_scope(
+            "authority:successor:navigation",
+            "successor",
+            "admitted",
+            "bd:checker",
+            Some("call:handoff-spawn"),
+            "navigation_only",
+            7,
+        ),
+        authority("authority:parent", "parent_lineage", "admitted", 8),
+        authority(
+            "authority:predecessor",
+            "predecessor_retired",
+            "admitted",
+            9,
+        ),
+        authority("authority:crown", "crown_ruling", "admitted", 10),
+    ]);
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+    let finding = finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn");
+
+    assert_eq!(finding.status, ProofInvariantStatus::Fail);
+    assert!(
+        finding
+            .reason
+            .contains("detached process create lacks admitted successor handoff")
+    );
+}
+
+#[test]
+fn proof_invariant_checker_ignores_unknown_evidence_use_for_authority() {
+    let db = db_with(vec![
+        call_site(),
+        call_edge(),
+        process_effect(),
+        authority_with_scope(
+            "authority:successor:audit",
+            "successor",
+            "admitted",
+            "bd:checker",
+            Some("call:handoff-spawn"),
+            "audit_only",
+            7,
+        ),
+        authority("authority:parent", "parent_lineage", "admitted", 8),
+        authority(
+            "authority:predecessor",
+            "predecessor_retired",
+            "admitted",
+            9,
+        ),
+        authority("authority:crown", "crown_ruling", "admitted", 10),
+    ]);
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+    let finding = finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn");
+
+    assert_eq!(finding.status, ProofInvariantStatus::Fail);
+    assert!(
+        finding
+            .reason
+            .contains("detached process create lacks admitted successor handoff")
+    );
+}
+
+#[test]
+fn proof_invariant_checker_requires_authority_build_domain_match_for_same_call_site() {
+    let db = db_with(vec![
+        call_site_named("call:shared-spawn", "bd:primary", "def:shared", 20),
+        call_edge_named(
+            "edge:shared-spawn",
+            "call:shared-spawn",
+            "def:shared",
+            "def:shared-successor",
+        ),
+        process_effect_named("effect:shared-spawn", "call:shared-spawn"),
+        authority_with_scope(
+            "authority:shared:successor:other-domain",
+            "successor",
+            "admitted",
+            "bd:other",
+            Some("call:shared-spawn"),
+            "proof_only",
+            21,
+        ),
+        authority_with_scope(
+            "authority:shared:parent:other-domain",
+            "parent_lineage",
+            "admitted",
+            "bd:other",
+            Some("call:shared-spawn"),
+            "proof_only",
+            22,
+        ),
+        authority_with_scope(
+            "authority:shared:predecessor:other-domain",
+            "predecessor_retired",
+            "admitted",
+            "bd:other",
+            Some("call:shared-spawn"),
+            "proof_only",
+            23,
+        ),
+        authority_with_scope(
+            "authority:shared:crown:other-domain",
+            "crown_ruling",
+            "admitted",
+            "bd:other",
+            Some("call:shared-spawn"),
+            "proof_only",
+            24,
+        ),
+    ]);
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+    let finding = finding_for(&findings, DETACHED_INVARIANT, "call:shared-spawn");
+
+    assert_eq!(finding.status, ProofInvariantStatus::Fail);
+    assert!(
+        finding
+            .reason
+            .contains("detached process create lacks admitted successor handoff")
+    );
+}
+
+#[test]
+fn proof_invariant_checker_blocks_process_effect_without_call_site_fail_closed() {
+    let db = db_with_raw_unscoped_process_effect();
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+
+    assert!(findings.iter().any(|finding| {
+        finding.invariant == DETACHED_INVARIANT
+            && finding.call_site_id.is_none()
+            && finding.status == ProofInvariantStatus::Blocked
+            && finding.reason.contains("lacks call_site_id")
+    }));
+    assert_no_status(&findings, DETACHED_INVARIANT, ProofInvariantStatus::Pass);
+}
+
+#[test]
+fn proof_invariant_checker_scopes_blockers_to_matching_call_site() {
+    let mut records = legal_handoff_records();
+    records.push(blocker_for(
+        "process_lifetime_evidence_missing",
+        "bd:checker",
+        Some("call:unrelated-spawn"),
+    ));
+    let db = db_with(records);
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+
+    assert_eq!(
+        finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn").status,
+        ProofInvariantStatus::Pass
+    );
+    assert_no_status(&findings, DETACHED_INVARIANT, ProofInvariantStatus::Blocked);
+}
+
+#[test]
+fn proof_invariant_checker_blocks_unscoped_proof_blocker_fail_closed() {
+    let mut records = legal_handoff_records();
+    records.push(unscoped_blocker("global_proof_gap"));
+    let db = db_with(records);
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+    let finding = finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn");
+
+    assert_eq!(finding.status, ProofInvariantStatus::Blocked);
+    assert!(finding.reason.contains("global_proof_gap"));
+}
+
+#[test]
+fn proof_invariant_checker_checks_each_detached_process_site_independently() {
+    let mut records = legal_handoff_records();
+    records.push(call_site_named(
+        "call:uncovered-spawn",
+        "bd:checker",
+        "def:uncovered",
+        20,
+    ));
+    records.push(call_edge_named(
+        "edge:uncovered-spawn",
+        "call:uncovered-spawn",
+        "def:uncovered",
+        "def:spawn-uncovered",
+    ));
+    records.push(process_effect_named(
+        "effect:uncovered-spawn",
+        "call:uncovered-spawn",
+    ));
+    let db = db_with(records);
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+    let covered = finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn");
+    let uncovered = finding_for(&findings, DETACHED_INVARIANT, "call:uncovered-spawn");
+
+    assert_eq!(covered.status, ProofInvariantStatus::Pass);
+    assert_eq!(uncovered.status, ProofInvariantStatus::Fail);
+    assert!(
+        uncovered
+            .reason
+            .contains("detached process create lacks admitted successor handoff")
+    );
+}
+
+#[test]
+fn proof_invariant_checker_does_not_use_domain_authority_for_detached_site() {
+    let db = db_with(unscoped_legal_handoff_records_for(
+        "domain-only",
+        "bd:domain-only",
+        30,
+    ));
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+    let finding = finding_for(&findings, DETACHED_INVARIANT, "call:domain-only-spawn");
+
+    assert_eq!(finding.status, ProofInvariantStatus::Fail);
+    assert!(
+        finding
+            .reason
+            .contains("detached process create lacks admitted successor handoff")
+    );
+}
+
+#[test]
+fn proof_invariant_checker_allows_independent_crown_rulings_per_build_domain() {
+    let mut records = unscoped_legal_handoff_records_for("primary", "bd:primary", 40);
+    records.extend(unscoped_legal_handoff_records_for(
+        "secondary",
+        "bd:secondary",
+        50,
+    ));
+    let db = db_with(records);
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+
+    assert_eq!(
+        finding_for(&findings, CROWN_INVARIANT, "call:primary-spawn").status,
+        ProofInvariantStatus::Pass
+    );
+    assert_eq!(
+        finding_for(&findings, CROWN_INVARIANT, "call:secondary-spawn").status,
+        ProofInvariantStatus::Pass
+    );
+    assert_no_status(&findings, CROWN_INVARIANT, ProofInvariantStatus::Fail);
+}
