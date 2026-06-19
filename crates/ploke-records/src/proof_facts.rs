@@ -149,6 +149,166 @@ pub enum ProofBlockerReason {
     ProcMacroExecutionBlocked,
 }
 
+/// Whether an evidence row may participate in proof, navigation, or both.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceUse {
+    /// Evidence consumed only by proof checkers and proof reports.
+    #[default]
+    ProofOnly,
+    /// Evidence used for symbol lookup, browsing, or GraphRAG hints only.
+    NavigationOnly,
+    /// Evidence may be shown to navigation consumers and checked by proof consumers.
+    ProofAndNavigation,
+}
+
+impl EvidenceUse {
+    /// True when this row may be used to satisfy proof obligations.
+    pub fn can_satisfy_proof(self) -> bool {
+        matches!(self, Self::ProofOnly | Self::ProofAndNavigation)
+    }
+
+    /// True when this row may be displayed by navigation or GraphRAG consumers.
+    pub fn visible_to_navigation(self) -> bool {
+        matches!(self, Self::NavigationOnly | Self::ProofAndNavigation)
+    }
+}
+
+/// Fail-closed status for a normalized proof obligation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObligationStatus {
+    /// Required evidence has been admitted by the checker boundary.
+    Admitted,
+    /// Evidence contradicts the obligation.
+    Rejected,
+    /// Evidence is missing, ambiguous, unresolved, or outside the proof domain.
+    Blocked,
+}
+
+impl ObligationStatus {
+    /// True only when the obligation can satisfy a proof consumer.
+    pub fn satisfies_proof(self) -> bool {
+        matches!(self, Self::Admitted)
+    }
+
+    /// True when the checker found contradictory evidence rather than missing evidence.
+    pub fn is_terminal_failure(self) -> bool {
+        matches!(self, Self::Rejected)
+    }
+
+    /// True when more typed evidence is required before a proof can pass.
+    pub fn blocks_until_evidence(self) -> bool {
+        matches!(self, Self::Blocked)
+    }
+}
+
+/// Handoff role relevant to the detached-process exception.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HandoffRole {
+    /// The one admitted detached successor runtime for a lineage transition.
+    Successor,
+    /// Evidence that the predecessor authority has retired or locked.
+    PredecessorRetired,
+}
+
+impl HandoffRole {
+    /// True for the role that may require the detached-process exception.
+    pub fn requires_detached_exception(self) -> bool {
+        matches!(self, Self::Successor)
+    }
+
+    /// True for the role proving predecessor authority is no longer ruling.
+    pub fn is_authority_retirement_evidence(self) -> bool {
+        matches!(self, Self::PredecessorRetired)
+    }
+}
+
+/// Minimal fail-closed evidence needed before a detached successor may be exempted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HandoffEvidence {
+    /// Successor-side admission evidence.
+    pub successor: ObligationStatus,
+    /// Predecessor authority has retired or locked before successor authority.
+    pub predecessor_retired: ObligationStatus,
+    /// Exactly one detached successor is admitted for this lineage transition.
+    pub exact_one_successor: ObligationStatus,
+}
+
+impl HandoffEvidence {
+    /// Convenience value for tests and checker fixtures with all handoff gates satisfied.
+    pub fn complete_successor_handoff() -> Self {
+        Self {
+            successor: ObligationStatus::Admitted,
+            predecessor_retired: ObligationStatus::Admitted,
+            exact_one_successor: ObligationStatus::Admitted,
+        }
+    }
+
+    /// True only when all detached-successor handoff gates satisfy proof.
+    pub fn satisfies_detached_successor(self) -> bool {
+        self.successor.satisfies_proof()
+            && self.predecessor_retired.satisfies_proof()
+            && self.exact_one_successor.satisfies_proof()
+    }
+}
+
+/// Conservative lifetime classification for process effects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProcessLifetime {
+    /// The creating runtime owns, waits, kills, reaps, or otherwise bounds the process.
+    RuntimeBounded,
+    /// The process may outlive the creating runtime.
+    Detached,
+    /// The extractor cannot prove whether the process is runtime-bounded.
+    Unknown,
+}
+
+impl ProcessLifetime {
+    /// True when this lifetime classification blocks the detached-process proof.
+    pub fn blocks_detached_process_proof(self, handoff: Option<HandoffEvidence>) -> bool {
+        match self {
+            Self::RuntimeBounded => false,
+            Self::Detached => !handoff.is_some_and(HandoffEvidence::satisfies_detached_successor),
+            Self::Unknown => true,
+        }
+    }
+}
+
+/// Authority vocabulary used by proof facts without granting authority itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthorityTerm {
+    /// Permissioned lineage authority currently allowed to rule.
+    CrownRuling,
+    /// Code boundary that can construct or move authority tokens.
+    AuthorityTokenConstructor,
+    /// Successor-side role in a handoff.
+    Successor,
+    /// Predecessor has retired or locked authority before successor admission.
+    PredecessorRetired,
+}
+
+impl AuthorityTerm {
+    /// True for the vocabulary term representing permissioned active authority.
+    pub fn is_permissioned_authority(self) -> bool {
+        matches!(self, Self::CrownRuling)
+    }
+
+    /// True for terms that identify authority-construction proof boundaries.
+    pub fn is_authority_boundary(self) -> bool {
+        matches!(self, Self::AuthorityTokenConstructor)
+    }
+
+    /// Passive record vocabulary is inert and can never grant authority.
+    pub fn record_deserialization_grants_authority(self) -> bool {
+        let _ = self;
+        false
+    }
+}
+
 /// Macro/build/proc-macro provenance boundary for a build domain.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExpansionBoundaryFact {
@@ -217,6 +377,13 @@ impl CallResolutionFact {
     }
 }
 
+impl ResolutionState {
+    /// True only for resolved call evidence that is allowed to satisfy proof.
+    pub fn can_satisfy_proof(self, evidence_use: EvidenceUse) -> bool {
+        matches!(self, Self::Resolved) && evidence_use.can_satisfy_proof()
+    }
+}
+
 /// Semantic effect classes seeded from call resolution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -253,11 +420,14 @@ pub struct EffectSeedFact {
     pub effect_class: EffectClass,
     pub confidence: String,
     pub blocker_if_unresolved: bool,
+    #[serde(default)]
+    pub evidence_use: EvidenceUse,
 }
 
 impl EffectSeedFact {
     pub fn blocks_proof_if_unresolved(&self, resolution: &CallResolutionFact) -> bool {
         self.call_site_id == resolution.call_site_id
+            && self.evidence_use.can_satisfy_proof()
             && self.blocker_if_unresolved
             && resolution.is_proof_blocking()
     }

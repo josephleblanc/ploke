@@ -1,7 +1,8 @@
 use ploke_records::proof_facts::{
-    BuildDomainFact, BuildDomainId, CallResolutionFact, CallSiteId, EffectClass, EffectSeedFact,
-    EffectSeedId, ExpansionBoundaryFact, ExpansionBoundaryId, ExpansionBoundaryKind,
-    ExpansionState, PROOF_FACT_SCHEMA_VERSION, ProofBlockerReason, ProofFactRecord,
+    AuthorityTerm, BuildDomainFact, BuildDomainId, CallResolutionFact, CallSiteId, EffectClass,
+    EffectSeedFact, EffectSeedId, EvidenceUse, ExpansionBoundaryFact, ExpansionBoundaryId,
+    ExpansionBoundaryKind, ExpansionState, HandoffEvidence, HandoffRole, ObligationStatus,
+    PROOF_FACT_SCHEMA_VERSION, ProcessLifetime, ProofBlockerReason, ProofFactRecord,
     ResolutionState, SourceSpanRecord, TargetKind,
 };
 
@@ -96,6 +97,7 @@ fn unresolved_process_effect_seed_is_explicitly_proof_blocking() {
         effect_class: EffectClass::OperatingSystemProcessCreate,
         confidence: "seed".to_string(),
         blocker_if_unresolved: true,
+        evidence_use: EvidenceUse::ProofOnly,
     };
 
     assert!(effect.blocks_proof_if_unresolved(&resolution));
@@ -106,4 +108,110 @@ fn unresolved_process_effect_seed_is_explicitly_proof_blocking() {
     assert_eq!(json["fact_kind"], "effect_seed");
     assert_eq!(json["effect_class"], "operating_system_process_create");
     assert_eq!(json["blocker_if_unresolved"], true);
+}
+
+#[test]
+fn resolution_vocabulary_distinguishes_proof_from_navigation_consumers() {
+    assert!(ResolutionState::Resolved.can_satisfy_proof(EvidenceUse::ProofOnly));
+    assert!(ResolutionState::Resolved.can_satisfy_proof(EvidenceUse::ProofAndNavigation));
+    assert!(!ResolutionState::Resolved.can_satisfy_proof(EvidenceUse::NavigationOnly));
+
+    for state in [
+        ResolutionState::CandidateSet,
+        ResolutionState::Ambiguous,
+        ResolutionState::Unresolved,
+        ResolutionState::ExternallySummarized,
+        ResolutionState::Blocked,
+    ] {
+        assert!(
+            !state.can_satisfy_proof(EvidenceUse::ProofOnly),
+            "{state:?} must not satisfy a proof obligation without stronger evidence"
+        );
+    }
+}
+
+#[test]
+fn proof_obligation_status_is_fail_closed() {
+    assert!(ObligationStatus::Admitted.satisfies_proof());
+    assert!(!ObligationStatus::Rejected.satisfies_proof());
+    assert!(!ObligationStatus::Blocked.satisfies_proof());
+    assert!(ObligationStatus::Rejected.is_terminal_failure());
+    assert!(ObligationStatus::Blocked.blocks_until_evidence());
+}
+
+#[test]
+fn lifetime_vocabulary_requires_full_handoff_evidence_for_detached_processes() {
+    assert!(!ProcessLifetime::RuntimeBounded.blocks_detached_process_proof(None));
+    assert!(ProcessLifetime::Detached.blocks_detached_process_proof(None));
+
+    let successor_only = HandoffEvidence {
+        successor: ObligationStatus::Admitted,
+        predecessor_retired: ObligationStatus::Blocked,
+        exact_one_successor: ObligationStatus::Blocked,
+    };
+    assert!(ProcessLifetime::Detached.blocks_detached_process_proof(Some(successor_only)));
+
+    let complete = HandoffEvidence::complete_successor_handoff();
+    assert!(!ProcessLifetime::Detached.blocks_detached_process_proof(Some(complete)));
+    assert!(ProcessLifetime::Unknown.blocks_detached_process_proof(Some(complete)));
+
+    assert!(HandoffRole::Successor.requires_detached_exception());
+    assert!(HandoffRole::PredecessorRetired.is_authority_retirement_evidence());
+}
+
+#[test]
+fn authority_vocabulary_labels_boundaries_without_granting_authority() {
+    assert!(AuthorityTerm::CrownRuling.is_permissioned_authority());
+    assert!(AuthorityTerm::AuthorityTokenConstructor.is_authority_boundary());
+    assert!(!AuthorityTerm::Successor.is_permissioned_authority());
+    assert!(!AuthorityTerm::PredecessorRetired.is_permissioned_authority());
+
+    for term in [
+        AuthorityTerm::CrownRuling,
+        AuthorityTerm::AuthorityTokenConstructor,
+        AuthorityTerm::Successor,
+        AuthorityTerm::PredecessorRetired,
+    ] {
+        assert!(
+            !term.record_deserialization_grants_authority(),
+            "{term:?} is proof vocabulary only; deserialization must stay inert"
+        );
+    }
+}
+
+#[test]
+fn effect_seed_records_proof_only_versus_navigation_only_evidence() {
+    let effect = EffectSeedFact {
+        schema_version: PROOF_FACT_SCHEMA_VERSION.to_string(),
+        effect_seed_id: EffectSeedId("effect:navigation:1".to_string()),
+        call_site_id: CallSiteId("call:navigation:1".to_string()),
+        effect_class: EffectClass::ExternalSummaryBoundary,
+        confidence: "navigation-hint".to_string(),
+        blocker_if_unresolved: true,
+        evidence_use: EvidenceUse::NavigationOnly,
+    };
+
+    assert!(!effect.evidence_use.can_satisfy_proof());
+    assert!(effect.evidence_use.visible_to_navigation());
+
+    let unresolved = CallResolutionFact {
+        schema_version: PROOF_FACT_SCHEMA_VERSION.to_string(),
+        call_site_id: CallSiteId("call:navigation:1".to_string()),
+        resolution_state: ResolutionState::Unresolved,
+        resolved_def_id: None,
+        candidate_def_ids: Vec::new(),
+        external_summary_id: None,
+        blocking_reason: Some(ProofBlockerReason::TypeResolutionMissing),
+    };
+    assert!(unresolved.is_proof_blocking());
+    assert!(
+        !effect.blocks_proof_if_unresolved(&unresolved),
+        "navigation-only evidence can guide browsing but must not participate in proof blocking"
+    );
+
+    let json =
+        serde_json::to_value(ProofFactRecord::EffectSeed(effect)).expect("serialize effect seed");
+
+    assert_eq!(json["fact_kind"], "effect_seed");
+    assert_eq!(json["evidence_use"], "navigation_only");
 }
