@@ -7041,10 +7041,13 @@ dependencies = [
  "ploke-llm",
  "ploke-protocol",
  "ploke-tui",
+ "proc-macro2",
+ "quote",
  "serde",
  "serde_json",
  "serde_path_to_error",
  "sha2 0.10.8",
+ "syn 1.0.109",
  "toml 0.9.5",
  "uuid",
 ]
