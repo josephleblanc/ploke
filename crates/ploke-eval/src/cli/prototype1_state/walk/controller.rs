@@ -1,8 +1,11 @@
 //! In-memory typestate walker used by the local debug server.
 //!
-//! `WalkController` owns exactly one `WalkState` value. Each step consumes that
-//! state and calls the canonical direct edge functions from `live_edges`; this
-//! module should not duplicate transition semantics.
+//! `WalkController` owns exactly one operator-session `WalkState` value. When
+//! the server has no state, it first tries durable reconstruction from disk; each
+//! live step then consumes the typed state and calls the canonical direct edge
+//! functions from `live_edges`. This module should not duplicate transition
+//! semantics or become authority for History, parent identity, child terminality,
+//! or successor handoff finality.
 
 use std::{
     fs,

@@ -4,6 +4,11 @@
 //! "what already happened here?" question from committed parent identity and
 //! campaign artifacts so completed runs remain discoverable after all runtimes
 //! have exited.
+//!
+//! Keep this as a lightweight discovery view. If a future field needs to explain
+//! selection authority, child evidence, or sealed History semantics, prefer a
+//! typed read model over `EvidenceStore`/`FsEvidenceStore` and `FsBlockStore`
+//! rather than adding more ad-hoc JSON parsing here.
 
 use std::{
     collections::BTreeMap,

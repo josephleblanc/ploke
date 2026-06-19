@@ -1,8 +1,16 @@
-//! Side-effect-free reconstruction for early Prototype 1 parent typestates.
+//! Side-effect-free durable reconstruction for Prototype 1 parent typestates.
 //!
-//! This slice reconstructs setup through policy-ready parent typestates. It
-//! rebuilds typed carriers from durable checkout/campaign/journal evidence
-//! without calling side-effectful live edges when the evidence already exists.
+//! This module rebuilds the most advanced currently supported `Runtime<...>`
+//! carrier from checkout, campaign, journal, channel, History, and handoff
+//! evidence. It started as an R0-R5/R7 reconstruction seam, so some internal
+//! names still say `Early*`; the current behavior is broader and can reconstruct
+//! through R14a/R14b when the required durable evidence exists.
+//!
+//! Reconstruction must not replay side effects. When evidence is complete, it
+//! rebuilds typed carriers and calls only pure/projection edges. When evidence is
+//! missing or inconsistent, it returns the latest safe state plus explicit
+//! blockers instead of spawning children, appending journal records, sealing
+//! History, mutating checkout state, or fabricating child outcomes.
 
 use std::path::{Path, PathBuf};
 
@@ -39,7 +47,12 @@ use crate::{
     spec::PrepareError,
 };
 
-/// Concrete early parent typestate reconstructed from durable evidence.
+/// Concrete parent typestate reconstructed from durable evidence.
+///
+/// The name is historical: early slices only reconstructed setup/policy phases.
+/// The enum now includes all currently reconstructable walk phases, including
+/// stopped and selected-successor final states when durable handoff/completion
+/// evidence is present.
 pub(crate) enum EarlyState {
     R1(typestate::R1<Prototype1StateRunShape, ResolvedCampaignConfig>),
     R3(typestate::R3<Prototype1StateRunShape, ResolvedCampaignConfig>),
@@ -57,7 +70,12 @@ pub(crate) enum EarlyState {
     R14b(typestate::R14bFinalHandoff<Prototype1StateRunShape, ResolvedCampaignConfig>),
 }
 
-/// Result of an early durable reconstruction attempt.
+/// Result of a durable reconstruction attempt.
+///
+/// The state is optional because a checkout with no parent identity cannot be
+/// admitted into the Prototype 1 parent typestate graph. `notes` explain which
+/// evidence was accepted; `blockers` explain strict edges that could not be
+/// reconstructed without weakening invariants.
 pub(crate) struct EarlySnapshot {
     pub(crate) state: Option<EarlyState>,
     pub(crate) campaign_id: Option<CampaignId>,
@@ -65,7 +83,15 @@ pub(crate) struct EarlySnapshot {
     pub(crate) blockers: Vec<String>,
 }
 
-/// Reconstruct the most advanced R0-R5 state supported by durable evidence.
+/// Reconstruct the most advanced supported parent state from durable evidence.
+///
+/// This is read-only with respect to loop side effects. It may read parent
+/// identity, campaign manifests, run profiles, transition journals, child-plan
+/// messages, channel records, runner/evaluation projections tied to channel
+/// evidence, successor handoff records, and parent-complete evidence. It must
+/// not create missing evidence or make permissive assumptions about schema,
+/// parent identity, child terminality, branch evaluations, History, or checkout
+/// state.
 pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, PrepareError> {
     let mut notes = Vec::new();
     let mut blockers = Vec::new();

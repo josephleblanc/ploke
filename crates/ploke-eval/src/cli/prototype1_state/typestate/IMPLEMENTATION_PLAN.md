@@ -1,5 +1,12 @@
 # Prototype 1 Runtime Typestate Implementation Plan
 
+> Current status, 2026-06-19: this is now a historical implementation plan, not
+> the live status page. The structural typestate pipeline is wired into
+> `prototype1-state` through `driver::advance::run_to_terminal`, and `loop walk`
+> steps the same direct edge functions through the local debug server. See
+> `docs/active/agents/2026-06-19_typestate-doc-code-survey.md` and the current
+> `walk` help text for the latest operator-facing status.
+
 This document records the implementation path for turning the live Prototype 1
 parent controller into a structural typestate pipeline.
 
@@ -7,13 +14,20 @@ The goal is not to invent a second controller. The goal is to migrate the
 existing live loop, edge by edge, into a form where the compiler can prove that
 later phases only run after their required earlier facts exist.
 
-The current live entrypoint is:
+The original live entrypoint was:
 
 ```rust
 run_prototype1_state_turn(command: Prototype1StateCommand) -> Result<(), PrepareError>
 ```
 
-The target shape is a pipeline of typed state transitions:
+That function is now a thin wrapper around the typed driver. The live batch
+entrypoint is:
+
+```rust
+driver::advance::run_to_terminal(command: Prototype1StateCommand) -> Result<(), PrepareError>
+```
+
+The target shape was, and the current driver uses, a pipeline of typed state transitions:
 
 ```rust
 Transition<From, To, F>
@@ -37,23 +51,24 @@ state.
 
 ## Current state
 
-The scaffold currently contains:
+The scaffold has been promoted into the live Prototype 1 state path. It now contains:
 
 - `Runtime<Phase, Role, Context, Plan, Children, History, Evidence, Continuation, Report>`.
 - Axis carriers for role, context, child plan, child set, History, evidence,
   continuation, and report facts.
-- R-phase aliases for the observed Prototype 1 parent loop.
+- R-phase aliases through `R14bFinalHandoff`.
 - A generic transition layer:
   - `Transition<From, To, F, Error>`
   - `Step<From>`
+  - `AsyncStep<From>`
   - `Chain<First, Second, Mid>`
   - `transition(...)`
-- The first live controller edge:
-  - `R0 -> R1<Prototype1StateRunShape, ResolvedCampaignConfig>`
+- A canonical batch driver in `driver::advance::run_to_terminal`.
+- A durable reconstruction path in `driver::reconstruct` used by `walk`.
+- A read-only replay cursor in `driver::replay` used by `walk replay/back/forward`.
 
-That first edge collects the command-derived setup inputs and then temporarily
-unpacks `R1` back into the existing locals. That unpacking is an intentional
-migration seam, not the final design.
+Older sections below describe the migration path and should be read as historical
+slice design unless they explicitly match current code.
 
 ## Invariants
 

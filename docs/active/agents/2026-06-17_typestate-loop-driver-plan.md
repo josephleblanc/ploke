@@ -2,7 +2,18 @@
 
 Short description: implementation plan for promoting the Prototype 1 typestate pipeline into the primary parent-loop data model and step driver, while keeping the `walk` server as an operator interface rather than loop authority.
 
-Status: active plan; do not treat as implemented behavior until the per-slice checks listed below pass.
+Status: historical active plan with partially completed milestones. Do not treat older per-slice wording as current behavior without checking code and the worklog.
+
+Current status, 2026-06-19:
+
+- `prototype1-state` uses the typed batch driver in `driver::advance::run_to_terminal`.
+- `walk` reconstructs durable state from disk before stepping when possible.
+- `walk summary` is serverless/read-only and provides operator discovery for completed runs.
+- `walk replay`, `walk back`, and `walk forward` are read-only historical cursor commands.
+- Live `R7 -> R8` and `R10 -> R11a | R11` require `--watch`.
+- Selected-successor `R12 -> R13b` is admitted only with `--watch --allow git-changes`.
+- `R13b -> R14b` final handoff report is represented in code and can be reconstructed when durable evidence exists.
+- See `2026-06-19_typestate-doc-code-survey.md` for a current docs/code survey.
 
 Related planning/code:
 
@@ -158,11 +169,11 @@ The table below treats R0–R14 as the driver spine. The exact durable evidence 
 | R10 | Selection strategy ready. | successor-selection policy/strategy, seed, metrics mode, History traversal inputs. | Reads History/projections to build strategy. | Replay shows strategy inputs. | Current walk admits pure `R9 -> R10`; live `R10 -> R11*` requires explicit `walk step --watch`. `ActiveSelectionStrategy` is still private to `cli_facing`; the typestate alias uses the public marker shape while runtime facts carry the value. |
 | R11a | Rejected-only branch projected. | rejected surface attempts and selection material. | Writes/report selection evidence if current path does. | Replay shows no-child selection evidence. | Current walk can reach R11a through explicit `--watch`; default next step projects R12 report facts; must not require fake child outcomes. |
 | R11b/R11c | Child fanout complete. | per-child C1-C5 evidence: materialized artifact, binary, invocation, per-child channel messages, channel-carried result/treatment references, parent branch evaluation. | Materialize/build/spawn/observe children; may call providers via child runner. | Replay should use channel messages or channel-carried verifiable refs, not spawn. Result files are reconstruction/projection unless named by the channel. Back cursor does not kill/undo completed child work. | Current walk exposes live fanout only through explicit `--watch`; durable reconstruction can rebuild R11 from stored terminal child outcomes when each child has matching invocation authority, terminal channel `Result`, latest and attempt-scoped runner results, and a matching branch evaluation report for successful children. Otherwise missing child terminal/evaluation evidence remains a hard blocker. Successful fanout can step/reconstruct to R12. |
-| R12 | Report-child/outcome projection ready. | child outcomes, fallback/report child, branch evaluation report, selection material. | Assembles report facts/projections. | Replay shows outcome projection. | Current walk admits pure `R11* -> R12` projection and can reconstruct R12 from channel-derived child outcomes plus parent comparison reports. Default R12 step reaches R13a only when no successor selection is present. Keep report facts separate from final emitted report. |
-| R13a | Continuation stopped/no successor. | successor decision/outcome, read History head, continuation decision stopped. | May append stopped successor/journal records. | Replay shows stop reason. | Current walk admits and reconstructs no-selection stopped path only; selected-successor R13b handoff remains blocked before consuming R12. |
-| R13b | Successor handoff committed. | selected child, selection seal material, open/locked/sealed/appended History block, retired parent, successor invocation/ready record. | Install selected artifact, seal/append History, retire parent, spawn successor, wait ready. | Replay can inspect sealed handoff. Branch-to-live later can start from here only with explicit new provenance. | Still blocked in `walk`; highest-risk slice; require focused proof before live full loop. |
-| R14a | Final report after stopped/no-selection. | completion resource sample and emitted `Prototype1StateReport`. | Appends completion sample and prints/writes report. | Replay displays final report. | Current walk admits and reconstructs stopped/no-selection final report from parent-complete resource evidence and stops at R14a. No handoff continuation. |
-| R14b | Final report after successor handoff. | completion sample, emitted report, successor completion record if bounded successor observed. | Records successor completion and final report. | Replay displays parent/successor closure. | Parent server should stop/become read-only; successor starts fresh context. |
+| R12 | Report-child/outcome projection ready. | child outcomes, fallback/report child, branch evaluation report, selection material. | Assembles report facts/projections. | Replay shows outcome projection. | Current walk admits pure `R11* -> R12` projection and can reconstruct R12 from channel-derived child outcomes plus parent comparison reports. From R12, stopped/no-selection paths go to R13a; selected-successor handoff goes to R13b only with `--watch --allow git-changes`. Keep report facts separate from final emitted report. |
+| R13a | Continuation stopped/no successor. | successor decision/outcome, read History head, continuation decision stopped. | May append stopped successor/journal records. | Replay shows stop reason. | Current walk admits and reconstructs stopped/no-selection and selected-successor-stopped paths. |
+| R13b | Successor handoff committed. | selected child, selection seal material, open/locked/sealed/appended History block, retired parent, successor invocation/ready record. | Install selected artifact, seal/append History, retire parent, spawn successor, wait ready. | Replay can inspect sealed handoff. Branch-to-live later can start from here only with explicit new provenance. | Current walk admits this path only with `--watch --allow git-changes`; treat it as the highest-risk live edge. |
+| R14a | Final report after stopped/no-selection. | completion resource sample and emitted `Prototype1StateReport`. | Appends completion sample and writes/prints report. | Replay displays final report. | Current walk admits and reconstructs stopped/no-selection final report from parent-complete resource evidence and stops at R14a. |
+| R14b | Final report after successor handoff. | completion sample, emitted report, successor completion record if bounded successor observed. | Records successor completion and final report. | Replay displays parent/successor closure. | Current walk represents and reconstructs this path when handoff/final evidence exists; long-term server lifecycle should still stop/read-only parent and start fresh successor context. |
 
 ## Proposed driver modules
 
@@ -372,7 +383,7 @@ Current implementation status:
 - Current-generation selection material now seals transport-agnostic refs for the terminal child-channel `Result`, attempt runner result, and child invocation into `SealedRuntimeEvidence`; decision-grade replay fails closed when the primary runtime lacks a terminal channel citation.
 - Rejected-only R11a smoke reaches/reconstructs R12 and records fallback/report facts without emitting the final report.
 - Missing report inputs still fail through the canonical edge; no fake child outcomes are invented.
-- Selected-successor R12 remains blocked before R13b handoff; no-selection R12 can continue to R13a/R14a.
+- Selected-successor R12 can continue to R13b only with `--watch --allow git-changes`; no-selection R12 can continue to R13a/R14a.
 
 Original requirements:
 
@@ -387,9 +398,9 @@ Goal: no-successor/stopped continuation is a typed terminal branch before final 
 Current implementation status:
 
 - `walk` admits and reconstructs R12 -> R13a only when the R12 facts have no selected successor.
-- If selected-successor evidence is present, `walk` remains at R12 and blocks before calling the canonical edge, so R13b handoff cannot start accidentally.
+- If selected-successor evidence is present, `walk` remains at R12 unless the operator explicitly supplies `--watch --allow git-changes`, so R13b handoff cannot start accidentally.
 - Rejected-only/no-selection smoke reaches/reconstructs R13a and shows stopped continuation facts.
-- Stopped/no-selection R14a final report emission is admitted and reconstructable from parent-complete resource evidence; R13b handoff remains blocked.
+- Stopped/no-selection R14a final report emission is admitted and reconstructable from parent-complete resource evidence; selected-successor R13b handoff is admitted only behind explicit watch/checkout-mutation gates.
 
 Original requirements:
 
@@ -424,9 +435,9 @@ Goal: final report emission is a typed edge for both stopped and handoff branche
 Current implementation status:
 
 - `walk` admits and reconstructs only `R13a -> R14a` stopped/no-selection final report.
-- The live edge uses canonical `r13_to_r14` wrapped with `R12ContinuationBranch::Stopped`, so R14b handoff-final remains unreachable from walk.
+- The stopped live edge uses canonical `r13_to_r14` wrapped with `R12ContinuationBranch::Stopped`; the handoff branch uses `R12ContinuationBranch::HandoffCommitted` after gated R13b admission.
 - Restart reconstruction builds R14a read-only from no-selection R12 facts plus parent-complete resource evidence, without re-emitting the final report or appending duplicate resource samples.
-- Smoke reaches/reconstructs R14a and records completion/report axes; selected-successor handoff remains blocked earlier at R12.
+- Smoke reaches/reconstructs R14a and records completion/report axes; selected-successor handoff requires the explicit R13b admission gate.
 
 Original requirements:
 
@@ -579,22 +590,20 @@ Basically the same for the harness. This is under-used, but I want to leave the 
 
 ## Success criteria
 
-Short-term:
+Short-term status as of 2026-06-19:
 
-- `walk` can reconstruct R0–R8 after server restart where durable baseline/child-plan evidence exists, step from R8 to R10 without additional provider/harness work, enter R11 branches only with explicit `--watch`, project in-memory R11 states to R12 report facts, advance no-selection R12 states to R13a while blocking selected-successor handoff, and emit stopped/no-selection R14a final reports.
-- R4a checkout mismatch displays as a typed blocker with recovery commands.
-- R6/R7 are admitted without duplicating baseline side effects when evidence already exists.
+- Achieved: `walk` can reconstruct through R8/R10/R12 and through R13a/R14a or R13b/R14b when matching durable evidence exists.
+- Achieved: R11 branches are entered only with explicit `--watch`.
+- Achieved: selected-successor R13b handoff is gated by `--watch --allow git-changes` instead of being silently available.
+- Achieved: R4a checkout mismatch displays as a typed blocker with recovery commands.
+- Achieved: R6/R7 are admitted without duplicating baseline side effects when evidence already exists.
+- Achieved: historical replay/back/forward are read-only cursor operations.
+- Achieved: `run_prototype1_state_turn` is reduced to a wrapper over the typed batch driver.
 
-Medium-term:
+Still open / future:
 
-- `walk step` can drive R0–R14 through stopped/no-successor paths.
-- Child-plan and child fanout use typed authority and C1-C5 carriers without loose local clusters.
-- `prototype1-step` and `prototype1-continue` call the same driver as `walk`.
-
-Long-term:
-
-- Full parent/successor handoff is driven by typed edges.
-- Server lifecycle is correct across handoff.
-- Historical replay and step-back are read-only cursor operations.
-- Branching from historical replay to live creates explicit provenance.
-- The old loose `run_prototype1_state_turn` path is either removed or reduced to thin wrappers over the typed driver.
+- Server lifecycle semantics across handoff need a focused design/proof pass before relying on very long self-editing chains.
+- `prototype1-step` and `prototype1-continue` are not yet documented as wrappers over the same driver.
+- Branching from historical replay to live currently records provenance only; it does not materialize a new live line.
+- Long-running edge UX is still blocking `--watch`, not background progress with `walk show progress`.
+- Fine-grained tool-call/protocol step-through remains intentionally deferred until the coarse typestate driver is stable.

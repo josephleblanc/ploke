@@ -862,3 +862,42 @@ Notes:
 
 - This is still not full R13b handoff admission. It only tightens current-generation selection material so a future handoff has channel-derived refs to validate.
 - Historical History candidates without terminal channel refs become decision-grade ineligible under the new check unless their sealed runtime evidence carries a terminal channel citation or they are otherwise migrated/admitted under a future History authority rule.
+
+## 2026-06-18/19 — R13b/R14b, historical replay, and operator discovery update
+
+Current status addendum after the follow-on typestate and operator-discovery slices:
+
+- `run_prototype1_state_turn(...)` is now a thin wrapper over `driver::advance::run_to_terminal(...)`.
+- `walk` can admit selected-successor `R12 -> R13b` handoff, but only with explicit `--watch --allow git-changes`.
+- `R13b -> R14b` final handoff report is represented in `WalkState`, `WalkPhase`, and typed aliases.
+- Durable reconstruction can rebuild R13b/R14b when matching selected-successor handoff/ready and parent-complete evidence exists.
+- Read-only historical replay commands are implemented:
+  - `walk replay`
+  - `walk back`
+  - `walk forward`
+  - `walk branch-live --reason ... --allow provenance-record`
+- `walk branch-live` currently writes explicit replay-to-live provenance only; it does not materialize a new live line.
+- `walk summary` is serverless/read-only and exposes generation rows as `branch`, `decision`, and `handoff` instead of the older ambiguous `selection=...` wording.
+- `walk summary -v` explains field meanings and points to typed `history selection-show --replay` / `score-selection-review` commands.
+- `walk replay/back/forward` now default to a 3-entry recent window and print a `--tail N` expansion hint.
+- `walk --help` and subcommand help now include common workflows and safety gates.
+
+Strict 5x3 smoke evidence:
+
+- Completed fresh generation-local 5 generations x 3 children on campaign `p1-walk5x3local2295-det-g25p-p25f-20260618-122326`.
+- Final active parent identity: generation 5, node `node-902d4e64290dcaee`, branch `branch-c165a996e96281b4`.
+- Final reconstruction reaches R6 then blocks as expected at policy/budget: parent generation 5 reached `max_generations=5`.
+- Handoff chain was proven across generations 0 -> 5.
+- No live `prototype1-state`/runner processes remained after completion.
+
+Important semantic clarification from this smoke:
+
+- `decision=Stop` is candidate-local successor-selection outcome, not proof the campaign stopped.
+- In gen1 of the smoke, the selected successor had `branch=reject`, `decision=Stop`, and `handoff=acknowledged`; continuation proceeded because rejected-branch exploration was enabled.
+
+Remaining known UX/implementation gaps:
+
+- Historical replay recent entries are still journal-tail based, not cursor-centered.
+- Structured replay JSON entries are still pending.
+- `walk summary` still parses several artifacts directly; richer inspection should move to `EvidenceStore` / `FsEvidenceStore` / sealed History projections before more semantics are added.
+- Server lifecycle across selected-successor handoff still needs an explicit long-run design/proof pass before relying on very long self-editing chains.

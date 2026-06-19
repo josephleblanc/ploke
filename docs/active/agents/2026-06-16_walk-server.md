@@ -29,6 +29,22 @@ Prerequisite edge/API commits:
 
 The server is a debug harness. It is not production loop authority and should not become the controller for the live self-evolving loop without an explicit later design pass.
 
+## Current status update — 2026-06-19
+
+The original sections below predate the latest typestate-driver slices. Current code now supports:
+
+- typed batch execution through `driver::advance::run_to_terminal`;
+- durable `walk` reconstruction through R14a/R14b when matching evidence exists;
+- live `R7 -> R8` and `R10 -> R11a | R11` only with explicit `walk step --watch`;
+- selected-successor `R12 -> R13b` handoff only with `walk step --watch --allow git-changes`;
+- `R13b -> R14b` final handoff report once handoff is committed;
+- serverless `walk summary` for durable run discovery;
+- read-only `walk replay`, `walk back`, and `walk forward` cursor movement;
+- `walk branch-live` as explicit provenance recording only.
+
+When this document conflicts with `ploke-eval loop walk --help` or current code,
+prefer the current CLI/code and update this document.
+
 The existing live command remains:
 
 ```text
@@ -53,6 +69,20 @@ Check server status without starting it:
 
 ```text
 ploke-eval loop walk status
+```
+
+Summarize durable campaign progress without contacting the server:
+
+```text
+ploke-eval loop walk summary -v
+```
+
+Move through the read-only historical replay cursor:
+
+```text
+ploke-eval loop walk replay --index 0
+ploke-eval loop walk forward --steps 10 --tail 20
+ploke-eval loop walk back --steps 5
 ```
 
 Start a server if needed, create a new in-memory walk, and stop at R0:
@@ -214,15 +244,17 @@ R8 -> R9  # pure schedule shaping
 R9 -> R10 # pure selection-strategy construction
 R10 -> R11a | R11 # requires explicit walk step --watch for rejected-only/fanout work
 R11a | R11 -> R12 # pure report-facts projection
-R12 -> R13a # no-selection stopped continuation only; selected-successor handoff blocked
+R12 -> R13a # stopped/no-selection or selected-successor stopped-by-policy branch
+R12 -> R13b # selected-successor handoff; requires --watch --allow git-changes
 R13a -> R14a # stopped/no-selection final report emission
+R13b -> R14b # final report after successor handoff
 ```
 
-- `R2a` and `R14a` are current stops.
+- `R2a`, `R14a`, and `R14b` are current terminal stops.
 - Default live stepping at `R7` is a safe boundary; live `R7 -> R8` requires explicit `walk step --watch`.
 - Default stepping at `R10` is also a safe boundary; live `R10 -> R11a | R11` requires explicit `walk step --watch`.
 - `R8` is reconstructable from existing child-plan authority.
-- Later phases (`R13b` handoff and `R14b` handoff-final report) are intentionally not admitted yet by the server slice.
+- Selected-successor `R13b` handoff is admitted only with explicit `--watch --allow git-changes`; this gate exists because the edge can install the selected successor into the active checkout, seal/advance History, retire the parent, and spawn/acknowledge the successor runtime.
 - `show` includes server-local previous entries, root/tracking directories, tracked file paths, current typestate alias, and next admitted edges.
 - `show delta` includes only the last successful step delta; `--verbose` also lists nested type structures, and `--no-color` disables ANSI colors.
 - `step` includes from/to phases, edge names, typestate axis deltas, and next admitted edges.
@@ -307,7 +339,7 @@ The live loop must remain capable of self-editing without being controlled by a 
 - `R5 -> R6` may establish/advance baseline closure state before loading the parent baseline; reconstruction uses durable baseline evidence when present.
 - `R6 -> R7` derives run policy and child-planning budget and preserves hard budget/max-generation stops.
 - Live `R7 -> R8` is exposed only through explicit `walk step --watch`; default step at R7 does not start provider/harness work.
-- Later async/live-effectful phases beyond stopped R14a (successor handoff and handoff-final report) are not yet exposed through the server.
+- Later async/live-effectful phases now include selected-successor handoff, but only through the explicit `--watch --allow git-changes` gate; do not run that path unless checkout mutation and successor process handoff are intended.
 - Failed consuming transitions are recorded as `Failed`, not retryable from the exact consumed Rust state.
 - The current source freshness check is status-hash based, not full content-hash based.
 - Server stdout/stderr are redirected to null when auto-spawned. Add an explicit log path before relying on the server for long debugging sessions.

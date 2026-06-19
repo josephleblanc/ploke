@@ -58,7 +58,8 @@ The main operator commands are in `src/cli.rs` and dispatch into
 | `ploke-eval loop prototype1-prompt --repo-root <parent>` | Prints the current broad-harness prompt for the active parent when the admitted run profile uses the broad-harness request generator. |
 | `ploke-eval loop prototype1-step --repo-root <parent>` | Advances exactly one diagnosed parent phase. Child phases run at cap 1. |
 | `ploke-eval loop prototype1-continue --repo-root <parent>` | Repeatedly advances diagnosed phases until the current turn is complete, blocked, or hands off. It has a 256-advance guard. |
-| `ploke-eval loop prototype1-state ...` | Lower-level typed parent runtime path. It can initialize parent identity, run one parent turn, or acknowledge a successor handoff with `--handoff-invocation`. |
+| `ploke-eval loop prototype1-state ...` | Typed parent runtime path. It can initialize parent identity, run one parent turn through `driver::advance::run_to_terminal`, or acknowledge a successor handoff with `--handoff-invocation`. |
+| `ploke-eval loop walk ...` | Local operator/debugger surface over the same typestate edges. Use `walk summary -v` for completed-run discovery, `walk replay/back/forward` for read-only historical cursor movement, and `walk step` for live edges. Long live edges require `--watch`; selected-successor handoff requires `--watch --allow git-changes`. |
 | `ploke-eval loop prototype1-runner --invocation <path> --execute` | Hidden child/successor runner seam for one persisted invocation. It still exists; do not treat it as removed. |
 | `ploke-eval loop prototype1-harness attempt|sweep ...` | Hidden broad headless-TUI probe surface. It replays published harness requests outside the full self-propagating parent loop. |
 | `ploke-eval loop prototype1 ...` | Older high-level controller over eval, protocol, intervention, treatment, and compare stages. It still exists, but the typed control path is `doctor` / `step` / `continue` / `prototype1-state`. |
@@ -164,7 +165,12 @@ Files outside the `prototype1/` subtree:
 | `src/cli.rs` | Clap command definitions and top-level dispatch. |
 | `src/cli/prototype1_state/mod.rs` | Conceptual model: Artifact, Runtime, Parent, Crown, History, child boxes, and intended loop ordering. |
 | `src/cli/prototype1_state/run/core.rs` | `doctor`, `prompt`, `step`, and `continue`; phase diagnosis and phase-by-phase advancement. |
-| `src/cli/prototype1_state/cli_facing.rs` | Setup, lower-level `prototype1-state`, broad harness probes, projections, path helpers, and report rendering. |
+| `src/cli/prototype1_state/cli_facing.rs` | Setup, broad harness probes, projections, path helpers, selection/handoff helpers, and report rendering. The live parent turn now delegates to the typed driver. |
+| `src/cli/prototype1_state/typestate/` | Structural `Runtime<Phase, Role, Context, Plan, Children, History, Evidence, Continuation, Report>` aliases and transition combinators for R0-R14b. |
+| `src/cli/prototype1_state/driver/advance.rs` | Canonical typed batch driver for one parent turn. |
+| `src/cli/prototype1_state/driver/reconstruct.rs` | Read-only durable reconstruction for `walk` from parent identity, journal, child-plan, channel, evaluation, and handoff evidence. |
+| `src/cli/prototype1_state/driver/replay.rs` | Read-only historical replay cursor used by `walk replay/back/forward`. |
+| `src/cli/prototype1_state/walk/` | Local debug server/client/operator surface over typed driver edges and reconstruction. |
 | `src/cli/prototype1_process.rs` | Child/successor process seam, child execution, successor install, History seal/append, spawn, and ready wait. |
 | `src/cli/prototype1_state/parent.rs` | Parent role states and the child-plan message box. |
 | `src/cli/prototype1_state/identity.rs` | Parent identity file schema and checkout path helpers. |
@@ -207,7 +213,16 @@ cd <active-parent-checkout>
 ```
 
 Use `doctor` when deciding what surface to inspect next. Use `step` when you
-want one transition and a fresh status. Use `continue` only when the current
+want one diagnosed phase and a fresh status. Use `continue` only when the current
 parent checkout and binary provenance are clear.
-Use `doctor --live-protocol-preflight` when provider request shape is the
-suspected blocker and a live call is acceptable.
+
+For typestate/debugger work, prefer the `walk` surface:
+
+```bash
+./target/debug/ploke-eval loop walk use <active-parent-checkout>
+./target/debug/ploke-eval loop walk summary -v
+./target/debug/ploke-eval loop walk replay --index 0
+./target/debug/ploke-eval loop walk step --until r6
+```
+
+Use `walk replay`, `walk back`, and `walk forward` for read-only historical inspection. Use `walk step` only when you intend to drive live typestate edges. Use `doctor --live-protocol-preflight` when provider request shape is the suspected blocker and a live call is acceptable.

@@ -48,7 +48,8 @@ phase, then diagnoses again and prints the resulting status.
 This is distinct from:
 
 - `prototype1-continue`, which loops through phases until terminal or blocked.
-- `prototype1-state`, which drives a direct typed parent turn.
+- `prototype1-state`, which drives the direct typed parent turn through `driver::advance::run_to_terminal`.
+- `walk`, the local operator/debugger surface over typestate reconstruction, live stepping, read-only replay, and summary inspection.
 - `prototype1`, the older wrapper/controller surface.
 
 ## CLI Dispatch

@@ -21,11 +21,13 @@ R8 -> R9 runs as pure schedule shaping when R8 is already held/reconstructed
 R9 -> R10 resolves successor-selection strategy
 R10 -> R11a | R11 requires walk step --watch for rejected-only/fanout work
 R11a | R11 -> R12 projects report facts without emitting final report
-R12 -> R13a records no-selection stopped continuation; selected-successor handoff is blocked
+R12 -> R13a records stopped/no-selection or selected-successor stopped-by-policy continuation
+R12 -> R13b commits selected-successor handoff only with --watch --allow git-changes
 R13a -> R14a emits stopped/no-selection final report
+R13b -> R14b emits final report after successor handoff
 ```
 
-`R8` can also be reconstructed when an existing child-plan message is present. `R11/R12` can be reconstructed after restart when all planned terminal children have validated channel `Result` evidence, matching runner results, and successful children have matching branch evaluation reports. No-selection `R13a/R14a` can be reconstructed from R12 report facts plus parent-complete resource evidence. `R2a` is the alternate parent-identity initialization boundary when started with `--init-parent-identity`.
+`R8` can also be reconstructed when an existing child-plan message is present. `R11/R12` can be reconstructed after restart when all planned terminal children have validated channel `Result` evidence, matching runner results, and successful children have matching branch evaluation reports. Stopped `R13a/R14a` and handoff `R13b/R14b` can be reconstructed from R12 report facts plus matching durable successor handoff/stopped and parent-complete evidence. `R2a` is the alternate parent-identity initialization boundary when started with `--init-parent-identity`.
 
 ## Important safety notes
 
@@ -36,8 +38,10 @@ R13a -> R14a emits stopped/no-selection final report
 - `R8 -> R9` and `R9 -> R10` are pure in-process edges and do not require `--watch`.
 - `R10 -> R11a | R11` requires explicit `walk step --watch` because it may project rejected-only selection evidence or run live child fanout.
 - `R11a | R11 -> R12` is a pure projection of report facts and does not emit the final report. Restart reconstruction can rebuild R12 from channel-derived terminal child outcomes without rerunning fanout.
-- `R12 -> R13a` is admitted only for no-selection stopped continuation; selected-successor R13b handoff remains blocked before consuming R12.
-- `R13a -> R14a` emits the stopped/no-selection final report and records parent-complete evidence; restart reconstruction uses that evidence read-only and does not re-emit the report. Handoff-final R14b remains blocked.
+- `R12 -> R13a` is the stopped continuation branch. If R12 has selected-successor evidence and the target is the stopped branch, `walk` rejects the target and tells you to use the matching handoff target.
+- `R12 -> R13b` is selected-successor handoff. It is admitted only with `walk step --watch --allow git-changes` because it may seal/advance History, install the selected successor into the active checkout, retire the parent, spawn the successor runtime, and wait for successor readiness.
+- `R13a -> R14a` emits the stopped/no-selection final report and records parent-complete evidence; restart reconstruction uses that evidence read-only and does not re-emit the report.
+- `R13b -> R14b` emits the final report after successor handoff once R13b exists.
 - If you run from a dirty development checkout, failing at `R4a` because local changes would block a checkout switch is expected.
 - `walk start --until ...` on an existing matching parent checkout prefers durable reconstruction before creating a fresh R0 walk. If reconstruction is already past the requested phase, `start` returns the later reconstructed phase instead of replaying live setup; historical `--until r12` smokes therefore do not duplicate parent-start/resource journal entries.
 - The auto-started server exits after 30 idle minutes by default.
@@ -116,6 +120,38 @@ Checks whether a server is listening. It does not start one.
 ploke-eval loop walk status
 ```
 
+### `summary`
+
+Reads durable campaign artifacts without contacting the walk server. This is the fastest first command for a completed historical run.
+
+```text
+ploke-eval loop walk summary
+ploke-eval loop walk summary -v
+ploke-eval loop walk summary --format json
+```
+
+Verbose mode explains compact fields such as `branch=reject decision=Stop handoff=acknowledged` and points to typed `history` inspection commands.
+
+### `replay`, `back`, and `forward`
+
+Move a read-only historical cursor over the transition journal. These commands do not undo side effects and do not call providers, spawn children, mutate checkout state, or append History.
+
+```text
+ploke-eval loop walk replay --index 0
+ploke-eval loop walk forward --steps 10 --tail 20
+ploke-eval loop walk back --steps 5
+```
+
+The default recent-entry window is 3 entries. Use `--tail N` to expand it. Current rendering shows the journal tail, not a cursor-centered window.
+
+### `branch-live`
+
+Records explicit provenance before leaving read-only replay toward future live work. It does not materialize a live branch by itself.
+
+```text
+ploke-eval loop walk branch-live --reason "investigate cursor 42" --allow provenance-record
+```
+
 ### `start`
 
 Starts the server if needed and stops at the requested phase. Default is `R0`. For `--until` targets beyond R0 on an existing parent checkout, `start` first attempts durable reconstruction and uses that state when it matches the requested campaign/checkout. If the reconstructed durable phase is already later than the target, `start` returns that later phase instead of replaying live setup; otherwise it creates a fresh R0 walk only when reconstruction is unavailable or for a different explicit campaign.
@@ -185,18 +221,21 @@ ploke-eval loop walk step
 # r11_to_r12 -> r12
 ```
 
-At R12, the default next step records no-selection stopped continuation when no successor selection is present. If selected-successor evidence is present, this step blocks before handoff:
+At R12, the default next step follows the branch that matches the report facts. No-selection or stopped-by-policy states go to R13a. Selected-successor states require explicit live handoff admission:
 
 ```text
 ploke-eval loop walk step
-# r12_to_r13 -> r13a
+# r12_to_r13 -> r13a, when no handoff is allowed/available
+
+ploke-eval loop walk step --watch --allow git-changes
+# r12_to_r13 -> r13b, when selected-successor handoff is allowed
 ```
 
-At R13a, the default next step emits the stopped/no-selection final report and stops at R14a:
+At R13a, the default next step emits the stopped/no-selection final report and stops at R14a. At R13b, the default next step emits the final report after handoff and stops at R14b:
 
 ```text
 ploke-eval loop walk step
-# r13_to_r14 -> r14a
+# r13_to_r14 -> r14a | r14b
 ```
 
 ### `show`
@@ -263,7 +302,7 @@ ploke-eval loop walk serve --no-ttl
 
 ## Recommended review session
 
-Use a clean Prototype 1 parent worktree as `ROOT` if you want to reach `R7`, or one with existing valid child-plan evidence if you want to reconstruct R8 and step to R10 without additional provider/harness work. R10 -> R11 requires `--watch` and may run live child fanout; R11 -> R12 is an in-memory report-facts projection; R12 -> R13a is no-selection only; R13a -> R14a emits the stopped final report.
+Use a clean Prototype 1 parent worktree as `ROOT` if you want to reach `R7`, or one with existing valid child-plan evidence if you want to reconstruct R8 and step to R10 without additional provider/harness work. R10 -> R11 requires `--watch` and may run live child fanout; R11 -> R12 is an in-memory report-facts projection. From R12, stopped/no-selection paths go to R13a/R14a, while selected-successor handoff goes to R13b/R14b only with `--watch --allow git-changes`.
 
 ```text
 ploke-eval loop walk use /path/to/prototype1-parent-worktree

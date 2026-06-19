@@ -4,6 +4,13 @@ Scope: documentation and code related to the Prototype 1 typestate driver, `walk
 
 Status: review/report. This is a source/code survey, not an authority document. Verify current behavior against code and run artifacts before using it to drive live handoff work.
 
+Post-review docs cleanup note, later 2026-06-19:
+
+- `typestate/mod.rs` module docs were updated to say the typestate map is now wired into the batch driver and `walk` surface.
+- `driver/reconstruct.rs` module and item docs were updated to describe durable reconstruction through currently supported phases instead of early-only R0-R5 reconstruction.
+- `2026-06-16_walk-server.md`, `2026-06-17_walk-command-guide.md`, `2026-06-17_typestate-loop-driver-plan.md`, crate operator docs, and historical walkthrough notes were updated with the R13b/R14b gated handoff status.
+- The remaining `EarlyState` / `EarlySnapshot` / `reconstruct_early` issue is now naming debt, not stale source documentation.
+
 ## Sources surveyed
 
 Active docs:
@@ -81,7 +88,7 @@ The aliases now cover R0 through R14b, including:
 - `R14aFinalStopped`
 - `R14bFinalHandoff`
 
-Important stale comment: `typestate/mod.rs` still says the module is "intentionally not wired into the live controller yet." That is no longer true for the batch driver or `walk` surface.
+Post-cleanup note: `typestate/mod.rs` now documents that this module is wired into the batch driver and `walk` surface.
 
 ### `walk` controller
 
@@ -111,10 +118,10 @@ The current controller therefore no longer matches older docs that say selected-
 - R13a/R14a stopped path from continuation/report/resource evidence.
 - R13b/R14b handoff path from durable handoff/ready and parent-complete evidence.
 
-Important stale names/comments:
+Important naming debt:
 
-- module doc says "Side-effect-free reconstruction for early Prototype 1 parent typestates";
 - `EarlyState` / `EarlySnapshot` / `reconstruct_early` now represent broad durable reconstruction through R14b.
+- The source docs have been updated to explain this, but the names remain historical and may still mislead future edits until a separate rename is done.
 
 This is not just cosmetic. The names make it easy for future agents to underestimate how much authority-sensitive reconstruction currently happens here.
 
@@ -219,11 +226,11 @@ Current caveat: `walk summary` still directly parses several TOML/JSON artifacts
 
 `typestate/mod.rs`
 
-- Says typestate map is not wired into the live controller. This is stale.
+- Fixed after this survey: module docs now describe the batch driver and `walk` integration.
 
 `driver/reconstruct.rs`
 
-- Says early/R0-R5 reconstruction, but reconstructs through R14b.
+- Fixed after this survey: module/item docs now describe broad durable reconstruction through current supported phases.
 
 `driver/reconstruct.rs` naming
 
@@ -246,7 +253,7 @@ Current caveat: `walk summary` still directly parses several TOML/JSON artifacts
 ### Risks / gaps
 
 1. **Docs understate current R13b/R14b capability.** A future operator reading the older docs may think handoff remains blocked when it is now admitted with gates.
-2. **Names understate reconstruction scope.** `reconstruct_early` and `EarlyState` are no longer early-only and could mislead future edits.
+2. **Names understate reconstruction scope.** `reconstruct_early` and `EarlyState` are no longer early-only. Source docs now explain this, but future edits may still benefit from a rename.
 3. **`walk summary` is still artifact-parser based.** Good for discovery, but richer inspection should move to typed `EvidenceStore`/History projections before adding more semantics.
 4. **Replay output is not cursor-centered.** The current cursor can be at `#6` while recent entries show `#249..#251`. The hint makes truncation clear, but debugging a local cursor still requires manual `--tail` or future centered rendering.
 5. **Long-running edge progress is still blocking `--watch`.** The plan’s desired default "return after ~1s and show progress command" remains future work.
@@ -271,11 +278,9 @@ replay/back/forward read-only cursor only
 branch-live provenance record only
 ```
 
-2. **Update stale source docs.** Minimal docs-only fixes:
-   - `typestate/mod.rs`: remove "not wired into live controller yet".
-   - `driver/reconstruct.rs`: replace "early/R0-R5" wording with "durable reconstruction through currently supported phases".
+2. **Source-doc cleanup completed after this survey.** The stale `typestate/mod.rs` and `driver/reconstruct.rs` source docs were updated; remaining work is optional rename/deeper refactor.
 
-3. **Append latest worklog entry.** Add a short worklog section for:
+3. **Maintain latest worklog entries.** Add or maintain short worklog sections for:
    - R13b/R14b handoff/reconstruction;
    - final 5x3 smoke;
    - replay/summary/help UX slices.

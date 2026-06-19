@@ -2,11 +2,14 @@
 
 //! Global Prototype 1 runtime typestate map.
 //!
-//! This module is intentionally not wired into the live controller yet. It maps
-//! the observed `run_prototype1_state_turn` execution phases onto one structural
-//! `Runtime<...>` carrier so we can review the intended type boundaries before
-//! moving implementation code.
+//! This module is now part of the live Prototype 1 parent driver. The batch
+//! `prototype1-state` path enters through `driver::advance::run_to_terminal`,
+//! and the `walk` operator/debugger surface steps the same typed edge functions
+//! through `walk::controller::WalkController`. The map is still evolving, but it
+//! is no longer a detached design sketch.
 //!
+//! The central carrier maps a parent turn onto one structural `Runtime<...>`
+//! value instead of encoding phase facts in loose locals or flattened names.
 //! The shape deliberately follows the existing C1-C5 pattern in `c1.rs`:
 //!
 //! ```text
@@ -70,10 +73,10 @@ pub(in crate::cli::prototype1_state::typestate) struct Private;
 // - `PlannedChildren` is useful but structurally awkward for this global map
 //   because it bundles `Parent<Selectable>` together with plan/child data. A
 //   future Runtime carrier should likely split those fields across axes.
-// - `Prototype1StateRunShape` and `ActiveSelectionStrategy` already exist, but
-//   both are private to `cli_facing.rs`; the runtime-state map cannot reuse them
-//   directly until those concepts move to a shared module or get replacement
-//   carriers.
+// - `Prototype1StateRunShape` and `ActiveSelectionStrategy` are now carried as
+//   value-level facts in the collected runtime context. Their marker-level shape
+//   remains intentionally small so the typestate aliases do not depend on every
+//   private projection detail in `cli_facing.rs`.
 // - `history/mod.rs` names the intended authority sequence as
 //   `Startup<Observed>
 //      -> Startup<Genesis | Predecessor> -> Startup<Validated>
@@ -84,11 +87,15 @@ pub(in crate::cli::prototype1_state::typestate) struct Private;
 //   validated startup came from genesis or predecessor. This map preserves that
 //   distinction in `R4cReady<Kind>`, then uses `startup::Any` once branches
 //   converge.
-// - Stopped/no-successor completion has no existing `Parent<Stopped>` carrier.
-//   The live path ends with `Parent<Selectable>` still held/dropped. That is an
-//   intentional review point before hardening terminal states.
-// - `Prototype1ContinuationDecision` is a value-level decision, not yet an
-//   unforgeable continuation gate token.
-// - `successor::Record` is a durable projection of successor transitions, not a
-//   `Successor<S>` authority carrier. The successor docs explicitly say the
-//   successor is the incoming parent before handoff acknowledgement.
+// - Stopped/no-successor completion still has no separate `Parent<Stopped>`
+//   carrier; R13a/R14a retain `Parent<Selectable>` while report/completion axes
+//   record terminal facts.
+// - Selected-successor handoff is represented by R13b/R14b with
+//   `Parent<Retired>` plus History/continuation/handoff axes. The `walk` CLI
+//   admits this path only with `--watch --allow git-changes`.
+// - `Prototype1ContinuationDecision` remains a value-level decision carried in
+//   the continuation axis; the authority to mutate checkout/History still comes
+//   from consuming the typed parent state plus the explicit operator gate.
+// - `successor::Record` is durable transition evidence for successor selection,
+//   ready, stopped, handoff, and completion events; it is not by itself a
+//   `Successor<S>` authority carrier.
