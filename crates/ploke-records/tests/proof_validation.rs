@@ -93,6 +93,24 @@ fn rustc_invocation(id: &str, build_domain_id: &str) -> RustcInvocationFact {
     })
 }
 
+fn authority_fact(
+    id: &str,
+    build_domain_id: &str,
+    call_site_id: &str,
+    authority_term: AuthorityTerm,
+) -> AuthorityFact {
+    AuthorityFact {
+        schema_version: PROOF_FACT_SCHEMA_VERSION.to_string(),
+        authority_fact_id: AuthorityFactId(id.to_string()),
+        build_domain_id: BuildDomainId(build_domain_id.to_string()),
+        call_site_id: Some(CallSiteId(call_site_id.to_string())),
+        source_span: span("crates/ploke-eval/src/cli/prototype1_state/inner.rs"),
+        authority_term,
+        status: ObligationStatus::Admitted,
+        evidence_use: EvidenceUse::ProofOnly,
+    }
+}
+
 #[test]
 fn validator_blocks_unresolved_process_effect_with_typed_reason() {
     let records = vec![
@@ -184,6 +202,7 @@ fn jsonl_import_preserves_inert_authority_records() {
         schema_version: PROOF_FACT_SCHEMA_VERSION.to_string(),
         authority_fact_id: AuthorityFactId("authority:1".to_string()),
         build_domain_id: BuildDomainId("bd:main".to_string()),
+        call_site_id: None,
         source_span: span("crates/ploke-eval/src/cli/prototype1_state/inner.rs"),
         authority_term: AuthorityTerm::CrownRuling,
         status: ObligationStatus::Admitted,
@@ -259,6 +278,7 @@ fn validator_rejects_authority_rejection() {
             schema_version: PROOF_FACT_SCHEMA_VERSION.to_string(),
             authority_fact_id: AuthorityFactId("authority:rejected".to_string()),
             build_domain_id: BuildDomainId("bd:main".to_string()),
+            call_site_id: None,
             source_span: span("crates/ploke-eval/src/cli/prototype1_state/inner.rs"),
             authority_term: AuthorityTerm::CrownRuling,
             status: ObligationStatus::Rejected,
@@ -688,6 +708,107 @@ fn validator_blocks_resolved_process_create_without_lifetime_or_handoff_evidence
             .iter()
             .any(|blocker| blocker.reason == ProofBlockerReason::ProcessLifetimeEvidenceMissing)
     );
+}
+
+#[test]
+fn validator_accepts_resolved_process_create_with_admitted_handoff_authorities() {
+    let records = vec![
+        ProofFactRecord::BuildDomain(build_domain("bd:main")),
+        ProofFactRecord::CfgDomain(cfg_domain("cfg:main", "bd:main")),
+        ProofFactRecord::RustcInvocation(rustc_invocation("rustc:main", "bd:main")),
+        ProofFactRecord::CallSite(call_site("call:handoff", "bd:main")),
+        ProofFactRecord::CallEdge(CallEdgeFact {
+            schema_version: PROOF_FACT_SCHEMA_VERSION.to_string(),
+            call_edge_id: CallEdgeId("edge:handoff".to_string()),
+            call_site_id: CallSiteId("call:handoff".to_string()),
+            caller_def_id: DefinitionId("def:caller".to_string()),
+            callee_def_id: Some(DefinitionId("def:std-process-command-spawn".to_string())),
+            resolution_state: ResolutionState::Resolved,
+            evidence_use: EvidenceUse::ProofOnly,
+        }),
+        ProofFactRecord::CallResolution(CallResolutionFact {
+            schema_version: PROOF_FACT_SCHEMA_VERSION.to_string(),
+            call_site_id: CallSiteId("call:handoff".to_string()),
+            resolution_state: ResolutionState::Resolved,
+            resolved_def_id: Some(DefinitionId("def:std-process-command-spawn".to_string())),
+            candidate_def_ids: Vec::new(),
+            external_summary_id: None,
+            blocking_reason: None,
+        }),
+        ProofFactRecord::EffectSeed(EffectSeedFact {
+            schema_version: PROOF_FACT_SCHEMA_VERSION.to_string(),
+            effect_seed_id: EffectSeedId("effect:handoff".to_string()),
+            call_site_id: CallSiteId("call:handoff".to_string()),
+            effect_class: EffectClass::OperatingSystemProcessCreate,
+            confidence: "seed".to_string(),
+            blocker_if_unresolved: true,
+            evidence_use: EvidenceUse::ProofOnly,
+        }),
+        ProofFactRecord::Authority(authority_fact(
+            "authority:handoff:successor",
+            "bd:main",
+            "call:handoff",
+            AuthorityTerm::Successor,
+        )),
+        ProofFactRecord::Authority(authority_fact(
+            "authority:handoff:parent",
+            "bd:main",
+            "call:handoff",
+            AuthorityTerm::ParentLineage,
+        )),
+        ProofFactRecord::Authority(authority_fact(
+            "authority:handoff:predecessor",
+            "bd:main",
+            "call:handoff",
+            AuthorityTerm::PredecessorRetired,
+        )),
+        ProofFactRecord::Authority(authority_fact(
+            "authority:handoff:crown",
+            "bd:main",
+            "call:handoff",
+            AuthorityTerm::CrownRuling,
+        )),
+    ];
+
+    let imported = ProofFactSet::from_records(records).expect("import proof facts");
+    let report = imported.validate_for_proof();
+
+    assert_eq!(report.status, ObligationStatus::Admitted);
+    assert!(
+        report.blockers.is_empty(),
+        "unexpected blockers: {report:?}"
+    );
+}
+
+#[test]
+fn validator_blocks_proof_critical_effect_when_blocker_flag_is_false() {
+    let records = vec![
+        ProofFactRecord::BuildDomain(build_domain("bd:main")),
+        ProofFactRecord::CfgDomain(cfg_domain("cfg:main", "bd:main")),
+        ProofFactRecord::RustcInvocation(rustc_invocation("rustc:main", "bd:main")),
+        ProofFactRecord::CallSite(call_site("call:durable-write", "bd:main")),
+        ProofFactRecord::EffectSeed(EffectSeedFact {
+            schema_version: PROOF_FACT_SCHEMA_VERSION.to_string(),
+            effect_seed_id: EffectSeedId("effect:durable-write".to_string()),
+            call_site_id: CallSiteId("call:durable-write".to_string()),
+            effect_class: EffectClass::DurableEvidenceWrite,
+            confidence: "seed".to_string(),
+            blocker_if_unresolved: false,
+            evidence_use: EvidenceUse::ProofOnly,
+        }),
+    ];
+
+    let imported = ProofFactSet::from_records(records).expect("import proof facts");
+    let report = imported.validate_for_proof();
+
+    assert_eq!(report.status, ObligationStatus::Blocked);
+    assert!(report.blockers.iter().any(|blocker| {
+        blocker.reason == ProofBlockerReason::TypeResolutionMissing
+            && blocker
+                .call_site_id
+                .as_ref()
+                .is_some_and(|id| id.as_str() == "call:durable-write")
+    }));
 }
 
 #[test]

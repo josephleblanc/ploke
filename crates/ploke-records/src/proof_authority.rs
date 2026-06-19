@@ -8,8 +8,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::proof_facts::{
-    AuthorityFact, AuthorityFactId, AuthorityTerm, BlockerFactId, BuildDomainId, EvidenceUse,
-    ObligationStatus, PROOF_FACT_SCHEMA_VERSION, ProofBlockerFact, ProofBlockerReason,
+    AuthorityFact, AuthorityFactId, AuthorityTerm, BlockerFactId, BuildDomainId, CallSiteId,
+    EvidenceUse, ObligationStatus, PROOF_FACT_SCHEMA_VERSION, ProofBlockerFact, ProofBlockerReason,
     ProofFactRecord, SourceSpanRecord,
 };
 use quote::ToTokens;
@@ -24,6 +24,7 @@ use syn1::{
 pub struct AuthorityAdmissionSite {
     canonical_call: String,
     line_start: u32,
+    call_site_id: Option<CallSiteId>,
 }
 
 impl AuthorityAdmissionSite {
@@ -31,7 +32,13 @@ impl AuthorityAdmissionSite {
         Self {
             canonical_call: canonical_call_name(canonical_call.as_ref()),
             line_start,
+            call_site_id: None,
         }
+    }
+
+    pub fn with_call_site_id(mut self, call_site_id: CallSiteId) -> Self {
+        self.call_site_id = Some(call_site_id);
+        self
     }
 }
 
@@ -40,7 +47,8 @@ impl AuthorityAdmissionSite {
 pub struct AuthorityExtractionConfig {
     pub build_domain_id: BuildDomainId,
     pub source_file: String,
-    admitted_sites: BTreeSet<AuthorityAdmissionSite>,
+    admitted_sites: BTreeMap<(String, u32), Option<CallSiteId>>,
+    ambiguous_admitted_sites: BTreeSet<(String, u32)>,
 }
 
 impl AuthorityExtractionConfig {
@@ -48,7 +56,8 @@ impl AuthorityExtractionConfig {
         Self {
             build_domain_id,
             source_file: source_file.into(),
-            admitted_sites: BTreeSet::new(),
+            admitted_sites: BTreeMap::new(),
+            ambiguous_admitted_sites: BTreeSet::new(),
         }
     }
 
@@ -63,17 +72,38 @@ impl AuthorityExtractionConfig {
     where
         I: IntoIterator<Item = AuthorityAdmissionSite>,
     {
-        self.admitted_sites = sites.into_iter().collect();
+        let mut admitted_sites = BTreeMap::new();
+        let mut ambiguous_admitted_sites = BTreeSet::new();
+        for site in sites {
+            let key = (site.canonical_call, site.line_start);
+            match admitted_sites.get(&key) {
+                None => {
+                    admitted_sites.insert(key, site.call_site_id);
+                }
+                Some(existing) if existing == &site.call_site_id => {}
+                Some(_) => {
+                    ambiguous_admitted_sites.insert(key);
+                }
+            }
+        }
+        self.admitted_sites = admitted_sites;
+        self.ambiguous_admitted_sites = ambiguous_admitted_sites;
         self
     }
 
-    fn status_for_site(&self, canonical: &str, line_start: u32) -> ObligationStatus {
-        let site = AuthorityAdmissionSite::from_canonical_call_site(canonical, line_start);
-        if self.admitted_sites.contains(&site) {
-            ObligationStatus::Admitted
-        } else {
-            ObligationStatus::Blocked
+    fn admission_for_site(
+        &self,
+        canonical: &str,
+        line_start: u32,
+    ) -> (ObligationStatus, Option<CallSiteId>) {
+        let key = (canonical_call_name(canonical), line_start);
+        if self.ambiguous_admitted_sites.contains(&key) {
+            return (ObligationStatus::Blocked, None);
         }
+        self.admitted_sites
+            .get(&key)
+            .map(|call_site_id| (ObligationStatus::Admitted, call_site_id.clone()))
+            .unwrap_or((ObligationStatus::Blocked, None))
     }
 }
 
@@ -152,6 +182,11 @@ impl AuthorityExtractor {
         self.authority_index += 1;
         let slug = sanitize_id(&call_name);
         let source_span = self.source_span(span);
+        let AuthorityClass {
+            term,
+            status,
+            call_site_id,
+        } = class;
         let fact_id = AuthorityFactId(format!(
             "authority:{}:{}:{}",
             self.config.source_file, self.authority_index, slug
@@ -160,13 +195,14 @@ impl AuthorityExtractor {
             schema_version: PROOF_FACT_SCHEMA_VERSION.to_string(),
             authority_fact_id: fact_id.clone(),
             build_domain_id: self.config.build_domain_id.clone(),
+            call_site_id,
             source_span,
-            authority_term: class.term,
-            status: class.status,
+            authority_term: term,
+            status,
             evidence_use: EvidenceUse::ProofOnly,
         }));
 
-        if class.status.blocks_until_evidence() || class.status.is_terminal_failure() {
+        if status.blocks_until_evidence() || status.is_terminal_failure() {
             self.records
                 .push(ProofFactRecord::ProofBlocker(ProofBlockerFact {
                     schema_version: PROOF_FACT_SCHEMA_VERSION.to_string(),
@@ -268,21 +304,31 @@ impl<'ast> Visit<'ast> for AuthorityExtractor {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct AuthorityClass {
     term: AuthorityTerm,
     status: ObligationStatus,
+    call_site_id: Option<CallSiteId>,
 }
 
 impl AuthorityClass {
-    fn new(term: AuthorityTerm, status: ObligationStatus) -> Self {
-        Self { term, status }
+    fn new(
+        term: AuthorityTerm,
+        status: ObligationStatus,
+        call_site_id: Option<CallSiteId>,
+    ) -> Self {
+        Self {
+            term,
+            status,
+            call_site_id,
+        }
     }
 
     fn blocked(term: AuthorityTerm) -> Self {
         Self {
             term,
             status: ObligationStatus::Blocked,
+            call_site_id: None,
         }
     }
 }
@@ -369,10 +415,8 @@ fn classify_authority_call(
     };
 
     if let Some(term) = exact_term {
-        return Some(AuthorityClass::new(
-            term,
-            config.status_for_site(&canonical, line_start),
-        ));
+        let (status, call_site_id) = config.admission_for_site(&canonical, line_start);
+        return Some(AuthorityClass::new(term, status, call_site_id));
     }
 
     if canonical.starts_with("ParentLineage::")

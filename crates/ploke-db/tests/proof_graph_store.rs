@@ -305,3 +305,66 @@ fn proof_graph_store_rejects_missing_build_and_effect_schema_fields() {
             .is_empty()
     );
 }
+
+#[test]
+fn proof_graph_store_rejects_invalid_enum_like_fields_before_storage() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    let mut records = proof_records();
+    records[0]["evidence_use"] = json!("proof-and-navigation");
+
+    let error = db
+        .upsert_proof_fact_values(&records)
+        .expect_err("invalid evidence_use spelling should be rejected before storage");
+    assert!(error.to_string().contains("evidence_use"));
+    assert!(
+        db.proof_graphrag_context("")
+            .expect("query graph")
+            .is_empty()
+    );
+
+    let mut effect_records = proof_records();
+    effect_records[2]["effect_class"] = json!("shell_command");
+    let effect_error = db
+        .upsert_proof_fact_values(&effect_records)
+        .expect_err("non-schema effect_class alias should be rejected before storage");
+    assert!(effect_error.to_string().contains("effect_class"));
+}
+
+#[test]
+fn proof_graph_store_accepts_all_stable_effect_class_values() {
+    for effect_class in [
+        "operating_system_process_create",
+        "operating_system_process_replace",
+        "operating_system_process_configure",
+        "operating_system_process_wait",
+        "operating_system_process_kill",
+        "operating_system_process_reap",
+        "async_task_spawn",
+        "async_task_join",
+        "async_task_abort",
+        "authority_mint",
+        "authority_retire",
+        "authority_lock",
+        "authority_unlock",
+        "history_open_block",
+        "history_seal_block",
+        "history_append_block",
+        "surface_measure",
+        "surface_digest_compare",
+        "durable_evidence_write",
+        "durable_evidence_read",
+        "external_summary_boundary",
+    ] {
+        let db = Database::new_init().expect("create db");
+        db.ensure_proof_graph_schema().expect("proof graph schema");
+        let mut records = proof_records();
+        records[2]["effect_seed_id"] = json!(format!("effect:{effect_class}"));
+        records[2]["effect_class"] = json!(effect_class);
+
+        db.upsert_proof_fact_values(&records)
+            .unwrap_or_else(|error| {
+                panic!("effect_class {effect_class} should be accepted: {error}")
+            });
+    }
+}

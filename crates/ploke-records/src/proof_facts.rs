@@ -651,8 +651,12 @@ impl EffectSeedFact {
     pub fn blocks_proof_if_unresolved(&self, resolution: &CallResolutionFact) -> bool {
         self.call_site_id == resolution.call_site_id
             && self.evidence_use.can_satisfy_proof()
-            && self.blocker_if_unresolved
+            && self.requires_call_resolution_evidence()
             && resolution.is_proof_blocking()
+    }
+
+    fn requires_call_resolution_evidence(&self) -> bool {
+        true
     }
 
     pub fn requires_process_lifetime_evidence(&self) -> bool {
@@ -708,6 +712,8 @@ pub struct AuthorityFact {
     pub schema_version: String,
     pub authority_fact_id: AuthorityFactId,
     pub build_domain_id: BuildDomainId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_site_id: Option<CallSiteId>,
     pub source_span: SourceSpanRecord,
     pub authority_term: AuthorityTerm,
     pub status: ObligationStatus,
@@ -1309,7 +1315,9 @@ impl ProofFactSet {
                                 .to_string(),
                         ));
                     }
-                    if fact.evidence_use.can_satisfy_proof() && fact.blocker_if_unresolved {
+                    if fact.evidence_use.can_satisfy_proof()
+                        && fact.requires_call_resolution_evidence()
+                    {
                         match resolutions.get(&fact.call_site_id) {
                             Some(resolution) if fact.blocks_proof_if_unresolved(resolution) => {
                                 blockers.push(blocker(
@@ -1342,6 +1350,7 @@ impl ProofFactSet {
                     }
                     if fact.evidence_use.can_satisfy_proof()
                         && fact.requires_process_lifetime_evidence()
+                        && !has_admitted_process_handoff(fact, &proof_call_sites, &authority_facts)
                     {
                         blockers.push(blocker(
                             ProofBlockerReason::ProcessLifetimeEvidenceMissing,
@@ -1364,6 +1373,33 @@ impl ProofFactSet {
                             None,
                             "authority fact references missing build domain".to_string(),
                         ));
+                    }
+                    if fact.evidence_use.can_satisfy_proof() {
+                        if let Some(call_site_id) = &fact.call_site_id {
+                            match proof_call_sites.get(call_site_id) {
+                                Some(call_site)
+                                    if call_site.build_domain_id != fact.build_domain_id =>
+                                {
+                                    blockers.push(blocker(
+                                        ProofBlockerReason::CanonicalIdentityMismatch,
+                                        ObligationStatus::Blocked,
+                                        Some(fact.build_domain_id.clone()),
+                                        Some(call_site_id.clone()),
+                                        "authority fact call-site scope uses a different build domain"
+                                            .to_string(),
+                                    ));
+                                }
+                                None => blockers.push(blocker(
+                                    ProofBlockerReason::CanonicalIdentityMismatch,
+                                    ObligationStatus::Blocked,
+                                    Some(fact.build_domain_id.clone()),
+                                    Some(call_site_id.clone()),
+                                    "authority fact references missing or navigation-only call site"
+                                        .to_string(),
+                                )),
+                                _ => {}
+                            }
+                        }
                     }
                     if fact.evidence_use.can_satisfy_proof() && !fact.status.satisfies_proof() {
                         blockers.push(blocker(
@@ -1394,6 +1430,38 @@ impl ProofFactSet {
 
         ProofValidationReport { status, blockers }
     }
+}
+
+fn has_admitted_process_handoff(
+    effect: &EffectSeedFact,
+    proof_call_sites: &HashMap<CallSiteId, &CallSiteFact>,
+    authority_facts: &HashMap<AuthorityFactId, &AuthorityFact>,
+) -> bool {
+    let Some(call_site) = proof_call_sites.get(&effect.call_site_id) else {
+        return false;
+    };
+
+    let mut successor_count = 0usize;
+    let mut parent_count = 0usize;
+    let mut predecessor_count = 0usize;
+    let mut crown_count = 0usize;
+
+    for authority in authority_facts.values().filter(|authority| {
+        authority.evidence_use.can_satisfy_proof()
+            && authority.status.satisfies_proof()
+            && authority.build_domain_id == call_site.build_domain_id
+            && authority.call_site_id.as_ref() == Some(&effect.call_site_id)
+    }) {
+        match authority.authority_term {
+            AuthorityTerm::Successor => successor_count += 1,
+            AuthorityTerm::ParentLineage => parent_count += 1,
+            AuthorityTerm::PredecessorRetired => predecessor_count += 1,
+            AuthorityTerm::CrownRuling => crown_count += 1,
+            _ => {}
+        }
+    }
+
+    successor_count == 1 && parent_count == 1 && predecessor_count >= 1 && crown_count == 1
 }
 
 fn blocker(

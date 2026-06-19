@@ -174,6 +174,16 @@ fn legal_handoff_records() -> Vec<Value> {
     ]
 }
 
+fn proof_and_navigation_handoff_records() -> Vec<Value> {
+    let mut records = legal_handoff_records();
+    for record in &mut records {
+        if record.get("evidence_use").is_some() {
+            record["evidence_use"] = json!("proof_and_navigation");
+        }
+    }
+    records
+}
+
 fn unscoped_legal_handoff_records_for(
     label: &str,
     build_domain_id: &str,
@@ -351,6 +361,107 @@ fn proof_invariant_checker_passes_legal_successor_handoff_fixture() {
 }
 
 #[test]
+fn proof_invariant_checker_accepts_proof_and_navigation_evidence_for_handoff() {
+    let db = db_with(proof_and_navigation_handoff_records());
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+
+    assert_eq!(
+        finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn").status,
+        ProofInvariantStatus::Pass
+    );
+    assert_eq!(
+        finding_for(&findings, CROWN_INVARIANT, "call:handoff-spawn").status,
+        ProofInvariantStatus::Pass
+    );
+}
+
+#[test]
+fn proof_invariant_checker_treats_process_replace_as_detached_process_obligation() {
+    let mut replace_effect = process_effect();
+    replace_effect["effect_class"] = json!("operating_system_process_replace");
+    let db = db_with(vec![call_site(), call_edge(), replace_effect]);
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+    let finding = finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn");
+
+    assert_eq!(finding.status, ProofInvariantStatus::Fail);
+    assert!(
+        finding
+            .reason
+            .contains("detached process create lacks admitted successor handoff")
+    );
+}
+
+#[test]
+fn proof_invariant_checker_blocks_active_blocker_even_without_process_scope() {
+    let db = db_with(vec![unscoped_blocker("process_lifetime_evidence_missing")]);
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+
+    assert!(findings.iter().any(|finding| {
+        finding.invariant == DETACHED_INVARIANT
+            && finding.call_site_id.is_none()
+            && finding.status == ProofInvariantStatus::Blocked
+            && finding.reason.contains("process_lifetime_evidence_missing")
+    }));
+    assert_no_status(&findings, DETACHED_INVARIANT, ProofInvariantStatus::Pass);
+}
+
+#[test]
+fn proof_invariant_checker_ignores_scoped_blocker_without_process_scope() {
+    let db = db_with(vec![
+        call_site_named("call:non-process", "bd:checker", "def:non-process", 12),
+        blocker_for(
+            "process_lifetime_evidence_missing",
+            "bd:checker",
+            Some("call:non-process"),
+        ),
+    ]);
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+
+    assert!(findings.iter().any(|finding| {
+        finding.invariant == DETACHED_INVARIANT
+            && finding.call_site_id.is_none()
+            && finding.status == ProofInvariantStatus::Pass
+            && finding
+                .reason
+                .contains("no proof-only detached process effects recorded")
+    }));
+    assert_no_status(&findings, DETACHED_INVARIANT, ProofInvariantStatus::Blocked);
+}
+
+#[test]
+fn proof_invariant_checker_blocks_scoped_blocker_with_missing_call_site_without_process_scope() {
+    let db = db_with(vec![blocker_for(
+        "process_lifetime_evidence_missing",
+        "bd:checker",
+        Some("call:missing"),
+    )]);
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+
+    assert!(findings.iter().any(|finding| {
+        finding.invariant == DETACHED_INVARIANT
+            && finding.call_site_id.is_none()
+            && finding.status == ProofInvariantStatus::Blocked
+            && finding.reason.contains("process_lifetime_evidence_missing")
+    }));
+    assert_no_status(&findings, DETACHED_INVARIANT, ProofInvariantStatus::Pass);
+}
+
+#[test]
 fn proof_invariant_checker_fails_illegal_detached_spawn_without_successor() {
     let db = db_with(vec![call_site(), call_edge(), process_effect()]);
 
@@ -470,41 +581,27 @@ fn proof_invariant_checker_ignores_navigation_only_authority_for_detached_handof
 }
 
 #[test]
-fn proof_invariant_checker_ignores_unknown_evidence_use_for_authority() {
-    let db = db_with(vec![
-        call_site(),
-        call_edge(),
-        process_effect(),
-        authority_with_scope(
-            "authority:successor:audit",
-            "successor",
-            "admitted",
-            "bd:checker",
-            Some("call:handoff-spawn"),
-            "audit_only",
-            7,
-        ),
-        authority("authority:parent", "parent_lineage", "admitted", 8),
-        authority(
-            "authority:predecessor",
-            "predecessor_retired",
-            "admitted",
-            9,
-        ),
-        authority("authority:crown", "crown_ruling", "admitted", 10),
-    ]);
+fn proof_invariant_checker_rejects_unknown_evidence_use_for_authority() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    let error = db
+        .upsert_proof_fact_values(&[
+            call_site(),
+            call_edge(),
+            process_effect(),
+            authority_with_scope(
+                "authority:successor:audit",
+                "successor",
+                "admitted",
+                "bd:checker",
+                Some("call:handoff-spawn"),
+                "audit_only",
+                7,
+            ),
+        ])
+        .expect_err("invalid evidence_use should reject before checking");
 
-    let findings = db
-        .proof_invariant_findings()
-        .expect("proof invariant findings");
-    let finding = finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn");
-
-    assert_eq!(finding.status, ProofInvariantStatus::Fail);
-    assert!(
-        finding
-            .reason
-            .contains("detached process create lacks admitted successor handoff")
-    );
+    assert!(error.to_string().contains("evidence_use"));
 }
 
 #[test]
@@ -610,7 +707,7 @@ fn proof_invariant_checker_scopes_blockers_to_matching_call_site() {
 #[test]
 fn proof_invariant_checker_blocks_unscoped_proof_blocker_fail_closed() {
     let mut records = legal_handoff_records();
-    records.push(unscoped_blocker("global_proof_gap"));
+    records.push(unscoped_blocker("process_lifetime_evidence_missing"));
     let db = db_with(records);
 
     let findings = db
@@ -619,7 +716,24 @@ fn proof_invariant_checker_blocks_unscoped_proof_blocker_fail_closed() {
     let finding = finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn");
 
     assert_eq!(finding.status, ProofInvariantStatus::Blocked);
-    assert!(finding.reason.contains("global_proof_gap"));
+    assert!(finding.reason.contains("process_lifetime_evidence_missing"));
+}
+
+#[test]
+fn proof_invariant_checker_blocks_rejected_proof_blocker_fail_closed() {
+    let mut records = legal_handoff_records();
+    let mut rejected_blocker = unscoped_blocker("process_lifetime_evidence_missing");
+    rejected_blocker["status"] = json!("rejected");
+    records.push(rejected_blocker);
+    let db = db_with(records);
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+    let finding = finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn");
+
+    assert_eq!(finding.status, ProofInvariantStatus::Blocked);
+    assert!(finding.reason.contains("process_lifetime_evidence_missing"));
 }
 
 #[test]

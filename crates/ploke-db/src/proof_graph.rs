@@ -390,7 +390,18 @@ fn evaluate_detached_process_invariants(rows: &[ProofFactRow]) -> Vec<ProofInvar
         ));
     }
     if scopes.is_empty() {
-        if findings.is_empty() {
+        let blocker_reasons = active_proof_blocker_reasons(rows);
+        if !blocker_reasons.is_empty() {
+            findings.push(finding(
+                "detached_process_successor_handoff",
+                ProofInvariantStatus::Blocked,
+                format!(
+                    "proof blockers prevent detached-process proof: {}",
+                    blocker_reasons.join(", ")
+                ),
+                None,
+            ));
+        } else if findings.is_empty() {
             findings.push(finding(
                 "detached_process_successor_handoff",
                 ProofInvariantStatus::Pass,
@@ -627,10 +638,37 @@ fn proof_blocker_reasons(rows: &[ProofFactRow], scope: &ProofScope) -> Vec<Strin
     rows.iter()
         .filter(|row| row.kind == "proof_blocker")
         .filter(|row| is_proof_evidence(row))
-        .filter(|row| row.status.as_deref() == Some("blocked"))
+        .filter(|row| is_active_blocker_status(row))
         .filter(|row| blocker_matches_scope(row, scope))
         .map(blocker_label)
         .collect()
+}
+
+fn active_proof_blocker_reasons(rows: &[ProofFactRow]) -> Vec<String> {
+    rows.iter()
+        .filter(|row| row.kind == "proof_blocker")
+        .filter(|row| is_proof_evidence(row))
+        .filter(|row| is_active_blocker_status(row))
+        .filter(|row| no_process_scope_blocker_can_affect_detached_process(row, rows))
+        .map(blocker_label)
+        .collect()
+}
+
+fn no_process_scope_blocker_can_affect_detached_process(
+    blocker: &ProofFactRow,
+    rows: &[ProofFactRow],
+) -> bool {
+    let Some(call_site_id) = blocker.call_site_id.as_deref() else {
+        return true;
+    };
+
+    !rows
+        .iter()
+        .any(|row| row.kind == "call_site" && row.call_site_id.as_deref() == Some(call_site_id))
+}
+
+fn is_active_blocker_status(row: &ProofFactRow) -> bool {
+    matches!(row.status.as_deref(), Some("blocked" | "rejected"))
 }
 
 fn scoped_authority_blockers(rows: &[ProofFactRow], scope: &ProofScope) -> Vec<String> {
@@ -725,17 +763,16 @@ fn lineage_matches(row: &ProofFactRow, build_domain_id: Option<&str>) -> bool {
 }
 
 fn is_proof_evidence(row: &ProofFactRow) -> bool {
-    row.evidence_use.as_deref() == Some("proof_only")
+    matches!(
+        row.evidence_use.as_deref(),
+        Some("proof_only" | "proof_and_navigation")
+    )
 }
 
 fn is_process_effect_class(effect_class: &str) -> bool {
     matches!(
         effect_class,
-        "operating_system_process_create"
-            | "detached_process"
-            | "std_process_command"
-            | "tokio_process_command"
-            | "shell_command"
+        "operating_system_process_create" | "operating_system_process_replace"
     )
 }
 
@@ -788,6 +825,7 @@ impl ProofFactProjection {
         }
         let fact_id = fact_id(value, &kind)?;
         validate_required_fields(value, &kind)?;
+        validate_enum_fields(value, &kind)?;
         let mut projection = Self::base(fact_id, kind.clone(), schema_version, value.clone());
         projection.evidence_use =
             json_string(value, "evidence_use").or(Some("proof_only".to_string()));
@@ -979,6 +1017,138 @@ fn validate_required_fields(value: &Value, kind: &str) -> Result<(), DbError> {
         other => Err(DbError::QueryConstruction(format!(
             "unknown proof fact kind {other}"
         ))),
+    }
+}
+
+fn validate_enum_fields(value: &Value, kind: &str) -> Result<(), DbError> {
+    validate_optional_enum(
+        value,
+        "evidence_use",
+        &["proof_only", "navigation_only", "proof_and_navigation"],
+    )?;
+    validate_optional_enum(value, "status", &["admitted", "rejected", "blocked"])?;
+    validate_optional_enum(
+        value,
+        "resolution_state",
+        &[
+            "resolved",
+            "candidate_set",
+            "ambiguous",
+            "unresolved",
+            "externally_summarized",
+            "blocked",
+        ],
+    )?;
+    validate_optional_enum(
+        value,
+        "expansion_state",
+        &["expanded", "unresolved", "externally_summarized", "blocked"],
+    )?;
+    validate_optional_enum(
+        value,
+        "effect_class",
+        &[
+            "operating_system_process_create",
+            "operating_system_process_replace",
+            "operating_system_process_configure",
+            "operating_system_process_wait",
+            "operating_system_process_kill",
+            "operating_system_process_reap",
+            "async_task_spawn",
+            "async_task_join",
+            "async_task_abort",
+            "authority_mint",
+            "authority_retire",
+            "authority_lock",
+            "authority_unlock",
+            "history_open_block",
+            "history_seal_block",
+            "history_append_block",
+            "surface_measure",
+            "surface_digest_compare",
+            "durable_evidence_write",
+            "durable_evidence_read",
+            "external_summary_boundary",
+        ],
+    )?;
+    validate_optional_enum(
+        value,
+        "authority_term",
+        &[
+            "parent_lineage",
+            "crown_ruling",
+            "authority_token_constructor",
+            "successor",
+            "predecessor_retired",
+            "immutable_surface_digest_admission",
+        ],
+    )?;
+    validate_optional_enum(value, "reason", PROOF_BLOCKER_REASONS)?;
+    validate_optional_enum(value, "blocking_reason", PROOF_BLOCKER_REASONS)?;
+    validate_optional_enum(
+        value,
+        "boundary_kind",
+        &[
+            "macro_rules_invocation",
+            "proc_macro_derive",
+            "proc_macro_attribute",
+            "proc_macro_function",
+            "build_script",
+            "include",
+            "external_summary",
+        ],
+    )?;
+    if kind == "build_domain" {
+        validate_optional_enum(
+            value,
+            "target_kind",
+            &[
+                "library",
+                "binary",
+                "test",
+                "example",
+                "benchmark",
+                "build_script",
+                "proc_macro",
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+const PROOF_BLOCKER_REASONS: &[&str] = &[
+    "macro_expansion_not_available",
+    "proc_macro_summary_missing",
+    "build_script_summary_missing",
+    "external_dependency_summary_missing",
+    "cfg_domain_not_materialized",
+    "type_resolution_missing",
+    "dynamic_dispatch_unbounded",
+    "external_command_summary_missing",
+    "build_script_execution_blocked",
+    "proc_macro_execution_blocked",
+    "canonical_identity_mismatch",
+    "schema_version_mismatch",
+    "authority_evidence_missing",
+    "process_lifetime_evidence_missing",
+    "rustc_invocation_evidence_missing",
+];
+
+fn validate_optional_enum(value: &Value, field: &str, allowed: &[&str]) -> Result<(), DbError> {
+    let Some(raw) = value.get(field) else {
+        return Ok(());
+    };
+    let Some(text) = raw.as_str() else {
+        return Err(DbError::QueryConstruction(format!(
+            "proof fact JSON field {field} is not a string"
+        )));
+    };
+    if allowed.contains(&text) {
+        Ok(())
+    } else {
+        Err(DbError::QueryConstruction(format!(
+            "proof fact JSON field {field} has invalid value {text}"
+        )))
     }
 }
 

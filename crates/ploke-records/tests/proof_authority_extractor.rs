@@ -2,7 +2,7 @@ use ploke_records::proof_authority::{
     AuthorityAdmissionSite, AuthorityExtractionConfig, extract_authority_facts_from_source,
 };
 use ploke_records::proof_facts::{
-    AuthorityTerm, BuildDomainId, ObligationStatus, ProofBlockerReason, ProofFactRecord,
+    AuthorityTerm, BuildDomainId, CallSiteId, ObligationStatus, ProofBlockerReason, ProofFactRecord,
 };
 
 fn authority_terms(records: &[ProofFactRecord]) -> Vec<(AuthorityTerm, ObligationStatus)> {
@@ -22,6 +22,110 @@ fn trusted_site(source: &str, canonical_call: &str, needle: &str) -> AuthorityAd
         .map(|line| line as u32 + 1)
         .expect("fixture contains trusted authority call");
     AuthorityAdmissionSite::from_canonical_call_site(canonical_call, line_start)
+}
+
+fn trusted_site_with_call_site(
+    source: &str,
+    canonical_call: &str,
+    needle: &str,
+    call_site_id: &str,
+) -> AuthorityAdmissionSite {
+    trusted_site(source, canonical_call, needle)
+        .with_call_site_id(CallSiteId(call_site_id.to_string()))
+}
+
+#[test]
+fn authority_extractor_carries_admitted_call_site_scope() {
+    let source = r#"
+        struct Handoff;
+        impl Handoff { fn admit_successor_parent() {} }
+
+        fn handoff() {
+            Handoff::admit_successor_parent();
+        }
+    "#;
+
+    let records = extract_authority_facts_from_source(
+        source,
+        AuthorityExtractionConfig::for_source(
+            BuildDomainId("bd:authority".to_string()),
+            "src/scoped.rs",
+        )
+        .with_admitted_sites([trusted_site_with_call_site(
+            source,
+            "Handoff::admit_successor_parent",
+            "Handoff::admit_successor_parent",
+            "call:handoff-spawn",
+        )]),
+    )
+    .expect("parse source");
+
+    let scoped_successor = records.iter().find_map(|record| match record {
+        ProofFactRecord::Authority(fact)
+            if fact.authority_term == AuthorityTerm::Successor
+                && fact.status == ObligationStatus::Admitted =>
+        {
+            Some(fact)
+        }
+        _ => None,
+    });
+
+    assert_eq!(
+        scoped_successor
+            .and_then(|fact| fact.call_site_id.as_ref())
+            .map(CallSiteId::as_str),
+        Some("call:handoff-spawn")
+    );
+}
+
+#[test]
+fn authority_extractor_blocks_ambiguous_admitted_site_scope() {
+    let source = r#"
+        struct Handoff;
+        impl Handoff { fn admit_successor_parent() {} }
+
+        fn handoff() {
+            Handoff::admit_successor_parent();
+        }
+    "#;
+
+    let records = extract_authority_facts_from_source(
+        source,
+        AuthorityExtractionConfig::for_source(
+            BuildDomainId("bd:authority".to_string()),
+            "src/ambiguous.rs",
+        )
+        .with_admitted_sites([
+            trusted_site(
+                source,
+                "Handoff::admit_successor_parent",
+                "Handoff::admit_successor_parent",
+            ),
+            trusted_site_with_call_site(
+                source,
+                "Handoff::admit_successor_parent",
+                "Handoff::admit_successor_parent",
+                "call:handoff-spawn",
+            ),
+        ]),
+    )
+    .expect("parse source");
+
+    let successor = records.iter().find_map(|record| match record {
+        ProofFactRecord::Authority(fact) if fact.authority_term == AuthorityTerm::Successor => {
+            Some(fact)
+        }
+        _ => None,
+    });
+
+    let successor = successor.expect("successor authority record");
+    assert_eq!(successor.status, ObligationStatus::Blocked);
+    assert_eq!(successor.call_site_id, None);
+    assert!(records.iter().any(|record| matches!(
+        record,
+        ProofFactRecord::ProofBlocker(blocker)
+            if blocker.reason == ProofBlockerReason::AuthorityEvidenceMissing
+    )));
 }
 
 #[test]
