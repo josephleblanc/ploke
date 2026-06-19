@@ -5,4 +5,5 @@ pub mod llm;
 pub(crate) mod probe;
 pub(crate) mod probe_text;
 pub(crate) mod self_edit;
+pub(crate) mod tool_loop;
 pub mod turn;

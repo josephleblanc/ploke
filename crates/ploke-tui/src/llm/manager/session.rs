@@ -2651,6 +2651,31 @@ mod tests {
         .to_string()
     }
 
+    fn list_dir_tool_call_response(index: usize) -> String {
+        json!({
+            "id": format!("tool-step-{index}"),
+            "choices": [{
+                "index": 0,
+                "finish_reason": "tool_calls",
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": format!("call_{index}"),
+                        "type": "function",
+                        "function": {
+                            "name": "list_dir",
+                            "arguments": "{\"dir\":\".\",\"max_entries\":3}"
+                        }
+                    }]
+                }
+            }],
+            "created": 0,
+            "model": "test/model",
+            "object": "chat.completion"
+        })
+        .to_string()
+    }
+
     fn content_response(content: &str) -> String {
         json!({
             "id": "final",
@@ -3356,6 +3381,308 @@ mod tests {
         );
         assert_eq!(captured_responses[0].index(), 0);
         assert_eq!(captured_responses[1].index(), 1);
+    }
+
+    #[tokio::test]
+    async fn run_chat_session_live_step_executes_tool_batch_before_boundary() {
+        let _router_guard = TEST_ROUTER_LOCK.lock().await;
+        let _api_key = ApiKeyGuard::set("test-key");
+        let responses = vec![list_dir_tool_call_response(0)];
+        let request_count = std::sync::Arc::new(AtomicUsize::new(0));
+        let server =
+            spawn_test_router_server("127.0.0.1:39181", responses, request_count.clone()).await;
+
+        let db = Arc::new(Database::new_init().expect("database initializes"));
+        let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db.active_embedding_set),
+            EmbeddingProcessor::new(EmbeddingSource::Local(
+                LocalEmbedder::new(EmbeddingConfig::default()).expect("local embedder initializes"),
+            )),
+        ));
+        let rag = Arc::new(
+            RagService::new(Arc::clone(&db), Arc::clone(&embedder))
+                .expect("rag service initializes"),
+        );
+        let (rag_tx, _rag_rx) = mpsc::channel(16);
+        let state = Arc::new(AppState::new(
+            db,
+            embedder,
+            ploke_io::IoManagerHandle::new(),
+            rag,
+            TokenBudget::default(),
+            rag_tx,
+        ));
+        let workspace = std::env::current_dir().expect("current dir is available");
+        state
+            .with_system_txn(|txn| {
+                txn.set_loaded_workspace(
+                    workspace.clone(),
+                    vec![workspace.clone()],
+                    Some(workspace),
+                );
+            })
+            .await;
+
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let mut tool_rx = event_bus.subscribe(crate::EventPriority::Realtime);
+        let requested = Arc::new(AtomicUsize::new(0));
+        let completed = Arc::new(AtomicUsize::new(0));
+        let tool_state = Arc::clone(&state);
+        let tool_bus = Arc::clone(&event_bus);
+        let requested_a = Arc::clone(&requested);
+        let completed_a = Arc::clone(&completed);
+        let tool_task = tokio::spawn(async move {
+            while let Ok(event) = tool_rx.recv().await {
+                if let AppEvent::System(SystemEvent::ToolCallRequested {
+                    tool_call,
+                    request_id,
+                    parent_id,
+                }) = event
+                {
+                    requested_a.fetch_add(1, Ordering::SeqCst);
+                    let ctx = crate::tools::Ctx {
+                        state: Arc::clone(&tool_state),
+                        event_bus: Arc::clone(&tool_bus),
+                        request_id,
+                        parent_id,
+                        call_id: tool_call.call_id.clone(),
+                    };
+                    if crate::tools::process_tool(tool_call, ctx).await.is_ok() {
+                        completed_a.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            }
+        });
+
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let drain = tokio::spawn(async move { while state_cmd_rx.recv().await.is_some() {} });
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_message(RequestMessage::new_user(
+                "Call list_dir for the current directory.".to_owned(),
+            ))
+            .with_tools(Some(vec![crate::tools::list_dir::ListDir::tool_def()]))
+            .with_tool_choice(Some(ToolChoice::Auto));
+        let tape = RecordedResponseTape::new(Vec::new());
+        let (request_tx, request_rx) = std::sync::mpsc::channel();
+        let _request_tap = install_request_tap(request_tx);
+        let (response_tx, response_rx) = std::sync::mpsc::channel();
+        let _response_tap = install_response_tap(response_tx);
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::recorded_prefix_then_live_steps(tape, 1),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id: Uuid::new_v4(),
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+            },
+            2,
+        )
+        .await;
+
+        server.await.expect("server task");
+        tool_task.abort();
+        drain.abort();
+        let captured_requests = request_rx.try_iter().collect::<Vec<_>>();
+        let captured_responses = response_rx.try_iter().collect::<Vec<_>>();
+
+        assert!(matches!(report.outcome, SessionOutcome::Completed));
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            1,
+            "exactly one live provider response should be allowed"
+        );
+        assert_eq!(
+            requested.load(Ordering::SeqCst),
+            1,
+            "the live response's tool request should execute before the boundary"
+        );
+        assert_eq!(
+            completed.load(Ordering::SeqCst),
+            1,
+            "the tool batch should complete before the boundary"
+        );
+        assert_eq!(
+            captured_requests.len(),
+            2,
+            "expected live request, then boundary request before the next provider call"
+        );
+        assert_eq!(captured_responses.len(), 1);
+        assert_eq!(captured_responses[0].index(), 0);
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    #[ignore = "requires direct Google auth/env, a tool-capable Gemini model, and quota"]
+    async fn live_google_chat_session_live_step_tool_batch_success_or_quota() {
+        if !google_live_ready("live_google_chat_session_live_step_tool_batch_success_or_quota") {
+            return;
+        }
+
+        let db = Arc::new(Database::new_init().expect("database initializes"));
+        let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db.active_embedding_set),
+            EmbeddingProcessor::new(EmbeddingSource::Local(
+                LocalEmbedder::new(EmbeddingConfig::default()).expect("local embedder initializes"),
+            )),
+        ));
+        let rag = Arc::new(
+            RagService::new(Arc::clone(&db), Arc::clone(&embedder))
+                .expect("rag service initializes"),
+        );
+        let (rag_tx, _rag_rx) = mpsc::channel(16);
+        let state = Arc::new(AppState::new(
+            db,
+            embedder,
+            ploke_io::IoManagerHandle::new(),
+            rag,
+            TokenBudget::default(),
+            rag_tx,
+        ));
+        let workspace = std::env::current_dir().expect("current dir is available");
+        state
+            .with_system_txn(|txn| {
+                txn.set_loaded_workspace(
+                    workspace.clone(),
+                    vec![workspace.clone()],
+                    Some(workspace),
+                );
+            })
+            .await;
+
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let mut tool_rx = event_bus.subscribe(crate::EventPriority::Realtime);
+        let requested = Arc::new(AtomicUsize::new(0));
+        let completed = Arc::new(AtomicUsize::new(0));
+        let tool_state = Arc::clone(&state);
+        let tool_bus = Arc::clone(&event_bus);
+        let requested_a = Arc::clone(&requested);
+        let completed_a = Arc::clone(&completed);
+        let tool_task = tokio::spawn(async move {
+            while let Ok(event) = tool_rx.recv().await {
+                if let AppEvent::System(SystemEvent::ToolCallRequested {
+                    tool_call,
+                    request_id,
+                    parent_id,
+                }) = event
+                {
+                    requested_a.fetch_add(1, Ordering::SeqCst);
+                    let ctx = crate::tools::Ctx {
+                        state: Arc::clone(&tool_state),
+                        event_bus: Arc::clone(&tool_bus),
+                        request_id,
+                        parent_id,
+                        call_id: tool_call.call_id.clone(),
+                    };
+                    if crate::tools::process_tool(tool_call, ctx).await.is_ok() {
+                        completed_a.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            }
+        });
+
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let drain = tokio::spawn(async move { while state_cmd_rx.recv().await.is_some() {} });
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let model = std::env::var("PLOKE_LIVE_GOOGLE_CHAT_MODEL")
+            .unwrap_or_else(|_| "google/gemini-2.5-flash".to_string());
+        let req = ChatCompRequest::<Google>::default()
+            .with_model_str(&model)
+            .expect("Google model id parses")
+            .with_message(RequestMessage::new_user(
+                "Call the list_dir tool exactly once with dir \".\" and max_entries 3.".to_string(),
+            ))
+            .with_max_tokens(160)
+            .with_temperature(0.0)
+            .with_tools(Some(vec![crate::tools::list_dir::ListDir::tool_def()]))
+            .with_tool_choice(Some(ToolChoice::Required));
+        let tape = RecordedResponseTape::new(Vec::new());
+        let (request_tx, request_rx) = std::sync::mpsc::channel();
+        let _request_tap = install_request_tap(request_tx);
+        let (response_tx, response_rx) = std::sync::mpsc::channel();
+        let _response_tap = install_response_tap(response_tx);
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::recorded_prefix_then_live_steps(tape, 1),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id: Uuid::new_v4(),
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+            },
+            90,
+        )
+        .await;
+
+        tool_task.abort();
+        drain.abort();
+        let captured_requests = request_rx.try_iter().collect::<Vec<_>>();
+        let captured_responses = response_rx.try_iter().collect::<Vec<_>>();
+
+        if matches!(report.outcome, SessionOutcome::Completed) && report.errors.is_empty() {
+            assert_eq!(requested.load(Ordering::SeqCst), 1, "report={report:#?}");
+            assert_eq!(completed.load(Ordering::SeqCst), 1, "report={report:#?}");
+            assert_eq!(
+                captured_requests.len(),
+                2,
+                "expected live request and next-request boundary, report={report:#?}"
+            );
+            assert_eq!(captured_responses.len(), 1, "report={report:#?}");
+            assert_eq!(captured_responses[0].index(), 0);
+        } else {
+            assert!(
+                live_google_failure_is_classified(&report),
+                "unexpected live Google failure: {report:#?}"
+            );
+        }
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn google_live_ready(test_name: &str) -> bool {
+        let has_route = std::env::var_os("GOOGLE_PROJECT_ID").is_some()
+            && std::env::var_os("GOOGLE_REGION").is_some();
+        let has_key = std::env::var_os("PLOKE_GOOGLE_AI_STUDIO_API_KEY").is_some()
+            || std::env::var_os("GEMINI_API_KEY").is_some()
+            || std::env::var_os("GOOGLE_API_KEY").is_some();
+        if has_route || has_key {
+            return true;
+        }
+        eprintln!(
+            "skipping {test_name}: set GOOGLE_PROJECT_ID/GOOGLE_REGION with Google auth or a Google API key"
+        );
+        false
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn live_google_failure_is_classified(report: &ChatSessionReport) -> bool {
+        let text = format!("{report:#?}").to_ascii_lowercase();
+        [
+            "quota",
+            "rate",
+            "429",
+            "401",
+            "403",
+            "auth",
+            "credential",
+            "permission",
+            "provider",
+            "unavailable",
+        ]
+        .iter()
+        .any(|needle| text.contains(needle))
     }
 
     #[test]
