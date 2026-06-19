@@ -24,6 +24,10 @@
   Draft symbolic proposition outline for the Ploke-loop invariant track,
   separating construction facts, admissibility assumptions, and empirical evidence
   for immutable surface induction, detached-process safety, and Crown/Ruler uniqueness.
+- [`detached-process-crown-proposition-sequence.md`](detached-process-crown-proposition-sequence.md)
+  Ordered proposition and lemma sequence for the Ploke-loop proof track, with
+  explicit assumptions, acyclic dependencies, proof sketches, claim status labels,
+  and a dependency graph for the detached-process and Crown invariant target.
 - [`macro-buildrs-callgraph-sequencing-survey.md`](macro-buildrs-callgraph-sequencing-survey.md)
   Survey and sequencing recommendation for macro/build-script provenance versus
   immediate call/effect graph implementation.
