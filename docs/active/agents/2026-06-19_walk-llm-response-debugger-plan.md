@@ -405,6 +405,20 @@ Avoid new ad-hoc `serde_json::Value` parsing in `walk`. Prefer the existing type
 
 Add new typed records only when existing shapes cannot represent checkpoint/resume authority.
 
+### Include live-Google verification where applicable
+
+Every implementation slice that touches a live provider boundary, model routing, provider-response stepping, harness execution, or `walk` admission into an LLM/tool-loop frame should include a live API verification path in addition to deterministic taped/unit tests.
+
+Use the existing live-Google endpoint/route rather than OpenRouter for these checks. Live tests must remain gated behind the existing `live_api_tests` feature or ignored-test pattern and should document required environment variables in the test or nearby test helper. Deterministic tests remain the required default CI proof; live-Google tests are an explicit operator/provider smoke for the same slice.
+
+Live-Google tests should be small and bounded:
+
+- one prompt that requests a simple, safe tool call when testing tool-loop stepping;
+- one provider response boundary per assertion when testing response stepping;
+- tight `max_attempts` and timeout budgets;
+- isolated temporary or fixture workspace;
+- no History/handoff authority changes unless the tested slice explicitly owns that edge.
+
 ## Proposed slices
 
 ### Slice 0 — document and test current response-step behavior
@@ -427,6 +441,14 @@ cargo test -p ploke-tui run_chat_session_can_replay_prefix_then_take_one_live_st
 cargo test -p ploke-eval replay --all-targets
 ```
 
+Live-Google verification, because this slice pins the provider-response boundary:
+
+```bash
+cargo test -p ploke-tui live_google_chat_session_executes_list_dir_tool_call_success_or_quota --features live_api_tests -- --ignored
+```
+
+If the existing live-Google test name changes, use the nearest live-Google session/tool-loop smoke that sends one provider request, observes a tool call or a quota/auth classified outcome, and does not require OpenRouter.
+
 ### Slice 1 — define durable checkpoint records
 
 Goal: introduce typed record shapes and local filesystem store without changing live execution.
@@ -442,6 +464,8 @@ Verify:
 ```bash
 cargo test -p ploke-eval tool_loop_checkpoint --all-targets
 ```
+
+No live-Google test is required for pure checkpoint serde/store work unless the slice also captures a live provider response into the new record shape. If it does, add a tiny ignored `live_api_tests` capture smoke using the live-Google route.
 
 ### Slice 2 — factor chat/session one-response step API
 
@@ -464,6 +488,8 @@ cargo test -p ploke-tui run_chat_session --features test_harness
 cargo check -p ploke-tui --all-targets
 ```
 
+Live-Google verification is required for this slice because it touches the session provider boundary. Add or reuse a gated live-Google test that proves the refactored one-response step API still reaches the direct Google provider, captures exactly the intended response boundary, and either executes the requested simple tool batch or returns a recognized quota/auth/provider-unavailable classification.
+
 ### Slice 3 — step-capable harness execution
 
 Goal: use the one-response chat step inside the headless TUI harness and produce durable step checkpoints.
@@ -480,7 +506,8 @@ Verify:
 - test recorded response with one tool batch;
 - test edit proposal settling before pause;
 - test no duplicate tool execution on resume within the same process;
-- test resume from persisted checkpoint if the slice includes durable resume.
+- test resume from persisted checkpoint if the slice includes durable resume;
+- add a gated live-Google harness smoke that steps one provider response through the headless TUI adapter and pauses after the resulting tool batch or classified provider/quota/auth outcome.
 
 ### Slice 4 — add walk inner frame model
 
@@ -498,6 +525,8 @@ Verify:
 ```bash
 cargo test -p ploke-eval loop_walk --all-targets
 ```
+
+No live-Google test is required for a purely structural `WalkState` inner-frame slice. If the slice starts or resumes a live inner frame, add a gated live-Google smoke through `loop walk` using the direct Google route.
 
 ### Slice 5 — add CLI commands
 
@@ -520,6 +549,8 @@ cargo build -p ploke-eval
 ./target/debug/ploke-eval loop walk llm --help
 ```
 
+CLI parsing/help does not require live-Google. Any command execution test that crosses the provider boundary must be gated behind `live_api_tests` and use the live-Google route.
+
 ### Slice 6 — wire first harness-backed typestate edge
 
 Goal: first useful end-to-end debugger through a real Prototype 1 edge.
@@ -535,7 +566,7 @@ Tasks:
 Verify:
 
 - smoke with a tiny fixture/model tape if possible;
-- live ignored test behind `live_api_tests` if provider use is required;
+- live ignored test behind `live_api_tests` using the live-Google route for the first real harness-backed typestate edge;
 - compare normal run-to-terminal artifacts against stepped-to-terminal artifacts.
 
 ### Slice 7 — inspection polish
@@ -553,7 +584,8 @@ Tasks:
 Verify:
 
 - golden-ish table tests for renderer functions;
-- no direct JSON field walking in CLI when typed shapes exist.
+- no direct JSON field walking in CLI when typed shapes exist;
+- no live-Google test is required for renderer-only work, but any example capture used to update golden fixtures should come from the live-Google route when a live provider is intentionally involved.
 
 ## Open questions
 
