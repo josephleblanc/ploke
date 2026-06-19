@@ -5,6 +5,12 @@ Task: `t_25f0a505`
 Status: initial source map for downstream prose/planning, not final prose
 Repo state inspected: branch `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`, HEAD `2f50fdcc`
 
+Companion artifacts:
+
+- [`implementation-invariants-source-slice.md`](implementation-invariants-source-slice.md) — implementation-grounded source slice for authority, surfaces, schemas, RAG, TUI, and proof facts.
+- [`graphrag-history-adapter-note.md`](graphrag-history-adapter-note.md) — reference note mapping the current code graph/RAG pipeline to Prototype 1 History adapter seams.
+- [`collaborator-mdbook-strategy.md`](collaborator-mdbook-strategy.md) — proposed collaborator mdBook table of contents, chapter source matrix, and maintenance/drift plan.
+
 ## Scope and hard assumption
 
 This inventory collects the currently discovered Ploke-loop documentation and code-adjacent sources for three later synthesis tracks:
