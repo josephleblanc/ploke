@@ -11,7 +11,7 @@
 //! rather than adding more ad-hoc JSON parsing here.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs, io,
     path::{Path, PathBuf},
 };
@@ -68,10 +68,18 @@ struct PolicySummary {
 #[derive(Debug, Serialize)]
 struct ProgressSummary {
     node_count: usize,
+    #[serde(skip)]
+    parent_nodes: usize,
+    #[serde(skip)]
+    child_nodes: usize,
     state_reports: usize,
     child_plan_count: usize,
+    #[serde(skip)]
+    rejected_attempts: usize,
     planned_generations: Vec<u32>,
     latest_generation: u32,
+    #[serde(skip)]
+    expected_children: Option<usize>,
     expected_nodes: Option<usize>,
 }
 
@@ -107,6 +115,8 @@ struct GenerationSummary {
     parent_node_id: String,
     child_generation: u32,
     child_count: usize,
+    #[serde(skip)]
+    rejected_attempts: usize,
     children: Vec<ChildSummary>,
     successor_node_id: Option<String>,
     branch_disposition: Option<String>,
@@ -168,18 +178,26 @@ impl WalkSummary {
         let node_count = count_dirs(&root.join("nodes"))?;
         let state_reports = reports.len();
         let child_plan_count = generations.len();
+        let child_nodes = total_children(&generations);
+        let parent_nodes = parent_node_count(&reports, &generations);
+        let rejected_attempts = total_rejections(&generations);
         let planned_generations = generations
             .iter()
             .map(|generation| generation.child_generation)
             .collect::<Vec<_>>();
         let latest_generation = identity.generation();
+        let expected_children = expected_children(&policy);
         let expected_nodes = expected_nodes(&policy);
         let progress = ProgressSummary {
             node_count,
+            parent_nodes,
+            child_nodes,
             state_reports,
             child_plan_count,
+            rejected_attempts,
             planned_generations,
             latest_generation,
+            expected_children,
             expected_nodes,
         };
         let completion = completion(&policy, &progress, &generations);
@@ -252,15 +270,34 @@ fn print_table(summary: &WalkSummary, verbose: bool) {
         display_opt(summary.policy.child_max)
     );
     println!("progress:");
-    println!("  durable_nodes: {}", summary.progress.node_count);
-    println!("  state_reports: {}", summary.progress.state_reports);
+    println!("  persisted_total_nodes: {}", summary.progress.node_count);
+    println!("  parent_turn_nodes: {}", summary.progress.parent_nodes);
+    println!("  admitted_child_nodes: {}", summary.progress.child_nodes);
+    println!("  parent_turn_reports: {}", summary.progress.state_reports);
+    println!("  child_plan_files: {}", summary.progress.child_plan_count);
     println!(
-        "  child_plan_messages: {}",
+        "  child_admission_records: {}",
         summary.progress.child_plan_count
     );
-    println!("  planned_children: {}", total_planned_children(summary));
+    println!("  admitted_children: {}", total_admitted_children(summary));
     println!(
-        "  expected_nodes: {}",
+        "  rejected_admission_attempts: {}",
+        summary.progress.rejected_attempts
+    );
+    println!(
+        "  rejected_edit_attempts: {}",
+        summary.progress.rejected_attempts
+    );
+    println!(
+        "  expected_children: {}",
+        summary
+            .progress
+            .expected_children
+            .map(|count| count.to_string())
+            .unwrap_or_else(|| "-".to_string())
+    );
+    println!(
+        "  expected_total_nodes: {}",
         summary
             .progress
             .expected_nodes
@@ -290,10 +327,11 @@ fn print_table(summary: &WalkSummary, verbose: bool) {
     }
     for generation in &summary.generations {
         println!(
-            "  gen{} parent={} planned_children={} child_budget={} selected_successor={} branch={} decision={} handoff={}",
+            "  gen{} parent={} admitted_children={} rejected_admission_attempts={} child_budget={} selected_successor={} branch={} decision={} handoff={}",
             generation.child_generation,
             generation.parent_node_id,
             generation.child_count,
+            generation.rejected_attempts,
             child_budget_status(summary, generation),
             selected_successor(generation),
             generation.branch_disposition.as_deref().unwrap_or("-"),
@@ -316,18 +354,41 @@ fn parent_turn_status(summary: &WalkSummary) -> String {
     }
 }
 
-fn total_planned_children(summary: &WalkSummary) -> usize {
-    summary
-        .generations
+fn total_admitted_children(summary: &WalkSummary) -> usize {
+    total_children(&summary.generations)
+}
+
+fn total_children(generations: &[GenerationSummary]) -> usize {
+    generations
         .iter()
         .map(|generation| generation.child_count)
         .sum()
 }
 
+fn total_rejections(generations: &[GenerationSummary]) -> usize {
+    generations
+        .iter()
+        .map(|generation| generation.rejected_attempts)
+        .sum()
+}
+
+fn parent_node_count(
+    reports: &BTreeMap<String, ReportSummary>,
+    generations: &[GenerationSummary],
+) -> usize {
+    let mut parents = reports.keys().cloned().collect::<BTreeSet<_>>();
+    parents.extend(
+        generations
+            .iter()
+            .map(|generation| generation.parent_node_id.clone()),
+    );
+    parents.len()
+}
+
 fn child_budget_expectation(summary: &WalkSummary) -> String {
     match (summary.policy.child_min, summary.policy.child_max) {
         (Some(min), Some(max)) => {
-            format!("expected {min}..{max} planned/admitted children per child-plan")
+            format!("expected {min}..{max} admitted children per child admission record")
         }
         _ => "no child budget configured".to_string(),
     }
@@ -397,6 +458,18 @@ fn print_verbose(summary: &WalkSummary) {
     println!("  handoff: selected-successor handoff status from the parent final report.");
     println!(
         "  latest_entry: latest durable transition-journal entry; replay cursor is separate and operator-local."
+    );
+    println!(
+        "  parent_turn_nodes: nodes that have completed or recorded a parent turn in this campaign view."
+    );
+    println!(
+        "  admitted_child_nodes/admitted_children: child nodes authorized by child admission records."
+    );
+    println!(
+        "  child_plan_files/child_admission_records: persisted files that record child admission for a parent turn."
+    );
+    println!(
+        "  rejected_admission_attempts: rejected edit attempts stored in child admission records."
     );
     println!(
         "  strict_completion: whether durable artifacts satisfy policy/budget/count expectations, not whether the parent turn emitted a final report."
@@ -578,11 +651,16 @@ fn load_generations(
             .and_then(JsonValue::as_array)
             .map(|children| children.iter().map(child_summary).collect::<Vec<_>>())
             .unwrap_or_default();
+        let rejections = value
+            .get("rejected_surface_attempts")
+            .and_then(JsonValue::as_array)
+            .map_or(0, Vec::len);
         let report = reports.get(&parent);
         generations.push(GenerationSummary {
             parent_node_id: parent,
             child_generation,
             child_count: children.len(),
+            rejected_attempts: rejections,
             children,
             successor_node_id: report.and_then(|report| report.successor.clone()),
             branch_disposition: report.and_then(|report| report.branch_disposition.clone()),
@@ -719,15 +797,21 @@ fn completion(
         blockers.push("no terminal policy threshold reached".to_string());
     }
     if !fanout {
-        blockers
-            .push("one or more child plans do not satisfy the configured child budget".to_string());
+        blockers.push(
+            "one or more child admission records do not satisfy the configured child budget"
+                .to_string(),
+        );
     }
     if matches!(node_count, Some(false)) {
-        blockers
-            .push("durable node count does not match the strict expected node count".to_string());
+        if let Some(expected) = progress.expected_nodes {
+            blockers.push(format!(
+                "expected {expected} persisted nodes if the child budget was met; found {}",
+                progress.node_count
+            ));
+        }
     }
     if progress.state_reports < progress.child_plan_count {
-        blockers.push("not every child-plan generation has a final state report".to_string());
+        blockers.push("not every child admission record has a parent turn report".to_string());
     }
     let terminal_condition = if reached_max_generations {
         "reached max_generations".to_string()
@@ -766,15 +850,19 @@ fn expected_fanout(policy: &PolicySummary, generations: &[GenerationSummary]) ->
     })
 }
 
-fn expected_nodes(policy: &PolicySummary) -> Option<usize> {
+fn expected_children(policy: &PolicySummary) -> Option<usize> {
     let generations = policy.max_generations? as usize;
     let min = policy.child_min?;
     let max = policy.child_max?;
     if min == max {
-        Some(1 + generations * max as usize)
+        Some(generations * max as usize)
     } else {
         None
     }
+}
+
+fn expected_nodes(policy: &PolicySummary) -> Option<usize> {
+    expected_children(policy).map(|children| 1 + children)
 }
 
 fn count_dirs(path: &Path) -> Result<usize, PrepareError> {
@@ -938,6 +1026,7 @@ mod tests {
             parent_node_id: "node-root".to_string(),
             child_generation: 1,
             child_count: 0,
+            rejected_attempts: 0,
             children: Vec::new(),
             successor_node_id: Some("node-root".to_string()),
             branch_disposition: None,
