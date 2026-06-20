@@ -70,8 +70,6 @@ struct ProgressSummary {
     node_count: usize,
     #[serde(skip)]
     parent_nodes: usize,
-    #[serde(skip)]
-    child_nodes: usize,
     state_reports: usize,
     child_plan_count: usize,
     #[serde(skip)]
@@ -178,7 +176,6 @@ impl WalkSummary {
         let node_count = count_dirs(&root.join("nodes"))?;
         let state_reports = reports.len();
         let child_plan_count = generations.len();
-        let child_nodes = total_children(&generations);
         let parent_nodes = parent_node_count(&reports, &generations);
         let rejected_attempts = total_rejections(&generations);
         let planned_generations = generations
@@ -191,7 +188,6 @@ impl WalkSummary {
         let progress = ProgressSummary {
             node_count,
             parent_nodes,
-            child_nodes,
             state_reports,
             child_plan_count,
             rejected_attempts,
@@ -270,45 +266,35 @@ fn print_table(summary: &WalkSummary, verbose: bool) {
         display_opt(summary.policy.child_max)
     );
     println!("progress:");
-    println!("  persisted_total_nodes: {}", summary.progress.node_count);
-    println!("  parent_turn_nodes: {}", summary.progress.parent_nodes);
-    println!("  admitted_child_nodes: {}", summary.progress.child_nodes);
-    println!("  parent_turn_reports: {}", summary.progress.state_reports);
-    println!("  child_plan_files: {}", summary.progress.child_plan_count);
+    println!("  expected:");
     println!(
-        "  child_admission_records: {}",
-        summary.progress.child_plan_count
+        "    children: {}",
+        display_count(summary.progress.expected_children)
     );
-    println!("  admitted_children: {}", total_admitted_children(summary));
     println!(
-        "  rejected_admission_attempts: {}",
+        "    total_nodes: {}",
+        display_count(summary.progress.expected_nodes)
+    );
+    println!("  actual:");
+    println!("    parent_nodes: {}", summary.progress.parent_nodes);
+    println!(
+        "    admitted_children: {}",
+        total_admitted_children(summary)
+    );
+    println!("    total_nodes: {}", summary.progress.node_count);
+    println!("  admission:");
+    println!("    records: {}", summary.progress.child_plan_count);
+    println!("    admitted: {}", total_admitted_children(summary));
+    println!(
+        "    rejected_attempts: {}",
         summary.progress.rejected_attempts
     );
     println!(
-        "  rejected_edit_attempts: {}",
-        summary.progress.rejected_attempts
-    );
-    println!(
-        "  expected_children: {}",
-        summary
-            .progress
-            .expected_children
-            .map(|count| count.to_string())
-            .unwrap_or_else(|| "-".to_string())
-    );
-    println!(
-        "  expected_total_nodes: {}",
-        summary
-            .progress
-            .expected_nodes
-            .map(|count| count.to_string())
-            .unwrap_or_else(|| "-".to_string())
-    );
-    println!(
-        "  child_budget_satisfied: {} ({})",
+        "    budget_satisfied: {} ({})",
         yes(summary.completion.expected_fanout_satisfied),
         child_budget_expectation(summary)
     );
+    print_progress_mismatch(summary);
     println!("journal:");
     println!(
         "  path: {}",
@@ -341,6 +327,33 @@ fn print_table(summary: &WalkSummary, verbose: bool) {
     }
     if verbose {
         print_verbose(summary);
+    }
+}
+
+fn print_progress_mismatch(summary: &WalkSummary) {
+    let admitted = total_admitted_children(summary);
+    let mut lines = Vec::new();
+    if let Some(expected) = summary.progress.expected_children {
+        if admitted != expected {
+            lines.push(format!("expected {expected} child, admitted {admitted}"));
+        }
+    }
+    if let Some(expected) = summary.progress.expected_nodes {
+        let found = summary.progress.node_count;
+        if found != expected {
+            lines.push(format!(
+                "expected {expected} persisted nodes, found {found}"
+            ));
+        }
+    }
+
+    println!("  mismatch:");
+    if lines.is_empty() {
+        println!("    - none");
+    } else {
+        for line in lines {
+            println!("    - {line}");
+        }
     }
 }
 
@@ -460,16 +473,16 @@ fn print_verbose(summary: &WalkSummary) {
         "  latest_entry: latest durable transition-journal entry; replay cursor is separate and operator-local."
     );
     println!(
-        "  parent_turn_nodes: nodes that have completed or recorded a parent turn in this campaign view."
+        "  progress.expected: policy-derived child/node counts if the configured child budget is met."
     );
     println!(
-        "  admitted_child_nodes/admitted_children: child nodes authorized by child admission records."
+        "  progress.actual: persisted parent/admitted-child node counts found in campaign artifacts."
     );
     println!(
-        "  child_plan_files/child_admission_records: persisted files that record child admission for a parent turn."
+        "  progress.admission.records: persisted child admission records, one per parent child-plan file."
     );
     println!(
-        "  rejected_admission_attempts: rejected edit attempts stored in child admission records."
+        "  progress.admission.rejected_attempts: rejected edit/admission attempts stored in child admission records."
     );
     println!(
         "  strict_completion: whether durable artifacts satisfy policy/budget/count expectations, not whether the parent turn emitted a final report."
@@ -970,6 +983,12 @@ fn toml_u32(value: Option<&TomlValue>, field: &str) -> Option<u32> {
 }
 
 fn display_opt(value: Option<u32>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "-".to_string())
+}
+
+fn display_count(value: Option<usize>) -> String {
     value
         .map(|value| value.to_string())
         .unwrap_or_else(|| "-".to_string())
