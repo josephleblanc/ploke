@@ -12,6 +12,7 @@ use std::{
     fs,
     io::Read,
     path::{Path, PathBuf},
+    process::Command,
     str::FromStr,
 };
 
@@ -24,6 +25,12 @@ use ploke_records::{
         PersistedToolCallArguments, PersistedToolResultContent, ToolCallArguments, ToolErrorWire,
         ToolResultContent, ToolRetryContextValue, decode_tool_result_content,
     },
+};
+use ploke_tui::tools::{
+    Tool, ToolDefinition, ToolName, cargo::CargoTool, code_edit::GatCodeEdit,
+    code_item_lookup::CodeItemLookup, create_file::CreateFile, get_code_edges::CodeItemEdges,
+    insert_rust_item::InsertRustItem, list_dir::ListDir, ns_patch::NsPatch, ns_read::NsRead,
+    request_code_context::RequestCodeContextGat,
 };
 
 use crate::{
@@ -422,6 +429,41 @@ impl WalkController {
         self.render_llm_timeline(&store, lane_state)
     }
 
+    /// Render the tool definition and historical arguments for one LLM tool call.
+    pub(crate) fn llm_tool_report(
+        &self,
+        session_id: Option<&str>,
+        lane: Option<&str>,
+        head: bool,
+        step: Option<usize>,
+        call: Option<usize>,
+        name: Option<&str>,
+        json: bool,
+    ) -> Result<String, PrepareError> {
+        let store = self.tool_loop_store()?;
+        let lane_state = match session_id {
+            Some(session_id) => self.lane_for_session(&store, store.read_session(session_id)?)?,
+            None => self.resolve_lane(&store, lane)?,
+        };
+        let selected = match step {
+            Some(step) => Some(step),
+            None if head => lane_state.head,
+            None => self
+                .llm_cursors
+                .get(cursor_key(&lane_state))
+                .copied()
+                .or(lane_state.head),
+        };
+        let loaded = selected
+            .map(|step| {
+                store
+                    .read_step(&lane_state.session.session_id, step)
+                    .map(|record| (step, record))
+            })
+            .transpose()?;
+        self.render_llm_tool(lane_state, loaded, call, name, json)
+    }
+
     /// Execute one historical or live LLM response step through current TUI tools.
     pub(crate) async fn llm_step(
         &mut self,
@@ -605,6 +647,10 @@ impl WalkController {
         lines.push(format!("lane: {}", lane.lane_id));
         lines.push(format!("session: {}", lane.session.session_id));
         lines.push(format!("status: {}", status_label(lane.session.status)));
+        lines.extend(render_provenance_lines(
+            &self.repo_root,
+            &lane.session.workspace,
+        ));
         lines.push(format!(
             "cursor: {}",
             current
@@ -943,6 +989,10 @@ impl WalkController {
         lines.push(format!("status: {}", status_label(lane.session.status)));
         lines.push(format!("harness: {}", lane.session.harness));
         lines.push(format!("workspace: {}", lane.session.workspace.display()));
+        lines.extend(render_provenance_lines(
+            &self.repo_root,
+            &lane.session.workspace,
+        ));
         if let Some(model) = lane.session.model.as_deref() {
             lines.push(format!("model: {model}"));
         }
@@ -1004,6 +1054,80 @@ impl WalkController {
             None => lines.push("step: (none recorded yet)".to_string()),
         }
         lines.join("\n")
+    }
+
+    fn render_llm_tool(
+        &self,
+        lane: LlmLane,
+        loaded: Option<(usize, crate::replay::tool_loop::ToolLoopStep)>,
+        call: Option<usize>,
+        name: Option<&str>,
+        json: bool,
+    ) -> Result<String, PrepareError> {
+        let selected_call = match loaded.as_ref() {
+            Some((_, record)) => select_tool_request(record, call, name)?,
+            None => None,
+        };
+        let tool_name = selected_call
+            .map(|request| request.tool.as_str())
+            .or(name)
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail:
+                    "selected LLM step has no tool calls; pass --name to inspect a tool definition"
+                        .to_string(),
+            })?;
+        let definition = current_tool_definition(tool_name);
+        if json {
+            return render_llm_tool_json(
+                self,
+                &lane,
+                loaded.as_ref().map(|(step, _)| *step),
+                selected_call,
+                tool_name,
+                definition.as_ref(),
+            );
+        }
+
+        let mut lines = Vec::new();
+        lines.push("llm tool".to_string());
+        lines.push(format!("lane: {}", lane.lane_id));
+        lines.push(format!("session: {}", lane.session.session_id));
+        if let Some((step, _)) = loaded.as_ref() {
+            lines.push(format!("step: {step}"));
+        } else {
+            lines.push("step: (none selected)".to_string());
+        }
+        lines.push(format!("tool: {tool_name}"));
+        lines.extend(render_provenance_lines(
+            &self.repo_root,
+            &lane.session.workspace,
+        ));
+        lines.push("definition_source: current_renderer_checkout".to_string());
+        if definition.is_none() {
+            lines.push("definition: (unknown tool in current renderer)".to_string());
+        }
+        if loaded.is_some() {
+            lines.push("arguments_source: persisted_checkpoint".to_string());
+        }
+        if let Some(request) = selected_call {
+            lines.push(format!("call_id: {}", request.call_id));
+            lines.push("arguments:".to_string());
+            lines.extend(indent_lines(&format_tool_arguments(request), 2));
+            lines.push("arguments_json:".to_string());
+            lines.extend(indent_lines(
+                &pretty_json_or_raw(request.arguments.as_str()),
+                2,
+            ));
+        } else if name.is_some() {
+            lines.push("arguments: (no matching persisted call at selected step)".to_string());
+        }
+        if let Some(definition) = definition.as_ref() {
+            lines.extend(render_tool_definition(definition));
+        }
+        lines.push("next:".to_string());
+        lines.push("  walk llm show      # inspect the full checkpoint transcript".to_string());
+        lines.push("  walk llm tool --json".to_string());
+        Ok(lines.join("\n"))
     }
 
     /// Render the last successful step delta, if any.
@@ -2367,6 +2491,242 @@ fn first_response_message(
         .cloned()
 }
 
+fn select_tool_request<'a>(
+    record: &'a crate::replay::tool_loop::ToolLoopStep,
+    call: Option<usize>,
+    name: Option<&str>,
+) -> Result<Option<&'a ToolRequestRecord>, PrepareError> {
+    if record.tool_requests.is_empty() {
+        return Ok(None);
+    }
+    if let Some(call) = call {
+        if call == 0 {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: "--call is one-based; use --call 1 for the first tool call".to_string(),
+            });
+        }
+        let index = call - 1;
+        return record
+            .tool_requests
+            .get(index)
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "selected step has {} tool call(s); --call {call} is out of range",
+                    record.tool_requests.len()
+                ),
+            })
+            .map(Some);
+    }
+    if let Some(name) = name {
+        if let Some(request) = record
+            .tool_requests
+            .iter()
+            .find(|request| request.tool == name)
+        {
+            return Ok(Some(request));
+        }
+        return Ok(None);
+    }
+    Ok(record.tool_requests.first())
+}
+
+fn current_tool_definition(tool: &str) -> Option<ToolDefinition> {
+    let name = parse_tool_name(tool)?;
+    Some(match name {
+        ToolName::RequestCodeContext => RequestCodeContextGat::tool_def(),
+        ToolName::ApplyCodeEdit => GatCodeEdit::tool_def(),
+        ToolName::InsertRustItem => InsertRustItem::tool_def(),
+        ToolName::CreateFile => CreateFile::tool_def(),
+        ToolName::NsPatch => NsPatch::tool_def(),
+        ToolName::NsRead => NsRead::tool_def(),
+        ToolName::CodeItemLookup => CodeItemLookup::tool_def(),
+        ToolName::CodeItemEdges => CodeItemEdges::tool_def(),
+        ToolName::Cargo => CargoTool::tool_def(),
+        ToolName::ListDir => ListDir::tool_def(),
+    })
+}
+
+fn parse_tool_name(tool: &str) -> Option<ToolName> {
+    serde_json::from_value(serde_json::Value::String(tool.to_string())).ok()
+}
+
+fn render_provenance_lines(repo_root: &Path, workspace: &Path) -> Vec<String> {
+    let Some(server_commit) = server_cwd_git_head() else {
+        return Vec::new();
+    };
+    let Some(workspace_commit) = git_head(workspace) else {
+        return Vec::new();
+    };
+    if server_commit == workspace_commit {
+        return vec![format!(
+            "provenance: server_cwd_commit={}",
+            short_sha(&server_commit)
+        )];
+    }
+    let target_commit = git_head(repo_root)
+        .map(|commit| short_sha(&commit))
+        .unwrap_or_else(|| "-".to_string());
+    vec![
+        format!(
+            "provenance: server_cwd_commit={} checkpoint_workspace_commit={} target_repo_commit={}",
+            short_sha(&server_commit),
+            short_sha(&workspace_commit),
+            target_commit
+        ),
+        "warning: rendered by a different checkout than the checkpoint workspace; decoded fields/tool hints/schemas may reflect current code, not the original run"
+            .to_string(),
+    ]
+}
+
+fn provenance_value(repo_root: &Path, workspace: &Path) -> serde_json::Value {
+    let server_commit = server_cwd_git_head();
+    let workspace_commit = git_head(workspace);
+    let target_commit = git_head(repo_root);
+    let commit_mismatch =
+        server_commit.is_some() && workspace_commit.is_some() && server_commit != workspace_commit;
+    serde_json::json!({
+        "server_cwd_commit": server_commit,
+        "checkpoint_workspace_commit": workspace_commit,
+        "target_repo_commit": target_commit,
+        "commit_mismatch": commit_mismatch,
+        "warning": "decoded fields/tool hints/schemas are rendered by the current binary; when commits differ they may not match the original run",
+    })
+}
+
+fn server_cwd_git_head() -> Option<String> {
+    std::env::current_dir().ok().and_then(|dir| git_head(&dir))
+}
+
+fn git_head(path: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .arg("rev-parse")
+        .arg("HEAD")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    let commit = stdout.trim();
+    if commit.is_empty() {
+        None
+    } else {
+        Some(commit.to_string())
+    }
+}
+
+fn short_sha(commit: &str) -> String {
+    commit.chars().take(7).collect()
+}
+
+fn render_llm_tool_json(
+    controller: &WalkController,
+    lane: &LlmLane,
+    step: Option<usize>,
+    selected_call: Option<&ToolRequestRecord>,
+    tool_name: &str,
+    definition: Option<&ToolDefinition>,
+) -> Result<String, PrepareError> {
+    let arguments = selected_call.and_then(|request| {
+        serde_json::from_str::<serde_json::Value>(request.arguments.as_str()).ok()
+    });
+    let payload = serde_json::json!({
+        "kind": "llm_tool",
+        "lane": lane.lane_id,
+        "session": lane.session.session_id,
+        "step": step,
+        "tool": tool_name,
+        "provenance": provenance_value(&controller.repo_root, &lane.session.workspace),
+        "definition_source": "current_renderer_checkout",
+        "tool_definition": definition,
+        "call_id": selected_call.map(|request| request.call_id.as_str()),
+        "arguments_source": selected_call.map(|_| "persisted_checkpoint"),
+        "arguments": arguments,
+        "arguments_raw": selected_call.map(|request| request.arguments.as_str()),
+    });
+    serde_json::to_string_pretty(&payload).map_err(PrepareError::Serialize)
+}
+
+fn render_tool_definition(definition: &ToolDefinition) -> Vec<String> {
+    let mut lines = Vec::new();
+    lines.push("description:".to_string());
+    let description = truncate_chars(definition.function.description.trim(), 1_400);
+    if description.is_empty() {
+        lines.push("  (empty)".to_string());
+    } else {
+        lines.extend(description.lines().map(|line| format!("  {line}")));
+    }
+    lines.push("parameters:".to_string());
+    render_schema_object(&mut lines, &definition.function.parameters, 2);
+    lines
+}
+
+fn render_schema_object(lines: &mut Vec<String>, schema: &serde_json::Value, indent: usize) {
+    let required = schema
+        .get("required")
+        .and_then(serde_json::Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let Some(properties) = schema
+        .get("properties")
+        .and_then(serde_json::Value::as_object)
+    else {
+        lines.push(format!("{}{}", " ".repeat(indent), schema_kind(schema)));
+        return;
+    };
+    for (name, property) in properties {
+        let mark = if required.iter().any(|item| item == name) {
+            "required"
+        } else {
+            "optional"
+        };
+        lines.push(format!(
+            "{}{}: {} {}",
+            " ".repeat(indent),
+            name,
+            schema_kind(property),
+            mark
+        ));
+        if let Some(description) = property
+            .get("description")
+            .and_then(serde_json::Value::as_str)
+        {
+            lines.push(format!(
+                "{}- {}",
+                " ".repeat(indent + 2),
+                preview_inline_chars(description, 220)
+            ));
+        }
+        if let Some(items) = property.get("items") {
+            lines.push(format!("{}items:", " ".repeat(indent + 2)));
+            render_schema_object(lines, items, indent + 4);
+        } else if property.get("properties").is_some() {
+            render_schema_object(lines, property, indent + 2);
+        }
+    }
+}
+
+fn schema_kind(schema: &serde_json::Value) -> String {
+    match schema.get("type").and_then(serde_json::Value::as_str) {
+        Some(kind) => kind.to_string(),
+        None => "value".to_string(),
+    }
+}
+
+fn pretty_json_or_raw(raw: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(raw) {
+        Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_else(|_| raw.to_string()),
+        Err(_) => raw.to_string(),
+    }
+}
+
 fn render_tool_calls(requests: &[ToolRequestRecord]) -> String {
     let mut lines = vec![format!("tool_calls: {}", requests.len())];
     if requests.is_empty() {
@@ -2649,6 +3009,9 @@ fn render_llm_next_commands(
     record: &crate::replay::tool_loop::ToolLoopStep,
 ) -> Vec<String> {
     let mut lines = vec!["next:".to_string()];
+    if !record.tool_requests.is_empty() {
+        lines.push("  walk llm tool".to_string());
+    }
     if record.step_index > 0 {
         lines.push("  walk llm back".to_string());
     }
@@ -3431,6 +3794,60 @@ mod tests {
         assert!(rendered.contains("crates/ploke-tree-browser/Cargo.toml"));
         assert!(rendered.contains("prior_messages:"));
         assert!(rendered.contains("next:"));
+    }
+
+    #[test]
+    fn llm_tool_render_shows_definition_arguments_and_json() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut session =
+            ToolLoopSession::new("session-tool", "headless-tui", tmp.path().join("lane-a"));
+        session.lane_id = Some("lane-a".to_string());
+        let lane = LlmLane {
+            lane_id: "lane-a".to_string(),
+            session: session.clone(),
+            resume: None,
+            head: Some(2),
+        };
+        let mut step = ToolLoopStep::new(
+            "session-tool",
+            2,
+            vec![RequestMessage::new_user("inspect".to_string())],
+            tool_call_response(2),
+            WorkspaceState::default(),
+            WorkspaceState::default(),
+        )
+        .expect("step");
+        step.tool_requests.push(ToolRequestRecord {
+            request_id: "session-tool:2".to_string(),
+            parent_id: "parent".to_string(),
+            call_id: "call-list-dir".to_string(),
+            tool: "list_dir".to_string(),
+            arguments: ToolArgumentsJson::from(r#"{"dir":"crates/ploke-tree-browser"}"#),
+        });
+
+        let controller = WalkController::new(tmp.path().join("repo"));
+        let rendered = controller
+            .render_llm_tool(lane.clone(), Some((2, step.clone())), None, None, false)
+            .expect("human tool render");
+
+        assert!(rendered.contains("llm tool"));
+        assert!(rendered.contains("tool: list_dir"));
+        assert!(rendered.contains("definition_source: current_renderer_checkout"));
+        assert!(rendered.contains("arguments_source: persisted_checkpoint"));
+        assert!(rendered.contains("arguments_json:"));
+        assert!(rendered.contains("\"dir\": \"crates/ploke-tree-browser\""));
+        assert!(rendered.contains("description:"));
+        assert!(rendered.contains("parameters:"));
+        assert!(rendered.contains("dir: string required"));
+
+        let json = controller
+            .render_llm_tool(lane, Some((2, step)), None, None, true)
+            .expect("json tool render");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("tool json");
+        assert_eq!(value["tool"], "list_dir");
+        assert_eq!(value["call_id"], "call-list-dir");
+        assert_eq!(value["arguments"]["dir"], "crates/ploke-tree-browser");
+        assert_eq!(value["tool_definition"]["function"]["name"], "list_dir");
     }
 
     #[test]

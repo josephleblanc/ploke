@@ -136,6 +136,23 @@ pub(crate) enum WalkRequestBody {
         /// Lane id. Defaults to current focus.
         lane: Option<String>,
     },
+    /// Inspect a nested LLM/tool-loop tool definition and selected call arguments.
+    LlmTool {
+        /// Specific checkpoint session id. Defaults to selected lane/latest session.
+        session_id: Option<String>,
+        /// Lane id. Defaults to current focus.
+        lane: Option<String>,
+        /// Inspect the latest head rather than the read-only cursor.
+        head: bool,
+        /// Specific provider-response step. Defaults to lane cursor or latest recorded step.
+        step: Option<usize>,
+        /// One-based tool call index within the selected step.
+        call: Option<usize>,
+        /// Tool name to inspect.
+        name: Option<String>,
+        /// Print a JSON payload instead of human-readable text.
+        json: bool,
+    },
     /// Execute one historical or live provider response step through current tools.
     LlmStep {
         /// Specific checkpoint session id. Defaults to selected lane/latest session.

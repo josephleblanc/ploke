@@ -270,7 +270,7 @@ pub struct Prototype1StateWalkShowDeltaCommand {
 #[derive(Debug, Clone, Parser)]
 #[command(
     about = "Inspect nested LLM/tool-loop debugger checkpoints",
-    after_help = "Examples:\n  ploke-eval loop walk llm lanes\n  ploke-eval loop walk llm focus node-...-r2\n  ploke-eval loop walk llm timeline\n  ploke-eval loop walk llm show --lane node-...-r2 --head\n  ploke-eval loop walk llm back --lane node-...-r2 --steps 3\n\nThis surface is read-only unless step/finish says otherwise. Current lane/cursor/timeline/show commands do not call providers, execute tools, mutate the checkout, or advance the outer typestate walk."
+    after_help = "Examples:\n  ploke-eval loop walk llm lanes\n  ploke-eval loop walk llm focus node-...-r2\n  ploke-eval loop walk llm timeline\n  ploke-eval loop walk llm show --lane node-...-r2 --head\n  ploke-eval loop walk llm tool --step 11 --json\n  ploke-eval loop walk llm back --lane node-...-r2 --steps 3\n\nThis surface is read-only unless step/finish says otherwise. Current lane/cursor/timeline/show/tool commands do not call providers, execute tools, mutate the checkout, or advance the outer typestate walk."
 )]
 pub struct Prototype1StateWalkLlmCommand {
     #[command(flatten)]
@@ -290,6 +290,8 @@ pub enum Prototype1StateWalkLlmSubcommand {
     Show(Prototype1StateWalkLlmShowCommand),
     /// Show a compact chronological summary of recorded LLM/tool-loop steps.
     Timeline(Prototype1StateWalkLlmTimelineCommand),
+    /// Inspect the tool definition and arguments for a selected LLM tool call.
+    Tool(Prototype1StateWalkLlmToolCommand),
     /// Execute one historical or live provider response step through current tools.
     Step(Prototype1StateWalkLlmStepCommand),
     /// Continue live provider response steps until terminal or max steps.
@@ -369,6 +371,37 @@ pub struct Prototype1StateWalkLlmTimelineCommand {
     /// Lane id, usually the candidate workspace basename. Defaults to current focus.
     #[arg(long)]
     pub lane: Option<String>,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkLlmToolCommand {
+    /// Specific tool-loop session id to inspect. Defaults to selected lane/latest session.
+    #[arg(long)]
+    pub session_id: Option<String>,
+
+    /// Lane id, usually the candidate workspace basename. Defaults to current focus.
+    #[arg(long)]
+    pub lane: Option<String>,
+
+    /// Inspect the selected lane's latest recorded head instead of its read-only cursor.
+    #[arg(long)]
+    pub head: bool,
+
+    /// Specific response step to inspect. Defaults to the lane cursor or latest recorded step.
+    #[arg(long)]
+    pub step: Option<usize>,
+
+    /// One-based tool call index within the selected step. Defaults to 1.
+    #[arg(long)]
+    pub call: Option<usize>,
+
+    /// Tool name to inspect. If no call matches, shows the current definition without historical arguments.
+    #[arg(long)]
+    pub name: Option<String>,
+
+    /// Print the raw JSON tool definition and historical argument payload.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Clone, Parser)]

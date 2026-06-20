@@ -126,6 +126,10 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             response_result(response)
         }
         Prototype1StateWalkSubcommand::Llm(command) => {
+            let raw_json_message = matches!(
+                &command.command,
+                Prototype1StateWalkLlmSubcommand::Tool(tool) if tool.json
+            );
             let format = command.control.format;
             let with_version = command.control.with_version;
             let socket_override = command.control.socket.clone();
@@ -151,6 +155,15 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
                         lane: timeline.lane,
                     }
                 }
+                Prototype1StateWalkLlmSubcommand::Tool(tool) => WalkRequestBody::LlmTool {
+                    session_id: tool.session_id,
+                    lane: tool.lane,
+                    head: tool.head,
+                    step: tool.step,
+                    call: tool.call,
+                    name: tool.name,
+                    json: tool.json,
+                },
                 Prototype1StateWalkLlmSubcommand::Step(step) => {
                     let allow_workspace_mutation = step.allow_workspace_mutation();
                     WalkRequestBody::LlmStep {
@@ -202,7 +215,11 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
                 None
             };
             let response = send_request(&socket, WalkRequest { client_epoch, body }).await?;
-            print_response(&response, format, with_version)?;
+            if raw_json_message && response.is_ok() {
+                print_ok_message(&response);
+            } else {
+                print_response(&response, format, with_version)?;
+            }
             response_result(response)
         }
         Prototype1StateWalkSubcommand::Summary(command) => summary::run(command),
@@ -601,6 +618,12 @@ fn print_multiline(label: &str, value: &str) {
         }
     } else {
         println!("{label}: {value}");
+    }
+}
+
+fn print_ok_message(response: &WalkResponse) {
+    if let WalkResponse::Ok { message, .. } = response {
+        println!("{message}");
     }
 }
 

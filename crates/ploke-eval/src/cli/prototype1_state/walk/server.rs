@@ -154,6 +154,26 @@ impl WalkServer {
                 .controller
                 .llm_timeline(session_id.as_deref(), lane.as_deref())
                 .map(|message| WalkResponse::ok(phase, message, self.epoch.clone())),
+            WalkRequestBody::LlmTool {
+                session_id,
+                lane,
+                head,
+                step,
+                call,
+                name,
+                json,
+            } => self
+                .controller
+                .llm_tool_report(
+                    session_id.as_deref(),
+                    lane.as_deref(),
+                    head,
+                    step,
+                    call,
+                    name.as_deref(),
+                    json,
+                )
+                .map(|message| WalkResponse::ok(phase, message, self.epoch.clone())),
             WalkRequestBody::LlmStep {
                 session_id,
                 lane,

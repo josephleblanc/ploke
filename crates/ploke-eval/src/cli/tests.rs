@@ -1896,6 +1896,46 @@ fn loop_walk_llm_timeline_command_parses() {
 }
 
 #[test]
+fn loop_walk_llm_tool_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "llm",
+        "tool",
+        "--lane",
+        "node-1",
+        "--step",
+        "11",
+        "--call",
+        "1",
+        "--name",
+        "non_semantic_patch",
+        "--json",
+    ])
+    .expect("loop walk llm tool should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Llm(cmd) => match cmd.command {
+                Prototype1StateWalkLlmSubcommand::Tool(tool) => {
+                    assert_eq!(tool.lane.as_deref(), Some("node-1"));
+                    assert_eq!(tool.step, Some(11));
+                    assert_eq!(tool.call, Some(1));
+                    assert_eq!(tool.name.as_deref(), Some("non_semantic_patch"));
+                    assert!(tool.json);
+                }
+                other => panic!("unexpected llm subcommand: {:?}", other),
+            },
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
 fn loop_walk_replay_and_back_commands_parse() {
     let replay = Cli::try_parse_from([
         "ploke-eval",
