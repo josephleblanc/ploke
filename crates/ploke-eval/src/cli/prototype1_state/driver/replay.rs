@@ -94,50 +94,70 @@ impl ReplayCursor {
 
     pub(crate) fn render(&self, tail: usize) -> String {
         let mut lines = Vec::new();
+        let campaign_dir = campaign_dir_from_journal(&self.journal_path);
         lines.push("historical replay cursor (read-only)".to_string());
+        lines.push(
+            "mode: inspecting durable journal evidence; the command header phase is live walk-server state, not replay position"
+                .to_string(),
+        );
         lines.push(format!("campaign_id: {}", self.campaign_id));
         lines.push(format!("repo_root: {}", self.repo_root.display()));
-        lines.push(format!("journal_path: {}", self.journal_path.display()));
+        lines.push(format!("campaign_dir: {}", display_dir(&campaign_dir)));
+        lines.push(format!(
+            "journal_path: {}",
+            display_under(&self.journal_path, &campaign_dir, "campaign_dir")
+        ));
         lines.push(format!("entries: {}", self.steps.len()));
         lines.push(format!(
             "cursor: {}",
             self.cursor
-                .map(|index| index.to_string())
+                .map(|index| format!(
+                    "#{index} of #{} (operator cursor)",
+                    self.steps.len().saturating_sub(1)
+                ))
                 .unwrap_or_else(|| "-".to_string())
         ));
         if let Some(current) = self.current() {
+            lines.push("current:".to_string());
             lines.push(format!(
-                "current: #{} {} {} {}",
+                "  entry: #{:04} {} {} {}",
                 current.index,
                 current.phase.map(|phase| phase.as_str()).unwrap_or("-"),
-                current.kind,
+                display_kind(current),
                 current.subject
             ));
-            lines.push(format!("detail: {}", current.detail));
+            lines.push(format!("  meaning: {}", entry_meaning(current)));
+            lines.push(format!("  detail: {}", current.detail));
         }
         let tail = tail.max(1);
-        let start = self.steps.len().saturating_sub(tail);
-        let shown = self.steps.len().saturating_sub(start);
-        lines.push(format!(
-            "recent entries: last {shown} of {}",
-            self.steps.len()
-        ));
-        if shown < self.steps.len() {
-            lines.push("hint: expand this window with --tail N, for example --tail 20".to_string());
+        let (start, end) = replay_window(self.steps.len(), self.cursor, tail);
+        if start < end {
+            lines.push(format!(
+                "entry_window: showing #{}..#{} of #{} ({} entries, includes cursor; use --tail N to expand)",
+                start,
+                end - 1,
+                self.steps.len().saturating_sub(1),
+                end - start
+            ));
+        } else {
+            lines.push("entry_window: (journal is empty)".to_string());
         }
-        for step in &self.steps[start..] {
+        for step in &self.steps[start..end] {
             let marker = if Some(step.index) == self.cursor {
                 "*"
             } else {
                 " "
             };
             lines.push(format!(
-                "{marker} #{:04} {:>4} {:<24} {}",
+                "{marker} #{:04} {:>4} {:<20} {}",
                 step.index,
                 step.phase.map(|phase| phase.as_str()).unwrap_or("-"),
-                step.kind,
+                display_kind(step),
                 step.subject
             ));
+            if Some(step.index) == self.cursor {
+                lines.push(format!("      {}", entry_meaning(step)));
+            }
         }
         lines.push("note: replay/back/forward move only this operator cursor; they do not undo durable side effects".to_string());
         lines.join("\n")
@@ -226,6 +246,78 @@ impl ReplayCursor {
     fn current(&self) -> Option<&ReplayStep> {
         self.cursor.and_then(|index| self.steps.get(index))
     }
+}
+
+fn replay_window(len: usize, cursor: Option<usize>, tail: usize) -> (usize, usize) {
+    if len == 0 {
+        return (0, 0);
+    }
+    let tail = tail.max(1).min(len);
+    let cursor = cursor.unwrap_or(len - 1).min(len - 1);
+    let mut start = cursor.saturating_sub(tail / 2);
+    if start + tail > len {
+        start = len - tail;
+    }
+    (start, start + tail)
+}
+
+fn display_kind(step: &ReplayStep) -> &str {
+    match step.kind.as_str() {
+        "resource.parentcomplete" => "parent_complete",
+        "resource.parentstart" => "parent_start_resource",
+        other => other,
+    }
+}
+
+fn entry_meaning(step: &ReplayStep) -> &'static str {
+    match step.kind.as_str() {
+        "parent_started" => {
+            "parent runtime started; this is startup evidence, not child fanout or final completion"
+        }
+        "resource.parentstart" => {
+            "parent-start resource was recorded for reconstruction/audit evidence"
+        }
+        "resource.parentcomplete" => {
+            "parent turn reached final report/parent-complete evidence; campaign may still be non-terminal"
+        }
+        "child_artifact_committed" => "child artifact/diff was committed for a planned child",
+        "materialize_branch" => "child branch materialization event",
+        "build_child" => "child runtime build event",
+        "spawn_child" => "child runtime spawn event",
+        "child_ready" => "child runtime reported ready",
+        "observe_child" => "parent observed child runtime result",
+        "successor.selected" => "successor selection was recorded",
+        "successor.stopped" => "continuation stopped without successor handoff",
+        "successor_handoff" | "successor.spawned" | "successor.checkout" | "successor.ready" => {
+            "successor handoff/install/spawn evidence"
+        }
+        _ => "durable transition-journal evidence",
+    }
+}
+
+fn campaign_dir_from_journal(path: &Path) -> PathBuf {
+    path.parent()
+        .and_then(Path::parent)
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf()
+}
+
+fn display_dir(path: &Path) -> String {
+    let mut value = path.display().to_string();
+    if !value.ends_with(std::path::MAIN_SEPARATOR) {
+        value.push(std::path::MAIN_SEPARATOR);
+    }
+    value
+}
+
+fn display_under(path: &Path, root: &Path, label: &str) -> String {
+    if let Ok(stripped) = path.strip_prefix(root) {
+        if stripped.as_os_str().is_empty() {
+            return format!("{{{label}}}/");
+        }
+        return format!("{{{label}}}/{}", stripped.display());
+    }
+    path.display().to_string()
 }
 
 fn replay_step(index: usize, entry: &JournalEntry) -> ReplayStep {
@@ -522,5 +614,70 @@ fn successor_step(
                 detail.as_deref().unwrap_or("-")
             ),
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ploke_records::ids::CampaignId;
+
+    fn step(index: usize, kind: &str) -> ReplayStep {
+        ReplayStep {
+            index,
+            recorded_at: None,
+            phase: Some(if kind == "resource.parentcomplete" {
+                WalkPhase::R14a
+            } else {
+                WalkPhase::R5
+            }),
+            kind: kind.to_string(),
+            subject: format!("node-{index}"),
+            detail: format!("detail-{index}"),
+        }
+    }
+
+    #[test]
+    fn replay_window_includes_index_zero_cursor() {
+        assert_eq!(replay_window(10, Some(0), 3), (0, 3));
+        assert_eq!(replay_window(10, Some(9), 3), (7, 10));
+        assert_eq!(replay_window(10, Some(5), 3), (4, 7));
+    }
+
+    #[test]
+    fn render_replay_index_window_uses_cursor_not_recent_tail() {
+        let cursor = ReplayCursor {
+            repo_root: PathBuf::from("/tmp/repo"),
+            campaign_id: CampaignId::from("campaign-replay-test"),
+            journal_path: PathBuf::from(
+                "/tmp/eval/campaigns/campaign-replay-test/prototype1/transition-journal.jsonl",
+            ),
+            steps: (0..5)
+                .map(|index| {
+                    if index == 4 {
+                        step(index, "resource.parentcomplete")
+                    } else {
+                        step(index, "parent_started")
+                    }
+                })
+                .collect(),
+            cursor: Some(0),
+        };
+
+        let rendered = cursor.render(3);
+
+        assert!(rendered.contains("cursor: #0 of #4 (operator cursor)"));
+        assert!(rendered.contains("entry_window: showing #0..#2 of #4"));
+        assert!(rendered.contains("* #0000"));
+        assert!(!rendered.contains("#0004"));
+        assert!(rendered.contains("command header phase is live walk-server state"));
+    }
+
+    #[test]
+    fn parent_complete_entry_has_plain_language_meaning() {
+        let step = step(2, "resource.parentcomplete");
+
+        assert_eq!(display_kind(&step), "parent_complete");
+        assert!(entry_meaning(&step).contains("campaign may still be non-terminal"));
     }
 }

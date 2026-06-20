@@ -97,6 +97,7 @@ struct JournalSummary {
 struct JournalCursor {
     index: usize,
     label: String,
+    meaning: String,
     node_id: Option<String>,
     generation: Option<u32>,
 }
@@ -218,13 +219,20 @@ fn print_table(summary: &WalkSummary, verbose: bool) {
     println!("active_node: {}", summary.active.node_id);
     println!("active_generation: {}", summary.active.generation);
     println!("active_branch: {}", summary.active.branch_id);
-    println!("terminal: {}", summary.completion.terminal_condition);
+    println!("outcome:");
     println!(
-        "completion: {}",
+        "  campaign_terminal: {} ({})",
+        yes(summary.completion.reached_max_generations
+            || summary.completion.reached_max_total_nodes),
+        summary.completion.terminal_condition
+    );
+    println!("  parent_turn: {}", parent_turn_status(summary));
+    println!(
+        "  strict_completion: {}",
         yes(summary.completion.expected_completion_satisfied)
     );
     if !summary.completion.blockers.is_empty() {
-        println!("blockers:");
+        println!("strict_completion_blockers:");
         for blocker in &summary.completion.blockers {
             println!("  - {blocker}");
         }
@@ -244,9 +252,13 @@ fn print_table(summary: &WalkSummary, verbose: bool) {
         display_opt(summary.policy.child_max)
     );
     println!("progress:");
-    println!("  nodes: {}", summary.progress.node_count);
+    println!("  durable_nodes: {}", summary.progress.node_count);
     println!("  state_reports: {}", summary.progress.state_reports);
-    println!("  child_plans: {}", summary.progress.child_plan_count);
+    println!(
+        "  child_plan_messages: {}",
+        summary.progress.child_plan_count
+    );
+    println!("  planned_children: {}", total_planned_children(summary));
     println!(
         "  expected_nodes: {}",
         summary
@@ -256,8 +268,9 @@ fn print_table(summary: &WalkSummary, verbose: bool) {
             .unwrap_or_else(|| "-".to_string())
     );
     println!(
-        "  expected_fanout: {}",
-        yes(summary.completion.expected_fanout_satisfied)
+        "  child_budget_satisfied: {} ({})",
+        yes(summary.completion.expected_fanout_satisfied),
+        child_budget_expectation(summary)
     );
     println!("journal:");
     println!(
@@ -266,9 +279,10 @@ fn print_table(summary: &WalkSummary, verbose: bool) {
     );
     println!("  entries: {}", summary.journal.entries);
     if let Some(cursor) = &summary.journal.latest_cursor {
-        println!("  latest_cursor: #{} {}", cursor.index, cursor.label);
+        println!("  latest_entry: #{} {}", cursor.index, cursor.label);
+        println!("  latest_meaning: {}", cursor.meaning);
     } else {
-        println!("  latest_cursor: -");
+        println!("  latest_entry: -");
     }
     println!("generations:");
     if summary.generations.is_empty() {
@@ -276,11 +290,12 @@ fn print_table(summary: &WalkSummary, verbose: bool) {
     }
     for generation in &summary.generations {
         println!(
-            "  gen{} parent={} children={} successor={} branch={} decision={} handoff={}",
+            "  gen{} parent={} planned_children={} child_budget={} selected_successor={} branch={} decision={} handoff={}",
             generation.child_generation,
             generation.parent_node_id,
             generation.child_count,
-            generation.successor_node_id.as_deref().unwrap_or("-"),
+            child_budget_status(summary, generation),
+            selected_successor(generation),
             generation.branch_disposition.as_deref().unwrap_or("-"),
             generation.selection_outcome.as_deref().unwrap_or("-"),
             generation.handoff.as_deref().unwrap_or("-"),
@@ -289,6 +304,60 @@ fn print_table(summary: &WalkSummary, verbose: bool) {
     if verbose {
         print_verbose(summary);
     }
+}
+
+fn parent_turn_status(summary: &WalkSummary) -> String {
+    match summary.journal.latest_cursor.as_ref() {
+        Some(cursor) if cursor.label.starts_with("r14a") || cursor.label.starts_with("r14b") => {
+            format!("complete ({})", cursor.label)
+        }
+        Some(cursor) => format!("not complete in latest journal entry ({})", cursor.label),
+        None => "unknown (journal empty)".to_string(),
+    }
+}
+
+fn total_planned_children(summary: &WalkSummary) -> usize {
+    summary
+        .generations
+        .iter()
+        .map(|generation| generation.child_count)
+        .sum()
+}
+
+fn child_budget_expectation(summary: &WalkSummary) -> String {
+    match (summary.policy.child_min, summary.policy.child_max) {
+        (Some(min), Some(max)) => {
+            format!("expected {min}..{max} planned/admitted children per child-plan")
+        }
+        _ => "no child budget configured".to_string(),
+    }
+}
+
+fn child_budget_status(summary: &WalkSummary, generation: &GenerationSummary) -> &'static str {
+    match (summary.policy.child_min, summary.policy.child_max) {
+        (Some(min), Some(max)) => {
+            let count = generation.child_count as u32;
+            if count >= min && count <= max {
+                "ok"
+            } else {
+                "unmet"
+            }
+        }
+        _ => "unknown",
+    }
+}
+
+fn selected_successor(generation: &GenerationSummary) -> &str {
+    if generation
+        .selection_outcome
+        .as_deref()
+        .is_none_or(|outcome| outcome.eq_ignore_ascii_case("none"))
+        && generation.branch_disposition.is_none()
+        && generation.handoff.is_none()
+    {
+        return "-";
+    }
+    generation.successor_node_id.as_deref().unwrap_or("-")
 }
 
 fn campaign_dir(summary: &WalkSummary) -> PathBuf {
@@ -327,7 +396,10 @@ fn print_verbose(summary: &WalkSummary) {
     );
     println!("  handoff: selected-successor handoff status from the parent final report.");
     println!(
-        "  latest_cursor: latest durable transition-journal entry, not a per-operator replay cursor."
+        "  latest_entry: latest durable transition-journal entry; replay cursor is separate and operator-local."
+    );
+    println!(
+        "  strict_completion: whether durable artifacts satisfy policy/budget/count expectations, not whether the parent turn emitted a final report."
     );
     println!("  selection_row_hint: row index to try with the sealed History selection inspector.");
     println!();
@@ -337,10 +409,7 @@ fn print_verbose(summary: &WalkSummary) {
     }
     for generation in &summary.generations {
         println!("  gen{}:", generation.child_generation);
-        println!(
-            "    selected_successor: {}",
-            generation.successor_node_id.as_deref().unwrap_or("-")
-        );
+        println!("    selected_successor: {}", selected_successor(generation));
         println!(
             "    branch: {}",
             generation.branch_disposition.as_deref().unwrap_or("-")
@@ -576,32 +645,51 @@ fn load_journal(path: &Path) -> Result<JournalSummary, PrepareError> {
 
 fn cursor_from_entry(index: usize, value: &JsonValue) -> JournalCursor {
     let kind = string_field(value, "kind").unwrap_or_else(|| "unknown".to_string());
+    let phase = string_field(value, "phase");
     let state = value.get("state");
-    let label = match (kind.as_str(), state) {
-        ("parent_started", _) => "r5 parent_started".to_string(),
-        ("resource.parentstart", _) => "r5 resource.parentstart".to_string(),
-        ("resource.parentcomplete", _) => "r14a resource.parentcomplete".to_string(),
-        ("successor_handoff", _) => "r13b successor_handoff".to_string(),
-        ("successor", Some(state)) if state.get("selected").is_some() => {
-            "r13b successor.selected".to_string()
-        }
-        ("successor", Some(state)) if state.get("checkout").is_some() => {
-            "r13b successor.checkout".to_string()
-        }
-        ("successor", Some(state)) if state.get("spawned").is_some() => {
-            "r13b successor.spawned".to_string()
-        }
-        ("successor", Some(state)) if state.get("ready").is_some() => {
-            "r13b successor.ready".to_string()
-        }
-        ("successor", Some(state)) if state.get("completed").is_some() => {
-            "r14b successor.completed".to_string()
-        }
-        _ => kind.clone(),
+    let (label, meaning) = match (kind.as_str(), phase.as_deref(), state) {
+        ("parent_started", _, _) => (
+            "r5 parent_started".to_string(),
+            "parent runtime started; this is startup evidence, not child fanout or final completion".to_string(),
+        ),
+        ("resource", Some("parent_start"), _) | ("resource.parentstart", _, _) => (
+            "r5 parent_start_resource".to_string(),
+            "parent-start resource was recorded for reconstruction/audit evidence".to_string(),
+        ),
+        ("resource", Some("parent_complete"), _) | ("resource.parentcomplete", _, _) => (
+            "r14a parent_complete".to_string(),
+            "parent turn reached final report/parent-complete evidence; campaign may still be non-terminal".to_string(),
+        ),
+        ("successor_handoff", _, _) => (
+            "r13b successor_handoff".to_string(),
+            "successor handoff was recorded".to_string(),
+        ),
+        ("successor", _, Some(state)) if state.get("selected").is_some() => (
+            "r13b successor.selected".to_string(),
+            "successor selection was recorded".to_string(),
+        ),
+        ("successor", _, Some(state)) if state.get("checkout").is_some() => (
+            "r13b successor.checkout".to_string(),
+            "selected successor checkout was installed".to_string(),
+        ),
+        ("successor", _, Some(state)) if state.get("spawned").is_some() => (
+            "r13b successor.spawned".to_string(),
+            "successor runtime was spawned".to_string(),
+        ),
+        ("successor", _, Some(state)) if state.get("ready").is_some() => (
+            "r13b successor.ready".to_string(),
+            "successor runtime reported ready".to_string(),
+        ),
+        ("successor", _, Some(state)) if state.get("completed").is_some() => (
+            "r14b successor.completed".to_string(),
+            "successor handoff parent emitted final completion evidence".to_string(),
+        ),
+        _ => (kind.clone(), "durable transition-journal evidence".to_string()),
     };
     JournalCursor {
         index,
         label,
+        meaning,
         node_id: string_field(value, "node_id")
             .or_else(|| nested_string(value, &["refs", "node_id"])),
         generation: u32_field(value, "generation")
@@ -818,5 +906,46 @@ mod tests {
             rendered,
             "{campaign_dir}/prototype1/transition-journal.jsonl"
         );
+    }
+
+    #[test]
+    fn parent_complete_cursor_explains_non_terminal_campaign() {
+        for value in [
+            serde_json::json!({
+                "kind": "resource.parentcomplete",
+                "node_id": "node-root"
+            }),
+            serde_json::json!({
+                "kind": "resource",
+                "phase": "parent_complete",
+                "node_id": "node-root"
+            }),
+        ] {
+            let cursor = cursor_from_entry(2, &value);
+
+            assert_eq!(cursor.label, "r14a parent_complete");
+            assert!(
+                cursor
+                    .meaning
+                    .contains("campaign may still be non-terminal")
+            );
+        }
+    }
+
+    #[test]
+    fn no_selection_generation_does_not_display_parent_as_successor() {
+        let generation = GenerationSummary {
+            parent_node_id: "node-root".to_string(),
+            child_generation: 1,
+            child_count: 0,
+            children: Vec::new(),
+            successor_node_id: Some("node-root".to_string()),
+            branch_disposition: None,
+            selection_outcome: Some("none".to_string()),
+            handoff: None,
+            selection_row_hint: None,
+        };
+
+        assert_eq!(selected_successor(&generation), "-");
     }
 }
