@@ -14,6 +14,7 @@ Success criteria:
 1. After:
 
 ```bash
+  alias pel='./target/debug/ploke-eval loop'
   pel walk use <recent-run-worktree>
   pel walk llm lanes
   pel walk llm focus <lane>
