@@ -145,6 +145,12 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
                     head: show.head,
                     step: show.step,
                 },
+                Prototype1StateWalkLlmSubcommand::Timeline(timeline) => {
+                    WalkRequestBody::LlmTimeline {
+                        session_id: timeline.session_id,
+                        lane: timeline.lane,
+                    }
+                }
                 Prototype1StateWalkLlmSubcommand::Step(step) => {
                     let allow_workspace_mutation = step.allow_workspace_mutation();
                     WalkRequestBody::LlmStep {

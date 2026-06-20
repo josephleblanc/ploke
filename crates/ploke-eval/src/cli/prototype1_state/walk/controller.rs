@@ -408,6 +408,20 @@ impl WalkController {
         Ok(self.render_llm_checkpoint(&store, lane_state, loaded))
     }
 
+    /// Render a compact chronological LLM/tool-loop checkpoint timeline.
+    pub(crate) fn llm_timeline(
+        &self,
+        session_id: Option<&str>,
+        lane: Option<&str>,
+    ) -> Result<String, PrepareError> {
+        let store = self.tool_loop_store()?;
+        let lane_state = match session_id {
+            Some(session_id) => self.lane_for_session(&store, store.read_session(session_id)?)?,
+            None => self.resolve_lane(&store, lane)?,
+        };
+        self.render_llm_timeline(&store, lane_state)
+    }
+
     /// Execute one historical or live LLM response step through current TUI tools.
     pub(crate) async fn llm_step(
         &mut self,
@@ -572,6 +586,55 @@ impl WalkController {
             "llm lane {} cursor=head ({head})",
             lane_state.lane_id
         ))
+    }
+
+    fn render_llm_timeline(
+        &self,
+        store: &FsToolLoopStore,
+        lane: LlmLane,
+    ) -> Result<String, PrepareError> {
+        let indices = store.step_indices(&lane.session.session_id)?;
+        let current = self
+            .llm_cursors
+            .get(cursor_key(&lane))
+            .copied()
+            .or(lane.head);
+        let mut lines = Vec::new();
+        lines.push("llm tool-loop timeline".to_string());
+        lines.push(format!("root: {}", store.root().display()));
+        lines.push(format!("lane: {}", lane.lane_id));
+        lines.push(format!("session: {}", lane.session.session_id));
+        lines.push(format!("status: {}", status_label(lane.session.status)));
+        lines.push(format!(
+            "cursor: {}",
+            current
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string())
+        ));
+        lines.push(format!(
+            "head: {}",
+            lane.head
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "-".to_string())
+        ));
+        lines.push(format!("steps: {}", indices.len()));
+        if indices.is_empty() {
+            lines.push("timeline: (no recorded response steps)".to_string());
+            return Ok(lines.join("\n"));
+        }
+        lines.push("timeline:".to_string());
+        lines.push("  cur step  kind     action                                      result                       note".to_string());
+        lines.push("  --- ----- -------- ------------------------------------------- ---------------------------- ------------------------------".to_string());
+        for index in indices {
+            let step = store.read_step(&lane.session.session_id, index)?;
+            let marker = if current == Some(index) { "*" } else { " " };
+            lines.push(render_timeline_row(marker, &step));
+        }
+        lines.push("next:".to_string());
+        lines.push("  walk llm show          # inspect the cursor row".to_string());
+        lines.push("  walk llm back/forward  # move the cursor".to_string());
+        lines.push("  walk llm head          # jump to latest recorded step".to_string());
+        Ok(lines.join("\n"))
     }
 
     fn prepare_llm_step(
@@ -1968,6 +2031,242 @@ fn lane_sort_key(lane: &LlmLane) -> (usize, usize, String) {
     )
 }
 
+fn render_timeline_row(marker: &str, step: &crate::replay::tool_loop::ToolLoopStep) -> String {
+    let kind = timeline_kind(step);
+    let action = timeline_action(step);
+    let result = timeline_result(step);
+    let note = timeline_note(step);
+    format!(
+        "  {marker} #{:04} {:<8} {:<43} {:<28} {}",
+        step.step_index,
+        kind,
+        fit_cell(&action, 43),
+        fit_cell(&result, 28),
+        fit_cell(&note, 54)
+    )
+}
+
+fn timeline_kind(step: &crate::replay::tool_loop::ToolLoopStep) -> &'static str {
+    if !step.tool_requests.is_empty() {
+        "tool"
+    } else if step.terminal {
+        "content"
+    } else {
+        match &step.outcome {
+            ToolLoopOutcome::Content { .. } => "content",
+            ToolLoopOutcome::ToolCalls { .. } => "tool",
+        }
+    }
+}
+
+fn timeline_action(step: &crate::replay::tool_loop::ToolLoopStep) -> String {
+    match step.tool_requests.as_slice() {
+        [] => assistant_timeline_preview(step).unwrap_or_else(|| "assistant content".to_string()),
+        [request] => tool_action_summary(request),
+        requests => {
+            let names = requests
+                .iter()
+                .map(|request| request.tool.as_str())
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("{} tool calls [{names}]", requests.len())
+        }
+    }
+}
+
+fn tool_action_summary(request: &ToolRequestRecord) -> String {
+    match request.arguments.decode_for_tool(&request.tool) {
+        PersistedToolCallArguments::Decoded(arguments) => match arguments {
+            ToolCallArguments::RequestCodeContext(args) => format!(
+                "{} {}",
+                request.tool,
+                args.search_term
+                    .unwrap_or_else(|| "<no search>".to_string())
+            ),
+            ToolCallArguments::NsRead(args) => format!("{} {}", request.tool, args.file),
+            ToolCallArguments::NsPatch(args) => {
+                let files = args
+                    .patches
+                    .iter()
+                    .take(3)
+                    .map(|patch| patch.file.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                if args.patches.len() > 3 {
+                    format!("{} {} (+{})", request.tool, files, args.patches.len() - 3)
+                } else {
+                    format!("{} {files}", request.tool)
+                }
+            }
+            ToolCallArguments::Cargo(args) => format!("{} {:?}", request.tool, args.command),
+            ToolCallArguments::ListDir(args) => {
+                let dir = if args.dir.is_empty() { "." } else { &args.dir };
+                format!("{} {dir}", request.tool)
+            }
+            _ => request.tool.clone(),
+        },
+        PersistedToolCallArguments::ParseFailure(failure) => {
+            raw_tool_target(&request.tool, &failure.raw_arguments)
+                .map(|target| format!("{} {target}", request.tool))
+                .or_else(|| {
+                    raw_json_fields(&failure.raw_arguments).map(|fields| {
+                        format!("{} {}", request.tool, preview_inline_chars(&fields, 80))
+                    })
+                })
+                .unwrap_or_else(|| request.tool.clone())
+        }
+    }
+}
+
+fn raw_tool_target(tool: &str, raw: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+    let object = value.as_object()?;
+    match tool {
+        "list_dir" => object
+            .get("dir")
+            .and_then(serde_json::Value::as_str)
+            .map(|dir| if dir.is_empty() { "." } else { dir }.to_string()),
+        "read_file" | "ns_read" => object
+            .get("file")
+            .or_else(|| object.get("file_path"))
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+        "request_code_context" => object
+            .get("search_term")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+        "non_semantic_patch" | "ns_patch" => object
+            .get("patches")
+            .and_then(serde_json::Value::as_array)
+            .map(|patches| {
+                let files = patches
+                    .iter()
+                    .filter_map(|patch| patch.get("file").and_then(serde_json::Value::as_str))
+                    .take(3)
+                    .collect::<Vec<_>>()
+                    .join(",");
+                if patches.len() > 3 {
+                    format!("{} (+{})", files, patches.len() - 3)
+                } else {
+                    files
+                }
+            })
+            .filter(|files| !files.is_empty()),
+        "cargo" => object
+            .get("command")
+            .and_then(serde_json::Value::as_str)
+            .map(ToOwned::to_owned),
+        _ => None,
+    }
+}
+
+fn timeline_result(step: &crate::replay::tool_loop::ToolLoopStep) -> String {
+    match step.tool_results.as_slice() {
+        [] if step.terminal => "terminal".to_string(),
+        [] => "no tool results".to_string(),
+        [ToolLoopResult::Completed(record)] => completed_timeline_result(record),
+        [ToolLoopResult::Failed(record)] => failed_timeline_result(record),
+        results => {
+            let failed = results
+                .iter()
+                .filter(|result| matches!(result, ToolLoopResult::Failed(_)))
+                .count();
+            if failed == 0 {
+                format!("{} completed", results.len())
+            } else {
+                format!("{} results; {failed} failed", results.len())
+            }
+        }
+    }
+}
+
+fn completed_timeline_result(record: &ToolCompletedRecord) -> String {
+    match decode_tool_result_content(&record.tool, &record.content) {
+        PersistedToolResultContent::Decoded(result) => match result {
+            ToolResultContent::ListDir(result) => {
+                format!("ok entries={}", result.entries.len())
+            }
+            ToolResultContent::Cargo(result) => format!(
+                "ok {:?} e{} w{}",
+                result.status_reason, result.summary.errors, result.summary.warnings
+            ),
+            ToolResultContent::NsPatch(result) => format!(
+                "ok staged={} applied={} files={}",
+                result.staged,
+                result.applied,
+                result.files.len()
+            ),
+            ToolResultContent::NsRead(result) => format!(
+                "ok bytes={}{}",
+                result
+                    .byte_len
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                if result.truncated { " truncated" } else { "" }
+            ),
+            _ => "completed".to_string(),
+        },
+        PersistedToolResultContent::ParseFailure(_) => "completed raw".to_string(),
+    }
+}
+
+fn failed_timeline_result(record: &ToolFailedRecord) -> String {
+    if let Some(wire) = ToolErrorWire::parse(&record.error) {
+        let protected = wire.user.contains("protected")
+            || wire.llm.message.contains("protected")
+            || wire.llm.received.as_deref() == Some("Cargo.toml");
+        if protected {
+            "failed protected-write".to_string()
+        } else {
+            format!("failed {:?}", wire.llm.code)
+        }
+    } else {
+        "failed".to_string()
+    }
+}
+
+fn timeline_note(step: &crate::replay::tool_loop::ToolLoopStep) -> String {
+    if let Some(failed) = step.tool_results.iter().find_map(|result| match result {
+        ToolLoopResult::Failed(record) => Some(record),
+        ToolLoopResult::Completed(_) => None,
+    }) && let Some(wire) = ToolErrorWire::parse(&failed.error)
+    {
+        return wire
+            .llm
+            .retry_hint
+            .as_deref()
+            .map(|hint| format!("retry: {hint}"))
+            .unwrap_or(wire.llm.message);
+    }
+    if step.terminal {
+        return assistant_timeline_preview(step).unwrap_or_else(|| "terminal".to_string());
+    }
+    assistant_timeline_preview(step).unwrap_or_default()
+}
+
+fn assistant_timeline_preview(step: &crate::replay::tool_loop::ToolLoopStep) -> Option<String> {
+    let message = first_response_message(step)?;
+    let content = message.get("content")?.as_str()?.trim();
+    if content.is_empty() || content == "Calling tools..." {
+        None
+    } else {
+        Some(content.to_string())
+    }
+}
+
+fn fit_cell(value: &str, width: usize) -> String {
+    let single_line = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if single_line.chars().count() <= width {
+        return single_line;
+    }
+    if width <= 3 {
+        single_line.chars().take(width).collect()
+    } else {
+        let prefix = single_line.chars().take(width - 3).collect::<String>();
+        format!("{prefix}...")
+    }
+}
+
 fn render_step_transcript(record: &crate::replay::tool_loop::ToolLoopStep) -> Vec<String> {
     let mut lines = Vec::new();
     lines.push("transcript:".to_string());
@@ -2955,6 +3254,121 @@ mod tests {
 
         assert_eq!(controller.llm_focus.as_deref(), Some("branched-session"));
         assert_eq!(controller.llm_cursors.get("branched-session"), Some(&3));
+    }
+
+    #[test]
+    fn llm_timeline_summarizes_steps_and_marks_cursor() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = FsToolLoopStore::new(tmp.path().join("tool-loop"));
+        let mut session =
+            ToolLoopSession::new("session-timeline", "headless-tui", tmp.path().join("work"));
+        session.lane_id = Some("lane-a".to_string());
+        store.write_session(&session).expect("session");
+
+        let mut listed = ToolLoopStep::new(
+            "session-timeline",
+            0,
+            vec![RequestMessage::new_user("inspect".to_string())],
+            tool_call_response(0),
+            WorkspaceState::default(),
+            WorkspaceState::default(),
+        )
+        .expect("list step");
+        listed.tool_requests.push(ToolRequestRecord {
+            request_id: "session-timeline:0".to_string(),
+            parent_id: "parent".to_string(),
+            call_id: "call-list-dir".to_string(),
+            tool: "list_dir".to_string(),
+            arguments: ToolArgumentsJson::from(r#"{"dir":"crates/ploke-tree-browser"}"#),
+        });
+        listed.tool_results.push(ToolLoopResult::Completed(ToolCompletedRecord {
+            request_id: "session-timeline:0".to_string(),
+            parent_id: "parent".to_string(),
+            call_id: "call-list-dir".to_string(),
+            tool: "list_dir".to_string(),
+            content: serde_json::json!({
+                "ok": true,
+                "dir": "crates/ploke-tree-browser",
+                "exists": true,
+                "truncated": false,
+                "entries": [
+                    {"name":"Cargo.toml","path":"crates/ploke-tree-browser/Cargo.toml","kind":"file","size_bytes":333,"modified_ms":null},
+                    {"name":"src","path":"crates/ploke-tree-browser/src","kind":"dir","size_bytes":null,"modified_ms":null}
+                ]
+            })
+            .to_string(),
+            ui_payload: None,
+            latency_ms: 0,
+        }));
+        store.write_step(&listed).expect("list step file");
+
+        let mut denied = ToolLoopStep::new(
+            "session-timeline",
+            1,
+            vec![RequestMessage::new_user("patch".to_string())],
+            tool_call_response(1),
+            WorkspaceState::default(),
+            WorkspaceState::default(),
+        )
+        .expect("denied step");
+        denied.tool_requests.push(ToolRequestRecord {
+            request_id: "session-timeline:1".to_string(),
+            parent_id: "parent".to_string(),
+            call_id: "call-patch".to_string(),
+            tool: "non_semantic_patch".to_string(),
+            arguments: ToolArgumentsJson::from(r#"{"patches":[{"file":"Cargo.toml","diff":"--- a/Cargo.toml","reasoning":"remove crate"}]}"#),
+        });
+        denied
+            .tool_results
+            .push(ToolLoopResult::Failed(ToolFailedRecord {
+                request_id: "session-timeline:1".to_string(),
+                parent_id: "parent".to_string(),
+                call_id: "call-patch".to_string(),
+                tool: Some("non_semantic_patch".to_string()),
+                error: protected_write_error(),
+                ui_payload: None,
+                latency_ms: 0,
+            }));
+        store.write_step(&denied).expect("denied step file");
+
+        let mut terminal = ToolLoopStep::new(
+            "session-timeline",
+            2,
+            vec![RequestMessage::new_user("finish".to_string())],
+            content_response(2),
+            WorkspaceState::default(),
+            WorkspaceState::default(),
+        )
+        .expect("terminal step");
+        terminal.terminal = true;
+        store.write_step(&terminal).expect("terminal step file");
+
+        let lane = LlmLane {
+            lane_id: "lane-a".to_string(),
+            session,
+            resume: None,
+            head: Some(2),
+        };
+        let mut controller = WalkController::new(tmp.path().join("repo"));
+        controller
+            .llm_cursors
+            .insert("session-timeline".to_string(), 1);
+
+        let rendered = controller
+            .render_llm_timeline(&store, lane)
+            .expect("timeline render");
+
+        assert!(rendered.contains("llm tool-loop timeline"));
+        assert!(rendered.contains("steps: 3"));
+        assert!(rendered.contains("#0000 tool"));
+        assert!(rendered.contains("list_dir crates/ploke-tree-browser"));
+        assert!(rendered.contains("ok entries=2"));
+        assert!(rendered.contains("* #0001 tool"));
+        assert!(rendered.contains("non_semantic_patch Cargo.toml"));
+        assert!(rendered.contains("failed protected-write"));
+        assert!(rendered.contains("#0002 content"));
+        assert!(rendered.contains("terminal"));
+        assert!(rendered.contains("walk llm show"));
     }
 
     #[test]

@@ -270,7 +270,7 @@ pub struct Prototype1StateWalkShowDeltaCommand {
 #[derive(Debug, Clone, Parser)]
 #[command(
     about = "Inspect nested LLM/tool-loop debugger checkpoints",
-    after_help = "Examples:\n  ploke-eval loop walk llm lanes\n  ploke-eval loop walk llm focus node-...-r2\n  ploke-eval loop walk llm show --lane node-...-r2 --head\n  ploke-eval loop walk llm back --lane node-...-r2 --steps 3\n\nThis surface is read-only unless a future live step/finish subcommand says otherwise. Current lane/cursor commands do not call providers, execute tools, mutate the checkout, or advance the outer typestate walk."
+    after_help = "Examples:\n  ploke-eval loop walk llm lanes\n  ploke-eval loop walk llm focus node-...-r2\n  ploke-eval loop walk llm timeline\n  ploke-eval loop walk llm show --lane node-...-r2 --head\n  ploke-eval loop walk llm back --lane node-...-r2 --steps 3\n\nThis surface is read-only unless step/finish says otherwise. Current lane/cursor/timeline/show commands do not call providers, execute tools, mutate the checkout, or advance the outer typestate walk."
 )]
 pub struct Prototype1StateWalkLlmCommand {
     #[command(flatten)]
@@ -288,6 +288,8 @@ pub enum Prototype1StateWalkLlmSubcommand {
     Focus(Prototype1StateWalkLlmFocusCommand),
     /// Show the latest or selected LLM/tool-loop checkpoint.
     Show(Prototype1StateWalkLlmShowCommand),
+    /// Show a compact chronological summary of recorded LLM/tool-loop steps.
+    Timeline(Prototype1StateWalkLlmTimelineCommand),
     /// Execute one historical or live provider response step through current tools.
     Step(Prototype1StateWalkLlmStepCommand),
     /// Continue live provider response steps until terminal or max steps.
@@ -356,6 +358,17 @@ pub struct Prototype1StateWalkLlmShowCommand {
     /// Specific response step to inspect. Defaults to the lane cursor or latest recorded step.
     #[arg(long)]
     pub step: Option<usize>,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkLlmTimelineCommand {
+    /// Specific tool-loop session id to summarize. Defaults to selected lane/latest session.
+    #[arg(long)]
+    pub session_id: Option<String>,
+
+    /// Lane id, usually the candidate workspace basename. Defaults to current focus.
+    #[arg(long)]
+    pub lane: Option<String>,
 }
 
 #[derive(Debug, Clone, Parser)]

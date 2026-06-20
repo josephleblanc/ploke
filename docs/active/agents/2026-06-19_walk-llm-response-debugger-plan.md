@@ -99,13 +99,15 @@ Currently implemented:
   ```text
   lanes
   focus
+  timeline
   show
   back
   forward
   head
   ```
 
-- The read-only `walk llm` surface can list lanes, select a lane, inspect the latest or selected checkpoint, and move an in-memory cursor.
+- The read-only `walk llm` surface can list lanes, select a lane, render a compact chronological timeline, inspect the latest or selected checkpoint, and move an in-memory cursor.
+- `walk llm timeline` renders compact chronological rows using the focused lane/session and cursor state, so operators can see the run trajectory before drilling into a row with `walk llm show`.
 - `walk llm show` now renders a per-step transcript with:
   - request-message counts and recent prior-message summary;
   - assistant response content/reasoning when present;
