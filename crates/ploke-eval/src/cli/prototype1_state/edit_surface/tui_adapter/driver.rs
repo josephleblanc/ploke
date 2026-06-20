@@ -1,4 +1,7 @@
 use std::{
+    collections::BTreeSet,
+    path::{Component, Path, PathBuf},
+    process::Command,
     sync::{Arc, Mutex, mpsc::Receiver},
     time::Duration,
 };
@@ -50,6 +53,7 @@ impl AttemptDriver {
         let mut run = HeadlessRun::new();
         run.model_route = self.model.as_ref().map(ModelSelection::model_route_record);
         let mut turn = 1_u32;
+        let mut protected_recovery_used = false;
         let extra_read_roots = evidence_read_roots(&self.evidence);
         let surface = self.surface.clone();
         let mut next_prompt = attempt_prompt(
@@ -122,6 +126,41 @@ impl AttemptDriver {
                         );
                     }
                     Step::Terminal(Terminal::Exhausted { attempts, last }) => {
+                        if !protected_recovery_used
+                            && let Some(feedback) = protected_write_denial_feedback(&last)
+                        {
+                            match workspace_is_clean(&self.workspace) {
+                                Ok(true) => {
+                                    protected_recovery_used = true;
+                                    turn = attempts.saturating_add(1);
+                                    let recovery = protected_write_recovery_feedback(
+                                        &self.workspace,
+                                        &surface,
+                                        &feedback,
+                                    );
+                                    observer.emit(format!(
+                                        "protected_write_recovery attempt={} feedback={}",
+                                        turn,
+                                        truncate_inline(&feedback, 240)
+                                    ));
+                                    next_prompt = attempt_prompt(
+                                        &self.workspace,
+                                        &surface,
+                                        &self.evidence,
+                                        &self.prompt,
+                                        Some(&recovery),
+                                    );
+                                    continue;
+                                }
+                                Ok(false) => observer.emit(
+                                    "protected_write_recovery skipped: workspace is not clean"
+                                        .to_string(),
+                                ),
+                                Err(error) => observer.emit(format!(
+                                    "protected_write_recovery skipped: workspace cleanliness check failed: {error}"
+                                )),
+                            }
+                        }
                         let terminal = exhausted_terminal(end, attempts, &last);
                         observer.emit(format!("terminal {}", terminal.live_summary()));
                         return Ok(terminal);
@@ -182,6 +221,125 @@ fn exhausted_terminal(end: AttemptEnd, attempts: u32, last: &Outcome) -> Headles
         attempts,
         last: Feedback::from_outcome(last).message().to_string(),
     }
+}
+
+fn protected_write_denial_feedback(outcome: &Outcome) -> Option<String> {
+    let feedback = Feedback::from_outcome(outcome).message().to_string();
+    if feedback.contains("Write path denied before executing")
+        && (feedback.contains("protected") || feedback.contains("out-of-scope"))
+    {
+        Some(feedback)
+    } else {
+        None
+    }
+}
+
+fn protected_write_recovery_feedback(
+    workspace: &Path,
+    surface: &SurfacePolicy,
+    feedback: &str,
+) -> String {
+    let mut lines = Vec::new();
+    lines.push("Protected write recovery:".to_string());
+    lines.push(format!("- Previous protected write denial: {feedback}"));
+    lines.push(
+        "- Do not retry protected manifests/configs such as Cargo.toml, Cargo.lock, rust-toolchain.toml, .cargo/, .ploke/, or crates/ploke-eval/."
+            .to_string(),
+    );
+    lines.push(
+        "- Manifest/config changes are not valid candidate patches in this run. Find a source-code change inside the writable surface instead."
+            .to_string(),
+    );
+    lines.push(
+        "- Use request_code_context, read_file, list_dir, or code lookup tools to locate an allowed Rust/source-file edit before calling write tools again."
+            .to_string(),
+    );
+    let roots = writable_crate_roots(workspace, surface);
+    if roots.is_empty() {
+        lines.push(
+            "- Writable surface hint: no crate roots could be listed, but protected manifests/configs remain forbidden."
+                .to_string(),
+        );
+    } else {
+        lines.push(format!(
+            "- Writable crate roots you may inspect/edit include: {}.",
+            roots.join(", ")
+        ));
+    }
+    lines.push(
+        "- If no mutable-surface solution exists, say that explicitly; otherwise stage exactly one allowed source edit."
+            .to_string(),
+    );
+    lines.join("\n")
+}
+
+fn writable_crate_roots(workspace: &Path, surface: &SurfacePolicy) -> Vec<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(workspace)
+        .arg("ls-files")
+        .output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut roots = BTreeSet::new();
+    for line in stdout.lines() {
+        let rel = PathBuf::from(line);
+        if surface
+            .classify_paths(workspace, std::slice::from_ref(&rel))
+            .is_some()
+        {
+            continue;
+        }
+        if let Some(root) = crate_root_label(&rel) {
+            roots.insert(root);
+        }
+    }
+    roots.into_iter().take(16).collect()
+}
+
+fn crate_root_label(path: &Path) -> Option<String> {
+    let mut components = path.components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(first)), Some(Component::Normal(second)))
+            if first == "crates" || first == "proc_macros" =>
+        {
+            Some(format!(
+                "{}/{}",
+                first.to_string_lossy(),
+                second.to_string_lossy()
+            ))
+        }
+        _ => None,
+    }
+}
+
+fn workspace_is_clean(workspace: &Path) -> Result<bool, String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(workspace)
+        .arg("status")
+        .arg("--porcelain")
+        .arg("--untracked-files=all")
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    Ok(output.stdout.is_empty())
+}
+
+fn truncate_inline(value: &str, max: usize) -> String {
+    let mut out = value.replace('\n', " ");
+    if out.len() > max {
+        out.truncate(max);
+        out.push_str("...");
+    }
+    out
 }
 
 #[cfg(test)]
@@ -311,5 +469,77 @@ mod tests {
             summary,
             "retry prompt must not regress to the generic turn summary"
         );
+    }
+
+    #[test]
+    fn protected_write_denial_is_recoverable_feedback() {
+        let message = "Previous attempt failed: non_semantic_patch: Write path denied before executing `non_semantic_patch`: Cargo.toml. Reason: path 'Cargo.toml' is protected";
+        let outcome = Outcome::NoEdit(NoEdit::new(message));
+
+        let observed = protected_write_denial_feedback(&outcome).expect("protected denial");
+
+        assert!(observed.contains("Cargo.toml"));
+        assert!(observed.contains("Write path denied"));
+    }
+
+    #[test]
+    fn recovery_feedback_lists_writable_crates_not_protected_crates() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let workspace = tmp.path();
+        std::fs::create_dir_all(workspace.join("crates/ploke-core/src")).expect("core dir");
+        std::fs::create_dir_all(workspace.join("crates/ploke-eval/src")).expect("eval dir");
+        std::fs::write(
+            workspace.join("crates/ploke-core/src/lib.rs"),
+            "pub fn ok() {}\n",
+        )
+        .expect("write core");
+        std::fs::write(
+            workspace.join("crates/ploke-eval/src/lib.rs"),
+            "pub fn no() {}\n",
+        )
+        .expect("write eval");
+        std::fs::write(workspace.join("Cargo.toml"), "[workspace]\n").expect("write manifest");
+        Command::new("git")
+            .arg("init")
+            .current_dir(workspace)
+            .output()
+            .expect("git init");
+        Command::new("git")
+            .args(["add", "."])
+            .current_dir(workspace)
+            .output()
+            .expect("git add");
+
+        let feedback = protected_write_recovery_feedback(
+            workspace,
+            &SurfacePolicy::workspace_except_core(),
+            "Write path denied before executing `non_semantic_patch`: Cargo.toml. Reason: path 'Cargo.toml' is protected",
+        );
+
+        let roots_line = feedback
+            .lines()
+            .find(|line| line.starts_with("- Writable crate roots"))
+            .expect("writable roots hint");
+        assert!(roots_line.contains("crates/ploke-core"));
+        assert!(!roots_line.contains("crates/ploke-eval"));
+        assert!(feedback.contains("Cargo.toml"));
+        assert!(feedback.contains("request_code_context"));
+    }
+
+    #[test]
+    fn workspace_cleanliness_guard_detects_untracked_changes() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let workspace = tmp.path();
+        Command::new("git")
+            .arg("init")
+            .current_dir(workspace)
+            .output()
+            .expect("git init");
+
+        assert!(workspace_is_clean(workspace).expect("clean workspace check"));
+
+        std::fs::write(workspace.join("scratch.txt"), "dirty\n").expect("write scratch");
+
+        assert!(!workspace_is_clean(workspace).expect("dirty workspace check"));
     }
 }
