@@ -601,7 +601,7 @@ impl WalkController {
             .or(lane.head);
         let mut lines = Vec::new();
         lines.push("llm tool-loop timeline".to_string());
-        lines.push(format!("root: {}", store.root().display()));
+        lines.push(format!("store: {}", timeline_store_label(store.root())));
         lines.push(format!("lane: {}", lane.lane_id));
         lines.push(format!("session: {}", lane.session.session_id));
         lines.push(format!("status: {}", status_label(lane.session.status)));
@@ -623,8 +623,11 @@ impl WalkController {
             return Ok(lines.join("\n"));
         }
         lines.push("timeline:".to_string());
-        lines.push("  cur step  kind     action                                      result                       note".to_string());
-        lines.push("  --- ----- -------- ------------------------------------------- ---------------------------- ------------------------------".to_string());
+        lines.push("  cur step  kind     action                              result".to_string());
+        lines.push(
+            "  --- ----- -------- ----------------------------------- ----------------------"
+                .to_string(),
+        );
         for index in indices {
             let step = store.read_step(&lane.session.session_id, index)?;
             let marker = if current == Some(index) { "*" } else { " " };
@@ -2035,15 +2038,21 @@ fn render_timeline_row(marker: &str, step: &crate::replay::tool_loop::ToolLoopSt
     let kind = timeline_kind(step);
     let action = timeline_action(step);
     let result = timeline_result(step);
-    let note = timeline_note(step);
     format!(
-        "  {marker} #{:04} {:<8} {:<43} {:<28} {}",
+        "  {marker} #{:04} {:<8} {:<35} {}",
         step.step_index,
         kind,
-        fit_cell(&action, 43),
-        fit_cell(&result, 28),
-        fit_cell(&note, 54)
+        fit_cell(&action, 35),
+        fit_cell(&result, 22)
     )
+}
+
+fn timeline_store_label(path: &Path) -> String {
+    if path.ends_with("prototype1/debug/tool-loop") {
+        "{campaign}/prototype1/debug/tool-loop".to_string()
+    } else {
+        path.display().to_string()
+    }
 }
 
 fn timeline_kind(step: &crate::replay::tool_loop::ToolLoopStep) -> &'static str {
@@ -2223,25 +2232,6 @@ fn failed_timeline_result(record: &ToolFailedRecord) -> String {
     } else {
         "failed".to_string()
     }
-}
-
-fn timeline_note(step: &crate::replay::tool_loop::ToolLoopStep) -> String {
-    if let Some(failed) = step.tool_results.iter().find_map(|result| match result {
-        ToolLoopResult::Failed(record) => Some(record),
-        ToolLoopResult::Completed(_) => None,
-    }) && let Some(wire) = ToolErrorWire::parse(&failed.error)
-    {
-        return wire
-            .llm
-            .retry_hint
-            .as_deref()
-            .map(|hint| format!("retry: {hint}"))
-            .unwrap_or(wire.llm.message);
-    }
-    if step.terminal {
-        return assistant_timeline_preview(step).unwrap_or_else(|| "terminal".to_string());
-    }
-    assistant_timeline_preview(step).unwrap_or_default()
 }
 
 fn assistant_timeline_preview(step: &crate::replay::tool_loop::ToolLoopStep) -> Option<String> {
