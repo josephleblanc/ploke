@@ -128,6 +128,9 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
         Prototype1StateWalkSubcommand::Llm(command) => {
             let raw_json_message = matches!(
                 &command.command,
+                Prototype1StateWalkLlmSubcommand::Prompt(prompt) if prompt.json
+            ) || matches!(
+                &command.command,
                 Prototype1StateWalkLlmSubcommand::Tool(tool) if tool.json
             );
             let format = command.control.format;
@@ -155,6 +158,15 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
                         lane: timeline.lane,
                     }
                 }
+                Prototype1StateWalkLlmSubcommand::Prompt(prompt) => WalkRequestBody::LlmPrompt {
+                    session_id: prompt.session_id,
+                    lane: prompt.lane,
+                    step: prompt.step,
+                    role: prompt.role,
+                    message: prompt.message,
+                    full: prompt.full,
+                    json: prompt.json,
+                },
                 Prototype1StateWalkLlmSubcommand::Tool(tool) => WalkRequestBody::LlmTool {
                     session_id: tool.session_id,
                     lane: tool.lane,

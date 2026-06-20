@@ -154,6 +154,26 @@ impl WalkServer {
                 .controller
                 .llm_timeline(session_id.as_deref(), lane.as_deref())
                 .map(|message| WalkResponse::ok(phase, message, self.epoch.clone())),
+            WalkRequestBody::LlmPrompt {
+                session_id,
+                lane,
+                step,
+                role,
+                message,
+                full,
+                json,
+            } => self
+                .controller
+                .llm_prompt_report(
+                    session_id.as_deref(),
+                    lane.as_deref(),
+                    step,
+                    role.as_deref(),
+                    message,
+                    full,
+                    json,
+                )
+                .map(|message| WalkResponse::ok(phase, message, self.epoch.clone())),
             WalkRequestBody::LlmTool {
                 session_id,
                 lane,

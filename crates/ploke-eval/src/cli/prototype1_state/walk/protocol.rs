@@ -136,6 +136,23 @@ pub(crate) enum WalkRequestBody {
         /// Lane id. Defaults to current focus.
         lane: Option<String>,
     },
+    /// Inspect persisted request messages sent to a nested LLM/tool-loop step.
+    LlmPrompt {
+        /// Specific checkpoint session id. Defaults to selected lane/latest session.
+        session_id: Option<String>,
+        /// Lane id. Defaults to current focus.
+        lane: Option<String>,
+        /// Response step whose request messages should be inspected. Defaults to 0.
+        step: Option<usize>,
+        /// Optional message-role filter.
+        role: Option<String>,
+        /// Optional zero-based message index.
+        message: Option<usize>,
+        /// Show complete message content instead of a bounded preview.
+        full: bool,
+        /// Print JSON instead of human-readable text.
+        json: bool,
+    },
     /// Inspect a nested LLM/tool-loop tool definition and selected call arguments.
     LlmTool {
         /// Specific checkpoint session id. Defaults to selected lane/latest session.

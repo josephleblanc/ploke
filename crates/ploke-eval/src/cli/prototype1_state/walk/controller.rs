@@ -429,6 +429,27 @@ impl WalkController {
         self.render_llm_timeline(&store, lane_state)
     }
 
+    /// Render persisted LLM request messages for one tool-loop response step.
+    pub(crate) fn llm_prompt_report(
+        &self,
+        session_id: Option<&str>,
+        lane: Option<&str>,
+        step: Option<usize>,
+        role: Option<&str>,
+        message: Option<usize>,
+        full: bool,
+        json: bool,
+    ) -> Result<String, PrepareError> {
+        let store = self.tool_loop_store()?;
+        let lane_state = match session_id {
+            Some(session_id) => self.lane_for_session(&store, store.read_session(session_id)?)?,
+            None => self.resolve_lane(&store, lane)?,
+        };
+        let selected = step.unwrap_or(0);
+        let record = store.read_step(&lane_state.session.session_id, selected)?;
+        self.render_llm_prompt(lane_state, selected, record, role, message, full, json)
+    }
+
     /// Render the tool definition and historical arguments for one LLM tool call.
     pub(crate) fn llm_tool_report(
         &self,
@@ -681,6 +702,7 @@ impl WalkController {
         }
         lines.push("next:".to_string());
         lines.push("  walk llm show          # inspect the cursor row".to_string());
+        lines.push("  walk llm prompt        # inspect the initial request messages".to_string());
         lines.push("  walk llm back/forward  # move the cursor".to_string());
         lines.push("  walk llm head          # jump to latest recorded step".to_string());
         Ok(lines.join("\n"))
@@ -1056,6 +1078,69 @@ impl WalkController {
         lines.join("\n")
     }
 
+    fn render_llm_prompt(
+        &self,
+        lane: LlmLane,
+        step: usize,
+        record: crate::replay::tool_loop::ToolLoopStep,
+        role: Option<&str>,
+        message: Option<usize>,
+        full: bool,
+        json: bool,
+    ) -> Result<String, PrepareError> {
+        let role = role.map(parse_prompt_role).transpose()?;
+        validate_prompt_message_index(message, record.request_messages.len())?;
+        let selected = select_prompt_messages(&record.request_messages, role, message);
+        if json {
+            return render_llm_prompt_json(
+                self,
+                &lane,
+                step,
+                &record.request_messages,
+                &selected,
+                role,
+                message,
+            );
+        }
+
+        let mut lines = Vec::new();
+        lines.push(if step == 0 {
+            "llm initial prompt".to_string()
+        } else {
+            "llm prompt".to_string()
+        });
+        lines.push(format!("lane: {}", lane.lane_id));
+        lines.push(format!("session: {}", lane.session.session_id));
+        lines.push(format!("step: {step}"));
+        lines.extend(render_provenance_lines(
+            &self.repo_root,
+            &lane.session.workspace,
+        ));
+        lines.push("source: persisted_checkpoint request_messages".to_string());
+        lines.push("note: provider request envelope and tool definitions are not persisted in this checkpoint record; use `walk llm tool` for current-renderer tool definitions".to_string());
+        lines.extend(render_prompt_counts(&record.request_messages));
+        if role.is_some() || message.is_some() {
+            lines.push(format!(
+                "selected_messages: {}{}",
+                selected.len(),
+                prompt_filter_label(role, message)
+            ));
+        }
+        lines.push("messages:".to_string());
+        if selected.is_empty() {
+            lines.push("  (no request messages matched filters)".to_string());
+        } else {
+            for (index, item) in selected {
+                push_prompt_message(&mut lines, index, item, full);
+            }
+        }
+        lines.push("next:".to_string());
+        lines.push(format!("  walk llm show --step {step}"));
+        lines.push(format!("  walk llm prompt --step {step} --json"));
+        lines.push("  walk llm timeline".to_string());
+        Ok(lines.join("\n"))
+    }
+
     fn render_llm_tool(
         &self,
         lane: LlmLane,
@@ -1126,6 +1211,7 @@ impl WalkController {
         }
         lines.push("next:".to_string());
         lines.push("  walk llm show      # inspect the full checkpoint transcript".to_string());
+        lines.push("  walk llm prompt    # inspect the initial request messages".to_string());
         lines.push("  walk llm tool --json".to_string());
         Ok(lines.join("\n"))
     }
@@ -2491,6 +2577,163 @@ fn first_response_message(
         .cloned()
 }
 
+fn parse_prompt_role(role: &str) -> Result<Role, PrepareError> {
+    match role {
+        "system" => Ok(Role::System),
+        "user" => Ok(Role::User),
+        "assistant" => Ok(Role::Assistant),
+        "tool" => Ok(Role::Tool),
+        other => Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "unknown prompt role '{other}'; expected system, user, assistant, or tool"
+            ),
+        }),
+    }
+}
+
+fn validate_prompt_message_index(
+    message: Option<usize>,
+    message_count: usize,
+) -> Result<(), PrepareError> {
+    if let Some(index) = message
+        && index >= message_count
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "selected prompt step has {message_count} request message(s); --message {index} is out of range"
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn select_prompt_messages(
+    messages: &[ploke_tui::llm::RequestMessage],
+    role: Option<Role>,
+    message: Option<usize>,
+) -> Vec<(usize, &ploke_tui::llm::RequestMessage)> {
+    messages
+        .iter()
+        .enumerate()
+        .filter(|(index, item)| {
+            message.is_none_or(|selected| selected == *index)
+                && role.is_none_or(|selected| selected == item.role)
+        })
+        .collect()
+}
+
+fn render_prompt_counts(messages: &[ploke_tui::llm::RequestMessage]) -> Vec<String> {
+    let (system, user, assistant, tool) = role_counts(messages);
+    vec![format!(
+        "request_messages: {} (system={system} user={user} assistant={assistant} tool={tool})",
+        messages.len()
+    )]
+}
+
+fn role_counts(messages: &[ploke_tui::llm::RequestMessage]) -> (usize, usize, usize, usize) {
+    let mut system = 0usize;
+    let mut user = 0usize;
+    let mut assistant = 0usize;
+    let mut tool = 0usize;
+    for message in messages {
+        match message.role {
+            Role::System => system += 1,
+            Role::User => user += 1,
+            Role::Assistant => assistant += 1,
+            Role::Tool => tool += 1,
+        }
+    }
+    (system, user, assistant, tool)
+}
+
+fn prompt_filter_label(role: Option<Role>, message: Option<usize>) -> String {
+    let mut filters = Vec::new();
+    if let Some(role) = role {
+        filters.push(format!("role={}", role_label(role)));
+    }
+    if let Some(message) = message {
+        filters.push(format!("message={message}"));
+    }
+    if filters.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", filters.join(" "))
+    }
+}
+
+fn push_prompt_message(
+    lines: &mut Vec<String>,
+    index: usize,
+    message: &ploke_tui::llm::RequestMessage,
+    full: bool,
+) {
+    let mut header = format!("  #{index} {}", role_label(message.role));
+    if let Some(call_id) = message.tool_call_id.as_ref() {
+        header.push_str(&format!(" tool_call_id={call_id}"));
+    }
+    if let Some(calls) = message.tool_calls.as_ref() {
+        let names = calls
+            .iter()
+            .map(|call| call.function.name.as_str().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        header.push_str(&format!(" tool_calls=[{names}]"));
+    }
+    header.push(':');
+    lines.push(header);
+    let max_chars = if full { usize::MAX } else { 2_400 };
+    let content = truncate_chars(message.content.trim(), max_chars);
+    if content.is_empty() {
+        lines.push("    (empty)".to_string());
+    } else {
+        lines.extend(content.lines().map(|line| format!("    {line}")));
+    }
+}
+
+fn render_llm_prompt_json(
+    controller: &WalkController,
+    lane: &LlmLane,
+    step: usize,
+    messages: &[ploke_tui::llm::RequestMessage],
+    selected: &[(usize, &ploke_tui::llm::RequestMessage)],
+    role: Option<Role>,
+    message: Option<usize>,
+) -> Result<String, PrepareError> {
+    let (system, user, assistant, tool) = role_counts(messages);
+    let selected_messages = selected
+        .iter()
+        .map(|(index, message)| {
+            let mut value = serde_json::to_value(message).map_err(PrepareError::Serialize)?;
+            if let serde_json::Value::Object(map) = &mut value {
+                map.insert("index".to_string(), serde_json::json!(index));
+            }
+            Ok(value)
+        })
+        .collect::<Result<Vec<_>, PrepareError>>()?;
+    let payload = serde_json::json!({
+        "kind": "llm_prompt",
+        "lane": lane.lane_id,
+        "session": lane.session.session_id,
+        "step": step,
+        "source": "persisted_checkpoint_request_messages",
+        "provenance": provenance_value(&controller.repo_root, &lane.session.workspace),
+        "note": "provider request envelope and tool definitions are not persisted in this checkpoint record",
+        "filters": {
+            "role": role.map(role_label),
+            "message": message,
+        },
+        "request_messages": {
+            "total": messages.len(),
+            "system": system,
+            "user": user,
+            "assistant": assistant,
+            "tool": tool,
+        },
+        "selected_messages": selected_messages,
+    });
+    serde_json::to_string_pretty(&payload).map_err(PrepareError::Serialize)
+}
+
 fn select_tool_request<'a>(
     record: &'a crate::replay::tool_loop::ToolLoopStep,
     call: Option<usize>,
@@ -3009,6 +3252,7 @@ fn render_llm_next_commands(
     record: &crate::replay::tool_loop::ToolLoopStep,
 ) -> Vec<String> {
     let mut lines = vec!["next:".to_string()];
+    lines.push(format!("  walk llm prompt --step {}", record.step_index));
     if !record.tool_requests.is_empty() {
         lines.push("  walk llm tool".to_string());
     }
@@ -3794,6 +4038,66 @@ mod tests {
         assert!(rendered.contains("crates/ploke-tree-browser/Cargo.toml"));
         assert!(rendered.contains("prior_messages:"));
         assert!(rendered.contains("next:"));
+    }
+
+    #[test]
+    fn llm_prompt_render_shows_persisted_request_messages_and_json() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut session =
+            ToolLoopSession::new("session-prompt", "headless-tui", tmp.path().join("lane-a"));
+        session.lane_id = Some("lane-a".to_string());
+        let lane = LlmLane {
+            lane_id: "lane-a".to_string(),
+            session,
+            resume: None,
+            head: Some(0),
+        };
+        let step = ToolLoopStep::new(
+            "session-prompt",
+            0,
+            vec![
+                RequestMessage::new_system("system prompt".to_string()),
+                RequestMessage::new_user("user task".to_string()),
+                RequestMessage::new_assistant("prior assistant".to_string()),
+            ],
+            content_response(0),
+            WorkspaceState::default(),
+            WorkspaceState::default(),
+        )
+        .expect("step");
+        let controller = WalkController::new(tmp.path().join("repo"));
+
+        let rendered = controller
+            .render_llm_prompt(lane.clone(), 0, step.clone(), None, None, false, false)
+            .expect("human prompt render");
+
+        assert!(rendered.contains("llm initial prompt"));
+        assert!(rendered.contains("source: persisted_checkpoint request_messages"));
+        assert!(rendered.contains("request_messages: 3 (system=1 user=1 assistant=1 tool=0)"));
+        assert!(rendered.contains("#0 system:"));
+        assert!(rendered.contains("system prompt"));
+        assert!(rendered.contains("#1 user:"));
+        assert!(rendered.contains("user task"));
+        assert!(rendered.contains("walk llm prompt --step 0 --json"));
+
+        let json = controller
+            .render_llm_prompt(lane, 0, step, Some("user"), None, false, true)
+            .expect("json prompt render");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("prompt json");
+        assert_eq!(value["kind"], "llm_prompt");
+        assert_eq!(value["source"], "persisted_checkpoint_request_messages");
+        assert_eq!(value["filters"]["role"], "user");
+        assert_eq!(value["request_messages"]["total"], 3);
+        assert_eq!(
+            value["selected_messages"]
+                .as_array()
+                .expect("messages")
+                .len(),
+            1
+        );
+        assert_eq!(value["selected_messages"][0]["index"], 1);
+        assert_eq!(value["selected_messages"][0]["role"], "user");
+        assert_eq!(value["selected_messages"][0]["content"], "user task");
     }
 
     #[test]
