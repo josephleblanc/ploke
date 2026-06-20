@@ -271,9 +271,7 @@ fn display_kind(step: &ReplayStep) -> &str {
 
 fn entry_meaning(step: &ReplayStep) -> &'static str {
     match step.kind.as_str() {
-        "parent_started" => {
-            "parent runtime started; this is startup evidence, not child fanout or final completion"
-        }
+        "parent_started" => "parent runtime started",
         "resource.parentstart" => {
             "parent-start resource was recorded for reconstruction/audit evidence"
         }

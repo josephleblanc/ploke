@@ -741,7 +741,7 @@ fn cursor_from_entry(index: usize, value: &JsonValue) -> JournalCursor {
     let (label, meaning) = match (kind.as_str(), phase.as_deref(), state) {
         ("parent_started", _, _) => (
             "r5 parent_started".to_string(),
-            "parent runtime started; this is startup evidence, not child fanout or final completion".to_string(),
+            "parent runtime started".to_string(),
         ),
         ("resource", Some("parent_start"), _) | ("resource.parentstart", _, _) => (
             "r5 parent_start_resource".to_string(),
