@@ -4,6 +4,51 @@ Status: active plan / partially implemented. The current implementation records 
 
 Short description: plan for turning the existing Prototype 1 `walk` typestate debugger plus turn-live replay machinery into a gdb-like nested debugger for harness-backed LLM/tool loops. The intended pause boundary is one provider/network response plus its full tool batch, not one individual parallel tool call.
 
+## Goal
+
+Implement walk llm as a practical run-review debugger, not just a
+checkpoint/stat viewer.
+
+Success criteria:
+
+1. After:
+
+```bash
+  pel walk use <recent-run-worktree>
+  pel walk llm lanes
+  pel walk llm focus <lane>
+  pel walk llm show
+  pel walk llm back
+  pel walk llm forward
+```
+
+the operator can understand each LLM response step without jq or opening
+checkpoint JSON.
+
+2. pel walk llm show renders, for the selected step:
+
+- assistant response/content or tool-call summary;
+- tool call names and decoded arguments;
+- completed/failed tool results with decoded payload previews;
+- protected-write denial/retry hints when present;
+- request/message summary sufficient to understand trajectory;
+- terminal/paused state and next suggested commands.
+
+3. walk llm step / finish remain gated and effectful, but their output focuses
+   the new session/lane enough that the operator can immediately continue
+   reviewing without copying excessive ids.
+
+4. Historical and live use-testing on p1-live-lanes-g25p-20260619-123437
+   demonstrates:
+
+- step 2 explains list_dir crates/ploke-tree-browser;
+- step 11 explains the denied non_semantic_patch Cargo.toml and retry hint;
+- step 12 explains the terminal prose trajectory;
+- live branch after step 11 can be inspected through walk llm show without jq.
+
+5. Update the plan doc with exactly what is implemented and what remains, and
+   add renderer tests so this UX does not regress.
+
 Related planning and source files:
 
 - `docs/active/agents/2026-06-02_prototype1-state-loop-walkthrough/turn-live-replay.md`
