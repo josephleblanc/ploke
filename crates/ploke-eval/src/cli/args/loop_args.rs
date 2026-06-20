@@ -288,12 +288,25 @@ pub enum Prototype1StateWalkLlmSubcommand {
     Focus(Prototype1StateWalkLlmFocusCommand),
     /// Show the latest or selected LLM/tool-loop checkpoint.
     Show(Prototype1StateWalkLlmShowCommand),
+    /// Execute one historical or live provider response step through current tools.
+    Step(Prototype1StateWalkLlmStepCommand),
+    /// Continue live provider response steps until terminal or max steps.
+    Finish(Prototype1StateWalkLlmFinishCommand),
     /// Move the focused/read-only lane cursor backward.
     Back(Prototype1StateWalkLlmMoveCommand),
     /// Move the focused/read-only lane cursor forward.
     Forward(Prototype1StateWalkLlmMoveCommand),
     /// Jump the focused/read-only lane cursor to the latest checkpoint head.
     Head(Prototype1StateWalkLlmLaneCommand),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum Prototype1StateWalkLlmStepSource {
+    /// Replay one recorded checkpoint response through current tools.
+    Historical,
+    /// Continue from checkpoint request state with one live provider response.
+    Live,
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -343,6 +356,92 @@ pub struct Prototype1StateWalkLlmShowCommand {
     /// Specific response step to inspect. Defaults to the lane cursor or latest recorded step.
     #[arg(long)]
     pub step: Option<usize>,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkLlmStepCommand {
+    /// Lane id, usually the candidate workspace basename. Defaults to current focus.
+    #[arg(long)]
+    pub lane: Option<String>,
+
+    /// Specific tool-loop session id to step from. Defaults to selected lane/latest session.
+    #[arg(long)]
+    pub session_id: Option<String>,
+
+    /// Response step index. Historical mode replays this response; live mode continues after this step.
+    #[arg(long)]
+    pub step: Option<usize>,
+
+    /// Step source: historical replays a recorded response; live calls the provider once.
+    #[arg(long, value_enum, default_value_t = Prototype1StateWalkLlmStepSource::Historical)]
+    pub source: Prototype1StateWalkLlmStepSource,
+
+    /// Wait for the live provider response. Required when --source live.
+    #[arg(long)]
+    pub watch: bool,
+
+    /// Admit workspace mutation by current TUI tools during the stepped response.
+    #[arg(long = "allow", value_name = "CAPABILITY", value_parser = ["workspace-mutation"])]
+    pub allow: Vec<String>,
+
+    /// Override model id for live steps. Defaults to the checkpoint session model.
+    #[arg(long, value_name = "MODEL")]
+    pub model_id: Option<String>,
+
+    /// Provider slug for the selected model. Requires --model-id.
+    #[arg(long, value_name = "PROVIDER")]
+    pub provider: Option<String>,
+
+    /// Maximum attempts for the one-step headless runtime.
+    #[arg(long, default_value_t = 1)]
+    pub max_attempts: u32,
+
+    /// Timeout seconds for the one-step headless runtime.
+    #[arg(long, default_value_t = 300)]
+    pub timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkLlmFinishCommand {
+    /// Lane id, usually the candidate workspace basename. Defaults to current focus.
+    #[arg(long)]
+    pub lane: Option<String>,
+
+    /// Specific tool-loop session id to continue. Defaults to selected lane/latest session.
+    #[arg(long)]
+    pub session_id: Option<String>,
+
+    /// Response step to continue after. Defaults to lane cursor/head.
+    #[arg(long)]
+    pub step: Option<usize>,
+
+    /// Wait for live provider responses. Required for finish.
+    #[arg(long)]
+    pub watch: bool,
+
+    /// Admit workspace mutation by current TUI tools during live response steps.
+    #[arg(long = "allow", value_name = "CAPABILITY", value_parser = ["workspace-mutation"])]
+    pub allow: Vec<String>,
+
+    /// Override model id for live steps. Defaults to the checkpoint session model.
+    #[arg(long, value_name = "MODEL")]
+    pub model_id: Option<String>,
+
+    /// Provider slug for the selected model. Requires --model-id.
+    #[arg(long, value_name = "PROVIDER")]
+    pub provider: Option<String>,
+
+    /// Maximum live response steps before stopping.
+    #[arg(long, default_value_t = 8)]
+    pub max_steps: usize,
+
+    /// Maximum attempts for each one-step headless runtime.
+    #[arg(long, default_value_t = 1)]
+    pub max_attempts: u32,
+
+    /// Timeout seconds for each one-step headless runtime.
+    #[arg(long, default_value_t = 300)]
+    pub timeout_secs: u64,
 }
 
 #[derive(Debug, Clone, Parser)]

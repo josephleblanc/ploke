@@ -12,9 +12,11 @@ use std::{
     fs,
     io::Read,
     path::{Path, PathBuf},
+    str::FromStr,
 };
 
-use ploke_records::ids::CampaignId;
+use ploke_llm::{ModelId, ProviderKey};
+use ploke_records::{ids::CampaignId, llm_response::RawFullResponseRecord};
 
 use crate::{
     ResolvedCampaignConfig,
@@ -23,6 +25,10 @@ use crate::{
         driver::{
             reconstruct::{self, EarlyState},
             replay::ReplayCursor,
+        },
+        edit_surface::{
+            harness_request::PublishedBroadHarnessRequest,
+            tui_adapter::{self, ModelSelection},
         },
         identity::{load_parent_identity_optional, parent_identity_path},
         journal::prototype1_transition_journal_path,
@@ -36,6 +42,10 @@ use crate::{
             R8, R9, R10, R11FanoutComplete, R11aRejectedOnly, R12, R13aStopped,
             R13bHandoffCommitted, R14aFinalStopped, R14bFinalHandoff, StepInput,
         },
+    },
+    cli::{
+        Prototype1StateWalkLlmStepSource,
+        provider::{headless_model_selection, load_parent_patcher_model_selection},
     },
     layout::prototype1_monitor_target_file,
     replay::tool_loop::{
@@ -383,6 +393,105 @@ impl WalkController {
         Ok(self.render_llm_checkpoint(&store, lane_state, loaded))
     }
 
+    /// Execute one historical or live LLM response step through current TUI tools.
+    pub(crate) async fn llm_step(
+        &mut self,
+        session_id: Option<&str>,
+        lane: Option<&str>,
+        step: Option<usize>,
+        source: Prototype1StateWalkLlmStepSource,
+        watch: bool,
+        allow_workspace_mutation: bool,
+        model_id: Option<&str>,
+        provider: Option<&str>,
+        max_attempts: u32,
+        timeout_secs: u64,
+    ) -> Result<String, PrepareError> {
+        let store = self.tool_loop_store()?;
+        let lane_state = match session_id {
+            Some(session_id) => self.lane_for_session(&store, store.read_session(session_id)?)?,
+            None => self.resolve_lane(&store, lane)?,
+        };
+        let request = self.prepare_llm_step(
+            &store,
+            &lane_state,
+            step,
+            source,
+            watch,
+            allow_workspace_mutation,
+            model_id,
+            provider,
+            max_attempts,
+            timeout_secs,
+        )?;
+        let summary = self.run_llm_step_request(request).await?;
+        if let Some(head) = store.latest_step_index(&summary.session_id.to_string())? {
+            self.llm_cursors.insert(lane_state.lane_id.clone(), head);
+        }
+        Ok(summary.render())
+    }
+
+    /// Continue live LLM response steps until terminal or max steps.
+    pub(crate) async fn llm_finish(
+        &mut self,
+        session_id: Option<&str>,
+        lane: Option<&str>,
+        step: Option<usize>,
+        watch: bool,
+        allow_workspace_mutation: bool,
+        model_id: Option<&str>,
+        provider: Option<&str>,
+        max_steps: usize,
+        max_attempts: u32,
+        timeout_secs: u64,
+    ) -> Result<String, PrepareError> {
+        if max_steps == 0 {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: "walk llm finish --max-steps must be greater than zero".to_string(),
+            });
+        }
+        let mut lines = vec!["llm live finish".to_string()];
+        let mut current_session = session_id.map(ToOwned::to_owned);
+        let mut current_lane = lane.map(ToOwned::to_owned);
+        let mut current_step = step;
+        for index in 0..max_steps {
+            let store = self.tool_loop_store()?;
+            let lane_state = match current_session.as_deref() {
+                Some(session_id) => {
+                    self.lane_for_session(&store, store.read_session(session_id)?)?
+                }
+                None => self.resolve_lane(&store, current_lane.as_deref())?,
+            };
+            let request = self.prepare_llm_step(
+                &store,
+                &lane_state,
+                current_step,
+                Prototype1StateWalkLlmStepSource::Live,
+                watch,
+                allow_workspace_mutation,
+                model_id,
+                provider,
+                max_attempts,
+                timeout_secs,
+            )?;
+            let summary = self.run_llm_step_request(request).await?;
+            lines.push(format!("step {}:", index + 1));
+            lines.extend(summary.render_indented("  "));
+            current_session = Some(summary.session_id.to_string());
+            current_lane = Some(summary.lane_id.clone());
+            current_step = None;
+            if summary.terminal {
+                lines.push("finish: terminal inner frame reached".to_string());
+                return Ok(lines.join("\n"));
+            }
+        }
+        lines.push(format!(
+            "finish: stopped after max_steps={} before terminal inner frame",
+            max_steps
+        ));
+        Ok(lines.join("\n"))
+    }
+
     /// Move a read-only lane cursor backward/forward without mutating durable state.
     pub(crate) fn llm_move(
         &mut self,
@@ -433,6 +542,200 @@ impl WalkController {
             "llm lane {} cursor=head ({head})",
             lane_state.lane_id
         ))
+    }
+
+    fn prepare_llm_step(
+        &self,
+        store: &FsToolLoopStore,
+        lane: &LlmLane,
+        step: Option<usize>,
+        source: Prototype1StateWalkLlmStepSource,
+        watch: bool,
+        allow_workspace_mutation: bool,
+        model_id: Option<&str>,
+        provider: Option<&str>,
+        max_attempts: u32,
+        timeout_secs: u64,
+    ) -> Result<LlmStepRequest, PrepareError> {
+        if !allow_workspace_mutation {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: "walk llm step executes current TUI tools and may mutate the candidate workspace; rerun with `--allow workspace-mutation`".to_string(),
+            });
+        }
+        if source == Prototype1StateWalkLlmStepSource::Live && !watch {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: "walk llm step --source live calls the provider; rerun with `--watch`"
+                    .to_string(),
+            });
+        }
+        if provider.is_some() && model_id.is_none() {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: "walk llm --provider requires --model-id".to_string(),
+            });
+        }
+        let budget = tui_adapter::Budget::new(max_attempts, timeout_secs).map_err(|source| {
+            PrepareError::DatabaseSetup {
+                phase: "walk_llm_budget",
+                detail: source.to_string(),
+            }
+        })?;
+        let published = self.load_llm_published_request(lane)?;
+        let model = resolve_llm_model(lane.session.model.as_deref(), model_id, provider)?;
+        let selected = self.select_llm_step_messages(store, lane, step, source)?;
+        Ok(LlmStepRequest {
+            lane_id: lane.lane_id.clone(),
+            source,
+            selected_step: selected.selected_step,
+            workspace: lane.session.workspace.clone(),
+            messages: selected.messages,
+            recorded_response: selected.recorded_response,
+            budget,
+            surface: published.request().edit_policy.clone(),
+            evidence: published.request().evidence_roots.clone(),
+            model,
+        })
+    }
+
+    async fn run_llm_step_request(
+        &self,
+        request: LlmStepRequest,
+    ) -> Result<LlmStepSummary, PrepareError> {
+        let source = match request.recorded_response {
+            Some(response) => tui_adapter::LlmDebugStepSource::Recorded(response),
+            None => tui_adapter::LlmDebugStepSource::Live,
+        };
+        let run = tui_adapter::run_llm_debug_step(
+            &request.workspace,
+            request.messages,
+            request.budget,
+            &request.surface,
+            &request.evidence,
+            Some(request.model),
+            source,
+        )
+        .await
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "walk_llm_step",
+            detail: source.to_string(),
+        })?;
+        let store = self.tool_loop_store()?;
+        let session_id = run.session_id.to_string();
+        let session = store.read_session(&session_id)?;
+        let head = store.latest_step_index(&session_id)?;
+        let terminal = session.status == ToolLoopStatus::Terminal
+            || store
+                .read_resume(&session_id)
+                .map(|resume| resume.terminal)
+                .unwrap_or(false);
+        Ok(LlmStepSummary {
+            lane_id: request.lane_id,
+            source: request.source,
+            selected_step: request.selected_step,
+            session_id: run.session_id,
+            outcome: run.outcome,
+            attempts: run.attempts,
+            final_messages: run.final_messages,
+            head,
+            terminal,
+        })
+    }
+
+    fn select_llm_step_messages(
+        &self,
+        store: &FsToolLoopStore,
+        lane: &LlmLane,
+        step: Option<usize>,
+        source: Prototype1StateWalkLlmStepSource,
+    ) -> Result<LlmStepSelection, PrepareError> {
+        let head = lane
+            .head
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: format!("llm lane '{}' has no recorded steps", lane.lane_id),
+            })?;
+        let selected_step = step
+            .or_else(|| self.llm_cursors.get(&lane.lane_id).copied())
+            .unwrap_or(head);
+        match source {
+            Prototype1StateWalkLlmStepSource::Historical => {
+                let record = store.read_step(&lane.session.session_id, selected_step)?;
+                Ok(LlmStepSelection {
+                    selected_step,
+                    messages: record.request_messages.clone(),
+                    recorded_response: Some(record.response.clone()),
+                })
+            }
+            Prototype1StateWalkLlmStepSource::Live => {
+                if let Ok(next) =
+                    store.read_step(&lane.session.session_id, selected_step.saturating_add(1))
+                {
+                    return Ok(LlmStepSelection {
+                        selected_step,
+                        messages: next.request_messages.clone(),
+                        recorded_response: None,
+                    });
+                }
+                let resume = store.read_resume(&lane.session.session_id)?;
+                if resume.terminal {
+                    return Err(PrepareError::InvalidBatchSelection {
+                        detail: format!(
+                            "llm lane '{}' session {} is terminal at step {}; choose an earlier --step to branch live before terminal",
+                            lane.lane_id, lane.session.session_id, selected_step
+                        ),
+                    });
+                }
+                Ok(LlmStepSelection {
+                    selected_step,
+                    messages: resume.request_messages,
+                    recorded_response: None,
+                })
+            }
+        }
+    }
+
+    fn load_llm_published_request(
+        &self,
+        lane: &LlmLane,
+    ) -> Result<PublishedBroadHarnessRequest, PrepareError> {
+        let path = match lane.session.request_path.clone() {
+            Some(path) => path,
+            None => self.infer_llm_request_path(&lane.lane_id)?,
+        };
+        let json = fs::read_to_string(&path).map_err(|source| PrepareError::ReadManifest {
+            path: path.clone(),
+            source,
+        })?;
+        serde_json::from_str(&json).map_err(|source| PrepareError::DatabaseSetup {
+            phase: "walk_llm_request",
+            detail: format!(
+                "failed to parse published request '{}': {source}",
+                path.display()
+            ),
+        })
+    }
+
+    fn infer_llm_request_path(&self, lane_id: &str) -> Result<PathBuf, PrepareError> {
+        let identity = load_parent_identity_optional(&self.repo_root)?.ok_or_else(|| {
+            PrepareError::DatabaseSetup {
+                phase: "walk_llm_request",
+                detail: format!(
+                    "parent identity is required to infer edit-harness request path: {}",
+                    parent_identity_path(&self.repo_root).display()
+                ),
+            }
+        })?;
+        let manifest = campaign_manifest_path_for_id(identity.campaign_id())?;
+        let campaign_dir = manifest
+            .parent()
+            .ok_or_else(|| PrepareError::DatabaseSetup {
+                phase: "walk_llm_request",
+                detail: format!(
+                    "campaign manifest '{}' has no parent directory",
+                    manifest.display()
+                ),
+            })?;
+        Ok(campaign_dir
+            .join("prototype1/messages/edit-harness-request")
+            .join(format!("{lane_id}.json")))
     }
 
     fn tool_loop_store(&self) -> Result<FsToolLoopStore, PrepareError> {
@@ -1511,12 +1814,102 @@ fn indent_lines(value: &str, spaces: usize) -> Vec<String> {
         .collect()
 }
 
+struct LlmStepRequest {
+    lane_id: String,
+    source: Prototype1StateWalkLlmStepSource,
+    selected_step: usize,
+    workspace: PathBuf,
+    messages: Vec<ploke_tui::llm::RequestMessage>,
+    recorded_response: Option<RawFullResponseRecord>,
+    budget: tui_adapter::Budget,
+    surface: crate::cli::prototype1_state::edit_surface::surface_policy::SurfacePolicy,
+    evidence: Vec<crate::cli::prototype1_state::edit_surface::harness_request::EvidenceRoot>,
+    model: ModelSelection,
+}
+
+struct LlmStepSelection {
+    selected_step: usize,
+    messages: Vec<ploke_tui::llm::RequestMessage>,
+    recorded_response: Option<RawFullResponseRecord>,
+}
+
+struct LlmStepSummary {
+    lane_id: String,
+    source: Prototype1StateWalkLlmStepSource,
+    selected_step: usize,
+    session_id: uuid::Uuid,
+    outcome: String,
+    attempts: u32,
+    final_messages: usize,
+    head: Option<usize>,
+    terminal: bool,
+}
+
+impl LlmStepSummary {
+    fn render(&self) -> String {
+        self.render_indented("").join("\n")
+    }
+
+    fn render_indented(&self, prefix: &str) -> Vec<String> {
+        vec![
+            format!("{prefix}llm step"),
+            format!("{prefix}lane: {}", self.lane_id),
+            format!("{prefix}source: {:?}", self.source),
+            format!("{prefix}selected_step: {}", self.selected_step),
+            format!("{prefix}new_session: {}", self.session_id),
+            format!(
+                "{prefix}new_head: {}",
+                self.head
+                    .map(|head| head.to_string())
+                    .unwrap_or_else(|| "-".to_string())
+            ),
+            format!("{prefix}outcome: {}", self.outcome),
+            format!("{prefix}attempts: {}", self.attempts),
+            format!("{prefix}final_messages: {}", self.final_messages),
+            format!("{prefix}terminal: {}", self.terminal),
+            format!(
+                "{prefix}inspect: walk llm show --session-id {} --head",
+                self.session_id
+            ),
+        ]
+    }
+}
+
 #[derive(Debug, Clone)]
 struct LlmLane {
     lane_id: String,
     session: ToolLoopSession,
     resume: Option<ToolLoopResume>,
     head: Option<usize>,
+}
+
+fn resolve_llm_model(
+    session_model: Option<&str>,
+    requested_model: Option<&str>,
+    requested_provider: Option<&str>,
+) -> Result<ModelSelection, PrepareError> {
+    let model = requested_model.or(session_model);
+    match (model, requested_provider) {
+        (Some(model), provider) => {
+            let model_id = ModelId::from_str(model).map_err(|err| PrepareError::DatabaseSetup {
+                phase: "walk_llm_model",
+                detail: format!("invalid model id '{model}': {err}"),
+            })?;
+            let provider = provider
+                .map(|provider| {
+                    ProviderKey::new(provider).map_err(|err| PrepareError::DatabaseSetup {
+                        phase: "walk_llm_provider",
+                        detail: format!("invalid provider slug '{provider}': {err}"),
+                    })
+                })
+                .transpose()?;
+            headless_model_selection(model_id, provider)
+        }
+        (None, Some(provider)) => Err(PrepareError::InvalidBatchSelection {
+            detail: format!("walk llm provider '{provider}' requires --model-id"),
+        }),
+        (None, None) => load_parent_patcher_model_selection(),
+    }
 }
 
 fn lane_label(session: &ToolLoopSession) -> String {
@@ -1838,6 +2231,110 @@ mod tests {
             None,
         );
         write_parent_identity(repo, &identity).expect("parent identity");
+    }
+
+    fn dummy_lane() -> LlmLane {
+        let mut session = ToolLoopSession::new("session-1", "headless-tui", PathBuf::from("work"));
+        session.lane_id = Some("lane-1".to_string());
+        LlmLane {
+            lane_id: "lane-1".to_string(),
+            session,
+            resume: None,
+            head: Some(0),
+        }
+    }
+
+    #[test]
+    fn llm_step_requires_explicit_workspace_mutation_gate() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let controller = WalkController::new(root.path().join("repo"));
+        let store = FsToolLoopStore::new(root.path().join("tool-loop"));
+
+        let result = controller.prepare_llm_step(
+            &store,
+            &dummy_lane(),
+            None,
+            Prototype1StateWalkLlmStepSource::Historical,
+            false,
+            false,
+            None,
+            None,
+            1,
+            30,
+        );
+        let err = match result {
+            Ok(_) => panic!("missing mutation gate should be rejected before any execution"),
+            Err(err) => err,
+        };
+
+        assert!(
+            err.to_string().contains("--allow workspace-mutation"),
+            "error should explain the required effectful gate: {err}"
+        );
+    }
+
+    #[test]
+    fn live_llm_step_requires_watch_gate() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let controller = WalkController::new(root.path().join("repo"));
+        let store = FsToolLoopStore::new(root.path().join("tool-loop"));
+
+        let result = controller.prepare_llm_step(
+            &store,
+            &dummy_lane(),
+            None,
+            Prototype1StateWalkLlmStepSource::Live,
+            false,
+            true,
+            None,
+            None,
+            1,
+            30,
+        );
+        let err = match result {
+            Ok(_) => panic!("live provider stepping should require --watch"),
+            Err(err) => err,
+        };
+
+        assert!(
+            err.to_string().contains("--watch"),
+            "error should explain that live stepping calls the provider: {err}"
+        );
+    }
+
+    #[test]
+    fn provider_override_requires_model_override() {
+        let err = resolve_llm_model(None, None, Some("google"))
+            .expect_err("provider without model cannot identify a routed live step");
+
+        assert!(
+            err.to_string().contains("requires --model-id"),
+            "error should name the missing model override: {err}"
+        );
+    }
+
+    #[test]
+    fn llm_step_summary_points_to_new_session_head() {
+        let session_id = uuid::Uuid::new_v4();
+        let summary = LlmStepSummary {
+            lane_id: "lane-1".to_string(),
+            source: Prototype1StateWalkLlmStepSource::Historical,
+            selected_step: 3,
+            session_id,
+            outcome: "completed".to_string(),
+            attempts: 1,
+            final_messages: 7,
+            head: Some(0),
+            terminal: true,
+        };
+
+        let rendered = summary.render();
+        assert!(rendered.contains("source: Historical"));
+        assert!(rendered.contains("selected_step: 3"));
+        assert!(
+            rendered.contains(&format!("walk llm show --session-id {session_id} --head")),
+            "summary should give the operator the exact follow-up inspection command: {rendered}"
+        );
     }
 
     #[test]

@@ -12,7 +12,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::cli::{
     InspectOutputFormat, Prototype1CandidateGenerator, Prototype1StateCommand,
-    Prototype1StateStopAfter, Prototype1SuccessorSelection, Prototype1TraversalMetrics,
+    Prototype1StateStopAfter, Prototype1StateWalkLlmStepSource, Prototype1SuccessorSelection,
+    Prototype1TraversalMetrics,
 };
 
 use super::{epoch::ServerEpoch, phase::WalkPhase};
@@ -127,6 +128,52 @@ pub(crate) enum WalkRequestBody {
         head: bool,
         /// Specific provider-response step. Defaults to lane cursor or latest recorded step.
         step: Option<usize>,
+    },
+    /// Execute one historical or live provider response step through current tools.
+    LlmStep {
+        /// Specific checkpoint session id. Defaults to selected lane/latest session.
+        session_id: Option<String>,
+        /// Lane id. Defaults to current focus.
+        lane: Option<String>,
+        /// Response step index. Historical mode replays this response; live mode continues after it.
+        step: Option<usize>,
+        /// Step source.
+        source: Prototype1StateWalkLlmStepSource,
+        /// Required for live provider calls.
+        watch: bool,
+        /// Required because current TUI tools may mutate the candidate workspace.
+        allow_workspace_mutation: bool,
+        /// Optional model override for live steps.
+        model_id: Option<String>,
+        /// Optional provider override for live steps.
+        provider: Option<String>,
+        /// Maximum attempts for the one-step headless runtime.
+        max_attempts: u32,
+        /// Timeout seconds for the one-step headless runtime.
+        timeout_secs: u64,
+    },
+    /// Continue live provider response steps until terminal or max steps.
+    LlmFinish {
+        /// Specific checkpoint session id. Defaults to selected lane/latest session.
+        session_id: Option<String>,
+        /// Lane id. Defaults to current focus.
+        lane: Option<String>,
+        /// Response step to continue after. Defaults to lane cursor/head.
+        step: Option<usize>,
+        /// Required for live provider calls.
+        watch: bool,
+        /// Required because current TUI tools may mutate the candidate workspace.
+        allow_workspace_mutation: bool,
+        /// Optional model override for live steps.
+        model_id: Option<String>,
+        /// Optional provider override for live steps.
+        provider: Option<String>,
+        /// Maximum live response steps.
+        max_steps: usize,
+        /// Maximum attempts for each one-step headless runtime.
+        max_attempts: u32,
+        /// Timeout seconds for each one-step headless runtime.
+        timeout_secs: u64,
     },
     /// Move the nested LLM/tool-loop lane cursor backward without mutating state.
     LlmBack {

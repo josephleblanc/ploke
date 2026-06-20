@@ -145,6 +145,36 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
                     head: show.head,
                     step: show.step,
                 },
+                Prototype1StateWalkLlmSubcommand::Step(step) => {
+                    let allow_workspace_mutation = step.allow_workspace_mutation();
+                    WalkRequestBody::LlmStep {
+                        session_id: step.session_id,
+                        lane: step.lane,
+                        step: step.step,
+                        source: step.source,
+                        watch: step.watch,
+                        allow_workspace_mutation,
+                        model_id: step.model_id,
+                        provider: step.provider,
+                        max_attempts: step.max_attempts,
+                        timeout_secs: step.timeout_secs,
+                    }
+                }
+                Prototype1StateWalkLlmSubcommand::Finish(finish) => {
+                    let allow_workspace_mutation = finish.allow_workspace_mutation();
+                    WalkRequestBody::LlmFinish {
+                        session_id: finish.session_id,
+                        lane: finish.lane,
+                        step: finish.step,
+                        watch: finish.watch,
+                        allow_workspace_mutation,
+                        model_id: finish.model_id,
+                        provider: finish.provider,
+                        max_steps: finish.max_steps,
+                        max_attempts: finish.max_attempts,
+                        timeout_secs: finish.timeout_secs,
+                    }
+                }
                 Prototype1StateWalkLlmSubcommand::Back(back) => WalkRequestBody::LlmBack {
                     lane: back.lane.lane,
                     steps: back.steps,
@@ -157,14 +187,15 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
                     WalkRequestBody::LlmHead { lane: head.lane }
                 }
             };
-            let response = send_request(
-                &socket,
-                WalkRequest {
-                    client_epoch: None,
-                    body,
-                },
-            )
-            .await?;
+            let client_epoch = if matches!(
+                body,
+                WalkRequestBody::LlmStep { .. } | WalkRequestBody::LlmFinish { .. }
+            ) {
+                Some(ServerEpoch::capture(&repo_root)?)
+            } else {
+                None
+            };
+            let response = send_request(&socket, WalkRequest { client_epoch, body }).await?;
             print_response(&response, format, with_version)?;
             response_result(response)
         }

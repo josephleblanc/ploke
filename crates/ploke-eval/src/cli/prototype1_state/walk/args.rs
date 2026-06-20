@@ -8,6 +8,7 @@ use std::{path::Path, time::Duration};
 use crate::{
     cli::{
         Prototype1StateWalkBranchLiveCommand, Prototype1StateWalkControlCommand,
+        Prototype1StateWalkLlmFinishCommand, Prototype1StateWalkLlmStepCommand,
         Prototype1StateWalkReplayCommand, Prototype1StateWalkReplayMoveCommand,
         Prototype1StateWalkServeCommand, Prototype1StateWalkStartCommand,
         Prototype1StateWalkStepCommand,
@@ -75,6 +76,24 @@ impl Prototype1StateWalkControlCommand {
     /// Borrow the optional repo root used for socket discovery.
     pub(crate) fn repo_root_ref(&self) -> Option<&Path> {
         self.repo_root.as_deref()
+    }
+}
+
+impl Prototype1StateWalkLlmStepCommand {
+    /// Whether this step admits current-tool workspace mutation.
+    pub(crate) fn allow_workspace_mutation(&self) -> bool {
+        self.allow
+            .iter()
+            .any(|capability| capability == "workspace-mutation")
+    }
+}
+
+impl Prototype1StateWalkLlmFinishCommand {
+    /// Whether finish admits current-tool workspace mutation.
+    pub(crate) fn allow_workspace_mutation(&self) -> bool {
+        self.allow
+            .iter()
+            .any(|capability| capability == "workspace-mutation")
     }
 }
 

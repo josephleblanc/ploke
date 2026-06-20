@@ -8,7 +8,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ploke_llm::{manager::RecordedResponse, router_only::RouterVariants};
+use ploke_llm::{
+    manager::{RecordedResponse, RecordedResponseTape},
+    router_only::RouterVariants,
+};
 use ploke_records::llm_response::RawFullResponseRecord;
 use ploke_tui::app::commands::harness::TestAppAccessor;
 use serde::Deserialize;
@@ -94,6 +97,133 @@ pub(crate) async fn run_headless_with_model_capture_responses(
     .run()
     .await
     .map(super::attempt::Attempt::into_headless_run)
+}
+
+pub(crate) enum LlmDebugStepSource {
+    Recorded(RawFullResponseRecord),
+    Live,
+}
+
+pub(crate) struct LlmDebugStepRun {
+    pub(crate) session_id: Uuid,
+    pub(crate) outcome: String,
+    pub(crate) attempts: u32,
+    pub(crate) final_messages: usize,
+}
+
+pub(crate) async fn run_llm_debug_step(
+    workspace_path: &Path,
+    messages: Vec<ploke_tui::llm::RequestMessage>,
+    budget: Budget,
+    surface: &SurfacePolicy,
+    evidence_roots: &[EvidenceRoot],
+    model: Option<ModelSelection>,
+    source: LlmDebugStepSource,
+) -> Result<LlmDebugStepRun, Error> {
+    let timeouts = harness::Timeouts::default();
+    let extra_read_roots = evidence_read_roots(evidence_roots);
+    let mut runtime = start_debug_runtime(
+        workspace_path,
+        &extra_read_roots,
+        surface,
+        model.as_ref(),
+        budget,
+        &timeouts,
+    )
+    .await?;
+    let _debug_guard =
+        super::tool_loop_debug::install_for_attempt(workspace_path, model.as_ref(), evidence_roots);
+    match source {
+        LlmDebugStepSource::Recorded(record) => {
+            ploke_tui::llm::install_recorded_response_tape(RecordedResponseTape::new(vec![
+                record.into_recorded_response(),
+            ]));
+        }
+        LlmDebugStepSource::Live => {
+            ploke_tui::llm::install_recorded_response_prefix_then_live_steps(
+                RecordedResponseTape::new(Vec::new()),
+                1,
+            );
+        }
+    }
+    let _recorded_guard = RecordedResponseGuard;
+    let report = ploke_tui::llm::run_chat_debug_messages(ploke_tui::llm::ChatDebugRunArgs {
+        state: Arc::clone(&runtime.state),
+        client: reqwest::Client::new(),
+        messages,
+        event_bus: Arc::clone(&runtime.event_bus),
+        assistant_message_id: Uuid::new_v4(),
+        parent_id: Uuid::new_v4(),
+        cmd_tx: runtime.app.state_cmd_tx(),
+    })
+    .await;
+    runtime.app.pump_pending_events().await;
+    Ok(LlmDebugStepRun {
+        session_id: report.session_id,
+        outcome: report.outcome,
+        attempts: report.attempts,
+        final_messages: report.final_messages.len(),
+    })
+}
+
+struct RecordedResponseGuard;
+
+impl Drop for RecordedResponseGuard {
+    fn drop(&mut self) {
+        ploke_tui::llm::clear_recorded_response_tape();
+    }
+}
+
+async fn start_debug_runtime(
+    workspace_path: &Path,
+    extra_read_roots: &[PathBuf],
+    surface: &SurfacePolicy,
+    model: Option<&ModelSelection>,
+    budget: Budget,
+    timeouts: &harness::Timeouts,
+) -> Result<crate::runner::WorkspaceTuiRuntime, Error> {
+    let runtime = crate::runner::setup_workspace_tui_runtime_with_read_roots(
+        workspace_path,
+        extra_read_roots,
+    )
+    .await
+    .map_err(Error::from_headless_start)?;
+
+    let write_scope = surface.write_scope();
+    runtime
+        .state
+        .with_system_txn(|txn| txn.set_write_scope(Some(write_scope)))
+        .await;
+
+    let cmd_tx = runtime.app.state_cmd_tx();
+    send_state(
+        &cmd_tx,
+        ploke_tui::app_state::StateCommand::SetEditingAutoConfirm { enabled: false },
+    )
+    .await?;
+    {
+        let mut cfg = runtime.state.config.write().await;
+        cfg.context_management.mode = ploke_tui::user_config::CtxMode::Off;
+        cfg.tooling.cargo_check_timeout_secs = timeouts.validation_cargo_check_secs;
+        cfg.tooling.cargo_test_timeout_secs = timeouts.validation_cargo_test_secs;
+        cfg.chat_policy.tool_call_timeout_secs = budget_tool_timeout_secs(budget, timeouts);
+        if let Some(model) = model {
+            cfg.active_model = model.model_id.clone();
+            cfg.active_router = model.router();
+            if !matches!(model.router(), RouterVariants::Google(_)) || model.provider.is_some() {
+                cfg.model_registry
+                    .select_model_provider(&model.model_id, model.provider.as_ref());
+            }
+        }
+    }
+    Ok(runtime)
+}
+
+fn budget_tool_timeout_secs(budget: Budget, timeouts: &harness::Timeouts) -> u64 {
+    budget
+        .timeout_secs()
+        .max(timeouts.validation_cargo_check_secs)
+        .max(timeouts.validation_cargo_test_secs)
 }
 
 pub(super) async fn start_attempt_runtime(

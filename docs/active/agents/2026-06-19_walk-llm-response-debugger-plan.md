@@ -1,6 +1,6 @@
 # 2026-06-19 Walk-integrated LLM response debugger plan
 
-Status: active plan / implementation design.
+Status: active plan / partially implemented. The current implementation records and inspects LLM/tool-loop checkpoints and now exposes gated `walk llm step` / `walk llm finish` execution for historical one-response replay and live one-response continuation. It is still not an outer-typestate-integrated nested debugger.
 
 Short description: plan for turning the existing Prototype 1 `walk` typestate debugger plus turn-live replay machinery into a gdb-like nested debugger for harness-backed LLM/tool loops. The intended pause boundary is one provider/network response plus its full tool batch, not one individual parallel tool call.
 
@@ -14,6 +14,112 @@ Related planning and source files:
 - `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter/harness/{mod.rs,tui.rs}`
 - `crates/ploke-eval/src/cli/prototype1_state/walk/`
 - `crates/ploke-tui/src/llm/manager/session.rs`
+
+## Implemented status as of 2026-06-20
+
+This section records the current code status so the plan is not mistaken for a completed feature.
+
+Implemented commits / working-tree slices:
+
+```text
+a6fa4001 Add tool loop checkpoint records
+2a063b35 Expose chat step resume messages
+ff6b05cb Add walk LLM checkpoint inspection
+5f7bd732 Add read-only walk LLM lane inspection
+working tree 2026-06-20 Add gated walk LLM historical/live stepping
+```
+
+Currently implemented:
+
+- `ploke-tui` can emit `ChatDebugStep` records after each normal chat-loop provider response has been parsed and its tool batch has executed.
+- `ploke-eval` installs a debug sink for captured headless TUI attempts and persists checkpoint records under:
+
+  ```text
+  <campaign>/prototype1/debug/tool-loop/<session-id>/
+    session.json
+    resume.json
+    steps/0000.json
+    steps/0001.json
+    ...
+  ```
+
+- `crates/ploke-eval/src/replay/tool_loop.rs` defines typed records and a filesystem store for:
+  - `ToolLoopSession`;
+  - `ToolLoopStep`;
+  - `ToolLoopResume`.
+- `ploke-eval loop walk llm` has read-only inspection/navigation subcommands:
+
+  ```text
+  lanes
+  focus
+  show
+  back
+  forward
+  head
+  ```
+
+- The read-only `walk llm` surface can list lanes, select a lane, inspect the latest or selected checkpoint, move an in-memory cursor, and show summaries of provider-response outcome, tool requests/results, terminal status, and resume metadata.
+- `walk llm step` is implemented as an explicitly effectful command gated by `--allow workspace-mutation`:
+  - `--source historical` replays one recorded provider response through current TUI tool semantics and writes a new checkpoint session;
+  - `--source live --watch` resumes from the selected checkpoint request state, calls the live provider once, executes that response's tool batch, and writes a new checkpoint session.
+- `walk llm finish --watch --allow workspace-mutation` loops live one-response steps until a terminal inner frame or `--max-steps`.
+- Live verification on `p1-live-lanes-g25p-20260619-123437` showed:
+  - historical step 12 replay reached a terminal content checkpoint;
+  - historical step 11 replay re-executed the protected-write attempt and paused with the failed tool result;
+  - live step after step 11 resumed after the protected-write denial, ran a `cargo check` tool call, and paused;
+  - live finish from that paused branch reached terminal content with a clean workspace.
+
+Still not implemented:
+
+- `walk step --into llm` or any equivalent outer-to-inner debugger entry command.
+- `walk llm abandon`.
+- A `WalkState::ToolLoopPaused` or equivalent inner-frame state that preserves an outer typestate anchor.
+- Authority-bearing resume/projection from terminal `walk llm finish` back into the outer `walk` typestate edge.
+- Historical multi-step continuation that chains a recorded next response onto a newly branched checkpoint session; current historical mode replays one selected recorded response into a new session.
+- Full proposal/admission/settle-effect capture, exact workspace dirty-path capture, or validation-barrier capture in every checkpoint.
+
+Current command semantics:
+
+```text
+normal/live headless run executes to completion
+  -> debug sink records response checkpoints
+  -> walk llm inspects recorded checkpoints read-only
+
+walk llm step --source historical --allow workspace-mutation
+  -> replay one selected recorded provider response through current tools
+  -> write a new checkpoint session
+
+walk llm step --source live --watch --allow workspace-mutation
+  -> resume from selected checkpoint request state
+  -> call the provider once
+  -> execute that response's tool batch
+  -> write a new checkpoint session
+
+walk llm finish --watch --allow workspace-mutation
+  -> repeat live one-response steps until terminal or --max-steps
+```
+
+The desired outer-integrated debugger semantics below remain the target, not current behavior:
+
+```text
+walk step --into llm
+walk llm step    # one provider response + whole tool batch, then pause
+walk llm finish  # run remaining response steps to terminal inner frame
+return/project terminal inner result into outer walk typestate
+```
+
+Related existing functionality outside `loop walk`:
+
+- `ploke-eval run replay turn-live --tail live-step` remains useful for turn-live bundle replay probing, but `walk llm step` is now the operator surface for checkpoint-rooted one-response stepping.
+- `ChatStepSource::RecordedPrefixThenLiveSteps` can enforce a one-live-response boundary in the replay-probe path.
+- These pieces should still be reused where possible for future outer-typestate integration and authority-safe projection.
+
+Near-term implementation direction:
+
+1. Use current checkpoint inspection on recent runs to identify the minimum fields missing from `ToolLoopStep`/`ToolLoopResume` for safe resume.
+2. Preserve `walk replay/back/forward` as read-only outer timeline commands.
+3. Add a separate live/effectful inner-frame path for `walk llm step`/`finish`, gated explicitly and tested against both recorded historical prefixes and live Google smoke runs.
+4. Before any resume implementation, prove that stepping from a checkpoint cannot duplicate prior tool effects or silently skip required settle/validation barriers.
 
 ## Goal
 

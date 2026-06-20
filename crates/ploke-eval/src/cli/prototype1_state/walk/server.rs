@@ -150,6 +150,66 @@ impl WalkServer {
                 .controller
                 .llm_report(session_id.as_deref(), lane.as_deref(), head, step)
                 .map(|message| WalkResponse::ok(phase, message, self.epoch.clone())),
+            WalkRequestBody::LlmStep {
+                session_id,
+                lane,
+                step,
+                source,
+                watch,
+                allow_workspace_mutation,
+                model_id,
+                provider,
+                max_attempts,
+                timeout_secs,
+            } => match self.ensure_epoch_guard(request.client_epoch.as_ref()) {
+                Ok(()) => self
+                    .controller
+                    .llm_step(
+                        session_id.as_deref(),
+                        lane.as_deref(),
+                        step,
+                        source,
+                        watch,
+                        allow_workspace_mutation,
+                        model_id.as_deref(),
+                        provider.as_deref(),
+                        max_attempts,
+                        timeout_secs,
+                    )
+                    .await
+                    .map(|message| WalkResponse::ok(phase, message, self.epoch.clone())),
+                Err(error) => Err(error),
+            },
+            WalkRequestBody::LlmFinish {
+                session_id,
+                lane,
+                step,
+                watch,
+                allow_workspace_mutation,
+                model_id,
+                provider,
+                max_steps,
+                max_attempts,
+                timeout_secs,
+            } => match self.ensure_epoch_guard(request.client_epoch.as_ref()) {
+                Ok(()) => self
+                    .controller
+                    .llm_finish(
+                        session_id.as_deref(),
+                        lane.as_deref(),
+                        step,
+                        watch,
+                        allow_workspace_mutation,
+                        model_id.as_deref(),
+                        provider.as_deref(),
+                        max_steps,
+                        max_attempts,
+                        timeout_secs,
+                    )
+                    .await
+                    .map(|message| WalkResponse::ok(phase, message, self.epoch.clone())),
+                Err(error) => Err(error),
+            },
             WalkRequestBody::LlmBack { lane, steps } => self
                 .controller
                 .llm_move(lane.as_deref(), steps, super::controller::LlmMove::Back)

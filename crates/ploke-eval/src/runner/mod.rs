@@ -15,7 +15,6 @@ use ploke_llm::router_only::{
     openrouter::{OpenRouter, OpenRouterModelId},
 };
 use ploke_llm::{LlmRoute, ModelId, ProviderKey, SupportsTools};
-use ploke_tui::AppEvent;
 use ploke_tui::app::App;
 use ploke_tui::app::commands::harness::{TestRuntime, TestRuntimeActorGuard};
 use ploke_tui::app::view::components::model_browser::tool_capable_provider_key;
@@ -25,6 +24,7 @@ use ploke_tui::parser::{resolve_index_target, run_parse_resolved};
 use ploke_tui::user_config::{
     ChatPolicy, ChatTimeoutStrategy, RetrievalStrategyUser, ToolLoopMode,
 };
+use ploke_tui::{AppEvent, EventBus};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::time::{Instant, sleep};
@@ -364,6 +364,7 @@ pub(crate) struct WorkspaceTuiRuntime {
     _actor_guard: TestRuntimeActorGuard,
     pub(crate) app: App,
     pub(crate) state: Arc<AppState>,
+    pub(crate) event_bus: Arc<EventBus>,
     pub(crate) debug_rx: mpsc::Receiver<ploke_tui::app::commands::harness::DebugStateCommand>,
     pub(crate) realtime_rx: broadcast::Receiver<AppEvent>,
     pub(crate) background_rx: broadcast::Receiver<AppEvent>,
@@ -419,6 +420,7 @@ pub(crate) async fn setup_workspace_tui_runtime_with_read_roots(
                 detail: "missing debug string receiver".to_string(),
             })?;
     let state = runtime.state_arc();
+    let event_bus = runtime.event_bus_arc();
 
     configure_sparse_strict_rag(&state).await;
     prepare_sparse_workspace(&state, workspace_root, extra_read_roots).await?;
@@ -433,6 +435,7 @@ pub(crate) async fn setup_workspace_tui_runtime_with_read_roots(
         _actor_guard: actor_guard,
         app,
         state,
+        event_bus,
         debug_rx,
         realtime_rx,
         background_rx,
@@ -481,6 +484,7 @@ pub(crate) async fn setup_workspace_tui_prompt_runtime(
                 detail: "missing debug string receiver".to_string(),
             })?;
     let state = runtime.state_arc();
+    let event_bus = runtime.event_bus_arc();
 
     configure_sparse_strict_rag(&state).await;
     prepare_sparse_workspace(&state, workspace_root, &[]).await?;
@@ -495,6 +499,7 @@ pub(crate) async fn setup_workspace_tui_prompt_runtime(
         _actor_guard: actor_guard,
         app,
         state,
+        event_bus,
         debug_rx,
         realtime_rx,
         background_rx,
