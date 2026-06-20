@@ -258,7 +258,7 @@ impl WalkController {
         self.files.push_roots(&mut lines);
         self.files.push_tracked(&mut lines);
         if let Some(reconstruction) = &self.reconstruction {
-            reconstruction.push_lines(&mut lines);
+            reconstruction.push_lines(&mut lines, &self.files);
         }
         lines.push("typestate:".to_string());
         let typestate = phase.typestate();
@@ -1113,19 +1113,71 @@ struct WalkReconstruction {
 }
 
 impl WalkReconstruction {
-    fn push_lines(&self, lines: &mut Vec<String>) {
+    fn push_lines(&self, lines: &mut Vec<String>, files: &WalkFiles) {
         lines.push("reconstruction:".to_string());
         if self.notes.is_empty() && self.blockers.is_empty() {
             lines.push("  (no durable reconstruction notes)".to_string());
             return;
         }
         for note in &self.notes {
-            push_wrapped_item(lines, note, "  - ", "    ");
+            let note = render_reconstruction_note(note, files);
+            push_wrapped_item(lines, &note, "  - ", "    ");
         }
         for blocker in &self.blockers {
-            push_wrapped_item(lines, blocker, "  - blocked: ", "    ");
+            let blocker = strip_reconstructed(blocker);
+            push_wrapped_item(lines, &blocker, "  - blocked: ", "    ");
         }
     }
+}
+
+fn render_reconstruction_note(note: &str, files: &WalkFiles) -> String {
+    if let Some(rest) = note.strip_prefix("parent identity: ") {
+        return render_parent_note(rest, files);
+    }
+    if let Some(path) = note
+        .strip_prefix("no parent identity found at '")
+        .and_then(|value| value.strip_suffix('\''))
+    {
+        return format!(
+            "parent_identity: {} (missing)",
+            files.display_tracked(Path::new(path))
+        );
+    }
+    if let Some(path) =
+        note.strip_prefix("inferred successor handoff invocation from durable journal: ")
+    {
+        return format!(
+            "successor_handoff_invocation: {}",
+            files.display_tracked(Path::new(path))
+        );
+    }
+    strip_reconstructed(note)
+}
+
+fn render_parent_note(note: &str, files: &WalkFiles) -> String {
+    let Some((path, rest)) = note.split_once(" (") else {
+        return format!(
+            "parent_identity: {}",
+            files.display_tracked(Path::new(note))
+        );
+    };
+    let detail = rest.strip_suffix(')').unwrap_or(rest);
+    format!(
+        "parent_identity: {}\n{detail}",
+        files.display_tracked(Path::new(path))
+    )
+}
+
+fn strip_reconstructed(note: &str) -> String {
+    let Some(rest) = note.strip_prefix("reconstructed ") else {
+        return note.to_string();
+    };
+    for separator in [" from ", " by "] {
+        if let Some((phase, detail)) = rest.split_once(separator) {
+            return format!("{phase}: {detail}");
+        }
+    }
+    rest.to_string()
 }
 
 fn push_wrapped_item(lines: &mut Vec<String>, value: &str, first_prefix: &str, rest_prefix: &str) {
@@ -1203,14 +1255,17 @@ fn ensure_supported_target(target: WalkPhase) -> Result<(), PrepareError> {
 
 fn push_changes(lines: &mut Vec<String>, from: WalkPhase, to: WalkPhase, label: &str) {
     lines.push(format!("{label}:"));
-    for change in to.changes_from(from) {
-        let mut change_lines = change.lines();
-        if let Some(first) = change_lines.next() {
-            lines.push(format!("  - {first}"));
-            for line in change_lines {
-                lines.push(format!("    {line}"));
-            }
-        }
+    let start = lines.len();
+    let style = DeltaRenderStyle {
+        verbose: false,
+        color: false,
+    };
+    for delta in to.axis_deltas_from(from) {
+        push_axis_delta(lines, &delta, style, 2);
+    }
+    push_side_effects(lines, from, to, style);
+    if lines.len() == start {
+        lines.push("  - no admitted typestate delta for this phase pair".to_string());
     }
 }
 
@@ -1221,23 +1276,14 @@ fn push_colored_changes(
     style: DeltaRenderStyle,
 ) {
     lines.push("typestate changes:".to_string());
+    let start = lines.len();
     for delta in to.axis_deltas_from(from) {
-        lines.push(format!(
-            "  - {}",
-            highlight_changed(delta.label, style.color)
-        ));
-        lines.push(format!(
-            "    {} {}",
-            highlight_removed("-", style.color),
-            highlight_removed(&delta.from, style.color)
-        ));
-        lines.push(format!(
-            "    {} {}",
-            highlight_added("+", style.color),
-            highlight_added(&delta.to, style.color)
-        ));
+        push_axis_delta(lines, &delta, style, 2);
     }
     push_side_effects(lines, from, to, style);
+    if lines.len() == start {
+        lines.push("  - no admitted typestate delta for this phase pair".to_string());
+    }
 }
 
 fn push_verbose_changes(
@@ -1247,18 +1293,16 @@ fn push_verbose_changes(
     style: DeltaRenderStyle,
 ) {
     lines.push("typestate changes:".to_string());
+    let start = lines.len();
     for delta in to.axis_deltas_from(from) {
         lines.push(format!(
-            "  - {}",
+            "  - {}:",
             highlight_changed(delta.label, style.color)
         ));
         lines.push("    removed:".to_string());
-        lines.push(format!(
-            "      {}",
-            highlight_removed(&delta.from, style.color)
-        ));
+        push_type_lines(lines, &delta.from, 6, style.color, highlight_removed);
         lines.push("    added:".to_string());
-        lines.push(format!("      {}", highlight_added(&delta.to, style.color)));
+        push_type_lines(lines, &delta.to, 6, style.color, highlight_added);
         if delta.label != "phase" {
             let removed = delta.removed_structures();
             if !removed.is_empty() {
@@ -1285,6 +1329,72 @@ fn push_verbose_changes(
         }
     }
     push_side_effects(lines, from, to, style);
+    if lines.len() == start {
+        lines.push("  - no admitted typestate delta for this phase pair".to_string());
+    }
+}
+
+fn push_axis_delta(
+    lines: &mut Vec<String>,
+    delta: &typestate::RuntimeAxisDelta,
+    style: DeltaRenderStyle,
+    indent: usize,
+) {
+    let compact = format!("{}: {} -> {}", delta.label, delta.from, delta.to);
+    if compact.len() <= 96 {
+        lines.push(format!(
+            "{}- {}: {} -> {}",
+            " ".repeat(indent),
+            highlight_changed(delta.label, style.color),
+            highlight_removed(&delta.from, style.color),
+            highlight_added(&delta.to, style.color)
+        ));
+        return;
+    }
+    lines.push(format!(
+        "{}- {}:",
+        " ".repeat(indent),
+        highlight_changed(delta.label, style.color)
+    ));
+    push_type_lines(
+        lines,
+        &delta.from,
+        indent + 4,
+        style.color,
+        highlight_removed,
+    );
+    push_arrow_type(lines, &delta.to, indent + 4, style.color, highlight_added);
+}
+
+fn push_type_lines(
+    lines: &mut Vec<String>,
+    value: &str,
+    indent: usize,
+    color: bool,
+    painter: fn(&str, bool) -> String,
+) {
+    for line in typestate::render_type_expr(value, indent) {
+        lines.push(painter(&line, color));
+    }
+}
+
+fn push_arrow_type(
+    lines: &mut Vec<String>,
+    value: &str,
+    indent: usize,
+    color: bool,
+    painter: fn(&str, bool) -> String,
+) {
+    let mut rendered = typestate::render_type_expr(value, indent).into_iter();
+    if let Some(first) = rendered.next() {
+        lines.push(painter(
+            &format!("{}-> {}", " ".repeat(indent), first.trim_start()),
+            color,
+        ));
+    }
+    for line in rendered {
+        lines.push(painter(&line, color));
+    }
 }
 
 fn push_side_effects(
@@ -1728,6 +1838,47 @@ mod tests {
             None,
         );
         write_parent_identity(repo, &identity).expect("parent identity");
+    }
+
+    #[test]
+    fn reconstruction_note_abbreviates_parent_identity_path() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let repo = tmp.path().join("repo");
+        let mut files = WalkFiles::default();
+        files.reset(&repo);
+        let note = format!(
+            "parent identity: {} (node=node-1, generation=0, branch=branch-1)",
+            parent_identity_path(&repo).display()
+        );
+
+        let rendered = render_reconstruction_note(&note, &files);
+
+        assert!(
+            rendered.contains("parent_identity: {root}/.ploke/prototype1/parent_identity.json")
+        );
+        assert!(rendered.contains("node=node-1, generation=0, branch=branch-1"));
+        assert!(!rendered.contains(tmp.path().to_str().expect("temp path")));
+    }
+
+    #[test]
+    fn typestate_changes_pretty_print_long_evidence_axis() {
+        let mut lines = Vec::new();
+
+        push_changes(
+            &mut lines,
+            WalkPhase::R13a,
+            WalkPhase::R14a,
+            "typestate changes",
+        );
+        let rendered = lines.join("\n");
+
+        assert!(rendered.contains("  - evidence:"));
+        assert!(rendered.contains("    Evidence<"));
+        assert!(rendered.contains("    -> Evidence<"));
+        assert!(rendered.contains("        evidence::completion::Recorded,"));
+        assert!(!rendered.contains(
+            "Evidence<evidence::parent_start::Recorded<ParentStartedEntry>, evidence::baseline"
+        ));
     }
 
     #[test]

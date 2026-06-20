@@ -328,77 +328,6 @@ impl WalkPhase {
         self.next_from(from).map(|step| step.edge)
     }
 
-    /// Human typestate deltas for a transition between two admitted phases.
-    pub(crate) fn changes_from(self, from: WalkPhase) -> Vec<String> {
-        let mut deltas = self
-            .axis_deltas_from(from)
-            .into_iter()
-            .map(|delta| render_axis_delta(&delta))
-            .collect::<Vec<_>>();
-        if matches!((from, self), (WalkPhase::R4c, WalkPhase::R5)) {
-            deltas.push(
-                "side effect: appends parent-start/resource entries to the transition journal"
-                    .to_string(),
-            );
-        }
-        if matches!((from, self), (WalkPhase::R5, WalkPhase::R6)) {
-            deltas.push(
-                "side effect: may advance eval/protocol closure before loading parent baseline"
-                    .to_string(),
-            );
-        }
-        if matches!((from, self), (WalkPhase::R7, WalkPhase::R8)) {
-            deltas.push(
-                "side effect: may publish or receive child-plan authority and wait on provider/harness work"
-                    .to_string(),
-            );
-        }
-        if matches!((from, self), (WalkPhase::R10, WalkPhase::R11a)) {
-            deltas.push(
-                "side effect: projects rejected-only selection evidence without child fanout"
-                    .to_string(),
-            );
-        }
-        if matches!((from, self), (WalkPhase::R10, WalkPhase::R11)) {
-            deltas.push(
-                "side effect: runs live child fanout and may spawn or observe child runtimes"
-                    .to_string(),
-            );
-        }
-        if matches!(
-            (from, self),
-            (WalkPhase::R11a | WalkPhase::R11, WalkPhase::R12)
-        ) {
-            deltas.push(
-                "projection: assembles report facts without emitting the final report".to_string(),
-            );
-        }
-        if matches!((from, self), (WalkPhase::R12, WalkPhase::R13a)) {
-            deltas.push("side effect: may record no-selection stopped continuation".to_string());
-        }
-        if matches!((from, self), (WalkPhase::R12, WalkPhase::R13b)) {
-            deltas.push(
-                "side effect: seals/appends History, installs selected successor checkout, retires parent, spawns successor, and waits for ready evidence"
-                    .to_string(),
-            );
-        }
-        if matches!((from, self), (WalkPhase::R13a, WalkPhase::R14a)) {
-            deltas.push(
-                "side effect: emits final report and records parent-complete evidence".to_string(),
-            );
-        }
-        if matches!((from, self), (WalkPhase::R13b, WalkPhase::R14b)) {
-            deltas.push(
-                "side effect: emits final handoff report and records parent-complete evidence"
-                    .to_string(),
-            );
-        }
-        if deltas.is_empty() {
-            deltas.push("no admitted typestate delta for this phase pair".to_string());
-        }
-        deltas
-    }
-
     /// Structured changed axes for a transition between two admitted phases.
     pub(crate) fn axis_deltas_from(self, from: WalkPhase) -> Vec<RuntimeAxisDelta> {
         match (from.shape(), self.shape()) {
@@ -448,15 +377,6 @@ impl WalkPhase {
 impl fmt::Display for WalkPhase {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
-    }
-}
-
-fn render_axis_delta(delta: &RuntimeAxisDelta) -> String {
-    let combined = format!("{}: {} -> {}", delta.label, delta.from, delta.to);
-    if combined.len() <= 96 {
-        combined
-    } else {
-        format!("{}:\n{}\n-> {}", delta.label, delta.from, delta.to)
     }
 }
 

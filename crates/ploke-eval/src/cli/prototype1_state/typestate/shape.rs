@@ -8,6 +8,8 @@
 
 use std::collections::BTreeSet;
 
+const TYPE_LINE_LIMIT: usize = 72;
+
 /// Stringified top-level axes of one `Runtime<...>` typestate alias.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RuntimeShape {
@@ -113,7 +115,7 @@ impl RuntimeShape {
             AxisShape {
                 label: "plan",
                 value: self.plan,
-                multiline: false,
+                multiline: true,
             },
             AxisShape {
                 label: "children",
@@ -153,18 +155,35 @@ fn render_delta(label: &str, from: &str, to: &str) -> String {
     }
 }
 
+pub(crate) fn render_type_expr(value: &str, indent: usize) -> Vec<String> {
+    render_type_expr_with(value, indent, false, false)
+}
+
 fn render_multiline_axis(value: &str, indent: usize) -> Vec<String> {
+    render_type_expr_with(value, indent, true, true)
+}
+
+fn render_type_expr_with(
+    value: &str,
+    indent: usize,
+    trailing: bool,
+    force_multiline: bool,
+) -> Vec<String> {
     let value = compact_type(value);
-    let Some((head, args)) = split_generic(&value) else {
-        return vec![format!("{}{},", " ".repeat(indent), value)];
-    };
     let prefix = " ".repeat(indent);
-    let item_prefix = " ".repeat(indent + 4);
-    let mut lines = vec![format!("{prefix}{head}<")];
-    for arg in split_top_level_args(args) {
-        lines.push(format!("{item_prefix}{arg},"));
+    let suffix = if trailing { "," } else { "" };
+    let Some((head, args)) = split_generic(&value) else {
+        return vec![format!("{prefix}{value}{suffix}")];
+    };
+    let args = split_top_level_args(args);
+    if !force_multiline && value.len() <= TYPE_LINE_LIMIT {
+        return vec![format!("{prefix}{value}{suffix}")];
     }
-    lines.push(format!("{prefix}>,"));
+    let mut lines = vec![format!("{prefix}{head}<")];
+    for arg in args {
+        lines.extend(render_type_expr_with(&arg, indent + 4, true, false));
+    }
+    lines.push(format!("{prefix}>{suffix}"));
     lines
 }
 
@@ -263,6 +282,42 @@ mod tests {
 
         assert!(rendered.contains("History<\n        history_axis::startup::None,"));
         assert!(rendered.contains("Context<context::Command<Prototype1StateCommand>>,"));
+    }
+
+    #[test]
+    fn renders_plan_axis_with_nested_schedule_multiline() {
+        let shape = RuntimeShape {
+            phase: "phase::R13a",
+            role: "parent_role::Parent<parent_role::Selectable>",
+            context: "Context<context::Collected<RunShape, CampaignConfig>>",
+            plan: "Plan<plan::authority::Received<Received<parent_role::ChildPlan>>, plan::schedule::Ready<Prototype1ChildBudget, Prototype1ChildScheduleMode>>",
+            children: "Children<children::set::Report<PlannedChildOutcome>, children::attempt::Complete>",
+            history: "History<history_axis::startup::Validated<history_axis::startup::Any>, history_axis::head::Read, history_axis::epoch::None>",
+            evidence: "Evidence<evidence::parent_start::Recorded<ParentStartedEntry>, evidence::baseline::Ready<CompleteBaseline>, evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>, evidence::selection::Evidence<SelectionSealMaterial>, evidence::completion::None>",
+            continuation: "Continuation<continuation::selection::Maybe<SuccessorDecision>, continuation::decision::Stopped<Prototype1ContinuationDecision>, continuation::handoff::None>",
+            report: "Report<report::Facts>",
+        };
+
+        let rendered = shape.render();
+
+        assert!(rendered.contains(
+            "Plan<\n        plan::authority::Received<Received<parent_role::ChildPlan>>,"
+        ));
+        assert!(
+            rendered.contains("        plan::schedule::Ready<\n            Prototype1ChildBudget,")
+        );
+    }
+
+    #[test]
+    fn renders_long_type_expr_multiline() {
+        let rendered = super::render_type_expr(
+            "Evidence<evidence::parent_start::Recorded<ParentStartedEntry>, evidence::baseline::Ready<CompleteBaseline>, evidence::policy::Ready<Prototype1SearchPolicy, Prototype1ChildBudget>, evidence::selection::Evidence<SelectionSealMaterial>, evidence::completion::Recorded>",
+            4,
+        )
+        .join("\n");
+
+        assert!(rendered.starts_with("    Evidence<"));
+        assert!(rendered.contains("        evidence::completion::Recorded,"));
     }
 
     #[test]

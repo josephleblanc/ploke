@@ -209,10 +209,12 @@ impl WalkSummary {
 }
 
 fn print_table(summary: &WalkSummary, verbose: bool) {
+    let campaign_dir = campaign_dir(summary);
     println!("walk summary");
     println!("----------------------------------------");
     println!("campaign_id: {}", summary.campaign_id);
     println!("repo_root: {}", summary.repo_root.display());
+    println!("campaign_dir: {}", display_dir(&campaign_dir));
     println!("active_node: {}", summary.active.node_id);
     println!("active_generation: {}", summary.active.generation);
     println!("active_branch: {}", summary.active.branch_id);
@@ -258,7 +260,10 @@ fn print_table(summary: &WalkSummary, verbose: bool) {
         yes(summary.completion.expected_fanout_satisfied)
     );
     println!("journal:");
-    println!("  path: {}", summary.journal.path.display());
+    println!(
+        "  path: {}",
+        display_under(&summary.journal.path, &campaign_dir, "campaign_dir")
+    );
     println!("  entries: {}", summary.journal.entries);
     if let Some(cursor) = &summary.journal.latest_cursor {
         println!("  latest_cursor: #{} {}", cursor.index, cursor.label);
@@ -284,6 +289,33 @@ fn print_table(summary: &WalkSummary, verbose: bool) {
     if verbose {
         print_verbose(summary);
     }
+}
+
+fn campaign_dir(summary: &WalkSummary) -> PathBuf {
+    summary
+        .paths
+        .campaign_manifest
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf()
+}
+
+fn display_dir(path: &Path) -> String {
+    let mut value = path.display().to_string();
+    if !value.ends_with(std::path::MAIN_SEPARATOR) {
+        value.push(std::path::MAIN_SEPARATOR);
+    }
+    value
+}
+
+fn display_under(path: &Path, root: &Path, label: &str) -> String {
+    if let Ok(stripped) = path.strip_prefix(root) {
+        if stripped.as_os_str().is_empty() {
+            return format!("{{{label}}}/");
+        }
+        return format!("{{{label}}}/{}", stripped.display());
+    }
+    path.display().to_string()
 }
 
 fn print_verbose(summary: &WalkSummary) {
@@ -769,4 +801,22 @@ fn display_opt(value: Option<u32>) -> String {
 
 fn yes(value: bool) -> &'static str {
     if value { "yes" } else { "no" }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_under_uses_campaign_dir_placeholder() {
+        let campaign_dir = PathBuf::from("/tmp/eval/campaigns/run-1");
+        let journal = campaign_dir.join("prototype1/transition-journal.jsonl");
+
+        let rendered = display_under(&journal, &campaign_dir, "campaign_dir");
+
+        assert_eq!(
+            rendered,
+            "{campaign_dir}/prototype1/transition-journal.jsonl"
+        );
+    }
 }
