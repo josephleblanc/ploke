@@ -153,6 +153,15 @@ pub(crate) enum WalkRequestBody {
         /// Print JSON instead of human-readable text.
         json: bool,
     },
+    /// Inspect persisted protocol review artifacts for a nested LLM/tool-loop session.
+    LlmProtocol {
+        /// Specific checkpoint session id. Defaults to selected lane/latest session.
+        session_id: Option<String>,
+        /// Lane id. Defaults to current focus.
+        lane: Option<String>,
+        /// Print JSON instead of human-readable text.
+        json: bool,
+    },
     /// Inspect a nested LLM/tool-loop tool definition and selected call arguments.
     LlmTool {
         /// Specific checkpoint session id. Defaults to selected lane/latest session.

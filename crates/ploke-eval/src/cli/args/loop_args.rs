@@ -270,7 +270,7 @@ pub struct Prototype1StateWalkShowDeltaCommand {
 #[derive(Debug, Clone, Parser)]
 #[command(
     about = "Inspect nested LLM/tool-loop debugger checkpoints",
-    after_help = "Examples:\n  ploke-eval loop walk llm lanes\n  ploke-eval loop walk llm focus node-...-r2\n  ploke-eval loop walk llm timeline\n  ploke-eval loop walk llm prompt\n  ploke-eval loop walk llm show --lane node-...-r2 --head\n  ploke-eval loop walk llm tool --step 11 --json\n  ploke-eval loop walk llm back --lane node-...-r2 --steps 3\n\nThis surface is read-only unless step/finish says otherwise. Current lane/cursor/timeline/show/prompt/tool commands do not call providers, execute tools, mutate the checkout, or advance the outer typestate walk."
+    after_help = "Examples:\n  ploke-eval loop walk llm lanes\n  ploke-eval loop walk llm focus node-...-r2\n  ploke-eval loop walk llm timeline\n  ploke-eval loop walk llm prompt\n  ploke-eval loop walk llm protocol\n  ploke-eval loop walk llm show --lane node-...-r2 --head\n  ploke-eval loop walk llm tool --step 11 --json\n  ploke-eval loop walk llm back --lane node-...-r2 --steps 3\n\nThis surface is read-only unless step/finish says otherwise. Current lane/cursor/timeline/show/prompt/protocol/tool commands do not call providers, execute tools, mutate the checkout, or advance the outer typestate walk."
 )]
 pub struct Prototype1StateWalkLlmCommand {
     #[command(flatten)]
@@ -292,6 +292,8 @@ pub enum Prototype1StateWalkLlmSubcommand {
     Timeline(Prototype1StateWalkLlmTimelineCommand),
     /// Inspect persisted request messages sent to the LLM/tool-loop.
     Prompt(Prototype1StateWalkLlmPromptCommand),
+    /// Inspect persisted protocol review artifacts for the selected LLM/tool-loop.
+    Protocol(Prototype1StateWalkLlmProtocolCommand),
     /// Inspect the tool definition and arguments for a selected LLM tool call.
     Tool(Prototype1StateWalkLlmToolCommand),
     /// Execute one historical or live provider response step through current tools.
@@ -402,6 +404,21 @@ pub struct Prototype1StateWalkLlmPromptCommand {
     pub full: bool,
 
     /// Print persisted request messages as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkLlmProtocolCommand {
+    /// Specific tool-loop session id to inspect. Defaults to selected lane/latest session.
+    #[arg(long)]
+    pub session_id: Option<String>,
+
+    /// Lane id, usually the candidate workspace basename. Defaults to current focus.
+    #[arg(long)]
+    pub lane: Option<String>,
+
+    /// Print protocol summary as JSON.
     #[arg(long)]
     pub json: bool,
 }

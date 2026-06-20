@@ -8,7 +8,7 @@
 //! or successor handoff finality.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::Read,
     path::{Path, PathBuf},
@@ -42,7 +42,9 @@ use crate::{
             replay::ReplayCursor,
         },
         edit_surface::{
-            harness_request::PublishedBroadHarnessRequest,
+            harness_request::{
+                EvidenceRootKind, EvidenceRootLocation, PublishedBroadHarnessRequest,
+            },
             tui_adapter::{self, ModelSelection},
         },
         identity::{load_parent_identity_optional, parent_identity_path},
@@ -63,6 +65,9 @@ use crate::{
         provider::{headless_model_selection, load_parent_patcher_model_selection},
     },
     layout::prototype1_monitor_target_file,
+    protocol_artifacts::{
+        StoredProtocolArtifactFile, load_protocol_artifact, protocol_artifact_summary,
+    },
     replay::tool_loop::{
         FsToolLoopStore, ToolLoopOutcome, ToolLoopResult, ToolLoopResume, ToolLoopSession,
         ToolLoopStatus, ToolLoopStore, WorkspaceState,
@@ -448,6 +453,22 @@ impl WalkController {
         let selected = step.unwrap_or(0);
         let record = store.read_step(&lane_state.session.session_id, selected)?;
         self.render_llm_prompt(lane_state, selected, record, role, message, full, json)
+    }
+
+    /// Render persisted protocol review artifacts for one LLM/tool-loop session.
+    pub(crate) fn llm_protocol_report(
+        &self,
+        session_id: Option<&str>,
+        lane: Option<&str>,
+        json: bool,
+    ) -> Result<String, PrepareError> {
+        let store = self.tool_loop_store()?;
+        let lane_state = match session_id {
+            Some(session_id) => self.lane_for_session(&store, store.read_session(session_id)?)?,
+            None => self.resolve_lane(&store, lane)?,
+        };
+        let report = self.load_llm_protocol_report(&store, &lane_state)?;
+        self.render_llm_protocol(&lane_state, &report, json)
     }
 
     /// Render the tool definition and historical arguments for one LLM tool call.
@@ -1062,6 +1083,10 @@ impl WalkController {
                 lines.push(format!("tool_requests: {}", record.tool_requests.len()));
                 lines.push(format!("tool_results: {}", record.tool_results.len()));
                 lines.extend(render_step_transcript(&record));
+                match self.load_llm_protocol_report(store, &lane) {
+                    Ok(report) => lines.extend(render_step_protocol_lines(&report, &record)),
+                    Err(error) => lines.push(format!("protocol: error {error}")),
+                }
                 lines.push(format!("terminal: {}", record.terminal));
                 lines.push(format!(
                     "workspace_before: {}",
@@ -1141,6 +1166,48 @@ impl WalkController {
         Ok(lines.join("\n"))
     }
 
+    fn load_llm_protocol_report(
+        &self,
+        store: &FsToolLoopStore,
+        lane: &LlmLane,
+    ) -> Result<LlmProtocolReport, PrepareError> {
+        let published = self.load_llm_published_request(lane).ok();
+        let dirs = protocol_artifact_dirs(store, lane, published.as_ref());
+        let artifacts = load_protocol_artifacts_from_dirs(&dirs)?;
+        let calls = collect_session_tool_calls(store, lane)?;
+        Ok(LlmProtocolReport::from_artifacts(dirs, artifacts, calls))
+    }
+
+    fn render_llm_protocol(
+        &self,
+        lane: &LlmLane,
+        report: &LlmProtocolReport,
+        json: bool,
+    ) -> Result<String, PrepareError> {
+        if json {
+            return render_llm_protocol_json(lane, report);
+        }
+        let mut lines = Vec::new();
+        lines.push("llm protocol".to_string());
+        lines.push(format!("lane: {}", lane.lane_id));
+        lines.push(format!("session: {}", lane.session.session_id));
+        lines.extend(render_provenance_lines(
+            &self.repo_root,
+            &lane.session.workspace,
+        ));
+        lines.extend(render_protocol_summary_lines(report, "protocol"));
+        lines.push("next:".to_string());
+        lines.push("  walk llm timeline".to_string());
+        lines.push(
+            "  walk llm show      # inspect checkpoint transcript with protocol hints".to_string(),
+        );
+        lines.push(
+            "  walk llm tool      # inspect one tool call with protocol feedback".to_string(),
+        );
+        lines.push("  walk llm protocol --json".to_string());
+        Ok(lines.join("\n"))
+    }
+
     fn render_llm_tool(
         &self,
         lane: LlmLane,
@@ -1203,6 +1270,15 @@ impl WalkController {
                 &pretty_json_or_raw(request.arguments.as_str()),
                 2,
             ));
+            if let Some((step, _)) = loaded.as_ref() {
+                match self
+                    .tool_loop_store()
+                    .and_then(|store| self.load_llm_protocol_report(&store, &lane))
+                {
+                    Ok(report) => lines.extend(render_tool_protocol_lines(&report, *step, request)),
+                    Err(error) => lines.push(format!("protocol: error {error}")),
+                }
+            }
         } else if name.is_some() {
             lines.push("arguments: (no matching persisted call at selected step)".to_string());
         }
@@ -2536,6 +2612,590 @@ fn role_label(role: Role) -> &'static str {
         Role::User => "user",
         Role::Assistant => "assistant",
         Role::Tool => "tool",
+    }
+}
+
+#[derive(Debug, Clone)]
+struct SessionToolCallRef {
+    protocol_index: usize,
+    step_index: usize,
+    tool: String,
+    call_id: String,
+}
+
+#[derive(Debug, Clone)]
+struct LlmProtocolCallReview {
+    focal_call_index: usize,
+    artifact_path: PathBuf,
+    created_at_ms: u64,
+    overall: Option<String>,
+    confidence: Option<String>,
+    usefulness: Option<ProtocolBranchSummary>,
+    redundancy: Option<ProtocolBranchSummary>,
+    recoverability: Option<ProtocolBranchSummary>,
+    concerns: Vec<String>,
+    scope_summary: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ProtocolBranchSummary {
+    verdict: Option<String>,
+    confidence: Option<String>,
+    rationale: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct LlmProtocolReport {
+    searched_dirs: Vec<PathBuf>,
+    artifacts: Vec<StoredProtocolArtifactFile>,
+    artifact_counts: BTreeMap<String, usize>,
+    session_calls: Vec<SessionToolCallRef>,
+    call_reviews: BTreeMap<usize, LlmProtocolCallReview>,
+    segment_review_counts: BTreeMap<String, usize>,
+    segmentation_segments: Option<usize>,
+    segmentation_uncovered: Option<usize>,
+    total_calls: usize,
+}
+
+impl LlmProtocolReport {
+    fn from_artifacts(
+        searched_dirs: Vec<PathBuf>,
+        artifacts: Vec<StoredProtocolArtifactFile>,
+        session_calls: Vec<SessionToolCallRef>,
+    ) -> Self {
+        let mut artifact_counts = BTreeMap::new();
+        let mut call_reviews = BTreeMap::<usize, LlmProtocolCallReview>::new();
+        let mut segment_review_counts = BTreeMap::new();
+        let mut segmentation_segments = None;
+        let mut segmentation_uncovered = None;
+        let mut total_calls = session_calls.len();
+
+        for artifact in &artifacts {
+            *artifact_counts
+                .entry(artifact.stored.procedure_name.clone())
+                .or_insert(0) += 1;
+            match artifact.stored.procedure_name.as_str() {
+                "tool_call_intent_segmentation" => {
+                    segmentation_segments = artifact
+                        .stored
+                        .output
+                        .get("segments")
+                        .and_then(serde_json::Value::as_array)
+                        .map(Vec::len)
+                        .or(segmentation_segments);
+                    segmentation_uncovered = artifact
+                        .stored
+                        .output
+                        .get("uncovered_call_indices")
+                        .and_then(serde_json::Value::as_array)
+                        .map(Vec::len)
+                        .or(segmentation_uncovered);
+                    if let Some(value) = artifact
+                        .stored
+                        .output
+                        .get("sequence")
+                        .and_then(|value| value.get("total_calls_in_run"))
+                        .and_then(serde_json::Value::as_u64)
+                    {
+                        total_calls = total_calls.max(value as usize);
+                    }
+                    if let Some(value) = artifact
+                        .stored
+                        .output
+                        .get("coverage")
+                        .and_then(|value| value.get("total_calls"))
+                        .and_then(serde_json::Value::as_u64)
+                    {
+                        total_calls = total_calls.max(value as usize);
+                    }
+                }
+                "tool_call_review" => {
+                    if let Some(review) = protocol_call_review_from_artifact(artifact) {
+                        total_calls = total_calls.max(review.focal_call_index.saturating_add(1));
+                        let replace = call_reviews
+                            .get(&review.focal_call_index)
+                            .is_none_or(|existing| review.created_at_ms >= existing.created_at_ms);
+                        if replace {
+                            call_reviews.insert(review.focal_call_index, review);
+                        }
+                    }
+                }
+                "tool_call_segment_review" => {
+                    let overall = protocol_json_string(&artifact.stored.output, &["overall"])
+                        .unwrap_or_else(|| "unknown".to_string());
+                    *segment_review_counts.entry(overall).or_insert(0) += 1;
+                }
+                _ => {}
+            }
+        }
+
+        Self {
+            searched_dirs,
+            artifacts,
+            artifact_counts,
+            session_calls,
+            call_reviews,
+            segment_review_counts,
+            segmentation_segments,
+            segmentation_uncovered,
+            total_calls,
+        }
+    }
+
+    fn is_present(&self) -> bool {
+        !self.artifacts.is_empty()
+    }
+
+    fn missing_call_indices(&self) -> Vec<usize> {
+        (0..self.total_calls)
+            .filter(|index| !self.call_reviews.contains_key(index))
+            .collect()
+    }
+
+    fn call_for_step_request(
+        &self,
+        step: usize,
+        request: &ToolRequestRecord,
+    ) -> Option<&SessionToolCallRef> {
+        self.session_calls
+            .iter()
+            .find(|call| call.step_index == step && call.call_id == request.call_id)
+    }
+}
+
+fn protocol_artifact_dirs(
+    store: &FsToolLoopStore,
+    lane: &LlmLane,
+    published: Option<&PublishedBroadHarnessRequest>,
+) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    dirs.push(
+        store
+            .root()
+            .join(&lane.session.session_id)
+            .join("protocol-artifacts"),
+    );
+    if let Some(published) = published {
+        let submitted = published.submitted_result_path();
+        dirs.push(submitted.with_extension("protocol-artifacts"));
+        dirs.push(
+            submitted
+                .with_extension("turn-live")
+                .join("protocol-artifacts"),
+        );
+        for root in &published.request().evidence_roots {
+            if root.kind != EvidenceRootKind::ProtocolArtifacts {
+                continue;
+            }
+            match &root.location {
+                EvidenceRootLocation::Directory { path } => dirs.push(path.clone()),
+                EvidenceRootLocation::File { path } => {
+                    if let Some(parent) = path.parent() {
+                        dirs.push(parent.to_path_buf());
+                    }
+                }
+                EvidenceRootLocation::NodeScopedDirectory {
+                    nodes_root,
+                    child_relpath,
+                } => {
+                    dirs.push(nodes_root.join(&lane.lane_id).join(child_relpath));
+                    dirs.push(nodes_root.join(child_relpath));
+                }
+                EvidenceRootLocation::AttachedReport { .. } => {}
+            }
+        }
+    }
+    let mut seen = BTreeSet::new();
+    dirs.retain(|dir| seen.insert(dir.clone()));
+    dirs
+}
+
+fn load_protocol_artifacts_from_dirs(
+    dirs: &[PathBuf],
+) -> Result<Vec<StoredProtocolArtifactFile>, PrepareError> {
+    let mut artifacts = Vec::new();
+    for dir in dirs {
+        let entries = match fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(source) => {
+                return Err(PrepareError::ReadProtocolArtifact {
+                    path: dir.clone(),
+                    source,
+                });
+            }
+        };
+        for entry in entries {
+            let entry = entry.map_err(|source| PrepareError::ReadProtocolArtifact {
+                path: dir.clone(),
+                source,
+            })?;
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+                continue;
+            }
+            artifacts.push(load_protocol_artifact(&path)?);
+        }
+    }
+    artifacts.sort_by(|left, right| {
+        left.stored
+            .created_at_ms
+            .cmp(&right.stored.created_at_ms)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    Ok(artifacts)
+}
+
+fn collect_session_tool_calls(
+    store: &FsToolLoopStore,
+    lane: &LlmLane,
+) -> Result<Vec<SessionToolCallRef>, PrepareError> {
+    let mut calls = Vec::new();
+    for step_index in store.step_indices(&lane.session.session_id)? {
+        let step = store.read_step(&lane.session.session_id, step_index)?;
+        for request in &step.tool_requests {
+            calls.push(SessionToolCallRef {
+                protocol_index: calls.len(),
+                step_index,
+                tool: request.tool.clone(),
+                call_id: request.call_id.clone(),
+            });
+        }
+    }
+    Ok(calls)
+}
+
+fn protocol_call_review_from_artifact(
+    artifact: &StoredProtocolArtifactFile,
+) -> Option<LlmProtocolCallReview> {
+    let output = &artifact.stored.output;
+    let focal = output
+        .get("packet")
+        .and_then(|value| value.get("focal_call_index"))
+        .and_then(serde_json::Value::as_u64)
+        .or_else(|| {
+            output
+                .get("neighborhood")
+                .and_then(|value| value.get("focal"))
+                .and_then(|value| value.get("index"))
+                .and_then(serde_json::Value::as_u64)
+        })? as usize;
+    let concerns = output
+        .get("signals")
+        .and_then(|value| value.get("candidate_concerns"))
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Some(LlmProtocolCallReview {
+        focal_call_index: focal,
+        artifact_path: artifact.path.clone(),
+        created_at_ms: artifact.stored.created_at_ms,
+        overall: protocol_json_string(output, &["overall"]),
+        confidence: protocol_json_string(output, &["overall_confidence"]),
+        usefulness: protocol_branch_summary(output, "usefulness"),
+        redundancy: protocol_branch_summary(output, "redundancy"),
+        recoverability: protocol_branch_summary(output, "recoverability"),
+        concerns,
+        scope_summary: protocol_json_string(output, &["packet", "scope_summary"]),
+    })
+}
+
+fn protocol_branch_summary(
+    value: &serde_json::Value,
+    branch: &str,
+) -> Option<ProtocolBranchSummary> {
+    let node = value.get(branch)?;
+    Some(ProtocolBranchSummary {
+        verdict: protocol_json_string(node, &["verdict"]),
+        confidence: protocol_json_string(node, &["confidence"]),
+        rationale: protocol_json_string(node, &["rationale"]),
+    })
+}
+
+fn protocol_json_string(value: &serde_json::Value, path: &[&str]) -> Option<String> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current.as_str().map(ToOwned::to_owned)
+}
+
+fn render_protocol_summary_lines(report: &LlmProtocolReport, label: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    if !report.is_present() {
+        lines.push(format!("{label}: not present for this tool-loop session"));
+        if !report.searched_dirs.is_empty() {
+            lines.push("protocol_search_dirs:".to_string());
+            for dir in &report.searched_dirs {
+                lines.push(format!("  {}", dir.display()));
+            }
+        }
+        return lines;
+    }
+    lines.push(format!("{label}: present"));
+    lines.push(format!("protocol_artifacts: {}", report.artifacts.len()));
+    if !report.artifact_counts.is_empty() {
+        let counts = report
+            .artifact_counts
+            .iter()
+            .map(|(name, count)| format!("{name}={count}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        lines.push(format!("protocol_counts: {counts}"));
+    }
+    lines.push(format!(
+        "protocol_call_reviews: {}/{} missing={}",
+        report.call_reviews.len(),
+        report.total_calls,
+        report.missing_call_indices().len()
+    ));
+    if let Some(segments) = report.segmentation_segments {
+        lines.push(format!(
+            "protocol_segments: {segments} uncovered={}",
+            report.segmentation_uncovered.unwrap_or(0)
+        ));
+    }
+    if !report.segment_review_counts.is_empty() {
+        let counts = report
+            .segment_review_counts
+            .iter()
+            .map(|(overall, count)| format!("{overall}={count}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        lines.push(format!("protocol_segment_reviews: {counts}"));
+    }
+    let missing = report.missing_call_indices();
+    if !missing.is_empty() {
+        lines.push(format!(
+            "protocol_missing_reviews: {}",
+            missing
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        ));
+    }
+    if report.call_reviews.is_empty() {
+        lines.push("protocol_call_feedback: (no per-call reviews found)".to_string());
+    } else {
+        lines.push("protocol_call_feedback:".to_string());
+        for (index, review) in report.call_reviews.iter().take(12) {
+            lines.push(format!(
+                "  call #{index}: {}",
+                protocol_review_label(review)
+            ));
+        }
+        if report.call_reviews.len() > 12 {
+            lines.push(format!(
+                "  ... {} more call review(s)",
+                report.call_reviews.len() - 12
+            ));
+        }
+    }
+    lines
+}
+
+fn render_step_protocol_lines(
+    report: &LlmProtocolReport,
+    record: &crate::replay::tool_loop::ToolLoopStep,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    if !report.is_present() {
+        lines.push("protocol: not present for this tool-loop session".to_string());
+        return lines;
+    }
+    lines.push(format!(
+        "protocol: present call_reviews={}/{}",
+        report.call_reviews.len(),
+        report.total_calls
+    ));
+    if record.tool_requests.is_empty() {
+        lines.push("protocol_step_feedback: (no tool calls in selected step)".to_string());
+        return lines;
+    }
+    lines.push("protocol_step_feedback:".to_string());
+    for (local_index, request) in record.tool_requests.iter().enumerate() {
+        match report.call_for_step_request(record.step_index, request) {
+            Some(call_ref) => match report.call_reviews.get(&call_ref.protocol_index) {
+                Some(review) => lines.push(format!(
+                    "  tool #{} protocol_call #{}: {}",
+                    local_index + 1,
+                    call_ref.protocol_index,
+                    protocol_review_label(review)
+                )),
+                None => lines.push(format!(
+                    "  tool #{} protocol_call #{}: review missing",
+                    local_index + 1,
+                    call_ref.protocol_index
+                )),
+            },
+            None => lines.push(format!(
+                "  tool #{} {}: not mapped to protocol call index",
+                local_index + 1,
+                request.tool
+            )),
+        }
+    }
+    lines
+}
+
+fn render_tool_protocol_lines(
+    report: &LlmProtocolReport,
+    step: usize,
+    request: &ToolRequestRecord,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    if !report.is_present() {
+        lines.push("protocol: not present for this tool-loop session".to_string());
+        return lines;
+    }
+    let Some(call_ref) = report.call_for_step_request(step, request) else {
+        lines.push("protocol: present but selected tool call is not mapped".to_string());
+        return lines;
+    };
+    lines.push(format!(
+        "protocol: present protocol_call_index={}",
+        call_ref.protocol_index
+    ));
+    match report.call_reviews.get(&call_ref.protocol_index) {
+        Some(review) => {
+            lines.push(format!(
+                "protocol_feedback: {}",
+                protocol_review_label(review)
+            ));
+            if let Some(scope) = review.scope_summary.as_deref() {
+                lines.push(format!("protocol_scope: {scope}"));
+            }
+            lines.push(format!(
+                "protocol_artifact: {}",
+                review.artifact_path.display()
+            ));
+        }
+        None => lines.push("protocol_feedback: review missing for selected call".to_string()),
+    }
+    lines
+}
+
+fn protocol_review_label(review: &LlmProtocolCallReview) -> String {
+    let mut parts = Vec::new();
+    parts.push(format!(
+        "overall={}",
+        review.overall.as_deref().unwrap_or("unknown")
+    ));
+    if let Some(confidence) = review.confidence.as_deref() {
+        parts.push(format!("confidence={confidence}"));
+    }
+    if let Some(usefulness) = review.usefulness.as_ref().and_then(protocol_branch_label) {
+        parts.push(format!("usefulness={usefulness}"));
+    }
+    if let Some(redundancy) = review.redundancy.as_ref().and_then(protocol_branch_label) {
+        parts.push(format!("redundancy={redundancy}"));
+    }
+    if let Some(recoverability) = review
+        .recoverability
+        .as_ref()
+        .and_then(protocol_branch_label)
+    {
+        parts.push(format!("recoverability={recoverability}"));
+    }
+    if !review.concerns.is_empty() {
+        parts.push(format!("concerns={}", review.concerns.join(",")));
+    }
+    parts.join(" ")
+}
+
+fn protocol_branch_label(summary: &ProtocolBranchSummary) -> Option<String> {
+    let verdict = summary.verdict.as_deref()?;
+    Some(match summary.confidence.as_deref() {
+        Some(confidence) => format!("{verdict}/{confidence}"),
+        None => verdict.to_string(),
+    })
+}
+
+fn render_llm_protocol_json(
+    lane: &LlmLane,
+    report: &LlmProtocolReport,
+) -> Result<String, PrepareError> {
+    let call_reviews = report
+        .call_reviews
+        .iter()
+        .map(|(index, review)| {
+            serde_json::json!({
+                "focal_call_index": index,
+                "artifact_path": review.artifact_path.display().to_string(),
+                "created_at_ms": review.created_at_ms,
+                "overall": review.overall.as_deref(),
+                "confidence": review.confidence.as_deref(),
+                "usefulness": protocol_branch_json(review.usefulness.as_ref()),
+                "redundancy": protocol_branch_json(review.redundancy.as_ref()),
+                "recoverability": protocol_branch_json(review.recoverability.as_ref()),
+                "concerns": &review.concerns,
+                "scope_summary": review.scope_summary.as_deref(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let session_calls = report
+        .session_calls
+        .iter()
+        .map(|call| {
+            serde_json::json!({
+                "protocol_index": call.protocol_index,
+                "step_index": call.step_index,
+                "tool": call.tool.as_str(),
+                "call_id": call.call_id.as_str(),
+                "review_present": report.call_reviews.contains_key(&call.protocol_index),
+            })
+        })
+        .collect::<Vec<_>>();
+    let artifacts = report
+        .artifacts
+        .iter()
+        .map(|artifact| {
+            serde_json::json!({
+                "path": artifact.path.display().to_string(),
+                "procedure_name": artifact.stored.procedure_name.as_str(),
+                "subject_id": artifact.stored.subject_id.as_str(),
+                "run_id": artifact.stored.run_id.as_str(),
+                "created_at_ms": artifact.stored.created_at_ms,
+                "summary": protocol_artifact_summary(artifact),
+            })
+        })
+        .collect::<Vec<_>>();
+    let payload = serde_json::json!({
+        "kind": "llm_protocol",
+        "lane": lane.lane_id,
+        "session": lane.session.session_id,
+        "present": report.is_present(),
+        "searched_dirs": &report.searched_dirs,
+        "artifact_counts": &report.artifact_counts,
+        "artifacts": artifacts,
+        "total_calls": report.total_calls,
+        "session_calls": session_calls,
+        "call_reviews": call_reviews,
+        "missing_call_indices": report.missing_call_indices(),
+        "segmentation": {
+            "segments": report.segmentation_segments,
+            "uncovered": report.segmentation_uncovered,
+        },
+        "segment_review_counts": &report.segment_review_counts,
+    });
+    serde_json::to_string_pretty(&payload).map_err(PrepareError::Serialize)
+}
+
+fn protocol_branch_json(summary: Option<&ProtocolBranchSummary>) -> serde_json::Value {
+    match summary {
+        Some(summary) => serde_json::json!({
+            "verdict": summary.verdict.as_deref(),
+            "confidence": summary.confidence.as_deref(),
+            "rationale": summary.rationale.as_deref(),
+        }),
+        None => serde_json::Value::Null,
     }
 }
 
@@ -4098,6 +4758,117 @@ mod tests {
         assert_eq!(value["selected_messages"][0]["index"], 1);
         assert_eq!(value["selected_messages"][0]["role"], "user");
         assert_eq!(value["selected_messages"][0]["content"], "user task");
+    }
+
+    #[test]
+    fn llm_protocol_render_shows_call_feedback_and_json() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut session = ToolLoopSession::new(
+            "session-protocol",
+            "headless-tui",
+            tmp.path().join("lane-a"),
+        );
+        session.lane_id = Some("lane-a".to_string());
+        let lane = LlmLane {
+            lane_id: "lane-a".to_string(),
+            session,
+            resume: None,
+            head: Some(11),
+        };
+        let artifact = StoredProtocolArtifactFile {
+            path: tmp.path().join("100_tool_call_review.json"),
+            stored: crate::protocol_artifacts::StoredProtocolArtifact {
+                schema_version: crate::protocol_artifacts::PROTOCOL_ARTIFACT_SCHEMA_VERSION
+                    .to_string(),
+                procedure_name: "tool_call_review".to_string(),
+                subject_id: "subject".to_string(),
+                run_id: "run".to_string(),
+                created_at_ms: 100,
+                model_id: None,
+                provider_slug: None,
+                input: serde_json::json!({}),
+                output: serde_json::json!({
+                    "overall": "focused_progress",
+                    "overall_confidence": "high",
+                    "packet": {
+                        "focal_call_index": 0,
+                        "scope_summary": "read target file"
+                    },
+                    "signals": {
+                        "candidate_concerns": ["RecoveryOpportunity"]
+                    },
+                    "usefulness": {
+                        "verdict": "key_progress",
+                        "confidence": "high",
+                        "rationale": "identified target"
+                    },
+                    "redundancy": {
+                        "verdict": "distinct",
+                        "confidence": "high",
+                        "rationale": "new file"
+                    },
+                    "recoverability": {
+                        "verdict": "clear_next_step",
+                        "confidence": "medium",
+                        "rationale": "continue reading"
+                    }
+                }),
+                artifact: serde_json::json!({}),
+            },
+        };
+        let report = LlmProtocolReport::from_artifacts(
+            vec![tmp.path().join("protocol-artifacts")],
+            vec![artifact],
+            vec![SessionToolCallRef {
+                protocol_index: 0,
+                step_index: 11,
+                tool: "read_file".to_string(),
+                call_id: "call-read".to_string(),
+            }],
+        );
+        let controller = WalkController::new(tmp.path().join("repo"));
+
+        let rendered = controller
+            .render_llm_protocol(&lane, &report, false)
+            .expect("protocol render");
+
+        assert!(rendered.contains("llm protocol"));
+        assert!(rendered.contains("protocol: present"));
+        assert!(rendered.contains("protocol_call_reviews: 1/1 missing=0"));
+        assert!(rendered.contains("call #0: overall=focused_progress"));
+        assert!(rendered.contains("usefulness=key_progress/high"));
+        assert!(rendered.contains("concerns=RecoveryOpportunity"));
+
+        let json = controller
+            .render_llm_protocol(&lane, &report, true)
+            .expect("protocol json");
+        let value: serde_json::Value = serde_json::from_str(&json).expect("protocol json value");
+        assert_eq!(value["kind"], "llm_protocol");
+        assert_eq!(value["present"], true);
+        assert_eq!(value["call_reviews"][0]["overall"], "focused_progress");
+        assert_eq!(value["session_calls"][0]["protocol_index"], 0);
+
+        let mut step = ToolLoopStep::new(
+            "session-protocol",
+            11,
+            vec![RequestMessage::new_user("read".to_string())],
+            tool_call_response(11),
+            WorkspaceState::default(),
+            WorkspaceState::default(),
+        )
+        .expect("step");
+        step.tool_requests.push(ToolRequestRecord {
+            request_id: "session-protocol:11".to_string(),
+            parent_id: "parent".to_string(),
+            call_id: "call-read".to_string(),
+            tool: "read_file".to_string(),
+            arguments: ToolArgumentsJson::from(r#"{"file":"src/lib.rs"}"#),
+        });
+
+        let step_lines = render_step_protocol_lines(&report, &step).join("\n");
+        assert!(step_lines.contains("protocol_step_feedback:"));
+        assert!(step_lines.contains("protocol_call #0"));
+        assert!(step_lines.contains("overall=focused_progress"));
     }
 
     #[test]

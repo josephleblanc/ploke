@@ -174,6 +174,14 @@ impl WalkServer {
                     json,
                 )
                 .map(|message| WalkResponse::ok(phase, message, self.epoch.clone())),
+            WalkRequestBody::LlmProtocol {
+                session_id,
+                lane,
+                json,
+            } => self
+                .controller
+                .llm_protocol_report(session_id.as_deref(), lane.as_deref(), json)
+                .map(|message| WalkResponse::ok(phase, message, self.epoch.clone())),
             WalkRequestBody::LlmTool {
                 session_id,
                 lane,

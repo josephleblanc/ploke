@@ -1938,6 +1938,40 @@ fn loop_walk_llm_prompt_command_parses() {
 }
 
 #[test]
+fn loop_walk_llm_protocol_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "llm",
+        "protocol",
+        "--lane",
+        "node-1",
+        "--session-id",
+        "session-1",
+        "--json",
+    ])
+    .expect("loop walk llm protocol should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Llm(cmd) => match cmd.command {
+                Prototype1StateWalkLlmSubcommand::Protocol(protocol) => {
+                    assert_eq!(protocol.lane.as_deref(), Some("node-1"));
+                    assert_eq!(protocol.session_id.as_deref(), Some("session-1"));
+                    assert!(protocol.json);
+                }
+                other => panic!("unexpected llm subcommand: {:?}", other),
+            },
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
 fn loop_walk_llm_tool_command_parses() {
     let parsed = Cli::try_parse_from([
         "ploke-eval",
