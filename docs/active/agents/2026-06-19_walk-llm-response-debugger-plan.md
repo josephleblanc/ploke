@@ -1,6 +1,6 @@
 # 2026-06-19 Walk-integrated LLM response debugger plan
 
-Status: active plan / partially implemented. The current implementation records and inspects LLM/tool-loop checkpoints and now exposes gated `walk llm step` / `walk llm finish` execution for historical one-response replay and live one-response continuation. It is still not an outer-typestate-integrated nested debugger.
+Status: active plan / partially implemented. The current implementation records LLM/tool-loop checkpoints, exposes gated `walk llm step` / `walk llm finish` execution for historical one-response replay and live one-response continuation, and now renders `walk llm show` as a practical per-step run-review transcript. It is still not an outer-typestate-integrated nested debugger.
 
 Short description: plan for turning the existing Prototype 1 `walk` typestate debugger plus turn-live replay machinery into a gdb-like nested debugger for harness-backed LLM/tool loops. The intended pause boundary is one provider/network response plus its full tool batch, not one individual parallel tool call.
 
@@ -72,7 +72,8 @@ a6fa4001 Add tool loop checkpoint records
 2a063b35 Expose chat step resume messages
 ff6b05cb Add walk LLM checkpoint inspection
 5f7bd732 Add read-only walk LLM lane inspection
-working tree 2026-06-20 Add gated walk LLM historical/live stepping
+ef60ccb8 Add walk LLM response stepping
+working tree 2026-06-20 Add walk LLM run-review transcript rendering
 ```
 
 Currently implemented:
@@ -104,16 +105,27 @@ Currently implemented:
   head
   ```
 
-- The read-only `walk llm` surface can list lanes, select a lane, inspect the latest or selected checkpoint, move an in-memory cursor, and show summaries of provider-response outcome, tool requests/results, terminal status, and resume metadata.
+- The read-only `walk llm` surface can list lanes, select a lane, inspect the latest or selected checkpoint, and move an in-memory cursor.
+- `walk llm show` now renders a per-step transcript with:
+  - request-message counts and recent prior-message summary;
+  - assistant response content/reasoning when present;
+  - tool-call names and decoded/generic arguments;
+  - decoded result previews for known tools such as `list_dir`, `cargo`, `read_file`, and `non_semantic_patch`;
+  - structured failed-tool output including protected-write denial fields, retry hints, and retry context;
+  - terminal/workspace status and suggested next `walk llm` commands.
 - `walk llm step` is implemented as an explicitly effectful command gated by `--allow workspace-mutation`:
   - `--source historical` replays one recorded provider response through current TUI tool semantics and writes a new checkpoint session;
   - `--source live --watch` resumes from the selected checkpoint request state, calls the live provider once, executes that response's tool batch, and writes a new checkpoint session.
 - `walk llm finish --watch --allow workspace-mutation` loops live one-response steps until a terminal inner frame or `--max-steps`.
-- Live verification on `p1-live-lanes-g25p-20260619-123437` showed:
+- After `walk llm step` or each `walk llm finish` step, the walk server focuses the newly written checkpoint session and moves its cursor to that session head, so the next `walk llm show` can inspect the branch without copying IDs.
+- Historical/live use-testing on `p1-live-lanes-g25p-20260619-123437` showed:
   - historical step 12 replay reached a terminal content checkpoint;
   - historical step 11 replay re-executed the protected-write attempt and paused with the failed tool result;
   - live step after step 11 resumed after the protected-write denial, ran a `cargo check` tool call, and paused;
-  - live finish from that paused branch reached terminal content with a clean workspace.
+  - live finish from that paused branch reached terminal content with a clean workspace;
+  - `walk llm show` for step 2 explains `list_dir { dir: crates/ploke-tree-browser }` and the returned `Cargo.toml`/`src` entries without `jq`;
+  - `walk llm show` for step 11 explains the denied `non_semantic_patch Cargo.toml` call, retry hint, and retry context without `jq`;
+  - `walk llm show --head` for step 12 shows the terminal prose trajectory without `jq`.
 
 Still not implemented:
 
@@ -123,6 +135,7 @@ Still not implemented:
 - Authority-bearing resume/projection from terminal `walk llm finish` back into the outer `walk` typestate edge.
 - Historical multi-step continuation that chains a recorded next response onto a newly branched checkpoint session; current historical mode replays one selected recorded response into a new session.
 - Full proposal/admission/settle-effect capture, exact workspace dirty-path capture, or validation-barrier capture in every checkpoint.
+- Full transcript polish for every possible tool payload; current renderer has typed coverage for the highest-value run-review tools and a generic JSON-field fallback for other arguments/results.
 
 Current command semantics:
 

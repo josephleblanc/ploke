@@ -15,8 +15,16 @@ use std::{
     str::FromStr,
 };
 
-use ploke_llm::{ModelId, ProviderKey};
-use ploke_records::{ids::CampaignId, llm_response::RawFullResponseRecord};
+use ploke_llm::{ModelId, ProviderKey, manager::Role};
+use ploke_records::{
+    agent_turn::{ToolCompletedRecord, ToolFailedRecord, ToolRequestRecord},
+    ids::CampaignId,
+    llm_response::RawFullResponseRecord,
+    tool_contracts::{
+        PersistedToolCallArguments, PersistedToolResultContent, ToolCallArguments, ToolErrorWire,
+        ToolResultContent, ToolRetryContextValue, decode_tool_result_content,
+    },
+};
 
 use crate::{
     ResolvedCampaignConfig,
@@ -305,7 +313,9 @@ impl WalkController {
         }
         lines.push("lanes:".to_string());
         for lane in lanes {
-            let marker = if self.llm_focus.as_deref() == Some(lane.lane_id.as_str()) {
+            let marker = if self.llm_focus.as_deref() == Some(lane.lane_id.as_str())
+                || self.llm_focus.as_deref() == Some(lane.session.session_id.as_str())
+            {
                 "*"
             } else {
                 " "
@@ -315,7 +325,7 @@ impl WalkController {
                 lane.lane_id,
                 status_label(lane.session.status),
                 self.llm_cursors
-                    .get(&lane.lane_id)
+                    .get(cursor_key(&lane))
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| "-".to_string()),
                 lane.head
@@ -343,10 +353,15 @@ impl WalkController {
     pub(crate) fn llm_focus(&mut self, lane: String) -> Result<String, PrepareError> {
         let store = self.tool_loop_store()?;
         let lane_state = self.resolve_lane(&store, Some(lane.as_str()))?;
-        self.llm_focus = Some(lane_state.lane_id.clone());
+        let focus_target = if lane == lane_state.session.session_id {
+            lane_state.session.session_id.clone()
+        } else {
+            lane_state.lane_id.clone()
+        };
+        self.llm_focus = Some(focus_target);
         if let Some(head) = lane_state.head {
             self.llm_cursors
-                .entry(lane_state.lane_id.clone())
+                .entry(cursor_key(&lane_state).to_string())
                 .or_insert(head);
         }
         Ok(format!(
@@ -378,7 +393,7 @@ impl WalkController {
             None if head => lane_state.head,
             None => self
                 .llm_cursors
-                .get(&lane_state.lane_id)
+                .get(cursor_key(&lane_state))
                 .copied()
                 .or(lane_state.head),
         };
@@ -425,10 +440,21 @@ impl WalkController {
             timeout_secs,
         )?;
         let summary = self.run_llm_step_request(request).await?;
-        if let Some(head) = store.latest_step_index(&summary.session_id.to_string())? {
-            self.llm_cursors.insert(lane_state.lane_id.clone(), head);
-        }
+        let stepped_session = summary.session_id.to_string();
+        self.focus_llm_session_head(&store, &stepped_session)?;
         Ok(summary.render())
+    }
+
+    fn focus_llm_session_head(
+        &mut self,
+        store: &FsToolLoopStore,
+        session_id: &str,
+    ) -> Result<(), PrepareError> {
+        self.llm_focus = Some(session_id.to_string());
+        if let Some(head) = store.latest_step_index(session_id)? {
+            self.llm_cursors.insert(session_id.to_string(), head);
+        }
+        Ok(())
     }
 
     /// Continue live LLM response steps until terminal or max steps.
@@ -477,7 +503,9 @@ impl WalkController {
             let summary = self.run_llm_step_request(request).await?;
             lines.push(format!("step {}:", index + 1));
             lines.extend(summary.render_indented("  "));
-            current_session = Some(summary.session_id.to_string());
+            let stepped_session = summary.session_id.to_string();
+            self.focus_llm_session_head(&store, &stepped_session)?;
+            current_session = Some(stepped_session);
             current_lane = Some(summary.lane_id.clone());
             current_step = None;
             if summary.terminal {
@@ -511,14 +539,15 @@ impl WalkController {
             })?;
         let current = self
             .llm_cursors
-            .get(&lane_state.lane_id)
+            .get(cursor_key(&lane_state))
             .copied()
             .unwrap_or(head);
         let next = match direction {
             LlmMove::Back => current.saturating_sub(steps),
             LlmMove::Forward => current.saturating_add(steps).min(head),
         };
-        self.llm_cursors.insert(lane_state.lane_id.clone(), next);
+        self.llm_cursors
+            .insert(cursor_key(&lane_state).to_string(), next);
         Ok(format!(
             "llm lane {} cursor={} head={}",
             lane_state.lane_id, next, head
@@ -537,7 +566,8 @@ impl WalkController {
                     lane_state.lane_id
                 ),
             })?;
-        self.llm_cursors.insert(lane_state.lane_id.clone(), head);
+        self.llm_cursors
+            .insert(cursor_key(&lane_state).to_string(), head);
         Ok(format!(
             "llm lane {} cursor=head ({head})",
             lane_state.lane_id
@@ -653,7 +683,7 @@ impl WalkController {
                 detail: format!("llm lane '{}' has no recorded steps", lane.lane_id),
             })?;
         let selected_step = step
-            .or_else(|| self.llm_cursors.get(&lane.lane_id).copied())
+            .or_else(|| self.llm_cursors.get(cursor_key(lane)).copied())
             .unwrap_or(head);
         match source {
             Prototype1StateWalkLlmStepSource::Historical => {
@@ -796,12 +826,15 @@ impl WalkController {
         }
         let target = requested.or(self.llm_focus.as_deref());
         if let Some(target) = target {
+            if let Ok(session) = store.read_session(target) {
+                return self.lane_for_session(store, session);
+            }
             return lanes
                 .into_iter()
                 .find(|lane| lane.lane_id == target || lane.session.session_id == target)
                 .ok_or_else(|| PrepareError::InvalidBatchSelection {
                     detail: format!(
-                        "unknown llm lane '{target}'; run `walk llm lanes` to list available lanes"
+                        "unknown llm lane or session '{target}'; run `walk llm lanes` to list available lanes"
                     ),
                 });
         }
@@ -859,7 +892,7 @@ impl WalkController {
         lines.push(format!(
             "cursor: {}",
             self.llm_cursors
-                .get(&lane.lane_id)
+                .get(cursor_key(&lane))
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "-".to_string())
         ));
@@ -870,7 +903,7 @@ impl WalkController {
                 .unwrap_or_else(|| "-".to_string())
         ));
         match lane.resume {
-            Some(resume) => {
+            Some(ref resume) => {
                 lines.push(format!("next_step: {}", resume.next_step));
                 lines.push(format!(
                     "resume_messages: {}",
@@ -890,15 +923,7 @@ impl WalkController {
                 lines.push(format!("outcome: {}", outcome_label(&record.outcome)));
                 lines.push(format!("tool_requests: {}", record.tool_requests.len()));
                 lines.push(format!("tool_results: {}", record.tool_results.len()));
-                for result in record.tool_results.iter().take(6) {
-                    lines.push(format!("  {}", result_label(result)));
-                }
-                if record.tool_results.len() > 6 {
-                    lines.push(format!(
-                        "  ... {} more result(s)",
-                        record.tool_results.len() - 6
-                    ));
-                }
+                lines.extend(render_step_transcript(&record));
                 lines.push(format!("terminal: {}", record.terminal));
                 lines.push(format!(
                     "workspace_before: {}",
@@ -908,6 +933,7 @@ impl WalkController {
                     "workspace_after: {}",
                     workspace_label(&record.workspace_after)
                 ));
+                lines.extend(render_llm_next_commands(&lane, &record));
             }
             None => lines.push("step: (none recorded yet)".to_string()),
         }
@@ -1867,8 +1893,9 @@ impl LlmStepSummary {
             format!("{prefix}attempts: {}", self.attempts),
             format!("{prefix}final_messages: {}", self.final_messages),
             format!("{prefix}terminal: {}", self.terminal),
+            format!("{prefix}inspect: walk llm show"),
             format!(
-                "{prefix}inspect: walk llm show --session-id {} --head",
+                "{prefix}inspect_explicit: walk llm show --session-id {} --head",
                 self.session_id
             ),
         ]
@@ -1881,6 +1908,10 @@ struct LlmLane {
     session: ToolLoopSession,
     resume: Option<ToolLoopResume>,
     head: Option<usize>,
+}
+
+fn cursor_key(lane: &LlmLane) -> &str {
+    lane.session.session_id.as_str()
 }
 
 fn resolve_llm_model(
@@ -1937,6 +1968,516 @@ fn lane_sort_key(lane: &LlmLane) -> (usize, usize, String) {
     )
 }
 
+fn render_step_transcript(record: &crate::replay::tool_loop::ToolLoopStep) -> Vec<String> {
+    let mut lines = Vec::new();
+    lines.push("transcript:".to_string());
+    lines.extend(indent_lines(
+        &render_request_summary(&record.request_messages),
+        2,
+    ));
+    lines.extend(indent_lines(&render_assistant_response(record), 2));
+    lines.extend(indent_lines(&render_tool_calls(&record.tool_requests), 2));
+    lines.extend(indent_lines(&render_tool_results(&record.tool_results), 2));
+    lines
+}
+
+fn render_request_summary(messages: &[ploke_tui::llm::RequestMessage]) -> String {
+    let mut system = 0usize;
+    let mut user = 0usize;
+    let mut assistant = 0usize;
+    let mut tool = 0usize;
+    for message in messages {
+        match message.role {
+            Role::System => system += 1,
+            Role::User => user += 1,
+            Role::Assistant => assistant += 1,
+            Role::Tool => tool += 1,
+        }
+    }
+
+    let mut lines = vec![format!(
+        "request_messages: {} (system={system} user={user} assistant={assistant} tool={tool})",
+        messages.len()
+    )];
+    if messages.is_empty() {
+        return lines.join("\n");
+    }
+    lines.push("prior_messages:".to_string());
+    let start = messages.len().saturating_sub(4);
+    for (index, message) in messages.iter().enumerate().skip(start) {
+        lines.push(format!("  #{index}: {}", request_message_summary(message)));
+    }
+    lines.join("\n")
+}
+
+fn request_message_summary(message: &ploke_tui::llm::RequestMessage) -> String {
+    let mut parts = Vec::new();
+    parts.push(format!("{}", role_label(message.role)));
+    if let Some(call_id) = message.tool_call_id.as_ref() {
+        parts.push(format!("tool_call_id={call_id}"));
+    }
+    if let Some(calls) = message.tool_calls.as_ref() {
+        let names = calls
+            .iter()
+            .map(|call| call.function.name.as_str().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        parts.push(format!("tool_calls=[{names}]"));
+    }
+    let content = preview_inline_chars(&message.content, 180);
+    if !content.is_empty() {
+        parts.push(content);
+    }
+    parts.join(" ")
+}
+
+fn role_label(role: Role) -> &'static str {
+    match role {
+        Role::System => "system",
+        Role::User => "user",
+        Role::Assistant => "assistant",
+        Role::Tool => "tool",
+    }
+}
+
+fn render_assistant_response(record: &crate::replay::tool_loop::ToolLoopStep) -> String {
+    let mut lines = vec!["assistant_response:".to_string()];
+    if let Some(message) = first_response_message(record) {
+        let content = message
+            .get("content")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let reasoning = message
+            .get("reasoning")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        if !content.trim().is_empty() {
+            lines.extend(indent_lines(&text_block("content", content, 1_600), 2));
+        }
+        if !reasoning.trim().is_empty() {
+            lines.extend(indent_lines(&text_block("reasoning", reasoning, 1_000), 2));
+        }
+        if content.trim().is_empty() && reasoning.trim().is_empty() {
+            lines.push("  (no assistant prose; response requested tools)".to_string());
+        }
+    } else {
+        lines.push("  (provider message unavailable)".to_string());
+    }
+    lines.join("\n")
+}
+
+fn first_response_message(
+    record: &crate::replay::tool_loop::ToolLoopStep,
+) -> Option<serde_json::Value> {
+    let value = serde_json::to_value(record.response.response()).ok()?;
+    value
+        .get("choices")?
+        .as_array()?
+        .first()?
+        .get("message")
+        .cloned()
+}
+
+fn render_tool_calls(requests: &[ToolRequestRecord]) -> String {
+    let mut lines = vec![format!("tool_calls: {}", requests.len())];
+    if requests.is_empty() {
+        lines.push("  (none)".to_string());
+        return lines.join("\n");
+    }
+    for (index, request) in requests.iter().enumerate() {
+        lines.push(format!(
+            "  {}. {} call_id={}",
+            index + 1,
+            request.tool,
+            request.call_id
+        ));
+        lines.extend(indent_lines(&format_tool_arguments(request), 5));
+    }
+    lines.join("\n")
+}
+
+fn format_tool_arguments(request: &ToolRequestRecord) -> String {
+    match request.arguments.decode_for_tool(&request.tool) {
+        PersistedToolCallArguments::Decoded(arguments) => match arguments {
+            ToolCallArguments::RequestCodeContext(args) => compact_fields(vec![
+                field_opt("search_term", args.search_term),
+                field_opt_u32("token_budget_per_result", args.token_budget_per_result),
+                field_opt_u32("token_budget_total", args.token_budget_total),
+            ]),
+            ToolCallArguments::NsRead(args) => compact_fields(vec![
+                Some(format!("file: {}", args.file)),
+                field_opt_u32("start_line", args.start_line),
+                field_opt_u32("end_line", args.end_line),
+                field_opt_u32("max_bytes", args.max_bytes),
+            ]),
+            ToolCallArguments::NsPatch(args) => {
+                let mut lines = Vec::new();
+                if let Some(confidence) = args.confidence {
+                    lines.push(format!("confidence: {confidence:.2}"));
+                }
+                lines.push(format!("patches: {}", args.patches.len()));
+                for patch in args.patches.iter().take(4) {
+                    lines.push(format!("  file: {}", patch.file));
+                    lines.push(format!(
+                        "  reasoning: {}",
+                        preview_inline_chars(&patch.reasoning, 180)
+                    ));
+                    lines.push(format!(
+                        "  diff: {}",
+                        preview_inline_chars(&patch.diff, 240)
+                    ));
+                }
+                if args.patches.len() > 4 {
+                    lines.push(format!("  ... {} more patch(es)", args.patches.len() - 4));
+                }
+                lines.join("\n")
+            }
+            ToolCallArguments::Cargo(args) => compact_fields(vec![
+                Some(format!("command: {:?}", args.command)),
+                Some(format!("scope: {:?}", args.scope)),
+                field_opt("package", args.package),
+                field_opt_vec("features", args.features),
+                field_opt("target", args.target),
+                field_opt("profile", args.profile),
+                Some(format!("release: {}", args.release)),
+                Some(format!("include_warnings: {}", args.include_warnings)),
+            ]),
+            ToolCallArguments::ListDir(args) => compact_fields(vec![
+                Some(format!("dir: {}", args.dir)),
+                Some(format!("include_hidden: {}", args.include_hidden)),
+                field_opt("sort", args.sort),
+                field_opt_u32("max_entries", args.max_entries),
+            ]),
+            other => pretty_json_preview(&other, 1_200),
+        },
+        PersistedToolCallArguments::ParseFailure(failure) => {
+            if let Some(arguments) = raw_json_fields(&failure.raw_arguments) {
+                arguments
+            } else {
+                format!(
+                    "arguments: {}\nparse_note: {:?}",
+                    preview_inline_chars(&failure.raw_arguments, 500),
+                    failure.error
+                )
+            }
+        }
+    }
+}
+
+fn render_tool_results(results: &[ToolLoopResult]) -> String {
+    let mut lines = vec![format!("tool_results: {}", results.len())];
+    if results.is_empty() {
+        lines.push("  (none)".to_string());
+        return lines.join("\n");
+    }
+    for (index, result) in results.iter().enumerate() {
+        match result {
+            ToolLoopResult::Completed(record) => {
+                lines.push(format!(
+                    "  {}. completed {} call_id={} latency_ms={}",
+                    index + 1,
+                    record.tool,
+                    record.call_id,
+                    record.latency_ms
+                ));
+                lines.extend(indent_lines(&format_completed_result(record), 5));
+            }
+            ToolLoopResult::Failed(record) => {
+                lines.push(format!(
+                    "  {}. failed {} call_id={} latency_ms={}",
+                    index + 1,
+                    record.tool.as_deref().unwrap_or("unknown"),
+                    record.call_id,
+                    record.latency_ms
+                ));
+                lines.extend(indent_lines(&format_failed_result(record), 5));
+            }
+        }
+    }
+    lines.join("\n")
+}
+
+fn format_completed_result(record: &ToolCompletedRecord) -> String {
+    match decode_tool_result_content(&record.tool, &record.content) {
+        PersistedToolResultContent::Decoded(result) => match result {
+            ToolResultContent::ListDir(result) => {
+                let mut lines = vec![format!(
+                    "ok={} dir={} exists={} entries={} truncated={}",
+                    result.ok,
+                    result.dir,
+                    result.exists,
+                    result.entries.len(),
+                    result.truncated
+                )];
+                for entry in result.entries.iter().take(8) {
+                    lines.push(format!(
+                        "- {} {} kind={} size={}",
+                        entry.path,
+                        entry.name,
+                        entry.kind,
+                        entry
+                            .size_bytes
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "-".to_string())
+                    ));
+                }
+                if result.entries.len() > 8 {
+                    lines.push(format!("... {} more entrie(s)", result.entries.len() - 8));
+                }
+                lines.join("\n")
+            }
+            ToolResultContent::Cargo(result) => {
+                let mut lines = vec![format!(
+                    "ok={} command={:?} scope={:?} status={:?} exit_code={} duration_ms={}",
+                    result.ok,
+                    result.command,
+                    result.scope,
+                    result.status_reason,
+                    result
+                        .exit_code
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "-".to_string()),
+                    result.duration_ms
+                )];
+                lines.push(format!("manifest: {}", result.manifest_path));
+                lines.push(format!(
+                    "summary: errors={} warnings={} notes={} artifacts={} other_messages={}",
+                    result.summary.errors,
+                    result.summary.warnings,
+                    result.summary.notes,
+                    result.summary.artifacts,
+                    result.summary.other_messages
+                ));
+                if !result.diagnostics.is_empty() {
+                    lines.push("diagnostics:".to_string());
+                    for diagnostic in result.diagnostics.iter().take(4) {
+                        lines.push(format!(
+                            "  - {} {}",
+                            diagnostic.level,
+                            preview_inline_chars(&diagnostic.message, 220)
+                        ));
+                    }
+                }
+                if !result.stderr_tail.is_empty() {
+                    lines.push("stderr_tail:".to_string());
+                    for line in result
+                        .stderr_tail
+                        .iter()
+                        .rev()
+                        .take(4)
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .rev()
+                    {
+                        lines.push(format!("  {}", preview_inline_chars(line, 220)));
+                    }
+                }
+                lines.join("\n")
+            }
+            ToolResultContent::NsPatch(result) => compact_fields(vec![
+                Some(format!("ok: {}", result.ok)),
+                Some(format!("staged: {}", result.staged)),
+                Some(format!("applied: {}", result.applied)),
+                Some(format!("files: {}", result.files.join(", "))),
+                Some(format!("preview_mode: {}", result.preview_mode)),
+                Some(format!("auto_confirmed: {}", result.auto_confirmed)),
+            ]),
+            ToolResultContent::NsRead(result) => {
+                let mut lines = vec![format!(
+                    "ok={} file={} exists={} bytes={} lines={}-{} truncated={}",
+                    result.ok,
+                    result.file_path,
+                    result.exists,
+                    result
+                        .byte_len
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "-".to_string()),
+                    result
+                        .start_line
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "-".to_string()),
+                    result
+                        .end_line
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "-".to_string()),
+                    result.truncated
+                )];
+                if let Some(content) = result.content.as_deref() {
+                    lines.extend(indent_lines(&text_block("content", content, 900), 0));
+                }
+                lines.join("\n")
+            }
+            other => pretty_json_preview(&other, 1_600),
+        },
+        PersistedToolResultContent::ParseFailure(failure) => format!(
+            "raw_content: {}\nparse_error: {:?}",
+            preview_inline_chars(&failure.raw_content, 1_000),
+            failure.error
+        ),
+    }
+}
+
+fn format_failed_result(record: &ToolFailedRecord) -> String {
+    if let Some(wire) = ToolErrorWire::parse(&record.error) {
+        let mut lines = vec![format!("user: {}", preview_inline_chars(&wire.user, 700))];
+        lines.push(format!(
+            "llm: tool={} code={:?} field={} expected={} received={}",
+            wire.llm.tool.as_str(),
+            wire.llm.code,
+            wire.llm.field.as_deref().unwrap_or("-"),
+            wire.llm.expected.as_deref().unwrap_or("-"),
+            wire.llm.received.as_deref().unwrap_or("-")
+        ));
+        lines.push(format!(
+            "message: {}",
+            preview_inline_chars(&wire.llm.message, 700)
+        ));
+        if let Some(hint) = wire.llm.retry_hint.as_deref() {
+            lines.push(format!("retry_hint: {}", preview_inline_chars(hint, 900)));
+        }
+        if let Some(context) = wire.llm.retry_context.as_ref() {
+            lines.push("retry_context:".to_string());
+            for field in &context.fields {
+                lines.push(format!(
+                    "  {}: {}",
+                    field.name,
+                    retry_context_value_label(&field.value)
+                ));
+            }
+        }
+        lines.push(format!(
+            "system: {}",
+            preview_inline_chars(&wire.system, 700)
+        ));
+        lines.join("\n")
+    } else {
+        format!("error: {}", preview_inline_chars(&record.error, 1_200))
+    }
+}
+
+fn render_llm_next_commands(
+    lane: &LlmLane,
+    record: &crate::replay::tool_loop::ToolLoopStep,
+) -> Vec<String> {
+    let mut lines = vec!["next:".to_string()];
+    if record.step_index > 0 {
+        lines.push("  walk llm back".to_string());
+    }
+    if lane.head.is_some_and(|head| record.step_index < head) {
+        lines.push("  walk llm forward".to_string());
+        lines.push("  walk llm head".to_string());
+    }
+    if !record.terminal {
+        lines.push("  walk llm step --source live --watch --allow workspace-mutation".to_string());
+    } else {
+        lines.push(
+            "  terminal inner frame; use walk llm back to inspect prior tool calls".to_string(),
+        );
+    }
+    lines
+}
+
+fn compact_fields(fields: Vec<Option<String>>) -> String {
+    let values = fields.into_iter().flatten().collect::<Vec<_>>();
+    if values.is_empty() {
+        "(none)".to_string()
+    } else {
+        values.join("\n")
+    }
+}
+
+fn field_opt(name: &str, value: Option<String>) -> Option<String> {
+    value.map(|value| format!("{name}: {value}"))
+}
+
+fn field_opt_u32(name: &str, value: Option<u32>) -> Option<String> {
+    value.map(|value| format!("{name}: {value}"))
+}
+
+fn field_opt_vec(name: &str, value: Option<Vec<String>>) -> Option<String> {
+    value.map(|value| format!("{name}: {}", value.join(", ")))
+}
+
+fn text_block(label: &str, text: &str, max_chars: usize) -> String {
+    let text = truncate_chars(text.trim(), max_chars);
+    if text.is_empty() {
+        return format!("{label}: (empty)");
+    }
+    let mut lines = vec![format!("{label}:")];
+    lines.extend(text.lines().map(|line| format!("  {line}")));
+    lines.join("\n")
+}
+
+fn pretty_json_preview<T: serde::Serialize>(value: &T, max_chars: usize) -> String {
+    match serde_json::to_string_pretty(value) {
+        Ok(encoded) => truncate_chars(&encoded, max_chars),
+        Err(error) => format!("<serialize error: {error}>"),
+    }
+}
+
+fn raw_json_fields(raw: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut lines = Vec::new();
+            for (key, value) in map {
+                lines.push(format!("{key}: {}", json_value_label(&value)));
+            }
+            Some(lines.join("\n"))
+        }
+        other => Some(pretty_json_preview(&other, 900)),
+    }
+}
+
+fn json_value_label(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => "null".to_string(),
+        serde_json::Value::Bool(value) => value.to_string(),
+        serde_json::Value::Number(value) => value.to_string(),
+        serde_json::Value::String(value) => value.clone(),
+        serde_json::Value::Array(values) => {
+            let rendered = values
+                .iter()
+                .take(4)
+                .map(json_value_label)
+                .collect::<Vec<_>>()
+                .join(", ");
+            if values.len() > 4 {
+                format!("[{rendered}, ...]")
+            } else {
+                format!("[{rendered}]")
+            }
+        }
+        serde_json::Value::Object(_) => preview_inline_chars(&pretty_json_preview(value, 500), 500),
+    }
+}
+
+fn retry_context_value_label(value: &ToolRetryContextValue) -> String {
+    match value {
+        ToolRetryContextValue::Null => "null".to_string(),
+        ToolRetryContextValue::Bool(value) => value.to_string(),
+        ToolRetryContextValue::Number(value) | ToolRetryContextValue::String(value) => {
+            value.clone()
+        }
+        ToolRetryContextValue::StringList(values) => values.join(", "),
+    }
+}
+
+fn preview_inline_chars(value: &str, max_chars: usize) -> String {
+    let single_line = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    truncate_chars(&single_line, max_chars)
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    let mut chars = value.chars();
+    let truncated = chars.by_ref().take(max_chars).collect::<String>();
+    if chars.next().is_some() {
+        format!("{truncated}...")
+    } else {
+        truncated
+    }
+}
+
 fn status_label(status: ToolLoopStatus) -> &'static str {
     match status {
         ToolLoopStatus::Active => "active",
@@ -1954,22 +2495,6 @@ fn outcome_label(outcome: &ToolLoopOutcome) -> String {
             ..
         } => format!("tool_calls count={count} finish_reason={finish_reason}"),
         ToolLoopOutcome::Content { .. } => "content".to_string(),
-    }
-}
-
-fn result_label(result: &ToolLoopResult) -> String {
-    match result {
-        ToolLoopResult::Completed(record) => format!(
-            "completed tool={} call_id={} latency_ms={}",
-            record.tool, record.call_id, record.latency_ms
-        ),
-        ToolLoopResult::Failed(record) => format!(
-            "failed tool={} call_id={} latency_ms={} error={}",
-            record.tool.as_deref().unwrap_or("-"),
-            record.call_id,
-            record.latency_ms,
-            preview_inline(&record.error)
-        ),
     }
 }
 
@@ -2184,14 +2709,18 @@ mod tests {
     use std::ffi::OsString;
 
     use ploke_llm::manager::{RecordedResponse, RequestMessage, ResponseIndex};
-    use ploke_records::llm_response::RawFullResponseRecord;
+    use ploke_records::{
+        agent_turn::{ToolCompletedRecord, ToolFailedRecord, ToolRequestRecord},
+        llm_response::RawFullResponseRecord,
+        tool_contracts::ToolArgumentsJson,
+    };
     use uuid::Uuid;
 
     use crate::{
         cli::prototype1_state::identity::{ParentIdentity, write_parent_identity},
         replay::tool_loop::{
-            FsToolLoopStore, ToolLoopResume, ToolLoopSession, ToolLoopStep, ToolLoopStore,
-            WorkspaceState,
+            FsToolLoopStore, ToolLoopResult, ToolLoopResume, ToolLoopSession, ToolLoopStep,
+            ToolLoopStore, WorkspaceState,
         },
         test_support::env_guard_os,
     };
@@ -2219,6 +2748,64 @@ mod tests {
                 response,
             },
         }
+    }
+
+    fn tool_call_response(index: usize) -> RawFullResponseRecord {
+        let response = serde_json::from_value(serde_json::json!({
+            "id": format!("chatcmpl-walk-llm-tool-{index}"),
+            "choices": [{
+                "index": 0,
+                "finish_reason": "tool_calls",
+                "message": {
+                    "role": "assistant",
+                    "content": "Calling tools...",
+                    "tool_calls": [{
+                        "id": "call-list-dir",
+                        "type": "function",
+                        "function": {
+                            "name": "list_dir",
+                            "arguments": "{\"dir\":\"crates/ploke-tree-browser\"}"
+                        }
+                    }]
+                }
+            }],
+            "created": index,
+            "model": "test/model",
+            "object": "chat.completion"
+        }))
+        .expect("response json");
+        RawFullResponseRecord {
+            assistant_message_id: Uuid::from_u128(0xbbbbbbbb_bbbb_bbbb_bbbb_bbbbbbbbbbbb),
+            recorded_response: RecordedResponse {
+                response_index: ResponseIndex::new(index),
+                response,
+            },
+        }
+    }
+
+    fn protected_write_error() -> String {
+        serde_json::json!({
+            "user": "non_semantic_patch: Write path denied before executing `non_semantic_patch`: Cargo.toml. Reason: path 'Cargo.toml' is protected",
+            "llm": {
+                "ok": false,
+                "tool": "non_semantic_patch",
+                "code": "invalid_format",
+                "field": "patches.file",
+                "expected": "workspace-root-relative path inside the writable surface",
+                "received": "Cargo.toml",
+                "message": "Write path denied before executing `non_semantic_patch`: Cargo.toml. Reason: path 'Cargo.toml' is protected",
+                "snippet": null,
+                "retry_hint": "Choose a workspace source file that is inside the writable surface. Do not edit protected manifests/configs such as Cargo.toml.",
+                "retry_context": {
+                    "fields": [{
+                        "name": "input_paths",
+                        "value": {"kind": "string_list", "value": ["Cargo.toml"]}
+                    }]
+                }
+            },
+            "system": "tool=NsPatch code=InvalidFormat: Write path denied before executing `non_semantic_patch`: Cargo.toml"
+        })
+        .to_string()
     }
 
     fn write_test_identity(repo: &Path, campaign: &CampaignId) {
@@ -2332,8 +2919,170 @@ mod tests {
         assert!(rendered.contains("source: Historical"));
         assert!(rendered.contains("selected_step: 3"));
         assert!(
-            rendered.contains(&format!("walk llm show --session-id {session_id} --head")),
-            "summary should give the operator the exact follow-up inspection command: {rendered}"
+            rendered.contains("inspect: walk llm show"),
+            "summary should give the operator a focused follow-up inspection command: {rendered}"
+        );
+        assert!(
+            rendered.contains(&format!(
+                "inspect_explicit: walk llm show --session-id {session_id} --head"
+            )),
+            "summary should also keep an explicit session fallback: {rendered}"
+        );
+    }
+
+    #[test]
+    fn effectful_llm_commands_focus_new_session_head() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = FsToolLoopStore::new(tmp.path().join("tool-loop"));
+        let session =
+            ToolLoopSession::new("branched-session", "headless-tui", tmp.path().join("work"));
+        store.write_session(&session).expect("session");
+        let step = ToolLoopStep::new(
+            "branched-session",
+            3,
+            vec![RequestMessage::new_user("continue".to_string())],
+            content_response(3),
+            WorkspaceState::default(),
+            WorkspaceState::default(),
+        )
+        .expect("step");
+        store.write_step(&step).expect("step file");
+
+        let mut controller = WalkController::new(tmp.path().join("repo"));
+        controller
+            .focus_llm_session_head(&store, "branched-session")
+            .expect("focus branched session");
+
+        assert_eq!(controller.llm_focus.as_deref(), Some("branched-session"));
+        assert_eq!(controller.llm_cursors.get("branched-session"), Some(&3));
+    }
+
+    #[test]
+    fn llm_checkpoint_render_shows_tool_arguments_and_decoded_results() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = FsToolLoopStore::new(tmp.path().join("tool-loop"));
+        let mut session =
+            ToolLoopSession::new("session-tool", "headless-tui", tmp.path().join("lane-a"));
+        session.lane_id = Some("lane-a".to_string());
+        let lane = LlmLane {
+            lane_id: "lane-a".to_string(),
+            session,
+            resume: None,
+            head: Some(2),
+        };
+        let mut step = ToolLoopStep::new(
+            "session-tool",
+            2,
+            vec![
+                RequestMessage::new_user("inspect the tree browser crate".to_string()),
+                RequestMessage::new_assistant("I will inspect the crate.".to_string()),
+            ],
+            tool_call_response(2),
+            WorkspaceState::default(),
+            WorkspaceState::default(),
+        )
+        .expect("step");
+        step.tool_requests.push(ToolRequestRecord {
+            request_id: "session-tool:2".to_string(),
+            parent_id: "parent".to_string(),
+            call_id: "call-list-dir".to_string(),
+            tool: "list_dir".to_string(),
+            arguments: ToolArgumentsJson::from(r#"{"dir":"crates/ploke-tree-browser"}"#),
+        });
+        step.tool_results.push(ToolLoopResult::Completed(ToolCompletedRecord {
+            request_id: "session-tool:2".to_string(),
+            parent_id: "parent".to_string(),
+            call_id: "call-list-dir".to_string(),
+            tool: "list_dir".to_string(),
+            content: serde_json::json!({
+                "ok": true,
+                "dir": "crates/ploke-tree-browser",
+                "exists": true,
+                "truncated": false,
+                "entries": [
+                    {"name":"Cargo.toml","path":"crates/ploke-tree-browser/Cargo.toml","kind":"file","size_bytes":333,"modified_ms":null},
+                    {"name":"src","path":"crates/ploke-tree-browser/src","kind":"dir","size_bytes":null,"modified_ms":null}
+                ]
+            })
+            .to_string(),
+            ui_payload: None,
+            latency_ms: 0,
+        }));
+
+        let rendered = WalkController::new(tmp.path().join("repo")).render_llm_checkpoint(
+            &store,
+            lane,
+            Some((2, step)),
+        );
+
+        assert!(rendered.contains("assistant_response:"));
+        assert!(rendered.contains("content:"));
+        assert!(rendered.contains("Calling tools..."));
+        assert!(rendered.contains("tool_calls: 1"));
+        assert!(rendered.contains("list_dir call_id=call-list-dir"));
+        assert!(rendered.contains("dir: crates/ploke-tree-browser"));
+        assert!(rendered.contains("tool_results: 1"));
+        assert!(rendered.contains("completed list_dir"));
+        assert!(rendered.contains("entries=2"));
+        assert!(rendered.contains("crates/ploke-tree-browser/Cargo.toml"));
+        assert!(rendered.contains("prior_messages:"));
+        assert!(rendered.contains("next:"));
+    }
+
+    #[test]
+    fn llm_checkpoint_render_shows_protected_write_retry_hint() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let store = FsToolLoopStore::new(tmp.path().join("tool-loop"));
+        let mut session =
+            ToolLoopSession::new("session-failed", "headless-tui", tmp.path().join("lane-a"));
+        session.lane_id = Some("lane-a".to_string());
+        let lane = LlmLane {
+            lane_id: "lane-a".to_string(),
+            session,
+            resume: None,
+            head: Some(11),
+        };
+        let mut step = ToolLoopStep::new(
+            "session-failed",
+            11,
+            vec![RequestMessage::new_user("try a patch".to_string())],
+            tool_call_response(11),
+            WorkspaceState::default(),
+            WorkspaceState::default(),
+        )
+        .expect("step");
+        step.tool_requests.push(ToolRequestRecord {
+            request_id: "session-failed:11".to_string(),
+            parent_id: "parent".to_string(),
+            call_id: "call-patch".to_string(),
+            tool: "non_semantic_patch".to_string(),
+            arguments: ToolArgumentsJson::from(r#"{"patches":[{"file":"Cargo.toml","diff":"--- a/Cargo.toml","reasoning":"remove crate"}]}"#),
+        });
+        step.tool_results
+            .push(ToolLoopResult::Failed(ToolFailedRecord {
+                request_id: "session-failed:11".to_string(),
+                parent_id: "parent".to_string(),
+                call_id: "call-patch".to_string(),
+                tool: Some("non_semantic_patch".to_string()),
+                error: protected_write_error(),
+                ui_payload: None,
+                latency_ms: 0,
+            }));
+
+        let rendered = WalkController::new(tmp.path().join("repo")).render_llm_checkpoint(
+            &store,
+            lane,
+            Some((11, step)),
+        );
+
+        assert!(rendered.contains("failed non_semantic_patch"));
+        assert!(rendered.contains("file: Cargo.toml"));
+        assert!(rendered.contains("retry_hint:"));
+        assert!(rendered.contains("Do not edit protected manifests/configs"));
+        assert!(rendered.contains("retry_context:"));
+        assert!(rendered.contains("input_paths: Cargo.toml"));
+        assert!(
+            rendered.contains("walk llm step --source live --watch --allow workspace-mutation")
         );
     }
 
