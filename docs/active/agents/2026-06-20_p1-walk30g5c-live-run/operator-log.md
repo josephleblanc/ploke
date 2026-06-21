@@ -56,3 +56,13 @@
 - Built `ploke-eval` successfully in the `r4` worktree.
 - Doctor passed at `phase = baseline_eval`; effective control was `parallel_cap = 5`, `patch_generation_parallel_cap = 5`.
 - Live protocol preflight passed with canary budget `4096` tokens. Headless TUI setup preflight was skipped because the run profile does not use broad-harness headless TUI generation.
+
+## 2026-06-20 17:59 PDT R5 Campaign Reaches R7
+
+- `r4` reproduced the baseline embedding preflight failure at `R5` because commands launched with the external worktree as `cwd` did not inherit `OPENROUTER_API_KEY`; the walk server PID also lacked that variable. Disposition: stop-use for loop progress.
+- Created seed worktree `/home/brasides/.ploke-eval/worktrees/p1-walk30g5c-pplxembed-r5-det-g25p-p25f-20260620-175208` from `feature/ploke-loop` at `f51e981e`.
+- Ran `prototype1-setup`, doctor, live protocol preflight, and `walk start` through a shell wrapper that exports `OPENROUTER_API_KEY` before entering the worktree.
+- Confirmed the r5 walk server PID had `OPENROUTER_API_KEY` in `/proc/<pid>/environ`.
+- `walk step --until r7 --watch` advanced from `R0` to `R7`; baseline evidence became `Ready<CompleteBaseline>` and policy evidence became `Ready<Prototype1SearchPolicy, Prototype1ChildBudget>`.
+- Baseline eval run root: `/home/brasides/.ploke-eval/instances/prototype1/p1-walk30g5c-pplxembed-r5-det-g25p-p25f-20260620-175208/BurntSushi__ripgrep-2295/runs/run-1782003272473-structured-current-policy-e8e82501`.
+- Baseline tool-loop review written by sub-agent: `tool-loop-reviews/cycle-00-baseline-run-1782003272473.md`.
