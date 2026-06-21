@@ -7,6 +7,14 @@ evaluation, artifact generation, inspection, and experimental analysis work
 around `ploke`; it is expected to move faster and may be less stable than the
 user-facing `ploke-tui` application.
 
+## Manual
+
+The crate-local mdBook lives in [`docs/`](docs/). Build it with:
+
+```bash
+mdbook build crates/ploke-eval
+```
+
 Current scope:
 - fetch a benchmark repo into a stable local cache
 - prepare one run manifest from a Multi-SWE-bench instance

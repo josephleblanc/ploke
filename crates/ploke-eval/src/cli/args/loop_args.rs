@@ -32,6 +32,7 @@ pub enum LoopSubcommand {
     Prototype1Step(Prototype1ControlCommand),
     /// Drive the typed Prototype 1 parent runtime path.
     Prototype1State(Prototype1StateCommand),
+    // ANCHOR: prototype1_walk_command_safety_help
     /// Debug-only local server for stepping Prototype 1 typestate transitions.
     #[command(
         name = "walk",
@@ -40,6 +41,7 @@ pub enum LoopSubcommand {
         after_help = "Common workflows:\n  Set context:       ploke-eval loop walk use /path/to/parent-worktree\n  Start live walk:   ploke-eval loop walk start\n  Inspect progress:  ploke-eval loop walk summary -v\n  Replay history:    ploke-eval loop walk replay --index 0\n  Move replay:       ploke-eval loop walk forward --steps 10 --tail 20\n  Live step:         ploke-eval loop walk step --until r6\n\nSafety notes:\n  replay/back/forward are read-only historical cursor commands.\n  step drives live typestate edges; long live edges require --watch.\n  R12 -> R13b successor handoff mutates checkout state and requires --allow git-changes.\n  branch-live writes only explicit provenance and requires --allow provenance-record."
     )]
     Prototype1StateWalk(Prototype1StateWalkCommand),
+    // ANCHOR_END: prototype1_walk_command_safety_help
     /// Inspect or execute one staged Prototype 1 runner invocation.
     #[command(hide = true)]
     Prototype1Runner(Prototype1RunnerCommand),
@@ -612,6 +614,7 @@ pub struct Prototype1StateWalkBranchLiveCommand {
     pub allow: Vec<String>,
 }
 
+// ANCHOR: prototype1_walk_step_live_edge_admission
 #[derive(Debug, Clone, Parser)]
 #[command(
     about = "Advance the current in-memory walk by one live typestate edge",
@@ -646,6 +649,7 @@ pub struct Prototype1StateWalkStepCommand {
     #[arg(long)]
     pub with_version: bool,
 }
+// ANCHOR_END: prototype1_walk_step_live_edge_admission
 
 #[derive(Debug, Clone, Parser)]
 #[command(

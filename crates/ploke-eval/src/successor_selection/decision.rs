@@ -5,6 +5,7 @@ use super::evidence::SelectionInput;
 use super::{PROCEDURE_ID, disposition_as_str};
 use crate::BranchDisposition;
 
+// ANCHOR: prototype1_successor_decision
 /// Parent-side successor-selection record.
 ///
 /// `branch_disposition`/`outcome` explain how the branch scored; they are not
@@ -112,3 +113,4 @@ pub(crate) enum SuccessorOutcome {
     ExploreFrom,
     Stop,
 }
+// ANCHOR_END: prototype1_successor_decision

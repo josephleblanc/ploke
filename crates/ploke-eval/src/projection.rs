@@ -3,6 +3,7 @@
 //! Projection files are operator views and compatibility mirrors. Active loop
 //! execution must use History, channels, or artifact backends instead.
 
+// ANCHOR: ploke_eval_operator_projection_read
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OperatorProjectionRead {
     _private: (),
@@ -17,3 +18,4 @@ impl OperatorProjectionRead {
         Self { _private: () }
     }
 }
+// ANCHOR_END: ploke_eval_operator_projection_read

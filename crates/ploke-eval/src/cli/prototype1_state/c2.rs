@@ -1,12 +1,14 @@
-#![allow(dead_code)] // REMOVE BY 2026-04-26: typed C2 -> C3 scaffold is not wired into the live controller yet
+#![allow(dead_code)]
+// C2 -> C3 is used by run_planned_child; some replay/test helpers remain intentionally unused.
 
+// ANCHOR: prototype1_c2_to_c3
 //! Explicit `C2 -> C3` prototype configuration transition.
 //!
 //! Temporary note:
 //! This file mirrors the current direct `cargo check` / `cargo build` child
-//! binary path from the existing prototype process helper. It does not yet
-//! replace that runtime path. The forward transition and replay vocabulary are
-//! both present here, but the live controller does not yet consume them.
+//! binary path from the existing prototype process helper. The forward
+//! transition and replay vocabulary are both present here; the live child path
+//! uses this typed carrier while other recovery/debug paths may reconstruct it.
 //!
 //! `C2` is the staged parent state:
 //! - the parent process is still running
@@ -17,6 +19,7 @@
 //! - the parent process is still running
 //! - the artifact world remains child-aligned
 //! - a promoted child binary now exists, but is not running yet
+// ANCHOR_END: prototype1_c2_to_c3
 
 use crate::prelude::*;
 

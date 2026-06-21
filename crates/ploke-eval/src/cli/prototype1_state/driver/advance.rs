@@ -20,6 +20,7 @@ use super::super::{
     typestate::{self, AsyncStepInput, Step, StepInput},
 };
 
+// ANCHOR: prototype1_run_to_terminal
 /// Run a complete typed parent turn from command capture to final report.
 pub(crate) async fn run_to_terminal(command: Prototype1StateCommand) -> Result<(), PrepareError> {
     let r0 = typestate::R0::new(command);
@@ -81,3 +82,4 @@ pub(crate) async fn run_to_terminal(command: Prototype1StateCommand) -> Result<(
     let _r14 = r13.advance(r13_to_r14)?;
     Ok(())
 }
+// ANCHOR_END: prototype1_run_to_terminal

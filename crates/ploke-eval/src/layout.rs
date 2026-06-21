@@ -27,9 +27,11 @@ pub fn registries_dir() -> Result<PathBuf, PrepareError> {
     Ok(ploke_eval_home()?.join("registries"))
 }
 
+// ANCHOR: ploke_eval_instances_dir
 pub fn instances_dir() -> Result<PathBuf, PrepareError> {
     Ok(ploke_eval_home()?.join("instances"))
 }
+// ANCHOR_END: ploke_eval_instances_dir
 
 pub fn protocol_dir() -> Result<PathBuf, PrepareError> {
     Ok(ploke_eval_home()?.join("protocol"))

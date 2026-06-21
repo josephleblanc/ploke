@@ -1,6 +1,9 @@
-#![allow(dead_code)] // REMOVE BY 2026-04-26: typed C4 -> C5 scaffold is not wired into the live controller yet
+#![allow(dead_code)]
+// C4 -> C5 is used by run_planned_child; some replay/test helpers remain intentionally unused.
 
+// ANCHOR: prototype1_c4_to_c5
 //! Explicit parent-side observation of child completion after `C4`.
+// ANCHOR_END: prototype1_c4_to_c5
 
 use std::path::PathBuf;
 use std::thread;

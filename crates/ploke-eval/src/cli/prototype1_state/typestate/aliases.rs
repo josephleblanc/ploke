@@ -71,6 +71,8 @@ macro_rules! runtime_alias {
     };
 }
 
+// ANCHOR: prototype1_typestate_aliases_and_branches
+// ANCHOR: prototype1_alias_r0
 runtime_alias! {
     /// R0: CLI dispatch / failure hook.
     ///
@@ -103,7 +105,9 @@ runtime_alias! {
     >;
     shape R0_SHAPE;
 }
+// ANCHOR_END: prototype1_alias_r0
 
+// ANCHOR: prototype1_alias_r1
 runtime_alias! {
     /// R1: prelude and coordinates.
     ///
@@ -139,6 +143,7 @@ runtime_alias! {
     >;
     shape R1_SHAPE;
 }
+// ANCHOR_END: prototype1_alias_r1
 
 impl R0 {
     /// Construct the initial runtime-state carrier from the raw CLI command.
@@ -273,10 +278,12 @@ impl<RunShape, CampaignConfig> R1<RunShape, CampaignConfig> {
 /// The enum is intentionally named by the states it can produce, not by a
 /// semantic transition label. The transition remains `Transition<R1, R1Branch,
 /// _>`.
+// ANCHOR: prototype1_branch_r1
 pub(crate) enum R1Branch<RunShape, CampaignConfig> {
     R2a(R2a<RunShape, CampaignConfig>),
     R3(R3<RunShape, CampaignConfig>),
 }
+// ANCHOR_END: prototype1_branch_r1
 
 /// Owned payload extracted from the R2a terminal branch.
 pub(crate) struct R2aParts<RunShape, CampaignConfig> {
@@ -290,6 +297,7 @@ pub(crate) struct R3Parts<RunShape, CampaignConfig> {
     pub(crate) parent_identity: ParentIdentity,
 }
 
+// ANCHOR: prototype1_alias_r2a
 runtime_alias! {
     /// R2a: gen0 parent identity initialization terminal branch.
     ///
@@ -328,7 +336,9 @@ runtime_alias! {
     >;
     shape R2A_SHAPE;
 }
+// ANCHOR_END: prototype1_alias_r2a
 
+// ANCHOR: prototype1_alias_r3
 runtime_alias! {
     /// R3: parent identity source resolved.
     ///
@@ -367,6 +377,7 @@ runtime_alias! {
     >;
     shape R3_SHAPE;
 }
+// ANCHOR_END: prototype1_alias_r3
 
 impl<RunShape, CampaignConfig> R2a<RunShape, CampaignConfig> {
     /// Build the terminal identity-initialization state from R1 context and the
@@ -499,11 +510,14 @@ pub(crate) struct R4cParts<RunShape, CampaignConfig> {
     pub(crate) parent: parent_role::Parent<parent_role::Ready>,
 }
 
+// ANCHOR: prototype1_branch_r4a_startup
 pub(crate) enum R4aStartupBranch<RunShape, CampaignConfig> {
     GenesisChecked(R4bGenesisChecked<RunShape, CampaignConfig>),
     PredecessorReady(R4cReady<RunShape, CampaignConfig>),
 }
+// ANCHOR_END: prototype1_branch_r4a_startup
 
+// ANCHOR: prototype1_alias_r4a
 runtime_alias! {
     /// R4a: parent loaded/constructed as unchecked.
     ///
@@ -541,7 +555,9 @@ runtime_alias! {
     >;
     shape R4A_SHAPE;
 }
+// ANCHOR_END: prototype1_alias_r4a
 
+// ANCHOR: prototype1_alias_r4b_genesis_checked
 runtime_alias! {
     /// R4b: genesis checkout validated.
     ///
@@ -578,7 +594,9 @@ runtime_alias! {
     >;
     shape R4B_SHAPE;
 }
+// ANCHOR_END: prototype1_alias_r4b_genesis_checked
 
+// ANCHOR: prototype1_alias_r4c_ready
 runtime_alias! {
     /// R4c: parent startup complete in the current live implementation.
     ///
@@ -619,6 +637,7 @@ runtime_alias! {
     >;
     shape R4C_SHAPE;
 }
+// ANCHOR_END: prototype1_alias_r4c_ready
 
 impl<RunShape, CampaignConfig> R4a<RunShape, CampaignConfig> {
     pub(crate) fn from_collected_parent(
@@ -913,6 +932,7 @@ impl<RunShape, CampaignConfig> R8<RunShape, CampaignConfig> {
     }
 }
 
+// ANCHOR: prototype1_alias_r5
 runtime_alias! {
     /// R5: parent-start evidence recorded.
     ///
@@ -949,7 +969,9 @@ runtime_alias! {
     >;
     shape R5_SHAPE;
 }
+// ANCHOR_END: prototype1_alias_r5
 
+// ANCHOR: prototype1_alias_r6
 runtime_alias! {
     /// R6: parent baseline established.
     ///
@@ -985,7 +1007,9 @@ runtime_alias! {
     >;
     shape R6_SHAPE;
 }
+// ANCHOR_END: prototype1_alias_r6
 
+// ANCHOR: prototype1_alias_r7
 runtime_alias! {
     /// R7: policy and child budget ready.
     ///
@@ -1023,7 +1047,9 @@ runtime_alias! {
     >;
     shape R7_SHAPE;
 }
+// ANCHOR_END: prototype1_alias_r7
 
+// ANCHOR: prototype1_alias_r8
 runtime_alias! {
     /// R8: child-plan authority received and parent becomes selectable.
     ///
@@ -1066,7 +1092,9 @@ runtime_alias! {
     >;
     shape R8_SHAPE;
 }
+// ANCHOR_END: prototype1_alias_r8
 
+// ANCHOR: prototype1_alias_r9
 runtime_alias! {
     /// R9: child schedule shaped.
     ///
@@ -1106,7 +1134,9 @@ runtime_alias! {
     >;
     shape R9_SHAPE;
 }
+// ANCHOR_END: prototype1_alias_r9
 
+// ANCHOR: prototype1_alias_r10
 runtime_alias! {
     /// R10: selection strategy ready.
     ///
@@ -1147,6 +1177,7 @@ runtime_alias! {
     >;
     shape R10_SHAPE;
 }
+// ANCHOR_END: prototype1_alias_r10
 
 macro_rules! selectable_state_impl {
     ($alias:ident, $phase:expr) => {
@@ -1210,6 +1241,7 @@ macro_rules! selectable_state_impl {
 selectable_state_impl!(R9, phase::R9);
 selectable_state_impl!(R10, phase::R10);
 
+// ANCHOR: prototype1_alias_r11a_rejected_only
 runtime_alias! {
     /// R11a: rejected-only branch projected into selection evidence.
     ///
@@ -1249,7 +1281,9 @@ runtime_alias! {
     >;
     shape R11A_SHAPE;
 }
+// ANCHOR_END: prototype1_alias_r11a_rejected_only
 
+// ANCHOR: prototype1_alias_r11_fanout_complete
 runtime_alias! {
     /// R11b/R11c: child fanout complete.
     ///
@@ -1292,15 +1326,19 @@ runtime_alias! {
     >;
     shape R11_SHAPE;
 }
+// ANCHOR_END: prototype1_alias_r11_fanout_complete
 
 selectable_state_impl!(R11aRejectedOnly, phase::R11a);
 selectable_state_impl!(R11FanoutComplete, phase::R11);
 
+// ANCHOR: prototype1_branch_r10_fanout
 pub(crate) enum R10FanoutBranch<RunShape, CampaignConfig> {
     RejectedOnly(R11aRejectedOnly<RunShape, CampaignConfig>),
     FanoutComplete(R11FanoutComplete<RunShape, CampaignConfig>),
 }
+// ANCHOR_END: prototype1_branch_r10_fanout
 
+// ANCHOR: prototype1_alias_r12
 runtime_alias! {
     /// R12: report-child/outcome projection ready.
     ///
@@ -1341,6 +1379,7 @@ runtime_alias! {
     >;
     shape R12_SHAPE;
 }
+// ANCHOR_END: prototype1_alias_r12
 
 selectable_state_impl!(R12, phase::R12);
 
@@ -1350,6 +1389,7 @@ impl<RunShape, CampaignConfig> R12<RunShape, CampaignConfig> {
     }
 }
 
+// ANCHOR: prototype1_alias_r13a_stopped
 runtime_alias! {
     /// R13a: successor decision stops or selects no successor.
     ///
@@ -1389,7 +1429,9 @@ runtime_alias! {
     >;
     shape R13A_SHAPE;
 }
+// ANCHOR_END: prototype1_alias_r13a_stopped
 
+// ANCHOR: prototype1_alias_r13b_handoff_committed
 runtime_alias! {
     /// R13b: successor handoff committed.
     ///
@@ -1436,6 +1478,7 @@ runtime_alias! {
     >;
     shape R13B_SHAPE;
 }
+// ANCHOR_END: prototype1_alias_r13b_handoff_committed
 
 selectable_state_impl!(R13aStopped, phase::R13a);
 
@@ -1499,11 +1542,14 @@ impl<RunShape, CampaignConfig> R13bHandoffCommitted<RunShape, CampaignConfig> {
     }
 }
 
+// ANCHOR: prototype1_branch_r12_continuation
 pub(crate) enum R12ContinuationBranch<RunShape, CampaignConfig> {
     Stopped(R13aStopped<RunShape, CampaignConfig>),
     HandoffCommitted(R13bHandoffCommitted<RunShape, CampaignConfig>),
 }
+// ANCHOR_END: prototype1_branch_r12_continuation
 
+// ANCHOR: prototype1_alias_r14a_final_stopped
 runtime_alias! {
     /// R14a: final report after stopped/no-selection continuation.
     ///
@@ -1543,7 +1589,9 @@ runtime_alias! {
     >;
     shape R14A_SHAPE;
 }
+// ANCHOR_END: prototype1_alias_r14a_final_stopped
 
+// ANCHOR: prototype1_alias_r14b_final_handoff
 runtime_alias! {
     /// R14b: final report after allowed successor handoff.
     ///
@@ -1581,6 +1629,7 @@ runtime_alias! {
     >;
     shape R14B_SHAPE;
 }
+// ANCHOR_END: prototype1_alias_r14b_final_handoff
 
 selectable_state_impl!(R14aFinalStopped, phase::R14);
 
@@ -1632,10 +1681,13 @@ impl<RunShape, CampaignConfig> R14bFinalHandoff<RunShape, CampaignConfig> {
     }
 }
 
+// ANCHOR: prototype1_branch_r14_final
 pub(crate) enum R14FinalBranch<RunShape, CampaignConfig> {
     Stopped(R14aFinalStopped<RunShape, CampaignConfig>),
     Handoff(R14bFinalHandoff<RunShape, CampaignConfig>),
 }
+// ANCHOR_END: prototype1_branch_r14_final
+// ANCHOR_END: prototype1_typestate_aliases_and_branches
 
 /// Child-attempt typestate chain used within R11 fanout.
 ///

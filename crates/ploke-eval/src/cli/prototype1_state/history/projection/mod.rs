@@ -3440,6 +3440,7 @@ fn append_sealed_evidence_citation_pairs(
     }
 }
 
+// ANCHOR: prototype1_selection_decision_entry
 /// Block-sealable selection decision payload.
 ///
 /// This is intended to be committed into an `EntryKind::Decision` entry, using
@@ -3511,6 +3512,7 @@ pub(crate) struct SelectionDecisionEntry {
     /// Decision result under `procedure_or_policy`.
     pub(crate) decision: crate::successor_selection::SuccessorDecision,
 }
+// ANCHOR_END: prototype1_selection_decision_entry
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct TraversalEvidence {
@@ -3619,6 +3621,7 @@ impl SelectionDecisionEntry {
         )
     }
 
+    // ANCHOR: prototype1_selection_entry_with_metrics
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_with_traversal_identity_metrics(
         procedure_or_policy: ProcedureRef,
@@ -3682,6 +3685,7 @@ impl SelectionDecisionEntry {
         entry.formula = crate::successor_selection::traversal::score_child_prop_formula(&entry)?;
         Ok(entry)
     }
+    // ANCHOR_END: prototype1_selection_entry_with_metrics
 
     fn contributes_candidates_to_history_projection(&self) -> bool {
         matches!(

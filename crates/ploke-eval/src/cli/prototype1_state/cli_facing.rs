@@ -2663,6 +2663,7 @@ fn publish_broad_harness_child_plan_from_attempts(
     attempted: &BTreeSet<usize>,
     rejections: &BTreeMap<usize, String>,
 ) -> Result<ChildPlanReceipt, PrepareError> {
+    // ANCHOR: prototype1_broad_harness_below_min_persist_rejected_plan
     if admitted.len() < batch.child_budget.min as usize {
         let failed_parent = project_node_status(batch.parent.node(), Prototype1NodeStatus::Failed);
         let rejected_attempts =
@@ -2684,6 +2685,7 @@ fn publish_broad_harness_child_plan_from_attempts(
             ),
         });
     }
+    // ANCHOR_END: prototype1_broad_harness_below_min_persist_rejected_plan
     let parent_identity = batch.parent.identity().clone();
     let parent_runtime_id = *batch.parent.runtime_id();
     let children = admitted
@@ -2721,6 +2723,7 @@ fn publish_broad_harness_child_plan_from_attempts(
     receive_child_plan(env, &parent_identity, planned, locked)
 }
 
+// ANCHOR: prototype1_persist_rejected_child_plan
 fn persist_rejected_plan(
     manifest_path: &Path,
     parent: Parent<Ready>,
@@ -2746,6 +2749,7 @@ fn persist_rejected_plan(
         })?;
     Ok(())
 }
+// ANCHOR_END: prototype1_persist_rejected_child_plan
 
 #[allow(dead_code)] // Rejected-attempt roll-up helper; exercised in below-min cli_tests.
 fn rejected_attempts(
@@ -5488,6 +5492,7 @@ pub(crate) fn compare_observed_child_treatment(
     Ok(report)
 }
 
+// ANCHOR: prototype1_run_planned_child
 pub(crate) fn run_planned_child(
     campaign_id: CampaignId,
     manifest_path: PathBuf,
@@ -5824,6 +5829,7 @@ pub(crate) fn run_planned_child(
         // and projected as payload-only candidates.
     })
 }
+// ANCHOR_END: prototype1_run_planned_child
 
 fn stored_child_outcome(
     campaign_id: &CampaignId,

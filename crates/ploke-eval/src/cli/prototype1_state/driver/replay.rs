@@ -23,6 +23,7 @@ use crate::{
     spec::PrepareError,
 };
 
+// ANCHOR: prototype1_replay_cursor
 /// In-memory replay cursor over an immutable snapshot of journal entries.
 #[derive(Debug, Clone)]
 pub(crate) struct ReplayCursor {
@@ -59,6 +60,7 @@ pub(crate) struct BranchProvenanceRecord {
     pub(crate) reason: String,
     pub(crate) admission: String,
 }
+// ANCHOR_END: prototype1_replay_cursor
 
 impl ReplayCursor {
     pub(crate) fn load(repo_root: &Path) -> Result<Self, PrepareError> {

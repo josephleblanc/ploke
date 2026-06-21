@@ -36,6 +36,7 @@ pub(crate) trait Transition {
     type To;
 }
 
+// ANCHOR: prototype1_message_box_trait
 /// Static filesystem box for exactly one lock edge and one unlock edge.
 pub(crate) trait MessageBox: File {
     /// Edge allowed to lock this box.
@@ -43,7 +44,9 @@ pub(crate) trait MessageBox: File {
     /// Edge allowed to unlock this box.
     type Unlock: Transition;
 }
+// ANCHOR_END: prototype1_message_box_trait
 
+// ANCHOR: prototype1_crown_carrier
 /// Crown authority state markers.
 pub(crate) mod crown {
     use super::{Private, SealBlock};
@@ -154,7 +157,9 @@ impl Crown<crown::Locked> {
         self.state.into_seal()
     }
 }
+// ANCHOR_END: prototype1_crown_carrier
 
+// ANCHOR: prototype1_lock_crown
 /// Transition that retires a selectable Parent and locks lineage authority.
 ///
 /// This trait is implemented in this module so the raw `Crown<Ruling>`
@@ -186,6 +191,7 @@ pub(crate) trait LockCrown {
         >;
 }
 
+// ANCHOR: prototype1_parent_selectable_lock_crown_impl
 impl LockCrown for super::parent::Parent<super::parent::Selectable> {
     type Retired = super::parent::Parent<super::parent::Retired>;
 
@@ -195,6 +201,7 @@ impl LockCrown for super::parent::Parent<super::parent::Selectable> {
         (retired, Crown::for_lineage(lineage).lock(seal))
     }
 
+    // ANCHOR: prototype1_parent_seal_block_with_artifact
     fn seal_block_with_artifact<F>(
         self,
         open: OpenBlock,
@@ -221,7 +228,10 @@ impl LockCrown for super::parent::Parent<super::parent::Selectable> {
         let sealed = locked.seal(block)?;
         Ok((retired, sealed))
     }
+    // ANCHOR_END: prototype1_parent_seal_block_with_artifact
 }
+// ANCHOR_END: prototype1_parent_selectable_lock_crown_impl
+// ANCHOR_END: prototype1_lock_crown
 
 #[cfg(test)]
 impl Crown<crown::Locked> {
@@ -245,6 +255,7 @@ impl Crown<crown::Ruling> {
     }
 }
 
+// ANCHOR: prototype1_lock_box_trait
 /// Static filesystem box that transfers the crown for one lineage.
 pub(crate) trait LockBox: File {
     /// Lineage authority carried by this box.
@@ -254,7 +265,9 @@ pub(crate) trait LockBox: File {
     /// Edge that unlocks the crown from this box.
     type Unlock: Transition;
 }
+// ANCHOR_END: prototype1_lock_box_trait
 
+// ANCHOR: prototype1_at_file_address
 /// Concrete address for a static filesystem message location.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct At<F: File> {
@@ -312,7 +325,9 @@ impl<'de, F: File> Deserialize<'de> for At<F> {
         })
     }
 }
+// ANCHOR_END: prototype1_at_file_address
 
+// ANCHOR: prototype1_message_trait
 /// Cross-runtime protocol message.
 ///
 /// Implement this for records that are written by one runtime and read by
@@ -350,7 +365,11 @@ pub(crate) trait Message {
         body: &Self::Body,
     ) -> Result<<<Self::Box as MessageBox>::Unlock as Transition>::To, Self::ReceiveError>;
 }
+// ANCHOR_END: prototype1_message_trait
 
+// ANCHOR: prototype1_message_open
+// ANCHOR: prototype1_message_open_carrier
+// ANCHOR: prototype1_message_open_decl
 /// Message that has been created but not yet packed into its buffer.
 #[must_use = "Open<M> must be packed or converted into a typed failure before it is dropped"]
 pub(crate) struct Open<M: Message> {
@@ -360,6 +379,8 @@ pub(crate) struct Open<M: Message> {
     _message: PhantomData<M>,
     _private: Private,
 }
+// ANCHOR_END: prototype1_message_open_decl
+// ANCHOR_END: prototype1_message_open_carrier
 
 impl<M: Message> fmt::Debug for Open<M> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -371,6 +392,7 @@ impl<M: Message> fmt::Debug for Open<M> {
 }
 
 impl<M: Message> Open<M> {
+    // ANCHOR: prototype1_message_open_from_sender
     /// Open a message by consuming its only valid sender role/state.
     pub(crate) fn from_sender(
         sender: <<M::Box as MessageBox>::Lock as Transition>::From,
@@ -384,7 +406,9 @@ impl<M: Message> Open<M> {
             _private: Private,
         }
     }
+    // ANCHOR_END: prototype1_message_open_from_sender
 
+    // ANCHOR: prototype1_message_open_lock
     /// Lock this message into its only durable box.
     pub(crate) fn lock<E, F>(
         mut self,
@@ -396,6 +420,7 @@ impl<M: Message> Open<M> {
     {
         let body = self.body.as_ref().expect("open message missing body");
         match write(&at, body) {
+            // ANCHOR: prototype1_message_open_lock_success
             Ok(()) => {
                 let sender = self
                     .sender
@@ -417,6 +442,8 @@ impl<M: Message> Open<M> {
                     },
                 ))
             }
+            // ANCHOR_END: prototype1_message_open_lock_success
+            // ANCHOR: prototype1_message_open_lock_failure
             Err(source) => {
                 let sender = self
                     .sender
@@ -430,10 +457,13 @@ impl<M: Message> Open<M> {
                 self.armed = false;
                 Err(LockError { sender, source })
             }
+            // ANCHOR_END: prototype1_message_open_lock_failure
         }
     }
+    // ANCHOR_END: prototype1_message_open_lock
 }
 
+// ANCHOR: prototype1_message_open_drop_guard
 impl<M: Message> Drop for Open<M> {
     fn drop(&mut self) {
         assert!(
@@ -443,7 +473,12 @@ impl<M: Message> Drop for Open<M> {
         );
     }
 }
+// ANCHOR_END: prototype1_message_open_drop_guard
+// ANCHOR_END: prototype1_message_open
 
+// ANCHOR: prototype1_message_locked
+// ANCHOR: prototype1_message_locked_carrier
+// ANCHOR: prototype1_message_locked_decl
 /// Message locked into its static durable box.
 #[must_use = "Locked<M> must be unlocked by the intended receiver or intentionally persisted across process exit"]
 pub(crate) struct Locked<M: Message> {
@@ -452,12 +487,15 @@ pub(crate) struct Locked<M: Message> {
     _message: PhantomData<M>,
     _private: Private,
 }
+// ANCHOR_END: prototype1_message_locked_decl
+// ANCHOR_END: prototype1_message_locked_carrier
 
 impl<M: Message> Locked<M> {
     pub(crate) fn at(&self) -> &At<M::Box> {
         &self.at
     }
 
+    // ANCHOR: prototype1_message_locked_from_box
     pub(crate) fn from_box<E, F>(at: At<M::Box>, read: F) -> Result<Self, UnlockReadError<M, E>>
     where
         F: FnOnce(&At<M::Box>) -> Result<M::Body, E>,
@@ -472,7 +510,9 @@ impl<M: Message> Locked<M> {
             Err(source) => Err(UnlockReadError { at, source }),
         }
     }
+    // ANCHOR_END: prototype1_message_locked_from_box
 
+    // ANCHOR: prototype1_message_locked_unlock
     pub(crate) fn unlock(
         self,
         receiver: <<M::Box as MessageBox>::Unlock as Transition>::From,
@@ -507,6 +547,7 @@ impl<M: Message> Locked<M> {
             },
         ))
     }
+    // ANCHOR_END: prototype1_message_locked_unlock
 }
 
 impl<M: Message> fmt::Debug for Locked<M>
@@ -545,7 +586,10 @@ where
             .finish_non_exhaustive()
     }
 }
+// ANCHOR_END: prototype1_message_locked
 
+// ANCHOR: prototype1_message_received
+// ANCHOR: prototype1_message_received_carrier
 /// Message that has been consumed by the intended receiver.
 #[must_use = "Received<M> is the capability proving a cross-runtime message was consumed"]
 pub(crate) struct Received<M: Message> {
@@ -554,6 +598,7 @@ pub(crate) struct Received<M: Message> {
     _message: PhantomData<M>,
     _private: Private,
 }
+// ANCHOR_END: prototype1_message_received_carrier
 
 impl<M: Message> Received<M> {
     pub(crate) fn at(&self) -> &At<M::Box> {
@@ -579,6 +624,7 @@ where
             .finish_non_exhaustive()
     }
 }
+// ANCHOR_END: prototype1_message_received
 
 /// Failed attempt to read a locked message box from transport.
 pub(crate) struct UnlockReadError<M: Message, E> {

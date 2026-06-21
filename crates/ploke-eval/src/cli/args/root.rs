@@ -6,6 +6,7 @@ use super::{
     RunCommand, SelectCommand, TranscriptCommand,
 };
 
+// ANCHOR: ploke_eval_cli_trust_order_help
 const CLI_BEFORE_LONG_HELP: &str = "\
 Minimal evaluation runner and artifact inspector for ploke.
 
@@ -26,6 +27,7 @@ Trust order:
 
 Use `ploke-eval help <command>` for examples, artifact paths, and command-specific defaults.
 ";
+// ANCHOR_END: ploke_eval_cli_trust_order_help
 
 #[derive(Debug, Parser)]
 #[command(
@@ -44,6 +46,7 @@ pub struct Cli {
     pub command: Command,
 }
 
+// ANCHOR: ploke_eval_cli_command_families
 #[derive(Debug, Subcommand)]
 pub enum Command {
     #[command(display_order = 10)]
@@ -92,3 +95,4 @@ pub enum Command {
     /// Run the prototype intervention loop through the currently implemented frontier.
     Loop(LoopCommand),
 }
+// ANCHOR_END: ploke_eval_cli_command_families

@@ -277,6 +277,7 @@ pub(crate) async fn prompt(command: Prototype1PromptCommand) -> Result<(), Prepa
     Ok(())
 }
 
+// ANCHOR: prototype1_continue_guard
 pub(crate) async fn resume(command: Prototype1ControlCommand) -> Result<(), PrepareError> {
     let mut guard = 0usize;
     loop {
@@ -302,7 +303,9 @@ pub(crate) async fn resume(command: Prototype1ControlCommand) -> Result<(), Prep
         advance(diagnosis, ExecuteMode::Continuous).await?;
     }
 }
+// ANCHOR_END: prototype1_continue_guard
 
+// ANCHOR: prototype1_step_diagnosis_driven
 /// Advance the active Prototype 1 parent checkout by one diagnosed phase.
 ///
 /// `prototype1-step` is intentionally diagnosis-driven: it does not accept a
@@ -332,6 +335,7 @@ pub(crate) async fn step(command: Prototype1ControlCommand) -> Result<(), Prepar
     let status = diagnose_command(&command)?;
     render_status(command.format, &status)
 }
+// ANCHOR_END: prototype1_step_diagnosis_driven
 
 fn diagnose_command(
     command: &Prototype1ControlCommand,
@@ -2284,6 +2288,7 @@ async fn advance_child_plan(context: &RuntimeContext) -> Result<(), PrepareError
     Ok(())
 }
 
+// ANCHOR: prototype1_child_phase_cap
 async fn advance_child_phase(diagnosis: Diagnosis, mode: ExecuteMode) -> Result<(), PrepareError> {
     let plan =
         diagnosis
@@ -2339,6 +2344,7 @@ async fn advance_child_phase(diagnosis: Diagnosis, mode: ExecuteMode) -> Result<
     }
     Ok(())
 }
+// ANCHOR_END: prototype1_child_phase_cap
 
 fn matches_phase(snapshot: &ChildSnapshot, phase: DiagnosedPhase) -> bool {
     matches!(

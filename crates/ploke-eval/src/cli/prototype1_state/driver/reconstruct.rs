@@ -47,6 +47,7 @@ use crate::{
     spec::PrepareError,
 };
 
+// ANCHOR: prototype1_reconstruct_snapshot_state
 /// Concrete parent typestate reconstructed from durable evidence.
 ///
 /// The name is historical: early slices only reconstructed setup/policy phases.
@@ -82,7 +83,9 @@ pub(crate) struct EarlySnapshot {
     pub(crate) notes: Vec<String>,
     pub(crate) blockers: Vec<String>,
 }
+// ANCHOR_END: prototype1_reconstruct_snapshot_state
 
+// ANCHOR: prototype1_reconstruct_early
 /// Reconstruct the most advanced supported parent state from durable evidence.
 ///
 /// This is read-only with respect to loop side effects. It may read parent
@@ -340,6 +343,7 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
         })
     }
 }
+// ANCHOR_END: prototype1_reconstruct_early
 
 fn reconstruct_after_r8(
     r8: typestate::R8<Prototype1StateRunShape, ResolvedCampaignConfig>,

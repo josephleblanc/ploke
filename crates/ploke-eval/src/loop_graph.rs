@@ -30,10 +30,13 @@ use std::str::FromStr;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+// ANCHOR: prototype1_loop_graph_vocabulary
+// ANCHOR: prototype1_runtime_id
 /// Durable identity for one concrete runtime instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub(crate) struct RuntimeId(pub Uuid);
+// ANCHOR_END: prototype1_runtime_id
 
 impl RuntimeId {
     pub(crate) fn new() -> Self {
@@ -55,6 +58,7 @@ impl FromStr for RuntimeId {
     }
 }
 
+// ANCHOR: prototype1_artifact_id
 /// Durable identity for a recoverable artifact state.
 ///
 /// The backing string is intentionally backend-neutral. It may later contain a
@@ -64,6 +68,7 @@ impl FromStr for RuntimeId {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub(crate) struct ArtifactId(String);
+// ANCHOR_END: prototype1_artifact_id
 
 impl ArtifactId {
     pub(crate) fn new(value: impl Into<String>) -> Self {
@@ -89,6 +94,7 @@ impl FromStr for ArtifactId {
     }
 }
 
+// ANCHOR: prototype1_patch_id
 /// Durable identity for one generated or composed patch.
 ///
 /// A `PatchId` identifies the patch record, not merely a candidate branch name.
@@ -97,6 +103,7 @@ impl FromStr for ArtifactId {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub(crate) struct PatchId(String);
+// ANCHOR_END: prototype1_patch_id
 
 impl PatchId {
     pub(crate) fn new(value: impl Into<String>) -> Self {
@@ -122,6 +129,7 @@ impl FromStr for PatchId {
     }
 }
 
+// ANCHOR: prototype1_operation_target
 /// Target operated over by a Runtime.
 ///
 /// The simple patch-generation case targets one Artifact. Patch composition
@@ -146,13 +154,17 @@ pub(crate) enum OperationTarget {
         artifact_ids: Vec<ArtifactId>,
     },
 }
+// ANCHOR_END: prototype1_operation_target
 
+// ANCHOR: prototype1_coordinate
 /// Runtime plus target coordinate for one generative or compositional action.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Coordinate {
     pub runtime_id: RuntimeId,
     pub target: OperationTarget,
 }
+// ANCHOR_END: prototype1_coordinate
+// ANCHOR_END: prototype1_loop_graph_vocabulary
 
 #[cfg(test)]
 mod tests {

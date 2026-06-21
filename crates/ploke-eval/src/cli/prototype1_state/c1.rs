@@ -1,5 +1,7 @@
-#![allow(dead_code)] // REMOVE BY 2026-04-26: typed C1 -> C2 scaffold is not wired into the live controller yet
+#![allow(dead_code)]
+// C1 -> C2 is used by run_planned_child; some replay/test helpers remain intentionally unused.
 
+// ANCHOR: prototype1_c1_to_c2
 //! Explicit `C1 -> C2` prototype configuration transition.
 //!
 //! Temporary note:
@@ -24,6 +26,7 @@
 //! Consuming `Prototype<Parent, Parent, Absent, Unacknowledged>` is the only
 //! way to produce `Prototype<Parent, Child, Absent, Unacknowledged>`, which
 //! prevents accidentally re-running the same state value twice.
+// ANCHOR_END: prototype1_c1_to_c2
 
 use crate::prelude::*;
 

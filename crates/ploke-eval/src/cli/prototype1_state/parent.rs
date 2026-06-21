@@ -30,6 +30,7 @@ use crate::{
     spec::{PrepareError, Prototype1ParentIdentityContext, Prototype1ParentNodeContext},
 };
 
+// ANCHOR: prototype1_parent_role_carrier
 /// Parent role before its artifact, identity, and scheduler facts agree.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Unchecked;
@@ -76,6 +77,7 @@ pub(crate) struct Selectable;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Retired;
 
+// ANCHOR: prototype1_parent_struct
 /// Runtime role carrier for a Parent in a known verification state.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Parent<S> {
@@ -84,7 +86,10 @@ pub(crate) struct Parent<S> {
     node: Prototype1NodeRecord,
     state: S,
 }
+// ANCHOR_END: prototype1_parent_struct
+// ANCHOR_END: prototype1_parent_role_carrier
 
+// ANCHOR: prototype1_parent_startup_gate
 /// Evidence that this runtime may enter the ready Parent path.
 ///
 /// `Startup<Validated>` is the local single-ruler startup gate. Gen0 reaches it
@@ -107,11 +112,16 @@ enum StartupKind {
     Genesis,
     Predecessor { head: BlockHead },
 }
+// ANCHOR_END: prototype1_parent_startup_gate
 
+// ANCHOR: prototype1_child_plan_types
+// ANCHOR: prototype1_child_plan_message_carrier
 /// Cross-runtime message: this parent has planned one or more child artifacts.
 #[derive(Debug)]
 pub(crate) struct ChildPlan;
+// ANCHOR_END: prototype1_child_plan_message_carrier
 
+// ANCHOR: prototype1_child_plan_body_carrier
 /// Body locked into the child-plan message box.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct ChildPlanFiles {
@@ -122,6 +132,7 @@ pub(crate) struct ChildPlanFiles {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     rejected_surface_attempts: Vec<surface_attempt::Evidence>,
 }
+// ANCHOR_END: prototype1_child_plan_body_carrier
 
 impl ChildPlanFiles {
     pub(crate) fn for_parent(
@@ -212,9 +223,14 @@ pub(crate) struct ChildFiles {
     harness: Option<harness_request::child::Evidence>,
 }
 
+// ANCHOR: prototype1_child_plan_file_carrier
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ChildPlanFile;
+// ANCHOR_END: prototype1_child_plan_file_carrier
+// ANCHOR_END: prototype1_child_plan_types
 
+// ANCHOR: prototype1_child_plan_transitions
+// ANCHOR: prototype1_child_plan_lock_transition
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct LockChildPlan;
 
@@ -222,6 +238,7 @@ impl Transition for LockChildPlan {
     type From = Parent<Ready>;
     type To = Parent<Planned>;
 }
+// ANCHOR_END: prototype1_child_plan_lock_transition
 
 impl observe::ObservedTransition for LockChildPlan {
     const ROLE: observe::Role = observe::Role::Parent;
@@ -231,6 +248,7 @@ impl observe::ObservedTransition for LockChildPlan {
     const LABEL: &'static str = "Parent<Ready>->Parent<Planned>";
 }
 
+// ANCHOR: prototype1_child_plan_unlock_transition
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct UnlockChildPlan;
 
@@ -238,6 +256,7 @@ impl Transition for UnlockChildPlan {
     type From = Parent<Planned>;
     type To = Parent<Selectable>;
 }
+// ANCHOR_END: prototype1_child_plan_unlock_transition
 
 impl observe::ObservedTransition for UnlockChildPlan {
     const ROLE: observe::Role = observe::Role::Parent;
@@ -246,6 +265,7 @@ impl observe::ObservedTransition for UnlockChildPlan {
     const AUTHORITY: observe::Authority = observe::Authority::ParentBroadcastChannel;
     const LABEL: &'static str = "ChildPlan->Parent<Selectable>";
 }
+// ANCHOR_END: prototype1_child_plan_transitions
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AwaitHarnessPlan;
@@ -279,6 +299,7 @@ impl observe::ObservedTransition for AcceptHarnessPlan {
     const LABEL: &'static str = "Parent<AwaitingHarnessPlan>->Parent<Ready>";
 }
 
+// ANCHOR: prototype1_child_plan_box_schema
 impl File for ChildPlanFile {
     type Params = (PathBuf, String);
 
@@ -297,6 +318,7 @@ impl MessageBox for ChildPlanFile {
     type Lock = LockChildPlan;
     type Unlock = UnlockChildPlan;
 }
+// ANCHOR_END: prototype1_child_plan_box_schema
 
 impl ChildFiles {
     pub(crate) fn from_resolved(
@@ -404,6 +426,7 @@ impl File for RunnerRequestFile {
     }
 }
 
+// ANCHOR: prototype1_child_plan_message_impl
 impl Message for ChildPlan {
     type Box = ChildPlanFile;
     type Body = ChildPlanFiles;
@@ -426,6 +449,7 @@ impl Message for ChildPlan {
         sender
     }
 
+    // ANCHOR: prototype1_child_plan_ready_receiver
     fn ready_receiver(
         receiver: <<Self::Box as MessageBox>::Unlock as Transition>::From,
         at: &At<Self::Box>,
@@ -440,7 +464,9 @@ impl Message for ChildPlan {
         body.validate_receiver(receiver.identity())?;
         Ok(receiver.cast())
     }
+    // ANCHOR_END: prototype1_child_plan_ready_receiver
 }
+// ANCHOR_END: prototype1_child_plan_message_impl
 
 /// Wrong receiver for a packed child-plan message.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -561,6 +587,7 @@ impl Parent<Unchecked> {
         Self::load_with_runtime_id(manifest_path, identity, RuntimeId::new())
     }
 
+    // ANCHOR: prototype1_parent_check
     #[instrument(
         target = "ploke_exec",
         level = "info",
@@ -585,12 +612,14 @@ impl Parent<Unchecked> {
         check: Check<'_>,
     ) -> Result<Parent<Checked>, PrepareError> {
         let _ = (manifest_path, check.campaign_id);
+        // ANCHOR: prototype1_parent_check_validation
         backend
             .validate_parent_checkout(check.active_root, &self.identity)
             .map_err(|source| PrepareError::DatabaseSetup {
                 phase: "prototype1_parent_checkout",
                 detail: source.to_string(),
             })?;
+        // ANCHOR_END: prototype1_parent_check_validation
 
         info!(
             target: "ploke_exec",
@@ -607,7 +636,9 @@ impl Parent<Unchecked> {
         );
         Ok(self.cast())
     }
+    // ANCHOR_END: prototype1_parent_check
 
+    // ANCHOR: prototype1_parent_ready_from_predecessor_startup
     #[instrument(
         target = "ploke_exec",
         level = "info",
@@ -644,6 +675,7 @@ impl Parent<Unchecked> {
         );
         Ok(self.cast())
     }
+    // ANCHOR_END: prototype1_parent_ready_from_predecessor_startup
 }
 
 impl Parent<Checked> {
@@ -651,6 +683,7 @@ impl Parent<Checked> {
         &self.identity
     }
 
+    // ANCHOR: prototype1_parent_ready
     #[instrument(
         target = "ploke_exec",
         level = "info",
@@ -668,7 +701,9 @@ impl Parent<Checked> {
         )
     )]
     pub(crate) fn ready(self, startup: Startup<Validated>) -> Result<Parent<Ready>, PrepareError> {
+        // ANCHOR: prototype1_parent_ready_validation
         startup.validate_parent(&self.identity)?;
+        // ANCHOR_END: prototype1_parent_ready_validation
         info!(
             target: "ploke_exec",
             role = "parent",
@@ -684,8 +719,10 @@ impl Parent<Checked> {
         );
         Ok(self.cast())
     }
+    // ANCHOR_END: prototype1_parent_ready
 }
 
+// ANCHOR: prototype1_parent_startup_from_history
 impl Startup<Genesis> {
     pub(crate) fn from_history(
         identity: &ParentIdentity,
@@ -875,6 +912,8 @@ impl Startup<Predecessor> {
     }
 }
 
+// ANCHOR_END: prototype1_parent_startup_from_history
+
 impl Startup<Validated> {
     fn validate_parent(&self, identity: &ParentIdentity) -> Result<(), PrepareError> {
         match (&self.kind, self.state.head()) {
@@ -995,13 +1034,18 @@ impl Parent<Ready> {
         &self.identity
     }
 
+    // ANCHOR: prototype1_parent_planned_from_locked_child_plan
+    // ANCHOR: prototype1_child_plan_replay_receive
     pub(crate) fn planned_from_locked_child_plan(self) -> Parent<Planned> {
         let identity = self.identity.clone();
         observe::transition::<LockChildPlan>(&identity)
             .stage(observe::Stage::RetryReplay)
             .commit(|| self.cast())
     }
+    // ANCHOR_END: prototype1_child_plan_replay_receive
+    // ANCHOR_END: prototype1_parent_planned_from_locked_child_plan
 
+    // ANCHOR: prototype1_parent_awaiting_harness_plan_for_request
     pub(crate) fn awaiting_harness_plan_for_request(
         self,
         harness_request: harness_request::request::Reference<
@@ -1013,6 +1057,7 @@ impl Parent<Ready> {
         observe::transition::<AwaitHarnessPlan>(&identity)
             .commit(|| self.into_state(AwaitingHarnessPlan { harness_request }))
     }
+    // ANCHOR_END: prototype1_parent_awaiting_harness_plan_for_request
 }
 
 impl Parent<Planned> {
@@ -1035,10 +1080,12 @@ impl Parent<AwaitingHarnessPlan> {
         &self.state.harness_request
     }
 
+    // ANCHOR: prototype1_parent_accept_harness_plan
     pub(crate) fn accept_harness_plan(self) -> Parent<Ready> {
         let identity = self.identity.clone();
         observe::transition::<AcceptHarnessPlan>(&identity).commit(|| self.into_state(Ready))
     }
+    // ANCHOR_END: prototype1_parent_accept_harness_plan
 }
 
 impl Parent<Selectable> {

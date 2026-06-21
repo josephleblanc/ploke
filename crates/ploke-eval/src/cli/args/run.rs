@@ -497,6 +497,7 @@ pub struct RunMsbBatchCommand {
     pub stop_on_error: bool,
 }
 
+// ANCHOR: ploke_eval_run_msb_agent_single_command
 #[derive(Debug, Parser)]
 #[command(
     about = "Execute one prepared Multi-SWE-bench run and one benchmark issue turn",
@@ -557,7 +558,9 @@ pub struct RunMsbAgentSingleCommand {
     #[arg(long, value_name = "PROVIDER")]
     pub embedding_provider: Option<String>,
 }
+// ANCHOR_END: ploke_eval_run_msb_agent_single_command
 
+// ANCHOR: ploke_eval_run_msb_agent_batch_command
 #[derive(Debug, Parser)]
 #[command(
     about = "Execute many prepared Multi-SWE-bench runs and one benchmark issue turn for each",
@@ -613,6 +616,7 @@ pub struct RunMsbAgentBatchCommand {
     #[arg(long)]
     pub stop_on_error: bool,
 }
+// ANCHOR_END: ploke_eval_run_msb_agent_batch_command
 #[derive(Debug, Parser)]
 #[command(about = "List concrete run attempts for one instance")]
 pub struct RunListCommand {

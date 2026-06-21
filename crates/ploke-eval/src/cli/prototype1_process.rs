@@ -1651,6 +1651,7 @@ pub(crate) fn record_prototype1_successor_completion(
     Ok(record)
 }
 
+// ANCHOR: prototype1_successor_startup_validation
 pub(crate) fn validate_prototype1_successor_continuation(
     invocation: &SuccessorInvocation,
     manifest_path: &Path,
@@ -1697,6 +1698,7 @@ pub(crate) fn validate_prototype1_successor_continuation(
     identity.validate_for_command(invocation.campaign_id(), Some(invocation.node_id()))?;
     Ok(identity)
 }
+// ANCHOR_END: prototype1_successor_startup_validation
 
 pub(crate) fn validate_child_surface(
     active_parent_root: &Path,
@@ -1711,6 +1713,7 @@ pub(crate) fn validate_child_surface(
         })
 }
 
+// ANCHOR: prototype1_active_successor_binary_build
 fn build_prototype1_active_successor_binary(repo_root: &Path) -> Result<PathBuf, PrepareError> {
     let output = ProcessCommand::new("cargo")
         .arg("build")
@@ -1752,6 +1755,7 @@ fn build_prototype1_active_successor_binary(repo_root: &Path) -> Result<PathBuf,
     }
     Ok(binary_path)
 }
+// ANCHOR_END: prototype1_active_successor_binary_build
 
 fn prepare_prototype1_active_successor_runtime(
     campaign_id: &CampaignId,
@@ -2955,6 +2959,7 @@ fn wait_for_prototype1_successor_ready(
     }
 }
 
+// ANCHOR: prototype1_spawn_and_handoff_successor
 pub(crate) fn spawn_and_handoff_prototype1_successor(
     campaign_id: &CampaignId,
     selected: selection::Selection<selection::Artifact>,
@@ -3299,6 +3304,7 @@ pub(crate) fn spawn_and_handoff_prototype1_successor(
         }
     }
 }
+// ANCHOR_END: prototype1_spawn_and_handoff_successor
 
 struct HandoffBlock {
     open: OpenBlock,
@@ -3306,6 +3312,7 @@ struct HandoffBlock {
     artifact_key: TreeKeyHash,
 }
 
+// ANCHOR: prototype1_handoff_block_fields
 fn handoff_block_fields(
     campaign_id: &CampaignId,
     parent_identity: &ParentIdentity,
@@ -3361,6 +3368,7 @@ fn handoff_block_fields(
         artifact_key,
     })
 }
+// ANCHOR_END: prototype1_handoff_block_fields
 
 fn parent_actor_ref(parent_identity: &ParentIdentity) -> ActorRef {
     ActorRef::Process(format!("parent:{}", parent_identity.parent_id()))

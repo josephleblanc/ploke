@@ -89,6 +89,7 @@ pub(crate) enum LlmMove {
     Forward,
 }
 
+// ANCHOR: prototype1_walk_controller
 /// Single-session in-memory controller for Prototype 1 typestate phases.
 ///
 /// The server admits setup/startup and parent-start phases through live `R7`,
@@ -108,7 +109,9 @@ pub(crate) struct WalkController {
     llm_focus: Option<String>,
     llm_cursors: BTreeMap<String, usize>,
 }
+// ANCHOR_END: prototype1_walk_controller
 
+// ANCHOR: prototype1_walk_state
 /// Owned typestate value currently held by the server.
 ///
 /// The enum is intentionally private: external callers address state through
@@ -144,6 +147,7 @@ enum WalkState {
         detail: String,
     },
 }
+// ANCHOR_END: prototype1_walk_state
 
 /// Human-facing summary of one `walk step` request.
 #[derive(Clone)]

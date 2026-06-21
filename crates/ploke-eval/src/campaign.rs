@@ -435,12 +435,14 @@ pub fn adopt_campaign_manifest_from_registry(
 
     let active_model = load_active_model()?;
     let route_source = model_registry_route_source(&active_model.model_id)?.unwrap_or_default();
+    // ANCHOR: campaign_direct_google_provider_normalization
     let provider_slug = if route_source.is_direct_google() {
         None
     } else {
         load_provider_for_model(&active_model.model_id)?
             .map(|provider| provider.slug.as_str().to_string())
     };
+    // ANCHOR_END: campaign_direct_google_provider_normalization
 
     Ok(CampaignManifest {
         schema_version: CAMPAIGN_MANIFEST_SCHEMA_VERSION.to_string(),
@@ -568,6 +570,7 @@ pub fn resolve_campaign_config(
         .provider_slug
         .clone()
         .or_else(|| manifest.provider_slug.clone());
+    // ANCHOR: campaign_resolve_direct_google_provider
     let provider_slug = if route_source.is_direct_google() {
         match explicit_provider.as_deref() {
             Some("google") | None => None,
@@ -588,6 +591,7 @@ pub fn resolve_campaign_config(
                 .map(|value| value.slug.as_str().to_string())
         })
     };
+    // ANCHOR_END: campaign_resolve_direct_google_provider
 
     let required_procedures = if overrides.required_procedures.is_empty() {
         normalize_required_procedures(&manifest.required_procedures)?

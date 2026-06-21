@@ -44,6 +44,8 @@ impl<T> Command<T> {
     }
 }
 
+// ANCHOR: prototype1_context_facts
+// ANCHOR: prototype1_context_facts_fields
 /// Value facts accumulated by the typed parent loop after initial setup.
 ///
 /// These fields are value-level bookkeeping, not extra typestate axes. The type
@@ -65,6 +67,7 @@ pub(crate) struct Facts {
     pub(crate) report: Option<ReportFacts>,
     pub(crate) parent_identity: Option<ParentIdentity>,
 }
+// ANCHOR_END: prototype1_context_facts_fields
 
 /// Concrete child-plan values after `Parent<Ready> -> Parent<Selectable>`.
 pub(crate) struct ChildPlanFacts {
@@ -84,6 +87,7 @@ pub(crate) struct ReportFacts {
     pub(crate) successor_pid: Option<u32>,
     pub(crate) successor_ready_path: Option<PathBuf>,
 }
+// ANCHOR_END: prototype1_context_facts
 
 impl fmt::Debug for ChildPlanFacts {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -124,6 +128,7 @@ impl fmt::Debug for Facts {
     }
 }
 
+// ANCHOR: prototype1_context_collected
 /// Repo/campaign/manifest/run-shape/journal inputs have been collected.
 ///
 /// This is intentionally generic over `RunShape` and `CampaignConfig`
@@ -144,6 +149,7 @@ pub(crate) struct Collected<RunShape = (), CampaignConfig = ()> {
     facts: Facts,
     _private: Private,
 }
+// ANCHOR_END: prototype1_context_collected
 
 /// Owned payload extracted from `Context<Collected<...>>` at the temporary
 /// migration boundary back into the existing live implementation.

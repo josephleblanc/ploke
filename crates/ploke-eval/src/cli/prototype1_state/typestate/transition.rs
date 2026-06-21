@@ -28,6 +28,7 @@ use super::Private;
 // `Transition<From, To, _>`, not encoded by flattening the edge into a new type
 // name.
 
+// ANCHOR: prototype1_transition_arrow
 /// A typed, fallible arrow from `From` to `To`.
 ///
 /// The function `F` is stored as data so callers can close over the environment
@@ -98,7 +99,10 @@ where
 {
     Transition::new(f)
 }
+// ANCHOR_END: prototype1_transition_arrow
 
+// ANCHOR: prototype1_step_trait
+// ANCHOR: prototype1_step_trait_contract
 /// A value that can advance one typed state to another.
 ///
 /// This trait is intentionally tiny. It is the Rust equivalent of a Kleisli
@@ -140,6 +144,7 @@ pub(crate) trait Step<From>: Sized {
         }
     }
 }
+// ANCHOR_END: prototype1_step_trait_contract
 
 impl<From, To, F, Error> Step<From> for Transition<From, To, F, Error>
 where
@@ -168,7 +173,9 @@ where
         self(from)
     }
 }
+// ANCHOR_END: prototype1_step_trait
 
+// ANCHOR: prototype1_step_input
 /// Value-first helper for applying a typed step.
 ///
 /// This is the typestate analogue of calling `x.map(f)`: the state value owns
@@ -193,6 +200,7 @@ pub(crate) trait StepInput: Sized {
 
 /// Every sized state value can be the receiver for `advance`.
 impl<T> StepInput for T {}
+// ANCHOR_END: prototype1_step_input
 
 /// A composed pair of adjacent steps.
 ///

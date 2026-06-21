@@ -2,6 +2,7 @@ use std::marker::PhantomData;
 
 use super::Private;
 
+// ANCHOR: prototype1_runtime_product
 /// Global runtime carrier, parameterized by each independently meaningful axis.
 #[derive(Debug)]
 pub(crate) struct Runtime<
@@ -26,7 +27,9 @@ pub(crate) struct Runtime<
     pub(super) report: Report,
     pub(super) _private: Private,
 }
+// ANCHOR_END: prototype1_runtime_product
 
+// ANCHOR: prototype1_runtime_axes
 /// Role axis before a concrete `Parent<S>` / `Child<S>` carrier exists.
 ///
 /// Once the parent role is constructed, the `Runtime` role parameter uses the
@@ -135,3 +138,4 @@ pub(crate) struct Report<State> {
     pub(super) _state: PhantomData<State>,
     pub(super) _private: Private,
 }
+// ANCHOR_END: prototype1_runtime_axes

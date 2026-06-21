@@ -277,9 +277,11 @@ pub fn sync_protocol_registration_status(record_path: &Path) -> Result<(), Prepa
     persist_registration(&registration)
 }
 
+// ANCHOR: ploke_eval_attempt_runs_dir
 fn artifact_runs_dir(instance_dir: &Path) -> PathBuf {
     instance_dir.join("runs")
 }
+// ANCHOR_END: ploke_eval_attempt_runs_dir
 
 fn run_id_from_run_dir(run_dir: &Path) -> Option<String> {
     run_dir

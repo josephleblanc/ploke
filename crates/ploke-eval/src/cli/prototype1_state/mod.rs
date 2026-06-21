@@ -641,7 +641,7 @@
 //! ## Persisted artifact map
 //!
 //! Operator appendix (commands, path table, glossary: scheduler generations vs
-//! History, channel vs journal): `crates/ploke-eval/docs/prototype1-loop-operator.md`.
+//! History, channel vs journal): `crates/ploke-eval/docs/prototype1/operator-map.md`.
 //! The old source-side `PROTOTYPE1_LOOP_OPERATOR.md` is retained only as a
 //! redirect. The labelled local path list is `prototype1_monitor_locations` in
 //! `cli_facing.rs`.
