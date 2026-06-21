@@ -44,3 +44,15 @@
 - A bounded setup-only probe against the same prepared run manifest and explicit `perplexity/pplx-embed-v1-4b` / `perplexity` flags succeeded, writing `/home/brasides/.ploke-eval/instances/prototype1/p1-walk30g5c-pplxembed-det-g25p-p25f-20260620-173545/BurntSushi__ripgrep-2295/runs/run-1782002582325-shell-only-4db3bca4/execution-log.json`.
 - Disposition: stop-use for loop progress. The campaign has persisted failed baseline evidence and should not be resumed.
 - Stopped the walk server at `R5`.
+
+## 2026-06-20 17:46 PDT Worktree-Correct Campaign Verified
+
+- Attempted campaign `p1-walk30g5c-pplxembed-r2-det-g25p-p25f-20260620-174400`; initial setup was blocked by dirty source docs but persisted a partial campaign manifest, so that campaign ID is tainted and should not be reused.
+- Attempted campaign `p1-walk30g5c-pplxembed-r3-det-g25p-p25f-20260620-174508`; setup admitted successfully but used `/home/brasides/code/ploke` as `repo_root`, so it does not satisfy the requested separate-worktree run shape and is stop-use for this live walk.
+- Created seed worktree `/home/brasides/.ploke-eval/worktrees/p1-walk30g5c-pplxembed-r4-det-g25p-p25f-20260620-174602` from `feature/ploke-loop` at `15322e88`.
+- Ran `prototype1-setup` inside the seed worktree for campaign `p1-walk30g5c-pplxembed-r4-det-g25p-p25f-20260620-174602`.
+- `prototype1-setup` admitted parent node `node-737ffdeb22262f67` on branch `prototype1-parent-p1-walk30g5c-pplxembed-r4-det-g25p-p25f-20260620-174602-gen0` with `repo_root = /home/brasides/.ploke-eval/worktrees/p1-walk30g5c-pplxembed-r4-det-g25p-p25f-20260620-174602`.
+- Campaign manifest verified parent model `google/gemini-2.5-pro` via `direct_google`, protocol model `google/gemini-2.5-flash` via `direct_google`, and eval embeddings `perplexity/pplx-embed-v1-4b` with provider `perplexity`.
+- Built `ploke-eval` successfully in the `r4` worktree.
+- Doctor passed at `phase = baseline_eval`; effective control was `parallel_cap = 5`, `patch_generation_parallel_cap = 5`.
+- Live protocol preflight passed with canary budget `4096` tokens. Headless TUI setup preflight was skipped because the run profile does not use broad-harness headless TUI generation.
