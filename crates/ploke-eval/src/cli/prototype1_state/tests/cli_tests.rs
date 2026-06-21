@@ -2757,6 +2757,75 @@ fn broad_harness_multi_file_admission_mints_one_artifact_child() {
 }
 
 #[test]
+fn broad_harness_child_plan_skips_missing_source_admitted_result_when_min_remains() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let allowed = write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "broad surface fixture");
+    let parent = ready_parent_for_test(&manifest_path, &repo_root);
+    let budget = Prototype1ChildBudget::new(2, 3);
+    let broad_tui = profile::BroadTui {
+        fresh_slots_per_child: Some(1),
+        ..profile::BroadTui::default()
+    };
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        broad_tui,
+    )
+    .expect("publish broad harness batch");
+    assert_eq!(batch.slots.len(), 3);
+
+    let first =
+        admit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "one");
+    let missing_source = PathBuf::from("crates/ploke-selection-score/tests/raser.rs");
+    let bad = admit_broad_slot_for_test(
+        &repo_root,
+        &batch.slots[1],
+        &[missing_source.clone()],
+        "bad",
+    );
+    let third =
+        admit_broad_slot_for_test(&repo_root, &batch.slots[2], &[allowed[1].clone()], "three");
+
+    let receipt = publish_broad_harness_child_plan_from_admitted_batch(
+        ChildPlanEnv {
+            campaign_id: &CLI_TEST_CAMPAIGN,
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+            broad_tui,
+            route_source: ModelRouteSource::DirectGoogle,
+        },
+        batch,
+        vec![first, bad, third],
+    )
+    .expect("missing-source candidate should be rejected while enough children remain");
+
+    let children = receipt.plan.body().children();
+    assert_eq!(children.len(), 2);
+    assert!(
+        children
+            .iter()
+            .all(|child| child.node_record().target_relpath != missing_source)
+    );
+    assert!(
+        receipt.rejected_surface_attempts.iter().any(|attempt| {
+            matches!(
+                &attempt.outcome,
+                surface_attempt::Outcome::Rejected { reason }
+                    if reason.contains("could not read source file")
+                        && reason.contains("raser.rs")
+            )
+        }),
+        "missing-source admission should be retained as rejected evidence: {:?}",
+        receipt.rejected_surface_attempts
+    );
+}
+
+#[test]
 fn broad_harness_materialization_accepts_relative_parent_repo_root() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");

@@ -13,6 +13,8 @@ Use this section for current operator and implementation truth.
 | How do I recover without weakening authority? | [Recovery](recovery.md) |
 | How do I use the typestate debugger? | [Loop Walk](loop-walk.md) |
 | What fields are in the admitted profile? | [Run Profile](run-profile.md) |
+| Where does the loop write, and how does it map to Cozo? | [Persistence Inventory and Cozo Map](persistence-inventory-and-cozo-map.md) |
+| How should edit-generation strategies become composable? | [Edit Strategy Algebra](edit-strategy-algebra.md) |
 | What does typestate prove? | [Typestate](typestate.md) |
 | What invariants matter? | [Typestate Invariants](typestate-invariants.md) |
 | How does child-plan admission work? | [Child Plan Authority](child-plan-authority/index.md) |

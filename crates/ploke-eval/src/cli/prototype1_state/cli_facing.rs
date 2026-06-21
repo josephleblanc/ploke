@@ -2627,6 +2627,49 @@ fn broad_harness_child_from_admitted(
     )
 }
 
+fn broad_harness_materialization_rejection(
+    env: ChildPlanEnv<'_>,
+    admitted: &AdmittedBroadHarnessResult,
+) -> Option<String> {
+    if admitted.changed_paths().is_empty() {
+        return Some("broad harness admitted transaction had no changed paths".to_string());
+    }
+    let target_relpath = &admitted.changed_paths()[0];
+    let source_path = env.repo_root.join(target_relpath);
+    if let Err(source) = fs::read_to_string(&source_path) {
+        return Some(format!(
+            "broad harness admitted transaction '{}' was not materialized as a child: could not read source file '{}' for broad child plan: {source}",
+            admitted.request_id(),
+            source_path.display()
+        ));
+    }
+    let candidate_path = admitted.workspace_root().join(target_relpath);
+    if let Err(source) = fs::read_to_string(&candidate_path) {
+        return Some(format!(
+            "broad harness admitted transaction '{}' was not materialized as a child: could not read candidate file '{}' for broad child plan: {source}",
+            admitted.request_id(),
+            candidate_path.display()
+        ));
+    }
+    None
+}
+
+fn broad_harness_admitted_slot_index(
+    batch: &HarnessRequestBatch,
+    admitted: &AdmittedBroadHarnessResult,
+) -> Result<usize, PrepareError> {
+    batch
+        .slots
+        .iter()
+        .position(|slot| slot.published.request_id() == admitted.request_id())
+        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "admitted broad harness transaction '{}' did not match any published request slot",
+                admitted.request_id()
+            ),
+        })
+}
+
 #[cfg_attr(not(test), allow(dead_code))] // Batch-completed child-plan publisher; live path uses from_attempts; exercised in cli_tests.
 fn publish_broad_harness_child_plan_from_admitted_batch(
     env: ChildPlanEnv<'_>,
@@ -2663,11 +2706,29 @@ fn publish_broad_harness_child_plan_from_attempts(
     attempted: &BTreeSet<usize>,
     rejections: &BTreeMap<usize, String>,
 ) -> Result<ChildPlanReceipt, PrepareError> {
+    let mut materialized_admitted = Vec::new();
+    let mut materialization_attempted = attempted.clone();
+    let mut materialization_rejections = rejections.clone();
+    for admitted_result in admitted {
+        if let Some(reason) = broad_harness_materialization_rejection(env, &admitted_result) {
+            let slot_index = broad_harness_admitted_slot_index(&batch, &admitted_result)?;
+            materialization_attempted.insert(slot_index);
+            materialization_rejections.insert(slot_index, reason);
+        } else {
+            materialized_admitted.push(admitted_result);
+        }
+    }
+
     // ANCHOR: prototype1_broad_harness_below_min_persist_rejected_plan
-    if admitted.len() < batch.child_budget.min as usize {
+    if materialized_admitted.len() < batch.child_budget.min as usize {
         let failed_parent = project_node_status(batch.parent.node(), Prototype1NodeStatus::Failed);
-        let rejected_attempts =
-            batch_attempt_evidence(&batch, &admitted, attempted, rejections, true);
+        let rejected_attempts = batch_attempt_evidence(
+            &batch,
+            &materialized_admitted,
+            &materialization_attempted,
+            &materialization_rejections,
+            true,
+        );
         let ready_parent = batch.parent.accept_harness_plan();
         // Task C2: error precedence edge case. If persisting the failed plan
         // itself errors here, that persistence error is surfaced via `?` and
@@ -2679,8 +2740,8 @@ fn publish_broad_harness_child_plan_from_attempts(
         write_node_projection(&failed_parent)?;
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
-                "broad harness admitted {} child transaction(s), fewer than required minimum {}",
-                admitted.len(),
+                "broad harness materialized {} child transaction(s), fewer than required minimum {}",
+                materialized_admitted.len(),
                 batch.child_budget.min
             ),
         });
@@ -2688,7 +2749,7 @@ fn publish_broad_harness_child_plan_from_attempts(
     // ANCHOR_END: prototype1_broad_harness_below_min_persist_rejected_plan
     let parent_identity = batch.parent.identity().clone();
     let parent_runtime_id = *batch.parent.runtime_id();
-    let children = admitted
+    let children = materialized_admitted
         .iter()
         .enumerate()
         .map(|(index, admitted)| {
@@ -2701,7 +2762,13 @@ fn publish_broad_harness_child_plan_from_attempts(
             )
         })
         .collect::<Result<Vec<_>, PrepareError>>()?;
-    let attempts = batch_attempt_evidence(&batch, &admitted, attempted, rejections, false);
+    let attempts = batch_attempt_evidence(
+        &batch,
+        &materialized_admitted,
+        &materialization_attempted,
+        &materialization_rejections,
+        false,
+    );
     let files = ChildPlanFiles::for_parent(env.manifest_path, &parent_identity, children)
         .with_rejected_surface_attempts(attempts);
     let at = files.message_at();

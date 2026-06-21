@@ -71,5 +71,6 @@ Campaign export reads completed closure rows and per-run submission artifacts.
   nodes/
 ```
 
-See the [Operator Map](../prototype1/operator-map.md) for the full Prototype 1
-file inventory and authority warnings.
+See the [Operator Map](../prototype1/operator-map.md) for Prototype 1
+operator context, and [Persistence Inventory and Cozo Map](../prototype1/persistence-inventory-and-cozo-map.md)
+for the detailed location inventory and database migration map.

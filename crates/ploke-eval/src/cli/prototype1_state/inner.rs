@@ -456,8 +456,7 @@ impl<M: Message> Open<M> {
                 let sender = M::fail_sender(sender);
                 self.armed = false;
                 Err(LockError { sender, source })
-            }
-            // ANCHOR_END: prototype1_message_open_lock_failure
+            } // ANCHOR_END: prototype1_message_open_lock_failure
         }
     }
     // ANCHOR_END: prototype1_message_open_lock

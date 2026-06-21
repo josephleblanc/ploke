@@ -38,6 +38,8 @@
 - [Recovery](prototype1/recovery.md)
 - [Loop Walk](prototype1/loop-walk.md)
 - [Run Profile](prototype1/run-profile.md)
+- [Persistence Inventory and Cozo Map](prototype1/persistence-inventory-and-cozo-map.md)
+- [Edit Strategy Algebra](prototype1/edit-strategy-algebra.md)
 - [Typestate](prototype1/typestate.md)
 - [Typestate Invariants](prototype1/typestate-invariants.md)
 - [Child Plan Authority](prototype1/child-plan-authority/index.md)
