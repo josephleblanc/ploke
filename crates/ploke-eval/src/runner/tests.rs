@@ -1902,6 +1902,40 @@ mod tests {
     }
 
     #[test]
+    fn non_exportable_msb_submission_detail_identifies_evidence_guard_errors() {
+        let tmp = tempdir().expect("tempdir");
+        let (prepared, run_output_dir) =
+            dirty_msb_prepared_for_submission(&tmp, "case-non-exportable-detail", 8);
+
+        let packaging_err = write_msb_submission_artifact(
+            &prepared,
+            &RunArm::structured_current_policy_treatment(),
+            &run_output_dir,
+            &run_output_dir.join("run.json"),
+            &run_output_dir.join("record.json.gz"),
+            Some(&msb_patch_artifact(true, false)),
+        )
+        .expect_err("non-empty wrong-target patch must remain non-exportable");
+
+        assert_eq!(
+            non_exportable_msb_submission_detail(&packaging_err),
+            Some("non-empty MBE fix_patch requires at least one expected benchmark file change")
+        );
+        assert_eq!(
+            non_exportable_msb_submission_detail(&PrepareError::InvalidBatchSelection {
+                detail: "some other batch selection error".to_string()
+            }),
+            None
+        );
+        assert!(
+            !run_output_dir
+                .join("multi-swe-bench-submission.jsonl")
+                .exists(),
+            "invalid submission must not be written"
+        );
+    }
+
+    #[test]
     fn write_msb_submission_artifact_rejects_nonempty_patch_without_expected_file_list() {
         let tmp = tempdir().expect("tempdir");
         let (prepared, run_output_dir) =
