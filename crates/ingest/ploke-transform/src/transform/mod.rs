@@ -11,6 +11,7 @@ use syn_parser::parser::nodes::*;
 use syn_parser::parser::types::TypeNode;
 use syn_parser::parser::{graph::CodeGraph, nodes::TypeDefNode, types::VisibilityKind};
 use syn_parser::resolve::RelationIndexer;
+use syn_parser::resolve::call_resolution::resolve_call_relations_after_tree;
 use syn_parser::resolve::module_tree::ModuleTree;
 use syn_parser::resolve::type_resolution_v2::resolve_type_relations_after_tree;
 use syn_parser::utils::LogStyle;
@@ -24,6 +25,9 @@ use crate::error::TransformError;
 
 // -- transforms
 use consts::transform_consts;
+use edges::transform_call_resolution_report;
+use edges::transform_call_site_relations;
+use edges::transform_call_sites;
 use edges::transform_relations;
 use edges::transform_type_relations;
 use enums::transform_enums;
@@ -136,6 +140,10 @@ pub fn transform_parsed_graph(
         resolve_type_relations_after_tree(&parsed_graph, tree).map_err(|err| {
             TransformError::Transformation(format!("typed type relation resolution failed: {err}"))
         })?;
+    let call_resolution_report =
+        resolve_call_relations_after_tree(&parsed_graph, tree).map_err(|err| {
+            TransformError::Transformation(format!("typed call relation resolution failed: {err}"))
+        })?;
 
     let code_graph = parsed_graph.graph;
     let crate_context = parsed_graph
@@ -170,6 +178,12 @@ pub fn transform_parsed_graph(
     transform_relations(db, code_graph.relations)?;
     tracing::trace!("{}: Starting", "type_relations".log_step());
     transform_type_relations(db, &type_relation_report)?;
+    tracing::trace!("{}: Starting", "call_sites".log_step());
+    transform_call_sites(db, &code_graph.call_sites)?;
+    tracing::trace!("{}: Starting", "call_site_relations".log_step());
+    transform_call_site_relations(db, &code_graph.call_site_relations)?;
+    tracing::trace!("{}: Starting", "call_resolution".log_step());
+    transform_call_resolution_report(db, &call_resolution_report)?;
 
     tracing::trace!("{}: Starting", "crate_context".log_step());
     transform_crate_context(db, crate_context)?;
@@ -204,10 +218,14 @@ fn transform_defined_types(
 
 #[cfg(test)]
 mod tests {
-    use cozo::{Db, MemStorage, ScriptMutability};
+    use cozo::{DataValue, Db, MemStorage, ScriptMutability};
     use ploke_test_utils::test_run_phases_and_collect;
     use std::collections::BTreeMap;
     use syn_parser::parser::ParsedCodeGraph;
+    use syn_parser::parser::graph::GraphAccess;
+    use syn_parser::parser::nodes::{AnyCallSiteId, CallBodyOwnerId, CallNode, ToCozoUuid};
+    use syn_parser::parser::relations::CallRelation;
+    use syn_parser::resolve::call_resolution::resolve_call_relations_after_tree;
 
     use crate::{error::TransformError, schema::create_schema_all};
 
@@ -252,6 +270,149 @@ mod tests {
             !resolved_type_rows.rows.is_empty(),
             "expected resolved type relation edges"
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_call_graph_projection_for_resolved_path_call() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let db = Db::new(MemStorage::default()).expect("Failed to create database");
+        db.initialize().expect("Failed to initialize database");
+        create_schema_all(&db)?;
+
+        let successful_graphs = test_run_phases_and_collect("fixture_path_resolution");
+        let mut merged =
+            ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
+        let tree = merged.build_tree_and_prune().unwrap_or_else(|e| {
+            tracing::error!(target: "transform_function", "Error building tree: {}", e);
+            panic!()
+        });
+
+        let call_report = resolve_call_relations_after_tree(&merged, &tree)?;
+        let resolved_function_edge = call_report
+            .relations
+            .iter()
+            .copied()
+            .find_map(|relation| match relation {
+                CallRelation::Function { source, target } => Some((source, target)),
+                CallRelation::Method { .. } => None,
+            })
+            .expect("fixture_path_resolution should have a resolved local function call edge");
+        let (call_site_id, target_function_id) = resolved_function_edge;
+        let call_site_any = AnyCallSiteId::Path(call_site_id);
+        let call_site = merged
+            .call_sites()
+            .iter()
+            .find(|call| call.id() == call_site_any)
+            .expect("resolved call edge source should have a structural call-site row");
+        let CallNode::PathCall(path_call) = call_site else {
+            panic!("resolved function edge source should be a PathCall");
+        };
+        assert_eq!(path_call.path, ["super", "restricted_func"]);
+        let owner_id = match call_site.owner() {
+            CallBodyOwnerId::Function(id) => {
+                let value: DataValue = id.into();
+                value
+            }
+            CallBodyOwnerId::Method(id) => {
+                let value: DataValue = id.into();
+                value
+            }
+        };
+        let call_site_db_id = call_site_id.to_cozo_uuid();
+        let target_db_id: DataValue = target_function_id.into();
+
+        transform_parsed_graph(&db, merged, &tree)?;
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), call_site_db_id.clone());
+        params.insert("target_id".to_string(), target_db_id.clone());
+        let call_relation_rows = db.run_script(
+            r#"?[source_id, target_id, relation_kind, source_kind, target_kind] :=
+                source_id = $call_site_id,
+                target_id = $target_id,
+                *call_relation{source_id, target_id, relation_kind, source_kind, target_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(
+            call_relation_rows.rows.len(),
+            1,
+            "expected exactly one persisted call_relation row for super::restricted_func()"
+        );
+        assert_eq!(&call_relation_rows.rows[0][2], &DataValue::from("Function"));
+        assert_eq!(&call_relation_rows.rows[0][3], &DataValue::from("Path"));
+        assert_eq!(&call_relation_rows.rows[0][4], &DataValue::from("Function"));
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), call_site_db_id.clone());
+        params.insert("owner_id".to_string(), owner_id.clone());
+        let call_site_rows = db.run_script(
+            r#"?[id, owner_id, call_kind, path] :=
+                id = $call_site_id,
+                owner_id = $owner_id,
+                *call_site{id, owner_id, call_kind, path @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(
+            call_site_rows.rows.len(),
+            1,
+            "expected exactly one persisted call_site row for super::restricted_func()"
+        );
+        assert_eq!(&call_site_rows.rows[0][2], &DataValue::from("Path"));
+        assert_eq!(
+            &call_site_rows.rows[0][3],
+            &DataValue::List(vec![
+                DataValue::from("super"),
+                DataValue::from("restricted_func"),
+            ])
+        );
+
+        let mut params = BTreeMap::new();
+        params.insert("owner_id".to_string(), owner_id);
+        params.insert("call_site_id".to_string(), call_site_db_id.clone());
+        let call_site_edge_rows = db.run_script(
+            r#"?[source_id, target_id, relation_kind, source_kind, target_kind] :=
+                source_id = $owner_id,
+                target_id = $call_site_id,
+                *call_site_edge{source_id, target_id, relation_kind, source_kind, target_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(
+            call_site_edge_rows.rows.len(),
+            1,
+            "expected exactly one persisted BodyContainsCall row"
+        );
+        assert_eq!(
+            &call_site_edge_rows.rows[0][2],
+            &DataValue::from("BodyContainsCall")
+        );
+        assert_eq!(
+            &call_site_edge_rows.rows[0][3],
+            &DataValue::from("Function")
+        );
+        assert_eq!(&call_site_edge_rows.rows[0][4], &DataValue::from("Path"));
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), call_site_db_id);
+        let status_rows = db.run_script(
+            r#"?[source_id, source_kind, status_kind, resolution_kind] :=
+                source_id = $call_site_id,
+                *call_resolution_status{source_id, source_kind, status_kind, resolution_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(
+            status_rows.rows.len(),
+            1,
+            "expected exactly one persisted call_resolution_status row"
+        );
+        assert_eq!(&status_rows.rows[0][1], &DataValue::from("Path"));
+        assert_eq!(&status_rows.rows[0][2], &DataValue::from("Resolved"));
+        assert_eq!(&status_rows.rows[0][3], &DataValue::from("LocalExact"));
 
         Ok(())
     }

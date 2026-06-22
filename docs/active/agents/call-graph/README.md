@@ -13,10 +13,11 @@ Short description: Current source of truth for the parser call-graph feature thr
 5. [`2026-06-22_inherent-self-method-resolution-plan.md`](2026-06-22_inherent-self-method-resolution-plan.md) — completed first semantic resolver slice.
 6. [`2026-06-22_structural-path-call-extraction-plan.md`](2026-06-22_structural-path-call-extraction-plan.md) — completed structural path-call slice.
 7. [`2026-06-22_local-free-function-path-call-resolution-plan.md`](2026-06-22_local-free-function-path-call-resolution-plan.md) — completed first local path-call resolver slice.
-8. [`2026-06-22_structural-macro-call-extraction-plan.md`](2026-06-22_structural-macro-call-extraction-plan.md) — completed structural macro-call slice.
-9. [`../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md`](../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md) — task sequence for the first `fixture_nodes` slice.
-10. [`../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`](../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md) — broader typed call-graph rollout plan.
-11. Long-horizon proof context only if needed:
+8. [`2026-06-22_call-graph-db-projection-plan.md`](2026-06-22_call-graph-db-projection-plan.md) — completed first database projection slice.
+9. [`2026-06-22_structural-macro-call-extraction-plan.md`](2026-06-22_structural-macro-call-extraction-plan.md) — completed structural macro-call slice.
+10. [`../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md`](../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md) — task sequence for the first `fixture_nodes` slice.
+11. [`../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`](../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md) — broader typed call-graph rollout plan.
+12. Long-horizon proof context only if needed:
    - [`../../../workflow/evalnomicon/drafts/formal/detached-process-callgraph-proof-target.md`](../../../workflow/evalnomicon/drafts/formal/detached-process-callgraph-proof-target.md)
    - [`../../../workflow/evalnomicon/drafts/formal/callgraph-implementation-design-for-detached-process-proof.md`](../../../workflow/evalnomicon/drafts/formal/callgraph-implementation-design-for-detached-process-proof.md)
    - [`../../../workflow/evalnomicon/drafts/formal/macro-buildrs-callgraph-sequencing-survey.md`](../../../workflow/evalnomicon/drafts/formal/macro-buildrs-callgraph-sequencing-survey.md)
@@ -62,6 +63,11 @@ Implemented/scaffolded:
   - `resolve::call_resolution::resolve_call_relations_after_tree(...)`
   - exact inherent `self.method()` resolution within the same impl block.
   - explicit local `crate`/`self`/`super` path-call resolution to local standalone functions.
+- Database projection in `ploke-transform`:
+  - `call_site`
+  - `call_site_edge`
+  - `call_relation`
+  - `call_resolution_status`
 - GREEN fixture tests now use a call-site paranoid harness and cover 12 concrete call expressions:
   - `fixture_nodes_public_method_records_and_resolves_self_private_method_call_site`
   - `fixture_nodes_get_secret_len_records_self_field_len_method_call_site`
@@ -83,7 +89,7 @@ Not implemented yet:
 - Trait dispatch.
 - Unqualified/import/re-export path-call resolution.
 - Associated-function path-call resolution.
-- Transform/database projection.
+- `ploke-db` query helper surface over persisted call graph relations.
 - Proof-fact projection.
 
 ## Binding design decisions
@@ -203,6 +209,27 @@ Primary implementation files:
 - `crates/ingest/syn_parser/src/parser/nodes/ids/internal/call_ids.rs`
 - `crates/ingest/syn_parser/tests/uuid_phase3_resolution/call_sites.rs`
 
+## Completed implementation slice: call graph database projection
+
+Implemented in this slice:
+
+1. Added Cozo schema for parser-owned call graph facts:
+   - `call_site`
+   - `call_site_edge`
+   - `call_relation`
+   - `call_resolution_status`
+2. Extended `transform_parsed_graph` to run `resolve_call_relations_after_tree(...)` at the transform boundary, mirroring `type_relation` projection.
+3. Persisted structural call sites, body containment, resolved semantic call edges, and explicit resolution statuses.
+4. Added a transform test proving the resolved `super::restricted_func()` path call appears in all four persisted relation families.
+
+Primary implementation files:
+
+- `crates/ingest/ploke-transform/src/schema/edges.rs`
+- `crates/ingest/ploke-transform/src/schema/mod.rs`
+- `crates/ingest/ploke-transform/src/transform/edges.rs`
+- `crates/ingest/ploke-transform/src/transform/mod.rs`
+- `docs/active/agents/call-graph/2026-06-22_call-graph-db-projection-plan.md`
+
 ## Completed implementation slice: local free-function path-call resolution
 
 Implemented in this slice:
@@ -270,9 +297,12 @@ cargo check -p syn_parser
 cargo check -p syn_parser --features typed_type_graph
 cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --nocapture
 cargo test -p syn_parser --features typed_type_graph call_sites -- --nocapture
+cargo check -p ploke-transform
+cargo check -p ploke-transform --features typed_type_graph
+cargo test -p ploke-transform --features typed_type_graph transform::tests -- --nocapture
 ```
 
-Result: all passed. The `call_sites` filter ran twelve paranoid fixture tests and all passed.
+Result: all passed. The `call_sites` filter ran twelve paranoid fixture tests and all passed; transform projection tests passed for type and call graph relations.
 
 ## Next implementation slice
 

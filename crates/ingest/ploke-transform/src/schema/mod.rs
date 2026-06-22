@@ -54,7 +54,10 @@ use compilation_unit::{
 use cozo::{Db, MemStorage, ScriptMutability};
 use crate_node::{CrateContextSchema, WorkspaceMetadataSchema};
 use edges::SyntacticRelationSchema;
-use edges::{TypeContainsSchema, TypeRelationSchema, TypeUseSchema};
+use edges::{
+    CallRelationSchema, CallResolutionStatusSchema, CallSiteRelationSchema, CallSiteSchema,
+    TypeContainsSchema, TypeRelationSchema, TypeUseSchema,
+};
 use itertools::Itertools;
 use meta::Bm25MetaSchema;
 use secondary_nodes::*;
@@ -123,6 +126,10 @@ pub fn create_schema_all(db: &Db<MemStorage>) -> Result<(), crate::error::Transf
     TypeRelationSchema::create_and_insert_schema(db)?;
     TypeUseSchema::create_and_insert_schema(db)?;
     TypeContainsSchema::create_and_insert_schema(db)?;
+    CallSiteSchema::create_and_insert_schema(db)?;
+    CallSiteRelationSchema::create_and_insert_schema(db)?;
+    CallRelationSchema::create_and_insert_schema(db)?;
+    CallResolutionStatusSchema::create_and_insert_schema(db)?;
 
     // -- crate_context --
     CrateContextSchema::create_and_insert_schema(db)?;

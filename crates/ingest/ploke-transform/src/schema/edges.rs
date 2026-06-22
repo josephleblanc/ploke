@@ -10,9 +10,13 @@ use super::*;
 use cozo::{Db, MemStorage};
 use itertools::Itertools;
 use std::collections::BTreeMap;
-use syn_parser::parser::nodes::ToCozoUuid;
-use syn_parser::parser::relations::SyntacticRelation;
-use syn_parser::parser::relations::TypeRelation;
+use syn_parser::parser::nodes::{
+    AnyCallSiteId, CallBodyOwnerId, CallNode, MethodCallReceiver, ToCozoUuid,
+};
+use syn_parser::parser::relations::{
+    CallRelation, CallResolutionKind, CallResolutionStatus, CallSiteRelation, SyntacticRelation,
+    TypeRelation,
+};
 use syn_parser::resolve::Colorize;
 use syn_parser::utils::{LogStyle, LogStyleDebug};
 
@@ -33,6 +37,88 @@ define_schema!(TypeRelationSchema {
     source_kind: "String",
     target_kind: "String"
 });
+
+define_schema!(CallSiteRelationSchema {
+    "call_site_edge",
+    source_id: "Uuid",
+    target_id: "Uuid",
+    relation_kind: "String",
+    source_kind: "String",
+    target_kind: "String"
+});
+
+define_schema!(CallRelationSchema {
+    "call_relation",
+    source_id: "Uuid",
+    target_id: "Uuid",
+    relation_kind: "String",
+    source_kind: "String",
+    target_kind: "String"
+});
+
+define_schema!(CallResolutionStatusSchema {
+    "call_resolution_status",
+    source_id: "Uuid",
+    source_kind: "String",
+    status_kind: "String",
+    resolution_kind: "String?"
+});
+
+pub struct CallSiteSchema;
+
+impl CallSiteSchema {
+    pub const RELATION: &'static str = "call_site";
+
+    pub fn create_and_insert_schema(db: &Db<MemStorage>) -> Result<(), TransformError> {
+        db.run_script(
+            r#":create call_site {
+                id: Uuid,
+                at: Validity =>
+                owner_id: Uuid,
+                call_kind: String,
+                span: [Int; 2],
+                cfgs: [String],
+                path: [String]?,
+                method_name: String?,
+                macro_name: String?,
+                receiver_kind: String?,
+                receiver_path: [String]?,
+                arg_count: Int?,
+                generic_arg_count: Int?
+            }"#,
+            BTreeMap::new(),
+            cozo::ScriptMutability::Mutable,
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_call_site(
+        db: &Db<MemStorage>,
+        call_site: &CallNode,
+    ) -> Result<(), TransformError> {
+        let params = call_site_to_params(call_site);
+        db.run_script(
+            r#"?[id, at, owner_id, call_kind, span, cfgs, path, method_name, macro_name, receiver_kind, receiver_path, arg_count, generic_arg_count] :=
+                id = $id,
+                owner_id = $owner_id,
+                call_kind = $call_kind,
+                span = $span,
+                cfgs = $cfgs,
+                path = $path,
+                method_name = $method_name,
+                macro_name = $macro_name,
+                receiver_kind = $receiver_kind,
+                receiver_path = $receiver_path,
+                arg_count = $arg_count,
+                generic_arg_count = $generic_arg_count,
+                at = 'ASSERT'
+            :put call_site { id, at => owner_id, call_kind, span, cfgs, path, method_name, macro_name, receiver_kind, receiver_path, arg_count, generic_arg_count }"#,
+            params,
+            cozo::ScriptMutability::Mutable,
+        )?;
+        Ok(())
+    }
+}
 
 pub struct TypeUseSchema;
 
@@ -347,6 +433,146 @@ fn int(value: usize) -> cozo::DataValue {
     cozo::DataValue::from(value as i64)
 }
 
+fn optional_int(value: Option<usize>) -> cozo::DataValue {
+    value
+        .map(|value| cozo::DataValue::from(value as i64))
+        .unwrap_or(cozo::DataValue::Null)
+}
+
+fn string_list(values: &[String]) -> cozo::DataValue {
+    cozo::DataValue::List(
+        values
+            .iter()
+            .map(|value| cozo::DataValue::from(value.as_str()))
+            .collect(),
+    )
+}
+
+fn span_to_cozo(span: (usize, usize)) -> cozo::DataValue {
+    cozo::DataValue::List(vec![
+        cozo::DataValue::from(span.0 as i64),
+        cozo::DataValue::from(span.1 as i64),
+    ])
+}
+
+fn call_site_id_to_cozo(id: AnyCallSiteId) -> cozo::DataValue {
+    match id {
+        AnyCallSiteId::Path(id) => id.to_cozo_uuid(),
+        AnyCallSiteId::Method(id) => id.to_cozo_uuid(),
+        AnyCallSiteId::Dynamic(id) => id.to_cozo_uuid(),
+        AnyCallSiteId::Macro(id) => id.to_cozo_uuid(),
+    }
+}
+
+fn call_body_owner_to_cozo(owner: CallBodyOwnerId) -> cozo::DataValue {
+    match owner {
+        CallBodyOwnerId::Function(id) => id.into(),
+        CallBodyOwnerId::Method(id) => id.into(),
+    }
+}
+
+fn call_body_owner_kind(owner: CallBodyOwnerId) -> &'static str {
+    match owner {
+        CallBodyOwnerId::Function(_) => "Function",
+        CallBodyOwnerId::Method(_) => "Method",
+    }
+}
+
+fn call_site_kind(id: AnyCallSiteId) -> &'static str {
+    match id {
+        AnyCallSiteId::Path(_) => "Path",
+        AnyCallSiteId::Method(_) => "Method",
+        AnyCallSiteId::Dynamic(_) => "Dynamic",
+        AnyCallSiteId::Macro(_) => "Macro",
+    }
+}
+
+fn call_resolution_kind_str(kind: CallResolutionKind) -> &'static str {
+    match kind {
+        CallResolutionKind::LocalExact => "LocalExact",
+    }
+}
+
+fn method_receiver_to_cozo(receiver: &MethodCallReceiver) -> (cozo::DataValue, cozo::DataValue) {
+    match receiver {
+        MethodCallReceiver::SelfValue => {
+            (cozo::DataValue::from("SelfValue"), cozo::DataValue::Null)
+        }
+        MethodCallReceiver::SelfField { field_path } => {
+            (cozo::DataValue::from("SelfField"), string_list(field_path))
+        }
+    }
+}
+
+fn call_site_to_params(call_site: &CallNode) -> BTreeMap<String, cozo::DataValue> {
+    let mut params = BTreeMap::new();
+    params.insert("id".to_string(), call_site_id_to_cozo(call_site.id()));
+    params.insert(
+        "owner_id".to_string(),
+        call_body_owner_to_cozo(call_site.owner()),
+    );
+    params.insert(
+        "call_kind".to_string(),
+        cozo::DataValue::from(call_site_kind(call_site.id())),
+    );
+    params.insert("span".to_string(), span_to_cozo(call_site.span()));
+    params.insert("cfgs".to_string(), string_list(call_site.cfgs()));
+
+    match call_site {
+        CallNode::PathCall(call) => {
+            params.insert("path".to_string(), string_list(&call.path));
+            params.insert("method_name".to_string(), cozo::DataValue::Null);
+            params.insert("macro_name".to_string(), cozo::DataValue::Null);
+            params.insert("receiver_kind".to_string(), cozo::DataValue::Null);
+            params.insert("receiver_path".to_string(), cozo::DataValue::Null);
+            params.insert("arg_count".to_string(), optional_int(Some(call.arg_count)));
+            params.insert(
+                "generic_arg_count".to_string(),
+                optional_int(Some(call.generic_arg_count)),
+            );
+        }
+        CallNode::MethodCall(call) => {
+            let (receiver_kind, receiver_path) = method_receiver_to_cozo(&call.receiver);
+            params.insert("path".to_string(), cozo::DataValue::Null);
+            params.insert(
+                "method_name".to_string(),
+                cozo::DataValue::from(call.method_name.as_str()),
+            );
+            params.insert("macro_name".to_string(), cozo::DataValue::Null);
+            params.insert("receiver_kind".to_string(), receiver_kind);
+            params.insert("receiver_path".to_string(), receiver_path);
+            params.insert("arg_count".to_string(), optional_int(Some(call.arg_count)));
+            params.insert(
+                "generic_arg_count".to_string(),
+                optional_int(Some(call.generic_arg_count)),
+            );
+        }
+        CallNode::DynamicCall(call) => {
+            params.insert("path".to_string(), cozo::DataValue::Null);
+            params.insert("method_name".to_string(), cozo::DataValue::Null);
+            params.insert("macro_name".to_string(), cozo::DataValue::Null);
+            params.insert("receiver_kind".to_string(), cozo::DataValue::Null);
+            params.insert("receiver_path".to_string(), cozo::DataValue::Null);
+            params.insert("arg_count".to_string(), optional_int(Some(call.arg_count)));
+            params.insert("generic_arg_count".to_string(), cozo::DataValue::Null);
+        }
+        CallNode::MacroCall(call) => {
+            params.insert("path".to_string(), cozo::DataValue::Null);
+            params.insert("method_name".to_string(), cozo::DataValue::Null);
+            params.insert(
+                "macro_name".to_string(),
+                cozo::DataValue::from(call.macro_name.as_str()),
+            );
+            params.insert("receiver_kind".to_string(), cozo::DataValue::Null);
+            params.insert("receiver_path".to_string(), cozo::DataValue::Null);
+            params.insert("arg_count".to_string(), cozo::DataValue::Null);
+            params.insert("generic_arg_count".to_string(), cozo::DataValue::Null);
+        }
+    }
+
+    params
+}
+
 pub struct TypeContainsSchema;
 
 impl TypeContainsSchema {
@@ -523,6 +749,134 @@ impl TypeRelationSchema {
         let script = schema.script_put(&params);
         db.run_script(&script, params, cozo::ScriptMutability::Mutable)?;
 
+        Ok(())
+    }
+}
+
+impl CallSiteRelationSchema {
+    pub fn insert_relation(
+        &self,
+        db: &Db<MemStorage>,
+        relation: &CallSiteRelation,
+    ) -> Result<(), TransformError> {
+        let schema = &CallSiteRelationSchema::SCHEMA;
+        let params = match relation {
+            CallSiteRelation::BodyContainsCall { source, target } => BTreeMap::from([
+                (
+                    schema.source_id().to_string(),
+                    call_body_owner_to_cozo(*source),
+                ),
+                (
+                    schema.target_id().to_string(),
+                    call_site_id_to_cozo(*target),
+                ),
+                (
+                    schema.relation_kind().to_string(),
+                    cozo::DataValue::from(relation.kind_str()),
+                ),
+                (
+                    schema.source_kind().to_string(),
+                    cozo::DataValue::from(call_body_owner_kind(*source)),
+                ),
+                (
+                    schema.target_kind().to_string(),
+                    cozo::DataValue::from(call_site_kind(*target)),
+                ),
+            ]),
+        };
+
+        let script = schema.script_put(&params);
+        db.run_script(&script, params, cozo::ScriptMutability::Mutable)?;
+        Ok(())
+    }
+}
+
+impl CallRelationSchema {
+    pub fn insert_relation(
+        &self,
+        db: &Db<MemStorage>,
+        relation: &CallRelation,
+    ) -> Result<(), TransformError> {
+        let schema = &CallRelationSchema::SCHEMA;
+        let params = match relation {
+            CallRelation::Function { source, target } => {
+                let target_id: cozo::DataValue = (*target).into();
+                BTreeMap::from([
+                    (schema.source_id().to_string(), source.to_cozo_uuid()),
+                    (schema.target_id().to_string(), target_id),
+                    (
+                        schema.relation_kind().to_string(),
+                        cozo::DataValue::from(relation.kind_str()),
+                    ),
+                    (
+                        schema.source_kind().to_string(),
+                        cozo::DataValue::from("Path"),
+                    ),
+                    (
+                        schema.target_kind().to_string(),
+                        cozo::DataValue::from("Function"),
+                    ),
+                ])
+            }
+            CallRelation::Method { source, target } => {
+                let target_id: cozo::DataValue = (*target).into();
+                BTreeMap::from([
+                    (schema.source_id().to_string(), source.to_cozo_uuid()),
+                    (schema.target_id().to_string(), target_id),
+                    (
+                        schema.relation_kind().to_string(),
+                        cozo::DataValue::from(relation.kind_str()),
+                    ),
+                    (
+                        schema.source_kind().to_string(),
+                        cozo::DataValue::from("Method"),
+                    ),
+                    (
+                        schema.target_kind().to_string(),
+                        cozo::DataValue::from("Method"),
+                    ),
+                ])
+            }
+        };
+
+        let script = schema.script_put(&params);
+        db.run_script(&script, params, cozo::ScriptMutability::Mutable)?;
+        Ok(())
+    }
+}
+
+impl CallResolutionStatusSchema {
+    pub fn insert_status(
+        &self,
+        db: &Db<MemStorage>,
+        status: &CallResolutionStatus,
+    ) -> Result<(), TransformError> {
+        let schema = &CallResolutionStatusSchema::SCHEMA;
+        let resolution_kind = match status {
+            CallResolutionStatus::Resolved { kind, .. } => {
+                cozo::DataValue::from(call_resolution_kind_str(*kind))
+            }
+            CallResolutionStatus::Unresolved { .. }
+            | CallResolutionStatus::Ambiguous { .. }
+            | CallResolutionStatus::External { .. }
+            | CallResolutionStatus::Unsupported { .. } => cozo::DataValue::Null,
+        };
+        let source = status.source();
+        let params = BTreeMap::from([
+            (schema.source_id().to_string(), call_site_id_to_cozo(source)),
+            (
+                schema.source_kind().to_string(),
+                cozo::DataValue::from(call_site_kind(source)),
+            ),
+            (
+                schema.status_kind().to_string(),
+                cozo::DataValue::from(status.kind_str()),
+            ),
+            (schema.resolution_kind().to_string(), resolution_kind),
+        ]);
+
+        let script = schema.script_put(&params);
+        db.run_script(&script, params, cozo::ScriptMutability::Mutable)?;
         Ok(())
     }
 }

@@ -79,13 +79,17 @@
 //
 
 use cozo::{Db, MemStorage};
-use syn_parser::parser::relations::SyntacticRelation;
+use syn_parser::parser::nodes::CallNode;
+use syn_parser::parser::relations::{CallSiteRelation, SyntacticRelation};
+use syn_parser::resolve::call_resolution::CallResolutionReport;
 use syn_parser::resolve::type_resolution_v2::TypeRelationReport;
 use tracing::instrument;
 
 use super::*;
-use crate::schema::edges::SyntacticRelationSchema;
-use crate::schema::edges::TypeRelationSchema;
+use crate::schema::edges::{
+    CallRelationSchema, CallResolutionStatusSchema, CallSiteRelationSchema, CallSiteSchema,
+    SyntacticRelationSchema, TypeRelationSchema,
+};
 
 #[instrument(skip_all)]
 pub(super) fn transform_relations(
@@ -112,6 +116,47 @@ pub(super) fn transform_type_relations(
     for relation in &report.relations {
         schema.insert_relation(db, relation)?;
     }
+    Ok(())
+}
+
+#[instrument(skip_all)]
+pub(super) fn transform_call_sites(
+    db: &Db<MemStorage>,
+    call_sites: &[CallNode],
+) -> Result<(), TransformError> {
+    for call_site in call_sites {
+        CallSiteSchema::insert_call_site(db, call_site)?;
+    }
+    Ok(())
+}
+
+#[instrument(skip_all)]
+pub(super) fn transform_call_site_relations(
+    db: &Db<MemStorage>,
+    relations: &[CallSiteRelation],
+) -> Result<(), TransformError> {
+    let schema = &CallSiteRelationSchema::SCHEMA;
+    for relation in relations {
+        schema.insert_relation(db, relation)?;
+    }
+    Ok(())
+}
+
+#[instrument(skip_all)]
+pub(super) fn transform_call_resolution_report(
+    db: &Db<MemStorage>,
+    report: &CallResolutionReport,
+) -> Result<(), TransformError> {
+    let relation_schema = &CallRelationSchema::SCHEMA;
+    for relation in &report.relations {
+        relation_schema.insert_relation(db, relation)?;
+    }
+
+    let status_schema = &CallResolutionStatusSchema::SCHEMA;
+    for status in &report.statuses {
+        status_schema.insert_status(db, status)?;
+    }
+
     Ok(())
 }
 // do stuff
