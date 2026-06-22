@@ -1,3 +1,4 @@
+mod call;
 mod consts;
 mod enums;
 mod function;
@@ -31,6 +32,9 @@ use ploke_core::TypeId;
 use serde::{Deserialize, Serialize};
 
 // Re-export all node types from submodules
+pub use call::{
+    CallNode, DynamicCallNode, MacroCallNode, MethodCallNode, MethodCallReceiver, PathCallNode,
+};
 pub use consts::ConstNode;
 pub use enums::{EnumNode, VariantNode};
 pub use function::{FunctionNode, ParamData};

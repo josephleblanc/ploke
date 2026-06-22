@@ -26,6 +26,7 @@ pub use internal::{
     NeverTypeId, ParenTypeId, RawPointerTypeId, ReferenceTypeId, SliceTypeId, TraitBoundTypeId,
     TraitObjectTypeId, TupleTypeId, TypeIdRefinementError, UnknownTypeId,
 };
+// --- node ids ---
 pub use internal::{
     ConstGenericParamNodeId, ConstNodeId, EnumNodeId, FieldNodeId, FunctionNodeId,
     GenericParamNodeId, ImplNodeId, ImportNodeId, LifetimeGenericParamNodeId, MacroNodeId,
@@ -33,6 +34,8 @@ pub use internal::{
     TraitNodeId, TypeAliasNodeId, TypeGenericParamNodeId, UnionNodeId, UnresolvedNodeId,
     VariantNodeId,
 };
+// --- call-site ids ---
+pub use internal::{DynamicCallSiteId, MacroCallSiteId, MethodCallSiteId, PathCallSiteId};
 // --- traits ---
 // Re-export marker traits (adjust list as needed)
 pub use internal::{AssociatedItemNodeIdTrait, PrimaryNodeIdTrait, SecondaryNodeIdTrait, TypedId};
@@ -49,9 +52,10 @@ pub use internal::{ToCozoUuid, ToUuidString};
 // pub(crate) use internal::TypedNodeIdGet;
 // --- enums ---
 // Re-export category enums
+pub use internal::{AnyCallSiteId, CallSiteKind};
 pub use internal::{
-    AnyGenericParamId, AnyNodeId, AssociatedItemNodeId, AssociatedItemOwnerId, GenericParamOwnerId,
-    PrimaryNodeId, SecondaryNodeId, SelfScopeOwnerId, TypeUseOwnerId,
+    AnyGenericParamId, AnyNodeId, AssociatedItemNodeId, AssociatedItemOwnerId, CallBodyOwnerId,
+    GenericParamOwnerId, PrimaryNodeId, SecondaryNodeId, SelfScopeOwnerId, TypeUseOwnerId,
 };
 // --- macro rules ---
 // --- error types ---
@@ -64,6 +68,11 @@ pub use internal::{
 
 // --- semi-private ---
 // Would like to make these more private someday
+#[allow(
+    unused_imports,
+    reason = "call-site extraction will use this parser-internal constructor"
+)]
+pub(in crate::parser) use internal::generate_method_call_site_id;
 pub(in crate::parser) use internal::{GenerateTypeId, GeneratesAnyNodeId};
 
 // Tests

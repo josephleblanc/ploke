@@ -1,9 +1,10 @@
 # Current Focus
 
-**Last Updated:** 2026-05-15
+**Last Updated:** 2026-06-22
 
 **Active planning surfaces:**
 
+- Parser call-graph feature thread: [`agents/call-graph/README.md`](agents/call-graph/README.md) — current restart spine for typed call-site IDs, completed structural `self.private_method()` extraction, completed exact inherent `self.method()` resolver slice, and the next structural path-call slice. Read this before acting on older call-graph plans.
 - Prototype 1 live broad-harness/context-building wave: [`agents/2026-05-15_hyperagents-context-building-handoff.md`](agents/2026-05-15_hyperagents-context-building-handoff.md), with background from [`agents/2026-05-08_bounded-edit-surface-implementation-orientation.md`](agents/2026-05-08_bounded-edit-surface-implementation-orientation.md) and [`agents/2026-05-12_hyperagents-broad-harness-orchestration-handoff.md`](agents/2026-05-12_hyperagents-broad-harness-orchestration-handoff.md) — current focus is landing a multi-generation broad-harness smoke campaign after disabling automatic initial source-code RAG and applying allowed headless TUI proposals during the model turn while keeping final candidate admission at `ChatTurnFinished`.
 - Self-improvement loop track index: [`plans/self-improvement-loop/handoffs.md`](plans/self-improvement-loop/handoffs.md) — current routing table for Prototype 1 records/playback, egui observability, and MBE/oracle calibration.
 - Frontend observability: [`agents/ploke-ui-task-readability/README.md`](agents/ploke-ui-task-readability/README.md), especially [`artifact-tree-default/`](agents/ploke-ui-task-readability/artifact-tree-default/README.md) — current `ploke-egui` artifact-tree default-view source of truth and follow-up task area.
@@ -52,6 +53,7 @@ They are related through the self-improvement-loop track, but the implementation
 | Frontend observability | [`agents/ploke-ui-task-readability/README.md`](agents/ploke-ui-task-readability/README.md), [`artifact-tree-default`](agents/ploke-ui-task-readability/artifact-tree-default/README.md) |
 | Target / run policy | [`workflow/target-capability-registry.md`](workflow/target-capability-registry.md) |
 | Agent doc index | [`agents/readme.md`](agents/readme.md) |
+| Call graph thread | [`agents/call-graph/README.md`](agents/call-graph/README.md) |
 
 ---
 

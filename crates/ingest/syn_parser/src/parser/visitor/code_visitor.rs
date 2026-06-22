@@ -9,6 +9,7 @@
 // fn visit_impl_item_const(&mut self, i: &'ast syn::ImplItemConst)
 
 use super::attribute_processing::{extract_attributes, extract_cfg_strings, extract_docstring};
+use super::call_extraction::extract_body_call_sites;
 use super::state::VisitorState;
 use super::type_processing::{
     get_or_create_trait_bound_type, get_or_create_trait_type, get_or_create_type,
@@ -21,7 +22,9 @@ use crate::parser::nodes::{
     StaticNodeId, StructNodeId, TraitNodeId, TypeAliasNodeId, UnionNodeId, VariantNodeId,
 };
 // Wrapper enums for catogories of individual node id wrapper types.
-use crate::parser::nodes::{AnyNodeId, AssociatedItemNodeId, PrimaryNodeId, SecondaryNodeId};
+use crate::parser::nodes::{
+    AnyNodeId, AssociatedItemNodeId, CallBodyOwnerId, PrimaryNodeId, SecondaryNodeId,
+};
 // Nodes
 use crate::parser::nodes::{
     ConstNode, EnumNode, FieldNode, FunctionNode, ImplNode, ImportNode, MacroNode, MethodNode,
@@ -74,6 +77,20 @@ impl<'a> CodeVisitor<'a> {
     // Update return type to use SyntacticRelation
     pub(crate) fn relations(&self) -> &[SyntacticRelation] {
         self.state.code_graph.relations()
+    }
+
+    fn record_body_call_sites(
+        &mut self,
+        owner: CallBodyOwnerId,
+        block: &syn::Block,
+        cfgs: &[String],
+    ) {
+        let (mut calls, mut relations) = extract_body_call_sites(owner, block, cfgs);
+        self.state.code_graph.call_sites.append(&mut calls);
+        self.state
+            .code_graph
+            .call_site_relations
+            .append(&mut relations);
     }
 
     fn trait_associated_const_node(
@@ -930,6 +947,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 target: PrimaryNodeId::from(fn_typed_id), // Use category enum
             };
             self.state.code_graph.relations.push(relation);
+            self.record_body_call_sites(
+                CallBodyOwnerId::Function(fn_typed_id),
+                &func.block,
+                &provisional_effective_cfgs,
+            );
 
             // NOTE: We are already visiting all the items we are processing within this
             // visit_item_fn, but this is where we would put the `visit_item_fn` to call the method
@@ -1925,6 +1947,11 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         cfgs: method_item_cfgs,
                     };
                     methods.push(method_node);
+                    self.record_body_call_sites(
+                        CallBodyOwnerId::Method(method_node_id),
+                        &method.block,
+                        &method_provisional_effective_cfgs,
+                    );
                     // ANCHOR_END: method_from_impl_node
                 }
                 syn::ImplItem::Const(item_const) => {
@@ -2149,6 +2176,13 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         cfgs: method_item_cfgs,
                     };
                     methods.push(method_node);
+                    if let Some(block) = method.default.as_ref() {
+                        self.record_body_call_sites(
+                            CallBodyOwnerId::Method(method_node_id),
+                            block,
+                            &method_provisional_effective_cfgs,
+                        );
+                    }
                     // ANCHOR_END: method_from_trait_node
                 }
                 syn::TraitItem::Const(item_const) => {

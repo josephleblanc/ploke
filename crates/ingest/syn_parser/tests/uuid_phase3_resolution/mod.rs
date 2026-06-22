@@ -8,6 +8,8 @@ pub mod backlink_imports_spp_cfg;
 
 pub mod path_attribute;
 
+#[cfg(feature = "typed_type_graph")]
+pub mod call_sites;
 pub mod prune_unlinked_imports;
 #[cfg(feature = "typed_type_graph")]
 pub mod type_relations_v2;

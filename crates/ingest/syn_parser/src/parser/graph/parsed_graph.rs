@@ -309,6 +309,16 @@ impl ParsedCodeGraph {
         self.graph.impls.append(&mut other.graph.impls);
         self.graph.traits.append(&mut other.graph.traits);
         self.graph.relations.append(&mut other.graph.relations);
+        self.graph.call_sites.append(&mut other.graph.call_sites);
+        self.graph
+            .call_site_relations
+            .append(&mut other.graph.call_site_relations);
+        self.graph
+            .call_relations
+            .append(&mut other.graph.call_relations);
+        self.graph
+            .call_resolution_statuses
+            .append(&mut other.graph.call_resolution_statuses);
         self.graph.modules.append(&mut other.graph.modules);
         self.graph.consts.append(&mut other.graph.consts); // Use consts
         self.graph.statics.append(&mut other.graph.statics); // Use statics
@@ -666,6 +676,35 @@ impl ParsedCodeGraph {
             .chain(self.traits().iter().flat_map(|tr| tr.methods.iter()))
             .count();
         prune_counts.methods = methods_count_pre - methods_count_post;
+
+        let live_call_owners: HashSet<CallBodyOwnerId> = self
+            .functions()
+            .iter()
+            .map(|function| CallBodyOwnerId::Function(function.id))
+            .chain(
+                self.impls()
+                    .iter()
+                    .flat_map(|imp| imp.methods.iter())
+                    .chain(self.traits().iter().flat_map(|tr| tr.methods.iter()))
+                    .map(|method| CallBodyOwnerId::Method(method.id)),
+            )
+            .collect();
+        self.call_sites_mut()
+            .retain(|call| live_call_owners.contains(&call.owner()));
+        let live_call_ids: HashSet<AnyCallSiteId> =
+            self.call_sites().iter().map(CallNode::id).collect();
+        self.call_site_relations_mut()
+            .retain(|relation| match relation {
+                CallSiteRelation::BodyContainsCall { source, target } => {
+                    live_call_owners.contains(source) && live_call_ids.contains(target)
+                }
+            });
+        self.call_relations_mut().retain(|relation| match relation {
+            CallRelation::Function { source, .. } => live_call_ids.contains(&(*source).into()),
+            CallRelation::Method { source, .. } => live_call_ids.contains(&(*source).into()),
+        });
+        self.call_resolution_statuses_mut()
+            .retain(|status| live_call_ids.contains(&status.source()));
         // ANCHOR_END: prune_methods_and_retain
 
         // -- handle pruning module ids
@@ -1046,6 +1085,22 @@ impl GraphAccess for ParsedCodeGraph {
         &self.graph.relations
     }
 
+    fn call_sites(&self) -> &[CallNode] {
+        &self.graph.call_sites
+    }
+
+    fn call_site_relations(&self) -> &[CallSiteRelation] {
+        &self.graph.call_site_relations
+    }
+
+    fn call_relations(&self) -> &[CallRelation] {
+        &self.graph.call_relations
+    }
+
+    fn call_resolution_statuses(&self) -> &[CallResolutionStatus] {
+        &self.graph.call_resolution_statuses
+    }
+
     fn modules(&self) -> &[ModuleNode] {
         &self.graph.modules
     }
@@ -1092,6 +1147,22 @@ impl GraphAccess for ParsedCodeGraph {
     fn relations_mut(&mut self) -> &mut Vec<SyntacticRelation> {
         // Updated type
         &mut self.graph.relations
+    }
+
+    fn call_sites_mut(&mut self) -> &mut Vec<CallNode> {
+        &mut self.graph.call_sites
+    }
+
+    fn call_site_relations_mut(&mut self) -> &mut Vec<CallSiteRelation> {
+        &mut self.graph.call_site_relations
+    }
+
+    fn call_relations_mut(&mut self) -> &mut Vec<CallRelation> {
+        &mut self.graph.call_relations
+    }
+
+    fn call_resolution_statuses_mut(&mut self) -> &mut Vec<CallResolutionStatus> {
+        &mut self.graph.call_resolution_statuses
     }
 
     fn modules_mut(&mut self) -> &mut Vec<ModuleNode> {

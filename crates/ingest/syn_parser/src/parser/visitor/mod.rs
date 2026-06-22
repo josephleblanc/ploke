@@ -7,6 +7,7 @@ use syn::visit::Visit;
 use tracing::instrument;
 mod attribute_processing;
 mod attribute_processing_syn1;
+mod call_extraction;
 mod cfg_evaluator;
 #[cfg(feature = "cfg_eval")]
 pub use attribute_processing::parse_cfg_expr_from_inner_tokens;

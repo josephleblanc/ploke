@@ -288,6 +288,55 @@ mod ids {
         )
     }
 
+    /// Unique identifier for a parser-owned call expression occurrence.
+    ///
+    /// `CallId` is the base identity universe for call sites, just as
+    /// [`NodeId`] is the base identity universe for code items and [`TypeId`] is
+    /// the base identity universe for structural type occurrences. Keeping this
+    /// universe separate matters because a call site is an expression occurrence
+    /// inside an item body, not a definition node that participates in module
+    /// containment or path/public-name resolution.
+    ///
+    /// A `CallId` names the occurrence. It does not say which function, method,
+    /// constructor, closure, dynamic dispatch target, or external summary the
+    /// occurrence calls. That semantic proof belongs in call-resolution facts
+    /// layered above the occurrence identity.
+    ///
+    /// `syn_parser` refines this base ID into typed endpoint wrappers such as
+    /// `PathCallSiteId` and `MethodCallSiteId`, mirroring the `NodeId` and
+    /// `TypeId` refinement patterns.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+    pub enum CallId {
+        /// Deterministic parser-local identity generated from structural
+        /// occurrence context: owner, call-site kind, callee discriminator,
+        /// source span, and cfg context.
+        Synthetic(Uuid),
+    }
+
+    impl IdTrait for CallId {
+        fn uuid(&self) -> Uuid {
+            match self {
+                CallId::Synthetic(uuid) => *uuid,
+            }
+        }
+
+        fn is_resolved(&self) -> bool {
+            false
+        }
+
+        fn is_synthetic(&self) -> bool {
+            true
+        }
+    }
+
+    impl std::fmt::Display for CallId {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                CallId::Synthetic(uuid) => write!(f, "C:{}", short_uuid(*uuid)),
+            }
+        }
+    }
+
     /// Unique identifier for a specific type structure *within a specific crate version*.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
     pub enum TypeId {

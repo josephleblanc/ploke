@@ -1,10 +1,12 @@
 // Import specific typed IDs AND the new category enums
 use super::nodes::{AnyNodeId, PrimaryNodeIdTrait};
 use crate::parser::nodes::{
-    AnyGenericParamId, AssociatedItemNodeId, ConstGenericParamNodeId, EnumNodeId, FieldNodeId,
-    GenericParamOwnerId, ImplNodeId, ImportNodeId, ModuleNodeId, OrdinaryTypeSourceId,
-    OrdinaryTypeTargetId, OrdinaryTypeUseId, PrimaryNodeId, StructNodeId, TraitNodeId,
-    TraitTypeSourceId, TraitTypeTargetId, TypeGenericParamNodeId, UnionNodeId, VariantNodeId,
+    AnyCallSiteId, AnyGenericParamId, AssociatedItemNodeId, CallBodyOwnerId,
+    ConstGenericParamNodeId, EnumNodeId, FieldNodeId, FunctionNodeId, GenericParamOwnerId,
+    ImplNodeId, ImportNodeId, MethodCallSiteId, MethodNodeId, ModuleNodeId, OrdinaryTypeSourceId,
+    OrdinaryTypeTargetId, OrdinaryTypeUseId, PathCallSiteId, PrimaryNodeId, StructNodeId,
+    TraitNodeId, TraitTypeSourceId, TraitTypeTargetId, TypeGenericParamNodeId, UnionNodeId,
+    VariantNodeId,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -119,6 +121,131 @@ impl GenericRelation {
             Self::TypeBound { .. } => "TypeBound",
             Self::TypeDefault { .. } => "TypeDefault",
             Self::ConstParamType { .. } => "ConstParamType",
+        }
+    }
+}
+
+/// Represents type-safe structural relations between function-like bodies and
+/// parser-owned call-site records.
+///
+/// The source endpoint stays in the node universe because a function or method
+/// body is owned by a real code item. The target endpoint stays in the call-site
+/// universe through [`AnyCallSiteId`]; call-site occurrences are not `AnyNodeId`
+/// members and must not be represented as module-contained code nodes.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CallSiteRelation {
+    /// A function or method body contains a call-site expression.
+    ///
+    /// ```text
+    /// BodyContainsCall ⊆ CallBodyOwnerId × AnyCallSiteId
+    /// ```
+    BodyContainsCall {
+        source: CallBodyOwnerId,
+        target: AnyCallSiteId,
+    },
+}
+
+impl CallSiteRelation {
+    /// Returns the relation kind as a stable string for diagnostics or database
+    /// projection.
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            Self::BodyContainsCall { .. } => "BodyContainsCall",
+        }
+    }
+}
+
+/// Type-safe semantic call-target edges emitted by call resolution.
+///
+/// These relations are deliberately separate from [`CallSiteRelation`]. A
+/// `BodyContainsCall` edge says that a function-like body contains an
+/// expression occurrence; a `CallRelation` says the resolver has proven a typed
+/// callable target for that occurrence. Unsupported or ambiguous cases belong
+/// in [`CallResolutionStatus`], not in fake broad target edges.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CallRelation {
+    /// A path-style call site resolved to a local standalone function.
+    ///
+    /// ```text
+    /// Function ⊆ PathCallSiteId × FunctionNodeId
+    /// ```
+    Function {
+        source: PathCallSiteId,
+        target: FunctionNodeId,
+    },
+    /// A method-call site resolved to a local method definition.
+    ///
+    /// ```text
+    /// Method ⊆ MethodCallSiteId × MethodNodeId
+    /// ```
+    Method {
+        source: MethodCallSiteId,
+        target: MethodNodeId,
+    },
+}
+
+impl CallRelation {
+    /// Returns the relation kind as a stable string for diagnostics or database
+    /// projection.
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            Self::Function { .. } => "Function",
+            Self::Method { .. } => "Method",
+        }
+    }
+}
+
+/// Successful call-resolution proof class.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CallResolutionKind {
+    /// Exact local target proven from parser-owned local graph facts.
+    LocalExact,
+}
+
+/// Resolver outcome for one structural call-site occurrence.
+///
+/// Every supported resolver pass should emit exactly one status for each call
+/// site it considers. A resolved status may be accompanied by a typed
+/// [`CallRelation`]. Unresolved, ambiguous, external, and unsupported statuses
+/// must not fabricate target edges.
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CallResolutionStatus {
+    /// The call site resolved to a typed local target.
+    Resolved {
+        source: AnyCallSiteId,
+        kind: CallResolutionKind,
+    },
+    /// The resolver supports the call shape but found no local target.
+    Unresolved { source: AnyCallSiteId },
+    /// The resolver found more than one plausible target and refused to choose.
+    Ambiguous { source: AnyCallSiteId },
+    /// The call appears to target an external crate or runtime surface.
+    External { source: AnyCallSiteId },
+    /// The call shape is structurally recorded but outside this resolver slice.
+    Unsupported { source: AnyCallSiteId },
+}
+
+impl CallResolutionStatus {
+    /// Returns the call-site occurrence this status describes.
+    pub fn source(&self) -> AnyCallSiteId {
+        match *self {
+            Self::Resolved { source, .. }
+            | Self::Unresolved { source }
+            | Self::Ambiguous { source }
+            | Self::External { source }
+            | Self::Unsupported { source } => source,
+        }
+    }
+
+    /// Returns the status kind as a stable string for diagnostics or database
+    /// projection.
+    pub fn kind_str(&self) -> &'static str {
+        match self {
+            Self::Resolved { .. } => "Resolved",
+            Self::Unresolved { .. } => "Unresolved",
+            Self::Ambiguous { .. } => "Ambiguous",
+            Self::External { .. } => "External",
+            Self::Unsupported { .. } => "Unsupported",
         }
     }
 }

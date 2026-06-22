@@ -198,6 +198,7 @@
 //! typed IDs define valid vertices, category enums define admissible endpoint
 //! sets, and relation variants define valid edges between those sets.
 
+mod call_ids;
 mod type_families;
 mod type_ids;
 
@@ -215,6 +216,12 @@ use uuid::Uuid;
 use std::convert::TryFrom;
 use std::error::Error;
 use std::fmt::Display;
+
+pub(in crate::parser) use call_ids::generate_method_call_site_id;
+pub use call_ids::{
+    AnyCallSiteId, CallBodyOwnerId, CallSiteKind, DynamicCallSiteId, MacroCallSiteId,
+    MethodCallSiteId, PathCallSiteId,
+};
 
 pub use type_families::{
     AnyTypeId, OrdinaryTypeDefId, OrdinaryTypeSourceId, OrdinaryTypeTargetId, OrdinaryTypeUseId,
@@ -343,6 +350,55 @@ pub mod test_ids {
     make_id_testable!(GenericParamNodeId);
     // Other IDs
     make_id_testable!(ReexportNodeId);
+
+    /// Test-only accessors for deterministic call-site ID regeneration.
+    ///
+    /// Production code should not use this trait as a construction path. It is
+    /// exported for integration tests that need to assert the parser and test
+    /// fixture computed the same call-site identity from the same structural
+    /// inputs.
+    pub trait TestCallIds: Copy {
+        /// Returns the underlying base call-site ID for exact test comparison.
+        fn base_cid(&self) -> ploke_core::CallId;
+        /// Constructs a typed call-site ID from a base [`ploke_core::CallId`]
+        /// in tests only.
+        fn new_call_test(id: ploke_core::CallId) -> Self;
+    }
+
+    macro_rules! make_call_id_testable {
+        ($SpecificId:ty) => {
+            impl TestCallIds for $SpecificId {
+                #[inline]
+                fn base_cid(&self) -> ploke_core::CallId {
+                    use super::call_ids::CallSiteId as _;
+                    self.base_id()
+                }
+                #[inline]
+                fn new_call_test(id: ploke_core::CallId) -> Self {
+                    Self::create(id)
+                }
+            }
+        };
+    }
+
+    make_call_id_testable!(PathCallSiteId);
+    make_call_id_testable!(MethodCallSiteId);
+    make_call_id_testable!(DynamicCallSiteId);
+    make_call_id_testable!(MacroCallSiteId);
+
+    /// Deterministically regenerates a base call-site ID for integration tests.
+    ///
+    /// This mirrors parser-internal call-site ID generation without making the
+    /// production typed-ID constructors public.
+    pub fn generate_test_call_id(
+        owner: CallBodyOwnerId,
+        kind: CallSiteKind,
+        discriminator: &str,
+        span: (usize, usize),
+        cfgs: &[String],
+    ) -> ploke_core::CallId {
+        super::call_ids::generate_call_id(owner, kind, discriminator, span, cfgs)
+    }
 }
 
 /// Convenience trait to help be more explicit about converting into AnyNodeId.
