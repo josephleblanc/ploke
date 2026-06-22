@@ -107,7 +107,7 @@ cargo test -p ploke-transform --features typed_type_graph transform::tests -- --
 cargo test -p syn_parser --features typed_type_graph call_sites -- --nocapture
 ```
 
-All commands passed. The transform test asserts persisted `call_site`, `call_site_edge`, `call_relation`, and `call_resolution_status` rows for the resolved `super::restricted_func()` path call.
+All commands passed. Transform tests assert persisted `call_site`, `call_site_edge`, `call_relation`, and `call_resolution_status` rows for the resolved `super::restricted_func()` path call, the resolved `self.private_method()` method call, and the unsupported/no-edge `PathBuf::new()` path call.
 
 ## Non-goals
 

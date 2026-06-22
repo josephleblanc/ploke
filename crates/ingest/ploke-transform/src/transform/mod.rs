@@ -224,7 +224,7 @@ mod tests {
     use syn_parser::parser::ParsedCodeGraph;
     use syn_parser::parser::graph::GraphAccess;
     use syn_parser::parser::nodes::{AnyCallSiteId, CallBodyOwnerId, CallNode, ToCozoUuid};
-    use syn_parser::parser::relations::CallRelation;
+    use syn_parser::parser::relations::{CallRelation, CallResolutionStatus};
     use syn_parser::resolve::call_resolution::resolve_call_relations_after_tree;
 
     use crate::{error::TransformError, schema::create_schema_all};
@@ -413,6 +413,162 @@ mod tests {
         assert_eq!(&status_rows.rows[0][1], &DataValue::from("Path"));
         assert_eq!(&status_rows.rows[0][2], &DataValue::from("Resolved"));
         assert_eq!(&status_rows.rows[0][3], &DataValue::from("LocalExact"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_call_graph_projection_for_method_edge_and_unsupported_path_call()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let db = Db::new(MemStorage::default()).expect("Failed to create database");
+        db.initialize().expect("Failed to initialize database");
+        create_schema_all(&db)?;
+
+        let successful_graphs = test_run_phases_and_collect("fixture_nodes");
+        let mut merged =
+            ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
+        let tree = merged.build_tree_and_prune().unwrap_or_else(|e| {
+            tracing::error!(target: "transform_function", "Error building tree: {}", e);
+            panic!()
+        });
+
+        let call_report = resolve_call_relations_after_tree(&merged, &tree)?;
+        let (method_call_site_id, target_method_id) = call_report
+            .relations
+            .iter()
+            .copied()
+            .find_map(|relation| match relation {
+                CallRelation::Method { source, target } => Some((source, target)),
+                CallRelation::Function { .. } => None,
+            })
+            .expect("fixture_nodes should have a resolved self.private_method() call edge");
+        let method_call_any = AnyCallSiteId::Method(method_call_site_id);
+        let method_call = merged
+            .call_sites()
+            .iter()
+            .find(|call| call.id() == method_call_any)
+            .expect("resolved method edge source should have a structural call-site row");
+        let CallNode::MethodCall(method_call_node) = method_call else {
+            panic!("resolved method edge source should be a MethodCall");
+        };
+        assert_eq!(method_call_node.method_name, "private_method");
+
+        let pathbuf_call = merged
+            .call_sites()
+            .iter()
+            .find_map(|call| match call {
+                CallNode::PathCall(path_call) if path_call.path == ["PathBuf", "new"] => {
+                    Some(path_call)
+                }
+                _ => None,
+            })
+            .expect("fixture_nodes should include PathBuf::new() call site");
+        let pathbuf_call_id = pathbuf_call.id;
+        assert!(
+            call_report.statuses.iter().any(|status| matches!(
+                status,
+                CallResolutionStatus::Unsupported { source }
+                    if *source == AnyCallSiteId::Path(pathbuf_call_id)
+            )),
+            "PathBuf::new() should be Unsupported before DB projection"
+        );
+        assert!(
+            call_report.relations.iter().all(|relation| {
+                !matches!(relation, CallRelation::Function { source, .. } if *source == pathbuf_call_id)
+            }),
+            "PathBuf::new() should not have a fabricated call_relation before DB projection"
+        );
+
+        let method_call_db_id = method_call_site_id.to_cozo_uuid();
+        let target_method_db_id: DataValue = target_method_id.into();
+        let pathbuf_call_db_id = pathbuf_call_id.to_cozo_uuid();
+
+        transform_parsed_graph(&db, merged, &tree)?;
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), method_call_db_id.clone());
+        params.insert("target_id".to_string(), target_method_db_id);
+        let method_relation_rows = db.run_script(
+            r#"?[source_id, target_id, relation_kind, source_kind, target_kind] :=
+                source_id = $call_site_id,
+                target_id = $target_id,
+                *call_relation{source_id, target_id, relation_kind, source_kind, target_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(
+            method_relation_rows.rows.len(),
+            1,
+            "expected exactly one persisted method call_relation row"
+        );
+        assert_eq!(&method_relation_rows.rows[0][2], &DataValue::from("Method"));
+        assert_eq!(&method_relation_rows.rows[0][3], &DataValue::from("Method"));
+        assert_eq!(&method_relation_rows.rows[0][4], &DataValue::from("Method"));
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), method_call_db_id);
+        let method_status_rows = db.run_script(
+            r#"?[source_id, source_kind, status_kind, resolution_kind] :=
+                source_id = $call_site_id,
+                *call_resolution_status{source_id, source_kind, status_kind, resolution_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(method_status_rows.rows.len(), 1);
+        assert_eq!(&method_status_rows.rows[0][1], &DataValue::from("Method"));
+        assert_eq!(&method_status_rows.rows[0][2], &DataValue::from("Resolved"));
+        assert_eq!(
+            &method_status_rows.rows[0][3],
+            &DataValue::from("LocalExact")
+        );
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), pathbuf_call_db_id.clone());
+        let pathbuf_status_rows = db.run_script(
+            r#"?[source_id, source_kind, status_kind, resolution_kind] :=
+                source_id = $call_site_id,
+                *call_resolution_status{source_id, source_kind, status_kind, resolution_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(pathbuf_status_rows.rows.len(), 1);
+        assert_eq!(&pathbuf_status_rows.rows[0][1], &DataValue::from("Path"));
+        assert_eq!(
+            &pathbuf_status_rows.rows[0][2],
+            &DataValue::from("Unsupported")
+        );
+        assert_eq!(&pathbuf_status_rows.rows[0][3], &DataValue::Null);
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), pathbuf_call_db_id.clone());
+        let pathbuf_relation_rows = db.run_script(
+            r#"?[source_id, target_id, relation_kind] :=
+                source_id = $call_site_id,
+                *call_relation{source_id, target_id, relation_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(
+            pathbuf_relation_rows.rows.len(),
+            0,
+            "unsupported PathBuf::new() should not have a persisted call_relation row"
+        );
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), pathbuf_call_db_id);
+        let pathbuf_call_site_rows = db.run_script(
+            r#"?[id, call_kind, path] :=
+                id = $call_site_id,
+                *call_site{id, call_kind, path @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(pathbuf_call_site_rows.rows.len(), 1);
+        assert_eq!(&pathbuf_call_site_rows.rows[0][1], &DataValue::from("Path"));
+        assert_eq!(
+            &pathbuf_call_site_rows.rows[0][2],
+            &DataValue::List(vec![DataValue::from("PathBuf"), DataValue::from("new")])
+        );
 
         Ok(())
     }

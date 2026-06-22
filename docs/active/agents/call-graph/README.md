@@ -220,7 +220,7 @@ Implemented in this slice:
    - `call_resolution_status`
 2. Extended `transform_parsed_graph` to run `resolve_call_relations_after_tree(...)` at the transform boundary, mirroring `type_relation` projection.
 3. Persisted structural call sites, body containment, resolved semantic call edges, and explicit resolution statuses.
-4. Added a transform test proving the resolved `super::restricted_func()` path call appears in all four persisted relation families.
+4. Added transform tests proving resolved path-call, resolved method-call, and unsupported/no-edge path-call rows appear correctly in the persisted relation families.
 
 Primary implementation files:
 
@@ -302,7 +302,7 @@ cargo check -p ploke-transform --features typed_type_graph
 cargo test -p ploke-transform --features typed_type_graph transform::tests -- --nocapture
 ```
 
-Result: all passed. The `call_sites` filter ran twelve paranoid fixture tests and all passed; transform projection tests passed for type and call graph relations.
+Result: all passed. The `call_sites` filter ran twelve paranoid fixture tests and all passed; transform projection tests passed for type relations, resolved call edges, and unsupported call statuses.
 
 ## Next implementation slice
 
