@@ -70,7 +70,7 @@ Implemented/scaffolded:
   - `call_site_edge`
   - `call_relation`
   - `call_resolution_status`
-- GREEN fixture tests now use a call-site paranoid harness and cover 13 concrete call expressions:
+- GREEN fixture tests now use a call-site paranoid harness and cover 15 concrete call expressions:
   - `fixture_nodes_public_method_records_and_resolves_self_private_method_call_site`
   - `fixture_nodes_get_secret_len_records_self_field_len_method_call_site`
   - `fixture_nodes_use_imported_items_records_hashmap_new_path_call_site`
@@ -84,6 +84,8 @@ Implemented/scaffolded:
   - `fixture_nodes_use_all_const_static_records_println_macro_call_site`
   - `fixture_path_resolution_call_restricted_resolves_super_restricted_func_path_call_site`
   - `fixture_path_resolution_root_func_records_std_path_new_external_path_call_site`
+  - `fixture_macros_use_local_macro_records_local_macro_call_site`
+  - `fixture_macros_use_local_macro_records_println_macro_call_site`
 
 Not implemented yet:
 
@@ -320,7 +322,7 @@ cargo check -p ploke-transform --features typed_type_graph
 cargo test -p ploke-transform --features typed_type_graph transform::tests -- --nocapture
 ```
 
-Result: all passed. The `call_sites` filter ran thirteen paranoid fixture tests and all passed; transform projection tests passed for type relations, resolved call edges, and unsupported call statuses.
+Result: all passed. The `call_sites` filter ran fifteen paranoid fixture tests and all passed; transform projection tests passed for type relations, resolved call edges, and unsupported call statuses.
 
 ## Next implementation slice
 

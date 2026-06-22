@@ -78,8 +78,8 @@ This section maps the exhaustive rows below to concrete fixtures we can use. Pre
 | `fixture_nodes` | `src/imports.rs:174` | `TupleStruct(1, 2)` | P22 | **green** | Covered by `fixture_nodes_use_imported_items_records_tuple_struct_path_call_site`; tuple struct constructor-shaped path call. |
 | `fixture_nodes` | `src/const_static.rs:54` | `five()` in `const FN_CALL_CONST` | owner matrix const | **blocked** | Requires `CallBodyOwnerId` extension for const initializer owners. |
 | `fixture_nodes` | `src/const_static.rs:148` | `println!(...)` | X02, X09 | **green** | Covered by `fixture_nodes_use_all_const_static_records_println_macro_call_site`; statement-position macro call in ordinary function body. |
-| `fixture_macros` | `src/lib.rs:20` | `local_macro!(my_var)` | X08, X09 | **ready green** | Local macro invocation in function body. |
-| `fixture_macros` | `src/lib.rs:21` | `println!("{}", my_var)` | X02, X09 | **ready green** | Standard macro invocation adjacent to local macro. |
+| `fixture_macros` | `src/lib.rs:23` | `local_macro!(my_var)` | X08, X09 | **green** | Covered by `fixture_macros_use_local_macro_records_local_macro_call_site`; local macro invocation in function body. |
+| `fixture_macros` | `src/lib.rs:24` | `println!("{}", my_var)` | X02, X09 | **green** | Covered by `fixture_macros_use_local_macro_records_println_macro_call_site`; standard macro invocation adjacent to local macro. |
 | `fixture_path_resolution` | `src/lib.rs` | `Regex::new(...).unwrap()` | P20-like, M13 | **ready RED/green split** | PathCall for `Regex::new`; method call `.unwrap()` needs receiver broadening. |
 | `fixture_path_resolution` | `src/lib.rs:142` | `std::path::Path::new("")` | P07/P20-like | **green** | Covered by `fixture_path_resolution_root_func_records_std_path_new_external_path_call_site`; direct external-root path call, `External`, no edge. |
 | `fixture_path_resolution` | `src/lib.rs` | `NodeId::generate_synthetic(...)` | P12/P20-like | **ready green** | Qualified associated-function-shaped path call. |

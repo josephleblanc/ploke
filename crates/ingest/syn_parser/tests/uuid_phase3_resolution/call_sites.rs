@@ -32,6 +32,8 @@ const TUPLE_STRUCT_CALL_SPAN: (usize, usize) = (5549, 5566);
 const PRINTLN_USED_CALL_SPAN: (usize, usize) = (4395, 4461);
 const SUPER_RESTRICTED_FUNC_CALL_SPAN: (usize, usize) = (1936, 1960);
 const STD_PATH_NEW_CALL_SPAN: (usize, usize) = (4214, 4238);
+const LOCAL_MACRO_CALL_SPAN: (usize, usize) = (437, 457);
+const FIXTURE_MACROS_PRINTLN_CALL_SPAN: (usize, usize) = (463, 485);
 
 fn simple_struct_inherent_method_args(ident: &'static str) -> AssocParanoidArgs<'static> {
     AssocParanoidArgs {
@@ -304,5 +306,35 @@ paranoid_call_site_test!(
         0,
         &[],
         ExpectedCallOutcome::External,
+    ),
+);
+
+paranoid_call_site_test!(
+    fixture_macros_use_local_macro_records_local_macro_call_site,
+    fixture: "fixture_macros",
+    owner: function {
+        module_path: &["crate"],
+        name: "use_local_macro"
+    },
+    expected: ExpectedCallSite::macro_call(
+        "local_macro",
+        LOCAL_MACRO_CALL_SPAN,
+        &[],
+        ExpectedCallOutcome::Unsupported,
+    ),
+);
+
+paranoid_call_site_test!(
+    fixture_macros_use_local_macro_records_println_macro_call_site,
+    fixture: "fixture_macros",
+    owner: function {
+        module_path: &["crate"],
+        name: "use_local_macro"
+    },
+    expected: ExpectedCallSite::macro_call(
+        "println",
+        FIXTURE_MACROS_PRINTLN_CALL_SPAN,
+        &[],
+        ExpectedCallOutcome::Unsupported,
     ),
 );
