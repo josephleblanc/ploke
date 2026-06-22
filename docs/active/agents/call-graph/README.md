@@ -12,10 +12,11 @@ Short description: Current source of truth for the parser call-graph feature thr
 4. [`2026-06-22_structural-method-call-extraction-plan.md`](2026-06-22_structural-method-call-extraction-plan.md) — completed structural method-call slice.
 5. [`2026-06-22_inherent-self-method-resolution-plan.md`](2026-06-22_inherent-self-method-resolution-plan.md) — completed first semantic resolver slice.
 6. [`2026-06-22_structural-path-call-extraction-plan.md`](2026-06-22_structural-path-call-extraction-plan.md) — completed structural path-call slice.
-7. [`2026-06-22_structural-macro-call-extraction-plan.md`](2026-06-22_structural-macro-call-extraction-plan.md) — completed structural macro-call slice.
-8. [`../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md`](../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md) — task sequence for the first `fixture_nodes` slice.
-9. [`../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`](../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md) — broader typed call-graph rollout plan.
-10. Long-horizon proof context only if needed:
+7. [`2026-06-22_local-free-function-path-call-resolution-plan.md`](2026-06-22_local-free-function-path-call-resolution-plan.md) — completed first local path-call resolver slice.
+8. [`2026-06-22_structural-macro-call-extraction-plan.md`](2026-06-22_structural-macro-call-extraction-plan.md) — completed structural macro-call slice.
+9. [`../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md`](../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md) — task sequence for the first `fixture_nodes` slice.
+10. [`../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`](../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md) — broader typed call-graph rollout plan.
+11. Long-horizon proof context only if needed:
    - [`../../../workflow/evalnomicon/drafts/formal/detached-process-callgraph-proof-target.md`](../../../workflow/evalnomicon/drafts/formal/detached-process-callgraph-proof-target.md)
    - [`../../../workflow/evalnomicon/drafts/formal/callgraph-implementation-design-for-detached-process-proof.md`](../../../workflow/evalnomicon/drafts/formal/callgraph-implementation-design-for-detached-process-proof.md)
    - [`../../../workflow/evalnomicon/drafts/formal/macro-buildrs-callgraph-sequencing-survey.md`](../../../workflow/evalnomicon/drafts/formal/macro-buildrs-callgraph-sequencing-survey.md)
@@ -23,7 +24,7 @@ Short description: Current source of truth for the parser call-graph feature thr
 
 ## Current implementation state
 
-Current branch/worktree state is uncommitted. Treat this as in-progress scaffolding, not landed feature support.
+Current branch/worktree state is active feature work. Treat this as the restart spine for the incremental call-graph implementation.
 
 Implemented/scaffolded:
 
@@ -57,10 +58,11 @@ Implemented/scaffolded:
   - `CodeGraph.call_resolution_statuses`
   - `CallRelation::{Function, Method}`
   - `CallResolutionStatus::{Resolved, Unresolved, Ambiguous, External, Unsupported}`
-- First semantic resolver slice:
+- First semantic resolver slices:
   - `resolve::call_resolution::resolve_call_relations_after_tree(...)`
   - exact inherent `self.method()` resolution within the same impl block.
-- GREEN fixture tests now use a call-site paranoid harness and cover 11 concrete call expressions:
+  - explicit local `crate`/`self`/`super` path-call resolution to local standalone functions.
+- GREEN fixture tests now use a call-site paranoid harness and cover 12 concrete call expressions:
   - `fixture_nodes_public_method_records_and_resolves_self_private_method_call_site`
   - `fixture_nodes_get_secret_len_records_self_field_len_method_call_site`
   - `fixture_nodes_use_imported_items_records_hashmap_new_path_call_site`
@@ -72,13 +74,14 @@ Implemented/scaffolded:
   - `fixture_nodes_use_imported_items_records_tuple_struct_path_call_site`
   - `fixture_nodes_use_imported_items_records_documented_macro_call_site`
   - `fixture_nodes_use_all_const_static_records_println_macro_call_site`
+  - `fixture_path_resolution_call_restricted_resolves_super_restricted_func_path_call_site`
 
 Not implemented yet:
 
 - Dynamic call extraction.
 - Non-`self` method receiver classification.
 - Trait dispatch.
-- Free-function path-call resolution.
+- Unqualified/import/re-export path-call resolution.
 - Associated-function path-call resolution.
 - Transform/database projection.
 - Proof-fact projection.
@@ -122,7 +125,7 @@ Implemented in this slice:
 1. Added `tests/common/call_site_paranoid.rs` as the call-site analogue of the node-level paranoid helpers.
 2. Added `paranoid_call_site_test!` to generate exact fixture-backed call-site tests.
 3. Each generated test regenerates the typed `CallId`, checks exact-ID lookup, checks value lookup, checks the `BodyContainsCall` relation, and checks resolver status plus expected semantic edge/no-edge policy.
-4. Converted the focused call-site coverage from hand-written tests/table rows to 11 named paranoid tests.
+4. Converted the focused call-site coverage from hand-written tests/table rows to named paranoid tests.
 
 Primary implementation files:
 
@@ -192,13 +195,28 @@ Implemented in this slice:
 2. It emits `CallNode::PathCall` with path segments, value arg count, generic arg count, span, owner, and cfgs.
 3. It emits `BodyContainsCall` for the path call site.
 4. The focused fixture target is `PathBuf::new()` inside `fixture_nodes::imports::use_imported_items`.
-5. The resolver still fails closed for path-call sites; no `CallRelation::Function` edge is emitted for this structural-only slice.
+5. The resolver initially failed closed for path-call sites; local explicit path-call resolution was added in a later slice.
 
 Primary implementation files:
 
 - `crates/ingest/syn_parser/src/parser/visitor/call_extraction.rs`
 - `crates/ingest/syn_parser/src/parser/nodes/ids/internal/call_ids.rs`
 - `crates/ingest/syn_parser/tests/uuid_phase3_resolution/call_sites.rs`
+
+## Completed implementation slice: local free-function path-call resolution
+
+Implemented in this slice:
+
+1. `CallRelationResolver` now attempts local standalone-function resolution for explicit `crate::`, `self::`, and `super::` path calls.
+2. The resolver traverses from the call owner's containing module, handles local path prefixes, walks intermediate module segments, and proves terminal `FunctionNodeId` targets.
+3. `super::restricted_func()` in `fixture_path_resolution::restricted_vis_mod::inner::call_restricted` resolves to `restricted_func` with `CallRelation::Function` and `Resolved(LocalExact)` status.
+4. Unsupported path-call shapes such as external associated-function-looking calls remain `Unsupported`.
+
+Primary implementation files:
+
+- `crates/ingest/syn_parser/src/resolve/call_resolution.rs`
+- `crates/ingest/syn_parser/tests/uuid_phase3_resolution/call_sites.rs`
+- `docs/active/agents/call-graph/2026-06-22_local-free-function-path-call-resolution-plan.md`
 
 ## Completed implementation slice: structural macro-call extraction
 
@@ -245,7 +263,7 @@ Before implementing new call-graph work, verify:
 
 ## Last verification summary
 
-Commands run after structural extraction, first resolver slice, path-call extraction, and macro-call extraction landed:
+Commands run after structural extraction, resolver slices, path-call extraction, and macro-call extraction landed:
 
 ```bash
 cargo check -p syn_parser
@@ -254,13 +272,13 @@ cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --noca
 cargo test -p syn_parser --features typed_type_graph call_sites -- --nocapture
 ```
 
-Result: all passed. The `call_sites` filter ran eleven paranoid fixture tests and all passed.
+Result: all passed. The `call_sites` filter ran twelve paranoid fixture tests and all passed.
 
 ## Next implementation slice
 
 Use [`2026-06-22_call-site-coverage-matrix.md`](2026-06-22_call-site-coverage-matrix.md) as the test-selection source of truth. Continue broadening structural coverage before broad semantic coverage. Recommended next RED tests:
 
-1. dynamic-call extraction for non-path callees such as `(f)()` or `make_fn()()` once a fixture target exists;
-2. decide whether path-to-binding calls such as `alias_checker(...)` remain `PathCall` structurally or need a later binding-aware dynamic reclassification;
-3. local free-function path-call resolution only after a local-function path-call fixture target is selected;
+1. broaden explicit local path-call resolution with `crate::...` / `self::...` fixtures and then imports/re-exports;
+2. dynamic-call extraction for non-path callees such as `(f)()` or `make_fn()()` once a fixture target exists;
+3. decide whether path-to-binding calls such as `alias_checker(...)` remain `PathCall` structurally or need a later binding-aware dynamic reclassification;
 4. associated-function path-call resolution after a dedicated `Self::new()` / local associated-function path-call test.

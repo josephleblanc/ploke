@@ -52,6 +52,7 @@ All focused call-site rows now run through the `paranoid_call_site_test!` harnes
 - `self.secret.len()` -> `MethodCall` with `SelfField { field_path: ["secret"] }`, `Unsupported`, no edge.
 - `PathBuf::new()` -> `PathCall`, `Unsupported`, no edge.
 - `HashMap::<String, i32>::new()`, `fs::read_to_string(...)`, `EnumWithData::Variant1(1)`, `Duration::from_secs(1)`, `Arc::new(1)`, and `TupleStruct(1, 2)` -> `PathCall`, `Unsupported`, no edge.
+- `super::restricted_func()` -> `PathCall`, `Resolved(LocalExact)`, `CallRelation::Function`.
 - `documented_macro!(...)` and statement-position `println!(...)` -> `MacroCall`, `Unsupported`, no edge.
 
 ## Fixture-backed target index
@@ -81,7 +82,7 @@ This section maps the exhaustive rows below to concrete fixtures we can use. Pre
 | `fixture_path_resolution` | `src/lib.rs` | `Regex::new(...).unwrap()` | P20-like, M13 | **ready RED/green split** | PathCall for `Regex::new`; method call `.unwrap()` needs receiver broadening. |
 | `fixture_path_resolution` | `src/lib.rs` | `NodeId::generate_synthetic(...)` | P12/P20-like | **ready green** | Qualified associated-function-shaped path call. |
 | `fixture_path_resolution` | `src/lib.rs` | `debug!(...)`, `info!(...)` | X01/X02-like | **ready green** | External/logging macro invocations. |
-| `fixture_path_resolution` | `src/lib.rs` | `super::restricted_func()` | P04 | **ready green** | Super-qualified local path call in inline module. |
+| `fixture_path_resolution` | `src/lib.rs:70` | `super::restricted_func()` | P04 | **green** | Covered by `fixture_path_resolution_call_restricted_resolves_super_restricted_func_path_call_site`; super-qualified local path call resolves to `CallRelation::Function`. |
 | `fixture_impls` | `src/main.rs:9-13` | `x.func_test_one()`, `x.func_test_two()`, `x.func_test_three()`, `x.func_test_five()` | M05, M20-ish | **ready RED** | Non-`self` local variable receiver method calls. |
 | `fixture_impls` | `src/main.rs:12` | `TestImplStruct::func_test_four()` | P12/P14 | **ready green** | Associated-function-shaped path call to local impl method; resolution later. |
 | `fixture_impls` | `src/main.rs:15` | `println!(...)` | X02, X09 | **ready green** | Macro call in binary main. |

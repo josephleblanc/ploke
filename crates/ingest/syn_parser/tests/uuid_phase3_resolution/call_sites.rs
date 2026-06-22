@@ -10,10 +10,13 @@
 use crate::common::call_site_paranoid::{
     ExpectedCallOutcome, ExpectedCallSite, ExpectedMethodReceiver,
 };
-use crate::common::{AssocOwner, AssocParanoidArgs, PARSED_FIXTURE_CRATE_NODES};
+use crate::common::{AssocOwner, AssocParanoidArgs, PARSED_FIXTURE_CRATE_NODES, ParanoidArgs};
 use crate::paranoid_call_site_test;
+use ploke_core::ItemKind;
+use syn_parser::parser::nodes::FunctionNodeId;
 
 const IMPLS_RS: &str = "src/impls.rs";
+const PATH_RESOLUTION_LIB_RS: &str = "src/lib.rs";
 const SIMPLE_STRUCT_IMPL_SPAN: (usize, usize) = (520, 750);
 const PRIVATE_STRUCT_IMPL_SPAN: (usize, usize) = (790, 884);
 const SELF_PRIVATE_METHOD_CALL_SPAN: (usize, usize) = (721, 742);
@@ -27,6 +30,7 @@ const DURATION_FROM_SECS_CALL_SPAN: (usize, usize) = (5235, 5257);
 const ARC_NEW_CALL_SPAN: (usize, usize) = (5452, 5463);
 const TUPLE_STRUCT_CALL_SPAN: (usize, usize) = (5549, 5566);
 const PRINTLN_USED_CALL_SPAN: (usize, usize) = (4395, 4461);
+const SUPER_RESTRICTED_FUNC_CALL_SPAN: (usize, usize) = (1936, 1960);
 
 fn simple_struct_inherent_method_args(ident: &'static str) -> AssocParanoidArgs<'static> {
     AssocParanoidArgs {
@@ -50,6 +54,20 @@ fn private_struct_inherent_method_args(ident: &'static str) -> AssocParanoidArgs
             span: PRIVATE_STRUCT_IMPL_SPAN,
         },
         ident,
+        expected_cfg: None,
+    }
+}
+
+fn path_resolution_function_args(
+    expected_path: &'static [&'static str],
+    ident: &'static str,
+) -> ParanoidArgs<'static> {
+    ParanoidArgs {
+        fixture: "fixture_path_resolution",
+        relative_file_path: PATH_RESOLUTION_LIB_RS,
+        expected_path,
+        ident,
+        item_kind: ItemKind::Function,
         expected_cfg: None,
     }
 }
@@ -243,4 +261,30 @@ paranoid_call_site_test!(
         &[],
         ExpectedCallOutcome::Unsupported,
     ),
+);
+
+paranoid_call_site_test!(
+    fixture_path_resolution_call_restricted_resolves_super_restricted_func_path_call_site,
+    fixture: "fixture_path_resolution",
+    owner: function {
+        module_path: &["crate", "restricted_vis_mod", "inner"],
+        name: "call_restricted"
+    },
+    expected: {
+        let target_args =
+            path_resolution_function_args(&["crate", "restricted_vis_mod"], "restricted_func");
+        let target_info = target_args.generate_pid(
+            crate::common::call_site_paranoid::parsed_graphs_for_fixture("fixture_path_resolution"),
+        )?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("restricted_func should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["super", "restricted_func"],
+            SUPER_RESTRICTED_FUNC_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
 );
