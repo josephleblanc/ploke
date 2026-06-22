@@ -377,6 +377,26 @@ pub(in crate::parser) fn generate_path_call_site_id(
     ))
 }
 
+/// Parser-internal constructor for dynamic expression-call site IDs.
+///
+/// Call this only after structural extraction has classified a call expression's
+/// callee as a non-path expression. The discriminator is intentionally coarse;
+/// the occurrence span and owner distinguish individual dynamic call sites.
+#[inline]
+pub(in crate::parser) fn generate_dynamic_call_site_id(
+    owner: CallBodyOwnerId,
+    span: (usize, usize),
+    cfgs: &[String],
+) -> DynamicCallSiteId {
+    DynamicCallSiteId::create(generate_call_id(
+        owner,
+        CallSiteKind::Dynamic,
+        "dynamic",
+        span,
+        cfgs,
+    ))
+}
+
 /// Parser-internal constructor for macro invocation site IDs.
 ///
 /// Call this only after structural extraction has classified an expression as a

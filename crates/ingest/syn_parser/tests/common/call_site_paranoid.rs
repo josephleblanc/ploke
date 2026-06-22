@@ -17,8 +17,8 @@ use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::parser::graph::GraphAccess;
 use syn_parser::parser::nodes::test_ids::{TestCallIds, generate_test_call_id};
 use syn_parser::parser::nodes::{
-    AnyCallSiteId, CallBodyOwnerId, CallNode, CallSiteKind, FunctionNodeId, MacroCallSiteId,
-    MethodCallReceiver, MethodCallSiteId, MethodNodeId, PathCallSiteId,
+    AnyCallSiteId, CallBodyOwnerId, CallNode, CallSiteKind, DynamicCallSiteId, FunctionNodeId,
+    MacroCallSiteId, MethodCallReceiver, MethodCallSiteId, MethodNodeId, PathCallSiteId,
 };
 use syn_parser::parser::relations::{
     CallRelation, CallResolutionKind, CallResolutionStatus, CallSiteRelation,
@@ -73,6 +73,8 @@ pub enum ExpectedCallKind<'a> {
         arg_count: usize,
         generic_arg_count: usize,
     },
+    /// Dynamic expression call, e.g. `(f)()` or `(|| 1)()`.
+    Dynamic { arg_count: usize },
     /// Macro invocation expression/statement, e.g. `println!(...)`.
     Macro { macro_name: &'a str },
 }
@@ -152,6 +154,21 @@ impl<'a> ExpectedCallSite<'a> {
         }
     }
 
+    /// Constructor for a dynamic-call expectation.
+    pub const fn dynamic(
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic { arg_count },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
     /// Constructor for a macro-call expectation.
     pub const fn macro_call(
         macro_name: &'a str,
@@ -182,6 +199,10 @@ impl<'a> ExpectedCallSite<'a> {
             }
             ExpectedCallKind::Method { method_name, .. } => MethodCallSiteId::new_call_test(
                 generate_test_call_id(owner, CallSiteKind::Method, method_name, self.span, cfgs),
+            )
+            .into(),
+            ExpectedCallKind::Dynamic { .. } => DynamicCallSiteId::new_call_test(
+                generate_test_call_id(owner, CallSiteKind::Dynamic, "dynamic", self.span, cfgs),
             )
             .into(),
             ExpectedCallKind::Macro { macro_name } => MacroCallSiteId::new_call_test(
@@ -227,6 +248,9 @@ impl<'a> ExpectedCallSite<'a> {
                     && actual.receiver == receiver.to_actual()
                     && actual.arg_count == arg_count
                     && actual.generic_arg_count == generic_arg_count
+            }
+            (ExpectedCallKind::Dynamic { arg_count }, CallNode::DynamicCall(actual)) => {
+                actual.arg_count == arg_count
             }
             (ExpectedCallKind::Macro { macro_name }, CallNode::MacroCall(actual)) => {
                 actual.macro_name == macro_name
@@ -315,6 +339,15 @@ impl<'a> ExpectedCallSite<'a> {
                 assert_eq!(actual.generic_arg_count, generic_arg_count);
             }
             (
+                ExpectedCallKind::Dynamic { arg_count },
+                CallNode::DynamicCall(actual),
+                AnyCallSiteId::Dynamic(expected_dynamic_id),
+            ) => {
+                assert_eq!(actual.id, expected_dynamic_id);
+                assert_eq!(actual.owner, owner.id);
+                assert_eq!(actual.arg_count, arg_count);
+            }
+            (
                 ExpectedCallKind::Macro { macro_name },
                 CallNode::MacroCall(actual),
                 AnyCallSiteId::Macro(expected_macro_id),
@@ -338,6 +371,7 @@ impl<'a> ExpectedCallSite<'a> {
             ExpectedCallKind::Method { method_name, .. } => {
                 format!("method call {method_name}()")
             }
+            ExpectedCallKind::Dynamic { .. } => "dynamic call".to_string(),
             ExpectedCallKind::Macro { macro_name } => format!("macro call {macro_name}!(...)"),
         }
     }

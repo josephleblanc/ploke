@@ -15,10 +15,11 @@ Short description: Current source of truth for the parser call-graph feature thr
 7. [`2026-06-22_local-free-function-path-call-resolution-plan.md`](2026-06-22_local-free-function-path-call-resolution-plan.md) — completed first local path-call resolver slice.
 8. [`2026-06-22_call-graph-db-projection-plan.md`](2026-06-22_call-graph-db-projection-plan.md) — completed first database projection slice.
 9. [`2026-06-22_external-root-path-call-classification-plan.md`](2026-06-22_external-root-path-call-classification-plan.md) — completed direct external-root classification slice.
-10. [`2026-06-22_structural-macro-call-extraction-plan.md`](2026-06-22_structural-macro-call-extraction-plan.md) — completed structural macro-call slice.
-11. [`../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md`](../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md) — task sequence for the first `fixture_nodes` slice.
-12. [`../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`](../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md) — broader typed call-graph rollout plan.
-13. Long-horizon proof context only if needed:
+10. [`2026-06-22_dynamic-call-extraction-plan.md`](2026-06-22_dynamic-call-extraction-plan.md) — completed dynamic structural call-site slice.
+11. [`2026-06-22_structural-macro-call-extraction-plan.md`](2026-06-22_structural-macro-call-extraction-plan.md) — completed structural macro-call slice.
+12. [`../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md`](../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md) — task sequence for the first `fixture_nodes` slice.
+13. [`../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`](../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md) — broader typed call-graph rollout plan.
+14. Long-horizon proof context only if needed:
    - [`../../../workflow/evalnomicon/drafts/formal/detached-process-callgraph-proof-target.md`](../../../workflow/evalnomicon/drafts/formal/detached-process-callgraph-proof-target.md)
    - [`../../../workflow/evalnomicon/drafts/formal/callgraph-implementation-design-for-detached-process-proof.md`](../../../workflow/evalnomicon/drafts/formal/callgraph-implementation-design-for-detached-process-proof.md)
    - [`../../../workflow/evalnomicon/drafts/formal/macro-buildrs-callgraph-sequencing-survey.md`](../../../workflow/evalnomicon/drafts/formal/macro-buildrs-callgraph-sequencing-survey.md)
@@ -51,6 +52,10 @@ Implemented/scaffolded:
   - `syn::ExprCall` with `syn::Expr::Path` callee.
   - `CallNode::PathCall` emission.
   - deterministic parser-internal `PathCallSiteId` construction from owner + path + span + cfgs.
+- Structural dynamic-call extraction:
+  - non-path `syn::ExprCall` callees such as `(closure)()` and `(|| 11)()`.
+  - `CallNode::DynamicCall` emission.
+  - deterministic parser-internal `DynamicCallSiteId` construction from owner + span + cfgs.
 - Structural macro-call extraction:
   - `syn::ExprMacro` and statement-position `syn::StmtMacro`.
   - `CallNode::MacroCall` emission.
@@ -70,7 +75,7 @@ Implemented/scaffolded:
   - `call_site_edge`
   - `call_relation`
   - `call_resolution_status`
-- GREEN fixture tests now use a call-site paranoid harness and cover 15 concrete call expressions:
+- GREEN fixture tests now use a call-site paranoid harness and cover 17 concrete call expressions:
   - `fixture_nodes_public_method_records_and_resolves_self_private_method_call_site`
   - `fixture_nodes_get_secret_len_records_self_field_len_method_call_site`
   - `fixture_nodes_use_imported_items_records_hashmap_new_path_call_site`
@@ -86,10 +91,12 @@ Implemented/scaffolded:
   - `fixture_path_resolution_root_func_records_std_path_new_external_path_call_site`
   - `fixture_macros_use_local_macro_records_local_macro_call_site`
   - `fixture_macros_use_local_macro_records_println_macro_call_site`
+  - `fixture_call_graph_dynamic_calls_records_parenthesized_binding_dynamic_call_site`
+  - `fixture_call_graph_dynamic_calls_records_closure_literal_dynamic_call_site`
 
 Not implemented yet:
 
-- Dynamic call extraction.
+- Dynamic call resolution.
 - Non-`self` method receiver classification.
 - Trait dispatch.
 - Unqualified/import/re-export path-call resolution.
@@ -214,6 +221,24 @@ Primary implementation files:
 - `crates/ingest/syn_parser/src/parser/nodes/ids/internal/call_ids.rs`
 - `crates/ingest/syn_parser/tests/uuid_phase3_resolution/call_sites.rs`
 
+## Completed implementation slice: dynamic call extraction
+
+Implemented in this slice:
+
+1. Added parser-internal `generate_dynamic_call_site_id(...)` for `DynamicCallSiteId` construction in the `CallId` universe.
+2. The body visitor records non-path `syn::ExprCall` callees as `CallNode::DynamicCall`.
+3. Added `tests/fixture_crates/fixture_call_graph` for focused dynamic/Fn-like syntax coverage absent from existing fixtures.
+4. `(closure)()` and `(|| 11)()` are covered by paranoid call-site tests and currently receive `Unsupported` status with no semantic edge.
+
+Primary implementation files:
+
+- `crates/ingest/syn_parser/src/parser/nodes/ids/internal/call_ids.rs`
+- `crates/ingest/syn_parser/src/parser/visitor/call_extraction.rs`
+- `crates/ingest/syn_parser/tests/common/call_site_paranoid.rs`
+- `crates/ingest/syn_parser/tests/uuid_phase3_resolution/call_sites.rs`
+- `tests/fixture_crates/fixture_call_graph/src/lib.rs`
+- `docs/active/agents/call-graph/2026-06-22_dynamic-call-extraction-plan.md`
+
 ## Completed implementation slice: direct external-root path-call classification
 
 Implemented in this slice:
@@ -322,7 +347,7 @@ cargo check -p ploke-transform --features typed_type_graph
 cargo test -p ploke-transform --features typed_type_graph transform::tests -- --nocapture
 ```
 
-Result: all passed. The `call_sites` filter ran fifteen paranoid fixture tests and all passed; transform projection tests passed for type relations, resolved call edges, and unsupported call statuses.
+Result: all passed. The `call_sites` filter ran seventeen paranoid fixture tests and all passed; transform projection tests passed for type relations, resolved call edges, and unsupported call statuses.
 
 ## Next implementation slice
 

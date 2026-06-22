@@ -222,7 +222,8 @@ pub use call_ids::{
     MethodCallSiteId, PathCallSiteId,
 };
 pub(in crate::parser) use call_ids::{
-    generate_macro_call_site_id, generate_method_call_site_id, generate_path_call_site_id,
+    generate_dynamic_call_site_id, generate_macro_call_site_id, generate_method_call_site_id,
+    generate_path_call_site_id,
 };
 
 pub use type_families::{

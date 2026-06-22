@@ -34,6 +34,8 @@ const SUPER_RESTRICTED_FUNC_CALL_SPAN: (usize, usize) = (1936, 1960);
 const STD_PATH_NEW_CALL_SPAN: (usize, usize) = (4214, 4238);
 const LOCAL_MACRO_CALL_SPAN: (usize, usize) = (437, 457);
 const FIXTURE_MACROS_PRINTLN_CALL_SPAN: (usize, usize) = (463, 485);
+const DYNAMIC_CLOSURE_BINDING_CALL_SPAN: (usize, usize) = (177, 188);
+const DYNAMIC_CLOSURE_LITERAL_CALL_SPAN: (usize, usize) = (213, 222);
 
 fn simple_struct_inherent_method_args(ident: &'static str) -> AssocParanoidArgs<'static> {
     AssocParanoidArgs {
@@ -334,6 +336,36 @@ paranoid_call_site_test!(
     expected: ExpectedCallSite::macro_call(
         "println",
         FIXTURE_MACROS_PRINTLN_CALL_SPAN,
+        &[],
+        ExpectedCallOutcome::Unsupported,
+    ),
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_dynamic_calls_records_parenthesized_binding_dynamic_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "dynamic_calls"
+    },
+    expected: ExpectedCallSite::dynamic(
+        DYNAMIC_CLOSURE_BINDING_CALL_SPAN,
+        0,
+        &[],
+        ExpectedCallOutcome::Unsupported,
+    ),
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_dynamic_calls_records_closure_literal_dynamic_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "dynamic_calls"
+    },
+    expected: ExpectedCallSite::dynamic(
+        DYNAMIC_CLOSURE_LITERAL_CALL_SPAN,
+        0,
         &[],
         ExpectedCallOutcome::Unsupported,
     ),

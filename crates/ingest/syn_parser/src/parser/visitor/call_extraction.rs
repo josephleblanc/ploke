@@ -8,8 +8,9 @@ use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
 
 use crate::parser::nodes::{
-    CallBodyOwnerId, CallNode, MacroCallNode, MethodCallNode, MethodCallReceiver, PathCallNode,
-    generate_macro_call_site_id, generate_method_call_site_id, generate_path_call_site_id,
+    CallBodyOwnerId, CallNode, DynamicCallNode, MacroCallNode, MethodCallNode, MethodCallReceiver,
+    PathCallNode, generate_dynamic_call_site_id, generate_macro_call_site_id,
+    generate_method_call_site_id, generate_path_call_site_id,
 };
 use crate::parser::relations::CallSiteRelation;
 
@@ -95,6 +96,25 @@ impl BodyCallVisitor<'_> {
         });
     }
 
+    fn record_dynamic_call(&mut self, call: &syn::ExprCall) {
+        let byte_range = call.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
+        let id = generate_dynamic_call_site_id(self.owner, span, self.cfgs);
+        let target = id.into();
+
+        self.calls.push(CallNode::DynamicCall(DynamicCallNode {
+            id,
+            owner: self.owner,
+            span,
+            cfgs: self.cfgs.to_vec(),
+            arg_count: call.args.len(),
+        }));
+        self.relations.push(CallSiteRelation::BodyContainsCall {
+            source: self.owner,
+            target,
+        });
+    }
+
     fn record_method_call(&mut self, call: &syn::ExprMethodCall) {
         let Some(receiver) = classify_method_receiver(&call.receiver) else {
             return;
@@ -138,7 +158,11 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
     }
 
     fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
-        self.record_path_call(call);
+        if matches!(call.func.as_ref(), syn::Expr::Path(_)) {
+            self.record_path_call(call);
+        } else {
+            self.record_dynamic_call(call);
+        }
         visit::visit_expr_call(self, call);
     }
 

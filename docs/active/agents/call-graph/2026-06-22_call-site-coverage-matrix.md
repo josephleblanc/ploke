@@ -54,6 +54,7 @@ All focused call-site rows now run through the `paranoid_call_site_test!` harnes
 - `HashMap::<String, i32>::new()`, `fs::read_to_string(...)`, `EnumWithData::Variant1(1)`, `Duration::from_secs(1)`, `Arc::new(1)`, and `TupleStruct(1, 2)` -> `PathCall`, `Unsupported`, no edge.
 - `super::restricted_func()` -> `PathCall`, `Resolved(LocalExact)`, `CallRelation::Function`.
 - `std::path::Path::new("")` -> `PathCall`, `External`, no edge.
+- `(closure)()` and `(|| 11)()` -> `DynamicCall`, `Unsupported`, no edge.
 - `documented_macro!(...)` and statement-position `println!(...)` -> `MacroCall`, `Unsupported`, no edge.
 
 ## Fixture-backed target index
@@ -91,6 +92,8 @@ This section maps the exhaustive rows below to concrete fixtures we can use. Pre
 | `fixture_type_resolution_v2` | `src/lib.rs` | generic/trait-heavy owners | M18/M19 candidates | **needs scan** | Good place to find bound-based method calls if present; otherwise add fixture. |
 | `fixture_generics` | `src/lib.rs` | generic functions/types | P11/M18 candidates | **needs scan** | Good candidate for generic path/method calls. |
 | `fixture_edge_cases` | `src/lib.rs` | unusual syntax | P28/raw identifiers maybe | **needs scan** | Use before adding raw-ident fixture. |
+| `fixture_call_graph` | `src/lib.rs:5` | `(closure)()` | D01/D02 | **green** | Focused fixture added for dynamic call syntax; covered by `fixture_call_graph_dynamic_calls_records_parenthesized_binding_dynamic_call_site`. |
+| `fixture_call_graph` | `src/lib.rs:6` | `(|| 11)()` | D03 | **green** | Focused fixture added for closure literal call syntax; covered by `fixture_call_graph_dynamic_calls_records_closure_literal_dynamic_call_site`. |
 
 ### Workspace/mock fixtures
 
