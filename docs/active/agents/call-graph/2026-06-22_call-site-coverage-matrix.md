@@ -53,6 +53,7 @@ All focused call-site rows now run through the `paranoid_call_site_test!` harnes
 - `PathBuf::new()` -> `PathCall`, `Unsupported`, no edge.
 - `HashMap::<String, i32>::new()`, `fs::read_to_string(...)`, `EnumWithData::Variant1(1)`, `Duration::from_secs(1)`, `Arc::new(1)`, and `TupleStruct(1, 2)` -> `PathCall`, `Unsupported`, no edge.
 - `super::restricted_func()` -> `PathCall`, `Resolved(LocalExact)`, `CallRelation::Function`.
+- `std::path::Path::new("")` -> `PathCall`, `External`, no edge.
 - `documented_macro!(...)` and statement-position `println!(...)` -> `MacroCall`, `Unsupported`, no edge.
 
 ## Fixture-backed target index
@@ -80,6 +81,7 @@ This section maps the exhaustive rows below to concrete fixtures we can use. Pre
 | `fixture_macros` | `src/lib.rs:20` | `local_macro!(my_var)` | X08, X09 | **ready green** | Local macro invocation in function body. |
 | `fixture_macros` | `src/lib.rs:21` | `println!("{}", my_var)` | X02, X09 | **ready green** | Standard macro invocation adjacent to local macro. |
 | `fixture_path_resolution` | `src/lib.rs` | `Regex::new(...).unwrap()` | P20-like, M13 | **ready RED/green split** | PathCall for `Regex::new`; method call `.unwrap()` needs receiver broadening. |
+| `fixture_path_resolution` | `src/lib.rs:142` | `std::path::Path::new("")` | P07/P20-like | **green** | Covered by `fixture_path_resolution_root_func_records_std_path_new_external_path_call_site`; direct external-root path call, `External`, no edge. |
 | `fixture_path_resolution` | `src/lib.rs` | `NodeId::generate_synthetic(...)` | P12/P20-like | **ready green** | Qualified associated-function-shaped path call. |
 | `fixture_path_resolution` | `src/lib.rs` | `debug!(...)`, `info!(...)` | X01/X02-like | **ready green** | External/logging macro invocations. |
 | `fixture_path_resolution` | `src/lib.rs:70` | `super::restricted_func()` | P04 | **green** | Covered by `fixture_path_resolution_call_restricted_resolves_super_restricted_func_path_call_site`; super-qualified local path call resolves to `CallRelation::Function`. |

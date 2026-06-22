@@ -14,10 +14,11 @@ Short description: Current source of truth for the parser call-graph feature thr
 6. [`2026-06-22_structural-path-call-extraction-plan.md`](2026-06-22_structural-path-call-extraction-plan.md) — completed structural path-call slice.
 7. [`2026-06-22_local-free-function-path-call-resolution-plan.md`](2026-06-22_local-free-function-path-call-resolution-plan.md) — completed first local path-call resolver slice.
 8. [`2026-06-22_call-graph-db-projection-plan.md`](2026-06-22_call-graph-db-projection-plan.md) — completed first database projection slice.
-9. [`2026-06-22_structural-macro-call-extraction-plan.md`](2026-06-22_structural-macro-call-extraction-plan.md) — completed structural macro-call slice.
-10. [`../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md`](../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md) — task sequence for the first `fixture_nodes` slice.
-11. [`../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`](../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md) — broader typed call-graph rollout plan.
-12. Long-horizon proof context only if needed:
+9. [`2026-06-22_external-root-path-call-classification-plan.md`](2026-06-22_external-root-path-call-classification-plan.md) — completed direct external-root classification slice.
+10. [`2026-06-22_structural-macro-call-extraction-plan.md`](2026-06-22_structural-macro-call-extraction-plan.md) — completed structural macro-call slice.
+11. [`../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md`](../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md) — task sequence for the first `fixture_nodes` slice.
+12. [`../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`](../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md) — broader typed call-graph rollout plan.
+13. Long-horizon proof context only if needed:
    - [`../../../workflow/evalnomicon/drafts/formal/detached-process-callgraph-proof-target.md`](../../../workflow/evalnomicon/drafts/formal/detached-process-callgraph-proof-target.md)
    - [`../../../workflow/evalnomicon/drafts/formal/callgraph-implementation-design-for-detached-process-proof.md`](../../../workflow/evalnomicon/drafts/formal/callgraph-implementation-design-for-detached-process-proof.md)
    - [`../../../workflow/evalnomicon/drafts/formal/macro-buildrs-callgraph-sequencing-survey.md`](../../../workflow/evalnomicon/drafts/formal/macro-buildrs-callgraph-sequencing-survey.md)
@@ -63,12 +64,13 @@ Implemented/scaffolded:
   - `resolve::call_resolution::resolve_call_relations_after_tree(...)`
   - exact inherent `self.method()` resolution within the same impl block.
   - explicit local `crate`/`self`/`super` path-call resolution to local standalone functions.
+  - direct external-root path-call classification for `std`/`core`/`alloc`/dependency-root calls.
 - Database projection in `ploke-transform`:
   - `call_site`
   - `call_site_edge`
   - `call_relation`
   - `call_resolution_status`
-- GREEN fixture tests now use a call-site paranoid harness and cover 12 concrete call expressions:
+- GREEN fixture tests now use a call-site paranoid harness and cover 13 concrete call expressions:
   - `fixture_nodes_public_method_records_and_resolves_self_private_method_call_site`
   - `fixture_nodes_get_secret_len_records_self_field_len_method_call_site`
   - `fixture_nodes_use_imported_items_records_hashmap_new_path_call_site`
@@ -81,6 +83,7 @@ Implemented/scaffolded:
   - `fixture_nodes_use_imported_items_records_documented_macro_call_site`
   - `fixture_nodes_use_all_const_static_records_println_macro_call_site`
   - `fixture_path_resolution_call_restricted_resolves_super_restricted_func_path_call_site`
+  - `fixture_path_resolution_root_func_records_std_path_new_external_path_call_site`
 
 Not implemented yet:
 
@@ -209,6 +212,21 @@ Primary implementation files:
 - `crates/ingest/syn_parser/src/parser/nodes/ids/internal/call_ids.rs`
 - `crates/ingest/syn_parser/tests/uuid_phase3_resolution/call_sites.rs`
 
+## Completed implementation slice: direct external-root path-call classification
+
+Implemented in this slice:
+
+1. Path calls whose first segment is `std`, `core`, `alloc`, or a parsed dependency name now receive `CallResolutionStatus::External`.
+2. These external-root calls emit no local `CallRelation` edges.
+3. `std::path::Path::new("")` in `fixture_path_resolution::root_func` is covered by a paranoid call-site test.
+4. Import-alias external calls such as `PathBuf::new()` remain `Unsupported` until import-aware external classification exists.
+
+Primary implementation files:
+
+- `crates/ingest/syn_parser/src/resolve/call_resolution.rs`
+- `crates/ingest/syn_parser/tests/uuid_phase3_resolution/call_sites.rs`
+- `docs/active/agents/call-graph/2026-06-22_external-root-path-call-classification-plan.md`
+
 ## Completed implementation slice: call graph database projection
 
 Implemented in this slice:
@@ -302,7 +320,7 @@ cargo check -p ploke-transform --features typed_type_graph
 cargo test -p ploke-transform --features typed_type_graph transform::tests -- --nocapture
 ```
 
-Result: all passed. The `call_sites` filter ran twelve paranoid fixture tests and all passed; transform projection tests passed for type relations, resolved call edges, and unsupported call statuses.
+Result: all passed. The `call_sites` filter ran thirteen paranoid fixture tests and all passed; transform projection tests passed for type relations, resolved call edges, and unsupported call statuses.
 
 ## Next implementation slice
 

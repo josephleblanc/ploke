@@ -145,6 +145,11 @@ impl<'a> CallRelationResolver<'a> {
     ) -> Result<(), SynParserError> {
         let source = AnyCallSiteId::Path(call.id);
 
+        if self.is_external_path(&call.path) {
+            statuses.push(CallResolutionStatus::External { source });
+            return Ok(());
+        }
+
         if !self.is_explicit_local_path(&call.path) {
             statuses.push(CallResolutionStatus::Unsupported { source });
             return Ok(());
@@ -178,6 +183,16 @@ impl<'a> CallRelationResolver<'a> {
                 path.first().map(String::as_str),
                 Some("crate" | "self" | "super")
             )
+    }
+
+    fn is_external_path(&self, path: &[String]) -> bool {
+        path.first().is_some_and(|segment| {
+            matches!(segment.as_str(), "std" | "core" | "alloc")
+                || self
+                    .graph
+                    .iter_dependency_names()
+                    .any(|dependency| dependency == segment)
+        })
     }
 
     fn resolve_explicit_local_function_path(
