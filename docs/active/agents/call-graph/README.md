@@ -60,14 +60,18 @@ Implemented/scaffolded:
 - First semantic resolver slice:
   - `resolve::call_resolution::resolve_call_relations_after_tree(...)`
   - exact inherent `self.method()` resolution within the same impl block.
-- GREEN fixture tests:
-  - `fixture_nodes_public_method_records_self_private_method_call_site`
-  - `fixture_nodes_public_method_resolves_self_private_method_edge`
+- GREEN fixture tests now use a call-site paranoid harness and cover 11 concrete call expressions:
+  - `fixture_nodes_public_method_records_and_resolves_self_private_method_call_site`
+  - `fixture_nodes_get_secret_len_records_self_field_len_method_call_site`
+  - `fixture_nodes_use_imported_items_records_hashmap_new_path_call_site`
+  - `fixture_nodes_use_imported_items_records_fs_read_to_string_path_call_site`
   - `fixture_nodes_use_imported_items_records_pathbuf_new_path_call_site`
-  - `fixture_nodes_use_imported_items_path_call_fixture_matrix`
+  - `fixture_nodes_use_imported_items_records_enum_variant1_path_call_site`
+  - `fixture_nodes_use_imported_items_records_duration_from_secs_path_call_site`
+  - `fixture_nodes_use_imported_items_records_arc_new_path_call_site`
+  - `fixture_nodes_use_imported_items_records_tuple_struct_path_call_site`
   - `fixture_nodes_use_imported_items_records_documented_macro_call_site`
   - `fixture_nodes_use_all_const_static_records_println_macro_call_site`
-  - `fixture_nodes_get_secret_len_records_self_field_len_method_call_site`
 
 Not implemented yet:
 
@@ -101,7 +105,7 @@ Production code should not expose broad constructors such as:
 MethodCallSiteId::generate_synthetic(...)
 ```
 
-The parser extraction path may use parser-internal helpers after seeing the corresponding `syn` expression shape. Tests may use explicit test/paranoid helpers for deterministic regeneration.
+The parser extraction path may use parser-internal helpers after seeing the corresponding `syn` expression shape. Tests use explicit test/paranoid helpers for deterministic regeneration, primarily through the call-site paranoid harness in `tests/common/call_site_paranoid.rs` and `paranoid_call_site_test!`.
 
 ### Structural facts are not semantic edges
 
@@ -110,6 +114,21 @@ A `MethodCallSiteId` proves structural syntax class only. It does not prove the 
 ### Fail closed
 
 Unsupported, dynamic, macro, external, and ambiguous call shapes must remain visible as structural facts or explicit statuses. They must not become fake local function/method edges.
+
+## Completed implementation slice: call-site paranoid test harness
+
+Implemented in this slice:
+
+1. Added `tests/common/call_site_paranoid.rs` as the call-site analogue of the node-level paranoid helpers.
+2. Added `paranoid_call_site_test!` to generate exact fixture-backed call-site tests.
+3. Each generated test regenerates the typed `CallId`, checks exact-ID lookup, checks value lookup, checks the `BodyContainsCall` relation, and checks resolver status plus expected semantic edge/no-edge policy.
+4. Converted the focused call-site coverage from hand-written tests/table rows to 11 named paranoid tests.
+
+Primary implementation files:
+
+- `crates/ingest/syn_parser/tests/common/call_site_paranoid.rs`
+- `crates/ingest/syn_parser/tests/common/macro_rule_tests.rs`
+- `crates/ingest/syn_parser/tests/uuid_phase3_resolution/call_sites.rs`
 
 ## Completed implementation slice: structural `self.method()` extraction
 
@@ -207,13 +226,7 @@ cargo check -p syn_parser --features typed_type_graph
 cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --nocapture
 ```
 
-Structural fixture test now expected GREEN:
-
-```bash
-cargo test -p syn_parser --features typed_type_graph fixture_nodes_public_method_records_self_private_method_call_site -- --nocapture
-```
-
-Resolver and structural call-site fixture tests now expected GREEN:
+Focused structural/resolver call-site fixture tests now expected GREEN:
 
 ```bash
 cargo test -p syn_parser --features typed_type_graph call_sites -- --nocapture
@@ -241,7 +254,7 @@ cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --noca
 cargo test -p syn_parser --features typed_type_graph call_sites -- --nocapture
 ```
 
-Result: all passed. The `call_sites` filter ran seven focused tests and all passed.
+Result: all passed. The `call_sites` filter ran eleven paranoid fixture tests and all passed.
 
 ## Next implementation slice
 

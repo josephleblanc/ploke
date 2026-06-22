@@ -22,6 +22,8 @@ use syn_parser::{
 use thiserror::Error; // Ensure thiserror is imported
 
 pub mod assoc_paranoid;
+#[cfg(feature = "typed_type_graph")]
+pub mod call_site_paranoid;
 pub mod debug_printers;
 pub mod macro_rule_tests;
 pub mod paranoid;

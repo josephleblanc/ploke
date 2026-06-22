@@ -6,10 +6,10 @@ Scope: make `syn_parser` emit the first parser-owned structural call-site fact f
 
 ## Goal
 
-Green the focused structural call-site test without adding semantic resolution:
+Green the focused structural call-site test without adding semantic resolution. This row is now covered by the paranoid call-site harness:
 
 ```bash
-cargo test -p syn_parser --features typed_type_graph fixture_nodes_public_method_records_self_private_method_call_site -- --nocapture
+cargo test -p syn_parser --features typed_type_graph fixture_nodes_public_method_records_and_resolves_self_private_method_call_site -- --nocapture
 ```
 
 Expected green behavior:
@@ -50,10 +50,10 @@ Completed after implementation:
 cargo check -p syn_parser
 cargo check -p syn_parser --features typed_type_graph
 cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --nocapture
-cargo test -p syn_parser --features typed_type_graph fixture_nodes_public_method_records_self_private_method_call_site -- --nocapture
+cargo test -p syn_parser --features typed_type_graph fixture_nodes_public_method_records_and_resolves_self_private_method_call_site -- --nocapture
 ```
 
-All commands passed. The focused call-site fixture test ran one test and passed.
+All commands passed. This row is now covered by the paranoid call-site harness under `fixture_nodes_public_method_records_and_resolves_self_private_method_call_site`.
 
 ## Next slice after green
 

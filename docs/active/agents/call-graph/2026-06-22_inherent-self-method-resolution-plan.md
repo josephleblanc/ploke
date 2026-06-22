@@ -6,10 +6,10 @@ Scope: add the first semantic call edge for `fixture_nodes::SimpleStruct::public
 
 ## Goal
 
-Green the focused resolver test:
+Green the focused resolver test. This row is now covered by the paranoid call-site harness:
 
 ```bash
-cargo test -p syn_parser --features typed_type_graph fixture_nodes_public_method_resolves_self_private_method_edge -- --nocapture
+cargo test -p syn_parser --features typed_type_graph fixture_nodes_public_method_records_and_resolves_self_private_method_call_site -- --nocapture
 ```
 
 Expected behavior:
@@ -77,7 +77,7 @@ cargo test -p syn_parser --features typed_type_graph call_sites -- --nocapture
 cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --nocapture
 ```
 
-All commands passed. The `call_sites` filter ran both structural and resolver tests and both passed.
+All commands passed. The `call_sites` filter now includes this row as `fixture_nodes_public_method_records_and_resolves_self_private_method_call_site`.
 
 ## Next slice
 

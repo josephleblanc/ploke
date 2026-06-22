@@ -47,7 +47,7 @@ cargo test -p syn_parser --features typed_type_graph call_sites -- --nocapture
 cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --nocapture
 ```
 
-All commands passed. The `call_sites` filter now runs six focused tests and all passed.
+All commands passed. The `call_sites` filter now runs eleven paranoid fixture tests and all passed.
 
 ## Non-goals
 

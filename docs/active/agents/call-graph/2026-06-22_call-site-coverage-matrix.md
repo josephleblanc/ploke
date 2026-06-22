@@ -46,6 +46,8 @@ Every structural call site considered by `resolve_call_relations_after_tree` sho
 
 Current green behavior:
 
+All focused call-site rows now run through the `paranoid_call_site_test!` harness, which regenerates the typed `CallId`, checks exact-ID and value lookup, checks `BodyContainsCall`, and checks resolver status/edge policy.
+
 - `self.private_method()` -> `MethodCall`, `Resolved(LocalExact)`, `CallRelation::Method`.
 - `self.secret.len()` -> `MethodCall` with `SelfField { field_path: ["secret"] }`, `Unsupported`, no edge.
 - `PathBuf::new()` -> `PathCall`, `Unsupported`, no edge.
@@ -60,18 +62,18 @@ This section maps the exhaustive rows below to concrete fixtures we can use. Pre
 
 | Fixture | File | Expression / target | Matrix rows | Status | Notes |
 |---|---|---|---|---|---|
-| `fixture_nodes` | `src/impls.rs:45` | `self.private_method()` | M01, M22 | **green** | Structural `MethodCall`, `Resolved(LocalExact)`, `CallRelation::Method`. |
+| `fixture_nodes` | `src/impls.rs:45` | `self.private_method()` | M01, M22 | **green** | Covered by `fixture_nodes_public_method_records_and_resolves_self_private_method_call_site`; structural `MethodCall`, `Resolved(LocalExact)`, `CallRelation::Method`. |
 | `fixture_nodes` | `src/impls.rs:52` | `self.secret.len()` | M02, M07 | **green** | Covered by `fixture_nodes_get_secret_len_records_self_field_len_method_call_site`; records `SelfField`, currently `Unsupported`. |
 | `fixture_nodes` | `src/impls.rs:77` | `self.value.len()` | M03, M07 | **ready RED** | Generic/string-like field receiver; unsupported until receiver typing. |
 | `fixture_nodes` | `src/impls.rs:103` | `self.value.into()` | M04 | **ready RED** | Trait conversion method on generic receiver. |
-| `fixture_nodes` | `src/imports.rs:108` | `HashMap::<String, i32>::new()` | P18 | **green** | Covered by `fixture_nodes_use_imported_items_path_call_fixture_matrix`; explicit generic args. |
-| `fixture_nodes` | `src/imports.rs:120` | `fs::read_to_string("dummy")` | P07 | **green** | Covered by path-call fixture matrix; external module-qualified path call currently `Unsupported`. |
-| `fixture_nodes` | `src/imports.rs:125` | `EnumWithData::Variant1(1)` | P23 | **green** | Covered by path-call fixture matrix; tuple variant constructor-shaped path call. |
+| `fixture_nodes` | `src/imports.rs:108` | `HashMap::<String, i32>::new()` | P18 | **green** | Covered by `fixture_nodes_use_imported_items_records_hashmap_new_path_call_site`; explicit generic args. |
+| `fixture_nodes` | `src/imports.rs:120` | `fs::read_to_string("dummy")` | P07 | **green** | Covered by `fixture_nodes_use_imported_items_records_fs_read_to_string_path_call_site`; external module-qualified path call currently `Unsupported`. |
+| `fixture_nodes` | `src/imports.rs:125` | `EnumWithData::Variant1(1)` | P23 | **green** | Covered by `fixture_nodes_use_imported_items_records_enum_variant1_path_call_site`; tuple variant constructor-shaped path call. |
 | `fixture_nodes` | `src/imports.rs:134` | `alias_checker(&_trait_user)` | P25, D12/D13 policy | **policy needed** | Syntactically path call to closure binding; decide structural-vs-semantic dynamic policy. |
 | `fixture_nodes` | `src/imports.rs:152` | `documented_macro!(fixture alias coverage)` | X01 | **green** | Structural `MacroCall`, `Unsupported`. |
-| `fixture_nodes` | `src/imports.rs:165` | `Duration::from_secs(1)` | P20 | **green** | Covered by path-call fixture matrix; external associated-function-shaped path call. |
-| `fixture_nodes` | `src/imports.rs:172` | `Arc::new(1)` | P21 | **green** | Covered by path-call fixture matrix; external associated-function-shaped path call. |
-| `fixture_nodes` | `src/imports.rs:174` | `TupleStruct(1, 2)` | P22 | **green** | Covered by path-call fixture matrix; tuple struct constructor-shaped path call. |
+| `fixture_nodes` | `src/imports.rs:165` | `Duration::from_secs(1)` | P20 | **green** | Covered by `fixture_nodes_use_imported_items_records_duration_from_secs_path_call_site`; external associated-function-shaped path call. |
+| `fixture_nodes` | `src/imports.rs:172` | `Arc::new(1)` | P21 | **green** | Covered by `fixture_nodes_use_imported_items_records_arc_new_path_call_site`; external associated-function-shaped path call. |
+| `fixture_nodes` | `src/imports.rs:174` | `TupleStruct(1, 2)` | P22 | **green** | Covered by `fixture_nodes_use_imported_items_records_tuple_struct_path_call_site`; tuple struct constructor-shaped path call. |
 | `fixture_nodes` | `src/const_static.rs:54` | `five()` in `const FN_CALL_CONST` | owner matrix const | **blocked** | Requires `CallBodyOwnerId` extension for const initializer owners. |
 | `fixture_nodes` | `src/const_static.rs:148` | `println!(...)` | X02, X09 | **green** | Covered by `fixture_nodes_use_all_const_static_records_println_macro_call_site`; statement-position macro call in ordinary function body. |
 | `fixture_macros` | `src/lib.rs:20` | `local_macro!(my_var)` | X08, X09 | **ready green** | Local macro invocation in function body. |
