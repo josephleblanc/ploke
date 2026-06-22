@@ -173,20 +173,27 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Checkpoints created/updated: none
 - Artifacts retained: none
 - Result: `EvalStore`/`FsEvalStore` exists, returns journal append receipts, writes `ParentStarted` plus `Resource(parent_start)`, and existing journal replay smoke still passes. Default production path is unchanged until Slice 3.
-- Commit: pending
+- Commit: `2ce48b46`
 
 ### Slice 3 — Move `R4c -> R5` behind FsEvalStore
 
-- Status: not started
+- Status: complete for `fs`; production `database`/`dual-strict` return explicit configuration errors until DB handle wiring.
 - Assumptions:
+  - `backend = fs` must preserve the existing parent-start/resource JSONL evidence path.
+  - `database` and `dual-strict` must fail loudly rather than use the passive mirror or silently fall back.
 - Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/live_edges.rs`
 - Tests added/changed:
+  - production code now uses the Slice 2 `FsEvalStore` path; no new dedicated R4c fixture test was added in this sub-slice.
+  - existing `prototype1_eval_store_parent_start_fs_appends_expected_entries` covers the writer semantics used by `R4c -> R5`.
 - Commands run:
+  - `cargo fmt --all`
+  - `cargo test -p ploke-eval prototype1_eval_store_parent_start_fs -- --nocapture`
 - Live API used: no
-- Checkpoints created/updated:
-- Artifacts retained:
-- Result:
-- Commit:
+- Checkpoints created/updated: none
+- Artifacts retained: none
+- Result: `R4c -> R5` delegates parent-start evidence to `ConfiguredEvalStore::Fs`; `database`/`dual-strict` produce explicit `DatabaseSetup` errors pending Slice 5.
+- Commit: pending
 
 ### Slice 4 — First DB schema/backend for tests and injected stores
 
