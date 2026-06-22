@@ -17,6 +17,7 @@ use syn_parser::parser::nodes::FunctionNodeId;
 
 const IMPLS_RS: &str = "src/impls.rs";
 const PATH_RESOLUTION_LIB_RS: &str = "src/lib.rs";
+const CALL_GRAPH_LIB_RS: &str = "src/lib.rs";
 const SIMPLE_STRUCT_IMPL_SPAN: (usize, usize) = (520, 750);
 const PRIVATE_STRUCT_IMPL_SPAN: (usize, usize) = (790, 884);
 const SELF_PRIVATE_METHOD_CALL_SPAN: (usize, usize) = (721, 742);
@@ -36,6 +37,8 @@ const LOCAL_MACRO_CALL_SPAN: (usize, usize) = (437, 457);
 const FIXTURE_MACROS_PRINTLN_CALL_SPAN: (usize, usize) = (463, 485);
 const DYNAMIC_CLOSURE_BINDING_CALL_SPAN: (usize, usize) = (177, 188);
 const DYNAMIC_CLOSURE_LITERAL_CALL_SPAN: (usize, usize) = (213, 222);
+const CRATE_LOCAL_TARGET_CALL_SPAN: (usize, usize) = (345, 366);
+const SELF_NESTED_TARGET_CALL_SPAN: (usize, usize) = (497, 518);
 
 fn simple_struct_inherent_method_args(ident: &'static str) -> AssocParanoidArgs<'static> {
     AssocParanoidArgs {
@@ -70,6 +73,20 @@ fn path_resolution_function_args(
     ParanoidArgs {
         fixture: "fixture_path_resolution",
         relative_file_path: PATH_RESOLUTION_LIB_RS,
+        expected_path,
+        ident,
+        item_kind: ItemKind::Function,
+        expected_cfg: None,
+    }
+}
+
+fn fixture_call_graph_function_args(
+    expected_path: &'static [&'static str],
+    ident: &'static str,
+) -> ParanoidArgs<'static> {
+    ParanoidArgs {
+        fixture: "fixture_call_graph",
+        relative_file_path: CALL_GRAPH_LIB_RS,
         expected_path,
         ident,
         item_kind: ItemKind::Function,
@@ -369,4 +386,52 @@ paranoid_call_site_test!(
         &[],
         ExpectedCallOutcome::Unsupported,
     ),
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_crate_local_target_resolves_crate_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_crate_local_target"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["crate", "local_target"],
+            CRATE_LOCAL_TARGET_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_self_nested_target_resolves_self_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate", "local_mod"],
+        name: "call_self_nested_target"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate", "local_mod"], "nested_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("nested_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["self", "nested_target"],
+            SELF_NESTED_TARGET_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
 );

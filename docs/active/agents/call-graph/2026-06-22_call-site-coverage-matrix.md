@@ -94,6 +94,8 @@ This section maps the exhaustive rows below to concrete fixtures we can use. Pre
 | `fixture_edge_cases` | `src/lib.rs` | unusual syntax | P28/raw identifiers maybe | **needs scan** | Use before adding raw-ident fixture. |
 | `fixture_call_graph` | `src/lib.rs:5` | `(closure)()` | D01/D02 | **green** | Focused fixture added for dynamic call syntax; covered by `fixture_call_graph_dynamic_calls_records_parenthesized_binding_dynamic_call_site`. |
 | `fixture_call_graph` | `src/lib.rs:6` | `(|| 11)()` | D03 | **green** | Focused fixture added for closure literal call syntax; covered by `fixture_call_graph_dynamic_calls_records_closure_literal_dynamic_call_site`. |
+| `fixture_call_graph` | `src/lib.rs:15` | `crate::local_target()` | P02/P04 | **green** | Covered by `fixture_call_graph_call_crate_local_target_resolves_crate_path_call_site`; explicit crate-root local function path resolves to `CallRelation::Function`. |
+| `fixture_call_graph` | `src/lib.rs:24` | `self::nested_target()` | P03/P04 | **green** | Covered by `fixture_call_graph_call_self_nested_target_resolves_self_path_call_site`; explicit self-module local function path resolves to `CallRelation::Function`. |
 
 ### Workspace/mock fixtures
 
