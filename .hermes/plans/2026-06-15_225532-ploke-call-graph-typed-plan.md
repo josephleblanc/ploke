@@ -37,6 +37,15 @@ The first path-style structural extraction slice is implemented:
 - `fixture_nodes_use_imported_items_records_pathbuf_new_path_call_site` is green.
 - Path-call semantic resolution is still intentionally not implemented.
 
+## 2026-06-22 structural macro-call update
+
+The first macro invocation structural extraction slice is implemented:
+
+- `syn::ExprMacro` now emits `CallNode::MacroCall` plus `BodyContainsCall`.
+- Parser-internal `generate_macro_call_site_id(...)` constructs `MacroCallSiteId` over `CallId`.
+- `fixture_nodes_use_imported_items_records_documented_macro_call_site` is green.
+- Macro expansion and macro target resolution remain intentionally not implemented.
+
 ## Current context and assumptions
 
 - Existing AST graph lives mainly under `crates/ingest/syn_parser/src/parser/`.

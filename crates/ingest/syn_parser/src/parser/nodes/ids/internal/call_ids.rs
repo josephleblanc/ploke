@@ -377,6 +377,27 @@ pub(in crate::parser) fn generate_path_call_site_id(
     ))
 }
 
+/// Parser-internal constructor for macro invocation site IDs.
+///
+/// Call this only after structural extraction has classified an expression as a
+/// macro invocation. The macro name/path is a structural discriminator for the
+/// invocation site, not proof of a resolved macro definition or expanded calls.
+#[inline]
+pub(in crate::parser) fn generate_macro_call_site_id(
+    owner: CallBodyOwnerId,
+    macro_name: &str,
+    span: (usize, usize),
+    cfgs: &[String],
+) -> MacroCallSiteId {
+    MacroCallSiteId::create(generate_call_id(
+        owner,
+        CallSiteKind::Macro,
+        macro_name,
+        span,
+        cfgs,
+    ))
+}
+
 /// Parser-internal constructor for method-call site IDs.
 ///
 /// Call this only after structural extraction has classified an expression as a

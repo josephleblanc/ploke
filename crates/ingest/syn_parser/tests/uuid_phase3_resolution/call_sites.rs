@@ -10,8 +10,8 @@ use syn_parser::error::SynParserError;
 use syn_parser::parser::graph::GraphAccess;
 use syn_parser::parser::nodes::test_ids::{TestCallIds, generate_test_call_id};
 use syn_parser::parser::nodes::{
-    AnyCallSiteId, CallBodyOwnerId, CallNode, CallSiteKind, MethodCallReceiver, MethodCallSiteId,
-    PathCallSiteId,
+    AnyCallSiteId, CallBodyOwnerId, CallNode, CallSiteKind, MacroCallSiteId, MethodCallReceiver,
+    MethodCallSiteId, PathCallSiteId,
 };
 use syn_parser::parser::relations::{
     CallRelation, CallResolutionKind, CallResolutionStatus, CallSiteRelation,
@@ -26,6 +26,7 @@ const IMPLS_RS: &str = "src/impls.rs";
 const SIMPLE_STRUCT_IMPL_SPAN: (usize, usize) = (520, 750);
 const SELF_PRIVATE_METHOD_CALL_SPAN: (usize, usize) = (721, 742);
 const PATHBUF_NEW_CALL_SPAN: (usize, usize) = (3930, 3944);
+const DOCUMENTED_MACRO_CALL_SPAN: (usize, usize) = (4894, 4935);
 
 fn simple_struct_inherent_method_args(ident: &'static str) -> AssocParanoidArgs<'static> {
     AssocParanoidArgs {
@@ -269,6 +270,80 @@ fn fixture_nodes_use_imported_items_records_pathbuf_new_path_call_site()
     assert_eq!(
         resolved_edge_count, 0,
         "path-call extraction slice should not emit a resolved function edge yet"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn fixture_nodes_use_imported_items_records_documented_macro_call_site()
+-> Result<(), SynParserError> {
+    let (graph, _) = build_tree_for_tests("fixture_nodes");
+    let function = fixture_nodes_function(&graph, &["crate", "imports"], "use_imported_items");
+    let owner = CallBodyOwnerId::Function(function.id);
+
+    let matching_macro_calls = graph
+        .call_sites()
+        .iter()
+        .filter_map(|call| match call {
+            CallNode::MacroCall(macro_call)
+                if macro_call.owner == owner
+                    && macro_call.macro_name == "documented_macro"
+                    && macro_call.span == DOCUMENTED_MACRO_CALL_SPAN =>
+            {
+                Some(macro_call)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching_macro_calls.len(),
+        1,
+        "use_imported_items should record exactly one documented_macro!(...) macro call site"
+    );
+    let macro_call = matching_macro_calls[0];
+
+    assert_eq!(macro_call.owner, owner);
+    assert_eq!(macro_call.macro_name, "documented_macro");
+    assert_eq!(macro_call.span, DOCUMENTED_MACRO_CALL_SPAN);
+    assert!(
+        function.span.0 <= macro_call.span.0 && macro_call.span.1 <= function.span.1,
+        "macro call span {:?} should be inside use_imported_items span {:?}",
+        macro_call.span,
+        function.span
+    );
+    assert!(
+        macro_call.cfgs.is_empty(),
+        "fixture_nodes imports macro call should have no cfgs"
+    );
+
+    let regenerated_call_id = MacroCallSiteId::new_call_test(generate_test_call_id(
+        owner,
+        CallSiteKind::Macro,
+        macro_call.macro_name.as_str(),
+        macro_call.span,
+        macro_call.cfgs.as_slice(),
+    ));
+    assert_eq!(
+        macro_call.id, regenerated_call_id,
+        "macro call site id should be deterministic from owner + macro name + span + cfgs"
+    );
+
+    let parsed_call_id = AnyCallSiteId::Macro(macro_call.id);
+    let body_contains_count = graph
+        .call_site_relations()
+        .iter()
+        .filter(|relation| {
+            matches!(
+                relation,
+                CallSiteRelation::BodyContainsCall { source, target }
+                    if *source == owner && *target == parsed_call_id
+            )
+        })
+        .count();
+    assert_eq!(
+        body_contains_count, 1,
+        "expected exactly one BodyContainsCall relation from use_imported_items to documented_macro!(...)"
     );
 
     Ok(())

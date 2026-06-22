@@ -8,8 +8,8 @@ use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
 
 use crate::parser::nodes::{
-    CallBodyOwnerId, CallNode, MethodCallNode, MethodCallReceiver, PathCallNode,
-    generate_method_call_site_id, generate_path_call_site_id,
+    CallBodyOwnerId, CallNode, MacroCallNode, MethodCallNode, MethodCallReceiver, PathCallNode,
+    generate_macro_call_site_id, generate_method_call_site_id, generate_path_call_site_id,
 };
 use crate::parser::relations::CallSiteRelation;
 
@@ -41,17 +41,36 @@ struct BodyCallVisitor<'a> {
 }
 
 impl BodyCallVisitor<'_> {
+    fn record_macro_call(&mut self, call: &syn::ExprMacro) {
+        let macro_name = path_discriminator(&call.mac.path);
+        if macro_name.is_empty() {
+            return;
+        }
+
+        let byte_range = call.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
+        let id = generate_macro_call_site_id(self.owner, &macro_name, span, self.cfgs);
+        let target = id.into();
+
+        self.calls.push(CallNode::MacroCall(MacroCallNode {
+            id,
+            owner: self.owner,
+            span,
+            cfgs: self.cfgs.to_vec(),
+            macro_name,
+        }));
+        self.relations.push(CallSiteRelation::BodyContainsCall {
+            source: self.owner,
+            target,
+        });
+    }
+
     fn record_path_call(&mut self, call: &syn::ExprCall) {
         let syn::Expr::Path(callee) = call.func.as_ref() else {
             return;
         };
 
-        let path = callee
-            .path
-            .segments
-            .iter()
-            .map(|segment| segment.ident.to_string())
-            .collect::<Vec<_>>();
+        let path = path_segments(&callee.path);
         if path.is_empty() {
             return;
         }
@@ -108,6 +127,11 @@ impl BodyCallVisitor<'_> {
 }
 
 impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
+    fn visit_expr_macro(&mut self, call: &'ast syn::ExprMacro) {
+        self.record_macro_call(call);
+        visit::visit_expr_macro(self, call);
+    }
+
     fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
         self.record_path_call(call);
         visit::visit_expr_call(self, call);
@@ -117,6 +141,17 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
         self.record_method_call(call);
         visit::visit_expr_method_call(self, call);
     }
+}
+
+fn path_segments(path: &syn::Path) -> Vec<String> {
+    path.segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect()
+}
+
+fn path_discriminator(path: &syn::Path) -> String {
+    path_segments(path).join("::")
 }
 
 fn path_generic_arg_count(path: &syn::Path) -> usize {

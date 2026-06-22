@@ -73,7 +73,9 @@ pub(in crate::parser) use internal::{GenerateTypeId, GeneratesAnyNodeId};
     unused_imports,
     reason = "call-site extraction will use this parser-internal constructor"
 )]
-pub(in crate::parser) use internal::{generate_method_call_site_id, generate_path_call_site_id};
+pub(in crate::parser) use internal::{
+    generate_macro_call_site_id, generate_method_call_site_id, generate_path_call_site_id,
+};
 
 // Tests
 pub use internal::test_ids;

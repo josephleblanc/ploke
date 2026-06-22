@@ -11,9 +11,10 @@ Short description: Current source of truth for the parser call-graph feature thr
 3. [`2026-06-22_structural-method-call-extraction-plan.md`](2026-06-22_structural-method-call-extraction-plan.md) — completed structural method-call slice.
 4. [`2026-06-22_inherent-self-method-resolution-plan.md`](2026-06-22_inherent-self-method-resolution-plan.md) — completed first semantic resolver slice.
 5. [`2026-06-22_structural-path-call-extraction-plan.md`](2026-06-22_structural-path-call-extraction-plan.md) — completed structural path-call slice.
-6. [`../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md`](../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md) — task sequence for the first `fixture_nodes` slice.
-7. [`../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`](../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md) — broader typed call-graph rollout plan.
-8. Long-horizon proof context only if needed:
+6. [`2026-06-22_structural-macro-call-extraction-plan.md`](2026-06-22_structural-macro-call-extraction-plan.md) — completed structural macro-call slice.
+7. [`../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md`](../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md) — task sequence for the first `fixture_nodes` slice.
+8. [`../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`](../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md) — broader typed call-graph rollout plan.
+9. Long-horizon proof context only if needed:
    - [`../../../workflow/evalnomicon/drafts/formal/detached-process-callgraph-proof-target.md`](../../../workflow/evalnomicon/drafts/formal/detached-process-callgraph-proof-target.md)
    - [`../../../workflow/evalnomicon/drafts/formal/callgraph-implementation-design-for-detached-process-proof.md`](../../../workflow/evalnomicon/drafts/formal/callgraph-implementation-design-for-detached-process-proof.md)
    - [`../../../workflow/evalnomicon/drafts/formal/macro-buildrs-callgraph-sequencing-survey.md`](../../../workflow/evalnomicon/drafts/formal/macro-buildrs-callgraph-sequencing-survey.md)
@@ -46,6 +47,10 @@ Implemented/scaffolded:
   - `syn::ExprCall` with `syn::Expr::Path` callee.
   - `CallNode::PathCall` emission.
   - deterministic parser-internal `PathCallSiteId` construction from owner + path + span + cfgs.
+- Structural macro-call extraction:
+  - `syn::ExprMacro`.
+  - `CallNode::MacroCall` emission.
+  - deterministic parser-internal `MacroCallSiteId` construction from owner + macro path + span + cfgs.
 - Typed call-resolution storage/accessor scaffold:
   - `CodeGraph.call_relations`
   - `CodeGraph.call_resolution_statuses`
@@ -58,11 +63,11 @@ Implemented/scaffolded:
   - `fixture_nodes_public_method_records_self_private_method_call_site`
   - `fixture_nodes_public_method_resolves_self_private_method_edge`
   - `fixture_nodes_use_imported_items_records_pathbuf_new_path_call_site`
+  - `fixture_nodes_use_imported_items_records_documented_macro_call_site`
 
 Not implemented yet:
 
 - Dynamic call extraction.
-- Macro call extraction.
 - Non-`self` method receiver classification.
 - Trait dispatch.
 - Free-function path-call resolution.
@@ -158,6 +163,22 @@ Primary implementation files:
 - `crates/ingest/syn_parser/src/parser/nodes/ids/internal/call_ids.rs`
 - `crates/ingest/syn_parser/tests/uuid_phase3_resolution/call_sites.rs`
 
+## Completed implementation slice: structural macro-call extraction
+
+Implemented in this slice:
+
+1. The body visitor records `syn::ExprMacro` invocations.
+2. It emits `CallNode::MacroCall` with macro path/name, span, owner, and cfgs.
+3. It emits `BodyContainsCall` for the macro call site.
+4. The focused fixture target is `documented_macro!(fixture alias coverage)` inside `fixture_nodes::imports::use_imported_items`.
+5. No macro expansion or macro target resolution is attempted.
+
+Primary implementation files:
+
+- `crates/ingest/syn_parser/src/parser/visitor/call_extraction.rs`
+- `crates/ingest/syn_parser/src/parser/nodes/ids/internal/call_ids.rs`
+- `crates/ingest/syn_parser/tests/uuid_phase3_resolution/call_sites.rs`
+
 ## Verification commands
 
 Known-good baseline after the ID-domain correction:
@@ -193,7 +214,7 @@ Before implementing new call-graph work, verify:
 
 ## Last verification summary
 
-Commands run after structural extraction, first resolver slice, and path-call extraction landed:
+Commands run after structural extraction, first resolver slice, path-call extraction, and macro-call extraction landed:
 
 ```bash
 cargo check -p syn_parser
@@ -202,13 +223,13 @@ cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --noca
 cargo test -p syn_parser --features typed_type_graph call_sites -- --nocapture
 ```
 
-Result: all passed. The `call_sites` filter ran three focused tests and all passed.
+Result: all passed. The `call_sites` filter ran four focused tests and all passed.
 
 ## Next implementation slice
 
 Continue broadening structural coverage before broad semantic coverage. Recommended next RED tests:
 
-1. macro-call extraction for a fixture macro invocation such as `println!` or `documented_macro!`;
-2. dynamic-call extraction for closure/function-value calls such as `alias_checker(...)`, if we decide simple path-to-binding calls should be reclassified out of `PathCall`;
+1. dynamic-call extraction for non-path callees such as `(f)()` or `make_fn()()` once a fixture target exists;
+2. decide whether path-to-binding calls such as `alias_checker(...)` remain `PathCall` structurally or need a later binding-aware dynamic reclassification;
 3. local free-function path-call resolution only after a local-function path-call fixture target is selected;
 4. associated-function path-call resolution after a dedicated `Self::new()` / local associated-function path-call test.
