@@ -2,13 +2,28 @@
 
 Status: active question list.
 
-## Store and ownership
+This list keeps unresolved decisions only. Resolved decisions live in [`README.md`](README.md), [`implementation-plan.md`](implementation-plan.md), [`storage-plan.md`](storage-plan.md), and [`relational-data-model.md`](relational-data-model.md).
 
-- What is the exact enum for `owner_scope`?
-  - Current candidates: `parent`, `child_runtime`, `successor_runtime`, `treatment_run`, `imported`, `passive_mirror`, `global_log`.
-- Should `producer_role` and `owner_scope` be independent fields, or can one derive from the other?
-- What stable id should identify a parent runtime: `parent_id`, `runtime_id`, `node_id`, or a composite?
-- Should a selected successor get a new `parent_id` row at ready time or only after entering `Parent<Ready>`?
+## First implementation slice
+
+These questions must be resolved once in the first-slice contract section of [`database-planning-notes.md`](database-planning-notes.md) before Phase 3/4 implementation.
+
+- What is the exact narrow Rust method for the fixed first slice around `R4c -> R5` ParentStarted/resource evidence?
+  - Candidate shape: `put_parent_started(...)`, `put_transition_event(...)`, or `put_evidence_ref(...)` with a typed parent-start envelope.
+- What deterministic id should the first slice use?
+  - Candidate shape: `sha256(campaign_id || parent_id || transition || source_stream_id || source_event_index || content_sha256)` for imported/journal-derived evidence; generated UUID only for direct live writes that also record source cursor/hash.
+- What exact filesystem bytes/paths are part of the `fs` parity assertion for `R4c -> R5`?
+- What exact semantic envelope/hash is compared in `dual-strict`?
+- What is the write-order and failure behavior in `dual-strict` if the filesystem write succeeds and DB write fails?
+
+## Common axes and enums
+
+Canonical axes are `store_scope`, `producer_role`, `visibility_scope`, `source_class`, `evidence_class`, and `validation_status`.
+
+- What are the minimal enum values needed for the first slice only?
+- Should `store_scope = campaign` exist for parent-start/resource evidence, or should the first slice always use `store_scope = parent` with `parent_id` present?
+- Which field identifies the parent runtime in the first slice: `parent_id`, `runtime_id`, both, or a composite?
+- Should selected successors receive a new `parent_id` row at ready time or only after entering `Parent<Ready>`?
 
 ## Remote execution
 
@@ -19,7 +34,7 @@ Status: active question list.
 
 ## Trace/log storage
 
-- Should the first trace slice ingest the optional `prototype1_observation_*.jsonl` file, or should `observe::Step` write directly to `EvalStore`?
+- Should the first trace slice ingest optional `prototype1_observation_*.jsonl`, or should `observe::Step` write directly to `EvalStore`?
 - Which log payloads can be stored inline, and which must remain path/object-store refs?
 - What redaction/sensitivity labels are needed for full LLM responses and tool payloads?
 - Should `TimingTrace` stderr markers be retired in favor of structured `observe::Step` events?
@@ -32,7 +47,7 @@ Status: active question list.
 
 ## Live transition test gate
 
-- What is the exact source-derived inventory of the current 20 transition outcomes?
+- What is the exact source-derived inventory of current transition outcomes?
 - Which transitions can be tested by direct edge functions, and which need the `loop walk` CLI surface for faithful setup?
 - What minimal admitted fixture or restore point should seed each transition in isolation?
 - What checkpoint format should preserve campaign tree, active checkout/artifact refs, run artifacts, and DB snapshots with hash verification?
@@ -41,10 +56,11 @@ Status: active question list.
 
 ## Relations and schemas
 
-- Which relation should be the first implementation slice: `eval_trace_event`, `eval_record_ref`, or `eval_node_status_event`?
-- Should `eval_record_ref` store full JSON inline for small records, or only refs/hashes?
-- What key shape should Cozo relations use for append-like events: UUID event id, `(runtime_id, sequence)`, `(source_path, line_number)`, or hash?
+- What is the exact DDL for the first slice relations and lookup paths?
+- Should `eval_record_ref` store full JSON inline for small compatibility records, or only refs/hashes?
 - How should duplicate dual-write records be detected during `dual-strict` mode?
+- Should `eval_successor` remain a derived projection, or become a base relation after handoff writes stabilize?
+- Where should basic validation command evidence stop and code-graph-backed validation coverage begin?
 
 ## Authority boundaries
 

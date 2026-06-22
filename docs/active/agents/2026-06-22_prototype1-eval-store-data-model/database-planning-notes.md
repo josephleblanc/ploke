@@ -268,14 +268,44 @@ ingested_at
 
 But each relation should still expose its own queryable columns.
 
-## Suggested first physical schema slice
+## Suggested physical schema slices
 
-The first slice should prove DB writes, idempotent ingestion, source refs, and useful queries without changing authority.
+The first slice should prove DB writes, idempotent insertion, source refs, and useful queries without changing authority.
+
+### Slice 0 — fixed first production writer: parent-start/resource evidence
+
+```text
+eval_transition_event     -- semantic `R4c -> R5` parent-start/resource fact
+eval_runtime              -- only if the writer can name a runtime cheaply
+eval_record_ref           -- optional source/ref/hash backpointer to existing filesystem evidence
+eval_trace_event          -- optional only if structured observe fields are captured in the same slice
+```
+
+Why:
+
+- parent-owned and non-authority;
+- no provider/API cost;
+- small blast radius;
+- exercises config, receipts, deterministic ids/hashes, DB insert/query, and dual-strict comparison.
+
+Queries enabled:
+
+- “did this parent start under the admitted campaign/profile?”
+- “which source evidence supports parent-start/resource observation?”
+- “can filesystem and DB forms be compared deterministically?”
+
+First-slice contract to write before coding:
+
+- **Writer:** `R4c -> R5` only.
+- **Current filesystem evidence:** `JournalEntry::ParentStarted` plus the parent-start resource sample appended by `append_parent_target_sample`.
+- **Authority class:** evidence/projection only; startup readiness remains decided before this writer.
+- **Method shape:** one parent-start-specific `EvalStore` method/envelope, not a generic record emitter.
+- **DB rows:** start with `eval_transition_event`; add `eval_record_ref`, `eval_runtime`, or `eval_trace_event` only if the envelope can populate their required fields without guessing.
+- **Required pre-code decisions:** deterministic id inputs, semantic envelope/hash fields, minimal common-axis enum values, duplicate/idempotency behavior, and dual-strict write-order/failure behavior.
 
 ### Slice A — trace/log/reference evidence
 
 ```text
-eval_runtime
 eval_log_ref
 eval_trace_event
 eval_record_ref
@@ -366,14 +396,14 @@ Example: keep `eval_channel_message` and `eval_channel_receipt` separate instead
 
 ### Duplicate parent/child/successor modeling
 
-`eval_successor` may eventually be a derived projection over:
+`eval_successor` is a derived/convenience projection over:
 
 - selected child/candidate;
 - sealed History ref;
 - successor attempt/runtime;
 - successor ready/completion receipts.
 
-It is fine as a convenience relation, but do not make it the only source of handoff truth.
+It is fine as a materialized convenience relation later, but do not make it a base source of handoff truth in the first storage pass.
 
 ### Legacy projection leakage
 
@@ -393,7 +423,7 @@ Because Cozo will not enforce all semantic constraints, writer/import code shoul
 
 - referenced campaign/runtime/attempt exists when expected;
 - channel envelope body hash matches payload;
-- imported evidence source scope and target scope are explicit;
+- imported evidence source scope, target scope, visibility, source class, and evidence class are explicit;
 - child-local evidence is not marked parent-visible without import/receipt;
 - event ordering fields are present for JSONL/channel/journal imports;
 - source payload hash matches raw bytes;
@@ -403,9 +433,8 @@ Tests should include idempotent re-import of the same JSONL/log/record source.
 
 ## Immediate doc follow-ups
 
-- Add a compact “physical slice A/B/C/D” section to `relational-data-model.md` after the current first implementation candidates, or keep this note as the physical-planning companion.
+- Keep this note as the physical-planning companion; `relational-data-model.md` remains the canonical logical model.
 - Use `debugging-and-research-query-workloads.md` to prioritize first queries before adding new normalized relations.
 - Keep `codegraph-eval-join-model.md` as follow-on guidance; do not add code-graph overlay columns/relations to the first file-or-db migration pass.
-- Decide whether `eval_successor` is a base relation or a derived projection.
 - Decide first event id scheme for observation JSONL import.
-- Define minimal enum values for `store_scope`, `source_class`, `evidence_class`, and `validation_status` before any DB writer lands.
+- Define minimal first-slice enum values for `store_scope`, `producer_role`, `visibility_scope`, `source_class`, `evidence_class`, and `validation_status` before any DB writer lands.

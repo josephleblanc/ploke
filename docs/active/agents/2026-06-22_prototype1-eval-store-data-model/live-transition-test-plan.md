@@ -26,7 +26,7 @@ The tested inventory is the current live typestate transition/outcome set, deriv
 - `crates/ploke-eval/src/cli/prototype1_state/typestate/aliases.rs`
 - the `loop walk` phase/step surfaces that expose the same live edges
 
-Treat the current “20 transitions” as a frozen implementation inventory for this migration. Add an inventory assertion so a future transition split/merge fails the suite until the test matrix is updated intentionally.
+Treat the current source-derived transition/outcome inventory as frozen for this migration. Add an inventory-count assertion generated from source so a future transition split/merge fails the suite until the test matrix is updated intentionally. Do not hard-code the count in prose.
 
 ## Test modes
 
@@ -75,8 +75,8 @@ Live API tests should be explicit and reproducible, not accidental CI defaults.
 
 Requirements:
 
-- gate behind the existing live-test mechanism, e.g. `live_api_tests`, and/or an explicit ignored test target;
-- require explicit environment opt-in such as provider credentials plus a suite-specific variable;
+- use an explicit ignored test target and suite-specific environment opt-in; do not rely on the `live_api_tests` feature alone, because it may be enabled by default in this crate;
+- require provider credentials plus a suite-specific variable such as `PLOKE_EVAL_LIVE_API_TESTS=1`;
 - document required provider/model variables near the tests;
 - persist run artifacts and profile commitments for review;
 - run serially or with bounded parallelism so failures are attributable;
@@ -113,7 +113,7 @@ For each transition/outcome:
 - **Input state:** phase/state alias, parent/runtime/campaign ids, admitted profile, artifact identity, and any required prior evidence.
 - **Live dependencies:** provider/model required or none; filesystem/git requirements; channel/message-box/history requirements.
 - **Writes in `fs`:** exact files or journal/channel/message-box/log refs expected.
-- **Rows in `dual-strict`:** relation(s), stable ids, owner/scope, source class, evidence class, hashes.
+- **Rows in `dual-strict`:** relation(s), stable ids, common scope/source/evidence axes, hashes.
 - **Authority guardrail:** which authority surface remains decisive.
 - **Failure check:** one negative/precondition case where practical.
 

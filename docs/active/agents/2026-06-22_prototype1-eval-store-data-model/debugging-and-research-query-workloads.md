@@ -253,7 +253,7 @@ High-level callers should ask for capabilities, not for Cozo scripts. For exampl
 | Late child result | Terminal channel/result evidence arrives after timeout and direct re-entry mutates projections | event ordering, recovery guard queries, projection contradiction warnings |
 | Malformed function call / truncation | Need compare finish reasons, token floors, tool choice, model family over time | model exchange params, finish reason, token usage, route policy, version/profile commitment |
 | Wrong-crate refresh | Logs expose that refresh scanned unrelated crate | index/refresh events joined to touched paths and code graph artifact scope |
-| Cargo ambiguity | Tool lifecycle success hides semantic failure or weak validation scope | validation event fields: manifest, changed-path coverage, model-visible payload, semantic status |
+| Cargo ambiguity | Tool lifecycle success hides semantic failure or weak validation scope | basic validation event fields: command/manifest/model-visible payload/semantic status; codegraph-backed coverage rows for changed-path coverage |
 | Manual run reviews | Findings are not queryable or aggregatable | optional review/annotation layer, source-cited and non-authoritative |
 
 ## Relation additions or refinements to consider
@@ -263,15 +263,15 @@ These are not mandatory first-slice relations, but the workload review suggests 
 ```text
 eval_harness_slot              -- one parent-side broad/edit slot, expected terminal evidence
 eval_attempt_lifecycle_event   -- launch, started, joined, timed_out, killed, no_start, fallback_diag
-eval_provider_call             -- or normalized fields inside eval_model_exchange
-eval_validation_event          -- command/cwd/manifest/coverage/semantic status
-eval_index_refresh_event       -- touched path -> owning crate/root -> refreshed DB/artifact snapshot
+provider-call dimensions       -- prefer fields inside eval_model_exchange first; promote eval_provider_call only if normalization demands it
+eval_validation_event          -- command/cwd/manifest/semantic status; coverage joins can follow in `eval_validation_cover`
+eval_refresh_event             -- touched path -> owning crate/root -> refreshed DB/artifact snapshot
 eval_review                    -- human/adjudicator report metadata
 eval_review_finding            -- source-cited non-authoritative judgments
 eval_experiment                -- optional research grouping over campaigns/profile commitments
 ```
 
-Some can start as views over existing event families. The important part is preserving the query dimensions.
+Some can start as views over existing event families. These are workload-driven candidates, not first-slice schema; promote them through [`relational-data-model.md`](relational-data-model.md) before implementation. The important part is preserving the query dimensions.
 
 ## First workload-driven queries to implement
 
@@ -284,7 +284,7 @@ For the first file-or-db storage pass, DB slices should be judged by whether the
 
 Follow-on code-graph/research queries after file/db parity:
 
-5. **Validation coverage**: final validation commands that cover changed paths versus weak unrelated focused checks.
+5. **Validation coverage**: final validation commands joined to changed paths/code refs versus weak unrelated focused checks.
 6. **Agent trajectory chain**: tool output visible to model -> next model action -> edit -> validation.
 7. **Benchmark trend rollup**: success/keep/reject/provider-failure/cost by profile commitment and harness version.
 

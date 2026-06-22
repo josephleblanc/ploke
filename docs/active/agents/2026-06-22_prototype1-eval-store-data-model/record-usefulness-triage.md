@@ -7,7 +7,7 @@ Short description: tracks persisted record families and files that may be legacy
 Related files:
 
 - [`relational-data-model.md`](relational-data-model.md)
-- [`schema-review.md`](schema-review.md)
+- [`schema-review.md`](schema-review.md) — archived/folded provenance only
 - [`typestate-persistence-ledger.md`](typestate-persistence-ledger.md)
 - [`storage-plan.md`](storage-plan.md)
 

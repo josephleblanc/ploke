@@ -74,7 +74,7 @@ Authority class values:
 | `R12 -> R13` handoff path | sealed History block and head/index projections under `prototype1/history/*` | History authority | Successor startup validates sealed head, selected identity/runtime/artifact/surface; later lineage traversal. | History tests remain separate. EvalStore tests may cite block refs only. |
 | `R12 -> R13` handoff path | successor invocation JSON; successor streams; successor channel endpoints; spawned/handoff journal | Bootstrap + transport authority + evidence | Successor process reads invocation; predecessor waits for `SuccessorReady`; final report records handoff status. | Checkpoint after spawn/ready to test successor finalization without replaying selection API. |
 | `R13 -> R14` | parent-complete resource sample; final `prototype1_state_report_path(...)` JSON; successor completion channel/journal if launched by handoff | Evidence/projection + transport for completion | Operator status, run review, predecessor/operator observability. | Final report tests should be local from R13 fixture. Completion channel remains transport. |
-| Passive record emission | `records/mirror.cozo.sqlite` relation `prototype1_record` | Compatibility mirror | Debug/backfill only; should not drive live gates. | Do not use mirror parity as proof of `DbEvalStore`; typed rows need owner/scope/import context. |
+| Passive record emission | `records/mirror.cozo.sqlite` relation `prototype1_record` | Compatibility mirror | Debug/backfill only; should not drive live gates. | Do not use mirror parity as proof of `DbEvalStore`; typed rows need `store_scope`, visibility, source/evidence class, and import/receipt context. |
 
 ## High-risk producer/consumer chains
 
@@ -148,7 +148,7 @@ Test shape: checkpoint after predecessor handoff, then launch/validate successor
 
 ## Checkpoint ladder for minimizing live API time
 
-Create reusable fixtures/checkpoints at transition boundaries. A checkpoint must include the full campaign tree, active checkout/artifact state, relevant run artifacts, and enough metadata to verify hashes/ids before use.
+Create reusable checkpoints at transition boundaries. The names below are conceptual until a fixture registry/location is added; do not assume a `fixtures/checkpoints` directory exists. A checkpoint must include the full campaign tree, active checkout/artifact state, relevant run artifacts, and enough metadata to verify hashes/ids before use.
 
 Suggested ladder:
 

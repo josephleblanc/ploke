@@ -4,13 +4,13 @@ Status: active implementation-prep plan; no storage code should move until Phase
 
 Related files:
 
-- [`storage-plan.md`](storage-plan.md) — authority boundaries, backend model, config sketch, migration sequence.
+- [`storage-plan.md`](storage-plan.md) — authority boundaries, backend model, config sketch, and migration boundary guardrails.
 - [`persistence-port-map.md`](persistence-port-map.md) — broader port/trait map for all persisted surfaces so implementation does not collapse everything into `EvalStore`.
 - [`typestate-persistence-ledger.md`](typestate-persistence-ledger.md) — source-checked transition ledger and hard gates.
 - [`live-transition-test-plan.md`](live-transition-test-plan.md) — isolated transition confidence suite, including live provider/API policy.
 - [`transition-persistence-dependency-matrix.md`](transition-persistence-dependency-matrix.md) — producer/consumer persisted-data matrix and checkpoint ladder.
 - [`database-planning-notes.md`](database-planning-notes.md) — physical slice planning, key strategy, validation requirements.
-- [`relational-data-model.md`](relational-data-model.md) — logical relation model and first implementation candidates.
+- [`relational-data-model.md`](relational-data-model.md) — canonical logical relation model and common axes.
 - [`record-usefulness-triage.md`](record-usefulness-triage.md) — compatibility/projection cleanup boundaries.
 
 ## Readiness call
@@ -21,9 +21,8 @@ We are not yet ready to move broad production writers to DB-backed storage. The 
 
 1. freeze the exact live transition/outcome inventory;
 2. build the per-transition fixture/checkpoint matrix;
-3. choose the first vertical storage slice;
-4. define exact first-slice DDL and deterministic ids/hashes;
-5. define dual-strict comparison/failure semantics.
+3. define exact first-slice DDL and deterministic ids/hashes for the fixed `R4c -> R5` ParentStarted/resource evidence slice;
+4. define dual-strict comparison/failure semantics.
 
 After those are written down and baseline `fs` tests exist, implementation can proceed one narrow slice at a time.
 
@@ -45,7 +44,7 @@ After those are written down and baseline `fs` tests exist, implementation can p
   - `crates/ploke-eval/src/cli/prototype1_state/live_edges.rs`
   - `crates/ploke-eval/src/cli/prototype1_state/typestate/aliases.rs`
   - `loop walk` phase/step surfaces when needed for faithful execution.
-- Inventory-count assertion for the current “20 transitions” expectation.
+- Inventory-count assertion generated from the current source-derived transition/outcome inventory; do not hard-code the count in prose.
 - Per-transition test matrix using [`transition-persistence-dependency-matrix.md`](transition-persistence-dependency-matrix.md).
 - Checkpoint restore/copy/hash-verification strategy for:
   - campaign tree;
@@ -128,13 +127,11 @@ Rust shape should extend the existing `Storage` profile struct without disturbin
 - Store construction from admitted profile/config.
 - Test-only recording store if useful for assertions.
 
-Recommended first-slice method options, to choose before code:
+First-slice method decision:
 
-1. `put_record_ref(...)` for a narrow record writer path;
-2. `put_trace_event(...)` for structured observation events;
-3. `put_parent_projection(...)` for parent-start/resource/report evidence.
-
-Prefer the smallest parent-owned, non-authority writer that still exercises config and receipts.
+- Add the narrowest method needed for parent-owned `R4c -> R5` ParentStarted/resource evidence.
+- Candidate names are `put_parent_started(...)` or `put_transition_event(...)`; choose the name from the final first-slice envelope shape, not from a future generic store API.
+- Do not start with `JsonRecordFile::emit`: the generic emitter is broader than needed for proving config, receipts, and dual-strict behavior.
 
 ### Tests to write/run
 
@@ -153,14 +150,16 @@ Prefer the smallest parent-owned, non-authority writer that still exercises conf
 
 ### Implement
 
-Define exact DDL for the first DB slice only. Candidate first relations from planning docs:
+Define exact DDL for the first DB slice only. The first production writer is `R4c -> R5` ParentStarted/resource evidence, so the minimal relation set should be chosen from:
 
 ```text
-eval_runtime
-eval_record_ref
-eval_trace_event
-eval_log_ref
+eval_runtime              -- only if the writer can name a concrete runtime cheaply
+eval_transition_event     -- parent-start semantic transition/event fact
+eval_trace_event          -- only for structured observe/trace fields captured in the same slice
+eval_record_ref           -- only for source/ref/hash backpointer to existing filesystem evidence
 ```
+
+`eval_log_ref` belongs in the next trace/log/ref slice unless the first writer creates or imports a concrete log ref.
 
 Do not add code-graph overlay relations in this phase.
 
@@ -171,7 +170,7 @@ For each relation define:
 - schema version / relation description;
 - deterministic event/ref id scheme;
 - payload hash scheme;
-- owner/scope fields;
+- `store_scope`, `producer_role`, `visibility_scope`, `source_class`, `evidence_class`, and `validation_status` fields needed by this slice;
 - evidence/source class fields;
 - idempotent insert behavior.
 
@@ -180,13 +179,13 @@ For each relation define:
 - Schema install is idempotent.
 - Insert/query round trip for first relation.
 - Duplicate deterministic id import behavior matches spec.
-- Missing owner/scope/hash fields fail before write.
+- Missing required scope/source/evidence/hash fields fail before write.
 - DB row cannot satisfy a MessageBox/Channel/History/artifact gate.
 
 ### Exit criteria
 
 - DB writes work for one narrow evidence slice.
-- Rows carry enough owner/scope/source/hash data for future imports.
+- Rows carry enough scope/source/evidence/hash data for future imports.
 - Schema is not shaped by legacy `scheduler.json`/`node.json` authority assumptions.
 
 ## Phase 5 — Dual-strict for the first slice
@@ -253,22 +252,30 @@ Before enabling DB-only mode for real runs, audit production reads of:
 
 DB-only mode is ready only for surfaces whose reads have been migrated or explicitly remain filesystem authority/compatibility dependencies.
 
-## First-slice recommendation
+## First-slice decision
 
-The safest first implementation path is:
+The first writer is fixed: **parent-start/resource evidence around `R4c -> R5`**.
 
-1. Phase 0 port-map confirmation plus inventory/checkpoint harness.
-2. Phase 1 baseline filesystem suite.
-3. Phase 2 config shape.
-4. Phase 3 `EvalStore` scaffolding with `fs` only.
-5. First writer: a parent-owned, non-authority evidence writer.
+Rationale:
 
-Two viable first writers:
+- parent-owned;
+- non-authority evidence/projection;
+- no provider cost;
+- exercises config, receipts, deterministic envelopes, DB insert/query, and dual-strict mismatch handling;
+- avoids the broader blast radius of `JsonRecordFile::emit` until the store/error/config shape is proven.
 
-- **Option A: parent-start/resource evidence around `R4c -> R5`.** Very low authority risk and no provider cost, but may require a small semantic wrapper around journal/resource evidence.
-- **Option B: `eval_record_ref` for one narrow `JsonRecordFile::emit` record family.** Exercises existing record-emission choke point, but risks a broader blast radius because the generic emitter is used by multiple records.
+`eval_record_ref` for one `JsonRecordFile::emit` family is the next likely slice after this first writer, not an alternative first slice.
 
-Choose explicitly before code. If uncertain, prefer Option A for authority safety, then add `eval_record_ref` after the store/error/config shape is proven.
+### First-slice contract to finalize before coding
+
+Keep the first-slice contract in one place and reference it from other docs. Before implementing Phase 3/4, write the exact contract into [`database-planning-notes.md`](database-planning-notes.md):
+
+- the narrow method name and envelope type, e.g. a parent-start-specific method rather than a generic record emitter;
+- the filesystem evidence covered by parity: `JournalEntry::ParentStarted` and the parent-start resource sample currently appended by `r4c_to_r5`;
+- the DB relation set for this slice only;
+- deterministic id and semantic envelope/hash inputs;
+- minimal enum values for `store_scope`, `producer_role`, `visibility_scope`, `source_class`, `evidence_class`, and `validation_status`;
+- dual-strict write order, duplicate handling, and failure behavior.
 
 ## Test command notes
 
@@ -281,7 +288,7 @@ cargo test -p ploke-eval prototype1_eval_store
 cargo test -p ploke-eval prototype1_storage_dual_strict
 ```
 
-Live provider suite should be explicit, e.g. feature/ignored/env-gated:
+Live provider suite should be explicit and must not rely on a feature alone. In the current crate, `live_api_tests` may be enabled by default, so use an ignored test plus a suite-specific environment opt-in:
 
 ```text
 PLOKE_EVAL_LIVE_API_TESTS=1 cargo test -p ploke-eval --features live_api_tests -- --ignored prototype1_live_transition

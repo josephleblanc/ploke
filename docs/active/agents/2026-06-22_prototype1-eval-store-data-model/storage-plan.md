@@ -1,11 +1,13 @@
-# 2026-06-21 — Prototype 1 Shared Codegraph Eval Store Plan
+# Prototype 1 Eval Store — Authority Boundaries and Backend Model
 
-Status: active plan / pre-implementation design note.
+Status: active boundary/backend plan; implementation sequencing lives in [`implementation-plan.md`](implementation-plan.md).
 
-Short description: plan for making Prototype 1 non-History, non-Channel persisted state configurable between the current filesystem layout and owner-scoped Cozo-backed `ploke_db::Database` handles, so parent-owned eval records/evidence/logs can be joined directly to the relevant code graph without collapsing parent, child, and treatment-run artifact scopes.
+Short description: authority-boundary plan for making Prototype 1 ordinary eval evidence configurable between the current filesystem layout and owner-scoped Cozo-backed `ploke_db::Database` handles. This file explains what `EvalStore` may own and what must remain under History, Channel, MessageBox, bootstrap, journal, artifact/worktree, log/blob, or snapshot-specific ports.
 
 Related planning files:
 
+- [`implementation-plan.md`](implementation-plan.md)
+- [`persistence-port-map.md`](persistence-port-map.md)
 - [`typestate-persistence-ledger.md`](typestate-persistence-ledger.md)
 - [`relational-data-model.md`](relational-data-model.md)
 - [`codegraph-eval-join-model.md`](codegraph-eval-join-model.md)
@@ -47,7 +49,7 @@ Future runs should be able to place parent and child runtimes on different machi
 - sealed History material and successor validation bundles;
 - an explicit import/admission edge that names the producing runtime/artifact and validates hashes or identities.
 
-Do not design the database backend as if every runtime can safely write to one ambient shared database. The database handle used by an `EvalStore` has an owner/scope, and cross-runtime movement of records must be explicit.
+Do not design the database backend as if every runtime can safely write to one ambient shared database. The database handle used by an `EvalStore` has explicit store scope/visibility, and cross-runtime movement of records must be explicit.
 
 ## Current file visibility categories
 
@@ -106,42 +108,29 @@ Reason: a message box is a typed access rule, not an arbitrary persisted record.
 
 ### Domain C: eval evidence / records / projections / diagnostics
 
-This is the target for the shared database-backed store.
+This is the only domain targeted by the first `EvalStore` backend work.
 
 Examples:
 
-- scheduler projection
-- node records
-- runner requests/results
-- child-plan payload mirrors after typed receipt, not the message-box authority itself
-- harness requests/results
-- branch registry records/projections
-- evaluations
-- transition journal records
-- structured tracing / `observe::Step` events
-- record emission currently written through JSON files
-- diagnostic log references and hashes
-- LLM response references and hashes
-- future code graph overlay labels/edges after file/db parity
+- parent-start/resource evidence, transition evidence, and ordinary report/projection evidence;
+- compatibility refs for scheduler/node/latest-result files without promoting those projections to decision authority;
+- runner request/result refs split by attempt/runtime and import boundary;
+- child-plan payload mirrors after typed receipt, not the message-box authority itself;
+- harness requests/results and branch/evaluation records;
+- selected transition journal records mirrored as evidence while JSONL replay remains intact;
+- structured tracing / `observe::Step` events;
+- diagnostic log references, LLM response references, and hashes;
+- future code graph overlay labels/edges after file/db parity.
 
-This domain should be configurable between filesystem and database backends. In the first pass, focus on the non-code-graph evidence rows; code graph overlays are follow-on work.
+This domain should be configurable between filesystem and database backends. In the first pass, focus on non-code-graph evidence rows and compatibility refs. Legacy projections such as `scheduler.json`, `node.json`, and latest `runner-result.json` stay low-strength refs or typed facts derived from stronger evidence; do not create authority-shaped scheduler/node tables.
 
 ## Backend model
 
 Use a capability trait for Domain C, not a single global store abstraction for all Prototype 1 state.
 
-Sketch:
+The first implementation must be narrow: add only the method needed for the fixed `R4c -> R5` parent-start/resource evidence slice, as specified in [`implementation-plan.md`](implementation-plan.md) and [`database-planning-notes.md`](database-planning-notes.md). Do not begin with a generic `put_record` / `put_blob_ref` / `put_edge` API or with `JsonRecordFile::emit`; those are broader than the first proof point and make authority boundaries harder to review.
 
-```rust
-trait EvalStore: Send + Sync {
-    fn put_record(&self, record: RecordEnvelope<'_>) -> Result<StoreRef, StoreError>;
-    fn put_blob_ref(&self, blob: BlobRefEnvelope<'_>) -> Result<StoreRef, StoreError>;
-    fn put_edge(&self, edge: EvalEdge<'_>) -> Result<(), StoreError>;
-    fn get_record(&self, key: &RecordKey) -> Result<Option<RecordEnvelope<'static>>, StoreError>;
-}
-```
-
-The trait should express eval-record/evidence semantics, not files. Filesystem paths are one backend representation.
+The trait should express eval evidence semantics, not files. Filesystem paths are one backend representation.
 
 ## Static and dynamic dispatch shape
 
@@ -161,15 +150,7 @@ impl EvalStore for ConfiguredEvalStore {
 }
 ```
 
-This keeps high-level callsites agnostic to the configured backend without spreading generic type parameters through the whole loop driver.
-
-Backend-specific code can still use static dispatch:
-
-```rust
-fn emit_node_record<S: EvalStore + ?Sized>(store: &S, node: &NodeRecord) -> Result<StoreRef, StoreError> {
-    // envelope construction + store call
-}
-```
+This keeps high-level callsites agnostic to the configured backend without spreading generic type parameters through the whole loop driver. Backend-specific helper functions can still be generic over the narrow `EvalStore` trait where useful.
 
 ## Cozo / Database handling
 
@@ -231,25 +212,21 @@ This lets `backend = "fs"` remain the default while DB parity is built.
 
 The database should use eval-specific overlay relations keyed by campaign/run/node/runtime ids. First-pass relations should be ordinary eval evidence/projection/ref rows, not code-graph overlay rows.
 
-Potential first-pass relation families:
+Potential first-pass relation families are defined canonically in [`relational-data-model.md`](relational-data-model.md) and sliced physically in [`database-planning-notes.md`](database-planning-notes.md). The near-term families are:
 
 ```text
-eval_campaign
-eval_record_ref
-eval_blob_ref
-eval_artifact_ref
-eval_trace_event
-eval_log_ref
-eval_attempt
+eval_transition_event      -- first slice: R4c -> R5 parent-start/resource evidence
+eval_trace_event           -- structured observe/log events
+eval_record_ref            -- legacy/small record refs, not legacy authority
+eval_log_ref / eval_blob_ref
+eval_runtime / eval_attempt
 eval_invocation
-eval_channel_message
-eval_channel_receipt
-eval_run_result
-eval_harness_result
-eval_child_plan
-eval_node_projection
-eval_transition_event
+eval_channel_message / eval_channel_receipt / eval_import_event
+eval_candidate_event
+eval_evaluation / eval_selection_decision
 ```
+
+Legacy projections such as scheduler/node/latest-result files may be retained through `eval_record_ref` or derived candidate/attempt events; do not create authority-shaped scheduler/node tables in the first pass.
 
 Follow-on relation families, after file/db parity:
 
@@ -258,7 +235,7 @@ eval_code_snapshot
 eval_code_ref
 eval_code_link
 eval_code_label
-eval_policy_group
+eval_policy_surface / eval_policy_grant
 eval_code_touch
 eval_validation_cover
 eval_retrieval_hit
@@ -285,37 +262,23 @@ target = "code-graph"
 Possible backend modes:
 
 - `fs`: current file layout remains authoritative for Domain C.
-- `database`: Domain C records are written to the shared `Database`.
+- `database`: Domain C records are written to the configured owner-scoped `Database` for that store.
 - `dual-strict`: write both filesystem and database forms and fail on mismatch or DB write failure.
 
 Default should remain `fs` until parity is proven.
 
-## Migration sequence
+## Migration boundary
 
-Testing gate: before moving any writer behind `EvalStore`, establish the isolated live transition suite described in [`live-transition-test-plan.md`](live-transition-test-plan.md), using [`transition-persistence-dependency-matrix.md`](transition-persistence-dependency-matrix.md) to select downstream consumer tests. The suite should cover the full current live typestate transition inventory in `fs` mode before and after abstraction, then exercise affected producer/consumer contracts in `dual-strict` as DB slices land. Provider-facing producer transitions should use live API calls; downstream consumers should reuse checkpoints where possible to avoid repeated 30–35 minute full-loop waits.
+The canonical phased sequence is [`implementation-plan.md`](implementation-plan.md). This file only records the boundary rules that sequence must preserve:
 
-1. Define owner/scope vocabulary for Domain C records: parent, child runtime, successor runtime, treatment run, passive mirror, trace/log sink, and imported evidence.
-2. Define `EvalStore` and envelope/receipt types for Domain C only, including structured trace events and log/blob refs.
-3. Add `ConfiguredEvalStore` and profile-backed store construction.
-4. Implement `FsEvalStore` by delegating to current file writers.
-5. Move one narrow parent-owned writer path behind `EvalStore` without changing persisted output.
-6. Add `DbEvalStore<Database>` and schema creation for eval overlay relations, with owner/scope columns from the first DB slice.
-7. Add `dual-strict` for that first writer path.
-8. Convert additional structured records in small slices:
-   - runner request/result
-   - node projection
-   - scheduler projection
-   - child-plan payload mirrors after `Received<ChildPlan>`
-   - harness request/result
-   - branch/evaluation records
-   - transition journal events
-9. Add blob/log reference ingestion after structured records are stable.
-10. Add explicit import paths for channel-carried child evidence and treatment-run summaries.
+1. Establish the isolated live transition suite before moving writers behind `EvalStore`.
+2. Keep `backend = fs` as the default and preserve current filesystem bytes/paths for migrated slices.
+3. Move only the fixed first writer, `R4c -> R5` ParentStarted/resource evidence, behind the first narrow `EvalStore` method.
+4. Add DB rows only for that slice, with common axes and deterministic envelope/hash comparison.
+5. Enable `dual-strict` for that slice and fail loudly on DB write errors or semantic mismatches.
+6. Expand later by dependency chain, using [`transition-persistence-dependency-matrix.md`](transition-persistence-dependency-matrix.md) to select downstream consumer tests.
 
-Post-first-pass follow-on:
-
-11. Add code graph overlay relations for mutable/immutable/protected policy groups.
-12. Build graph queries that join eval evidence to code graph nodes without collapsing parent and child artifact scopes.
+Later slices may retain legacy files as `eval_record_ref` compatibility evidence, but should not add first-class authority-shaped relations for `scheduler.json`, `node.json`, latest `runner-result.json`, or passive mirror rows. Code graph overlay relations remain follow-on work after file/db parity for ordinary eval evidence.
 
 ## Things explicitly out of scope for this plan
 
@@ -331,17 +294,4 @@ Post-first-pass follow-on:
 
 ## Open refinement slots
 
-The user has at least one refinement to make before implementation. Known open design points:
-
-- Exact boundary between `Record` emission and `EvalStore` envelopes.
-- Whether logs/LLM full responses are stored as full text, chunked blobs, or path+hash references.
-- Whether DB-backed runs should require a persistent Cozo database or allow parent-owned ingestion into an in-memory `Database` plus backup/export.
-- Exact relation names and key/value columns for the eval overlay schema.
-- Exact owner/scope fields needed to distinguish parent graph, child graph, treatment run graph, passive mirror, and imported evidence.
-- Which child-local facts should never cross into the parent graph by default.
-- How remote child bootstraps receive invocation, artifact, policy overlay, and channel endpoint information without shared filesystem access.
-- How to represent mutable/immutable/protected code regions: labels, groups, policy relations, or derived query views.
-- How selected successors inherit or revalidate policy overlays under the newly checked-out artifact.
-- Which writer path should be the first vertical slice.
-- Exact source-derived transition inventory and per-transition live test fixtures for the current 20 transition outcomes.
-- Checkpoint serialization/restoration mechanics for the producer/consumer dependency matrix.
+Current unresolved questions are tracked in [`open-questions.md`](open-questions.md). Keep this file focused on authority and backend boundaries; do not add competing implementation sequences or relation catalogs here.

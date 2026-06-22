@@ -38,13 +38,13 @@ Terms used below:
 - **MessageBox:** typed lock/unlock buffer. Current concrete example is the child-plan file.
 - **Channel:** typed runtime communication authority. Current concrete transport is JSONL files.
 - **History/Block:** sealed lineage authority. Do not treat as generic eval records.
-- **EvalStore candidate:** ordinary eval evidence/projection that can move behind an `EvalStore` backend if owner/scope is preserved.
+- **EvalStore candidate:** ordinary eval evidence/projection that can move behind an `EvalStore` backend if store scope, visibility, source, evidence class, and import/admission context are preserved.
 
 ## First-pass storage domains by backend target
 
 | Data family | Current concrete storage | Authority domain | Backend abstraction target |
 | --- | --- | --- | --- |
-| Node projections, runner requests/results, branch comparison reports, parent reports, resource samples | JSON/JSONL under `prototype1/` plus passive record mirror | Projection / eval evidence | `EvalStore` candidate, with owner/scope fields |
+| Node projections, runner requests/results, branch comparison reports, parent reports, resource samples | JSON/JSONL under `prototype1/` plus passive record mirror | Projection / eval evidence | `EvalStore` candidate, with common scope/source/evidence fields |
 | Child-plan file | `prototype1/messages/child-plan/<parent-node-id>.json` | `MessageBox` lock/unlock | Message-box backing first; optional EvalStore mirror after receipt |
 | Parent/child and parent/successor channel envelopes | `nodes/<node>/channels/<runtime>/*.jsonl` | `Channel<R, T: Transport>` | `Transport`, not `EvalStore` |
 | Invocation bootstrap files | `nodes/<node>/invocations/<runtime>.json` | Attempt bootstrap descriptor | Remote bootstrap package/transport; maybe EvalStore mirror |
@@ -772,31 +772,34 @@ Trace and log output are persisted evidence too. A transition that has “no rec
 | Compressed run record | `write_compressed_record` | run dir `record.json.gz` | Run-local aggregate | Compatibility blob/ref plus derived typed rows over time. |
 | TimingTrace stderr markers | `TimingTrace::scope` | stderr of the current process; captured only if that process stderr is redirected | Local process timing marker | Prefer replacing/duplicating with structured `observe::Step` events before relying on it as evidence. |
 
-Design conclusion: trace events are not “less persisted” than JSON records when tracing sinks are active. They are currently outside the passive mirror and should be modeled separately from `eval_record` payloads.
+Design conclusion: trace events are not “less persisted” than JSON records when tracing sinks are active. They are currently outside the passive mirror and should be modeled separately from `eval_record_ref` payload refs.
 
 ### Recommended DB treatment from this pass
 
 `DbEvalStore` should have at least three ordinary-evidence lanes, separate from History, Channel, and MessageBox authority:
 
 ```text
-eval_record        -- typed small records/projections with family/schema/owner scope
+eval_record_ref    -- typed small records/projections with family/schema/ref/hash and common axes
 eval_trace_event   -- structured tracing/observe events with transition/span fields
 eval_log_ref       -- path/object-store refs, hashes, byte ranges, redaction/sensitivity flags
 ```
 
-Possible minimum scope fields shared by these lanes:
+Use the canonical common axes from [`relational-data-model.md`](relational-data-model.md):
 
 ```text
 campaign_id
-producer_role          -- parent | child | successor | eval_runner | harness | unknown
-producer_runtime_id
+producer_role          -- parent | child | successor | eval_runner | harness | operator | provider | unknown
+producer_id            -- runtime_id when known
 node_id
 run_id / treatment_campaign_id
 artifact_id / tree_hash
-owner_scope            -- parent | child_runtime | successor_runtime | treatment_run | imported
-recorded_at
-authority_domain       -- projection | message_box_mirror | channel_import | history_ref | trace | blob_ref
-source_path_or_uri
+store_scope            -- parent | child_runtime | successor_runtime | treatment_run | campaign | artifact | external
+visibility_scope       -- local | parent_visible | successor_visible | imported | public_debug
+source_class           -- direct_write | channel_payload | channel_ref | message_box_mirror | passive_mirror | log_parse | compatibility_import
+evidence_class         -- sealed_history | admitted_channel | typed_transition | passive_record | diagnostic | compatibility | unverified
+validation_status      -- unchecked | valid | invalid | rejected | degraded | imported
+recorded_at / ingested_at
+source_ref
 content_sha256
 ```
 
@@ -844,15 +847,14 @@ These assumptions are acceptable for the current filesystem backend but should b
 
 ## Initial EvalStore slices suggested by this ledger
 
-Safer first slices are parent-owned projections that do not change authority boundaries:
+The fixed first slice is parent-owned `R4c -> R5` `ParentStarted` / resource sample evidence. After that, safer slices that do not change authority boundaries are:
 
 1. Structured `eval_trace_event` ingestion from `observe::TransitionBuilder` / `observe::Step` events, or from the optional Prototype 1 observation JSONL sink.
-2. `ParentStarted` / resource sample projection.
-3. Node status projection writes (`node.json`) with owner/scope fields.
-4. Runner request/result projection writes, split by child-local attempt result vs parent-imported terminal result.
-5. Parent comparison reports and branch comparison records.
-6. Final parent report.
-7. Child-plan payload mirror after `Received<ChildPlan>`, explicitly marked as mirror of MessageBox authority.
+2. Node status projection writes (`node.json`) with common scope/source/evidence fields.
+3. Runner request/result projection writes, split by child-local attempt result vs parent-imported terminal result.
+4. Parent comparison reports and branch comparison records.
+5. Final parent report.
+6. Child-plan payload mirror after `Received<ChildPlan>`, explicitly marked as mirror of MessageBox authority.
 
 Do **not** start with:
 
@@ -867,7 +869,7 @@ Do **not** start with:
 - Fill exact path for `prototype1_state_report_path` and report consumers.
 - Split broad harness request/result artifacts into their own mini-ledger.
 - Decide whether `records/mirror.cozo.sqlite` remains always-on compatibility mirror, profile-gated mirror, or retired after `DbEvalStore` reaches parity.
-- Add owner/scope columns proposed for each EvalStore candidate row: parent runtime, child runtime, successor runtime, treatment run, imported evidence, artifact id/tree.
+- Add exact common-axis values proposed for each EvalStore candidate row: parent runtime, child runtime, successor runtime, treatment run, imported evidence, artifact id/tree, source class, evidence class, and visibility.
 - Decide which trace/log payloads are stored inline versus path/object-store refs with hashes.
 - Decide which channel-carried child evidence is imported into parent store immediately versus retained as a child-owned ref.
 - Define how policy overlays for mutable/immutable/protected edit surfaces are inherited or revalidated by selected successors.

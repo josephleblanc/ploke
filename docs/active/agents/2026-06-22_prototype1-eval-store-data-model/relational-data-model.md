@@ -12,7 +12,7 @@ Related files:
 - [`cozo-feature-map.md`](cozo-feature-map.md)
 - [`codegraph-eval-join-model.md`](codegraph-eval-join-model.md)
 - [`debugging-and-research-query-workloads.md`](debugging-and-research-query-workloads.md)
-- [`schema-review.md`](schema-review.md)
+- [`schema-review.md`](schema-review.md) — archived/folded provenance only
 - [`record-usefulness-triage.md`](record-usefulness-triage.md)
 - [`open-questions.md`](open-questions.md)
 
@@ -65,7 +65,7 @@ eval_runtime
 eval_parent_epoch
 eval_attempt
 eval_child
-eval_successor
+eval_successor              -- derived/convenience projection; not first-pass base truth
 eval_artifact
 eval_invocation
 eval_channel
@@ -104,11 +104,11 @@ eval_agent_turn_event
 eval_evidence_warning
 ```
 
-Follow-on code-graph-backed event/fact families:
+Follow-on workload/code-graph event/fact families:
 
 ```text
-eval_validation_event
-eval_validation_cover
+eval_validation_event       -- ordinary validation command evidence when captured
+eval_validation_cover       -- code-graph-backed coverage overlay
 eval_retrieval
 eval_retrieval_hit
 eval_refresh_event
@@ -139,6 +139,19 @@ eval_code_ref
 eval_code_link
 ```
 
+## Relation status rules
+
+Use these status rules to avoid treating every useful query idea as first-pass schema:
+
+| Status | Meaning | Current examples |
+| --- | --- | --- |
+| First-slice base | Required for the fixed `R4c -> R5` migration slice. | `eval_transition_event`; optional `eval_record_ref` / `eval_runtime` / `eval_trace_event` only if populated by the first envelope. |
+| First-pass base | Ordinary eval evidence/ref relations likely to land before DB-only review. | `eval_trace_event`, `eval_log_ref`, `eval_record_ref`, attempt/channel mirror rows, evaluation/selection summaries. |
+| Compatibility ref | Legacy mutable or projection files retained as low-strength evidence, not authority-shaped tables. | `scheduler.json`, `node.json`, latest `runner-result.json`, passive mirror rows. |
+| Derived/materialized | Convenience views over stronger base rows; do not make them the only source of handoff truth. | `eval_successor`, current phase views, algorithm-ready causal/artifact/trace edges. |
+| Follow-on overlay | Code graph, policy, retrieval, validation-coverage, refresh, and research joins after file/db parity. | `eval_code_snapshot`, `eval_code_ref`, `eval_code_link`, `eval_code_touch`, `eval_validation_cover`, `eval_retrieval_hit`, `eval_refresh_event`. |
+| Workload idea | Query pressure captured for later normalization; not canonical base schema until promoted here. | `eval_harness_slot`, `eval_attempt_lifecycle_event`, review/annotation/experiment rows. |
+
 ## Common axes
 
 Most relations should carry a subset of these fields. Use `null` only where genuinely not applicable.
@@ -165,7 +178,7 @@ record_ref_id        -- typed record/evidence ref id
 
 ### Scope, visibility, and evidence class
 
-Do not overload one `owner_scope` field with all concepts. Keep ownership, visibility, source, and evidence strength separate.
+Do not reintroduce the older overloaded `owner_scope` field. Keep ownership, visibility, source, and evidence strength separate.
 
 ```text
 store_scope          -- parent | child_runtime | successor_runtime | treatment_run | campaign | artifact | external
@@ -173,11 +186,10 @@ producer_role        -- parent | child | successor | eval_runner | harness | ope
 visibility_scope     -- local | parent_visible | successor_visible | imported | public_debug
 source_class         -- direct_write | channel_payload | channel_ref | message_box_mirror | passive_mirror | log_parse | compatibility_import
 evidence_class       -- sealed_history | admitted_channel | typed_transition | passive_record | diagnostic | compatibility | unverified
-authority_domain     -- projection | trace | blob_ref | message_box | channel | history_ref | artifact | policy
 validation_status    -- unchecked | valid | invalid | rejected | degraded | imported
 ```
 
-`store_scope` is the ownership boundary. `visibility_scope` says who may rely on or query it. `source_class` says how it entered the store. `evidence_class` says how strong the fact is. A parent-visible imported child summary is not the same as a child-local raw DB fact.
+`store_scope` is the ownership boundary. `visibility_scope` says who may rely on or query it. `source_class` says how it entered the store. `evidence_class` says how strong the fact is. A parent-visible imported child summary is not the same as a child-local raw DB fact. If older notes mention `authority_domain`, treat that as superseded by the relation family plus these common axes.
 
 ### Ordering
 
@@ -333,7 +345,7 @@ eval_child {
 
 ### `eval_successor`
 
-Selected continuation attempt.
+Selected continuation attempt, modeled as a derived/convenience projection over selection, sealed History refs, successor invocation/runtime, and successor ready/completion receipts. Do not implement it as the only source of handoff truth in the first storage pass.
 
 ```text
 eval_successor {
@@ -807,7 +819,7 @@ eval_build_event {
 
 ### Validation, retrieval, and refresh relations
 
-These are follow-on code-graph-backed workload relations, not first-pass storage-migration requirements. Full join semantics are in [`codegraph-eval-join-model.md`](codegraph-eval-join-model.md).
+`eval_validation_event` can be ordinary eval evidence for command/cargo/test semantics when a validation writer is migrated. `eval_validation_cover`, retrieval hits linked to `code_ref_id`, and refresh freshness joins are follow-on code-graph-backed workload relations. Full join semantics are in [`codegraph-eval-join-model.md`](codegraph-eval-join-model.md).
 
 ```text
 eval_validation_event {
@@ -1229,7 +1241,7 @@ eval_snapshot_ref {
 
 Snapshots usually remain child/treatment-local. Parent imports summaries or selected refs, not raw code graph facts by default.
 
-### Closure, protocol, artifact, and code refs
+### Closure, protocol, and artifact refs
 
 ```text
 eval_closure_ref {
@@ -1263,67 +1275,18 @@ eval_artifact_ref {
   content_sha256: String?,
   recorded_at: String?
 }
-
-eval_code_snapshot {
-  snapshot_id: String =>
-  campaign_id: String?,
-  artifact_id: String?,
-  store_scope: String,
-  namespace: String?,
-  crate_id: String?,
-  root_path: String?,
-  git_commit: String?,
-  code_validity: String?,
-  schema_version: String?,
-  created_at: String?
-}
-
-eval_code_ref {
-  code_ref_id: String =>
-  campaign_id: String,
-  artifact_id: String?,
-  snapshot_id: String?,
-  code_node_id: Uuid?,
-  node_kind: String?,
-  crate_id: String?,
-  namespace: String?,
-  canonical_path: [String]?,
-  relpath: String?,
-  span: [Int; 2]?,
-  node_hash: String?,
-  file_hash: String?,
-  resolution: String,
-  source_ref: String?,
-  recorded_at: String?
-}
-
-eval_code_link {
-  subject_kind: String,
-  subject_id: String,
-  code_ref_id: String =>
-  ref_role: String,              -- cited | retrieved | edited | proposed | applied | validated | failed | protected | selected | denied
-  event_id: String?,
-  confidence: Float?,
-  evidence_ref: String?,
-  recorded_at: String?
-}
-
-eval_code_touch {
-  touch_id: String =>
-  campaign_id: String,
-  patch_id: String?,
-  apply_id: String?,
-  code_ref_id: String?,
-  touch_kind: String,
-  relpath: String,
-  pre_hash: String?,
-  post_hash: String?,
-  hunk_ref: String?,
-  recorded_at: String?
-}
 ```
 
-See [`codegraph-eval-join-model.md`](codegraph-eval-join-model.md) for the join semantics and snapshot-scope guardrails. `code_node_id` means a parsed code graph UUID; current Prototype 1 `node_id` strings remain candidate/work-item join keys.
+Code graph bridge refs are follow-on overlay schema, not first-pass storage schema. Their canonical details live in [`codegraph-eval-join-model.md`](codegraph-eval-join-model.md):
+
+```text
+eval_code_snapshot
+eval_code_ref
+eval_code_link
+eval_code_touch
+```
+
+`code_node_id` means a parsed code graph UUID; current Prototype 1 `node_id` strings remain candidate/work-item join keys.
 
 ## Policy/edit-surface overlay sketches
 
@@ -1525,20 +1488,21 @@ Result: exactly which child-local facts became parent-visible, under what valida
 
 First pass goal: configurable file-or-db storage for ordinary eval evidence while preserving current filesystem output and authority boundaries. Do not require code-graph overlay relations in this pass.
 
-1. Define common enums/columns: store scope, visibility, source class, evidence class, validation status, and causal order fields.
-2. Ingest `eval_trace_event` from `observe.rs` / observation JSONL while preserving current structured fields.
-3. Add `eval_attempt`, `eval_invocation`, `eval_channel_message`, and `eval_channel_receipt` as evidence mirrors only, not transport authority.
-4. Add `eval_record_ref` for legacy node/request/result records, split by child-local writes and parent-imported terminal facts.
-5. Add `eval_candidate_event` from typed transition/channel outcomes; raw `node.json` status can be a compatibility source, not the authority.
-6. Add `eval_evaluation` and `eval_selection_decision` summary rows after parent comparison.
-7. Add `eval_log_ref` for child/successor stdout/stderr and runner execution logs.
+1. Define common enums/columns: `store_scope`, `producer_role`, `visibility_scope`, `source_class`, `evidence_class`, `validation_status`, and causal order fields.
+2. First writer: parent-owned `R4c -> R5` ParentStarted/resource evidence, likely as `eval_transition_event` plus any required source/ref/hash backpointer.
+3. Ingest `eval_trace_event` from `observe.rs` / observation JSONL while preserving current structured fields.
+4. Add `eval_attempt`, `eval_invocation`, `eval_channel_message`, and `eval_channel_receipt` as evidence mirrors only, not transport authority.
+5. Add `eval_record_ref` for legacy node/request/result records, split by child-local writes and parent-imported terminal facts.
+6. Add `eval_candidate_event` from typed transition/channel outcomes; raw `node.json` status can be a compatibility source, not the authority.
+7. Add `eval_evaluation` and `eval_selection_decision` summary rows after parent comparison.
+8. Add `eval_log_ref` for child/successor stdout/stderr and runner execution logs.
 
 ## Follow-on code graph overlay candidates
 
 These are intentionally separated from the first file-or-db migration pass. See [`codegraph-eval-join-model.md`](codegraph-eval-join-model.md).
 
 1. Add `eval_code_snapshot`, richer `eval_code_ref`, and `eval_code_link` for parent-code-graph joins once core DB writes are stable.
-2. Add `eval_code_touch`, `eval_validation_event` / validation coverage, retrieval-hit, and refresh-event rows as code-graph-backed workload slices.
+2. Add `eval_code_touch`, `eval_validation_cover`, retrieval-hit, and refresh-event rows as code-graph-backed workload slices; basic `eval_validation_event` may land earlier as ordinary eval evidence if a validation writer is migrated.
 3. Add policy/code overlays after record, trace, and code-ref lanes are stable.
 
 ## Non-goals for this model
