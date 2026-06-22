@@ -109,7 +109,7 @@ Commit only after the slice's required tests pass or, for expected-failing tests
   - checked-in generated inventory doc with row count 26.
   - checked-in checkpoint seed manifests/files only; no provider payloads or secrets.
 - Result: focused inventory, checkpoint manifest/restore, restored journal consumer, and authority-negative MessageBox gate tests pass. Slice 0 names 26 transition/outcome rows; provider-facing rows remain live/API only in the confidence suite.
-- Commit: pending
+- Commit: `efbdf01a`, `3f41cf05`, `57b98b41`
 
 ### Slice 1 — Profile config shape only
 
@@ -146,20 +146,34 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Artifacts retained:
   - no provider artifacts; only the updated F0 seed manifest/profile fixture.
 - Result: storage backend config parses, defaults to `fs`, round-trips through the passive `ploke-records` DTO, is carried into `Prototype1StateRunShape`, and unknown backend values are rejected.
-- Commit: pending
+- Commit: `647c1ab3`
 
 ### Slice 2 — EvalStore module, receipts, filesystem backend only
 
-- Status: not started
+- Status: complete; production `R4c -> R5` not moved yet.
 - Assumptions:
+  - `append_with_receipt` must preserve the exact compact JSONL bytes produced by the existing `RecordStore::append` implementation.
+  - Resource-sample construction can be split from append behavior without changing current best-effort callers.
 - Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/journal.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/mod.rs`
 - Tests added/changed:
+  - `prototype1_eval_store_parent_start_fs_appends_expected_entries`
+  - `append_with_receipt_preserves_record_store_bytes`
+  - existing `replay_all_collects_each_transition_family`
 - Commands run:
+  - `cargo fmt --all`
+  - `cargo test -p ploke-eval prototype1_eval_store_parent_start_fs -- --nocapture`
+  - `cargo test -p ploke-eval append_with_receipt_preserves_record_store_bytes -- --nocapture`
+  - `cargo test -p ploke-eval replay_all_collects_each_transition_family -- --nocapture`
+  - `cargo test -p ploke-eval prototype1_eval_store_parent_start_fs -- --nocapture`
 - Live API used: no
-- Checkpoints created/updated:
-- Artifacts retained:
-- Result:
-- Commit:
+- Checkpoints created/updated: none
+- Artifacts retained: none
+- Result: `EvalStore`/`FsEvalStore` exists, returns journal append receipts, writes `ParentStarted` plus `Resource(parent_start)`, and existing journal replay smoke still passes. Default production path is unchanged until Slice 3.
+- Commit: pending
 
 ### Slice 3 — Move `R4c -> R5` behind FsEvalStore
 

@@ -57,6 +57,7 @@ use crate::intervention::{
     CommitPhase, Prototype1RunnerDisposition, RecordStore, load_runner_result_at,
 };
 use crate::projection::OperatorProjectionRead;
+use sha2::{Digest, Sha256};
 
 pub(crate) const DEFAULT_OBSERVE_CHILD_STALE_AFTER: Duration =
     Duration::from_secs(DEFAULT_OBSERVE_CHILD_STALE_AFTER_SECS);
@@ -364,6 +365,18 @@ pub(crate) struct PrototypeJournal {
     path: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct JournalAppendReceipt {
+    pub(crate) path: PathBuf,
+    pub(crate) source_event_index: usize,
+    pub(crate) source_line: usize,
+    pub(crate) byte_start: u64,
+    /// Compact JSON payload byte length, excluding the trailing newline.
+    pub(crate) byte_len: usize,
+    pub(crate) content_sha256: String,
+    pub(crate) payload_json: String,
+}
+
 impl PrototypeJournal {
     pub(crate) fn new(path: impl Into<PathBuf>) -> Self {
         Self { path: path.into() }
@@ -371,6 +384,68 @@ impl PrototypeJournal {
 
     pub(crate) fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub(crate) fn append_with_receipt(
+        &mut self,
+        entry: JournalEntry,
+    ) -> Result<JournalAppendReceipt, PrototypeJournalError> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent).map_err(|source| PrototypeJournalError::CreateDir {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+
+        let source_event_index = count_lines(&self.path)?;
+        let byte_start = match fs::metadata(&self.path) {
+            Ok(metadata) => metadata.len(),
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(source) => {
+                return Err(PrototypeJournalError::Read {
+                    path: self.path.clone(),
+                    source,
+                });
+            }
+        };
+        let payload_json =
+            serde_json::to_string(&entry).map_err(PrototypeJournalError::Serialize)?;
+        let byte_len = payload_json.len();
+        let content_sha256 = sha256_hex(payload_json.as_bytes());
+
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)
+            .map_err(|source| PrototypeJournalError::Open {
+                path: self.path.clone(),
+                source,
+            })?;
+        file.write_all(payload_json.as_bytes())
+            .map_err(|source| PrototypeJournalError::Write {
+                path: self.path.clone(),
+                source,
+            })?;
+        file.write_all(b"\n")
+            .map_err(|source| PrototypeJournalError::Write {
+                path: self.path.clone(),
+                source,
+            })?;
+        file.sync_data()
+            .map_err(|source| PrototypeJournalError::Sync {
+                path: self.path.clone(),
+                source,
+            })?;
+
+        Ok(JournalAppendReceipt {
+            path: self.path.clone(),
+            source_event_index,
+            source_line: source_event_index + 1,
+            byte_start,
+            byte_len,
+            content_sha256,
+            payload_json,
+        })
     }
 
     pub(crate) fn load_entries(&self) -> Result<Vec<JournalEntry>, PrototypeJournalError> {
@@ -663,6 +738,36 @@ impl PrototypeJournal {
 
         Ok(replay)
     }
+}
+
+fn count_lines(path: &Path) -> Result<usize, PrototypeJournalError> {
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(source) => {
+            return Err(PrototypeJournalError::Read {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+    let reader = BufReader::new(file);
+    let mut count = 0;
+    for line in reader.lines() {
+        line.map_err(|source| PrototypeJournalError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        count += 1;
+    }
+    Ok(count)
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    format!("{digest:x}")
 }
 
 pub(crate) fn prototype1_transition_journal_path(campaign_manifest_path: &Path) -> PathBuf {

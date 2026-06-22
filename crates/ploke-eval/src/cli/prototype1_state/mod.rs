@@ -783,6 +783,7 @@ pub(crate) mod child;
 pub(crate) mod cli_facing;
 pub(crate) mod driver;
 pub(crate) mod edit_surface;
+pub(crate) mod eval_store;
 pub(crate) mod event;
 pub(crate) mod evidence;
 pub(crate) mod evidence_class;
