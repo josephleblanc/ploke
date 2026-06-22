@@ -71,7 +71,7 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 
 ### Slice 0 — Transition inventory and checkpoint harness
 
-- Status: in progress; inventory + checkpoint manifest foundation added and restored journal consumer smoke covered. Remaining before full Slice 0 exit: authority-negative fixture at a real gate.
+- Status: complete for Slice 0 harness scope.
 - Assumptions:
   - Parent transition inventory can be source-derived from `WalkPhase::next_steps()` plus explicit child C1-C5 rows until child walk metadata exists.
   - Seed F0/F1 checkpoint fixtures are manifest/hash fixtures only; they intentionally do not claim History/channel/MessageBox/artifact authority.
@@ -79,6 +79,7 @@ Commit only after the slice's required tests pass or, for expected-failing tests
   - `crates/ploke-eval/src/cli/prototype1_state/transition_inventory.rs`
   - `crates/ploke-eval/src/cli/prototype1_state/checkpoint.rs`
   - `crates/ploke-eval/src/cli/prototype1_state/mod.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs`
   - `crates/ploke-eval/tests/fixtures/prototype1-checkpoints/`
   - `docs/active/agents/2026-06-22_prototype1-eval-store-data-model/transition-inventory.generated.md`
 - Tests added/changed:
@@ -90,6 +91,7 @@ Commit only after the slice's required tests pass or, for expected-failing tests
   - `prototype1_checkpoint_restore_feeds_journal_consumer`
   - `prototype1_checkpoint_missing_required_file_fails`
   - `prototype1_checkpoint_hash_mismatch_fails`
+  - `prototype1_storage_authority_negative_projection_cannot_replace_child_plan_box`
 - Commands run:
   - `PLOKE_UPDATE_TRANSITION_INVENTORY=1 cargo test -p ploke-eval prototype1_transition_inventory_generated_doc_matches_source -- --nocapture`
   - `cargo fmt --all`
@@ -97,6 +99,8 @@ Commit only after the slice's required tests pass or, for expected-failing tests
   - `cargo test -p ploke-eval prototype1_checkpoint -- --nocapture`
   - `cargo fmt --all`
   - `cargo test -p ploke-eval prototype1_checkpoint -- --nocapture`
+  - `cargo test -p ploke-eval prototype1_storage_authority_negative_projection_cannot_replace_child_plan_box -- --nocapture`
+  - `cargo test -p ploke-eval prototype1_storage_authority_negative -- --nocapture`
 - Live API used: no
 - Checkpoints created/updated:
   - `F0_setup` seed manifest and required hash files.
@@ -104,7 +108,7 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Artifacts retained:
   - checked-in generated inventory doc with row count 26.
   - checked-in checkpoint seed manifests/files only; no provider payloads or secrets.
-- Result: focused inventory and checkpoint manifest tests pass; full Slice 0 still requires an authority-negative test at a real gate.
+- Result: focused inventory, checkpoint manifest/restore, restored journal consumer, and authority-negative MessageBox gate tests pass. Slice 0 names 26 transition/outcome rows; provider-facing rows remain live/API only in the confidence suite.
 - Commit: pending
 
 ### Slice 1 — Profile config shape only

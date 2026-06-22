@@ -5072,6 +5072,68 @@ fn below_min_rejected_attempts_are_persisted_and_recoverable_from_existing_child
 }
 
 #[test]
+fn prototype1_storage_authority_negative_projection_cannot_replace_child_plan_box() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    write_broad_surface_targets(&repo_root);
+    let parent: Parent<Ready> = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
+    let projection_path =
+        prototype1_campaign_root(&manifest_path).join("eval-store/child-plan-row.json");
+    fs::create_dir_all(projection_path.parent().expect("projection parent"))
+        .expect("create projection dir");
+    write_json_file_pretty(
+        &projection_path,
+        &serde_json::json!({
+            "schema_version": "prototype1-eval-store-projection-test.v1",
+            "edge_id": "r7_to_r8",
+            "parent_id": parent_identity.parent_id(),
+            "message_box_claimed": true
+        }),
+    )
+    .expect("write projection row");
+
+    let (result, trace) = collect_traces(|| {
+        receive_existing_child_plan(
+            ChildPlanEnv {
+                campaign_id: &CLI_TEST_CAMPAIGN,
+                manifest_path: &manifest_path,
+                repo_root: &repo_root,
+                broad_tui: profile::BroadTui::default(),
+                route_source: ModelRouteSource::DirectGoogle,
+            },
+            parent,
+        )
+    });
+    dump_trace_if_requested(&trace);
+    let err = match result {
+        Ok(_) => panic!("projection row must not replace child-plan MessageBox"),
+        Err(err) => err,
+    };
+    let PrepareError::ReadManifest { path, source } = err else {
+        panic!("unexpected error variant");
+    };
+    assert_eq!(
+        path,
+        child_plan_message_path_for_parent(&manifest_path, &parent_identity)
+    );
+    assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+    assert!(projection_path.exists());
+    assert!(trace_contains(
+        &trace,
+        &[
+            "event=typestate_transition",
+            "transition=Parent<Ready>->Parent<Planned>",
+            "phase=retry_replay",
+            "record_access=read",
+            "record_kind=child_plan_file",
+            "outcome=failed",
+        ],
+    ));
+}
+
+#[test]
 fn child_plan_replay_rejects_wrong_parent() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
