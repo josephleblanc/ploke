@@ -17,6 +17,7 @@ Read these first when implementing:
 - [`database-planning-notes.md`](database-planning-notes.md) — physical schema slices, first-slice contract checklist, key strategy, Cozo-specific implementation notes, and validation requirements.
 - [`live-transition-test-plan.md`](live-transition-test-plan.md) — live/source-derived transition test gate.
 - [`transition-persistence-dependency-matrix.md`](transition-persistence-dependency-matrix.md) — producer/consumer persisted-data matrix and checkpoint strategy.
+- [`transition-inventory.generated.md`](transition-inventory.generated.md) — checked generated transition inventory with source anchors, live/API requirements, checkpoint boundaries, and authority-negative cases.
 
 Supporting references:
 
