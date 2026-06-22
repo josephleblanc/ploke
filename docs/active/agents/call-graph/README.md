@@ -8,13 +8,14 @@ Short description: Current source of truth for the parser call-graph feature thr
 
 1. This file.
 2. [`../2026-06-22_call-graph-id-domain-correction.md`](../2026-06-22_call-graph-id-domain-correction.md) — binding design decision for call-site identity.
-3. [`2026-06-22_structural-method-call-extraction-plan.md`](2026-06-22_structural-method-call-extraction-plan.md) — completed structural method-call slice.
-4. [`2026-06-22_inherent-self-method-resolution-plan.md`](2026-06-22_inherent-self-method-resolution-plan.md) — completed first semantic resolver slice.
-5. [`2026-06-22_structural-path-call-extraction-plan.md`](2026-06-22_structural-path-call-extraction-plan.md) — completed structural path-call slice.
-6. [`2026-06-22_structural-macro-call-extraction-plan.md`](2026-06-22_structural-macro-call-extraction-plan.md) — completed structural macro-call slice.
-7. [`../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md`](../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md) — task sequence for the first `fixture_nodes` slice.
-8. [`../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`](../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md) — broader typed call-graph rollout plan.
-9. Long-horizon proof context only if needed:
+3. [`2026-06-22_call-site-coverage-matrix.md`](2026-06-22_call-site-coverage-matrix.md) — active structural/resolution test matrix for future slices.
+4. [`2026-06-22_structural-method-call-extraction-plan.md`](2026-06-22_structural-method-call-extraction-plan.md) — completed structural method-call slice.
+5. [`2026-06-22_inherent-self-method-resolution-plan.md`](2026-06-22_inherent-self-method-resolution-plan.md) — completed first semantic resolver slice.
+6. [`2026-06-22_structural-path-call-extraction-plan.md`](2026-06-22_structural-path-call-extraction-plan.md) — completed structural path-call slice.
+7. [`2026-06-22_structural-macro-call-extraction-plan.md`](2026-06-22_structural-macro-call-extraction-plan.md) — completed structural macro-call slice.
+8. [`../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md`](../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md) — task sequence for the first `fixture_nodes` slice.
+9. [`../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`](../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md) — broader typed call-graph rollout plan.
+10. Long-horizon proof context only if needed:
    - [`../../../workflow/evalnomicon/drafts/formal/detached-process-callgraph-proof-target.md`](../../../workflow/evalnomicon/drafts/formal/detached-process-callgraph-proof-target.md)
    - [`../../../workflow/evalnomicon/drafts/formal/callgraph-implementation-design-for-detached-process-proof.md`](../../../workflow/evalnomicon/drafts/formal/callgraph-implementation-design-for-detached-process-proof.md)
    - [`../../../workflow/evalnomicon/drafts/formal/macro-buildrs-callgraph-sequencing-survey.md`](../../../workflow/evalnomicon/drafts/formal/macro-buildrs-callgraph-sequencing-survey.md)
@@ -227,7 +228,7 @@ Result: all passed. The `call_sites` filter ran four focused tests and all passe
 
 ## Next implementation slice
 
-Continue broadening structural coverage before broad semantic coverage. Recommended next RED tests:
+Use [`2026-06-22_call-site-coverage-matrix.md`](2026-06-22_call-site-coverage-matrix.md) as the test-selection source of truth. Continue broadening structural coverage before broad semantic coverage. Recommended next RED tests:
 
 1. dynamic-call extraction for non-path callees such as `(f)()` or `make_fn()()` once a fixture target exists;
 2. decide whether path-to-binding calls such as `alias_checker(...)` remain `PathCall` structurally or need a later binding-aware dynamic reclassification;

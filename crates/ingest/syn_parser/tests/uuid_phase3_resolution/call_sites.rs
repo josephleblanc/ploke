@@ -272,13 +272,29 @@ fn fixture_nodes_use_imported_items_records_pathbuf_new_path_call_site()
         "path-call extraction slice should not emit a resolved function edge yet"
     );
 
+    let unsupported_status_count = report
+        .statuses
+        .iter()
+        .filter(|status| {
+            matches!(
+                status,
+                CallResolutionStatus::Unsupported { source }
+                    if *source == AnyCallSiteId::Path(path_call.id)
+            )
+        })
+        .count();
+    assert_eq!(
+        unsupported_status_count, 1,
+        "path calls should currently receive exactly one Unsupported status"
+    );
+
     Ok(())
 }
 
 #[test]
 fn fixture_nodes_use_imported_items_records_documented_macro_call_site()
 -> Result<(), SynParserError> {
-    let (graph, _) = build_tree_for_tests("fixture_nodes");
+    let (graph, tree) = build_tree_for_tests("fixture_nodes");
     let function = fixture_nodes_function(&graph, &["crate", "imports"], "use_imported_items");
     let owner = CallBodyOwnerId::Function(function.id);
 
@@ -344,6 +360,23 @@ fn fixture_nodes_use_imported_items_records_documented_macro_call_site()
     assert_eq!(
         body_contains_count, 1,
         "expected exactly one BodyContainsCall relation from use_imported_items to documented_macro!(...)"
+    );
+
+    let report = resolve_call_relations_after_tree(&graph, &tree)?;
+    let unsupported_status_count = report
+        .statuses
+        .iter()
+        .filter(|status| {
+            matches!(
+                status,
+                CallResolutionStatus::Unsupported { source }
+                    if *source == AnyCallSiteId::Macro(macro_call.id)
+            )
+        })
+        .count();
+    assert_eq!(
+        unsupported_status_count, 1,
+        "macro calls should currently receive exactly one Unsupported status"
     );
 
     Ok(())
