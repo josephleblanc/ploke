@@ -113,16 +113,40 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 
 ### Slice 1 — Profile config shape only
 
-- Status: not started
+- Status: complete.
 - Assumptions:
+  - Omitted `[storage]` and omitted `[storage.eval]` must continue to default to filesystem mode.
+  - A `[storage.eval]` table may be present without explicitly repeating `worktree_root`; `worktree_root` keeps its prior default.
 - Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/profile.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs`
+  - `crates/ploke-records/src/run_profile.rs`
+  - `crates/ploke-eval/tests/fixtures/prototype1-checkpoints/F0_setup/`
 - Tests added/changed:
+  - `run_profile_storage_eval_backend_defaults_to_fs`
+  - `run_profile_storage_eval_backend_roundtrips_kebab_case`
+  - `run_profile_storage_eval_backend_rejects_unknown`
+  - `state_run_shape_defaults_eval_storage_backend_to_fs`
+  - `state_run_shape_prefers_admitted_campaign_profile`
+  - `run_profile_toml_defaults_eval_storage_to_fs`
+  - `run_profile_toml_roundtrips_eval_storage_backend`
+  - existing `admitted_run_profile_carries_digest`
+  - existing `prototype1_checkpoint_seed_manifests_verify_hashes`
 - Commands run:
+  - `cargo fmt --all`
+  - `cargo test -p ploke-eval run_profile_storage_eval_backend -- --nocapture`
+  - `cargo test -p ploke-eval state_run_shape -- --nocapture`
+  - `cargo test -p ploke-records run_profile_toml -- --nocapture`
+  - `cargo test -p ploke-eval admitted_run_profile_carries_digest -- --nocapture`
+  - `cargo test -p ploke-eval prototype1_checkpoint_seed_manifests_verify_hashes -- --nocapture`
 - Live API used: no
 - Checkpoints created/updated:
+  - `F0_setup/prototype1/run-profile.toml` now explicitly includes `[storage.eval] backend = "fs"` and manifest hash was updated.
 - Artifacts retained:
-- Result:
-- Commit:
+  - no provider artifacts; only the updated F0 seed manifest/profile fixture.
+- Result: storage backend config parses, defaults to `fs`, round-trips through the passive `ploke-records` DTO, is carried into `Prototype1StateRunShape`, and unknown backend values are rejected.
+- Commit: pending
 
 ### Slice 2 — EvalStore module, receipts, filesystem backend only
 

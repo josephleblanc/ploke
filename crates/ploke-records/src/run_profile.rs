@@ -44,14 +44,50 @@ impl Record for RunProfileRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Storage {
+    #[serde(default = "default_worktree_root")]
     pub worktree_root: PathBuf,
+    #[serde(default)]
+    pub eval: EvalStorage,
 }
 
 impl Default for Storage {
     fn default() -> Self {
         Self {
-            worktree_root: PathBuf::from("~/.ploke-eval/worktrees"),
+            worktree_root: default_worktree_root(),
+            eval: EvalStorage::default(),
         }
+    }
+}
+
+fn default_worktree_root() -> PathBuf {
+    PathBuf::from("~/.ploke-eval/worktrees")
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct EvalStorage {
+    #[serde(default)]
+    pub backend: EvalStorageBackend,
+}
+
+impl Default for EvalStorage {
+    fn default() -> Self {
+        Self {
+            backend: EvalStorageBackend::Fs,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum EvalStorageBackend {
+    Fs,
+    Database,
+    DualStrict,
+}
+
+impl Default for EvalStorageBackend {
+    fn default() -> Self {
+        Self::Fs
     }
 }
 
@@ -546,6 +582,7 @@ graph_nearest = 13
         assert_eq!(profile.selection.metrics.imp_at_k.budget_k, 50);
         assert_eq!(profile.protocol.max_tokens, 2000);
         assert_eq!(profile.protocol.reasoning, ProtocolReasoning::default());
+        assert_eq!(profile.storage.eval.backend, EvalStorageBackend::Fs);
         assert!(profile.execution.mbe.enabled);
         assert_eq!(profile.execution.mbe.python, "python3");
         assert_eq!(profile.execution.mbe.workers, 2);
@@ -554,6 +591,27 @@ graph_nearest = 13
         let decoded: RunProfileRecord = toml::from_str(&encoded).expect("roundtrip parses");
 
         assert_eq!(decoded, profile);
+    }
+
+    #[test]
+    fn run_profile_toml_defaults_eval_storage_to_fs() {
+        let parsed: RunProfileRecord = toml::from_str(PROFILE).expect("profile parses");
+
+        assert_eq!(parsed.storage.eval.backend, EvalStorageBackend::Fs);
+    }
+
+    #[test]
+    fn run_profile_toml_roundtrips_eval_storage_backend() {
+        let profile = PROFILE.replace(
+            "[target]",
+            "[storage.eval]\nbackend = \"database\"\n\n[target]",
+        );
+        let parsed: RunProfileRecord = toml::from_str(&profile).expect("profile parses");
+        let encoded = toml::to_string(&parsed).expect("profile serializes");
+        let decoded: RunProfileRecord = toml::from_str(&encoded).expect("roundtrip parses");
+
+        assert_eq!(decoded.storage.eval.backend, EvalStorageBackend::Database);
+        assert!(encoded.contains("backend = \"database\""));
     }
 
     #[test]

@@ -1033,6 +1033,7 @@ pub(crate) struct Prototype1StateRunShape {
     pub(crate) successor_oracle_mode: crate::successor_selection::OracleMode,
     pub(crate) successor_oracle_require_evidence: bool,
     pub(crate) successor_metrics_policy: crate::successor_selection::metrics::Policy,
+    pub(crate) eval_storage_backend: profile::EvalStorageBackend,
 }
 
 impl Prototype1StateRunShape {
@@ -1048,6 +1049,7 @@ impl Prototype1StateRunShape {
             successor_oracle_mode: crate::successor_selection::OracleMode::RecordOnly,
             successor_oracle_require_evidence: true,
             successor_metrics_policy: crate::successor_selection::metrics::Policy::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
         }
     }
 
@@ -1065,6 +1067,7 @@ impl Prototype1StateRunShape {
             successor_oracle_mode: profile.selection.oracle_mode(),
             successor_oracle_require_evidence: profile.selection.oracle_require_evidence(),
             successor_metrics_policy: profile.selection.metrics_policy(),
+            eval_storage_backend: profile.storage.eval.backend,
         }
     }
 

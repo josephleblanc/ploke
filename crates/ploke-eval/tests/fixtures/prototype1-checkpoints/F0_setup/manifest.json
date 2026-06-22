@@ -15,7 +15,7 @@
     },
     {
       "path": "prototype1/run-profile.toml",
-      "sha256": "fdfb1831202630fe9312c9471c213840d9b3b6bdf4f25b43ed1cb6a3e1c41ce2",
+      "sha256": "755ec13d8ba72b9731b65dbb7f784fe8193586323c8f89147148f246806de10f",
       "required": true,
       "authority_class": "profile_config"
     },

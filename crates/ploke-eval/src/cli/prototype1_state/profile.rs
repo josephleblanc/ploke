@@ -67,6 +67,7 @@ impl Prototype1RunProfile {
                 self.schema_version, RUN_PROFILE_SCHEMA_VERSION
             )));
         }
+        self.storage.validate()?;
         self.target.validate()?;
         self.model.validate()?;
         self.search.validate()?;
@@ -121,14 +122,66 @@ impl Prototype1RunProfile {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct Storage {
+    #[serde(default = "default_worktree_root")]
     pub(crate) worktree_root: PathBuf,
+    #[serde(default)]
+    pub(crate) eval: EvalStorage,
 }
 
 impl Default for Storage {
     fn default() -> Self {
         Self {
-            worktree_root: PathBuf::from("~/.ploke-eval/worktrees"),
+            worktree_root: default_worktree_root(),
+            eval: EvalStorage::default(),
         }
+    }
+}
+
+fn default_worktree_root() -> PathBuf {
+    PathBuf::from("~/.ploke-eval/worktrees")
+}
+
+impl Storage {
+    fn validate(&self) -> Result<(), PrepareError> {
+        self.eval.validate()
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct EvalStorage {
+    #[serde(default)]
+    pub(crate) backend: EvalStorageBackend,
+}
+
+impl Default for EvalStorage {
+    fn default() -> Self {
+        Self {
+            backend: EvalStorageBackend::Fs,
+        }
+    }
+}
+
+impl EvalStorage {
+    fn validate(&self) -> Result<(), PrepareError> {
+        match self.backend {
+            EvalStorageBackend::Fs
+            | EvalStorageBackend::Database
+            | EvalStorageBackend::DualStrict => Ok(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum EvalStorageBackend {
+    Fs,
+    Database,
+    DualStrict,
+}
+
+impl Default for EvalStorageBackend {
+    fn default() -> Self {
+        Self::Fs
     }
 }
 
@@ -1174,9 +1227,45 @@ graph_nearest = 13
         assert_eq!(profile.execution.broad_tui.max_attempts, Some(2));
         assert_eq!(profile.execution.broad_tui.fresh_slots_per_child, Some(2));
         assert_eq!(profile.execution.broad_tui.graph_nearest, Some(13));
+        assert_eq!(profile.storage.eval.backend, EvalStorageBackend::Fs);
         assert!(profile.execution.mbe.enabled);
         assert_eq!(profile.execution.mbe.python, "python3");
         assert_eq!(profile.execution.mbe.workers, 2);
+    }
+
+    #[test]
+    fn run_profile_storage_eval_backend_defaults_to_fs() {
+        let profile = parse_profile(Path::new("profile.toml"), PROFILE).expect("profile parses");
+
+        assert_eq!(profile.storage.eval.backend, EvalStorageBackend::Fs);
+    }
+
+    #[test]
+    fn run_profile_storage_eval_backend_roundtrips_kebab_case() {
+        let text = PROFILE.replace(
+            "[target]",
+            "[storage.eval]\nbackend = \"dual-strict\"\n\n[target]",
+        );
+        let profile = parse_profile(Path::new("profile.toml"), &text).expect("profile parses");
+        let encoded = toml::to_string(&profile).expect("serialize profile");
+        let decoded = parse_profile(Path::new("profile.toml"), &encoded).expect("roundtrip parses");
+
+        assert_eq!(profile.storage.eval.backend, EvalStorageBackend::DualStrict);
+        assert_eq!(decoded.storage.eval.backend, EvalStorageBackend::DualStrict);
+        assert!(encoded.contains("[storage.eval]"));
+        assert!(encoded.contains("backend = \"dual-strict\""));
+    }
+
+    #[test]
+    fn run_profile_storage_eval_backend_rejects_unknown() {
+        let text = PROFILE.replace(
+            "[target]",
+            "[storage.eval]\nbackend = \"db-only\"\n\n[target]",
+        );
+        let err = parse_profile(Path::new("profile.toml"), &text)
+            .expect_err("unknown eval storage backend should fail");
+
+        assert!(err.to_string().contains("backend"));
     }
 
     #[test]

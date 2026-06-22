@@ -596,6 +596,9 @@ fn state_run_shape_prefers_admitted_campaign_profile() {
 schema_version = "prototype1-run-profile.v1"
 name = "overnight-edit-surface"
 
+[storage.eval]
+backend = "dual-strict"
+
 [search]
 max_generations = 15
 max_total_nodes = 96
@@ -641,10 +644,22 @@ observe_child_stale_after_secs = 17
     assert_eq!(shape.successor_selection_seed, 7);
     assert_eq!(shape.observe_child_stale_after, Duration::from_secs(17));
     assert_eq!(
+        shape.eval_storage_backend,
+        profile::EvalStorageBackend::DualStrict
+    );
+    assert_eq!(
         shape.successor_oracle_mode,
         crate::successor_selection::OracleMode::RecordOnly
     );
     assert!(shape.successor_oracle_require_evidence);
+}
+
+#[test]
+fn state_run_shape_defaults_eval_storage_backend_to_fs() {
+    let command = state_command_without_ids();
+    let shape = Prototype1StateRunShape::from_command(&command);
+
+    assert_eq!(shape.eval_storage_backend, profile::EvalStorageBackend::Fs);
 }
 
 #[test]
