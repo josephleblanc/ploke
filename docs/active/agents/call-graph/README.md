@@ -10,9 +10,10 @@ Short description: Current source of truth for the parser call-graph feature thr
 2. [`../2026-06-22_call-graph-id-domain-correction.md`](../2026-06-22_call-graph-id-domain-correction.md) — binding design decision for call-site identity.
 3. [`2026-06-22_structural-method-call-extraction-plan.md`](2026-06-22_structural-method-call-extraction-plan.md) — completed structural method-call slice.
 4. [`2026-06-22_inherent-self-method-resolution-plan.md`](2026-06-22_inherent-self-method-resolution-plan.md) — completed first semantic resolver slice.
-5. [`../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md`](../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md) — task sequence for the first `fixture_nodes` slice.
-6. [`../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`](../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md) — broader typed call-graph rollout plan.
-7. Long-horizon proof context only if needed:
+5. [`2026-06-22_structural-path-call-extraction-plan.md`](2026-06-22_structural-path-call-extraction-plan.md) — completed structural path-call slice.
+6. [`../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md`](../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md) — task sequence for the first `fixture_nodes` slice.
+7. [`../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`](../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md) — broader typed call-graph rollout plan.
+8. Long-horizon proof context only if needed:
    - [`../../../workflow/evalnomicon/drafts/formal/detached-process-callgraph-proof-target.md`](../../../workflow/evalnomicon/drafts/formal/detached-process-callgraph-proof-target.md)
    - [`../../../workflow/evalnomicon/drafts/formal/callgraph-implementation-design-for-detached-process-proof.md`](../../../workflow/evalnomicon/drafts/formal/callgraph-implementation-design-for-detached-process-proof.md)
    - [`../../../workflow/evalnomicon/drafts/formal/macro-buildrs-callgraph-sequencing-survey.md`](../../../workflow/evalnomicon/drafts/formal/macro-buildrs-callgraph-sequencing-survey.md)
@@ -41,6 +42,10 @@ Implemented/scaffolded:
   - `syn::ExprMethodCall` with literal `self` receiver.
   - `CallNode::MethodCall` emission.
   - `CallSiteRelation::BodyContainsCall` emission.
+- Structural path-call extraction:
+  - `syn::ExprCall` with `syn::Expr::Path` callee.
+  - `CallNode::PathCall` emission.
+  - deterministic parser-internal `PathCallSiteId` construction from owner + path + span + cfgs.
 - Typed call-resolution storage/accessor scaffold:
   - `CodeGraph.call_relations`
   - `CodeGraph.call_resolution_statuses`
@@ -52,10 +57,10 @@ Implemented/scaffolded:
 - GREEN fixture tests:
   - `fixture_nodes_public_method_records_self_private_method_call_site`
   - `fixture_nodes_public_method_resolves_self_private_method_edge`
+  - `fixture_nodes_use_imported_items_records_pathbuf_new_path_call_site`
 
 Not implemented yet:
 
-- Path call extraction.
 - Dynamic call extraction.
 - Macro call extraction.
 - Non-`self` method receiver classification.
@@ -137,6 +142,22 @@ Primary implementation files:
 - `crates/ingest/syn_parser/src/parser/graph/{code_graph.rs,mod.rs,parsed_graph.rs}`
 - `crates/ingest/syn_parser/tests/uuid_phase3_resolution/call_sites.rs`
 
+## Completed implementation slice: structural path-call extraction
+
+Implemented in this slice:
+
+1. The body visitor records `syn::ExprCall` expressions whose callee is `syn::Expr::Path`.
+2. It emits `CallNode::PathCall` with path segments, value arg count, generic arg count, span, owner, and cfgs.
+3. It emits `BodyContainsCall` for the path call site.
+4. The focused fixture target is `PathBuf::new()` inside `fixture_nodes::imports::use_imported_items`.
+5. The resolver still fails closed for path-call sites; no `CallRelation::Function` edge is emitted for this structural-only slice.
+
+Primary implementation files:
+
+- `crates/ingest/syn_parser/src/parser/visitor/call_extraction.rs`
+- `crates/ingest/syn_parser/src/parser/nodes/ids/internal/call_ids.rs`
+- `crates/ingest/syn_parser/tests/uuid_phase3_resolution/call_sites.rs`
+
 ## Verification commands
 
 Known-good baseline after the ID-domain correction:
@@ -153,10 +174,10 @@ Structural fixture test now expected GREEN:
 cargo test -p syn_parser --features typed_type_graph fixture_nodes_public_method_records_self_private_method_call_site -- --nocapture
 ```
 
-Resolver fixture test now expected GREEN:
+Resolver and structural call-site fixture tests now expected GREEN:
 
 ```bash
-cargo test -p syn_parser --features typed_type_graph fixture_nodes_public_method_resolves_self_private_method_edge -- --nocapture
+cargo test -p syn_parser --features typed_type_graph call_sites -- --nocapture
 ```
 
 ## Drift prevention checklist
@@ -172,7 +193,7 @@ Before implementing new call-graph work, verify:
 
 ## Last verification summary
 
-Commands run after structural extraction and first resolver slice landed:
+Commands run after structural extraction, first resolver slice, and path-call extraction landed:
 
 ```bash
 cargo check -p syn_parser
@@ -181,12 +202,13 @@ cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --noca
 cargo test -p syn_parser --features typed_type_graph call_sites -- --nocapture
 ```
 
-Result: all passed. The `call_sites` filter ran two focused tests and both passed.
+Result: all passed. The `call_sites` filter ran three focused tests and all passed.
 
 ## Next implementation slice
 
-Broaden structural coverage before broad semantic coverage. Recommended next RED tests:
+Continue broadening structural coverage before broad semantic coverage. Recommended next RED tests:
 
-1. structural path-call extraction for a simple local `helper()` or constructor/associated-function-shaped path call;
-2. local free-function path-call resolution only after path-call structure is green;
-3. associated-function path-call resolution (`Self::new()` / `SimpleStruct::new()`) after a dedicated structural path-call test.
+1. macro-call extraction for a fixture macro invocation such as `println!` or `documented_macro!`;
+2. dynamic-call extraction for closure/function-value calls such as `alias_checker(...)`, if we decide simple path-to-binding calls should be reclassified out of `PathCall`;
+3. local free-function path-call resolution only after a local-function path-call fixture target is selected;
+4. associated-function path-call resolution after a dedicated `Self::new()` / local associated-function path-call test.

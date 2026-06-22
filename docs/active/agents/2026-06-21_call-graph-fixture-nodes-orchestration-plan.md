@@ -350,7 +350,7 @@ Stop/escalate if:
 
 ## Phase 3: Structural extraction for the first method call
 
-Status update 2026-06-22: Tasks 3.1 and 3.2 are implemented for the first narrow slice. `syn::ExprMethodCall` with literal `self` receiver now emits `CallNode::MethodCall` plus `BodyContainsCall`, and the focused fixture test passes. Broader structural forms remain future work.
+Status update 2026-06-22: Tasks 3.1 and 3.2 are implemented for the first narrow slice. `syn::ExprMethodCall` with literal `self` receiver now emits `CallNode::MethodCall` plus `BodyContainsCall`, and the focused fixture test passes. A follow-up structural slice also records `syn::ExprCall` with `syn::Expr::Path` callee as `CallNode::PathCall`; `fixture_nodes_use_imported_items_records_pathbuf_new_path_call_site` passes. Dynamic and macro forms remain future work.
 
 ### Task 3.1: Add a body call visitor for method calls
 

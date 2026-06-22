@@ -217,11 +217,11 @@ use std::convert::TryFrom;
 use std::error::Error;
 use std::fmt::Display;
 
-pub(in crate::parser) use call_ids::generate_method_call_site_id;
 pub use call_ids::{
     AnyCallSiteId, CallBodyOwnerId, CallSiteKind, DynamicCallSiteId, MacroCallSiteId,
     MethodCallSiteId, PathCallSiteId,
 };
+pub(in crate::parser) use call_ids::{generate_method_call_site_id, generate_path_call_site_id};
 
 pub use type_families::{
     AnyTypeId, OrdinaryTypeDefId, OrdinaryTypeSourceId, OrdinaryTypeTargetId, OrdinaryTypeUseId,

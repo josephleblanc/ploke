@@ -354,6 +354,29 @@ pub(super) fn generate_call_id(
     CallId::Synthetic(Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &synthetic_data))
 }
 
+/// Parser-internal constructor for path-call site IDs.
+///
+/// Call this only after structural extraction has classified an expression as a
+/// path-style call. The path segments are joined with `::` for the identity
+/// discriminator; this records the structural callee spelling and does not
+/// imply semantic target resolution.
+#[inline]
+pub(in crate::parser) fn generate_path_call_site_id(
+    owner: CallBodyOwnerId,
+    path: &[String],
+    span: (usize, usize),
+    cfgs: &[String],
+) -> PathCallSiteId {
+    let discriminator = path.join("::");
+    PathCallSiteId::create(generate_call_id(
+        owner,
+        CallSiteKind::Path,
+        discriminator.as_str(),
+        span,
+        cfgs,
+    ))
+}
+
 /// Parser-internal constructor for method-call site IDs.
 ///
 /// Call this only after structural extraction has classified an expression as a

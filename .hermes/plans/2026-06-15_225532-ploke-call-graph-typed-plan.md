@@ -28,6 +28,15 @@ The first semantic resolver slice is implemented for exact inherent `self.method
 - `resolve::call_resolution::resolve_call_relations_after_tree(...)` returns a `CallResolutionReport`; broad trait dispatch, path calls, external summaries, macro expansion, and dynamic calls remain unsupported.
 - `fixture_nodes_public_method_resolves_self_private_method_edge` is green.
 
+## 2026-06-22 structural path-call update
+
+The first path-style structural extraction slice is implemented:
+
+- `syn::ExprCall` with `syn::Expr::Path` callee now emits `CallNode::PathCall` plus `BodyContainsCall`.
+- Parser-internal `generate_path_call_site_id(...)` constructs `PathCallSiteId` over `CallId`.
+- `fixture_nodes_use_imported_items_records_pathbuf_new_path_call_site` is green.
+- Path-call semantic resolution is still intentionally not implemented.
+
 ## Current context and assumptions
 
 - Existing AST graph lives mainly under `crates/ingest/syn_parser/src/parser/`.
