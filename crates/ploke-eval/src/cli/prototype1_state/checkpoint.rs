@@ -73,6 +73,14 @@ pub(crate) enum CheckpointError {
         expected: String,
         actual: String,
     },
+    #[error("failed to create checkpoint directory '{path}': {source}")]
+    CreateDir { path: String, source: io::Error },
+    #[error("failed to copy checkpoint file '{from}' to '{to}': {source}")]
+    Copy {
+        from: String,
+        to: String,
+        source: io::Error,
+    },
 }
 
 impl CheckpointManifest {
@@ -94,6 +102,17 @@ impl CheckpointManifest {
         }
         for db in &self.db_snapshots {
             verify_path(root, &db.path, &db.sha256, db.required)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn restore_to(&self, root: &Path, dest: &Path) -> Result<(), CheckpointError> {
+        self.verify_hashes(root)?;
+        for file in &self.files {
+            copy_path(root, dest, &file.path, file.required)?;
+        }
+        for db in &self.db_snapshots {
+            copy_path(root, dest, &db.path, db.required)?;
         }
         Ok(())
     }
@@ -133,6 +152,32 @@ fn verify_path(
     }
 }
 
+fn copy_path(
+    root: &Path,
+    dest: &Path,
+    relpath: &str,
+    required: bool,
+) -> Result<(), CheckpointError> {
+    let from = root.join(relpath);
+    if !from.exists() && !required {
+        return Ok(());
+    }
+    let to = dest.join(relpath);
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent).map_err(|source| CheckpointError::CreateDir {
+            path: parent.display().to_string(),
+            source,
+        })?;
+    }
+    fs::copy(&from, &to)
+        .map(|_| ())
+        .map_err(|source| CheckpointError::Copy {
+            from: from.display().to_string(),
+            to: to.display().to_string(),
+            source,
+        })
+}
+
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
@@ -143,6 +188,8 @@ fn sha256_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use std::{fs, path::Path};
+
+    use crate::cli::prototype1_state::journal::PrototypeJournal;
 
     use super::*;
 
@@ -158,6 +205,34 @@ mod tests {
             assert!(!manifest.needs_live_regen);
             manifest.verify_hashes(&dir).expect("hashes verify");
         }
+    }
+
+    #[test]
+    fn prototype1_checkpoint_seed_fixtures_do_not_claim_authority() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(ROOT);
+        for name in ["F0_setup", "F1_ready_parent"] {
+            let manifest = CheckpointManifest::read(&root.join(name)).expect("manifest reads");
+            assert!(manifest.db_snapshots.is_empty());
+            assert!(manifest.authority_surfaces.history.is_empty());
+            assert!(manifest.authority_surfaces.channels.is_empty());
+            assert!(manifest.authority_surfaces.message_boxes.is_empty());
+            assert!(manifest.authority_surfaces.artifacts.is_empty());
+        }
+    }
+
+    #[test]
+    fn prototype1_checkpoint_restore_feeds_journal_consumer() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join(ROOT)
+            .join("F1_ready_parent");
+        let tmp = tempfile::tempdir().expect("tmp");
+        let manifest = CheckpointManifest::read(&root).expect("manifest reads");
+
+        manifest.restore_to(&root, tmp.path()).expect("restore");
+
+        let journal = PrototypeJournal::new(tmp.path().join("prototype1/transition-journal.jsonl"));
+        let entries = journal.load_entries().expect("journal consumer reads");
+        assert!(entries.is_empty());
     }
 
     #[test]

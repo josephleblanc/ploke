@@ -71,7 +71,7 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 
 ### Slice 0 — Transition inventory and checkpoint harness
 
-- Status: in progress; inventory + checkpoint manifest foundation added. Remaining before full Slice 0 exit: real restored-checkpoint consumer edge and authority-negative fixture at a real gate.
+- Status: in progress; inventory + checkpoint manifest foundation added and restored journal consumer smoke covered. Remaining before full Slice 0 exit: authority-negative fixture at a real gate.
 - Assumptions:
   - Parent transition inventory can be source-derived from `WalkPhase::next_steps()` plus explicit child C1-C5 rows until child walk metadata exists.
   - Seed F0/F1 checkpoint fixtures are manifest/hash fixtures only; they intentionally do not claim History/channel/MessageBox/artifact authority.
@@ -86,12 +86,16 @@ Commit only after the slice's required tests pass or, for expected-failing tests
   - `prototype1_transition_inventory_names_live_api_edges`
   - `prototype1_transition_inventory_generated_doc_matches_source`
   - `prototype1_checkpoint_seed_manifests_verify_hashes`
+  - `prototype1_checkpoint_seed_fixtures_do_not_claim_authority`
+  - `prototype1_checkpoint_restore_feeds_journal_consumer`
   - `prototype1_checkpoint_missing_required_file_fails`
   - `prototype1_checkpoint_hash_mismatch_fails`
 - Commands run:
   - `PLOKE_UPDATE_TRANSITION_INVENTORY=1 cargo test -p ploke-eval prototype1_transition_inventory_generated_doc_matches_source -- --nocapture`
   - `cargo fmt --all`
   - `cargo test -p ploke-eval prototype1_transition_inventory -- --nocapture`
+  - `cargo test -p ploke-eval prototype1_checkpoint -- --nocapture`
+  - `cargo fmt --all`
   - `cargo test -p ploke-eval prototype1_checkpoint -- --nocapture`
 - Live API used: no
 - Checkpoints created/updated:
@@ -100,7 +104,7 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Artifacts retained:
   - checked-in generated inventory doc with row count 26.
   - checked-in checkpoint seed manifests/files only; no provider payloads or secrets.
-- Result: focused inventory and checkpoint manifest tests pass; full Slice 0 still requires restored consumer and authority-negative gate tests.
+- Result: focused inventory and checkpoint manifest tests pass; full Slice 0 still requires an authority-negative test at a real gate.
 - Commit: pending
 
 ### Slice 1 — Profile config shape only
