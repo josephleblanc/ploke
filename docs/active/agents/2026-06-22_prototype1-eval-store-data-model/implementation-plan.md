@@ -5,6 +5,8 @@ Status: active implementation-prep plan; no storage code should move until Phase
 Related files:
 
 - [`storage-plan.md`](storage-plan.md) — authority boundaries, backend model, config sketch, and migration boundary guardrails.
+- [`slice-by-slice-implementation-plan.md`](slice-by-slice-implementation-plan.md) — code-checked implementation slices, live/API checkpoint gates, validation details, and commit/log contract.
+- [`implementation-log.md`](implementation-log.md) — implementation/run log template for slice execution evidence.
 - [`persistence-port-map.md`](persistence-port-map.md) — broader port/trait map for all persisted surfaces so implementation does not collapse everything into `EvalStore`.
 - [`typestate-persistence-ledger.md`](typestate-persistence-ledger.md) — source-checked transition ledger and hard gates.
 - [`live-transition-test-plan.md`](live-transition-test-plan.md) — isolated transition confidence suite, including live provider/API policy.
@@ -266,16 +268,17 @@ Rationale:
 
 `eval_record_ref` for one `JsonRecordFile::emit` family is the next likely slice after this first writer, not an alternative first slice.
 
-### First-slice contract to finalize before coding
+### First-slice contract source
 
-Keep the first-slice contract in one place and reference it from other docs. Before implementing Phase 3/4, write the exact contract into [`database-planning-notes.md`](database-planning-notes.md):
+The exact first-slice contract now lives in [`database-planning-notes.md`](database-planning-notes.md) under “Accepted first-slice contract before coding.” Treat that section as canonical for:
 
-- the narrow method name and envelope type, e.g. a parent-start-specific method rather than a generic record emitter;
-- the filesystem evidence covered by parity: `JournalEntry::ParentStarted` and the parent-start resource sample currently appended by `r4c_to_r5`;
-- the DB relation set for this slice only;
+- the narrow `put_parent_started` method and envelope;
+- filesystem evidence covered by parity: `JournalEntry::ParentStarted` and the parent-start resource sample currently appended by `r4c_to_r5`;
+- first-slice DB relation set;
 - deterministic id and semantic envelope/hash inputs;
-- minimal enum values for `store_scope`, `producer_role`, `visibility_scope`, `source_class`, `evidence_class`, and `validation_status`;
-- dual-strict write order, duplicate handling, and failure behavior.
+- minimal common-axis values;
+- duplicate/idempotency behavior;
+- dual-strict write order and partial-write failure behavior.
 
 ## Test command notes
 
@@ -284,14 +287,16 @@ Exact commands should be finalized when test targets exist. Expected families:
 ```text
 cargo test -p ploke-eval prototype1_transition_inventory
 cargo test -p ploke-eval prototype1_checkpoint
-cargo test -p ploke-eval prototype1_eval_store
-cargo test -p ploke-eval prototype1_storage_dual_strict
+cargo test -p ploke-eval prototype1_eval_store_parent_start_fs
+cargo test -p ploke-eval prototype1_eval_store_parent_start_db
+cargo test -p ploke-eval prototype1_eval_store_parent_start_dual_strict
+cargo test -p ploke-eval prototype1_storage_authority_negative
 ```
 
 Live provider suite should be explicit and must not rely on a feature alone. In the current crate, `live_api_tests` may be enabled by default, so use an ignored test plus a suite-specific environment opt-in:
 
 ```text
-PLOKE_EVAL_LIVE_API_TESTS=1 cargo test -p ploke-eval --features live_api_tests -- --ignored prototype1_live_transition
+PLOKE_EVAL_LIVE_API_TESTS=1 PLOKE_RUN_LIVE_TESTS=1 cargo test -p ploke-eval --features live_api_tests -- --ignored prototype1_live_transition
 ```
 
 Keep exact provider/model/profile requirements beside the tests when implemented.

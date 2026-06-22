@@ -9,6 +9,8 @@ Short description: planning packet for replacing Prototype 1 shared-filesystem a
 Read these first when implementing:
 
 - [`implementation-plan.md`](implementation-plan.md) — canonical phased implementation plan, first-slice decision, and migration gates.
+- [`slice-by-slice-implementation-plan.md`](slice-by-slice-implementation-plan.md) — consolidated code-checked slice plan with concrete files/functions to change per slice.
+- [`implementation-log.md`](implementation-log.md) — implementation/run log template for autonomous slice execution, test evidence, live API usage, checkpoints, and commits.
 - [`storage-plan.md`](storage-plan.md) — authority boundaries, Domain-C `EvalStore` backend model, config sketch, and migration boundary guardrails; it no longer carries a competing implementation sequence.
 - [`persistence-port-map.md`](persistence-port-map.md) — broader port/trait map for all persisted surfaces so implementation does not collapse them into `EvalStore`.
 - [`relational-data-model.md`](relational-data-model.md) — canonical logical relation model, common axes, and relation status rules.

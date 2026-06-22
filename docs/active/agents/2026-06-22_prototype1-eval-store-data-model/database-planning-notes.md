@@ -294,14 +294,166 @@ Queries enabled:
 - “which source evidence supports parent-start/resource observation?”
 - “can filesystem and DB forms be compared deterministically?”
 
-First-slice contract to write before coding:
+Accepted first-slice contract before coding:
 
 - **Writer:** `R4c -> R5` only.
 - **Current filesystem evidence:** `JournalEntry::ParentStarted` plus the parent-start resource sample appended by `append_parent_target_sample`.
 - **Authority class:** evidence/projection only; startup readiness remains decided before this writer.
 - **Method shape:** one parent-start-specific `EvalStore` method/envelope, not a generic record emitter.
-- **DB rows:** start with `eval_transition_event`; add `eval_record_ref`, `eval_runtime`, or `eval_trace_event` only if the envelope can populate their required fields without guessing.
-- **Required pre-code decisions:** deterministic id inputs, semantic envelope/hash fields, minimal common-axis enum values, duplicate/idempotency behavior, and dual-strict write-order/failure behavior.
+- **DB rows:** `eval_transition_event` plus two `eval_record_ref` rows for the exact journal source lines. Do not add `eval_runtime` in this slice because genesis parent-start currently has no concrete parent runtime id; `ParentStartedEntry` only has optional `handoff_runtime_id`. Do not add `eval_trace_event` until a structured trace writer/import slice exists.
+
+Rust method/envelope shape:
+
+```rust
+trait EvalStore {
+    fn put_parent_started(
+        &mut self,
+        evidence: ParentStartedEvidence,
+    ) -> Result<ParentStartedReceipt, EvalStoreError>;
+}
+```
+
+`ParentStartedEvidence` fields:
+
+```text
+campaign_id
+parent_identity
+repo_root
+handoff_runtime_id
+pid
+parent_started_recorded_at
+resource_recorded_at
+resource_subject = cargo_target
+resource_phase = parent_start
+resource_path = repo_root/target
+resource_status
+resource_bytes
+resource_error
+```
+
+The filesystem backend appends the two journal entries and returns source receipts:
+
+```text
+journal_path
+source_stream_id
+source_event_index      -- zero-based JSONL event index
+source_line             -- one-based JSONL line
+byte_start
+byte_len_without_newline
+content_sha256          -- compact JSON line bytes, excluding trailing newline
+payload_json            -- compact JSON line payload for small source ref rows
+```
+
+First-slice common-axis values:
+
+| Field | `eval_transition_event` | `eval_record_ref` for `ParentStarted` | `eval_record_ref` for resource sample |
+| --- | --- | --- | --- |
+| `store_scope` | `parent` | `parent` | `parent` |
+| `producer_role` | `parent` | `parent` | `parent` |
+| `visibility_scope` | `parent_visible` | `parent_visible` | `parent_visible` |
+| `source_class` | `direct_write` | `direct_write` | `direct_write` |
+| `evidence_class` | `typed_transition` | `typed_transition` | `diagnostic` |
+| `validation_status` | `valid` | `valid` | `valid` |
+
+Deterministic ids:
+
+```text
+source_stream_id = "prototype1-transition-journal:" || campaign_id || ":" || journal_path
+transition_event_id = sha256(
+  "p1.eval.transition_event.v1" || campaign_id || parent_id ||
+  "r4c_to_r5" || source_stream_id || parent_started_source_event_index ||
+  parent_started_content_sha256
+)
+record_ref_id = sha256(
+  "p1.eval.record_ref.v1" || campaign_id || family || source_stream_id ||
+  source_event_index || content_sha256
+)
+semantic_hash = sha256(canonical_json(ParentStartedSemanticEnvelopeV1))
+```
+
+`ParentStartedSemanticEnvelopeV1` contains the typed fields above plus the resource sample fields, but not DB relation ordering or Cozo formatting.
+
+First-slice DDL shape:
+
+```text
+eval_transition_event {
+  event_id: String =>
+  campaign_id: String,
+  parent_id: String,
+  runtime_id: String?,
+  node_id: String,
+  generation: Int,
+  transition: String,
+  phase: String,
+  outcome: String,
+  store_scope: String,
+  producer_role: String,
+  visibility_scope: String,
+  source_class: String,
+  evidence_class: String,
+  validation_status: String,
+  source_stream_id: String,
+  source_event_index: Int,
+  source_line: Int,
+  source_ref: String,
+  content_sha256: String,
+  semantic_hash: String,
+  recorded_at: Int,
+  ingested_at: String
+}
+
+eval_record_ref {
+  record_ref_id: String =>
+  campaign_id: String,
+  family: String,
+  schema_version: String,
+  store_scope: String,
+  producer_role: String,
+  producer_id: String?,
+  source_class: String,
+  evidence_class: String,
+  visibility_scope: String,
+  validation_status: String,
+  source_stream_id: String,
+  source_event_index: Int,
+  source_line: Int,
+  source_ref: String,
+  content_sha256: String,
+  payload_json: String?,
+  recorded_at: Int?,
+  ingested_at: String
+}
+```
+
+First-slice query validation:
+
+```text
+parent_started_by_parent(campaign_id, parent_id)
+  -> event_id, semantic_hash, source_ref, source_event_index, content_sha256
+
+record_refs_for_event(event_id)
+  -> ParentStarted source line ref, Resource(parent_start) source line ref
+
+dual_strict_parent_start_parity(campaign_id, parent_id)
+  -> semantic_hash_from_fs == semantic_hash_from_db
+```
+
+Duplicate/idempotency behavior:
+
+- same deterministic id + same semantic hash/content hash: idempotent success;
+- same deterministic id + different semantic hash/content hash: hard error;
+- missing common axes, source stream fields, content hash, or parent identity fields: validate before write and fail without DB mutation.
+
+Dual-strict write order/failure behavior:
+
+1. Append filesystem `ParentStarted` journal line.
+2. Append filesystem `Resource(parent_start)` journal line.
+3. Construct semantic envelope from the requested evidence plus filesystem receipts.
+4. Write DB rows in one DB transaction/script.
+5. Query back the DB semantic hash and source refs.
+6. Fail the transition loudly if DB write/query fails or hash/source-ref parity fails.
+
+Rationale: filesystem-first preserves current transition-journal replay while DB parity is proven. If DB fails after filesystem success, the transition returns an error with journal path, event indices, line hashes, and expected semantic hash so an operator can diagnose or re-import the already-written source evidence. Do not silently mark the run successful in `dual-strict` after a DB failure.
 
 ### Slice A — trace/log/reference evidence
 
