@@ -26,7 +26,9 @@ use crate::common::{
 
 const IMPLS_RS: &str = "src/impls.rs";
 const SIMPLE_STRUCT_IMPL_SPAN: (usize, usize) = (520, 750);
+const PRIVATE_STRUCT_IMPL_SPAN: (usize, usize) = (790, 884);
 const SELF_PRIVATE_METHOD_CALL_SPAN: (usize, usize) = (721, 742);
+const SELF_SECRET_LEN_CALL_SPAN: (usize, usize) = (859, 876);
 const HASHMAP_NEW_CALL_SPAN: (usize, usize) = (3413, 3442);
 const FS_READ_TO_STRING_CALL_SPAN: (usize, usize) = (3838, 3865);
 const PATHBUF_NEW_CALL_SPAN: (usize, usize) = (3930, 3944);
@@ -44,6 +46,19 @@ fn simple_struct_inherent_method_args(ident: &'static str) -> AssocParanoidArgs<
         expected_path: &["crate", "impls"],
         owner: AssocOwner::Impl {
             span: SIMPLE_STRUCT_IMPL_SPAN,
+        },
+        ident,
+        expected_cfg: None,
+    }
+}
+
+fn private_struct_inherent_method_args(ident: &'static str) -> AssocParanoidArgs<'static> {
+    AssocParanoidArgs {
+        fixture: "fixture_nodes",
+        relative_file_path: IMPLS_RS,
+        expected_path: &["crate", "impls"],
+        owner: AssocOwner::Impl {
+            span: PRIVATE_STRUCT_IMPL_SPAN,
         },
         ident,
         expected_cfg: None,
@@ -367,6 +382,114 @@ fn fixture_nodes_public_method_records_self_private_method_call_site() -> Result
     assert_eq!(
         private_owned_call_count, 0,
         "SimpleStruct::private_method should own zero parsed call sites in this fixture row"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn fixture_nodes_get_secret_len_records_self_field_len_method_call_site()
+-> Result<(), SynParserError> {
+    let method_args = private_struct_inherent_method_args("get_secret_len");
+    let method_info = method_args.generate_method_pid(&*PARSED_FIXTURE_CRATE_NODES)?;
+    let method_id = method_info.test_method_id();
+    let owner = CallBodyOwnerId::Method(method_id);
+
+    let (graph, tree) = build_tree_for_tests("fixture_nodes");
+    let method = graph
+        .find_node_unique(method_info.test_any_id())
+        .expect("get_secret_len id should resolve to a unique graph node")
+        .as_method()
+        .expect("get_secret_len id should resolve to MethodNode");
+    assert_eq!(method.name, "get_secret_len");
+
+    let owned_calls = graph
+        .call_sites()
+        .iter()
+        .filter(|call| call.owner() == owner)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        owned_calls.len(),
+        1,
+        "PrivateStruct::get_secret_len should own exactly one self-field method call site"
+    );
+
+    let method_call = match owned_calls[0] {
+        CallNode::MethodCall(method_call) => method_call,
+        other => panic!("expected self.secret.len() to be a method call, got {other:?}"),
+    };
+
+    assert_eq!(method_call.owner, owner);
+    assert_eq!(method_call.method_name, "len");
+    assert_eq!(
+        method_call.receiver,
+        MethodCallReceiver::SelfField {
+            field_path: vec!["secret".to_string()]
+        }
+    );
+    assert_eq!(method_call.arg_count, 0);
+    assert_eq!(method_call.generic_arg_count, 0);
+    assert_eq!(method_call.span, SELF_SECRET_LEN_CALL_SPAN);
+    assert!(
+        method.span.0 <= method_call.span.0 && method_call.span.1 <= method.span.1,
+        "call span {:?} should be inside get_secret_len span {:?}",
+        method_call.span,
+        method.span
+    );
+
+    let regenerated_call_id = MethodCallSiteId::new_call_test(generate_test_call_id(
+        owner,
+        CallSiteKind::Method,
+        method_call.method_name.as_str(),
+        method_call.span,
+        method_call.cfgs.as_slice(),
+    ));
+    assert_eq!(
+        method_call.id, regenerated_call_id,
+        "method call site id should be deterministic from owner + name + span + cfgs"
+    );
+
+    let parsed_call_id = AnyCallSiteId::Method(method_call.id);
+    let body_contains_count = graph
+        .call_site_relations()
+        .iter()
+        .filter(|relation| {
+            matches!(
+                relation,
+                CallSiteRelation::BodyContainsCall { source, target }
+                    if *source == owner && *target == parsed_call_id
+            )
+        })
+        .count();
+    assert_eq!(
+        body_contains_count, 1,
+        "expected exactly one BodyContainsCall relation from get_secret_len to self.secret.len()"
+    );
+
+    let report = resolve_call_relations_after_tree(&graph, &tree)?;
+    let resolved_edge_count = report
+        .relations
+        .iter()
+        .filter(|relation| matches!(relation, CallRelation::Method { source, .. } if *source == method_call.id))
+        .count();
+    assert_eq!(
+        resolved_edge_count, 0,
+        "self-field method call should not fabricate a local method edge"
+    );
+
+    let unsupported_status_count = report
+        .statuses
+        .iter()
+        .filter(|status| {
+            matches!(
+                status,
+                CallResolutionStatus::Unsupported { source } if *source == parsed_call_id
+            )
+        })
+        .count();
+    assert_eq!(
+        unsupported_status_count, 1,
+        "self-field method calls should currently receive exactly one Unsupported status"
     );
 
     Ok(())

@@ -67,6 +67,7 @@ Implemented/scaffolded:
   - `fixture_nodes_use_imported_items_path_call_fixture_matrix`
   - `fixture_nodes_use_imported_items_records_documented_macro_call_site`
   - `fixture_nodes_use_all_const_static_records_println_macro_call_site`
+  - `fixture_nodes_get_secret_len_records_self_field_len_method_call_site`
 
 Not implemented yet:
 
@@ -150,6 +151,20 @@ Primary implementation files:
 - `crates/ingest/syn_parser/src/parser/graph/{code_graph.rs,mod.rs,parsed_graph.rs}`
 - `crates/ingest/syn_parser/tests/uuid_phase3_resolution/call_sites.rs`
 
+## Completed implementation slice: self-field method-call extraction
+
+Implemented in this slice:
+
+1. Method-call receiver classification now recognizes field projections rooted at `self`, such as `self.secret`.
+2. `self.secret.len()` in `fixture_nodes::impls::PrivateStruct::get_secret_len` is recorded as `CallNode::MethodCall` with `MethodCallReceiver::SelfField { field_path: ["secret"] }`.
+3. The resolver fails closed for this call with `Unsupported` and emits no fake local `CallRelation::Method` edge.
+
+Primary implementation files:
+
+- `crates/ingest/syn_parser/src/parser/nodes/call.rs`
+- `crates/ingest/syn_parser/src/parser/visitor/call_extraction.rs`
+- `crates/ingest/syn_parser/tests/uuid_phase3_resolution/call_sites.rs`
+
 ## Completed implementation slice: structural path-call extraction
 
 Implemented in this slice:
@@ -226,7 +241,7 @@ cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --noca
 cargo test -p syn_parser --features typed_type_graph call_sites -- --nocapture
 ```
 
-Result: all passed. The `call_sites` filter ran six focused tests and all passed.
+Result: all passed. The `call_sites` filter ran seven focused tests and all passed.
 
 ## Next implementation slice
 

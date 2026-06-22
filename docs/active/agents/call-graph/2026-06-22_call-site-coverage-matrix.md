@@ -26,7 +26,7 @@ This matrix is Ploke-native, not a copy of RA behavior. RA is a reference for ca
 |---|---|---|
 | `ExprCall` with `ExprPath` callee | `CallNode::PathCall` | Current implementation. This is intentionally syntactic; `closure_binding()` and `fn_ptr()` are path-shaped even if semantic target is dynamic. |
 | `ExprCall` with non-path callee | `CallNode::DynamicCall` | Future implementation. Examples: `(f)()`, `(|| 1)()`, `make_fn()()`, `funcs[0]()`. |
-| `ExprMethodCall` | `CallNode::MethodCall` | Current implementation only records literal `self` receiver; receiver classification needs to broaden. |
+| `ExprMethodCall` | `CallNode::MethodCall` | Current implementation records literal `self` receivers and field projections rooted at `self`; broader local binding/literal/call receivers still need classification. |
 | `ExprMacro` / statement-position `StmtMacro` | `CallNode::MacroCall` | Current implementation. Invocation site only, no expansion. |
 | Calls inside const/static/associated const initializers | Future owner expansion | Requires extending `CallBodyOwnerId`; do not force these into function/method owners. |
 | Calls inside closure/async/block bodies | Future owner/nesting model | Need closure/body-owner IDs or explicit containment under nearest item plus nested-body metadata. |
@@ -47,6 +47,7 @@ Every structural call site considered by `resolve_call_relations_after_tree` sho
 Current green behavior:
 
 - `self.private_method()` -> `MethodCall`, `Resolved(LocalExact)`, `CallRelation::Method`.
+- `self.secret.len()` -> `MethodCall` with `SelfField { field_path: ["secret"] }`, `Unsupported`, no edge.
 - `PathBuf::new()` -> `PathCall`, `Unsupported`, no edge.
 - `HashMap::<String, i32>::new()`, `fs::read_to_string(...)`, `EnumWithData::Variant1(1)`, `Duration::from_secs(1)`, `Arc::new(1)`, and `TupleStruct(1, 2)` -> `PathCall`, `Unsupported`, no edge.
 - `documented_macro!(...)` and statement-position `println!(...)` -> `MacroCall`, `Unsupported`, no edge.
@@ -60,7 +61,7 @@ This section maps the exhaustive rows below to concrete fixtures we can use. Pre
 | Fixture | File | Expression / target | Matrix rows | Status | Notes |
 |---|---|---|---|---|---|
 | `fixture_nodes` | `src/impls.rs:45` | `self.private_method()` | M01, M22 | **green** | Structural `MethodCall`, `Resolved(LocalExact)`, `CallRelation::Method`. |
-| `fixture_nodes` | `src/impls.rs:52` | `self.secret.len()` | M02, M07 | **ready RED** | Drives non-literal/field receiver method extraction; should not fabricate local edge. |
+| `fixture_nodes` | `src/impls.rs:52` | `self.secret.len()` | M02, M07 | **green** | Covered by `fixture_nodes_get_secret_len_records_self_field_len_method_call_site`; records `SelfField`, currently `Unsupported`. |
 | `fixture_nodes` | `src/impls.rs:77` | `self.value.len()` | M03, M07 | **ready RED** | Generic/string-like field receiver; unsupported until receiver typing. |
 | `fixture_nodes` | `src/impls.rs:103` | `self.value.into()` | M04 | **ready RED** | Trait conversion method on generic receiver. |
 | `fixture_nodes` | `src/imports.rs:108` | `HashMap::<String, i32>::new()` | P18 | **green** | Covered by `fixture_nodes_use_imported_items_path_call_fixture_matrix`; explicit generic args. |
@@ -176,7 +177,7 @@ This section maps the exhaustive rows below to concrete fixtures we can use. Pre
 | ID | Rust expression | Fixture candidate | Receiver class needed | Current resolver expectation | Target family eventually |
 |---|---|---|---|---|---|
 | M01 | `self.private_method()` | current green test | `SelfValue` | `Resolved(LocalExact)` | `MethodNodeId` |
-| M02 | `self.secret.len()` | `fixture_nodes/src/impls.rs` | field receiver rooted at self | should be structural, no fake local edge | external/std method or unsupported |
+| M02 | `self.secret.len()` | `fixture_nodes/src/impls.rs` | field receiver rooted at self | currently structural `SelfField`, `Unsupported`, no fake local edge | external/std method or unsupported |
 | M03 | `self.value.len()` | `fixture_nodes/src/impls.rs` | field receiver rooted at self/generic | unsupported/external until typing | trait/inherent method |
 | M04 | `self.value.into()` | `fixture_nodes/src/impls.rs` | field receiver rooted at self/generic | unsupported/external until typing | trait method |
 | M05 | `local.clone()` | add/use fixture | local binding receiver | future trait/inherent resolution | `MethodNodeId` or external |

@@ -174,6 +174,30 @@ fn classify_method_receiver(receiver: &syn::Expr) -> Option<MethodCallReceiver> 
         syn::Expr::Path(path) if path.qself.is_none() && path.path.is_ident("self") => {
             Some(MethodCallReceiver::SelfValue)
         }
+        syn::Expr::Field(_) => self_field_path(receiver)
+            .filter(|field_path| !field_path.is_empty())
+            .map(|field_path| MethodCallReceiver::SelfField { field_path }),
         _ => None,
+    }
+}
+
+fn self_field_path(expr: &syn::Expr) -> Option<Vec<String>> {
+    match expr {
+        syn::Expr::Path(path) if path.qself.is_none() && path.path.is_ident("self") => {
+            Some(Vec::new())
+        }
+        syn::Expr::Field(field) => {
+            let mut field_path = self_field_path(field.base.as_ref())?;
+            field_path.push(member_name(&field.member));
+            Some(field_path)
+        }
+        _ => None,
+    }
+}
+
+fn member_name(member: &syn::Member) -> String {
+    match member {
+        syn::Member::Named(ident) => ident.to_string(),
+        syn::Member::Unnamed(index) => index.index.to_string(),
     }
 }

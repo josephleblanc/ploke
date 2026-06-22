@@ -152,4 +152,10 @@ pub struct MacroCallNode {
 pub enum MethodCallReceiver {
     /// The receiver expression is the literal `self` value.
     SelfValue,
+    /// The receiver is a field projection rooted at `self`, such as
+    /// `self.secret` or `self.inner.value`.
+    SelfField {
+        /// Field/member projection path after `self`.
+        field_path: Vec<String>,
+    },
 }
