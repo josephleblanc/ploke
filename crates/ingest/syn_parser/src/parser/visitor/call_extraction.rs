@@ -41,13 +41,13 @@ struct BodyCallVisitor<'a> {
 }
 
 impl BodyCallVisitor<'_> {
-    fn record_macro_call(&mut self, call: &syn::ExprMacro) {
-        let macro_name = path_discriminator(&call.mac.path);
+    fn record_macro_call(&mut self, mac: &syn::Macro) {
+        let macro_name = path_discriminator(&mac.path);
         if macro_name.is_empty() {
             return;
         }
 
-        let byte_range = call.span().byte_range();
+        let byte_range = mac.span().byte_range();
         let span = (byte_range.start, byte_range.end);
         let id = generate_macro_call_site_id(self.owner, &macro_name, span, self.cfgs);
         let target = id.into();
@@ -128,8 +128,13 @@ impl BodyCallVisitor<'_> {
 
 impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
     fn visit_expr_macro(&mut self, call: &'ast syn::ExprMacro) {
-        self.record_macro_call(call);
+        self.record_macro_call(&call.mac);
         visit::visit_expr_macro(self, call);
+    }
+
+    fn visit_stmt_macro(&mut self, call: &'ast syn::StmtMacro) {
+        self.record_macro_call(&call.mac);
+        visit::visit_stmt_macro(self, call);
     }
 
     fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {

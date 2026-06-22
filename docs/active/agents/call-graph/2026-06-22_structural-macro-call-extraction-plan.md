@@ -19,7 +19,8 @@ pub fn use_imported_items() {
 Expected first behavior:
 
 - `documented_macro!(...)` is observed as `syn::ExprMacro`.
-- The parser emits one `CallNode::MacroCall` owned by `CallBodyOwnerId::Function(use_imported_items_id)`.
+- Statement-position macros such as `println!(...)` are observed as `syn::StmtMacro`.
+- The parser emits one `CallNode::MacroCall` owned by `CallBodyOwnerId::Function(use_imported_items_id)` for each macro invocation site.
 - The macro call records:
   - macro name/path `documented_macro`;
   - source byte span;
@@ -31,7 +32,7 @@ Expected first behavior:
 
 1. Add a focused RED test in `uuid_phase3_resolution/call_sites.rs`.
 2. Add parser-internal `generate_macro_call_site_id(...)` over `CallId`.
-3. Extend `call_extraction.rs` with `visit_expr_macro` handling.
+3. Extend `call_extraction.rs` with `visit_expr_macro` and `visit_stmt_macro` handling.
 4. Record `MacroCallNode` and `BodyContainsCall`.
 5. Re-run focused call-site tests and existing type-relation baseline.
 
@@ -46,7 +47,7 @@ cargo test -p syn_parser --features typed_type_graph call_sites -- --nocapture
 cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --nocapture
 ```
 
-All commands passed. The `call_sites` filter ran four focused tests and all passed.
+All commands passed. The `call_sites` filter now runs six focused tests and all passed.
 
 ## Non-goals
 

@@ -16,7 +16,9 @@ use syn_parser::parser::nodes::{
 use syn_parser::parser::relations::{
     CallRelation, CallResolutionKind, CallResolutionStatus, CallSiteRelation,
 };
-use syn_parser::resolve::call_resolution::resolve_call_relations_after_tree;
+use syn_parser::resolve::call_resolution::{
+    CallResolutionReport, resolve_call_relations_after_tree,
+};
 
 use crate::common::{
     AssocOwner, AssocParanoidArgs, PARSED_FIXTURE_CRATE_NODES, build_tree_for_tests,
@@ -25,8 +27,15 @@ use crate::common::{
 const IMPLS_RS: &str = "src/impls.rs";
 const SIMPLE_STRUCT_IMPL_SPAN: (usize, usize) = (520, 750);
 const SELF_PRIVATE_METHOD_CALL_SPAN: (usize, usize) = (721, 742);
+const HASHMAP_NEW_CALL_SPAN: (usize, usize) = (3413, 3442);
+const FS_READ_TO_STRING_CALL_SPAN: (usize, usize) = (3838, 3865);
 const PATHBUF_NEW_CALL_SPAN: (usize, usize) = (3930, 3944);
+const ENUM_VARIANT1_CALL_SPAN: (usize, usize) = (4007, 4032);
 const DOCUMENTED_MACRO_CALL_SPAN: (usize, usize) = (4894, 4935);
+const DURATION_FROM_SECS_CALL_SPAN: (usize, usize) = (5235, 5257);
+const ARC_NEW_CALL_SPAN: (usize, usize) = (5452, 5463);
+const TUPLE_STRUCT_CALL_SPAN: (usize, usize) = (5549, 5566);
+const PRINTLN_USED_CALL_SPAN: (usize, usize) = (4395, 4461);
 
 fn simple_struct_inherent_method_args(ident: &'static str) -> AssocParanoidArgs<'static> {
     AssocParanoidArgs {
@@ -74,6 +83,182 @@ fn fixture_nodes_function<'a>(
             many.len()
         ),
     }
+}
+
+struct PathCallExpectation<'a> {
+    path: &'a [&'a str],
+    span: (usize, usize),
+    arg_count: usize,
+    generic_arg_count: usize,
+}
+
+fn path_matches(path: &[String], expected: &[&str]) -> bool {
+    path.iter().map(String::as_str).eq(expected.iter().copied())
+}
+
+fn expect_unsupported_path_call<'a>(
+    graph: &'a impl GraphAccess,
+    report: &CallResolutionReport,
+    owner: CallBodyOwnerId,
+    expectation: &PathCallExpectation<'_>,
+) -> &'a syn_parser::parser::nodes::PathCallNode {
+    let matching_path_calls = graph
+        .call_sites()
+        .iter()
+        .filter_map(|call| match call {
+            CallNode::PathCall(path_call)
+                if path_call.owner == owner
+                    && path_matches(&path_call.path, expectation.path)
+                    && path_call.span == expectation.span =>
+            {
+                Some(path_call)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching_path_calls.len(),
+        1,
+        "expected exactly one path call {:?} at {:?}",
+        expectation.path,
+        expectation.span
+    );
+    let path_call = matching_path_calls[0];
+
+    assert_eq!(path_call.owner, owner);
+    assert!(path_matches(&path_call.path, expectation.path));
+    assert_eq!(path_call.arg_count, expectation.arg_count);
+    assert_eq!(path_call.generic_arg_count, expectation.generic_arg_count);
+    assert_eq!(path_call.span, expectation.span);
+
+    let path_discriminator = expectation.path.join("::");
+    let regenerated_call_id = PathCallSiteId::new_call_test(generate_test_call_id(
+        owner,
+        CallSiteKind::Path,
+        path_discriminator.as_str(),
+        path_call.span,
+        path_call.cfgs.as_slice(),
+    ));
+    assert_eq!(
+        path_call.id, regenerated_call_id,
+        "path call site id should be deterministic from owner + path + span + cfgs"
+    );
+
+    let parsed_call_id = AnyCallSiteId::Path(path_call.id);
+    let body_contains_count = graph
+        .call_site_relations()
+        .iter()
+        .filter(|relation| {
+            matches!(
+                relation,
+                CallSiteRelation::BodyContainsCall { source, target }
+                    if *source == owner && *target == parsed_call_id
+            )
+        })
+        .count();
+    assert_eq!(
+        body_contains_count, 1,
+        "expected exactly one BodyContainsCall relation for path call {:?}",
+        expectation.path
+    );
+
+    let resolved_edge_count = report
+        .relations
+        .iter()
+        .filter(|relation| {
+            matches!(relation, CallRelation::Function { source, .. } if *source == path_call.id)
+        })
+        .count();
+    assert_eq!(
+        resolved_edge_count, 0,
+        "path-call coverage rows should not emit resolved function edges yet"
+    );
+
+    let unsupported_status_count = report
+        .statuses
+        .iter()
+        .filter(|status| {
+            matches!(
+                status,
+                CallResolutionStatus::Unsupported { source }
+                    if *source == parsed_call_id
+            )
+        })
+        .count();
+    assert_eq!(
+        unsupported_status_count, 1,
+        "path call {:?} should currently receive exactly one Unsupported status",
+        expectation.path
+    );
+
+    path_call
+}
+
+fn expect_unsupported_macro_call<'a>(
+    graph: &'a impl GraphAccess,
+    report: &CallResolutionReport,
+    owner: CallBodyOwnerId,
+    macro_name: &str,
+    span: (usize, usize),
+) -> &'a syn_parser::parser::nodes::MacroCallNode {
+    let matching_macro_calls = graph
+        .call_sites()
+        .iter()
+        .filter_map(|call| match call {
+            CallNode::MacroCall(macro_call)
+                if macro_call.owner == owner
+                    && macro_call.macro_name == macro_name
+                    && macro_call.span == span =>
+            {
+                Some(macro_call)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching_macro_calls.len(),
+        1,
+        "expected exactly one macro call {macro_name}! at {span:?}"
+    );
+    let macro_call = matching_macro_calls[0];
+
+    let regenerated_call_id = MacroCallSiteId::new_call_test(generate_test_call_id(
+        owner,
+        CallSiteKind::Macro,
+        macro_call.macro_name.as_str(),
+        macro_call.span,
+        macro_call.cfgs.as_slice(),
+    ));
+    assert_eq!(macro_call.id, regenerated_call_id);
+
+    let parsed_call_id = AnyCallSiteId::Macro(macro_call.id);
+    let body_contains_count = graph
+        .call_site_relations()
+        .iter()
+        .filter(|relation| {
+            matches!(
+                relation,
+                CallSiteRelation::BodyContainsCall { source, target }
+                    if *source == owner && *target == parsed_call_id
+            )
+        })
+        .count();
+    assert_eq!(body_contains_count, 1);
+
+    let unsupported_status_count = report
+        .statuses
+        .iter()
+        .filter(|status| {
+            matches!(
+                status,
+                CallResolutionStatus::Unsupported { source }
+                    if *source == parsed_call_id
+            )
+        })
+        .count();
+    assert_eq!(unsupported_status_count, 1);
+
+    macro_call
 }
 
 #[test]
@@ -292,6 +477,65 @@ fn fixture_nodes_use_imported_items_records_pathbuf_new_path_call_site()
 }
 
 #[test]
+fn fixture_nodes_use_imported_items_path_call_fixture_matrix() -> Result<(), SynParserError> {
+    let (graph, tree) = build_tree_for_tests("fixture_nodes");
+    let report = resolve_call_relations_after_tree(&graph, &tree)?;
+    let function = fixture_nodes_function(&graph, &["crate", "imports"], "use_imported_items");
+    let owner = CallBodyOwnerId::Function(function.id);
+
+    let cases = [
+        PathCallExpectation {
+            path: &["HashMap", "new"],
+            span: HASHMAP_NEW_CALL_SPAN,
+            arg_count: 0,
+            generic_arg_count: 2,
+        },
+        PathCallExpectation {
+            path: &["fs", "read_to_string"],
+            span: FS_READ_TO_STRING_CALL_SPAN,
+            arg_count: 1,
+            generic_arg_count: 0,
+        },
+        PathCallExpectation {
+            path: &["EnumWithData", "Variant1"],
+            span: ENUM_VARIANT1_CALL_SPAN,
+            arg_count: 1,
+            generic_arg_count: 0,
+        },
+        PathCallExpectation {
+            path: &["Duration", "from_secs"],
+            span: DURATION_FROM_SECS_CALL_SPAN,
+            arg_count: 1,
+            generic_arg_count: 0,
+        },
+        PathCallExpectation {
+            path: &["Arc", "new"],
+            span: ARC_NEW_CALL_SPAN,
+            arg_count: 1,
+            generic_arg_count: 0,
+        },
+        PathCallExpectation {
+            path: &["TupleStruct"],
+            span: TUPLE_STRUCT_CALL_SPAN,
+            arg_count: 2,
+            generic_arg_count: 0,
+        },
+    ];
+
+    for case in &cases {
+        let call = expect_unsupported_path_call(&graph, &report, owner, case);
+        assert!(
+            function.span.0 <= call.span.0 && call.span.1 <= function.span.1,
+            "call span {:?} should be inside use_imported_items span {:?}",
+            call.span,
+            function.span
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn fixture_nodes_use_imported_items_records_documented_macro_call_site()
 -> Result<(), SynParserError> {
     let (graph, tree) = build_tree_for_tests("fixture_nodes");
@@ -377,6 +621,27 @@ fn fixture_nodes_use_imported_items_records_documented_macro_call_site()
     assert_eq!(
         unsupported_status_count, 1,
         "macro calls should currently receive exactly one Unsupported status"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn fixture_nodes_use_all_const_static_records_println_macro_call_site() -> Result<(), SynParserError>
+{
+    let (graph, tree) = build_tree_for_tests("fixture_nodes");
+    let report = resolve_call_relations_after_tree(&graph, &tree)?;
+    let function =
+        fixture_nodes_function(&graph, &["crate", "const_static"], "use_all_const_static");
+    let owner = CallBodyOwnerId::Function(function.id);
+
+    let macro_call =
+        expect_unsupported_macro_call(&graph, &report, owner, "println", PRINTLN_USED_CALL_SPAN);
+    assert!(
+        function.span.0 <= macro_call.span.0 && macro_call.span.1 <= function.span.1,
+        "println! span {:?} should be inside use_all_const_static span {:?}",
+        macro_call.span,
+        function.span
     );
 
     Ok(())

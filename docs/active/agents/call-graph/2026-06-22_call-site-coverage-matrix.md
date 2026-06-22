@@ -27,7 +27,7 @@ This matrix is Ploke-native, not a copy of RA behavior. RA is a reference for ca
 | `ExprCall` with `ExprPath` callee | `CallNode::PathCall` | Current implementation. This is intentionally syntactic; `closure_binding()` and `fn_ptr()` are path-shaped even if semantic target is dynamic. |
 | `ExprCall` with non-path callee | `CallNode::DynamicCall` | Future implementation. Examples: `(f)()`, `(|| 1)()`, `make_fn()()`, `funcs[0]()`. |
 | `ExprMethodCall` | `CallNode::MethodCall` | Current implementation only records literal `self` receiver; receiver classification needs to broaden. |
-| `ExprMacro` | `CallNode::MacroCall` | Current implementation. Invocation site only, no expansion. |
+| `ExprMacro` / statement-position `StmtMacro` | `CallNode::MacroCall` | Current implementation. Invocation site only, no expansion. |
 | Calls inside const/static/associated const initializers | Future owner expansion | Requires extending `CallBodyOwnerId`; do not force these into function/method owners. |
 | Calls inside closure/async/block bodies | Future owner/nesting model | Need closure/body-owner IDs or explicit containment under nearest item plus nested-body metadata. |
 | Desugared/implicit calls | Separate future effect/call layer | Operators, `for`, `?`, `.await`, drop, deref coercions, etc. should be explicit matrix rows, not silently ignored. |
@@ -48,7 +48,74 @@ Current green behavior:
 
 - `self.private_method()` -> `MethodCall`, `Resolved(LocalExact)`, `CallRelation::Method`.
 - `PathBuf::new()` -> `PathCall`, `Unsupported`, no edge.
-- `documented_macro!(...)` -> `MacroCall`, `Unsupported`, no edge.
+- `HashMap::<String, i32>::new()`, `fs::read_to_string(...)`, `EnumWithData::Variant1(1)`, `Duration::from_secs(1)`, `Arc::new(1)`, and `TupleStruct(1, 2)` -> `PathCall`, `Unsupported`, no edge.
+- `documented_macro!(...)` and statement-position `println!(...)` -> `MacroCall`, `Unsupported`, no edge.
+
+## Fixture-backed target index
+
+This section maps the exhaustive rows below to concrete fixtures we can use. Prefer rows marked **ready** before adding new fixture code. Rows marked **needs fixture** are known gaps.
+
+### Artificial parser fixtures: ready or near-ready
+
+| Fixture | File | Expression / target | Matrix rows | Status | Notes |
+|---|---|---|---|---|---|
+| `fixture_nodes` | `src/impls.rs:45` | `self.private_method()` | M01, M22 | **green** | Structural `MethodCall`, `Resolved(LocalExact)`, `CallRelation::Method`. |
+| `fixture_nodes` | `src/impls.rs:52` | `self.secret.len()` | M02, M07 | **ready RED** | Drives non-literal/field receiver method extraction; should not fabricate local edge. |
+| `fixture_nodes` | `src/impls.rs:77` | `self.value.len()` | M03, M07 | **ready RED** | Generic/string-like field receiver; unsupported until receiver typing. |
+| `fixture_nodes` | `src/impls.rs:103` | `self.value.into()` | M04 | **ready RED** | Trait conversion method on generic receiver. |
+| `fixture_nodes` | `src/imports.rs:108` | `HashMap::<String, i32>::new()` | P18 | **green** | Covered by `fixture_nodes_use_imported_items_path_call_fixture_matrix`; explicit generic args. |
+| `fixture_nodes` | `src/imports.rs:120` | `fs::read_to_string("dummy")` | P07 | **green** | Covered by path-call fixture matrix; external module-qualified path call currently `Unsupported`. |
+| `fixture_nodes` | `src/imports.rs:125` | `EnumWithData::Variant1(1)` | P23 | **green** | Covered by path-call fixture matrix; tuple variant constructor-shaped path call. |
+| `fixture_nodes` | `src/imports.rs:134` | `alias_checker(&_trait_user)` | P25, D12/D13 policy | **policy needed** | Syntactically path call to closure binding; decide structural-vs-semantic dynamic policy. |
+| `fixture_nodes` | `src/imports.rs:152` | `documented_macro!(fixture alias coverage)` | X01 | **green** | Structural `MacroCall`, `Unsupported`. |
+| `fixture_nodes` | `src/imports.rs:165` | `Duration::from_secs(1)` | P20 | **green** | Covered by path-call fixture matrix; external associated-function-shaped path call. |
+| `fixture_nodes` | `src/imports.rs:172` | `Arc::new(1)` | P21 | **green** | Covered by path-call fixture matrix; external associated-function-shaped path call. |
+| `fixture_nodes` | `src/imports.rs:174` | `TupleStruct(1, 2)` | P22 | **green** | Covered by path-call fixture matrix; tuple struct constructor-shaped path call. |
+| `fixture_nodes` | `src/const_static.rs:54` | `five()` in `const FN_CALL_CONST` | owner matrix const | **blocked** | Requires `CallBodyOwnerId` extension for const initializer owners. |
+| `fixture_nodes` | `src/const_static.rs:148` | `println!(...)` | X02, X09 | **green** | Covered by `fixture_nodes_use_all_const_static_records_println_macro_call_site`; statement-position macro call in ordinary function body. |
+| `fixture_macros` | `src/lib.rs:20` | `local_macro!(my_var)` | X08, X09 | **ready green** | Local macro invocation in function body. |
+| `fixture_macros` | `src/lib.rs:21` | `println!("{}", my_var)` | X02, X09 | **ready green** | Standard macro invocation adjacent to local macro. |
+| `fixture_path_resolution` | `src/lib.rs` | `Regex::new(...).unwrap()` | P20-like, M13 | **ready RED/green split** | PathCall for `Regex::new`; method call `.unwrap()` needs receiver broadening. |
+| `fixture_path_resolution` | `src/lib.rs` | `NodeId::generate_synthetic(...)` | P12/P20-like | **ready green** | Qualified associated-function-shaped path call. |
+| `fixture_path_resolution` | `src/lib.rs` | `debug!(...)`, `info!(...)` | X01/X02-like | **ready green** | External/logging macro invocations. |
+| `fixture_path_resolution` | `src/lib.rs` | `super::restricted_func()` | P04 | **ready green** | Super-qualified local path call in inline module. |
+| `fixture_impls` | `src/main.rs:9-13` | `x.func_test_one()`, `x.func_test_two()`, `x.func_test_three()`, `x.func_test_five()` | M05, M20-ish | **ready RED** | Non-`self` local variable receiver method calls. |
+| `fixture_impls` | `src/main.rs:12` | `TestImplStruct::func_test_four()` | P12/P14 | **ready green** | Associated-function-shaped path call to local impl method; resolution later. |
+| `fixture_impls` | `src/main.rs:15` | `println!(...)` | X02, X09 | **ready green** | Macro call in binary main. |
+| `fixture_type_resolution_v2` | `src/lib.rs` | generic/trait-heavy owners | M18/M19 candidates | **needs scan** | Good place to find bound-based method calls if present; otherwise add fixture. |
+| `fixture_generics` | `src/lib.rs` | generic functions/types | P11/M18 candidates | **needs scan** | Good candidate for generic path/method calls. |
+| `fixture_edge_cases` | `src/lib.rs` | unusual syntax | P28/raw identifiers maybe | **needs scan** | Use before adding raw-ident fixture. |
+
+### Workspace/mock fixtures
+
+| Fixture | Files | Useful for | Status | Notes |
+|---|---|---|---|---|
+| `tests/fixture_workspace/fixture_mock_serde` | mock serde crates + build.rs | build scripts, proc-macro-ish crate layout, multi-crate external-ish calls | **later** | Useful after per-workspace call reports are stable. |
+| `tests/fixture_workspace/ws_fixture_02_assoc_local_enum_ids` | many focused repro members | local enum/assoc ID edge cases | **needs scan** | Good source for constructor and associated item edge cases. |
+| `tests/fixture_workspace/ws_fixture_03_cli_collision` | CLI collision repro | duplicate names / path ambiguity | **later** | Useful for ambiguous path-call resolution tests. |
+
+### Real Rust corpus fixtures
+
+| Corpus fixture | File / grep target | Matrix rows | Status | Notes |
+|---|---|---|---|---|
+| `fixture_github_clones/corpus/axum` | `examples/http-proxy/src/main.rs` | P20/P21, M13-M16, D02/D04, X02 | **later smoke** | Dense async/fluent chains: `Router::new().route(...)`, `get(|| async { ... })`, `service_fn(move |req| ...)`, `tokio::task::spawn(async move { ... })`, `.await`. |
+| `fixture_github_clones/corpus/axum` | `examples/testing/src/main.rs` | P20, M13, D02, X03 | **later smoke** | `Router::new().route(...)`, closure handlers, `Request::get(format!(...))`, `.ready().await.unwrap().call(...)`. |
+| `fixture_github_clones/corpus/axum` | `examples/chat/src/main.rs` | P20/P21, M13/M17, D02, X03 | **later smoke** | `Arc::new`, `ws.on_upgrade(|socket| ...)`, `tokio::spawn(async move { ... })`, websocket stream `.next().await`. |
+| `fixture_github_clones/corpus/serde` | `serde*/build.rs`, derive crates | owner matrix build/proc macro rows, implicit/macro rows | **later smoke** | Good for build scripts/proc macro sequencing once parser call facts are robust. |
+
+### Known fixture gaps
+
+| Missing case | Matrix rows | Suggested fixture action |
+|---|---|---|
+| Direct local free function call `callee()` with no imports/ambiguity | P01 | Add tiny row to an existing artificial fixture or find in simple crates. |
+| `crate::m::callee()` / `self::callee()` exact local calls | P02/P03 | Scan `fixture_path_resolution`; add if absent. |
+| `<Type>::assoc()` / `<Type as Trait>::assoc()` | P15/P16 | Add explicit artificial fixture; RA grammar confirms this syntax matters. |
+| `(f)()` / `(|| 1)()` / `make_fn()()` | D01-D04 | Add explicit dynamic-call fixture after policy decision. |
+| `if/match` callee dynamic calls | D05-D06 | Add explicit dynamic-call fixture. |
+| Function pointer and `Fn` trait calls | P26/P27/D10-D13 | Add explicit fixture with `fn` pointer, closure binding, generic `F: FnOnce`. |
+| Raw identifier calls/methods | P28/M24 | Add if not found in `fixture_edge_cases`. |
+| Ambiguous trait methods | M20/M21 | Add explicit fixture; important for fail-closed resolver. |
+| Closure body ownership | owner matrix closure | Add after closure owner/nesting design. |
 
 ## Body-owner coverage matrix
 
@@ -139,7 +206,7 @@ Current green behavior:
 | ID | Rust expression | Fixture candidate | Structural expectation | Resolver expectation |
 |---|---|---|---|---|
 | X01 | `documented_macro!(...)` | current green test | `MacroCall` | `Unsupported`, no edge |
-| X02 | `println!(...)` | `fixture_nodes/src/const_static.rs` | `MacroCall` once owner supports const/static? actually in function body `use_all_const_static` | `Unsupported` |
+| X02 | `println!(...)` | `fixture_nodes/src/const_static.rs` | `MacroCall` including statement-position macro syntax | `Unsupported` |
 | X03 | `format!(...)` | `new_test_module.rs`, currently not module-routed | `MacroCall` after fixture routing | `Unsupported` |
 | X04 | `vec![...]` | add fixture | `MacroCall` | `Unsupported` |
 | X05 | `assert_eq!(...)` in tests | fixture test modules may be cfg/test | `MacroCall` if test bodies parsed | `Unsupported` |

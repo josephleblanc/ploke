@@ -49,7 +49,7 @@ Implemented/scaffolded:
   - `CallNode::PathCall` emission.
   - deterministic parser-internal `PathCallSiteId` construction from owner + path + span + cfgs.
 - Structural macro-call extraction:
-  - `syn::ExprMacro`.
+  - `syn::ExprMacro` and statement-position `syn::StmtMacro`.
   - `CallNode::MacroCall` emission.
   - deterministic parser-internal `MacroCallSiteId` construction from owner + macro path + span + cfgs.
 - Typed call-resolution storage/accessor scaffold:
@@ -64,7 +64,9 @@ Implemented/scaffolded:
   - `fixture_nodes_public_method_records_self_private_method_call_site`
   - `fixture_nodes_public_method_resolves_self_private_method_edge`
   - `fixture_nodes_use_imported_items_records_pathbuf_new_path_call_site`
+  - `fixture_nodes_use_imported_items_path_call_fixture_matrix`
   - `fixture_nodes_use_imported_items_records_documented_macro_call_site`
+  - `fixture_nodes_use_all_const_static_records_println_macro_call_site`
 
 Not implemented yet:
 
@@ -168,10 +170,10 @@ Primary implementation files:
 
 Implemented in this slice:
 
-1. The body visitor records `syn::ExprMacro` invocations.
+1. The body visitor records `syn::ExprMacro` invocations and statement-position `syn::StmtMacro` invocations.
 2. It emits `CallNode::MacroCall` with macro path/name, span, owner, and cfgs.
 3. It emits `BodyContainsCall` for the macro call site.
-4. The focused fixture target is `documented_macro!(fixture alias coverage)` inside `fixture_nodes::imports::use_imported_items`.
+4. Focused fixture targets include `documented_macro!(fixture alias coverage)` inside `fixture_nodes::imports::use_imported_items` and `println!(...)` inside `fixture_nodes::const_static::use_all_const_static`.
 5. No macro expansion or macro target resolution is attempted.
 
 Primary implementation files:
@@ -224,7 +226,7 @@ cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --noca
 cargo test -p syn_parser --features typed_type_graph call_sites -- --nocapture
 ```
 
-Result: all passed. The `call_sites` filter ran four focused tests and all passed.
+Result: all passed. The `call_sites` filter ran six focused tests and all passed.
 
 ## Next implementation slice
 
