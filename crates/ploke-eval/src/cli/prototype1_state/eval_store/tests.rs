@@ -17,6 +17,7 @@ use super::{
         PARENT_STARTED_TRANSITION, RECORD_REL, STORE_SCOPE, TRACE_EVENT_REL,
         parent_started_db_receipt,
     },
+    selection::{SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL},
 };
 use crate::cli::prototype1_state::{
     event::RecordedAt,
@@ -109,6 +110,12 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
     assert!(
         eval_relation_exists(&db, CONTINUATION_DECISION_REL)
             .expect("continuation decision rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, SELECTION_DECISION_REL).expect("selection decision rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, SELECTION_CANDIDATE_REL).expect("selection candidate rel exists")
     );
     assert!(eval_relation_exists(&db, RECORD_REL).expect("record rel exists"));
     assert!(eval_relation_exists(&db, LOG_REF_REL).expect("log rel exists"));

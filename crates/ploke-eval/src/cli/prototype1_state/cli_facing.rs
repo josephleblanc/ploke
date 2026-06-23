@@ -848,6 +848,7 @@ struct DeterministicTuiToolsCandidates {
     rejected_attempts: Vec<surface_attempt::Evidence>,
 }
 
+#[derive(Clone)]
 pub(crate) struct SelectionSealMaterial {
     procedure: ProcedureRef,
     scope: SelectionScope,
@@ -7332,13 +7333,56 @@ pub(crate) fn select_successor_for_profile(
         run_profile.selection.oracle_require_evidence(),
         run_profile.selection.metrics_policy(),
     );
-    ParentSelection::new(
+    let selection = ParentSelection::new(
         manifest_path,
         parent_identity,
         child_outcomes,
         rejected_surface_attempts,
     )
-    .select_successor(run_profile.selection.seed, strategy)
+    .select_successor(run_profile.selection.seed, strategy)?;
+    if let Some((decision, material)) = selection.as_ref() {
+        emit_selection_decision_if_owner_db_exists(
+            manifest_path,
+            parent_identity,
+            decision,
+            material,
+        )?;
+    }
+    Ok(selection)
+}
+
+fn emit_selection_decision_if_owner_db_exists(
+    manifest_path: &Path,
+    parent_identity: &ParentIdentity,
+    decision: &SuccessorDecision,
+    material: &SelectionSealMaterial,
+) -> Result<(), PrepareError> {
+    let db_path = eval_store::prototype1_eval_store_db_path(manifest_path);
+    if !db_path.is_file() {
+        return Ok(());
+    }
+    let entry = material.clone().into_entry(decision.clone())?;
+    let evidence = eval_store::SelectionDecisionEvidence {
+        campaign_id: parent_identity.campaign_id().clone(),
+        parent_id: parent_identity.parent_id().to_string(),
+        decision_ref: Some(format!(
+            "selection:{}:{}",
+            parent_identity.parent_id(),
+            entry.decision.candidate_node_id
+        )),
+        entry,
+        recorded_at: Some(Utc::now().to_rfc3339()),
+    };
+    eval_store::write_selection_decision_to_owner_db(&db_path, evidence).map_err(|source| {
+        PrepareError::DatabaseSetup {
+            phase: "eval_selection_decision_put",
+            detail: format!(
+                "failed to persist selection decision rows for '{}': {source}",
+                db_path.display()
+            ),
+        }
+    })?;
+    Ok(())
 }
 
 #[instrument(

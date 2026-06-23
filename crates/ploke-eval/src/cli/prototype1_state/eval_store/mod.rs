@@ -14,6 +14,7 @@ mod error;
 mod evaluation;
 mod evidence;
 mod observation;
+mod selection;
 
 #[cfg(test)]
 mod tests;
@@ -48,3 +49,6 @@ pub(crate) use evidence::{
 pub(crate) use evidence::{LogRefEvidence, ParentStartedReceipt};
 #[cfg(test)]
 pub(crate) use observation::ObservationJsonlImport;
+#[cfg(test)]
+pub(crate) use selection::{SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL};
+pub(crate) use selection::{SelectionDecisionEvidence, write_selection_decision_to_owner_db};

@@ -895,6 +895,36 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: continuation decisions now install and write queryable `eval_continuation_decision` rows when the owner eval DB exists. The authority-negative test proves the passive row does not append a successor journal entry or replace successor transition authority.
 - Commit: `feat: mirror continuation decision summaries`.
 
+### Slice 9c — Selection decision and candidate summary rows
+
+- Status: complete for `eval_selection_decision` and `eval_selection_candidate` rows written after `select_successor_for_profile` returns a typed successor selection.
+- Assumptions:
+  - `SelectionDecisionEntry` remains the source carrier for sealed selection evidence. The eval-store evidence type is only a private DB row carrier for Cozo writes.
+  - Selection rows are passive query evidence. They do not replace sealed History admission, transition-journal successor authority, active checkout advancement, or successor startup validation.
+  - This sub-slice persists the decision and candidate membership rows only. `eval_selection_finding` and `eval_selection_score` remain follow-up work because they need a separate mapping from domain findings and metric formula rows.
+  - `set_id` is the candidate-set root when available, otherwise the considered-order hash. Candidate `member_id` prefers membership id, then occurrence id, then payload hash.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/selection.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/cozo_schema.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/mod.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/tests.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs`
+- Tests added/changed:
+  - existing `historical_node_150_channel_treatment_reaches_current_generation_handoff` now seeds an owner eval DB, asserts selection decision/candidate rows, and proves those passive rows do not append a successor journal entry.
+  - existing `prototype1_eval_store_parent_start_db_schema_installs_idempotently`
+- Commands run:
+  - `gitnexus impact ... select_successor_for_profile`: LOW risk; 3 direct callers, affected processes `live_google_step_child_plan` and `live_google_parallel_slots`.
+  - `gitnexus impact ... install_schema`: HIGH risk; 8 direct callers, no affected execution flows. Schema coverage added.
+  - `gitnexus impact ... SelectionSealMaterial`: HIGH risk through selection/reconstruction. Change limited to deriving `Clone` so the existing sealed carrier can be reused for passive DB rows without consuming the live handoff material.
+  - `cargo fmt --all`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval historical_node_150_channel_treatment_reaches_current_generation_handoff -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_parent_start_db_schema_installs_idempotently -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
+- Live API used: no. This sub-slice mirrors local parent-side selection evidence and does not modify provider execution or terminal result production.
+- Result: selection now writes queryable decision and candidate rows when the owner eval DB exists. The handoff test still exercises the real artifact selection path, and the journal assertion proves DB rows do not replace successor transition authority.
+- Commit: `feat: mirror selection decision summaries`.
+
 ### Later slices
 
 Create a new subsection per slice before editing.

@@ -6268,6 +6268,12 @@ fn historical_node_150_channel_treatment_reaches_current_generation_handoff() {
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+    ploke_db::Database::new_init()
+        .expect("empty eval db")
+        .write_backup_to_path(&db_path)
+        .expect("seed owner eval db");
     let parent_identity: ParentIdentity = json_fixture(include_str!(
         "../../../tests/fixtures/prototype1-node-150-handoff/parent_identity.json"
     ));
@@ -6573,6 +6579,123 @@ seed = 0
         Some(outcome.node.branch_id.as_str())
     );
     assert!(material.selected_from_generation_outcomes);
+    let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+    let decision_rows = db
+        .raw_query_params(
+            r#"
+?[
+    decision_id,
+    parent_id,
+    procedure_id,
+    selected_node_id,
+    outcome,
+    disposition,
+    decision_hash
+] :=
+    *eval_selection_decision {
+        decision_id,
+        parent_id,
+        procedure_id,
+        selected_node_id,
+        outcome,
+        disposition,
+        decision_hash
+    }
+"#,
+            std::collections::BTreeMap::new(),
+        )
+        .expect("query selection decision rows");
+    assert_eq!(decision_rows.rows.len(), 1);
+    let decision_row = decision_rows
+        .row_refs()
+        .next()
+        .expect("selection decision row");
+    let decision_id = decision_row
+        .get::<String>("decision_id")
+        .expect("decision id");
+    assert_eq!(
+        decision_row.get::<String>("parent_id").expect("parent"),
+        parent_identity.parent_id()
+    );
+    assert_eq!(
+        decision_row
+            .get::<String>("procedure_id")
+            .expect("procedure"),
+        crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID
+    );
+    assert_eq!(
+        decision_row
+            .get::<String>("selected_node_id")
+            .expect("selected node"),
+        NODE_ID
+    );
+    assert_eq!(
+        decision_row.get::<String>("outcome").expect("outcome"),
+        "accepted"
+    );
+    assert_eq!(
+        decision_row
+            .get::<String>("disposition")
+            .expect("disposition"),
+        "keep"
+    );
+    assert!(
+        !decision_row
+            .get::<String>("decision_hash")
+            .expect("decision hash")
+            .is_empty()
+    );
+
+    let mut candidate_params = std::collections::BTreeMap::new();
+    candidate_params.insert(
+        "decision_id".to_string(),
+        cozo::DataValue::from(decision_id),
+    );
+    let candidate_rows = db
+        .raw_query_params(
+            r#"
+?[
+    node_id,
+    branch_id,
+    selectable,
+    selected
+] :=
+    *eval_selection_candidate {
+        decision_id,
+        node_id,
+        branch_id,
+        selectable,
+        selected
+    },
+    decision_id = $decision_id
+"#,
+            candidate_params,
+        )
+        .expect("query selection candidate rows");
+    assert_eq!(candidate_rows.rows.len(), 1);
+    let candidate_row = candidate_rows
+        .row_refs()
+        .next()
+        .expect("selection candidate row");
+    assert_eq!(
+        candidate_row.get::<String>("node_id").expect("node"),
+        NODE_ID
+    );
+    assert_eq!(
+        candidate_row.get::<String>("branch_id").expect("branch"),
+        outcome.node.branch_id
+    );
+    assert!(candidate_row.get::<bool>("selectable").expect("selectable"));
+    assert!(candidate_row.get::<bool>("selected").expect("selected"));
+    let journal_entries = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path))
+        .load_entries()
+        .expect("load journal entries");
+    assert!(
+        journal_entries
+            .iter()
+            .all(|entry| !matches!(entry, JournalEntry::Successor(_))),
+        "passive eval-store selection rows must not replace successor transition authority"
+    );
 
     let (selection, trace) = collect_traces(|| {
         select_artifact_for_handoff(&decision, &material)
