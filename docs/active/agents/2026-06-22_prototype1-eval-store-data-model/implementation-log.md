@@ -1,0 +1,226 @@
+# Prototype 1 Eval Store Implementation Log
+
+Status: active implementation log template; fill as slices are implemented.
+
+Related files:
+
+- [`slice-by-slice-implementation-plan.md`](slice-by-slice-implementation-plan.md)
+- [`live-transition-test-plan.md`](live-transition-test-plan.md)
+- [`transition-persistence-dependency-matrix.md`](transition-persistence-dependency-matrix.md)
+- [`database-planning-notes.md`](database-planning-notes.md)
+
+## Operating contract
+
+Use this log during implementation so another agent/operator can resume, review, or revert at slice boundaries.
+
+For each slice:
+
+1. Record assumptions and any unresolved decisions before editing.
+2. Run impact analysis for symbols before modifying code.
+3. Update tests first when the slice changes behavior.
+4. Run the slice's local tests and required checkpoint/live tests.
+5. Record exact commands, environment variables, and artifact/checkpoint paths.
+6. Run `git status --short` and `git diff --stat` before committing.
+7. Run GitNexus change detection before each commit when available in the harness.
+8. Commit after each validated slice with a slice-scoped message.
+
+Do not commit secrets, provider credentials, live run payloads with secrets, or large generated artifacts. Persist only manifests, hashes, and intentional small fixtures.
+
+## Live API policy for implementation
+
+Provider-facing producer transitions may make live API calls when the operator has exported the required opt-in variables and credentials.
+
+Required migration-suite opt-in:
+
+```text
+PLOKE_EVAL_LIVE_API_TESTS=1
+```
+
+Recommended strict mode for avoiding accidental skips:
+
+```text
+PLOKE_RUN_LIVE_TESTS=1
+```
+
+Direct-Google defaults and credentials:
+
+```text
+GOOGLE_PROJECT_ID=<project>      # code can default if absent, but log the effective value
+GOOGLE_REGION=<region>           # code can default if absent, but log the effective value
+PLOKE_EVAL_LIVE_GOOGLE_MODEL_ID=google/gemini-2.5-flash-lite  # or explicit override
+# Google ADC auth must be available to the process.
+```
+
+Provider-facing producer tests must not pass through skips or mocks when `PLOKE_RUN_LIVE_TESTS=1` is set.
+
+## Commit cadence
+
+Suggested commit boundaries:
+
+- `docs: add eval-store implementation validation gates` — planning/log-only update.
+- `test: add prototype1 transition inventory and checkpoints` — Slice 0.
+- `feat: add prototype1 eval storage config` — Slice 1.
+- `feat: add fs eval-store parent-start scaffold` — Slices 2/3 if small enough, otherwise split.
+- `feat: add eval-store parent-start db schema` — Slice 4.
+- `feat: enable dual-strict parent-start eval storage` — Slice 5.
+- Continue one commit per later storage slice.
+
+Commit only after the slice's required tests pass or, for expected-failing tests added before implementation, after documenting the expected failure and not claiming the slice is complete.
+
+## Slice entries
+
+### Slice 0 — Transition inventory and checkpoint harness
+
+- Status: complete for Slice 0 harness scope.
+- Assumptions:
+  - Parent transition inventory can be source-derived from `WalkPhase::next_steps()` plus explicit child C1-C5 rows until child walk metadata exists.
+  - Seed F0/F1 checkpoint fixtures are manifest/hash fixtures only; they intentionally do not claim History/channel/MessageBox/artifact authority.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/transition_inventory.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/checkpoint.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/mod.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs`
+  - `crates/ploke-eval/tests/fixtures/prototype1-checkpoints/`
+  - `docs/active/agents/2026-06-22_prototype1-eval-store-data-model/transition-inventory.generated.md`
+- Tests added/changed:
+  - `prototype1_transition_inventory_covers_source_edges`
+  - `prototype1_transition_inventory_names_live_api_edges`
+  - `prototype1_transition_inventory_generated_doc_matches_source`
+  - `prototype1_checkpoint_seed_manifests_verify_hashes`
+  - `prototype1_checkpoint_seed_fixtures_do_not_claim_authority`
+  - `prototype1_checkpoint_restore_feeds_journal_consumer`
+  - `prototype1_checkpoint_missing_required_file_fails`
+  - `prototype1_checkpoint_hash_mismatch_fails`
+  - `prototype1_storage_authority_negative_projection_cannot_replace_child_plan_box`
+- Commands run:
+  - `PLOKE_UPDATE_TRANSITION_INVENTORY=1 cargo test -p ploke-eval prototype1_transition_inventory_generated_doc_matches_source -- --nocapture`
+  - `cargo fmt --all`
+  - `cargo test -p ploke-eval prototype1_transition_inventory -- --nocapture`
+  - `cargo test -p ploke-eval prototype1_checkpoint -- --nocapture`
+  - `cargo fmt --all`
+  - `cargo test -p ploke-eval prototype1_checkpoint -- --nocapture`
+  - `cargo test -p ploke-eval prototype1_storage_authority_negative_projection_cannot_replace_child_plan_box -- --nocapture`
+  - `cargo test -p ploke-eval prototype1_storage_authority_negative -- --nocapture`
+- Live API used: no
+- Checkpoints created/updated:
+  - `F0_setup` seed manifest and required hash files.
+  - `F1_ready_parent` seed manifest and required hash files.
+- Artifacts retained:
+  - checked-in generated inventory doc with row count 26.
+  - checked-in checkpoint seed manifests/files only; no provider payloads or secrets.
+- Result: focused inventory, checkpoint manifest/restore, restored journal consumer, and authority-negative MessageBox gate tests pass. Slice 0 names 26 transition/outcome rows; provider-facing rows remain live/API only in the confidence suite.
+- Commit: `efbdf01a`, `3f41cf05`, `57b98b41`
+
+### Slice 1 — Profile config shape only
+
+- Status: complete.
+- Assumptions:
+  - Omitted `[storage]` and omitted `[storage.eval]` must continue to default to filesystem mode.
+  - A `[storage.eval]` table may be present without explicitly repeating `worktree_root`; `worktree_root` keeps its prior default.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/profile.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs`
+  - `crates/ploke-records/src/run_profile.rs`
+  - `crates/ploke-eval/tests/fixtures/prototype1-checkpoints/F0_setup/`
+- Tests added/changed:
+  - `run_profile_storage_eval_backend_defaults_to_fs`
+  - `run_profile_storage_eval_backend_roundtrips_kebab_case`
+  - `run_profile_storage_eval_backend_rejects_unknown`
+  - `state_run_shape_defaults_eval_storage_backend_to_fs`
+  - `state_run_shape_prefers_admitted_campaign_profile`
+  - `run_profile_toml_defaults_eval_storage_to_fs`
+  - `run_profile_toml_roundtrips_eval_storage_backend`
+  - existing `admitted_run_profile_carries_digest`
+  - existing `prototype1_checkpoint_seed_manifests_verify_hashes`
+- Commands run:
+  - `cargo fmt --all`
+  - `cargo test -p ploke-eval run_profile_storage_eval_backend -- --nocapture`
+  - `cargo test -p ploke-eval state_run_shape -- --nocapture`
+  - `cargo test -p ploke-records run_profile_toml -- --nocapture`
+  - `cargo test -p ploke-eval admitted_run_profile_carries_digest -- --nocapture`
+  - `cargo test -p ploke-eval prototype1_checkpoint_seed_manifests_verify_hashes -- --nocapture`
+- Live API used: no
+- Checkpoints created/updated:
+  - `F0_setup/prototype1/run-profile.toml` now explicitly includes `[storage.eval] backend = "fs"` and manifest hash was updated.
+- Artifacts retained:
+  - no provider artifacts; only the updated F0 seed manifest/profile fixture.
+- Result: storage backend config parses, defaults to `fs`, round-trips through the passive `ploke-records` DTO, is carried into `Prototype1StateRunShape`, and unknown backend values are rejected.
+- Commit: `647c1ab3`
+
+### Slice 2 — EvalStore module, receipts, filesystem backend only
+
+- Status: complete; production `R4c -> R5` not moved yet.
+- Assumptions:
+  - `append_with_receipt` must preserve the exact compact JSONL bytes produced by the existing `RecordStore::append` implementation.
+  - Resource-sample construction can be split from append behavior without changing current best-effort callers.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/journal.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/mod.rs`
+- Tests added/changed:
+  - `prototype1_eval_store_parent_start_fs_appends_expected_entries`
+  - `append_with_receipt_preserves_record_store_bytes`
+  - existing `replay_all_collects_each_transition_family`
+- Commands run:
+  - `cargo fmt --all`
+  - `cargo test -p ploke-eval prototype1_eval_store_parent_start_fs -- --nocapture`
+  - `cargo test -p ploke-eval append_with_receipt_preserves_record_store_bytes -- --nocapture`
+  - `cargo test -p ploke-eval replay_all_collects_each_transition_family -- --nocapture`
+  - `cargo test -p ploke-eval prototype1_eval_store_parent_start_fs -- --nocapture`
+- Live API used: no
+- Checkpoints created/updated: none
+- Artifacts retained: none
+- Result: `EvalStore`/`FsEvalStore` exists, returns journal append receipts, writes `ParentStarted` plus `Resource(parent_start)`, and existing journal replay smoke still passes. Default production path is unchanged until Slice 3.
+- Commit: `2ce48b46`
+
+### Slice 3 — Move `R4c -> R5` behind FsEvalStore
+
+- Status: complete for `fs`; production `database`/`dual-strict` return explicit configuration errors until DB handle wiring.
+- Assumptions:
+  - `backend = fs` must preserve the existing parent-start/resource JSONL evidence path.
+  - `database` and `dual-strict` must fail loudly rather than use the passive mirror or silently fall back.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/live_edges.rs`
+- Tests added/changed:
+  - production code now uses the Slice 2 `FsEvalStore` path; no new dedicated R4c fixture test was added in this sub-slice.
+  - existing `prototype1_eval_store_parent_start_fs_appends_expected_entries` covers the writer semantics used by `R4c -> R5`.
+- Commands run:
+  - `cargo fmt --all`
+  - `cargo test -p ploke-eval prototype1_eval_store_parent_start_fs -- --nocapture`
+- Live API used: no
+- Checkpoints created/updated: none
+- Artifacts retained: none
+- Result: `R4c -> R5` delegates parent-start evidence to `ConfiguredEvalStore::Fs`; `database`/`dual-strict` produce explicit `DatabaseSetup` errors pending Slice 5.
+- Commit: pending
+
+### Slice 4 — First DB schema/backend for tests and injected stores
+
+- Status: not started
+- Assumptions:
+- Code touched:
+- Tests added/changed:
+- Commands run:
+- Live API used: no
+- Checkpoints created/updated:
+- Artifacts retained:
+- Result:
+- Commit:
+
+### Slice 5 — Production DB construction and dual-strict for first slice
+
+- Status: not started
+- Assumptions:
+- Code touched:
+- Tests added/changed:
+- Commands run:
+- Live API used: no for parent-start slice
+- Checkpoints created/updated:
+- Artifacts retained:
+- Result:
+- Commit:
+
+### Slice 6+ — Later evidence slices
+
+Create a new subsection per slice before editing.

@@ -1035,6 +1035,7 @@ pub(crate) struct Prototype1StateRunShape {
     pub(crate) successor_oracle_mode: crate::successor_selection::OracleMode,
     pub(crate) successor_oracle_require_evidence: bool,
     pub(crate) successor_metrics_policy: crate::successor_selection::metrics::Policy,
+    pub(crate) eval_storage_backend: profile::EvalStorageBackend,
 }
 
 impl Prototype1StateRunShape {
@@ -1051,6 +1052,7 @@ impl Prototype1StateRunShape {
             successor_oracle_mode: crate::successor_selection::OracleMode::RecordOnly,
             successor_oracle_require_evidence: true,
             successor_metrics_policy: crate::successor_selection::metrics::Policy::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
         }
     }
 
@@ -1069,6 +1071,7 @@ impl Prototype1StateRunShape {
             successor_oracle_mode: profile.selection.oracle_mode(),
             successor_oracle_require_evidence: profile.selection.oracle_require_evidence(),
             successor_metrics_policy: profile.selection.metrics_policy(),
+            eval_storage_backend: profile.storage.eval.backend,
         }
     }
 
@@ -8046,14 +8049,14 @@ fn directory_size_bytes(path: &Path) -> io::Result<u64> {
     Ok(bytes)
 }
 
-pub(crate) fn append_parent_target_sample(
-    journal: &mut PrototypeJournal,
+pub(crate) fn parent_target_sample(
     campaign_id: &CampaignId,
     parent_identity: &ParentIdentity,
     runtime_id: Option<crate::cli::prototype1_state::event::RuntimeId>,
     repo_root: &Path,
     phase: journal::resource::Phase,
-) {
+    recorded_at: RecordedAt,
+) -> journal::resource::Sample {
     let path = repo_root.join("target");
     let measurement = match directory_size_bytes(&path) {
         Ok(bytes) => (journal::resource::Status::Measured, Some(bytes), None),
@@ -8066,8 +8069,8 @@ pub(crate) fn append_parent_target_sample(
             Some(source.to_string()),
         ),
     };
-    let sample = journal::resource::Sample {
-        recorded_at: RecordedAt::now(),
+    journal::resource::Sample {
+        recorded_at,
         campaign_id: campaign_id.clone(),
         parent_id: parent_identity.parent_id().to_string(),
         node_id: parent_identity.node_id().to_string(),
@@ -8079,7 +8082,25 @@ pub(crate) fn append_parent_target_sample(
         status: measurement.0,
         bytes: measurement.1,
         error: measurement.2,
-    };
+    }
+}
+
+pub(crate) fn append_parent_target_sample(
+    journal: &mut PrototypeJournal,
+    campaign_id: &CampaignId,
+    parent_identity: &ParentIdentity,
+    runtime_id: Option<crate::cli::prototype1_state::event::RuntimeId>,
+    repo_root: &Path,
+    phase: journal::resource::Phase,
+) {
+    let sample = parent_target_sample(
+        campaign_id,
+        parent_identity,
+        runtime_id,
+        repo_root,
+        phase,
+        RecordedAt::now(),
+    );
 
     info!(
         target: EXECUTION_DEBUG_TARGET,

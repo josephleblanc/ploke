@@ -1,0 +1,30 @@
+{
+  "schema_version": "prototype1-checkpoint-manifest.v1",
+  "checkpoint": "F1_ready_parent",
+  "created_by": "test",
+  "campaign_id": "checkpoint-seed-campaign",
+  "parent_id": "checkpoint-seed-parent",
+  "boundary": "after R4b -> R4c or predecessor R4a -> R4c; before R4c -> R5",
+  "requires_live_api_to_regenerate": false,
+  "files": [
+    {
+      "path": "prototype1/checkpoint.marker",
+      "sha256": "e5f2c464fed74ab6c4d3ad3a8f0f9d7e30420ec152576978266a571a35f9eefc",
+      "required": true,
+      "authority_class": "fixture_marker"
+    },
+    {
+      "path": "prototype1/transition-journal.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "required": true,
+      "authority_class": "evidence_projection"
+    }
+  ],
+  "db_snapshots": [],
+  "authority_surfaces": {
+    "history": [],
+    "channels": [],
+    "message_boxes": [],
+    "artifacts": []
+  }
+}

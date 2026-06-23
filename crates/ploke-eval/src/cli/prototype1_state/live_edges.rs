@@ -31,14 +31,13 @@ use crate::{
                 resolve_prototype1_state_campaign, run_adaptive_child_fanout, run_child_fanout,
                 same_existing_path, select_artifact_for_handoff, traversal_metric_inputs,
             },
+            eval_store::{ConfiguredEvalStore, EvalStore, ParentStartedEvidence},
             event::RecordedAt,
             invocation::{self, InvocationAuthority, SuccessorCompletionStatus},
-            journal::{
-                self, JournalEntry, ParentStartedEntry, PrototypeJournal,
-                prototype1_transition_journal_path,
-            },
+            journal::{self, JournalEntry, PrototypeJournal, prototype1_transition_journal_path},
             observe,
             parent::{Check, Genesis, Parent, Predecessor, Startup, Unchecked},
+            profile::EvalStorageBackend,
             successor::Record as SuccessorRecord,
             typestate,
         },
@@ -46,6 +45,14 @@ use crate::{
     intervention::{Prototype1ChildBudget, Prototype1ChildScheduleMode, RecordStore},
     spec::PrepareError,
 };
+
+fn eval_storage_backend_name(backend: EvalStorageBackend) -> &'static str {
+    match backend {
+        EvalStorageBackend::Fs => "fs",
+        EvalStorageBackend::Database => "database",
+        EvalStorageBackend::DualStrict => "dual-strict",
+    }
+}
 
 // ANCHOR: prototype1_live_edges
 /// Resolve command-derived context and open the transition journal.
@@ -390,33 +397,36 @@ pub(crate) fn r4c_to_r5(
         handoff_runtime_id = ?parts.handoff_invocation.as_ref().map(|invocation| invocation.runtime_id()),
         "parent entered ready state for active turn"
     );
-    parts
-        .journal
-        .append(JournalEntry::ParentStarted(ParentStartedEntry {
-            recorded_at: RecordedAt::now(),
-            campaign_id: parts.campaign_id.clone(),
-            parent_identity: parent_identity.clone(),
-            repo_root: parts.repo_root.clone(),
-            handoff_runtime_id: parts
-                .handoff_invocation
-                .as_ref()
-                .map(|invocation| invocation.runtime_id()),
-            pid: std::process::id(),
-        }))
-        .map_err(|err| {
-            prototype1_state_transition_error("prototype1_parent_start", err.to_string())
-        })?;
-    append_parent_target_sample(
-        &mut parts.journal,
-        &parts.campaign_id,
-        &parent_identity,
-        parts
-            .handoff_invocation
-            .as_ref()
-            .map(|invocation| invocation.runtime_id()),
-        &parts.repo_root,
-        journal::resource::Phase::ParentStart,
-    );
+    let handoff_runtime_id = parts
+        .handoff_invocation
+        .as_ref()
+        .map(|invocation| invocation.runtime_id());
+    let evidence = ParentStartedEvidence {
+        campaign_id: parts.campaign_id.clone(),
+        parent_identity: parent_identity.clone(),
+        repo_root: parts.repo_root.clone(),
+        handoff_runtime_id,
+        pid: std::process::id(),
+        parent_recorded_at: RecordedAt::now(),
+        resource_recorded_at: RecordedAt::now(),
+    };
+    match parts.run_shape.eval_storage_backend {
+        EvalStorageBackend::Fs => {
+            let mut store = ConfiguredEvalStore::fs(&mut parts.journal);
+            store.put_parent_started(evidence).map_err(|err| {
+                prototype1_state_transition_error("prototype1_parent_start", err.to_string())
+            })?;
+        }
+        EvalStorageBackend::Database | EvalStorageBackend::DualStrict => {
+            return Err(PrepareError::DatabaseSetup {
+                phase: "prototype1_eval_store",
+                detail: format!(
+                    "eval storage backend '{}' is not wired for production parent-start until the DB handle slice",
+                    eval_storage_backend_name(parts.run_shape.eval_storage_backend)
+                ),
+            });
+        }
+    }
 
     debug!(
         target: EXECUTION_DEBUG_TARGET,

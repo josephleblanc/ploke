@@ -605,6 +605,7 @@ mod tests {
             name: "overnight-edit-surface".to_owned(),
             storage: Storage {
                 worktree_root: PathBuf::from("worktrees"),
+                eval: todo!(),
             },
             target: Target {
                 dataset_key: Some("ripgrep".to_owned()),
