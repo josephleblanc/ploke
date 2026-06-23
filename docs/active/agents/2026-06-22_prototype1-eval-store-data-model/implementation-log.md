@@ -984,6 +984,39 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: broad-harness child materialization now writes queryable artifact provenance rows when the owner eval DB exists. The authority-negative test proves artifact rows do not replace candidate workspace/backend authority.
 - Commit: `feat: mirror materialized artifact provenance`.
 
+### Slice 10b — Child build and promoted binary provenance rows
+
+- Status: complete for successful `C2 -> C3` build/promotion provenance rows: `eval_build_event` and `eval_binary_ref`.
+- Assumptions:
+  - This sub-slice mirrors only successful child build promotion after the promoted binary exists and the C2 After journal entry is appended.
+  - Failed cargo-check/build events, C3 spawn runtime refs, patch/apply operation rows, and selected-artifact active-checkout install remain later Slice 10 work.
+  - Owner DB presence remains the opt-in boundary. If `prototype1/eval-store.cozo.sqlite` does not already exist, C2 build behavior is unchanged and no DB file is created by the build transition.
+  - DB binary refs are passive evidence only. They do not prove a binary file exists or allow C3 spawn/invocation bootstrap to proceed without filesystem validation.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/c2.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/c3.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/build.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/cozo_schema.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/mod.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/tests.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs`
+- Tests added/changed:
+  - existing `child_build_promotes_binary_and_cleans_scratch` now seeds an owner eval DB and asserts the build event row and binary ref row.
+  - new `binary_ref_rows_do_not_replace_missing_promoted_binary` seeds matching binary/build rows, deletes the promoted binary, and asserts `MissingChildBinary` before any spawn journal or invocation bootstrap write.
+  - existing `prototype1_eval_store_parent_start_db_schema_installs_idempotently` now asserts build/binary relation installation.
+- Commands run:
+  - `gitnexus impact ... BuildChild.transition`: LOW risk; no direct upstream callers found by the index.
+  - `gitnexus impact ... SpawnChild.transition`: LOW risk; no direct upstream callers found by the index.
+  - `gitnexus impact ... install_schema`: HIGH risk; 8 direct callers, no affected execution flows. Schema coverage extended with idempotent build/binary relations.
+  - `cargo fmt --all`
+  - test-runner sub-agent: `cargo check -p ploke-eval` passed.
+  - test-runner sub-agent: `cargo test -p ploke-eval prototype1_eval_store_parent_start_db_schema_installs_idempotently -- --nocapture` passed.
+  - test-runner sub-agent: `cargo test -p ploke-eval child_build_promotes_binary_and_cleans_scratch -- --nocapture` passed.
+  - test-runner sub-agent: `cargo test -p ploke-eval binary_ref_rows_do_not_replace_missing_promoted_binary -- --nocapture` passed.
+- Live API used: no. This sub-slice uses local fake-cargo build tests and does not modify provider execution, child generation, terminal result production, or selected-artifact handoff.
+- Result: successful C2 child build promotion now writes queryable build and binary provenance rows when the owner eval DB exists. The authority-negative test proves binary refs do not replace filesystem binary authority for C3 spawn.
+- Commit: `feat: mirror child build provenance`.
+
 ### Later slices
 
 Create a new subsection per slice before editing.

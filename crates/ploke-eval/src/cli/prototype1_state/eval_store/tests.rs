@@ -8,9 +8,9 @@ use sha2::{Digest, Sha256};
 
 use super::*;
 use super::{
-    ARTIFACT_REF_REL, ARTIFACT_REL, ARTIFACT_SURFACE_REL, CONTINUATION_DECISION_REL,
-    EVALUATION_INSTANCE_REL, EVALUATION_REL, SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL,
-    SELECTION_FINDING_REL, SELECTION_SCORE_REL,
+    ARTIFACT_REF_REL, ARTIFACT_REL, ARTIFACT_SURFACE_REL, BINARY_REF_REL, BUILD_EVENT_REL,
+    CONTINUATION_DECISION_REL, EVALUATION_INSTANCE_REL, EVALUATION_REL, SELECTION_CANDIDATE_REL,
+    SELECTION_DECISION_REL, SELECTION_FINDING_REL, SELECTION_SCORE_REL,
     api::EvalStorageMode,
     cozo_schema::eval_relation_exists,
     error::EvalStoreError,
@@ -125,6 +125,8 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
     assert!(eval_relation_exists(&db, ARTIFACT_REL).expect("artifact rel exists"));
     assert!(eval_relation_exists(&db, ARTIFACT_SURFACE_REL).expect("artifact surface rel exists"));
     assert!(eval_relation_exists(&db, ARTIFACT_REF_REL).expect("artifact ref rel exists"));
+    assert!(eval_relation_exists(&db, BINARY_REF_REL).expect("binary ref rel exists"));
+    assert!(eval_relation_exists(&db, BUILD_EVENT_REL).expect("build event rel exists"));
     assert!(eval_relation_exists(&db, RECORD_REL).expect("record rel exists"));
     assert!(eval_relation_exists(&db, LOG_REF_REL).expect("log rel exists"));
     assert!(eval_relation_exists(&db, TRACE_EVENT_REL).expect("trace rel exists"));

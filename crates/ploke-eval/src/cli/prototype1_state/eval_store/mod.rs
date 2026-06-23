@@ -7,6 +7,7 @@
 
 mod api;
 mod artifact;
+mod build;
 mod continuation;
 mod cozo_params;
 mod cozo_schema;
@@ -28,6 +29,12 @@ pub(crate) use artifact::{ARTIFACT_REF_REL, ARTIFACT_REL, ARTIFACT_SURFACE_REL};
 pub(crate) use artifact::{
     ArtifactEvidence, ArtifactProvenanceEvidence, ArtifactRefEvidence, ArtifactSurfaceEvidence,
     artifact_surface_hash, write_artifact_provenance_to_owner_db,
+};
+#[cfg(test)]
+pub(crate) use build::{BINARY_REF_REL, BUILD_EVENT_REL};
+pub(crate) use build::{
+    BinaryRefEvidence, BuildEventEvidence, BuildProvenanceEvidence, file_sha256,
+    write_build_provenance_to_owner_db,
 };
 #[cfg(test)]
 pub(crate) use continuation::CONTINUATION_DECISION_REL;

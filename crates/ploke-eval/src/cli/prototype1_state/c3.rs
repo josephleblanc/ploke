@@ -444,6 +444,11 @@ impl Intervention<C3, C4> for SpawnChild {
                 },
             ));
         }
+        if !binary_path.is_file() {
+            return Err(CommitError::Transition(
+                SpawnChildError::MissingChildBinary { path: binary_path },
+            ));
+        }
         let invocation_path = invocation_path(&from.node.node_dir, self.runtime_id);
         let channel_root = channel_root(&from.node.node_dir, self.runtime_id);
         let invocation = ChildInvocation::with_bootstrap(

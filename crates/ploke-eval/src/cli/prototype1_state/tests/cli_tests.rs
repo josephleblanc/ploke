@@ -29,6 +29,7 @@ use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::{Layer, Registry};
 
 use crate::cli::prototype1_state::c1::MaterializeBranchError;
+use crate::cli::prototype1_state::c3::SpawnChildError;
 use crate::intervention::{
     CommitError, CommitPhase, PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1RunnerResult,
     Prototype1SearchPolicy, RecordStore, TreatmentBranchNode, TreatmentBranchStatus,
@@ -4403,6 +4404,12 @@ fn local_node(mut node: Prototype1NodeRecord, manifest_path: &Path) -> Prototype
 async fn child_build_promotes_binary_and_cleans_scratch() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+    ploke_db::Database::new_init()
+        .expect("empty eval db")
+        .write_backup_to_path(&db_path)
+        .expect("seed owner eval db");
     let repo_root = tmp.path().join("repo");
     let fake_bin = tmp.path().join("fake-bin");
     let path = install_fake_cargo(&fake_bin, "#!/bin/sh\nexit 0\n");
@@ -4474,6 +4481,243 @@ async fn child_build_promotes_binary_and_cleans_scratch() {
     assert!(
         !node.node_dir.join("target").exists(),
         "temporary child build target should be removed after a successful build"
+    );
+
+    let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "node_id".to_string(),
+        cozo::DataValue::from(node.node_id.clone()),
+    );
+    let builds = db
+        .raw_query_params(
+            r#"
+?[
+    build_id,
+    node_id,
+    artifact_id,
+    phase,
+    outcome,
+    binary_ref
+] :=
+    *eval_build_event {
+        build_id,
+        node_id,
+        artifact_id,
+        phase,
+        outcome,
+        binary_ref
+    },
+    node_id = $node_id
+"#,
+            params,
+        )
+        .expect("query build event");
+    assert_eq!(builds.rows.len(), 1);
+    let build_row = builds.row_refs().next().expect("build row");
+    assert_eq!(build_row.get::<String>("phase").expect("phase"), "promote");
+    assert_eq!(
+        build_row.get::<String>("outcome").expect("outcome"),
+        "built"
+    );
+    assert_eq!(
+        build_row.get::<String>("artifact_id").expect("artifact id"),
+        node.derived_artifact_id
+            .expect("derived artifact")
+            .to_string()
+    );
+    let binary_ref_id = build_row
+        .get::<String>("binary_ref")
+        .expect("binary ref id");
+    assert!(!binary_ref_id.is_empty());
+
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "binary_ref_id".to_string(),
+        cozo::DataValue::from(binary_ref_id),
+    );
+    let binaries = db
+        .raw_query_params(
+            r#"
+?[
+    binary_ref_id,
+    artifact_id,
+    source_ref,
+    content_sha256
+] :=
+    *eval_binary_ref {
+        binary_ref_id,
+        artifact_id,
+        source_ref,
+        content_sha256
+    },
+    binary_ref_id = $binary_ref_id
+"#,
+            params,
+        )
+        .expect("query binary ref");
+    assert_eq!(binaries.rows.len(), 1);
+    let binary_row = binaries.row_refs().next().expect("binary row");
+    assert_eq!(
+        binary_row.get::<String>("source_ref").expect("source ref"),
+        outcome.binary_path.display().to_string()
+    );
+    assert!(
+        !binary_row
+            .get::<String>("content_sha256")
+            .expect("binary hash")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn binary_ref_rows_do_not_replace_missing_promoted_binary() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let fake_bin = tmp.path().join("fake-bin");
+    let path = install_fake_cargo(&fake_bin, "#!/bin/sh\nexit 0\n");
+    let _env = crate::test_support::env_guard_os(vec![("PATH", path)]);
+
+    let allowed = write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "broad surface fixture");
+    let parent = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
+    let budget = Prototype1ChildBudget::new(1, 1);
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
+    submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
+    let receipt = admit_broad_harness_batch(
+        ChildPlanEnv {
+            campaign_id: &CLI_TEST_CAMPAIGN,
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
+        },
+        batch,
+    )
+    .await
+    .expect("admit one child");
+    let child = receipt.plan.body().children()[0].clone();
+    let baseline = CompleteBaseline::complete(
+        CampaignId::from("campaign"),
+        parent_identity.node_id().to_string(),
+        parent_identity.branch_id().to_string(),
+        "eval-set".to_string(),
+        vec![BaselineInstance {
+            instance_id: parent_identity
+                .instance_id()
+                .expect("test parent instance")
+                .to_string(),
+            registration_path: None,
+            record_path: tmp.path().join("baseline-record.json.gz"),
+            metrics: test_metrics(false, true, 0),
+        }],
+    )
+    .expect("complete baseline");
+
+    let outcome = run_planned_child(
+        CampaignId::from("campaign"),
+        manifest_path.clone(),
+        repo_root,
+        prototype1_transition_journal_path(&manifest_path),
+        parent_identity,
+        baseline,
+        Arc::new(Mutex::new(())),
+        Prototype1StateStopAfter::Build,
+        Duration::from_secs(30),
+        0,
+        child.clone(),
+    )
+    .expect("build child with fake cargo");
+    assert!(outcome.binary_path.is_file());
+    let binary_hash = eval_store::file_sha256(&outcome.binary_path).expect("binary hash");
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    eval_store::write_build_provenance_to_owner_db(
+        &db_path,
+        eval_store::BuildProvenanceEvidence {
+            binary_ref: eval_store::BinaryRefEvidence {
+                campaign_id: CLI_TEST_CAMPAIGN.clone(),
+                artifact_id: child
+                    .node_record()
+                    .derived_artifact_id
+                    .as_ref()
+                    .map(|id| id.to_string()),
+                built_by: None,
+                source_ref: outcome.binary_path.display().to_string(),
+                content_sha256: Some(binary_hash),
+                protocol_digest: None,
+                recorded_at: Some("2026-06-23T00:00:00Z".to_string()),
+            },
+            build_event: eval_store::BuildEventEvidence {
+                campaign_id: CLI_TEST_CAMPAIGN.clone(),
+                node_id: child.node_record().node_id.clone(),
+                runtime_id: None,
+                artifact_id: child
+                    .node_record()
+                    .derived_artifact_id
+                    .as_ref()
+                    .map(|id| id.to_string()),
+                phase: "promote".to_string(),
+                outcome: "built".to_string(),
+                binary_ref: None,
+                log_ref: None,
+                recorded_at: "2026-06-23T00:00:00Z".to_string(),
+            },
+        },
+    )
+    .expect("seed binary provenance rows");
+    fs::remove_file(&outcome.binary_path).expect("remove promoted binary");
+
+    let stored = load_test_node_record(&manifest_path, child.node_id());
+    let c3: crate::cli::prototype1_state::c2::C3 = Prototype {
+        campaign_id: CLI_TEST_CAMPAIGN.clone(),
+        campaign_manifest_path: manifest_path.clone(),
+        node: stored.clone(),
+        request: child.runner_request().clone(),
+        resolved: child.resolved().clone(),
+        artifact: Artifact {
+            repo_root: stored.workspace_root.clone(),
+            target_relpath: child.resolved().target_relpath.clone(),
+            source_content_hash: ContentHash(child.resolved().source_content_hash.clone()),
+            current_content_hash: ContentHash(
+                child.resolved().branch.proposed_content_hash.clone(),
+            ),
+            proposed_content_hash: ContentHash(
+                child.resolved().branch.proposed_content_hash.clone(),
+            ),
+            _lineage: std::marker::PhantomData::<ChildLineage>,
+        },
+        binary: Binary {
+            parent_running: true,
+            child_path: stored.binary_path.clone(),
+            child_runtime: None,
+            _lineage: std::marker::PhantomData::<ParentLineage>,
+            _child: std::marker::PhantomData::<Present>,
+            _ack: std::marker::PhantomData::<crate::cli::prototype1_state::c1::Unacknowledged>,
+        },
+    };
+    let mut journal = PrototypeJournal::new(tmp.path().join("spawn-negative-journal.jsonl"));
+    let err = SpawnChild::new()
+        .transition(c3, &mut journal)
+        .expect_err("DB binary refs cannot replace the promoted binary file");
+
+    match err {
+        CommitError::Transition(SpawnChildError::MissingChildBinary { path }) => {
+            assert_eq!(path, outcome.binary_path);
+        }
+        other => panic!("unexpected spawn error: {other:?}"),
+    }
+    assert!(
+        journal.load_entries().expect("spawn journal").is_empty(),
+        "missing binary must fail before spawn journal entries or invocation bootstrap writes"
     );
 }
 
