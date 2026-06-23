@@ -202,20 +202,34 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Checkpoints created/updated: none
 - Artifacts retained: none
 - Result: `R4c -> R5` delegates parent-start evidence to `ConfiguredEvalStore::Fs`; the transition-contract test proves the output is `R5`, the journal contains exactly `ParentStarted` plus `Resource(parent_start)`, and no History/message/artifact authority surface is created by this edge. `database`/`dual-strict` produce explicit `DatabaseSetup` errors and write no parent-start journal evidence pending DB handle wiring.
-- Commit: `9b8e3247` for production routing; transition-contract test commit pending.
+- Commit: `9b8e3247` for production routing; `bca4eec2` for transition-contract tests.
 
 ### Slice 4 — First DB schema/backend for tests and injected stores
 
-- Status: not started
+- Status: complete for injected/test DB writer; production `database`/`dual-strict` modes remain explicitly unwired until the parent-owned DB handle slice.
 - Assumptions:
+  - Slice 4 should use Cozo through `ploke_db::Database`, not through a raw `cozo::DbInstance` opened by `EvalStore`.
+  - DB rows for this first slice are projections of validated parent-start journal receipts; JSONL replay remains the filesystem authority until dual-strict is wired.
+  - First-slice record refs can use non-null `producer_id`, `payload_json`, and `recorded_at` because `ParentStarted` and `Resource(parent_start)` receipts always provide them.
 - Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store.rs`
 - Tests added/changed:
+  - `prototype1_eval_store_parent_start_db_schema_installs_idempotently`
+  - `prototype1_eval_store_parent_start_db_round_trips_rows`
+  - `prototype1_eval_store_parent_start_db_duplicate_identical_is_idempotent`
+  - `prototype1_eval_store_parent_start_db_duplicate_semantic_mismatch_fails`
+  - `prototype1_eval_store_parent_start_db_missing_required_hash_fails_before_rows`
 - Commands run:
-- Live API used: no
-- Checkpoints created/updated:
-- Artifacts retained:
-- Result:
-- Commit:
+  - `cargo fmt --all`
+  - `cargo test -p ploke-eval prototype1_eval_store_parent_start_db -- --nocapture` (initial run hit `/tmp` quota during tempfile write)
+  - `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_parent_start_db -- --nocapture`
+  - `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_parent_start -- --nocapture`
+  - `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
+- Live API used: no; this is a parent-start DB projection slice.
+- Checkpoints created/updated: none
+- Artifacts retained: none
+- Result: `DbEvalStore<D>` and narrow `EvalDb` trait now support idempotent schema install and deterministic parent-start DB rows in tests. The DB writer creates one `eval_transition_event` row plus two `eval_record_ref` rows from filesystem append receipts, treats duplicate identical semantic hashes as idempotent, rejects duplicate event IDs with semantic hash mismatches, and validates required source/hash fields before row writes.
+- Commit: pending
 
 ### Slice 5 — Production DB construction and dual-strict for first slice
 
