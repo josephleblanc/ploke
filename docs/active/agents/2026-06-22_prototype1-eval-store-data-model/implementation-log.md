@@ -333,6 +333,41 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: EvalStore storage code is split into focused modules while focused eval-store, observe, and R4c→R5 contract tests still pass.
 - Commit: current cleanup commit, `refactor: split eval-store module`
 
+### Slice 7a — Compatibility record-ref DB lane
+
+- Status: complete for the typed compatibility-record-ref DB lane; scheduler/node/result/branch producers are not migrated yet.
+- Assumptions:
+  - Compatibility/projection records should enter `eval_record_ref` with explicit axes and hashes, not as semantic scheduler/node authority.
+  - A record-ref row must not fabricate transition rows or satisfy MessageBox/channel/History/artifact gates.
+  - This sub-slice should reuse the existing `eval_record_ref` relation and `EvalRecordRefRow` instead of introducing scheduler/node mirror DTOs.
+  - Duplicate record-ref IDs with the same content hash are idempotent; duplicate IDs with different content hashes fail before overwrite.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/evidence.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/cozo_store.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/cozo_params.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/mod.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/tests.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs`
+- Tests added/changed:
+  - `prototype1_eval_store_record_ref_compatibility_import_round_trips_axes`
+  - `prototype1_eval_store_record_ref_duplicate_identical_is_idempotent`
+  - `prototype1_eval_store_record_ref_missing_axis_fails_without_rows`
+  - `prototype1_storage_authority_negative_record_ref_cannot_replace_child_plan_box`
+  - updated record-ref query assertions to include source/evidence/visibility/status axes.
+- Commands run:
+  - `npx gitnexus analyze` refreshed a stale index before impact analysis.
+  - `gitnexus impact ...` for `DbEvalStore`, `EvalRecordRefRow`, `put_record_ref_row`, and `record_ref_id`: LOW risk; no HIGH/CRITICAL warnings.
+  - `cargo fmt --all`
+  - `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_record_ref -- --nocapture` passed, 3 tests.
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_parent_start -- --nocapture` passed, 8 tests.
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_storage_authority_negative -- --nocapture` passed, 2 tests.
+- Live API used: no; this sub-slice is local compatibility record-ref persistence and authority-negative coverage only.
+- Checkpoints created/updated: none
+- Artifacts retained: none
+- Result: `DbEvalStore::put_record_ref` writes queryable compatibility `eval_record_ref` rows with store scope, producer role, source class, evidence class, visibility, validation status, source coordinates, payload hash, and payload JSON. Missing axes fail before row writes. Compatibility record refs do not create `eval_transition_event` rows, and an owner eval DB row claiming child-plan projection does not replace the child-plan `MessageBox` file gate.
+- Commit: current slice commit, `feat: add compatibility eval record refs`.
+
 ### Slice 7+ — Later evidence slices
 
 Create a new subsection per slice before editing.

@@ -5178,6 +5178,90 @@ fn prototype1_storage_authority_negative_projection_cannot_replace_child_plan_bo
 }
 
 #[test]
+fn prototype1_storage_authority_negative_record_ref_cannot_replace_child_plan_box() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    write_broad_surface_targets(&repo_root);
+    let parent: Parent<Ready> = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    let payload = serde_json::json!({
+        "schema_version": "prototype1-eval-store-projection-test.v1",
+        "edge_id": "r7_to_r8",
+        "parent_id": parent_identity.parent_id(),
+        "message_box_claimed": true
+    })
+    .to_string();
+    eval_store::write_record_ref_to_owner_db(
+        &db_path,
+        eval_store::RecordRefEvidence::compatibility_import(
+            CLI_TEST_CAMPAIGN.clone(),
+            "child_plan_projection",
+            "prototype1-eval-store-projection-test.v1",
+            parent_identity.parent_id(),
+            "prototype1-eval-store:child-plan-projection",
+            0,
+            1,
+            db_path.display().to_string(),
+            payload,
+            1000,
+        ),
+    )
+    .expect("write owner eval DB record ref");
+    assert!(db_path.is_file());
+    let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+    let refs = db
+        .raw_query_params(
+            r#"
+?[record_ref_id] :=
+    *eval_record_ref { record_ref_id, family },
+    family = "child_plan_projection"
+"#,
+            std::collections::BTreeMap::new(),
+        )
+        .expect("query record refs");
+    assert_eq!(refs.rows.len(), 1);
+
+    let (result, trace) = collect_traces(|| {
+        receive_existing_child_plan(
+            ChildPlanEnv {
+                campaign_id: &CLI_TEST_CAMPAIGN,
+                manifest_path: &manifest_path,
+                repo_root: &repo_root,
+                broad_tui: profile::BroadTui::default(),
+                route_source: ModelRouteSource::DirectGoogle,
+            },
+            parent,
+        )
+    });
+    dump_trace_if_requested(&trace);
+    let err = match result {
+        Ok(_) => panic!("eval_record_ref row must not replace child-plan MessageBox"),
+        Err(err) => err,
+    };
+    let PrepareError::ReadManifest { path, source } = err else {
+        panic!("unexpected error variant");
+    };
+    assert_eq!(
+        path,
+        child_plan_message_path_for_parent(&manifest_path, &parent_identity)
+    );
+    assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+    assert!(trace_contains(
+        &trace,
+        &[
+            "event=typestate_transition",
+            "transition=Parent<Ready>->Parent<Planned>",
+            "phase=retry_replay",
+            "record_access=read",
+            "record_kind=child_plan_file",
+            "outcome=failed",
+        ],
+    ));
+}
+
+#[test]
 fn child_plan_replay_rejects_wrong_parent() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");

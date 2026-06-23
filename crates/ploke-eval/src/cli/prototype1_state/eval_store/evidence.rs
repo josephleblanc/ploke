@@ -21,8 +21,10 @@ pub(super) const STORE_SCOPE: &str = "parent";
 pub(super) const PRODUCER_ROLE_PARENT: &str = "parent";
 pub(super) const VISIBILITY_SCOPE: &str = "parent_visible";
 pub(super) const JOURNAL_SOURCE_CLASS: &str = "direct_write";
+pub(super) const COMPATIBILITY_IMPORT_CLASS: &str = "compatibility_import";
 pub(super) const TYPED_TRANSITION_CLASS: &str = "typed_transition";
 pub(super) const DIAGNOSTIC_CLASS: &str = "diagnostic";
+pub(super) const COMPATIBILITY_CLASS: &str = "compatibility";
 pub(super) const VALID_STATUS: &str = "valid";
 pub(super) const JOURNAL_SCHEMA: &str = "prototype1-transition-journal.jsonl";
 
@@ -108,6 +110,66 @@ pub(crate) struct LogRefEvidence {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LogRefReceipt {
     pub(crate) log_ref_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RecordRefEvidence {
+    pub(crate) campaign_id: CampaignId,
+    pub(crate) family: String,
+    pub(crate) schema_version: String,
+    pub(crate) store_scope: String,
+    pub(crate) producer_role: String,
+    pub(crate) producer_id: String,
+    pub(crate) source_class: String,
+    pub(crate) evidence_class: String,
+    pub(crate) visibility_scope: String,
+    pub(crate) validation_status: String,
+    pub(crate) source_stream_id: String,
+    pub(crate) source_event_index: i64,
+    pub(crate) source_line: i64,
+    pub(crate) source_ref: String,
+    pub(crate) payload_json: String,
+    pub(crate) recorded_at: i64,
+}
+
+impl RecordRefEvidence {
+    pub(crate) fn compatibility_import(
+        campaign_id: CampaignId,
+        family: impl Into<String>,
+        schema_version: impl Into<String>,
+        producer_id: impl Into<String>,
+        source_stream_id: impl Into<String>,
+        source_event_index: i64,
+        source_line: i64,
+        source_ref: impl Into<String>,
+        payload_json: impl Into<String>,
+        recorded_at: i64,
+    ) -> Self {
+        Self {
+            campaign_id,
+            family: family.into(),
+            schema_version: schema_version.into(),
+            store_scope: STORE_SCOPE.to_string(),
+            producer_role: PRODUCER_ROLE_PARENT.to_string(),
+            producer_id: producer_id.into(),
+            source_class: COMPATIBILITY_IMPORT_CLASS.to_string(),
+            evidence_class: COMPATIBILITY_CLASS.to_string(),
+            visibility_scope: VISIBILITY_SCOPE.to_string(),
+            validation_status: VALID_STATUS.to_string(),
+            source_stream_id: source_stream_id.into(),
+            source_event_index,
+            source_line,
+            source_ref: source_ref.into(),
+            payload_json: payload_json.into(),
+            recorded_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RecordRefReceipt {
+    pub(crate) record_ref_id: String,
+    pub(crate) content_sha256: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -438,6 +500,62 @@ pub(super) fn log_ref_row(evidence: LogRefEvidence) -> Result<EvalLogRefRow, Eva
         content_sha256: evidence.content_sha256,
         sensitivity: evidence.sensitivity,
         recorded_at: evidence.recorded_at,
+    })
+}
+
+pub(super) fn record_ref_row_from_evidence(
+    evidence: RecordRefEvidence,
+) -> Result<EvalRecordRefRow, EvalStoreError> {
+    require_non_empty("record_ref.family", &evidence.family)?;
+    require_non_empty("record_ref.schema_version", &evidence.schema_version)?;
+    require_non_empty("record_ref.store_scope", &evidence.store_scope)?;
+    require_non_empty("record_ref.producer_role", &evidence.producer_role)?;
+    require_non_empty("record_ref.producer_id", &evidence.producer_id)?;
+    require_non_empty("record_ref.source_class", &evidence.source_class)?;
+    require_non_empty("record_ref.evidence_class", &evidence.evidence_class)?;
+    require_non_empty("record_ref.visibility_scope", &evidence.visibility_scope)?;
+    require_non_empty("record_ref.validation_status", &evidence.validation_status)?;
+    require_non_empty("record_ref.source_stream_id", &evidence.source_stream_id)?;
+    require_non_empty("record_ref.source_ref", &evidence.source_ref)?;
+    require_non_empty("record_ref.payload_json", &evidence.payload_json)?;
+    let source_event_index =
+        validate_non_negative_i64(evidence.source_event_index, "record_ref.source_event_index")?;
+    if evidence.source_line <= 0 {
+        return Err(EvalStoreError::Validation {
+            field: "record_ref.source_line",
+            detail: "record-ref source lines are one-based and must be non-zero".to_string(),
+        });
+    }
+    let recorded_at = validate_non_negative_i64(evidence.recorded_at, "record_ref.recorded_at")?;
+    let content_sha256 = sha256_bytes(evidence.payload_json.as_bytes());
+    let record_ref_id = record_ref_id(
+        evidence.campaign_id.as_str(),
+        &evidence.family,
+        &evidence.source_stream_id,
+        source_event_index,
+        &content_sha256,
+    );
+    let ingested_at = chrono::Utc::now().to_rfc3339();
+    Ok(EvalRecordRefRow {
+        record_ref_id,
+        campaign_id: evidence.campaign_id.to_string(),
+        family: evidence.family,
+        schema_version: evidence.schema_version,
+        store_scope: evidence.store_scope,
+        producer_role: evidence.producer_role,
+        producer_id: evidence.producer_id,
+        source_class: evidence.source_class,
+        evidence_class: evidence.evidence_class,
+        visibility_scope: evidence.visibility_scope,
+        validation_status: evidence.validation_status,
+        source_stream_id: evidence.source_stream_id,
+        source_event_index,
+        source_line: evidence.source_line,
+        source_ref: evidence.source_ref,
+        content_sha256,
+        payload_json: evidence.payload_json,
+        recorded_at,
+        ingested_at,
     })
 }
 

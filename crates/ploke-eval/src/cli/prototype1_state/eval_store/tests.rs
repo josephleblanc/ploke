@@ -144,6 +144,138 @@ fn prototype1_eval_store_trace_log_ref_round_trips_row() {
 }
 
 #[test]
+fn prototype1_eval_store_record_ref_compatibility_import_round_trips_axes() {
+    let db = Database::new_init().expect("db");
+    let store = DbEvalStore::new(&db);
+    let payload = r#"{"schema_version":"prototype1-node.v1","node_id":"node-1"}"#;
+
+    let receipt = store
+        .put_record_ref(RecordRefEvidence::compatibility_import(
+            CampaignId::from("campaign"),
+            "scheduler_node",
+            "prototype1-node.v1",
+            "parent",
+            "prototype1-record:campaign",
+            7,
+            8,
+            "/tmp/prototype1/nodes/node-1/node.json:L8",
+            payload,
+            1234,
+        ))
+        .expect("compatibility record ref writes");
+
+    let refs = query_record_refs(&db, &CampaignId::from("campaign"));
+    assert_eq!(refs.rows.len(), 1);
+    let row = refs.row_refs().next().expect("record ref row");
+    assert_eq!(
+        row.get::<String>("record_ref_id").expect("id"),
+        receipt.record_ref_id
+    );
+    assert_eq!(
+        row.get::<String>("content_sha256").expect("hash"),
+        receipt.content_sha256
+    );
+    assert_eq!(
+        row.get::<String>("family").expect("family"),
+        "scheduler_node"
+    );
+    assert_eq!(
+        row.get::<String>("schema_version").expect("schema"),
+        "prototype1-node.v1"
+    );
+    assert_eq!(row.get::<String>("store_scope").expect("scope"), "parent");
+    assert_eq!(row.get::<String>("producer_role").expect("role"), "parent");
+    assert_eq!(
+        row.get::<String>("source_class").expect("source"),
+        "compatibility_import"
+    );
+    assert_eq!(
+        row.get::<String>("evidence_class").expect("evidence"),
+        "compatibility"
+    );
+    assert_eq!(
+        row.get::<String>("visibility_scope").expect("visibility"),
+        "parent_visible"
+    );
+    assert_eq!(
+        row.get::<String>("validation_status").expect("status"),
+        "valid"
+    );
+    assert_eq!(row.get::<String>("payload_json").expect("payload"), payload);
+    assert!(
+        query_all_transition_events(&db).rows.is_empty(),
+        "compatibility record refs must not fabricate transition authority"
+    );
+}
+
+#[test]
+fn prototype1_eval_store_record_ref_duplicate_identical_is_idempotent() {
+    let db = Database::new_init().expect("db");
+    let store = DbEvalStore::new(&db);
+    let evidence = RecordRefEvidence::compatibility_import(
+        CampaignId::from("campaign"),
+        "scheduler_node",
+        "prototype1-node.v1",
+        "parent",
+        "prototype1-record:campaign",
+        7,
+        8,
+        "/tmp/prototype1/nodes/node-1/node.json:L8",
+        r#"{"schema_version":"prototype1-node.v1","node_id":"node-1"}"#,
+        1234,
+    );
+
+    let first = store
+        .put_record_ref(evidence.clone())
+        .expect("first record ref");
+    let second = store.put_record_ref(evidence).expect("same record ref");
+
+    assert_eq!(second, first);
+    assert_eq!(
+        query_record_refs(&db, &CampaignId::from("campaign"))
+            .rows
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn prototype1_eval_store_record_ref_missing_axis_fails_without_rows() {
+    let db = Database::new_init().expect("db");
+    let store = DbEvalStore::new(&db);
+    store.install_schema().expect("schema");
+    let evidence = RecordRefEvidence::compatibility_import(
+        CampaignId::from("campaign"),
+        "",
+        "prototype1-node.v1",
+        "parent",
+        "prototype1-record:campaign",
+        7,
+        8,
+        "/tmp/prototype1/nodes/node-1/node.json:L8",
+        r#"{"schema_version":"prototype1-node.v1","node_id":"node-1"}"#,
+        1234,
+    );
+
+    let err = store
+        .put_record_ref(evidence)
+        .expect_err("missing family fails");
+
+    match err {
+        EvalStoreError::Validation { field, detail } => {
+            assert_eq!(field, "record_ref.family");
+            assert!(detail.contains("required eval-store field"));
+        }
+        other => panic!("unexpected record ref validation error: {other:?}"),
+    }
+    assert!(
+        query_record_refs(&db, &CampaignId::from("campaign"))
+            .rows
+            .is_empty()
+    );
+}
+
+#[test]
 fn prototype1_eval_store_trace_observation_jsonl_imports_rows_idempotently() {
     let tmp = tempfile::tempdir().expect("tmp");
     let log_path = tmp.path().join("prototype1-observation.jsonl");
@@ -607,11 +739,32 @@ fn query_record_refs(db: &Database, campaign_id: &CampaignId) -> QueryResult {
     );
     db.raw_query_params(
         r#"
-?[record_ref_id, family, source_event_index, source_line, content_sha256, payload_json] :=
+?[
+    record_ref_id,
+    family,
+    schema_version,
+    store_scope,
+    producer_role,
+    source_class,
+    evidence_class,
+    visibility_scope,
+    validation_status,
+    source_event_index,
+    source_line,
+    content_sha256,
+    payload_json
+] :=
     *eval_record_ref {
         record_ref_id,
         campaign_id,
         family,
+        schema_version,
+        store_scope,
+        producer_role,
+        source_class,
+        evidence_class,
+        visibility_scope,
+        validation_status,
         source_event_index,
         source_line,
         content_sha256,
