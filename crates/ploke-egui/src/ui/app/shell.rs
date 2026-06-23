@@ -2983,7 +2983,7 @@ mod tests {
     };
     use crate::ui::view::GraphSelectionRef;
     use ploke_records::history::{ArtifactRefRecord, TreeKeyHashRecord};
-    use ploke_records::ids::{ArtifactId, HistoryHash};
+    use ploke_records::ids::{ArtifactId, CampaignId, HistoryHash};
     use ploke_tree::graph::{
         ArtifactIdentity, ArtifactIds, ArtifactIndex, ArtifactKey, ArtifactNode,
     };
@@ -3285,7 +3285,7 @@ mod tests {
         let graph = Graph {
             forest: Some(RunForest {
                 campaign: ploke_tree::CampaignRef {
-                    campaign_id: "campaign".to_owned(),
+                    campaign_id: CampaignId::from("campaign"),
                     updated_at: "now".to_owned(),
                 },
                 roots: vec![node.key.clone()],

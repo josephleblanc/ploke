@@ -17,6 +17,7 @@ use crate::cli::prototype1_state::identity::{
     PARENT_IDENTITY_SCHEMA_VERSION, ParentIdentity, ParentIdentityRecord,
     parent_identity_commit_message, parent_identity_relpath, write_parent_identity,
 };
+use ploke_records::ids::CampaignId;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -303,7 +304,7 @@ fn proposal_for(
 fn identity(generation: u32, parent_id: &str, artifact_branch: &str) -> ParentIdentity {
     ParentIdentity::from_record_for_test(ParentIdentityRecord {
         schema_version: PARENT_IDENTITY_SCHEMA_VERSION.to_string(),
-        campaign_id: "campaign-1".to_string(),
+        campaign_id: CampaignId::from("campaign-1"),
         parent_id: parent_id.to_string(),
         node_id: parent_id.to_string(),
         generation,

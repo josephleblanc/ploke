@@ -4,6 +4,7 @@
 //! context into tracing spans so downstream events can be attributed without
 //! duplicating identity into every telemetry record.
 
+use ploke_records::ids::CampaignId;
 use tracing::Span;
 
 // these were only being used in the `child` accessor below, but `child` was never actually being used
@@ -19,7 +20,7 @@ use super::{
 pub(crate) struct RuntimeTelemetry {
     role: &'static str,
     runtime_phase: &'static str,
-    campaign_id: String,
+    campaign_id: CampaignId,
     node_id: String,
     branch_id: String,
     generation: u32,
@@ -31,7 +32,7 @@ impl RuntimeTelemetry {
         Self {
             role: "parent",
             runtime_phase,
-            campaign_id: identity.campaign_id().to_string(),
+            campaign_id: identity.campaign_id().clone(),
             node_id: identity.node_id().to_string(),
             branch_id: identity.branch_id().to_string(),
             generation: identity.generation(),
@@ -56,7 +57,7 @@ impl RuntimeTelemetry {
         Self {
             role: "parent",
             runtime_phase,
-            campaign_id,
+            campaign_id: CampaignId::from(campaign_id),
             node_id: node_id.clone(),
             branch_id: node_id,
             generation: 0,
@@ -65,7 +66,7 @@ impl RuntimeTelemetry {
     }
 
     // pub(crate) fn child(
-    //     campaign_id: &str,
+    //     campaign_id: &CampaignId,
     //     node: &Prototype1NodeRecord,
     //     runtime_id: RuntimeId,
     //     runtime_phase: &'static str,
@@ -73,7 +74,7 @@ impl RuntimeTelemetry {
     //     Self {
     //         role: "child",
     //         runtime_phase,
-    //         campaign_id: campaign_id.to_string(),
+    //         campaign_id: campaign_id.clone(),
     //         node_id: node.node_id.clone(),
     //         branch_id: node.branch_id.clone(),
     //         generation: node.generation,
@@ -97,7 +98,7 @@ impl RuntimeTelemetry {
         ploke_tui::llm::set_prototype1_trace_context(ploke_tui::llm::Prototype1TraceContext {
             role: self.role.to_string(),
             runtime_phase: self.runtime_phase.to_string(),
-            campaign_id: self.campaign_id.clone(),
+            campaign_id: self.campaign_id.to_string(),
             node_id: self.node_id.clone(),
             branch_id: self.branch_id.clone(),
             generation: self.generation,

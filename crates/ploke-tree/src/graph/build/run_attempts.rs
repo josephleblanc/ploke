@@ -310,7 +310,7 @@ mod tests {
         InvocationRecord {
             schema_version: "prototype1-invocation.v1".to_owned(),
             role: Role::Child,
-            campaign_id: "campaign-1".to_owned(),
+            campaign_id: CampaignId::from("campaign-1"),
             node_id: "node-1".to_owned(),
             runtime_id,
             journal_path: PathBuf::from("transition-journal.jsonl"),

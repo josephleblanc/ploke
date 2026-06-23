@@ -203,6 +203,7 @@ impl Builder {
 
 #[cfg(test)]
 mod tests {
+    use ploke_records::ids::CampaignId;
     use ploke_records::journal::{JournalEntry, SuccessorRecord, SuccessorStateRecord};
     use ploke_records::scheduler::{ContinuationDecisionRecord, ContinuationDispositionRecord};
 
@@ -234,7 +235,7 @@ mod tests {
                 record: JournalEntry::Successor(SuccessorRecord {
                     runtime_id: Some(runtime_id.clone()),
                     recorded_at: ploke_records::ids::RecordedAt(0),
-                    campaign_id: "campaign-1".to_owned(),
+                    campaign_id: CampaignId::from("campaign-1"),
                     node_id: "node-1".to_owned(),
                     state: SuccessorStateRecord::Selected {
                         decision: ContinuationDecisionRecord {
@@ -284,7 +285,7 @@ mod tests {
                 record: JournalEntry::Successor(SuccessorRecord {
                     runtime_id: None,
                     recorded_at: ploke_records::ids::RecordedAt(0),
-                    campaign_id: "campaign-1".to_owned(),
+                    campaign_id: CampaignId::from("campaign-1"),
                     node_id: "node-1".to_owned(),
                     state: SuccessorStateRecord::ExitedBeforeReady { exit_code: None },
                 }),

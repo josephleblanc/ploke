@@ -1,3 +1,6 @@
+#[cfg(test)]
+use ploke_records::ids::CampaignId;
+
 /// Ingress chain-of-custody payload that must be sealed with the entry.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct IngressImportPayload {
@@ -240,6 +243,8 @@ impl Entry<Admitted> {
     }
 }
 
+// ANCHOR: prototype1_history_open_and_seal_block_fields
+// ANCHOR: prototype1_history_open_block
 /// Data required to open a block.
 ///
 /// Implemented now: `block_height` is validated as lineage-local height:
@@ -268,6 +273,7 @@ pub(crate) struct OpenBlock {
     pub(crate) surface: SurfaceCommitment,
     pub(crate) opened_at: RecordedAt,
 }
+// ANCHOR_END: prototype1_history_open_block
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct BlockCommon {
@@ -287,6 +293,7 @@ struct BlockCommon {
     opened_at: RecordedAt,
 }
 
+// ANCHOR: prototype1_history_seal_block
 /// Header data committed by `Crown<Locked> -> Block<block::Sealed>`.
 ///
 /// Implementation status updated 2026-04-29: `Crown<Locked>` now carries this
@@ -304,12 +311,14 @@ pub(crate) struct SealBlock {
     pub(crate) claims: block::Claims,
     pub(crate) sealed_at: RecordedAt,
 }
+// ANCHOR_END: prototype1_history_seal_block
+// ANCHOR_END: prototype1_history_open_and_seal_block_fields
 
 #[cfg(test)]
 fn test_parent_identity() -> ParentIdentity {
     ParentIdentity::from_record_for_test(ParentIdentityRecord {
         schema_version: PARENT_IDENTITY_SCHEMA_VERSION.to_string(),
-        campaign_id: "campaign:test".to_string(),
+        campaign_id: CampaignId::from("campaign:test"),
         parent_id: "node:successor".to_string(),
         node_id: "node:successor".to_string(),
         generation: 0,
@@ -536,6 +545,7 @@ struct SealedBlockPreimage {
     entries_root: HistoryHash,
 }
 
+// ANCHOR: prototype1_history_block_carrier
 /// One authority epoch in a lineage-local History chain.
 ///
 /// Draft block-content framing recorded 2026-04-29 08:03 PDT. Current code
@@ -589,6 +599,7 @@ pub(crate) struct Block<S> {
     #[serde(skip)]
     stored_entry_hashes: Option<Vec<HistoryHash>>,
 }
+// ANCHOR_END: prototype1_history_block_carrier
 
 impl<S: PartialEq> PartialEq for Block<S> {
     fn eq(&self, other: &Self) -> bool {
@@ -806,6 +817,7 @@ impl Block<block::Sealed> {
         &self.header().active_artifact
     }
 
+    // ANCHOR: prototype1_history_block_verify_hash
     pub(crate) fn verify_hash(&self) -> Result<(), HistoryError> {
         let header = self.header();
         if header.entry_count != self.entries.len() {
@@ -843,6 +855,7 @@ impl Block<block::Sealed> {
 
         Ok(())
     }
+    // ANCHOR_END: prototype1_history_block_verify_hash
 
     pub(crate) fn verify_expected_hash(&self, expected: &BlockHash) -> Result<(), HistoryError> {
         self.verify_hash()?;
@@ -852,6 +865,7 @@ impl Block<block::Sealed> {
         Ok(())
     }
 
+    // ANCHOR: prototype1_history_block_verify_current_artifact_tree
     /// Verify that the sealed head admits the current checkout's Artifact tree.
     ///
     /// This is the successor-side half of the cross-runtime handoff contract: the
@@ -884,7 +898,9 @@ impl Block<block::Sealed> {
             .map_err(VerifyError::into_history_error)?;
         Ok(())
     }
+    // ANCHOR_END: prototype1_history_block_verify_current_artifact_tree
 
+    // ANCHOR: prototype1_history_block_verify_current_surface
     /// Verify that the current checkout matches the surface admitted by this
     /// sealed head.
     ///
@@ -898,6 +914,7 @@ impl Block<block::Sealed> {
     ) -> Result<(), HistoryError> {
         self.header().common.surface.verify_current(current)
     }
+    // ANCHOR_END: prototype1_history_block_verify_current_surface
 
     fn open_successor(
         &self,
@@ -1835,6 +1852,24 @@ mod tests {
             missing_treatment_instance_ids: Vec::new(),
             note: None,
         }
+    }
+
+    fn test_runtime_evidence(runtime_id: &str) -> Vec<SealedRuntimeEvidence> {
+        vec![SealedRuntimeEvidence {
+            runtime_id: runtime_id.to_string(),
+            document_citations: vec![SealedEvidenceCitation {
+                ref_id: format!("channel:child-to-parent:terminal-result:n1:{runtime_id}"),
+                content_hash: Some(
+                    HistoryHash::of_domain_json(
+                        "prototype1.test.child_channel_terminal_result",
+                        &runtime_id,
+                    )
+                    .expect("terminal hash"),
+                ),
+                record_name: Some(CHILD_CHANNEL_TERMINAL_RESULT_RECORD.to_string()),
+            }],
+            journal_citations: Vec::new(),
+        }]
     }
 
     fn test_metrics(
@@ -3668,7 +3703,7 @@ mod tests {
                 },
                 compared_runs: Vec::new(),
             }],
-            runtimes: Vec::new(),
+            runtimes: test_runtime_evidence("rt-a"),
             branches: Vec::new(),
             extra_document_citations: Vec::new(),
             extra_journal_citations: Vec::new(),

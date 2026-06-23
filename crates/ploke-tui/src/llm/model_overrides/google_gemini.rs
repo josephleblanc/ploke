@@ -1,9 +1,9 @@
 //! First model-override entry: the direct Google (Vertex) Gemini
 //! `MALFORMED_FUNCTION_CALL` quirk.
 //!
-//! Observed behavior: direct-Google `gemini-2.5*`/`gemini-3.5*` return a
-//! `MALFORMED_FUNCTION_CALL` finish reason when a structured tool call (e.g. a
-//! multi-line unified-diff argument) is truncated by a too-small output-token
+//! Observed behavior: direct-Google `gemini-2.5*`/`gemini-3.1*`/`gemini-3.5*`
+//! return a `MALFORMED_FUNCTION_CALL` finish reason when a structured tool call
+//! (e.g. a multi-line unified-diff argument) is truncated by a too-small output-token
 //! budget. The production broad-patch turn sends no `max_tokens` at all
 //! (`LLMParameters::default().max_tokens == None`), so Vertex applies a small
 //! default that truncates the call; thinking models (gemini-2.5-pro) make this
@@ -38,11 +38,12 @@ use super::{ModelOverride, ParamOverrides};
 // notes a 10 QPM cap specific to 2.5-pro), so pro throttles sooner under
 // high-parallelism eval fan-out. Prefer `gemini-2.5-flash-lite` for parallel
 // eval/protocol runs and keep parallel_cap modest for pro (or use
-// GOOGLE_REGION=global + backoff). `gemini-3.5-flash` is routable but a DSQ
-// "shadow" model with no operator-visible quota row (429-prone);
-// `gemini-3.0-flash` is not routable (Vertex 404). See
+// GOOGLE_REGION=global + backoff). `gemini-3.1-pro-preview-customtools` is
+// routable and tool-call capable but preview-only; `gemini-3.5-flash` is
+// routable but a DSQ "shadow" model with no operator-visible quota row
+// (429-prone); `gemini-3.0-flash` is not routable (Vertex 404). See
 // docs/active/bugs/2026-06-10-vertex-gemini-35-flash-dsq-shadow-quota-429.md.
-const AFFECTED_PREFIXES: &[&str] = &["gemini-2.5", "gemini-3.5"];
+const AFFECTED_PREFIXES: &[&str] = &["gemini-2.5", "gemini-3.1", "gemini-3.5"];
 
 /// Output-token floor for affected direct-Google Gemini requests. 8192 was
 /// proven to eliminate the malformation; raised to 16384 so the thinking model

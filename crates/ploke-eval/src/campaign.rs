@@ -25,7 +25,7 @@ const DEFAULT_REQUIRED_PROCEDURES: [&str; 3] = [
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CampaignManifest {
     pub schema_version: String,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     #[serde(default = "default_benchmark_family")]
     pub benchmark_family: BenchmarkFamily,
     #[serde(default)]
@@ -161,7 +161,7 @@ pub struct CampaignOverrides {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ResolvedCampaignConfig {
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub benchmark_family: BenchmarkFamily,
     pub dataset_sources: Vec<RegistryDatasetSource>,
     pub model_id: String,
@@ -184,7 +184,7 @@ pub struct CampaignValidationCheck {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CampaignListEntry {
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub has_manifest: bool,
     pub has_closure_state: bool,
 }
@@ -263,7 +263,7 @@ pub fn default_protocol_max_tokens() -> u32 {
 }
 
 impl CampaignManifest {
-    pub fn new(campaign_id: String) -> Self {
+    pub fn new(campaign_id: CampaignId) -> Self {
         Self {
             schema_version: CAMPAIGN_MANIFEST_SCHEMA_VERSION.to_string(),
             campaign_id,
@@ -322,17 +322,19 @@ impl ResolvedCampaignConfig {
     }
 }
 
-pub fn campaign_manifest_path(campaign_id: &str) -> Result<PathBuf, PrepareError> {
-    Ok(campaigns_dir()?.join(campaign_id).join("campaign.json"))
+pub fn campaign_manifest_path(campaign_id: &CampaignId) -> Result<PathBuf, PrepareError> {
+    Ok(campaigns_dir()?
+        .join(campaign_id.as_str())
+        .join("campaign.json"))
 }
 
-pub fn campaign_closure_state_path(campaign_id: &str) -> Result<PathBuf, PrepareError> {
+pub fn campaign_closure_state_path(campaign_id: &CampaignId) -> Result<PathBuf, PrepareError> {
     Ok(campaigns_dir()?
-        .join(campaign_id)
+        .join(campaign_id.as_str())
         .join("closure-state.json"))
 }
 
-pub fn load_campaign_manifest(campaign_id: &str) -> Result<CampaignManifest, PrepareError> {
+pub fn load_campaign_manifest(campaign_id: &CampaignId) -> Result<CampaignManifest, PrepareError> {
     let path = campaign_manifest_path(campaign_id)?;
     let text = fs::read_to_string(&path).map_err(|source| {
         if source.kind() == std::io::ErrorKind::NotFound {
@@ -349,7 +351,7 @@ pub fn load_campaign_manifest(campaign_id: &str) -> Result<CampaignManifest, Pre
             path: path.clone(),
             source,
         })?;
-    if manifest.campaign_id != campaign_id {
+    if manifest.campaign_id != *campaign_id {
         return Err(PrepareError::DatabaseSetup {
             phase: "campaign_manifest",
             detail: format!(
@@ -379,7 +381,7 @@ pub fn save_campaign_manifest(manifest: &CampaignManifest) -> Result<PathBuf, Pr
 }
 
 pub fn adopt_campaign_manifest_from_closure_state(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
 ) -> Result<CampaignManifest, PrepareError> {
     let path = campaign_closure_state_path(campaign_id)?;
     let text = fs::read_to_string(&path).map_err(|source| PrepareError::ReadManifest {
@@ -404,7 +406,7 @@ pub fn adopt_campaign_manifest_from_closure_state(
 
     Ok(CampaignManifest {
         schema_version: CAMPAIGN_MANIFEST_SCHEMA_VERSION.to_string(),
-        campaign_id: campaign_id.to_string(),
+        campaign_id: campaign_id.clone(),
         benchmark_family: stored.config.benchmark_family,
         dataset_sources: stored.config.dataset_sources,
         model_id: stored.config.model_id,
@@ -420,7 +422,7 @@ pub fn adopt_campaign_manifest_from_closure_state(
 }
 
 pub fn adopt_campaign_manifest_from_registry(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
 ) -> Result<CampaignManifest, PrepareError> {
     let benchmark_family = default_benchmark_family();
     let registry = load_target_registry(benchmark_family)?;
@@ -433,16 +435,18 @@ pub fn adopt_campaign_manifest_from_registry(
 
     let active_model = load_active_model()?;
     let route_source = model_registry_route_source(&active_model.model_id)?.unwrap_or_default();
+    // ANCHOR: campaign_direct_google_provider_normalization
     let provider_slug = if route_source.is_direct_google() {
         None
     } else {
         load_provider_for_model(&active_model.model_id)?
             .map(|provider| provider.slug.as_str().to_string())
     };
+    // ANCHOR_END: campaign_direct_google_provider_normalization
 
     Ok(CampaignManifest {
         schema_version: CAMPAIGN_MANIFEST_SCHEMA_VERSION.to_string(),
-        campaign_id: campaign_id.to_string(),
+        campaign_id: campaign_id.clone(),
         benchmark_family,
         dataset_sources: registry.dataset_sources,
         model_id: Some(active_model.model_id.to_string()),
@@ -506,7 +510,7 @@ pub fn list_campaigns() -> Result<Vec<CampaignListEntry>, PrepareError> {
         if !path.is_dir() {
             continue;
         }
-        let campaign_id = entry.file_name().to_string_lossy().to_string();
+        let campaign_id = CampaignId::from(entry.file_name().to_string_lossy().as_ref());
         let has_manifest = path.join("campaign.json").exists();
         let has_closure_state = path.join("closure-state.json").exists();
         if !has_manifest && !has_closure_state {
@@ -524,7 +528,7 @@ pub fn list_campaigns() -> Result<Vec<CampaignListEntry>, PrepareError> {
 }
 
 pub fn resolve_campaign_config(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     overrides: &CampaignOverrides,
 ) -> Result<ResolvedCampaignConfig, PrepareError> {
     let manifest = load_campaign_manifest(campaign_id)?;
@@ -566,6 +570,7 @@ pub fn resolve_campaign_config(
         .provider_slug
         .clone()
         .or_else(|| manifest.provider_slug.clone());
+    // ANCHOR: campaign_resolve_direct_google_provider
     let provider_slug = if route_source.is_direct_google() {
         match explicit_provider.as_deref() {
             Some("google") | None => None,
@@ -586,6 +591,7 @@ pub fn resolve_campaign_config(
                 .map(|value| value.slug.as_str().to_string())
         })
     };
+    // ANCHOR_END: campaign_resolve_direct_google_provider
 
     let required_procedures = if overrides.required_procedures.is_empty() {
         normalize_required_procedures(&manifest.required_procedures)?
@@ -605,7 +611,7 @@ pub fn resolve_campaign_config(
         .unwrap_or(batches_dir()?);
 
     Ok(ResolvedCampaignConfig {
-        campaign_id: campaign_id.to_string(),
+        campaign_id: campaign_id.clone(),
         benchmark_family: manifest.benchmark_family,
         dataset_sources,
         model_id,
@@ -627,7 +633,7 @@ pub async fn validate_campaign_config(
 
     checks.push(CampaignValidationCheck {
         label: "campaign".to_string(),
-        detail: config.campaign_id.clone(),
+        detail: config.campaign_id.to_string(),
     });
 
     for source in &config.dataset_sources {
@@ -838,7 +844,7 @@ pub fn render_resolved_campaign_config(config: &ResolvedCampaignConfig) -> Strin
             .eval
             .batch_prefix
             .as_deref()
-            .unwrap_or(&config.campaign_id)
+            .unwrap_or(config.campaign_id.as_str())
     ));
     out.push_str("\nprotocol\n");
     out.push_str(&format!(
@@ -991,7 +997,7 @@ mod tests {
     #[test]
     fn render_handles_empty_framework() {
         let cfg = ResolvedCampaignConfig {
-            campaign_id: "demo".to_string(),
+            campaign_id: CampaignId::from("demo"),
             benchmark_family: BenchmarkFamily::MultiSweBenchRust,
             dataset_sources: vec![RegistryDatasetSource {
                 key: Some("ripgrep".to_string()),

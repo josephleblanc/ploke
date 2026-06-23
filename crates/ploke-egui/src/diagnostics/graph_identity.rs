@@ -111,6 +111,7 @@ mod tests {
         artifact_tree::Shape,
     };
     use eframe::egui::Vec2;
+    use ploke_records::ids::CampaignId;
     use ploke_tree::{CampaignRef, Lanes, NodeKey, RunForest, TreeNode};
 
     #[test]
@@ -118,7 +119,7 @@ mod tests {
         let graph = ploke_tree::Graph {
             forest: Some(RunForest {
                 campaign: CampaignRef {
-                    campaign_id: "campaign".to_owned(),
+                    campaign_id: CampaignId::from("campaign"),
                     updated_at: "now".to_owned(),
                 },
                 roots: vec![NodeKey::from("root")],

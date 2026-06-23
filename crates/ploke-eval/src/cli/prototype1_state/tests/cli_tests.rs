@@ -5,6 +5,7 @@ use crate::cli::prototype1_state::edit_surface::harness_request::{
     PublishedBroadHarnessRequest, RequestAdmissionBinding,
 };
 use crate::cli::prototype1_state::edit_surface::surface::SurfacePolicyId;
+use crate::cli::prototype1_state::typestate::{self, StepInput};
 use crate::cli::{
     InspectOutputFormat, Prototype1CandidateGenerator,
     Prototype1ChildScheduleMode as CliPrototype1ChildScheduleMode, Prototype1LoopCommand,
@@ -31,6 +32,10 @@ use crate::intervention::{
     Prototype1SearchPolicy, RecordStore, TreatmentBranchNode, TreatmentBranchStatus,
 };
 use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, RuntimeId};
+use ploke_records::ids::CampaignId;
+use std::sync::LazyLock;
+
+static CLI_TEST_CAMPAIGN: LazyLock<CampaignId> = LazyLock::new(|| CampaignId::from("campaign"));
 
 #[derive(Clone, Default)]
 struct TraceLines(Arc<Mutex<Vec<String>>>);
@@ -174,6 +179,26 @@ fn state_command_without_ids() -> Prototype1StateCommand {
 }
 
 #[test]
+fn r0_to_r1_requires_campaign_or_parent_identity() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let mut command = state_command_without_ids();
+    command.repo_root = Some(tmp.path().to_path_buf());
+
+    let error = typestate::R0::new(command)
+        .advance(r0_to_r1)
+        .expect_err("missing campaign and parent identity should fail during R0 -> R1");
+
+    match error {
+        PrepareError::InvalidBatchSelection { detail } => {
+            assert!(detail.contains("--campaign was omitted"));
+            assert!(detail.contains("no parent identity exists"));
+            assert!(detail.contains("parent_identity.json"));
+        }
+        other => panic!("unexpected R0 -> R1 error: {other:?}"),
+    }
+}
+
+#[test]
 fn candidate_generation_config_dispatches_broad_harness_surface_by_default() {
     let command = state_command_without_ids();
     let config = CandidateGenerationConfig::from_command(&command);
@@ -256,7 +281,7 @@ fn parent_identity_for(node_id: &str, generation: u32) -> ParentIdentity {
     ParentIdentity::from_record_for_test(ParentIdentityRecord {
         schema_version: crate::cli::prototype1_state::identity::PARENT_IDENTITY_SCHEMA_VERSION
             .to_string(),
-        campaign_id: "campaign".to_string(),
+        campaign_id: CampaignId::from("campaign"),
         parent_id: node_id.to_string(),
         node_id: node_id.to_string(),
         generation,
@@ -274,7 +299,7 @@ fn append_parent_started(manifest_path: &Path, identity: ParentIdentity) {
     journal
         .append(JournalEntry::ParentStarted(ParentStartedEntry {
             recorded_at: RecordedAt::now(),
-            campaign_id: identity.campaign_id().to_string(),
+            campaign_id: identity.campaign_id().clone(),
             parent_identity: identity,
             repo_root: manifest_path
                 .parent()
@@ -691,7 +716,7 @@ fn prototype1_setup_campaign_manifest_preserves_embedding_overrides() {
         specific: Vec::new(),
         limit: None,
         prepare_batch_id: None,
-        campaign: Some("embedding-override-campaign".to_string()),
+        campaign: Some(CampaignId::from("embedding-override-campaign")),
         profile: None,
         repo_cache: None,
         instances_root: None,
@@ -728,7 +753,8 @@ fn prototype1_setup_campaign_manifest_preserves_embedding_overrides() {
     let campaign = prepare_prototype1_loop_campaign(&command, &prepared_batch, None)
         .expect("campaign prepares");
     let manifest =
-        crate::campaign::load_campaign_manifest("embedding-override-campaign").expect("manifest");
+        crate::campaign::load_campaign_manifest(&CampaignId::from("embedding-override-campaign"))
+            .expect("manifest");
 
     assert_eq!(
         manifest.eval.embedding_model_id.as_deref(),
@@ -758,9 +784,11 @@ fn prototype1_eval_set_id_includes_embedding_overrides() {
     }];
     let instance_ids = vec!["BurntSushi__ripgrep-2209".to_string()];
     let base_policy = test_eval_policy();
+    let baseline_campaign = CampaignId::from("baseline");
+    let treatment_campaign = CampaignId::from("treatment");
     let base_id = prototype1_eval_set_id(
-        "baseline",
-        "treatment",
+        &baseline_campaign,
+        &treatment_campaign,
         crate::target_registry::BenchmarkFamily::MultiSweBenchRust,
         &sources,
         &base_policy,
@@ -771,8 +799,8 @@ fn prototype1_eval_set_id_includes_embedding_overrides() {
     embedding_policy.embedding_model_id = Some("perplexity/pplx-embed-v1-4b".to_string());
     embedding_policy.embedding_provider_slug = Some("perplexity".to_string());
     let embedding_id = prototype1_eval_set_id(
-        "baseline",
-        "treatment",
+        &baseline_campaign,
+        &treatment_campaign,
         crate::target_registry::BenchmarkFamily::MultiSweBenchRust,
         &sources,
         &embedding_policy,
@@ -840,7 +868,7 @@ fn checked_edit_surface_candidate_is_accepted_by_tui_child_plan_consumer() {
     node.derived_artifact_id = None;
 
     let child = child_files_from_checked_edit(
-        "campaign",
+        &CLI_TEST_CAMPAIGN,
         Prototype1EditSurface::PlokeTuiTools,
         node,
         &checked,
@@ -892,7 +920,12 @@ fn checked_edit_surface_candidate_is_accepted_by_tui_child_plan_consumer() {
 fn legacy_child_files_serialize_without_surface_evidence() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let node = test_node(tmp.path(), "node-child", "branch-child", "candidate-child");
-    let child = ChildFiles::from_resolved("campaign", node.clone(), test_resolved(&node), false);
+    let child = ChildFiles::from_resolved(
+        &CLI_TEST_CAMPAIGN,
+        node.clone(),
+        test_resolved(&node),
+        false,
+    );
 
     let serialized = serde_json::to_value(&child).expect("child files json");
 
@@ -1497,7 +1530,7 @@ async fn zero_admission_batch_is_persisted() {
     let parent_identity = batch.parent.identity().clone();
     let receipt = publish_broad_harness_child_plan_from_admitted_batch(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -1537,7 +1570,7 @@ name = "zero-admission-replay"
     .expect("profile parses");
     run_profile.validate().expect("profile validates");
     let planned_result = resolve_profile_child_plan(
-        "campaign",
+        &CLI_TEST_CAMPAIGN,
         &manifest_path,
         &repo_root,
         resumed_parent,
@@ -1845,7 +1878,7 @@ fn tui_edit_surface_parent_selection_publishes_child_plan() {
 
     let receipt = publish_deterministic_tui_tools_child_plan(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -2046,7 +2079,7 @@ async fn pre_child_planning_review_writes_prompt_and_artifact_before_admission()
 
     run_pre_child_planning_review(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -2656,7 +2689,7 @@ fn broad_harness_rejects_unbound_existing_child_plan() {
     let budget = Prototype1ChildBudget::new(1, 1);
     let receipt = publish_deterministic_tui_tools_child_plan(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -2696,7 +2729,7 @@ fn broad_harness_child_requires_request_bound_evidence() {
     resolved.branch.generation_target = Some(crate::loop_graph::OperationTarget::Artifact {
         artifact_id: node.base_artifact_id.clone().expect("base artifact"),
     });
-    let child = ChildFiles::from_resolved("campaign", node, resolved, false);
+    let child = ChildFiles::from_resolved(&CLI_TEST_CAMPAIGN, node, resolved, false);
 
     let err = validate_requested_broad_harness_child(&child)
         .expect_err("request-bound broad child evidence is mandatory");
@@ -2761,7 +2794,7 @@ fn broad_harness_multi_file_admission_mints_one_artifact_child() {
 
     let child_plan = publish_broad_harness_child_plan_from_admitted(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -2817,6 +2850,77 @@ fn broad_harness_multi_file_admission_mints_one_artifact_child() {
 }
 
 #[test]
+fn broad_harness_child_plan_skips_missing_source_admitted_result_when_min_remains() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let allowed = write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "broad surface fixture");
+    let parent = ready_parent_for_test(&manifest_path, &repo_root);
+    let budget = Prototype1ChildBudget::new(2, 3);
+    let broad_tui = profile::BroadTui {
+        fresh_slots_per_child: Some(1),
+        ..profile::BroadTui::default()
+    };
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        broad_tui,
+        profile::AntiAttractorPolicy::None,
+    )
+    .expect("publish broad harness batch");
+    assert_eq!(batch.slots.len(), 3);
+
+    let first =
+        admit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "one");
+    let missing_source = PathBuf::from("crates/ploke-selection-score/tests/raser.rs");
+    let bad = admit_broad_slot_for_test(
+        &repo_root,
+        &batch.slots[1],
+        &[missing_source.clone()],
+        "bad",
+    );
+    let third =
+        admit_broad_slot_for_test(&repo_root, &batch.slots[2], &[allowed[1].clone()], "three");
+
+    let receipt = publish_broad_harness_child_plan_from_admitted_batch(
+        ChildPlanEnv {
+            campaign_id: &CLI_TEST_CAMPAIGN,
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+            broad_tui,
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            route_source: ModelRouteSource::DirectGoogle,
+        },
+        batch,
+        vec![first, bad, third],
+    )
+    .expect("missing-source candidate should be rejected while enough children remain");
+
+    let children = receipt.plan.body().children();
+    assert_eq!(children.len(), 2);
+    assert!(
+        children
+            .iter()
+            .all(|child| child.node_record().target_relpath != missing_source)
+    );
+    assert!(
+        receipt.rejected_surface_attempts.iter().any(|attempt| {
+            matches!(
+                &attempt.outcome,
+                surface_attempt::Outcome::Rejected { reason }
+                    if reason.contains("could not read source file")
+                        && reason.contains("raser.rs")
+            )
+        }),
+        "missing-source admission should be retained as rejected evidence: {:?}",
+        receipt.rejected_surface_attempts
+    );
+}
+
+#[test]
 fn broad_harness_materialization_accepts_relative_parent_repo_root() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
@@ -2869,7 +2973,7 @@ fn broad_harness_materialization_accepts_relative_parent_repo_root() {
 
     let child_plan = publish_broad_harness_child_plan_from_admitted(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -2951,7 +3055,7 @@ async fn broad_harness_batch_admits_three_transactions_into_three_children() {
 
     let receipt = admit_broad_harness_batch(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -3059,7 +3163,7 @@ async fn broad_slots_run_in_parallel() {
 
     let receipt = admit_broad_harness_batch(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -3160,7 +3264,7 @@ async fn provider_unavailable_after_partial_admissions_persists_failed_child_pla
 
     let result = admit_broad_harness_batch(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -3213,7 +3317,7 @@ async fn provider_unavailable_after_partial_admissions_persists_failed_child_pla
     let resumed_parent = ready_parent_for_test(&manifest_path, &repo_root);
     let receipt = receive_existing_child_plan(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -3288,7 +3392,7 @@ async fn provider_unavailable_after_min_admitted_returns_published_plan() {
 
     let result = admit_broad_harness_batch(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -3366,7 +3470,7 @@ async fn database_setup_fatal_after_min_admitted_returns_published_plan() {
 
     let result = admit_broad_harness_batch(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -3451,7 +3555,7 @@ async fn provider_unavailable_with_parallel_slots_aborts_without_corrupting_plan
 
     let result = admit_broad_harness_batch(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -3536,7 +3640,7 @@ async fn completed_without_edit_zero_admission_returns_rejected_only_plan_withou
 
     let receipt = admit_broad_harness_batch(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -3624,7 +3728,7 @@ async fn provider_unavailable_with_google_direct_permanently_fails_parent() {
 
     let result = admit_broad_harness_batch(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -3661,7 +3765,7 @@ async fn provider_unavailable_with_google_direct_permanently_fails_parent() {
     let resumed_parent = ready_parent_for_test(&manifest_path, &repo_root);
     let receipt = receive_existing_child_plan(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -3736,7 +3840,7 @@ async fn provider_unavailable_without_google_direct_keeps_parent_resumable() {
 
     let result = admit_broad_harness_batch(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -3837,7 +3941,7 @@ async fn child_fanout_is_parallel() {
     }
     let receipt = admit_broad_harness_batch(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -3852,7 +3956,7 @@ async fn child_fanout_is_parallel() {
     assert_eq!(children.len(), 3);
 
     let baseline = CompleteBaseline::complete(
-        "campaign".to_string(),
+        CampaignId::from("campaign"),
         parent_identity.node_id().to_string(),
         parent_identity.branch_id().to_string(),
         "eval-set".to_string(),
@@ -3868,7 +3972,7 @@ async fn child_fanout_is_parallel() {
     )
     .expect("complete baseline");
     let outcomes = run_child_fanout(
-        "campaign",
+        &CLI_TEST_CAMPAIGN,
         &manifest_path,
         &repo_root,
         &prototype1_transition_journal_path(&manifest_path),
@@ -3990,7 +4094,7 @@ async fn child_build_promotes_binary_and_cleans_scratch() {
     submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
     let receipt = admit_broad_harness_batch(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -4004,7 +4108,7 @@ async fn child_build_promotes_binary_and_cleans_scratch() {
     let child = receipt.plan.body().children()[0].clone();
     let node = child.node_record().clone();
     let baseline = CompleteBaseline::complete(
-        "campaign".to_string(),
+        CampaignId::from("campaign"),
         parent_identity.node_id().to_string(),
         parent_identity.branch_id().to_string(),
         "eval-set".to_string(),
@@ -4021,7 +4125,7 @@ async fn child_build_promotes_binary_and_cleans_scratch() {
     .expect("complete baseline");
 
     let outcome = run_planned_child(
-        "campaign".to_string(),
+        CampaignId::from("campaign"),
         manifest_path.clone(),
         repo_root.clone(),
         prototype1_transition_journal_path(&manifest_path),
@@ -4183,7 +4287,7 @@ async fn historical_late_child_result_blocks_direct_reentry() {
 
     let parent_identity = parent_identity.expect("historical parent identity");
     let baseline = CompleteBaseline::complete(
-        parent_identity.campaign_id().to_string(),
+        parent_identity.campaign_id().clone(),
         parent_identity.node_id().to_string(),
         parent_identity.branch_id().to_string(),
         "eval-set".to_string(),
@@ -4200,7 +4304,7 @@ async fn historical_late_child_result_blocks_direct_reentry() {
     .expect("complete baseline");
 
     let err = run_planned_child(
-        parent_identity.campaign_id().to_string(),
+        parent_identity.campaign_id().clone(),
         manifest_path.clone(),
         tmp.path().join("repo"),
         journal_path.clone(),
@@ -4269,7 +4373,7 @@ async fn terminal_child_blocks_reentry() {
     submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
     let receipt = admit_broad_harness_batch(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -4287,13 +4391,13 @@ async fn terminal_child_blocks_reentry() {
     write_node_projection(&stored).expect("write contaminated node projection");
     let runner_result = crate::intervention::Prototype1RunnerResult {
         schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
-        campaign_id: "campaign".to_string(),
+        campaign_id: CampaignId::from("campaign"),
         node_id: node.node_id.clone(),
         generation: node.generation,
         branch_id: node.branch_id.clone(),
         status: Prototype1NodeStatus::Succeeded,
         disposition: crate::intervention::Prototype1RunnerDisposition::Succeeded,
-        treatment_campaign_id: Some("treatment".to_string()),
+        treatment_campaign_id: Some(CampaignId::from("treatment")),
         evaluation_artifact_path: None,
         detail: None,
         exit_code: Some(0),
@@ -4304,7 +4408,7 @@ async fn terminal_child_blocks_reentry() {
     crate::intervention::write_runner_result_at(&stored.runner_result_path, &runner_result)
         .expect("write terminal runner result");
     let baseline = CompleteBaseline::complete(
-        "campaign".to_string(),
+        CampaignId::from("campaign"),
         parent_identity.node_id().to_string(),
         parent_identity.branch_id().to_string(),
         "eval-set".to_string(),
@@ -4321,7 +4425,7 @@ async fn terminal_child_blocks_reentry() {
     .expect("complete baseline");
 
     let err = run_planned_child(
-        "campaign".to_string(),
+        CampaignId::from("campaign"),
         manifest_path.clone(),
         repo_root,
         prototype1_transition_journal_path(&manifest_path),
@@ -4382,7 +4486,7 @@ async fn succeeded_child_without_evaluation_blocks_direct_reentry() {
     submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
     let receipt = admit_broad_harness_batch(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -4400,13 +4504,13 @@ async fn succeeded_child_without_evaluation_blocks_direct_reentry() {
     write_node_projection(&stored).expect("write terminal node projection");
     let runner_result = crate::intervention::Prototype1RunnerResult {
         schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
-        campaign_id: "campaign".to_string(),
+        campaign_id: CampaignId::from("campaign"),
         node_id: node.node_id.clone(),
         generation: node.generation,
         branch_id: node.branch_id.clone(),
         status: Prototype1NodeStatus::Succeeded,
         disposition: crate::intervention::Prototype1RunnerDisposition::Succeeded,
-        treatment_campaign_id: Some("treatment".to_string()),
+        treatment_campaign_id: Some(CampaignId::from("treatment")),
         evaluation_artifact_path: None,
         detail: None,
         exit_code: Some(0),
@@ -4417,7 +4521,7 @@ async fn succeeded_child_without_evaluation_blocks_direct_reentry() {
     crate::intervention::write_runner_result_at(&stored.runner_result_path, &runner_result)
         .expect("write terminal runner result");
     let baseline = CompleteBaseline::complete(
-        "campaign".to_string(),
+        CampaignId::from("campaign"),
         parent_identity.node_id().to_string(),
         parent_identity.branch_id().to_string(),
         "eval-set".to_string(),
@@ -4434,7 +4538,7 @@ async fn succeeded_child_without_evaluation_blocks_direct_reentry() {
     .expect("complete baseline");
 
     let err = run_planned_child(
-        "campaign".to_string(),
+        CampaignId::from("campaign"),
         manifest_path.clone(),
         repo_root,
         prototype1_transition_journal_path(&manifest_path),
@@ -4467,6 +4571,207 @@ async fn succeeded_child_without_evaluation_blocks_direct_reentry() {
         !loaded.node_dir.join("target").exists(),
         "blocked re-entry must not create a child build target"
     );
+}
+
+#[tokio::test]
+async fn succeeded_child_without_evaluation_recovers_from_terminal_channel() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let campaign_id = CampaignId::from("campaign");
+
+    let allowed = write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "broad surface fixture");
+    let parent = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
+    let budget = Prototype1ChildBudget::new(1, 1);
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+        profile::AntiAttractorPolicy::None,
+    )
+    .expect("publish broad harness batch");
+    submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
+    let receipt = admit_broad_harness_batch(
+        ChildPlanEnv {
+            campaign_id: &CLI_TEST_CAMPAIGN,
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
+            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            route_source: ModelRouteSource::DirectGoogle,
+        },
+        batch,
+    )
+    .await
+    .expect("admit one child");
+    let child = receipt.plan.body().children()[0].clone();
+    let node = child.node_record().clone();
+    let mut stored = project_node_status(&node, Prototype1NodeStatus::Succeeded);
+    stored.updated_at = "2026-06-09T18:04:04.433855206+00:00".to_string();
+    write_node_projection(&stored).expect("write terminal node projection");
+
+    let treatment_id = CampaignId::from("treatment");
+    let run_metrics = test_metrics(false, true, 0);
+    let treatment = Prototype1TreatmentEvidence {
+        baseline_campaign_id: campaign_id.clone(),
+        branch_id: node.branch_id.clone(),
+        treatment_campaign_id: treatment_id.clone(),
+        treatment_campaign_manifest: tmp.path().join("treatment/campaign.json"),
+        treatment_closure_state_path: tmp.path().join("treatment/closure-state.json"),
+        eval_policy: EvalCampaignPolicy::default(),
+        benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+        dataset_sources: Vec::new(),
+        instances: vec![Prototype1TreatmentInstanceEvidence {
+            instance_id: node.instance_id.clone(),
+            registration_path: None,
+            record_path: Some(tmp.path().join("treatment-record.json.gz")),
+            metrics: Some(run_metrics.clone()),
+            oracle_evaluation: None,
+            status: "complete".to_string(),
+        }],
+    };
+    let result = crate::intervention::Prototype1RunnerResult {
+        schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
+        campaign_id: campaign_id.clone(),
+        node_id: node.node_id.clone(),
+        generation: node.generation,
+        branch_id: node.branch_id.clone(),
+        status: Prototype1NodeStatus::Succeeded,
+        disposition: crate::intervention::Prototype1RunnerDisposition::Succeeded,
+        treatment_campaign_id: Some(treatment_id.clone()),
+        evaluation_artifact_path: None,
+        detail: None,
+        exit_code: Some(0),
+        stdout_excerpt: None,
+        stderr_excerpt: None,
+        recorded_at: "2026-06-09T17:55:54.420975107+00:00".to_string(),
+    };
+    crate::intervention::write_runner_result_at(&stored.runner_result_path, &result)
+        .expect("write terminal runner result");
+
+    let runtime_id = RuntimeId::new();
+    let runtime_path =
+        crate::cli::prototype1_state::invocation::result_path(&stored.node_dir, runtime_id);
+    crate::intervention::write_runner_result_at(&runtime_path, &result)
+        .expect("write attempt runner result");
+    let journal_path = prototype1_transition_journal_path(&manifest_path);
+    let channel_root =
+        crate::cli::prototype1_state::invocation::channel_root(&stored.node_dir, runtime_id);
+    let payload = project_node_status(&node, Prototype1NodeStatus::BinaryBuilt);
+    let invocation = crate::cli::prototype1_state::invocation::ChildInvocation::with_bootstrap(
+        campaign_id.clone(),
+        payload,
+        child.runner_request().clone(),
+        child.resolved().clone(),
+        runtime_id,
+        journal_path.clone(),
+        channel_root.clone(),
+    )
+    .expect("child invocation bootstrap");
+    let invocation_path =
+        crate::cli::prototype1_state::invocation::invocation_path(&stored.node_dir, runtime_id);
+    crate::cli::prototype1_state::invocation::write_child_invocation(&invocation_path, &invocation)
+        .expect("write child invocation");
+
+    let ready = crate::cli::prototype1_state::channel::ToParent::Ready;
+    let evaluating = crate::cli::prototype1_state::channel::ToParent::Evaluating;
+    let terminal = crate::cli::prototype1_state::channel::ToParent::Result {
+        runner_result: result.clone(),
+        treatment: Some(treatment),
+    };
+    let messages = [ready, evaluating, terminal];
+    let mut lines = Vec::new();
+    for (index, message) in messages.iter().enumerate() {
+        use sha2::{Digest, Sha256};
+
+        let bytes = serde_json::to_vec(message).expect("serialize channel body");
+        let body = String::from_utf8(bytes.clone()).expect("channel body utf8");
+        let hash = format!("{:x}", Sha256::digest(&bytes));
+        let message_id = format!("00000000-0000-4000-8000-{:012}", index + 1);
+        lines.push(format!(
+            r#"{{"schema_version":"prototype1-runtime-channel.v1","direction":"child_to_parent","campaign_id":"{campaign_id}","node_id":"{}","runtime_id":"{runtime_id}","message_id":"{message_id}","recorded_at":0,"body_hash":"{hash}","body":{body}}}"#,
+            node.node_id
+        ));
+    }
+    fs::create_dir_all(&channel_root).expect("create channel root");
+    fs::write(
+        channel_root.join("child-to-parent.jsonl"),
+        lines.join("\n") + "\n",
+    )
+    .expect("write terminal channel");
+
+    let baseline = CompleteBaseline::complete(
+        campaign_id.clone(),
+        parent_identity.node_id().to_string(),
+        parent_identity.branch_id().to_string(),
+        "eval-set".to_string(),
+        vec![BaselineInstance {
+            instance_id: node.instance_id.clone(),
+            registration_path: None,
+            record_path: tmp.path().join("baseline-record.json.gz"),
+            metrics: run_metrics,
+        }],
+    )
+    .expect("complete baseline");
+
+    let path = prototype1_branch_evaluation_path(&manifest_path, &node.branch_id);
+    assert!(!path.exists(), "test starts without branch evaluation");
+    let outcome = run_planned_child(
+        campaign_id.clone(),
+        manifest_path.clone(),
+        repo_root,
+        journal_path.clone(),
+        parent_identity,
+        baseline,
+        Arc::new(Mutex::new(())),
+        Prototype1StateStopAfter::Build,
+        Duration::from_secs(30),
+        0,
+        child.clone(),
+    )
+    .expect("recover missing branch evaluation from terminal channel");
+
+    assert_eq!(outcome.outcome, "completed:Keep");
+    assert_eq!(outcome.node_status, Prototype1NodeStatus::Succeeded);
+    assert_eq!(outcome.child_runtime, Some(runtime_id.to_string()));
+    assert!(outcome.evaluation_report.is_some());
+    assert!(outcome.selection_input.is_some());
+    assert!(path.exists(), "recovery writes parent comparison report");
+    assert!(
+        !stored.node_dir.join("target").exists(),
+        "stored terminal recovery must not create a child build target"
+    );
+    let entries = PrototypeJournal::new(journal_path)
+        .load_entries()
+        .expect("load recovery journal");
+    assert!(entries.iter().any(|entry| matches!(
+        entry,
+        JournalEntry::ObserveChild(observed)
+            if observed.refs.node_id == node.node_id
+                && observed.runtime_id == runtime_id
+                && observed.phase == CommitPhase::After
+                && matches!(
+                    &observed.result,
+                    Some(crate::cli::prototype1_state::journal::ObservedChildResult::TreatmentComplete {
+                        treatment_campaign_id,
+                    }) if treatment_campaign_id == &treatment_id
+                )
+    )));
+
+    let reconstructed = reconstruct_child_outcomes_from_store(
+        &campaign_id,
+        &manifest_path,
+        std::slice::from_ref(&child),
+    )
+    .expect("read-only child outcome reconstruction from terminal channel");
+    assert_eq!(reconstructed.len(), 1);
+    assert_eq!(reconstructed[0].outcome, "completed:Keep");
+    assert_eq!(reconstructed[0].child_runtime, Some(runtime_id.to_string()));
+    assert!(reconstructed[0].selection_input.is_some());
 }
 
 #[tokio::test]
@@ -4523,7 +4828,7 @@ exit 0
     submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
     let receipt = admit_broad_harness_batch(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -4537,7 +4842,7 @@ exit 0
     let child = receipt.plan.body().children()[0].clone();
     let node = child.node_record().clone();
     let baseline = CompleteBaseline::complete(
-        "campaign".to_string(),
+        CampaignId::from("campaign"),
         parent_identity.node_id().to_string(),
         parent_identity.branch_id().to_string(),
         "eval-set".to_string(),
@@ -4555,7 +4860,7 @@ exit 0
 
     let journal_path = prototype1_transition_journal_path(&manifest_path);
     let outcome = run_planned_child(
-        "campaign".to_string(),
+        CampaignId::from("campaign"),
         manifest_path.clone(),
         repo_root.clone(),
         journal_path.clone(),
@@ -4624,7 +4929,7 @@ async fn child_spawn_observes_failed_result() {
     submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
     let receipt = admit_broad_harness_batch(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -4639,7 +4944,7 @@ async fn child_spawn_observes_failed_result() {
     let node = child.node_record().clone();
     let runner_result = crate::intervention::Prototype1RunnerResult {
         schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
-        campaign_id: "campaign".to_string(),
+        campaign_id: CampaignId::from("campaign"),
         node_id: node.node_id.clone(),
         generation: node.generation,
         branch_id: node.branch_id.clone(),
@@ -4714,7 +5019,7 @@ exit 0
     let _env = crate::test_support::env_guard_os(vec![("PATH", path)]);
 
     let baseline = CompleteBaseline::complete(
-        "campaign".to_string(),
+        CampaignId::from("campaign"),
         parent_identity.node_id().to_string(),
         parent_identity.branch_id().to_string(),
         "eval-set".to_string(),
@@ -4731,7 +5036,7 @@ exit 0
     .expect("complete baseline");
 
     let outcome = run_planned_child(
-        "campaign".to_string(),
+        CampaignId::from("campaign"),
         manifest_path.clone(),
         repo_root.clone(),
         prototype1_transition_journal_path(&manifest_path),
@@ -4799,7 +5104,7 @@ fn broad_harness_batch_rejects_below_minimum_admitted_transactions() {
 
     let result = publish_broad_harness_child_plan_from_admitted_batch(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -4872,7 +5177,7 @@ fn broad_harness_materialization_rejects_post_admission_drift() {
         .expect("admit broad harness result");
     let child_plan = publish_broad_harness_child_plan_from_admitted(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -4927,7 +5232,7 @@ fn below_min_rejected_attempts_are_persisted_and_recoverable_from_existing_child
     let resumed_parent = ready_parent_for_test(&manifest_path, &repo_root);
     let receipt = receive_existing_child_plan(
         ChildPlanEnv {
-            campaign_id: "campaign",
+            campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
@@ -5008,7 +5313,7 @@ fn child_plan_replay_rejects_wrong_parent() {
     let (result, trace) = collect_traces(|| {
         receive_existing_child_plan(
             ChildPlanEnv {
-                campaign_id: "campaign",
+                campaign_id: &CLI_TEST_CAMPAIGN,
                 manifest_path: &manifest_path,
                 repo_root: &repo_root,
                 broad_tui: profile::BroadTui::default(),
@@ -5073,7 +5378,7 @@ fn child_plan_replay_rejects_malformed_file() {
     let (result, trace) = collect_traces(|| {
         receive_existing_child_plan(
             ChildPlanEnv {
-                campaign_id: "campaign",
+                campaign_id: &CLI_TEST_CAMPAIGN,
                 manifest_path: &manifest_path,
                 repo_root: &repo_root,
                 broad_tui: profile::BroadTui::default(),
@@ -5252,7 +5557,7 @@ fn test_parent_identity() -> ParentIdentity {
     ParentIdentity::from_record_for_test(ParentIdentityRecord {
         schema_version: crate::cli::prototype1_state::identity::PARENT_IDENTITY_SCHEMA_VERSION
             .to_string(),
-        campaign_id: "campaign".to_string(),
+        campaign_id: CampaignId::from("campaign"),
         parent_id: "node-parent".to_string(),
         node_id: "node-parent".to_string(),
         generation: 0,
@@ -5302,9 +5607,9 @@ fn test_metrics(
 
 fn test_evaluation_report(node: &Prototype1NodeRecord) -> Prototype1BranchEvaluationReport {
     Prototype1BranchEvaluationReport {
-        baseline_campaign_id: "baseline".to_string(),
+        baseline_campaign_id: CampaignId::from("baseline"),
         branch_id: node.branch_id.clone(),
-        treatment_campaign_id: "treatment".to_string(),
+        treatment_campaign_id: CampaignId::from("treatment"),
         evaluation_procedure_id: Some(
             crate::cli::prototype1_state::evidence::PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID
                 .to_string(),
@@ -5358,9 +5663,9 @@ fn test_evaluation_report(node: &Prototype1NodeRecord) -> Prototype1BranchEvalua
 
 fn test_treatment_evidence(node: &Prototype1NodeRecord) -> Prototype1TreatmentEvidence {
     Prototype1TreatmentEvidence {
-        baseline_campaign_id: "baseline".to_string(),
+        baseline_campaign_id: CampaignId::from("baseline"),
         branch_id: node.branch_id.clone(),
-        treatment_campaign_id: "treatment".to_string(),
+        treatment_campaign_id: CampaignId::from("treatment"),
         treatment_campaign_manifest: PathBuf::from("/tmp/treatment/campaign.json"),
         treatment_closure_state_path: PathBuf::from("/tmp/treatment/closure-state.json"),
         eval_policy: test_eval_policy(),
@@ -5394,7 +5699,7 @@ fn test_eval_policy() -> EvalCampaignPolicy {
 fn test_closure_state_without_record(instance_id: &str) -> crate::closure::ClosureState {
     crate::closure::ClosureState {
         schema_version: "closure-state.v1".to_string(),
-        campaign_id: "baseline".to_string(),
+        campaign_id: CampaignId::from("baseline"),
         updated_at: "2026-05-10T00:00:00Z".to_string(),
         config: crate::closure::ClosureConfig {
             benchmark_family: BenchmarkFamily::MultiSweBenchRust,
@@ -5478,7 +5783,7 @@ fn selected_child_treatment_promotes_to_parent_baseline() {
     let parent = ParentIdentity::from_record_for_test(ParentIdentityRecord {
         schema_version: crate::cli::prototype1_state::identity::PARENT_IDENTITY_SCHEMA_VERSION
             .to_string(),
-        campaign_id: "baseline".to_string(),
+        campaign_id: CampaignId::from("baseline"),
         parent_id: "node-child".to_string(),
         node_id: "node-child".to_string(),
         generation: 1,
@@ -5528,7 +5833,7 @@ fn parent_compares_treatment_evidence_against_owned_baseline() {
         "candidate-1",
     );
     let baseline = CompleteBaseline::complete(
-        "baseline".to_string(),
+        CampaignId::from("baseline"),
         parent.node_id().to_string(),
         parent.branch_id().to_string(),
         "baseline-eval-set".to_string(),
@@ -5543,7 +5848,7 @@ fn parent_compares_treatment_evidence_against_owned_baseline() {
     let treatment = test_treatment_evidence(&node);
 
     let report = build_prototype1_branch_evaluation_report(
-        "baseline",
+        &CampaignId::from("baseline"),
         &node.branch_id,
         Path::new("/tmp/prototype1/branches.json"),
         Path::new("/tmp/prototype1/evaluations/branch-child.json"),
@@ -5593,6 +5898,24 @@ fn bind_test_tui_surface_fields(
     resolved.branch.derived_artifact_id = Some(after);
 }
 
+fn channel_refs_for_test(node_id: &str, runtime_id: &str) -> ChildChannelEvidenceRefs {
+    let terminal_hash = HistoryHash::of_domain_json(
+        "prototype1.test.child_channel_terminal_result",
+        &(node_id, runtime_id),
+    )
+    .expect("terminal hash");
+    ChildChannelEvidenceRefs {
+        runtime_id: runtime_id.to_string(),
+        terminal_result: SealedEvidenceCitation {
+            ref_id: format!("channel:child-to-parent:terminal-result:{node_id}:{runtime_id}"),
+            content_hash: Some(terminal_hash),
+            record_name: Some(CHILD_CHANNEL_TERMINAL_RESULT_RECORD.to_string()),
+        },
+        attempt_result: None,
+        invocation: None,
+    }
+}
+
 fn test_completed_outcome(
     mut node: Prototype1NodeRecord,
     resolved: crate::intervention::ResolvedTreatmentBranch,
@@ -5601,6 +5924,7 @@ fn test_completed_outcome(
     node.status = Prototype1NodeStatus::Succeeded;
     let report = test_evaluation_report(&node);
     let selection_input = selection_input_from_child_report(&node, &report);
+    let runtime_id = format!("runtime:{}", node.node_id);
     PlannedChildOutcome {
         plan_index,
         node_id: node.node_id.clone(),
@@ -5609,7 +5933,8 @@ fn test_completed_outcome(
         workspace_root: node.workspace_root.clone(),
         binary_path: node.binary_path.clone(),
         resolved,
-        child_runtime: Some(format!("runtime:{}", node.node_id)),
+        child_runtime: Some(runtime_id.clone()),
+        channel_evidence: Some(channel_refs_for_test(&node.node_id, &runtime_id)),
         evaluation_report: Some(report),
         selection_input: Some(selection_input),
         surface: None,
@@ -5698,7 +6023,9 @@ fn historical_node_150_channel_treatment_reaches_current_generation_handoff() {
     assert_eq!(terminal.2.branch_id, node.branch_id);
     assert_eq!(
         terminal.2.treatment_campaign_id,
-        "p1-gemini35-flash-direct-15g2x3-20260525-035000-treatment-branch-c56614c6e6a63aa9-1779711014414"
+        CampaignId::from(
+            "p1-gemini35-flash-direct-15g2x3-20260525-035000-treatment-branch-c56614c6e6a63aa9-1779711014414"
+        )
     );
     let treatment_record_path = tmp.path().join("treatment-record.json.gz");
     fs::write(
@@ -5840,6 +6167,42 @@ fn historical_node_150_channel_treatment_reaches_current_generation_handoff() {
     assert_eq!(report.branch_id, node.branch_id);
     assert_eq!(report.overall_disposition, BranchDisposition::Keep);
 
+    let terminal_body = crate::cli::prototype1_state::channel::ToParent::Result {
+        runner_result: terminal.1.clone(),
+        treatment: Some(terminal.2.clone()),
+    };
+    let channel_evidence = ChildChannelEvidenceRefs {
+        runtime_id: terminal.0.clone(),
+        terminal_result: SealedEvidenceCitation {
+            ref_id: format!(
+                "channel:child-to-parent:terminal-result:{}:{}",
+                node.node_id, terminal.0
+            ),
+            content_hash: Some(
+                HistoryHash::of_domain_json(
+                    "prototype1.history.child_channel_terminal_result.v1",
+                    &terminal_body,
+                )
+                .expect("terminal channel hash"),
+            ),
+            record_name: Some(CHILD_CHANNEL_TERMINAL_RESULT_RECORD.to_string()),
+        },
+        attempt_result: Some(SealedEvidenceCitation {
+            ref_id: format!(
+                "child-store:attempt-runner-result:{}:{}",
+                node.node_id, terminal.0
+            ),
+            content_hash: Some(
+                HistoryHash::of_domain_json(
+                    "prototype1.history.child_attempt_runner_result.v1",
+                    &terminal.1,
+                )
+                .expect("attempt result hash"),
+            ),
+            record_name: Some(CHILD_ATTEMPT_RUNNER_RESULT_RECORD.to_string()),
+        }),
+        invocation: None,
+    };
     let outcome = PlannedChildOutcome {
         plan_index,
         node_id: node.node_id.clone(),
@@ -5848,7 +6211,8 @@ fn historical_node_150_channel_treatment_reaches_current_generation_handoff() {
         workspace_root: node.workspace_root.clone(),
         binary_path: node.binary_path.clone(),
         resolved: child.resolved().clone(),
-        child_runtime: Some(terminal.0),
+        child_runtime: Some(terminal.0.clone()),
+        channel_evidence: Some(channel_evidence),
         evaluation_report: Some(report.clone()),
         selection_input: Some(selection_input_from_child_report(&node, &report)),
         surface: child.surface().cloned(),
@@ -5959,7 +6323,28 @@ fn current_generation_selector_trace_follows_child_channel_evidence_path() {
     assert_eq!(sealed.evaluations.len(), 1);
     assert_eq!(
         sealed.evaluations[0].primary_report_citation.ref_id,
-        "inline:child-channel:evaluation-report:branch-child"
+        "parent-comparison:evaluation-report:branch-child"
+    );
+    assert!(
+        sealed.evaluations[0]
+            .primary_report_citation
+            .content_hash
+            .is_some(),
+        "parent comparison citation must carry a report hash"
+    );
+    let runtime = sealed.runtimes.first().expect("runtime evidence");
+    assert_eq!(runtime.runtime_id, "runtime:node-child");
+    assert!(
+        runtime
+            .document_citations
+            .iter()
+            .any(is_child_channel_terminal_result)
+    );
+    assert!(
+        payload
+            .source_refs
+            .iter()
+            .any(|reference| reference.as_str().contains("terminal-result:node-child"))
     );
 
     assert!(trace_contains(
@@ -5995,6 +6380,51 @@ fn current_generation_selector_trace_follows_child_channel_evidence_path() {
             .iter()
             .all(|line| !line.contains("FsEvidenceStore") && !line.contains("history_preview")),
         "trace should stay on the typed child outcome path: {trace:#?}"
+    );
+}
+
+#[test]
+fn current_generation_candidates_without_channel_refs_are_not_decision_grade() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let mut node = test_node(tmp.path(), "node-child", "branch-child", "candidate-1");
+    node.parent_node_id = Some("node-parent".to_string());
+    let mut outcome = test_completed_outcome(
+        node,
+        test_resolved(&test_node(
+            tmp.path(),
+            "node-child",
+            "branch-child",
+            "candidate-1",
+        )),
+        0,
+    );
+    outcome.channel_evidence = None;
+    let parent_identity = test_parent_identity();
+    let parent_selection = ParentSelection::new(
+        &manifest_path,
+        &parent_identity,
+        std::slice::from_ref(&outcome),
+        &[],
+    );
+
+    let projection = parent_selection
+        .current_generation_candidates()
+        .expect("current generation candidate projection");
+    let payload = &projection.considered[0];
+    let grade = payload.decision_grade_eligibility();
+
+    assert!(
+        !grade.eligible,
+        "payload must fail closed without channel refs"
+    );
+    assert!(
+        grade
+            .identity_gaps
+            .iter()
+            .any(|gap| gap.starts_with("primary_runtime_terminal_channel_citation_missing")),
+        "unexpected gaps: {:?}",
+        grade.identity_gaps
     );
 }
 
@@ -6145,7 +6575,7 @@ fn requested_tui_surface_child_rejects_legacy_plan_child() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let node = test_node(tmp.path(), "node-child", "branch-child", "candidate-1");
     let child = ChildFiles::from_resolved(
-        "campaign",
+        &CLI_TEST_CAMPAIGN,
         node,
         test_resolved(&test_node(
             tmp.path(),

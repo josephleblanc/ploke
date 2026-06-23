@@ -268,6 +268,7 @@ mod tests {
         ProposalSnapshotRecord,
     };
     use ploke_records::evaluation::PatchProjectionCheckState;
+    use ploke_records::ids::CampaignId;
     use ploke_records::run_record::{
         AgentMetadata, BenchmarkMetadata, EvalBudget, PackagingPhase, PatchPhase, RunArm,
         RunArmRole, RunMetadata, RunPhases, RunRecord, RuntimeMetadata, SubmissionArtifactState,
@@ -438,7 +439,7 @@ mod tests {
         ploke_tree::Graph {
             forest: Some(RunForest {
                 campaign: CampaignRef {
-                    campaign_id: "campaign".to_owned(),
+                    campaign_id: CampaignId::from("campaign"),
                     updated_at: "now".to_owned(),
                 },
                 roots: Vec::new(),

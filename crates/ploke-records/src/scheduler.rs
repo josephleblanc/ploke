@@ -185,7 +185,7 @@ pub struct RunnerResultRecord {
     pub status: NodeStatusRecord,
     pub disposition: RunnerDispositionRecord,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub treatment_campaign_id: Option<String>,
+    pub treatment_campaign_id: Option<CampaignId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evaluation_artifact_path: Option<PathBuf>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

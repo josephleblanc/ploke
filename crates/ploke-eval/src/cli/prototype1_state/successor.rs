@@ -5,9 +5,7 @@
 //! These records project that handoff path into the append-only transition
 //! journal.
 
-use std::path::PathBuf;
-
-use serde::{Deserialize, Serialize};
+use crate::prelude::*;
 
 use crate::intervention::CommitPhase;
 use crate::intervention::Prototype1ContinuationDecision;
@@ -78,7 +76,7 @@ impl State {
 pub(crate) struct Record {
     pub runtime_id: Option<RuntimeId>,
     pub recorded_at: RecordedAt,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub node_id: String,
     pub state: State,
 }
@@ -86,7 +84,7 @@ pub(crate) struct Record {
 impl Record {
     #[cfg(test)]
     pub(crate) fn selected(
-        campaign_id: String,
+        campaign_id: CampaignId,
         node_id: String,
         decision: Prototype1ContinuationDecision,
     ) -> Self {
@@ -103,7 +101,7 @@ impl Record {
     }
 
     pub(crate) fn selected_with_decision(
-        campaign_id: String,
+        campaign_id: CampaignId,
         node_id: String,
         decision: Prototype1ContinuationDecision,
         selection_decision: SuccessorDecision,
@@ -121,7 +119,7 @@ impl Record {
     }
 
     pub(crate) fn stopped(
-        campaign_id: String,
+        campaign_id: CampaignId,
         node_id: String,
         decision: Prototype1ContinuationDecision,
         selection_decision: SuccessorDecision,
@@ -139,7 +137,7 @@ impl Record {
     }
 
     pub(crate) fn checkout(
-        campaign_id: String,
+        campaign_id: CampaignId,
         node_id: String,
         phase: CommitPhase,
         active_parent_root: PathBuf,
@@ -172,7 +170,7 @@ impl Record {
         Self {
             runtime_id: Some(invocation.runtime_id()),
             recorded_at: RecordedAt::now(),
-            campaign_id: invocation.campaign_id().to_string(),
+            campaign_id: invocation.campaign_id().clone(),
             node_id: invocation.node_id().to_string(),
             state: State::Spawned {
                 pid,
@@ -189,7 +187,7 @@ impl Record {
         Self {
             runtime_id: Some(invocation.runtime_id()),
             recorded_at: RecordedAt::now(),
-            campaign_id: invocation.campaign_id().to_string(),
+            campaign_id: invocation.campaign_id().clone(),
             node_id: invocation.node_id().to_string(),
             state: State::Ready { pid, ready_path },
         }
@@ -203,7 +201,7 @@ impl Record {
         Self {
             runtime_id: Some(invocation.runtime_id()),
             recorded_at: RecordedAt::now(),
-            campaign_id: invocation.campaign_id().to_string(),
+            campaign_id: invocation.campaign_id().clone(),
             node_id: invocation.node_id().to_string(),
             state: State::TimedOut {
                 waited_ms,
@@ -219,7 +217,7 @@ impl Record {
         Self {
             runtime_id: Some(invocation.runtime_id()),
             recorded_at: RecordedAt::now(),
-            campaign_id: invocation.campaign_id().to_string(),
+            campaign_id: invocation.campaign_id().clone(),
             node_id: invocation.node_id().to_string(),
             state: State::ExitedBeforeReady { exit_code },
         }
@@ -235,7 +233,7 @@ impl Record {
         Self {
             runtime_id: Some(invocation.runtime_id()),
             recorded_at: RecordedAt::now(),
-            campaign_id: invocation.campaign_id().to_string(),
+            campaign_id: invocation.campaign_id().clone(),
             node_id: invocation.node_id().to_string(),
             state: State::Completed {
                 status,

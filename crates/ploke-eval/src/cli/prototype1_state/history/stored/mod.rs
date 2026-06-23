@@ -1,3 +1,4 @@
+// ANCHOR: prototype1_block_store_contract
 /// Append-only storage port for sealed History blocks.
 ///
 /// This is intentionally separate from the read-only preview `EvidenceStore`
@@ -30,6 +31,8 @@ pub(crate) trait BlockStore {
 
     fn lineage_state(&self, lineage: &LineageId) -> Result<LineageState, Self::Error>;
 }
+// ANCHOR_END: prototype1_block_store_contract
+
 /// Filesystem-backed sealed block store for Prototype 1.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FsBlockStore {
@@ -282,6 +285,7 @@ impl FsBlockStore {
 impl BlockStore for FsBlockStore {
     type Error = BlockStoreError;
 
+    // ANCHOR: prototype1_fs_block_store_append
     fn append(
         &self,
         expected: &LineageState,
@@ -328,6 +332,7 @@ impl BlockStore for FsBlockStore {
 
         Ok(stored)
     }
+    // ANCHOR_END: prototype1_fs_block_store_append
 
     fn lineage_state(&self, lineage: &LineageId) -> Result<LineageState, Self::Error> {
         let heads = self.read_heads()?;

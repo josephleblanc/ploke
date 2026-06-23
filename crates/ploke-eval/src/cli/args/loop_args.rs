@@ -1,10 +1,13 @@
 use std::path::PathBuf;
 
+use ploke_records::ids::CampaignId;
+
 use clap::{ArgAction, Parser, Subcommand};
 use ploke_llm::request::models::ModelRouteSource;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::common::{InspectOutputFormat, parse_model_route_source};
+use crate::cli::prototype1_state::walk::phase::WalkPhase;
 
 #[derive(Debug, Parser)]
 #[command(about = "Run higher-level loop wrappers over eval, protocol, and intervention stages")]
@@ -29,6 +32,16 @@ pub enum LoopSubcommand {
     Prototype1Step(Prototype1ControlCommand),
     /// Drive the typed Prototype 1 parent runtime path.
     Prototype1State(Prototype1StateCommand),
+    // ANCHOR: prototype1_walk_command_safety_help
+    /// Debug-only local server for stepping Prototype 1 typestate transitions.
+    #[command(
+        name = "walk",
+        about = "Debug-step Prototype 1 typestate transitions through a local walk server",
+        long_about = "Debug-step Prototype 1 typestate transitions through a local walk server.\n\nThe walk server is a local debugging harness over live Prototype 1 transition edges. It is not production loop authority. By default it uses the active walk context if one was set with `walk use`, otherwise the current directory, and a repo-hashed socket under the runtime directory.",
+        after_help = "Common workflows:\n  Set context:       ploke-eval loop walk use /path/to/parent-worktree\n  Start live walk:   ploke-eval loop walk start\n  Inspect progress:  ploke-eval loop walk summary -v\n  Replay history:    ploke-eval loop walk replay --index 0\n  Move replay:       ploke-eval loop walk forward --steps 10 --tail 20\n  Live step:         ploke-eval loop walk step --until r6\n\nSafety notes:\n  replay/back/forward are read-only historical cursor commands.\n  step drives live typestate edges; long live edges require --watch.\n  R12 -> R13b successor handoff mutates checkout state and requires --allow git-changes.\n  branch-live writes only explicit provenance and requires --allow provenance-record."
+    )]
+    Prototype1StateWalk(Prototype1StateWalkCommand),
+    // ANCHOR_END: prototype1_walk_command_safety_help
     /// Inspect or execute one staged Prototype 1 runner invocation.
     #[command(hide = true)]
     Prototype1Runner(Prototype1RunnerCommand),
@@ -37,7 +50,7 @@ pub enum LoopSubcommand {
     Prototype1Harness(Prototype1HarnessCommand),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum Prototype1StateStopAfter {
     Materialize,
@@ -46,7 +59,7 @@ pub enum Prototype1StateStopAfter {
     Complete,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum Prototype1SuccessorSelection {
     GenerationLocal,
@@ -54,14 +67,14 @@ pub enum Prototype1SuccessorSelection {
     HistoryScoreChildProp,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum Prototype1TraversalMetrics {
     Operational,
     OperationalAndProtocol,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
 pub enum Prototype1CandidateGenerator {
     Legacy,
@@ -81,7 +94,7 @@ pub enum Prototype1EditSurface {
 pub struct Prototype1StateCommand {
     /// Campaign id. Defaults to parent identity, then active `select campaign`.
     #[arg(long)]
-    pub campaign: Option<String>,
+    pub campaign: Option<CampaignId>,
 
     /// Candidate node id to materialize/evaluate. During --init-parent-identity only, this is the generation-0 parent node.
     #[arg(long)]
@@ -130,6 +143,591 @@ pub struct Prototype1StateCommand {
     pub format: InspectOutputFormat,
 }
 
+#[derive(Debug, Parser)]
+#[command(about = "Debug-step Prototype 1 typestate transitions through a local walk server")]
+pub struct Prototype1StateWalkCommand {
+    #[command(subcommand)]
+    pub command: Prototype1StateWalkSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Prototype1StateWalkSubcommand {
+    /// Run the local walk server on a Unix socket.
+    Serve(Prototype1StateWalkServeCommand),
+    /// Save the active parent checkout for later walk commands.
+    Use(Prototype1StateWalkUseCommand),
+    /// Start a new in-memory walk, defaulting to R0.
+    Start(Prototype1StateWalkStartCommand),
+    /// Advance the current in-memory walk by one step or until a target phase.
+    Step(Prototype1StateWalkStepCommand),
+    /// Reset the current in-memory walk without stopping the server.
+    Reset(Prototype1StateWalkControlCommand),
+    /// Print tracked output files for the current walk.
+    Files(Prototype1StateWalkControlCommand),
+    /// Show current in-memory walk state or the last step delta.
+    Show(Prototype1StateWalkShowCommand),
+    /// Inspect nested LLM/tool-loop debugger checkpoints.
+    Llm(Prototype1StateWalkLlmCommand),
+    /// Summarize durable campaign progress without contacting the walk server.
+    Summary(Prototype1StateWalkSummaryCommand),
+    /// Show or jump within the read-only historical replay cursor.
+    Replay(Prototype1StateWalkReplayCommand),
+    /// Move the read-only historical replay cursor backward without undoing side effects.
+    Back(Prototype1StateWalkReplayMoveCommand),
+    /// Move the read-only historical replay cursor forward.
+    Forward(Prototype1StateWalkReplayMoveCommand),
+    /// Record explicit provenance before branching from replay toward live work.
+    BranchLive(Prototype1StateWalkBranchLiveCommand),
+    /// Check whether the local walk server is alive.
+    Status(Prototype1StateWalkControlCommand),
+    /// Stop the local walk server.
+    Stop(Prototype1StateWalkControlCommand),
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkServeCommand {
+    /// Parent checkout root. Defaults to active walk context, then current directory.
+    #[arg(long, value_name = "PATH")]
+    pub repo_root: Option<PathBuf>,
+
+    /// Explicit Unix socket path. Defaults to a repo-hashed path under the runtime directory.
+    #[arg(long, value_name = "PATH")]
+    pub socket: Option<PathBuf>,
+
+    /// Idle seconds before the server exits. Defaults to 1800 seconds.
+    #[arg(long, value_name = "SECS", conflicts_with = "no_ttl")]
+    pub ttl_secs: Option<u64>,
+
+    /// Keep the server alive until an explicit stop request.
+    #[arg(long)]
+    pub no_ttl: bool,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Remember the parent checkout/socket used by later walk commands",
+    after_help = "Examples:\n  ploke-eval loop walk use /path/to/parent-worktree\n  ploke-eval loop walk use /path/to/parent-worktree --socket /tmp/ploke-walk.sock\n\nLater walk commands default to this context when --repo-root/--socket are omitted."
+)]
+pub struct Prototype1StateWalkUseCommand {
+    /// Parent checkout root to remember. Defaults to the current directory.
+    #[arg(value_name = "PATH")]
+    pub repo_root: Option<PathBuf>,
+
+    /// Explicit Unix socket path to remember for this walk context.
+    #[arg(long, value_name = "PATH")]
+    pub socket: Option<PathBuf>,
+
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkControlCommand {
+    /// Parent checkout root. Defaults to active walk context, then current directory.
+    #[arg(long, value_name = "PATH")]
+    pub repo_root: Option<PathBuf>,
+
+    /// Explicit Unix socket path. Defaults to a repo-hashed path under the runtime directory.
+    #[arg(long, value_name = "PATH")]
+    pub socket: Option<PathBuf>,
+
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+
+    /// Include protocol and transition-graph versions in table output.
+    #[arg(long)]
+    pub with_version: bool,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Show current in-memory walk state or the last step delta",
+    after_help = "Examples:\n  ploke-eval loop walk show\n  ploke-eval loop walk show --with-version\n  ploke-eval loop walk show delta --verbose\n\nUse summary/replay for durable historical inspection after a run has completed."
+)]
+pub struct Prototype1StateWalkShowCommand {
+    #[command(flatten)]
+    pub control: Prototype1StateWalkControlCommand,
+
+    #[command(subcommand)]
+    pub command: Option<Prototype1StateWalkShowSubcommand>,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum Prototype1StateWalkShowSubcommand {
+    /// Show only the last successful step delta.
+    Delta(Prototype1StateWalkShowDeltaCommand),
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkShowDeltaCommand {
+    /// Include changed axis values plus added/removed nested type structures.
+    #[arg(long)]
+    pub verbose: bool,
+
+    /// Disable ANSI colors in table output.
+    #[arg(long)]
+    pub no_color: bool,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Inspect nested LLM/tool-loop debugger checkpoints",
+    after_help = "Examples:\n  ploke-eval loop walk llm lanes\n  ploke-eval loop walk llm focus node-...-r2\n  ploke-eval loop walk llm timeline\n  ploke-eval loop walk llm prompt\n  ploke-eval loop walk llm protocol\n  ploke-eval loop walk llm show --lane node-...-r2 --head\n  ploke-eval loop walk llm tool --step 11 --json\n  ploke-eval loop walk llm back --lane node-...-r2 --steps 3\n\nThis surface is read-only unless step/finish says otherwise. Current lane/cursor/timeline/show/prompt/protocol/tool commands do not call providers, execute tools, mutate the checkout, or advance the outer typestate walk."
+)]
+pub struct Prototype1StateWalkLlmCommand {
+    #[command(flatten)]
+    pub control: Prototype1StateWalkControlCommand,
+
+    #[command(subcommand)]
+    pub command: Prototype1StateWalkLlmSubcommand,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum Prototype1StateWalkLlmSubcommand {
+    /// List known fanout lanes and their latest checkpoint heads.
+    Lanes(Prototype1StateWalkLlmLanesCommand),
+    /// Set the default lane for subsequent LLM checkpoint commands on this server.
+    Focus(Prototype1StateWalkLlmFocusCommand),
+    /// Show the latest or selected LLM/tool-loop checkpoint.
+    Show(Prototype1StateWalkLlmShowCommand),
+    /// Show a compact chronological summary of recorded LLM/tool-loop steps.
+    Timeline(Prototype1StateWalkLlmTimelineCommand),
+    /// Inspect persisted request messages sent to the LLM/tool-loop.
+    Prompt(Prototype1StateWalkLlmPromptCommand),
+    /// Inspect persisted protocol review artifacts for the selected LLM/tool-loop.
+    Protocol(Prototype1StateWalkLlmProtocolCommand),
+    /// Inspect the tool definition and arguments for a selected LLM tool call.
+    Tool(Prototype1StateWalkLlmToolCommand),
+    /// Execute one historical or live provider response step through current tools.
+    Step(Prototype1StateWalkLlmStepCommand),
+    /// Continue live provider response steps until terminal or max steps.
+    Finish(Prototype1StateWalkLlmFinishCommand),
+    /// Move the focused/read-only lane cursor backward.
+    Back(Prototype1StateWalkLlmMoveCommand),
+    /// Move the focused/read-only lane cursor forward.
+    Forward(Prototype1StateWalkLlmMoveCommand),
+    /// Jump the focused/read-only lane cursor to the latest checkpoint head.
+    Head(Prototype1StateWalkLlmLaneCommand),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum Prototype1StateWalkLlmStepSource {
+    /// Replay one recorded checkpoint response through current tools.
+    Historical,
+    /// Continue from checkpoint request state with one live provider response.
+    Live,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkLlmLanesCommand {
+    /// Include workspace and session ids for each lane.
+    #[arg(long)]
+    pub verbose: bool,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkLlmFocusCommand {
+    /// Lane id to focus, usually the candidate workspace basename.
+    pub lane: String,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkLlmLaneCommand {
+    /// Lane id. Defaults to the current focus, then the latest lane.
+    #[arg(long)]
+    pub lane: Option<String>,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkLlmMoveCommand {
+    #[command(flatten)]
+    pub lane: Prototype1StateWalkLlmLaneCommand,
+
+    /// Number of recorded response steps to move.
+    #[arg(long, default_value_t = 1)]
+    pub steps: usize,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkLlmShowCommand {
+    /// Specific tool-loop session id to inspect. Defaults to selected lane/latest session.
+    #[arg(long)]
+    pub session_id: Option<String>,
+
+    /// Lane id, usually the candidate workspace basename. Defaults to current focus.
+    #[arg(long)]
+    pub lane: Option<String>,
+
+    /// Inspect the selected lane's latest recorded head instead of its read-only cursor.
+    #[arg(long)]
+    pub head: bool,
+
+    /// Specific response step to inspect. Defaults to the lane cursor or latest recorded step.
+    #[arg(long)]
+    pub step: Option<usize>,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkLlmTimelineCommand {
+    /// Specific tool-loop session id to summarize. Defaults to selected lane/latest session.
+    #[arg(long)]
+    pub session_id: Option<String>,
+
+    /// Lane id, usually the candidate workspace basename. Defaults to current focus.
+    #[arg(long)]
+    pub lane: Option<String>,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkLlmPromptCommand {
+    /// Specific tool-loop session id to inspect. Defaults to selected lane/latest session.
+    #[arg(long)]
+    pub session_id: Option<String>,
+
+    /// Lane id, usually the candidate workspace basename. Defaults to current focus.
+    #[arg(long)]
+    pub lane: Option<String>,
+
+    /// Response step whose request messages should be inspected. Defaults to the initial step 0.
+    #[arg(long)]
+    pub step: Option<usize>,
+
+    /// Filter to one message role: system, user, assistant, or tool.
+    #[arg(long, value_parser = ["system", "user", "assistant", "tool"])]
+    pub role: Option<String>,
+
+    /// Zero-based request message index to show.
+    #[arg(long)]
+    pub message: Option<usize>,
+
+    /// Show complete message content instead of a bounded preview.
+    #[arg(long)]
+    pub full: bool,
+
+    /// Print persisted request messages as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkLlmProtocolCommand {
+    /// Specific tool-loop session id to inspect. Defaults to selected lane/latest session.
+    #[arg(long)]
+    pub session_id: Option<String>,
+
+    /// Lane id, usually the candidate workspace basename. Defaults to current focus.
+    #[arg(long)]
+    pub lane: Option<String>,
+
+    /// Print protocol summary as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkLlmToolCommand {
+    /// Specific tool-loop session id to inspect. Defaults to selected lane/latest session.
+    #[arg(long)]
+    pub session_id: Option<String>,
+
+    /// Lane id, usually the candidate workspace basename. Defaults to current focus.
+    #[arg(long)]
+    pub lane: Option<String>,
+
+    /// Inspect the selected lane's latest recorded head instead of its read-only cursor.
+    #[arg(long)]
+    pub head: bool,
+
+    /// Specific response step to inspect. Defaults to the lane cursor or latest recorded step.
+    #[arg(long)]
+    pub step: Option<usize>,
+
+    /// One-based tool call index within the selected step. Defaults to 1.
+    #[arg(long)]
+    pub call: Option<usize>,
+
+    /// Tool name to inspect. If no call matches, shows the current definition without historical arguments.
+    #[arg(long)]
+    pub name: Option<String>,
+
+    /// Print the raw JSON tool definition and historical argument payload.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkLlmStepCommand {
+    /// Lane id, usually the candidate workspace basename. Defaults to current focus.
+    #[arg(long)]
+    pub lane: Option<String>,
+
+    /// Specific tool-loop session id to step from. Defaults to selected lane/latest session.
+    #[arg(long)]
+    pub session_id: Option<String>,
+
+    /// Response step index. Historical mode replays this response; live mode continues after this step.
+    #[arg(long)]
+    pub step: Option<usize>,
+
+    /// Step source: historical replays a recorded response; live calls the provider once.
+    #[arg(long, value_enum, default_value_t = Prototype1StateWalkLlmStepSource::Historical)]
+    pub source: Prototype1StateWalkLlmStepSource,
+
+    /// Wait for the live provider response. Required when --source live.
+    #[arg(long)]
+    pub watch: bool,
+
+    /// Admit workspace mutation by current TUI tools during the stepped response.
+    #[arg(long = "allow", value_name = "CAPABILITY", value_parser = ["workspace-mutation"])]
+    pub allow: Vec<String>,
+
+    /// Override model id for live steps. Defaults to the checkpoint session model.
+    #[arg(long, value_name = "MODEL")]
+    pub model_id: Option<String>,
+
+    /// Provider slug for the selected model. Requires --model-id.
+    #[arg(long, value_name = "PROVIDER")]
+    pub provider: Option<String>,
+
+    /// Maximum attempts for the one-step headless runtime.
+    #[arg(long, default_value_t = 1)]
+    pub max_attempts: u32,
+
+    /// Timeout seconds for the one-step headless runtime.
+    #[arg(long, default_value_t = 300)]
+    pub timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, Parser)]
+pub struct Prototype1StateWalkLlmFinishCommand {
+    /// Lane id, usually the candidate workspace basename. Defaults to current focus.
+    #[arg(long)]
+    pub lane: Option<String>,
+
+    /// Specific tool-loop session id to continue. Defaults to selected lane/latest session.
+    #[arg(long)]
+    pub session_id: Option<String>,
+
+    /// Response step to continue after. Defaults to lane cursor/head.
+    #[arg(long)]
+    pub step: Option<usize>,
+
+    /// Wait for live provider responses. Required for finish.
+    #[arg(long)]
+    pub watch: bool,
+
+    /// Admit workspace mutation by current TUI tools during live response steps.
+    #[arg(long = "allow", value_name = "CAPABILITY", value_parser = ["workspace-mutation"])]
+    pub allow: Vec<String>,
+
+    /// Override model id for live steps. Defaults to the checkpoint session model.
+    #[arg(long, value_name = "MODEL")]
+    pub model_id: Option<String>,
+
+    /// Provider slug for the selected model. Requires --model-id.
+    #[arg(long, value_name = "PROVIDER")]
+    pub provider: Option<String>,
+
+    /// Maximum live response steps before stopping.
+    #[arg(long, default_value_t = 8)]
+    pub max_steps: usize,
+
+    /// Maximum attempts for each one-step headless runtime.
+    #[arg(long, default_value_t = 1)]
+    pub max_attempts: u32,
+
+    /// Timeout seconds for each one-step headless runtime.
+    #[arg(long, default_value_t = 300)]
+    pub timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Summarize durable campaign progress without contacting the walk server",
+    after_help = "Field guide:\n  branch: selected branch disposition when the final report recorded one.\n  decision: candidate-local selection outcome; decision=Stop does not necessarily mean the campaign stopped.\n  handoff: whether the selected successor handoff was acknowledged, skipped, or absent.\n\nUse --verbose/-v for run-specific notes and next inspection commands."
+)]
+pub struct Prototype1StateWalkSummaryCommand {
+    /// Parent checkout root. Defaults to active walk context, then current directory.
+    #[arg(long, value_name = "PATH")]
+    pub repo_root: Option<PathBuf>,
+
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+
+    /// Include field meanings and next typed inspection commands in table output.
+    #[arg(short, long)]
+    pub verbose: bool,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Show or jump within the read-only historical replay cursor",
+    after_help = "Examples:\n  ploke-eval loop walk replay\n  ploke-eval loop walk replay --index 0\n  ploke-eval loop walk replay --index 120 --tail 20\n\nThe recent-entry window shows the latest journal entries by default. Use --tail N to show more entries. This command does not undo or replay durable side effects."
+)]
+pub struct Prototype1StateWalkReplayCommand {
+    #[command(flatten)]
+    pub control: Prototype1StateWalkControlCommand,
+
+    /// Jump to this zero-based durable journal index before rendering.
+    #[arg(long)]
+    pub index: Option<usize>,
+
+    /// Number of trailing journal entries to render.
+    #[arg(long, default_value_t = 3)]
+    pub tail: usize,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Move the read-only historical replay cursor backward or forward",
+    after_help = "Examples:\n  ploke-eval loop walk forward\n  ploke-eval loop walk forward --steps 10 --tail 20\n  ploke-eval loop walk back --steps 1\n\nCursor movement is read-only. It changes only the server's in-memory replay cursor and never mutates the parent checkout or journal. Use --tail N to expand the recent-entry window."
+)]
+pub struct Prototype1StateWalkReplayMoveCommand {
+    #[command(flatten)]
+    pub control: Prototype1StateWalkControlCommand,
+
+    /// Number of replay entries to move.
+    #[arg(long, default_value_t = 1)]
+    pub steps: usize,
+
+    /// Number of trailing journal entries to render.
+    #[arg(long, default_value_t = 3)]
+    pub tail: usize,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Record explicit provenance before leaving replay toward live work",
+    after_help = "Example:\n  ploke-eval loop walk branch-live --reason \"investigate cursor 42\" --allow provenance-record\n\nThis command records provenance only. It does not materialize a new live branch, run providers, or mutate checkout content."
+)]
+pub struct Prototype1StateWalkBranchLiveCommand {
+    #[command(flatten)]
+    pub control: Prototype1StateWalkControlCommand,
+
+    /// Operator reason for leaving read-only historical replay.
+    #[arg(long)]
+    pub reason: String,
+
+    /// Explicitly admit writing a replay-to-live provenance record.
+    #[arg(long = "allow", value_name = "CAPABILITY", value_parser = ["provenance-record"])]
+    pub allow: Vec<String>,
+}
+
+// ANCHOR: prototype1_walk_step_live_edge_admission
+#[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Advance the current in-memory walk by one live typestate edge",
+    after_help = "Examples:\n  ploke-eval loop walk step\n  ploke-eval loop walk step --until r6\n  ploke-eval loop walk step --until r8 --watch\n  ploke-eval loop walk step --until r13b --watch --allow git-changes\n\nUse replay/back/forward for read-only historical inspection. Use step only when you intend to drive live typestate edges. Long live edges require --watch; checkout-mutating successor handoff requires --allow git-changes."
+)]
+pub struct Prototype1StateWalkStepCommand {
+    /// Parent checkout root. Defaults to active walk context, then current directory.
+    #[arg(long, value_name = "PATH")]
+    pub repo_root: Option<PathBuf>,
+
+    /// Explicit Unix socket path. Defaults to a repo-hashed path under the runtime directory.
+    #[arg(long, value_name = "PATH")]
+    pub socket: Option<PathBuf>,
+
+    /// Advance repeatedly until this phase instead of exactly one step.
+    #[arg(long, value_enum)]
+    pub until: Option<WalkPhase>,
+
+    /// Wait for a long live edge instead of returning at the safe boundary.
+    #[arg(long)]
+    pub watch: bool,
+
+    /// Admit typed edges that intentionally install the selected successor into
+    /// the active checkout. Required for R12 -> R13b handoff.
+    #[arg(long = "allow", value_name = "CAPABILITY", value_parser = ["git-changes"])]
+    pub allow: Vec<String>,
+
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+
+    /// Include protocol and transition-graph versions in table output.
+    #[arg(long)]
+    pub with_version: bool,
+}
+// ANCHOR_END: prototype1_walk_step_live_edge_admission
+
+#[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Start a live in-memory walk, defaulting to R0",
+    after_help = "Examples:\n  ploke-eval loop walk start\n  ploke-eval loop walk start --until r6\n  ploke-eval loop walk start --no-ttl\n\nStart creates or contacts the local walk server for the selected parent checkout. Use summary/replay when you only need to inspect a completed historical run."
+)]
+pub struct Prototype1StateWalkStartCommand {
+    /// Campaign id. Defaults to parent identity, then active `select campaign`.
+    #[arg(long)]
+    pub campaign: Option<CampaignId>,
+
+    /// Candidate node id to materialize/evaluate. During --init-parent-identity only, this is the generation-0 parent node.
+    #[arg(long)]
+    pub node_id: Option<String>,
+
+    /// Parent checkout root. Defaults to active walk context, then current directory.
+    #[arg(long, value_name = "PATH")]
+    pub repo_root: Option<PathBuf>,
+
+    /// Explicit Unix socket path. Defaults to a repo-hashed path under the runtime directory.
+    #[arg(long, value_name = "PATH")]
+    pub socket: Option<PathBuf>,
+
+    /// Idle seconds before an auto-started server exits. Defaults to 1800 seconds.
+    #[arg(long, value_name = "SECS", conflicts_with = "no_ttl")]
+    pub ttl_secs: Option<u64>,
+
+    /// Keep an auto-started server alive until an explicit stop request.
+    #[arg(long)]
+    pub no_ttl: bool,
+
+    /// Bootstrap the active checkout by writing and committing parent identity.
+    #[arg(long)]
+    pub init_parent_identity: bool,
+
+    /// Branch to create or switch to before writing initial parent identity.
+    #[arg(long, value_name = "BRANCH", requires = "init_parent_identity")]
+    pub identity_branch: Option<String>,
+
+    /// Prepared instance id for the generation-0 parent identity.
+    #[arg(long, value_name = "INSTANCE", requires = "init_parent_identity")]
+    pub identity_instance: Option<String>,
+
+    /// Successor handoff token written by the previous parent runtime.
+    #[arg(long, value_name = "PATH")]
+    pub handoff_invocation: Option<PathBuf>,
+
+    #[arg(long, value_enum, default_value_t = Prototype1StateStopAfter::Complete)]
+    pub stop_after: Prototype1StateStopAfter,
+
+    /// Successor-selection strategy. Active selection defaults to History traversal with current-generation candidates appended before scoring.
+    #[arg(long, value_enum, default_value_t = Prototype1SuccessorSelection::HistoryScoreChildProp)]
+    pub successor_selection: Prototype1SuccessorSelection,
+
+    /// Replay seed committed by History-backed traversal selection.
+    #[arg(long, default_value_t = 0)]
+    pub successor_selection_seed: u64,
+
+    /// Metric-bearing states used by History-backed traversal scoring.
+    #[arg(long, value_enum, default_value_t = Prototype1TraversalMetrics::Operational)]
+    pub successor_selection_metrics: Prototype1TraversalMetrics,
+
+    /// Candidate generator used before publishing the child plan.
+    #[arg(long, value_enum, default_value_t = Prototype1CandidateGenerator::BroadHarnessRequest)]
+    pub candidate_generator: Prototype1CandidateGenerator,
+
+    /// Stop after this admitted typestate phase. Defaults to R0.
+    #[arg(long, value_enum, default_value_t = WalkPhase::R0)]
+    pub until: WalkPhase,
+
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
+
+    /// Include protocol and transition-graph versions in table output.
+    #[arg(long)]
+    pub with_version: bool,
+}
+
 #[derive(Debug, Clone, Parser)]
 #[command(about = "Diagnose or control the active Prototype 1 parent checkout")]
 pub struct Prototype1ControlCommand {
@@ -176,7 +774,7 @@ pub struct Prototype1PromptCommand {
 )]
 pub struct Prototype1RunnerCommand {
     #[arg(long)]
-    pub campaign: Option<String>,
+    pub campaign: Option<CampaignId>,
 
     #[arg(long)]
     pub node_id: Option<String>,
@@ -341,7 +939,7 @@ pub struct Prototype1LoopCommand {
 
     /// Stable human campaign/profile id for Prototype 1 state.
     #[arg(long)]
-    pub campaign: Option<String>,
+    pub campaign: Option<CampaignId>,
 
     /// Prototype 1 run profile name or TOML path. Profile admission is owned by setup.
     #[arg(long, value_name = "NAME_OR_PATH")]
@@ -414,7 +1012,7 @@ pub struct Prototype1LoopCommand {
 
     /// Continue the loop from a previously synthesized/applied branch in another Prototype 1 campaign.
     #[arg(long, requires = "source_branch_id")]
-    pub source_campaign: Option<String>,
+    pub source_campaign: Option<CampaignId>,
 
     /// Branch id to materialize as the starting source content state for this loop generation.
     #[arg(long, requires = "source_campaign")]

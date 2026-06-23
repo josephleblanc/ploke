@@ -89,7 +89,11 @@ impl SelectStatusCommand {
                 println!("{}", "-".repeat(40));
                 println!(
                     "campaign: {}",
-                    selection.campaign.as_deref().unwrap_or("(none)")
+                    selection
+                        .campaign
+                        .as_ref()
+                        .map(|id| id.as_str())
+                        .unwrap_or("(none)")
                 );
                 println!("batch: {}", selection.batch.as_deref().unwrap_or("(none)"));
                 println!(

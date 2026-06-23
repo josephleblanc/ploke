@@ -1,0 +1,768 @@
+# 2026-06-19 Walk-integrated LLM response debugger plan
+
+Status: active plan / partially implemented. The current implementation records LLM/tool-loop checkpoints, exposes gated `walk llm step` / `walk llm finish` execution for historical one-response replay and live one-response continuation, and now renders `walk llm show` as a practical per-step run-review transcript. It is still not an outer-typestate-integrated nested debugger.
+
+Short description: plan for turning the existing Prototype 1 `walk` typestate debugger plus turn-live replay machinery into a gdb-like nested debugger for harness-backed LLM/tool loops. The intended pause boundary is one provider/network response plus its full tool batch, not one individual parallel tool call.
+
+## Goal
+
+Implement walk llm as a practical run-review debugger, not just a
+checkpoint/stat viewer.
+
+Success criteria:
+
+1. After:
+
+```bash
+  alias pel='./target/debug/ploke-eval loop'
+  pel walk use <recent-run-worktree>
+  pel walk llm lanes
+  pel walk llm focus <lane>
+  pel walk llm show
+  pel walk llm back
+  pel walk llm forward
+```
+
+the operator can understand each LLM response step without jq or opening
+checkpoint JSON.
+
+2. pel walk llm show renders, for the selected step:
+
+- assistant response/content or tool-call summary;
+- tool call names and decoded arguments;
+- completed/failed tool results with decoded payload previews;
+- protected-write denial/retry hints when present;
+- request/message summary sufficient to understand trajectory;
+- terminal/paused state and next suggested commands.
+
+3. walk llm step / finish remain gated and effectful, but their output focuses
+   the new session/lane enough that the operator can immediately continue
+   reviewing without copying excessive ids.
+
+4. Historical and live use-testing on p1-live-lanes-g25p-20260619-123437
+   demonstrates:
+
+- step 2 explains list_dir crates/ploke-tree-browser;
+- step 11 explains the denied non_semantic_patch Cargo.toml and retry hint;
+- step 12 explains the terminal prose trajectory;
+- live branch after step 11 can be inspected through walk llm show without jq.
+
+5. Update the plan doc with exactly what is implemented and what remains, and
+   add renderer tests so this UX does not regress.
+
+Related planning and source files:
+
+- `docs/active/agents/2026-06-02_prototype1-state-loop-walkthrough/turn-live-replay.md`
+- `docs/active/agents/2026-06-16_walk-server.md`
+- `docs/active/agents/2026-06-17_walk-command-guide.md`
+- `docs/active/agents/2026-06-17_typestate-loop-driver-plan.md`
+- `crates/ploke-eval/src/replay/{probe.rs,turn.rs,llm.rs,inspect.rs,probe_text.rs}`
+- `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter/harness/{mod.rs,tui.rs}`
+- `crates/ploke-eval/src/cli/prototype1_state/walk/`
+- `crates/ploke-tui/src/llm/manager/session.rs`
+
+## Implemented status as of 2026-06-20
+
+This section records the current code status so the plan is not mistaken for a completed feature.
+
+Implemented commits / working-tree slices:
+
+```text
+a6fa4001 Add tool loop checkpoint records
+2a063b35 Expose chat step resume messages
+ff6b05cb Add walk LLM checkpoint inspection
+5f7bd732 Add read-only walk LLM lane inspection
+ef60ccb8 Add walk LLM response stepping
+working tree 2026-06-20 Add walk LLM run-review transcript rendering
+```
+
+Currently implemented:
+
+- `ploke-tui` can emit `ChatDebugStep` records after each normal chat-loop provider response has been parsed and its tool batch has executed.
+- `ploke-eval` installs a debug sink for captured headless TUI attempts and persists checkpoint records under:
+
+  ```text
+  <campaign>/prototype1/debug/tool-loop/<session-id>/
+    session.json
+    resume.json
+    steps/0000.json
+    steps/0001.json
+    ...
+  ```
+
+- `crates/ploke-eval/src/replay/tool_loop.rs` defines typed records and a filesystem store for:
+  - `ToolLoopSession`;
+  - `ToolLoopStep`;
+  - `ToolLoopResume`.
+- `ploke-eval loop walk llm` has read-only inspection/navigation subcommands:
+
+  ```text
+  lanes
+  focus
+  timeline
+  show
+  back
+  forward
+  head
+  ```
+
+- The read-only `walk llm` surface can list lanes, select a lane, render a compact chronological timeline, inspect the latest or selected checkpoint, and move an in-memory cursor.
+- `walk llm timeline` renders compact chronological rows using the focused lane/session and cursor state, so operators can see the run trajectory before drilling into a row with `walk llm show`.
+- `walk llm show` now renders a per-step transcript with:
+  - request-message counts and recent prior-message summary;
+  - assistant response content/reasoning when present;
+  - tool-call names and decoded/generic arguments;
+  - decoded result previews for known tools such as `list_dir`, `cargo`, `read_file`, and `non_semantic_patch`;
+  - structured failed-tool output including protected-write denial fields, retry hints, and retry context;
+  - terminal/workspace status and suggested next `walk llm` commands.
+- `walk llm step` is implemented as an explicitly effectful command gated by `--allow workspace-mutation`:
+  - `--source historical` replays one recorded provider response through current TUI tool semantics and writes a new checkpoint session;
+  - `--source live --watch` resumes from the selected checkpoint request state, calls the live provider once, executes that response's tool batch, and writes a new checkpoint session.
+- `walk llm finish --watch --allow workspace-mutation` loops live one-response steps until a terminal inner frame or `--max-steps`.
+- After `walk llm step` or each `walk llm finish` step, the walk server focuses the newly written checkpoint session and moves its cursor to that session head, so the next `walk llm show` can inspect the branch without copying IDs.
+- Historical/live use-testing on `p1-live-lanes-g25p-20260619-123437` showed:
+  - historical step 12 replay reached a terminal content checkpoint;
+  - historical step 11 replay re-executed the protected-write attempt and paused with the failed tool result;
+  - live step after step 11 resumed after the protected-write denial, ran a `cargo check` tool call, and paused;
+  - live finish from that paused branch reached terminal content with a clean workspace;
+  - `walk llm show` for step 2 explains `list_dir { dir: crates/ploke-tree-browser }` and the returned `Cargo.toml`/`src` entries without `jq`;
+  - `walk llm show` for step 11 explains the denied `non_semantic_patch Cargo.toml` call, retry hint, and retry context without `jq`;
+  - `walk llm show --head` for step 12 shows the terminal prose trajectory without `jq`.
+
+Still not implemented:
+
+- `walk step --into llm` or any equivalent outer-to-inner debugger entry command.
+- `walk llm abandon`.
+- A `WalkState::ToolLoopPaused` or equivalent inner-frame state that preserves an outer typestate anchor.
+- Authority-bearing resume/projection from terminal `walk llm finish` back into the outer `walk` typestate edge.
+- Historical multi-step continuation that chains a recorded next response onto a newly branched checkpoint session; current historical mode replays one selected recorded response into a new session.
+- Full proposal/admission/settle-effect capture, exact workspace dirty-path capture, or validation-barrier capture in every checkpoint.
+- Full transcript polish for every possible tool payload; current renderer has typed coverage for the highest-value run-review tools and a generic JSON-field fallback for other arguments/results.
+
+Current command semantics:
+
+```text
+normal/live headless run executes to completion
+  -> debug sink records response checkpoints
+  -> walk llm inspects recorded checkpoints read-only
+
+walk llm step --source historical --allow workspace-mutation
+  -> replay one selected recorded provider response through current tools
+  -> write a new checkpoint session
+
+walk llm step --source live --watch --allow workspace-mutation
+  -> resume from selected checkpoint request state
+  -> call the provider once
+  -> execute that response's tool batch
+  -> write a new checkpoint session
+
+walk llm finish --watch --allow workspace-mutation
+  -> repeat live one-response steps until terminal or --max-steps
+```
+
+The desired outer-integrated debugger semantics below remain the target, not current behavior:
+
+```text
+walk step --into llm
+walk llm step    # one provider response + whole tool batch, then pause
+walk llm finish  # run remaining response steps to terminal inner frame
+return/project terminal inner result into outer walk typestate
+```
+
+Related existing functionality outside `loop walk`:
+
+- `ploke-eval run replay turn-live --tail live-step` remains useful for turn-live bundle replay probing, but `walk llm step` is now the operator surface for checkpoint-rooted one-response stepping.
+- `ChatStepSource::RecordedPrefixThenLiveSteps` can enforce a one-live-response boundary in the replay-probe path.
+- These pieces should still be reused where possible for future outer-typestate integration and authority-safe projection.
+
+Near-term implementation direction:
+
+1. Use current checkpoint inspection on recent runs to identify the minimum fields missing from `ToolLoopStep`/`ToolLoopResume` for safe resume.
+2. Preserve `walk replay/back/forward` as read-only outer timeline commands.
+3. Add a separate live/effectful inner-frame path for `walk llm step`/`finish`, gated explicitly and tested against both recorded historical prefixes and live Google smoke runs.
+4. Before any resume implementation, prove that stepping from a checkpoint cannot duplicate prior tool effects or silently skip required settle/validation barriers.
+
+## Goal
+
+Add a debugger surface that lets an operator start from `ploke-eval loop walk`, reach a typestate edge that invokes the headless TUI/harness LLM tool loop, step into that inner loop, and pause after every provider/network response once that response's tool batch has been executed and settled.
+
+The mental model is gdb for Prototype 1:
+
+```text
+outer walk frame: Prototype 1 typestate Rn -> Rn+1
+  inner harness frame: one broad/headless TUI attempt or planner call
+    llm response step 0: provider response -> all requested tools execute -> settle -> pause
+    llm response step 1: provider response -> all requested tools execute -> settle -> pause
+    ...
+  inner frame returns terminal harness result
+outer walk frame resumes at the next typestate
+```
+
+The step boundary is deliberately **not** one individual tool call. A single model response may request a parallel batch of tools. The debugger should let that whole batch execute using current `ploke-tui` semantics, then pause before the next provider request.
+
+## Desired pause boundary
+
+One debugger `llm step` should do exactly this:
+
+1. Use the current request/conversation state to reach a provider boundary.
+2. Obtain exactly one provider response envelope from either:
+   - a recorded tape;
+   - a live provider call; or
+   - a durable branch/checkpoint continuation.
+3. Parse that provider response through the normal chat parser.
+4. If the response contains tool calls, execute the entire tool-call batch through the normal `ploke-tui` event-bus path.
+5. Wait for current gated edit/tool-loop semantics to settle:
+   - pending edit payloads should not be treated as final results;
+   - staged proposal admission should use the same harness policy as normal runs;
+   - approved edits should pass the current post-apply scan/index/refresh barrier;
+   - declared validation should run at the same point as normal harness execution.
+6. Persist a durable checkpoint with the provider response, tool results, workspace/proposal effects, and next request/conversation state.
+7. Pause before the next provider request.
+
+At the pause, the operator should be able to inspect:
+
+- the provider request that was sent;
+- the raw provider response and normalized `ChatStepOutcome`;
+- all tool calls requested by that response;
+- all completed/failed tool results from the batch;
+- proposal/admission/settle effects;
+- workspace dirty status and changed paths;
+- the next request state that would be sent if stepping continues;
+- whether the inner harness frame is terminal and ready to return to outer `walk`.
+
+## What already exists
+
+### Provider-response step semantics
+
+`ploke-tui` already has provider-response step machinery:
+
+- `ChatStepSource::RecordedPrefixThenLiveSteps`
+- `install_recorded_response_prefix_then_live_steps(tape, 1)`
+- request and response taps
+- replay boundary errors that are converted into clean completed reports
+
+Current behavior already matches the desired response-level boundary in the replay probe case:
+
+```text
+recorded prefix -> one live provider response -> execute that response's tools -> stop before next provider request
+```
+
+Important file:
+
+- `crates/ploke-tui/src/llm/manager/session.rs`
+
+### Replay probe and branch tapes
+
+`ploke-eval run replay turn-live --tail live-step` already exposes one-response stepping for historical turn-live bundles.
+
+Existing pieces:
+
+- `ReplayTail::LiveStep`
+- `ProbeRequest` / `ProbeRun`
+- `ReplayBranchTape`
+- `ProbeRun::live_step_response_count`
+- `ProbeRun::live_step_tool_calls`
+- `ProbeRun::live_step_tool_events`
+- `ProbeRun::live_step_boundary_reached`
+
+Important files:
+
+- `crates/ploke-eval/src/replay/probe.rs`
+- `crates/ploke-eval/src/replay/probe_text.rs`
+- `crates/ploke-eval/src/replay/turn.rs`
+- `crates/ploke-eval/src/replay/llm.rs`
+
+Limit: the replay branch tape stores provider responses only. It is useful for replay probes, but it is not enough for durable live checkpoints because replaying it later re-executes tools.
+
+### Turn-live artifacts
+
+Broad headless TUI attempts write replay/debug artifacts:
+
+- `agent-turn-trace.json`
+- `agent-turn-summary.json`
+- `llm-full-responses.jsonl`
+
+Important files:
+
+- `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`
+- `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter/harness_io.rs`
+- `crates/ploke-records/src/agent_turn.rs`
+- `crates/ploke-records/src/llm_response.rs`
+
+Limit: these artifacts are written at terminal attempt completion today. They are not a streamed or checkpointed authority surface.
+
+### Harness step seam
+
+The headless TUI adapter now has a real internal harness stepping boundary:
+
+```rust
+trait Harness {
+    async fn next(&mut self, deadline: Instant) -> Result<Progress, Error>;
+    async fn decide(&mut self, decision: Decision) -> Result<bool, Error>;
+    async fn settle(&mut self, deadline: Instant) -> Result<Settled, Error>;
+}
+```
+
+Useful progress values:
+
+- `Progress::Prompt`
+- `Progress::Tool`
+- `Progress::PendingEdit`
+- `Progress::TurnEnded`
+- `Progress::ProviderUnavailable`
+- `Progress::ContextUnavailable`
+
+Important files:
+
+- `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter/harness/mod.rs`
+- `crates/ploke-eval/src/cli/prototype1_state/edit_surface/tui_adapter/harness/tui.rs`
+
+Limit: normal production code calls `drive_to_attempt_end`, so this seam is not yet exposed as a durable debugger frame.
+
+### Outer `walk` typestate debugger
+
+`loop walk` can reconstruct and step outer Prototype 1 typestates, including live gated edges. It is the correct operator entrypoint for this work.
+
+Important files:
+
+- `crates/ploke-eval/src/cli/prototype1_state/walk/`
+- `crates/ploke-eval/src/cli/prototype1_state/driver/advance.rs`
+- `crates/ploke-eval/src/cli/prototype1_state/driver/reconstruct.rs`
+- `crates/ploke-eval/src/cli/prototype1_state/live_edges.rs`
+
+Limit: `walk` does not yet represent an inner harness/tool-loop frame. A live typestate edge either runs or blocks; it cannot currently suspend inside the harness.
+
+## What must be implemented
+
+### 1. Durable response-step checkpoints
+
+Current `ReplayBranchTape` is provider-response-only. For a durable debugger, the checkpoint must include enough state to resume without re-running prior tools.
+
+Add a new persisted shape, not as a replacement for `ReplayBranchTape`:
+
+```text
+.ploke/prototype1/debug/tool-loop/<session-id>/
+  session.json
+  steps/
+    0000.json
+    0001.json
+    ...
+  resume.json
+```
+
+Possible names:
+
+- `ToolLoopDebugSession`
+- `ToolLoopStepRecord`
+- `ToolLoopResumeState`
+- `ToolLoopCheckpointStore`
+
+Minimum `session.json` fields:
+
+- schema/version;
+- session id;
+- campaign id / parent node id / branch id / generation when known;
+- outer walk phase and edge that created the frame;
+- harness kind, e.g. broad TUI attempt, planner, future harness-backed edge;
+- workspace path;
+- surface policy/evidence roots or references to their authoritative source;
+- model selection / route summary;
+- status: `active | paused | terminal | abandoned`.
+
+Minimum `steps/<n>.json` fields:
+
+- monotonically increasing response step index;
+- provider request snapshot or typed request-message record list;
+- raw provider response record;
+- parsed outcome summary;
+- requested tool calls from that response;
+- completed/failed tool batch results;
+- pending/proposal/admission events produced by this response;
+- settle/refresh/validation observations;
+- workspace git status before/after;
+- terminal/progress status after the step;
+- hashes/paths for large payload sidecars if needed.
+
+Minimum `resume.json` fields:
+
+- next response index;
+- assistant message id / parent id / request id coordinates;
+- full current request message vector or a typed, lossless equivalent;
+- pending retry/error repair state if present;
+- commit phase and attempt counters needed by the chat loop;
+- model/config knobs that influence the next request;
+- references to already-executed tool results so they are not re-run.
+
+The hard invariant: resuming from `resume.json` must not silently re-execute already completed tools or duplicate workspace mutation.
+
+### 2. Step-capable chat/session API
+
+`run_chat_session` is currently run-to-terminal. We need a lower-level step API that can do one provider response plus its full tool batch and return a pause record.
+
+Conceptual API:
+
+```rust
+struct ChatStepFrame { /* current req, ids, policy, commit phase, attempts, etc. */ }
+
+async fn run_one_provider_response(
+    frame: ChatStepFrame,
+    source: ChatStepSource,
+) -> Result<ChatStepPause, ChatStepError>;
+```
+
+`ChatStepPause` should include:
+
+- updated frame/resume state;
+- provider request;
+- provider response;
+- parsed `ChatStepOutcome`;
+- tool results appended into the request messages;
+- whether this response ended the session.
+
+Do not copy `run_chat_session` semantics into `ploke-eval`. The parser, tool execution, finish-reason handling, repair payloads, commit phase, and request-message mutation rules should remain owned by `ploke-tui`/`ploke-llm`.
+
+### 3. Step-capable harness adapter
+
+Expose a harness mode that owns a `TuiHarness` and can pause at response boundaries.
+
+The current `Harness::next` API observes tool events after the session internals have executed them. For response-level stepping, either:
+
+1. teach the underlying chat/session API to stop after one response and let `TuiHarness` observe/drain the resulting events; or
+2. add a `TuiHarness` method that combines chat-step pause data with observed event draining.
+
+The second option may be easier for `ploke-eval` presentation, but the actual one-response stop should still be controlled by the chat/session layer.
+
+### 4. Inner frame in `walk`
+
+Extend the walk controller state model to represent nested debugger frames.
+
+Conceptual state shape:
+
+```rust
+enum WalkState {
+    Outer(/* existing typestate states */),
+    ToolLoopPaused {
+        outer: OuterWalkAnchor,
+        edge: HarnessEdge,
+        session_id: ToolLoopSessionId,
+        phase: ToolLoopPhase,
+    },
+}
+```
+
+Where `OuterWalkAnchor` captures enough of the current outer typestate to return to it when the inner harness frame finishes.
+
+The `walk` controller must preserve current gates:
+
+- live provider calls require `--watch`;
+- checkout mutation/handoff paths require `--allow git-changes` where already required;
+- tool-loop stepping that can mutate workspace must be explicit about mutation admission;
+- historical replay/back/forward stay read-only and must not execute tools.
+
+### 5. `walk` command surface
+
+Add a nested command group under `loop walk`.
+
+Candidate UX:
+
+```bash
+# Reach an outer phase that can start a harness-backed live edge.
+ploke-eval loop walk step --until r10
+
+# Step into the harness/tool-loop frame instead of running the edge to completion.
+ploke-eval loop walk step --into llm --watch --allow git-changes
+
+# Show the paused inner frame.
+ploke-eval loop walk llm show
+
+# Execute one provider response and the full tool batch, then pause.
+ploke-eval loop walk llm step --watch --allow git-changes
+
+# Inspect current and previous response steps.
+ploke-eval loop walk llm show --step latest
+ploke-eval loop walk llm show --step 3 --format json
+
+# Run remaining provider responses/tool batches until the inner harness frame is terminal.
+ploke-eval loop walk llm finish --watch --allow git-changes
+
+# Return to outer typestate stepping.
+ploke-eval loop walk show
+ploke-eval loop walk step
+```
+
+Possible `llm show` output:
+
+```text
+outer: R10 selection strategy ready
+edge: R10 -> R11 child fanout
+inner: tool-loop paused
+session: tool-loop-node-...-slot-02
+step: 3
+last_response: tool_calls
+model: google/gemini-3.5-flash
+request_messages: 14
+requested_tools: 4
+completed_tools: 4
+failed_tools: 0
+pending_edit: no
+applied: yes
+changed_paths: src/lib.rs
+next: walk llm step | walk llm finish | walk llm abandon
+```
+
+### 6. Typestate edge integration points
+
+This debugger should be available for any live typestate edge that invokes a harness-backed LLM/tool loop. The first target should be the existing broad/headless TUI child-generation path used during child fanout, because it already emits turn-live artifacts and uses `TuiHarness`.
+
+Likely first outer edge:
+
+```text
+R10 -> R11* child fanout / broad harness execution
+```
+
+Future targets:
+
+- broad child-plan/planner calls if they move onto the same harness abstraction;
+- protocol or review loops if they become harness-backed and need response-level stepping;
+- any new guided edit-surface typestate edge that uses the headless TUI adapter.
+
+The design should not bake in one phase name. It should model a generic `HarnessEdge` with phase-specific metadata.
+
+## Invariants and guardrails
+
+### Do not weaken authority
+
+The debugger must not make the system more permissive. Missing channel evidence, invalid child terminality, invalid branch evaluations, stale History, or invalid checkout state should remain hard blockers.
+
+### Do not duplicate side effects on resume
+
+Durable checkpoints must distinguish:
+
+- provider responses already consumed;
+- tool calls already executed;
+- proposals already approved/rejected/applied;
+- scan/index refresh already completed;
+- validation already run.
+
+Resume must continue from the next provider request state, not replay prior tool effects.
+
+### Preserve parallel tool-batch semantics
+
+If a provider response requests multiple tools, the debugger pauses after the batch completes. It should not split a provider response into individual tool-call stops unless a later design explicitly introduces a manual approval mode.
+
+### Keep replay read-only unless explicitly live
+
+Existing `walk replay/back/forward` remain read-only. The new debugger surface is live/effectful and should require explicit admission flags.
+
+### Separate debugging artifacts from History authority
+
+Tool-loop checkpoints are debugger/session artifacts. They are not Crown, History, child admission, branch evaluation, or successor handoff authority unless a later typed evidence design explicitly promotes a subset.
+
+### Use typed records where possible
+
+Avoid new ad-hoc `serde_json::Value` parsing in `walk`. Prefer the existing typed shapes:
+
+- `RawFullResponseRecord`
+- `AgentTurnArtifactRecord`
+- `ObservedTurnEventRecord`
+- `ToolRequestRecord`
+- `ToolCompletedRecord`
+- `ToolFailedRecord`
+- `RequestMessageRecord`
+
+Add new typed records only when existing shapes cannot represent checkpoint/resume authority.
+
+### Include live-Google verification where applicable
+
+Every implementation slice that touches a live provider boundary, model routing, provider-response stepping, harness execution, or `walk` admission into an LLM/tool-loop frame should include a live API verification path in addition to deterministic taped/unit tests.
+
+Use the existing live-Google endpoint/route rather than OpenRouter for these checks. Live tests must remain gated behind the existing `live_api_tests` feature or ignored-test pattern and should document required environment variables in the test or nearby test helper. Deterministic tests remain the required default CI proof; live-Google tests are an explicit operator/provider smoke for the same slice.
+
+Live-Google tests should be small and bounded:
+
+- one prompt that requests a simple, safe tool call when testing tool-loop stepping;
+- one provider response boundary per assertion when testing response stepping;
+- tight `max_attempts` and timeout budgets;
+- isolated temporary or fixture workspace;
+- no History/handoff authority changes unless the tested slice explicitly owns that edge.
+
+## Proposed slices
+
+### Slice 0 — document and test current response-step behavior
+
+Goal: lock down existing semantics before refactor.
+
+Tasks:
+
+- Add or update tests around `RecordedPrefixThenLiveSteps` to assert:
+  - one live provider response is allowed;
+  - tools from that response execute;
+  - stop occurs before the next provider request;
+  - request/response taps capture the boundary.
+- Add eval-side tests around `ProbeRun::live_step_boundary_reached` and branch response indexing if coverage is thin.
+
+Verify:
+
+```bash
+cargo test -p ploke-tui run_chat_session_can_replay_prefix_then_take_one_live_step --features test_harness
+cargo test -p ploke-eval replay --all-targets
+```
+
+Live-Google verification, because this slice pins the provider-response boundary:
+
+```bash
+cargo test -p ploke-tui live_google_chat_session_executes_list_dir_tool_call_success_or_quota --features live_api_tests -- --ignored
+```
+
+If the existing live-Google test name changes, use the nearest live-Google session/tool-loop smoke that sends one provider request, observes a tool call or a quota/auth classified outcome, and does not require OpenRouter.
+
+### Slice 1 — define durable checkpoint records
+
+Goal: introduce typed record shapes and local filesystem store without changing live execution.
+
+Tasks:
+
+- Add `ToolLoopDebugSession`, `ToolLoopStepRecord`, `ToolLoopResumeState` records in the owning crate/module chosen for debugger persistence.
+- Add `ToolLoopCheckpointStore` / `FsToolLoopCheckpointStore`.
+- Add serde round-trip tests and schema-version rejection tests.
+
+Verify:
+
+```bash
+cargo test -p ploke-eval tool_loop_checkpoint --all-targets
+```
+
+No live-Google test is required for pure checkpoint serde/store work unless the slice also captures a live provider response into the new record shape. If it does, add a tiny ignored `live_api_tests` capture smoke using the live-Google route.
+
+### Slice 2 — factor chat/session one-response step API
+
+Goal: extract reusable one-response stepping from `run_chat_session` while preserving existing run-to-terminal behavior.
+
+Tasks:
+
+- Run GitNexus impact on `run_chat_session`, `ChatStepSource`, and `execute_tools_via_event_bus` before edits.
+- Extract a typed frame for mutable chat-loop state.
+- Add a one-response step function that returns updated frame plus response/tool-batch evidence.
+- Keep `run_chat_session` as a wrapper loop over the same step function.
+
+Risk: high. `run_chat_session` is central and heavily tested.
+
+Verify:
+
+```bash
+cargo test -p ploke-tui llm::manager::session --features test_harness
+cargo test -p ploke-tui run_chat_session --features test_harness
+cargo check -p ploke-tui --all-targets
+```
+
+Live-Google verification is required for this slice because it touches the session provider boundary. Add or reuse a gated live-Google test that proves the refactored one-response step API still reaches the direct Google provider, captures exactly the intended response boundary, and either executes the requested simple tool batch or returns a recognized quota/auth/provider-unavailable classification.
+
+### Slice 3 — step-capable harness execution
+
+Goal: use the one-response chat step inside the headless TUI harness and produce durable step checkpoints.
+
+Tasks:
+
+- Add an execution mode beside `drive_to_attempt_end` that runs one provider response and drains harness events until the post-tool-batch boundary.
+- Persist one `ToolLoopStepRecord` per response.
+- Persist updated `ToolLoopResumeState` after each pause.
+- Keep normal broad harness behavior unchanged.
+
+Verify:
+
+- test recorded response with one tool batch;
+- test edit proposal settling before pause;
+- test no duplicate tool execution on resume within the same process;
+- test resume from persisted checkpoint if the slice includes durable resume;
+- add a gated live-Google harness smoke that steps one provider response through the headless TUI adapter and pauses after the resulting tool batch or classified provider/quota/auth outcome.
+
+### Slice 4 — add walk inner frame model
+
+Goal: let `walk` represent a suspended harness/tool-loop frame.
+
+Tasks:
+
+- Extend `WalkState`/controller protocol with an inner `ToolLoopPaused` frame.
+- Record outer phase/edge anchor.
+- Add `walk show` rendering for inner frames.
+- Ensure read-only replay/back/forward do not enter or mutate this state.
+
+Verify:
+
+```bash
+cargo test -p ploke-eval loop_walk --all-targets
+```
+
+No live-Google test is required for a purely structural `WalkState` inner-frame slice. If the slice starts or resumes a live inner frame, add a gated live-Google smoke through `loop walk` using the direct Google route.
+
+### Slice 5 — add CLI commands
+
+Goal: operator can step into and through the LLM response loop from `loop walk`.
+
+Tasks:
+
+- Add `walk step --into llm` or equivalent.
+- Add `walk llm show`.
+- Add `walk llm step`.
+- Add `walk llm finish`.
+- Add `walk llm abandon` if needed for cleanup/provenance.
+- Help text must clearly state mutation/live-provider gates.
+
+Verify:
+
+```bash
+cargo test -p ploke-eval loop_walk_llm_command_parses --all-targets
+cargo build -p ploke-eval
+./target/debug/ploke-eval loop walk llm --help
+```
+
+CLI parsing/help does not require live-Google. Any command execution test that crosses the provider boundary must be gated behind `live_api_tests` and use the live-Google route.
+
+### Slice 6 — wire first harness-backed typestate edge
+
+Goal: first useful end-to-end debugger through a real Prototype 1 edge.
+
+Recommended first edge: broad/headless TUI child execution during the R10/R11 fanout path.
+
+Tasks:
+
+- Identify the precise live edge call path that enters the broad harness.
+- Add a debug admission branch that starts a `ToolLoopDebugSession` instead of running to terminal.
+- When `walk llm finish` reaches terminal harness result, project/commit the same evidence the normal edge would have produced and return to the outer typestate.
+
+Verify:
+
+- smoke with a tiny fixture/model tape if possible;
+- live ignored test behind `live_api_tests` using the live-Google route for the first real harness-backed typestate edge;
+- compare normal run-to-terminal artifacts against stepped-to-terminal artifacts.
+
+### Slice 7 — inspection polish
+
+Goal: make the debugger useful in practice.
+
+Tasks:
+
+- Add concise table rendering of each response step.
+- Add JSON output for all step records.
+- Add request diff or request-message summary between steps.
+- Decode known tool result payloads like `request_code_context`, `cargo`, edit proposal results.
+- Show workspace dirty/change summary per step.
+
+Verify:
+
+- golden-ish table tests for renderer functions;
+- no direct JSON field walking in CLI when typed shapes exist;
+- no live-Google test is required for renderer-only work, but any example capture used to update golden fixtures should come from the live-Google route when a live provider is intentionally involved.
+
+## Open questions
+
+1. Should tool-loop checkpoints live under `.ploke/prototype1/debug/` in the worktree, under the campaign `prototype1/` tree, or both with one being a provenance pointer?
+2. Should `walk llm step` require `--allow git-changes` for any harness surface whose tools may apply edits, or should it use a narrower `--allow workspace-mutation` gate?
+3. Which fields are sufficient to resume without re-running tools: full request messages only, or a richer chat-loop frame including commit phase/error repair state?
+4. Should `walk branch-live` interact with tool-loop checkpoints, or remain provenance-only and separate?
+5. Should a terminal inner frame automatically project back into the outer typestate on `walk llm finish`, or require a separate `walk step` after finish?
+6. How much raw provider/tool content should be inline vs sidecar files to avoid huge checkpoint JSON?
+
+## Recommended next action
+
+Start with Slice 0 and Slice 1. They preserve current behavior while pinning the exact response-step semantics and checkpoint schema. Do not refactor `run_chat_session` until the checkpoint shape and one-response invariants are explicit in tests.

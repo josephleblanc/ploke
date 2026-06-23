@@ -1,5 +1,7 @@
-#![allow(dead_code)] // REMOVE BY 2026-04-26: typed C1 -> C2 scaffold is not wired into the live controller yet
+#![allow(dead_code)]
+// C1 -> C2 is used by run_planned_child; some replay/test helpers remain intentionally unused.
 
+// ANCHOR: prototype1_c1_to_c2
 //! Explicit `C1 -> C2` prototype configuration transition.
 //!
 //! Temporary note:
@@ -24,6 +26,7 @@
 //! Consuming `Prototype<Parent, Parent, Absent, Unacknowledged>` is the only
 //! way to produce `Prototype<Parent, Child, Absent, Unacknowledged>`, which
 //! prevents accidentally re-running the same state value twice.
+// ANCHOR_END: prototype1_c1_to_c2
 
 use crate::prelude::*;
 
@@ -165,7 +168,7 @@ pub(crate) struct Prototype<
     ChildState: ChildBinaryState,
     AckState: ChildAckState,
 > {
-    pub(in crate::cli::prototype1_state) campaign_id: String,
+    pub(in crate::cli::prototype1_state) campaign_id: CampaignId,
     pub(in crate::cli::prototype1_state) campaign_manifest_path: PathBuf,
     pub(in crate::cli::prototype1_state) node: Prototype1NodeRecord,
     pub(in crate::cli::prototype1_state) request: Prototype1RunnerRequest,
@@ -206,7 +209,7 @@ impl<
     AckState: ChildAckState,
 > Prototype<Running, ArtifactWorld, ChildState, AckState>
 {
-    pub(crate) fn campaign_id(&self) -> &str {
+    pub(crate) fn campaign_id(&self) -> &CampaignId {
         &self.campaign_id
     }
 
@@ -434,7 +437,7 @@ pub(crate) enum MaterializeBranchError {
 impl Prototype<Parent, Parent, Absent, Unacknowledged> {
     /// Validate an aligned `C1` state from a received child-plan payload.
     pub(crate) fn from_child_plan(
-        campaign_id: impl Into<String>,
+        campaign_id: impl Into<CampaignId>,
         campaign_manifest_path: impl Into<PathBuf>,
         node: Prototype1NodeRecord,
         request: Prototype1RunnerRequest,

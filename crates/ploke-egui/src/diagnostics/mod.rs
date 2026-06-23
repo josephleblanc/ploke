@@ -661,7 +661,8 @@ mod tests {
         SurfaceDeltaRecord, SurfaceRecord, SurfaceRootRecord,
     };
     use ploke_records::ids::{
-        ArtifactId, BlockHash, BlockId, EntryId, HistoryHash, LineageId, RecordedAt, RuntimeId,
+        ArtifactId, BlockHash, BlockId, CampaignId, EntryId, HistoryHash, LineageId, RecordedAt,
+        RuntimeId,
     };
     use ploke_tree::graph::{
         ArtifactIdentity, ArtifactIds, ArtifactIndex, ArtifactKey, ArtifactNode, HistoryBlockNode,
@@ -785,7 +786,7 @@ mod tests {
         let graph = ploke_tree::Graph {
             forest: Some(RunForest {
                 campaign: CampaignRef {
-                    campaign_id: "campaign".to_owned(),
+                    campaign_id: CampaignId::from("campaign"),
                     updated_at: "now".to_owned(),
                 },
                 roots: vec![NodeKey::from("root")],
@@ -1152,7 +1153,7 @@ mod tests {
         ploke_tree::Graph {
             forest: Some(ploke_tree::RunForest {
                 campaign: ploke_tree::CampaignRef {
-                    campaign_id: "campaign".to_owned(),
+                    campaign_id: CampaignId::from("campaign"),
                     updated_at: "now".to_owned(),
                 },
                 roots: Vec::new(),

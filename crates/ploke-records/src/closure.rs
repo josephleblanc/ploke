@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::ids::CampaignId;
 use crate::record::{Record, RecordFamily, RecordFormat};
 
 pub const CLOSURE_STATE_SCHEMA_VERSION: &str = "closure-state.v1";
@@ -17,7 +18,7 @@ pub const CLOSURE_STATE_SCHEMA_VERSION: &str = "closure-state.v1";
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ClosureStateRecord {
     pub schema_version: String,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub updated_at: String,
     pub config: ClosureConfigRecord,
     pub registry: RegistryClosureSummaryRecord,

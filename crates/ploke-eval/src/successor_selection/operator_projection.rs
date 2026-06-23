@@ -40,6 +40,11 @@ pub(crate) fn generation_summary(inputs: Vec<SelectionInput>) -> Option<Successo
         .into_iter()
         .max_by_key(|(score, _, _)| *score)
         .map(|(_, input, mut decision)| {
+            // Projection-only mirror of the documented "explore from rejected
+            // child" mode: rejection is branch-evaluation disposition, not a
+            // runtime-invalidity or successor-ineligibility marker. See
+            // docs/workflow/evalnomicon/drafts/runtime/child.md and
+            // docs/workflow/evalnomicon/chat-history/on-hyper-agents.md.
             decision.outcome = decision::SuccessorOutcome::ExploreFrom;
             decision.selected_branch_id = Some(input.candidate.branch_id.clone());
             decision.rationale.push(format!(

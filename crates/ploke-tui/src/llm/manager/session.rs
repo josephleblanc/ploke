@@ -1049,6 +1049,88 @@ pub struct ChatSession<R: Router> {
     pub cancel_rx: watch::Receiver<CancelChatToken>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ChatDebugStep {
+    pub session_id: Uuid,
+    pub parent_id: Uuid,
+    pub assistant_message_id: Uuid,
+    pub step_index: usize,
+    pub request_messages: Vec<RequestMessage>,
+    pub response: OpenAiResponse,
+    pub tool_calls: Vec<ToolCall>,
+    pub tool_results: Vec<ChatDebugToolResult>,
+    pub final_messages: Vec<RequestMessage>,
+    pub terminal: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum ChatDebugToolResult {
+    Completed {
+        call_id: ploke_core::ArcStr,
+        tool: Option<String>,
+        content: String,
+        ui_payload: Option<ToolUiPayload>,
+    },
+    Failed {
+        call_id: ploke_core::ArcStr,
+        tool: Option<String>,
+        error: String,
+        ui_payload: Option<ToolUiPayload>,
+    },
+}
+
+pub trait ChatDebugSink: Send + Sync {
+    fn record_step(&self, step: ChatDebugStep) -> Result<(), String>;
+}
+
+#[cfg(feature = "test_harness")]
+static CHAT_DEBUG_SINK: std::sync::OnceLock<std::sync::Mutex<Option<Arc<dyn ChatDebugSink>>>> =
+    std::sync::OnceLock::new();
+
+#[cfg(feature = "test_harness")]
+pub struct ChatDebugSinkGuard;
+
+#[cfg(feature = "test_harness")]
+impl Drop for ChatDebugSinkGuard {
+    fn drop(&mut self) {
+        clear_chat_debug_sink();
+    }
+}
+
+#[cfg(feature = "test_harness")]
+pub fn install_chat_debug_sink(sink: Arc<dyn ChatDebugSink>) -> ChatDebugSinkGuard {
+    let mutex = CHAT_DEBUG_SINK.get_or_init(|| std::sync::Mutex::new(None));
+    let mut guard = mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *guard = Some(sink);
+    ChatDebugSinkGuard
+}
+
+#[cfg(feature = "test_harness")]
+pub fn clear_chat_debug_sink() {
+    if let Some(mutex) = CHAT_DEBUG_SINK.get() {
+        let mut guard = mutex
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = None;
+    }
+}
+
+#[cfg(feature = "test_harness")]
+fn active_chat_debug_sink() -> Option<Arc<dyn ChatDebugSink>> {
+    let mutex = CHAT_DEBUG_SINK.get()?;
+    let guard = mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    guard.clone()
+}
+
+#[cfg(not(feature = "test_harness"))]
+fn active_chat_debug_sink() -> Option<Arc<dyn ChatDebugSink>> {
+    None
+}
+
 async fn wait_for_cancel_signal(cancel_rx: &mut watch::Receiver<CancelChatToken>) {
     loop {
         if matches!(*cancel_rx.borrow(), CancelChatToken::Close) {
@@ -1123,6 +1205,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
     let mut loop_state = ChatLoopState::default();
     let model_key = req.model_key.clone();
     let session_id = Uuid::new_v4();
+    let debug_sink = active_chat_debug_sink();
     let mut report = ChatSessionReport::new(
         session_id,
         assistant_message_id,
@@ -1163,6 +1246,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                 "Outgoing chat request (truncated when large)"
             );
         }
+        let request_snapshot = req.core.messages.clone();
         let calibration_input = R::calibration_input(&req);
         let mut provider_timing = R::resolve_provider_timing(calibration_input);
         provider_timing.attempt_timeout = AttemptTimeout::fixed(http_timeout);
@@ -1201,6 +1285,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                     report.outcome = SessionOutcome::Completed;
                     report.commit_phase = commit_phase;
                     report.attempts = attempts;
+                    report.final_messages = req.core.messages.clone();
                     return report;
                 }
                 let allowed = allowed_tool_names();
@@ -1445,6 +1530,8 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
         }
 
         let token_usage = full_response.usage;
+        let mut debug_calls = Vec::new();
+        let mut debug_results = Vec::new();
         if let Some(resp_tokens) = token_usage {
             state_cmd_tx
                 .send(StateCommand::UpdateContextTokens {
@@ -1565,6 +1652,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                 } else {
                     None
                 };
+                debug_calls = calls.clone();
                 req.core
                     .messages
                     .push(RequestMessage::new_assistant_with_tool_calls(
@@ -1615,6 +1703,7 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                         ).await;
                     }
                 };
+                debug_results = debug_tool_results(&results, &call_name_by_id);
 
                 // 3) append tool results into req.core.messages for the next step
                 for (call_id, tool_json_result) in results.into_iter() {
@@ -1805,6 +1894,21 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                 } else if let Some(prompt) = continue_info.system_prompt {
                     req.core.messages.push(RequestMessage::new_system(prompt));
                 }
+                record_chat_debug_step(
+                    &debug_sink,
+                    ChatDebugStep {
+                        session_id,
+                        parent_id,
+                        assistant_message_id,
+                        step_index: chain_index,
+                        request_messages: request_snapshot,
+                        response: full_response.clone(),
+                        tool_calls: debug_calls,
+                        tool_results: debug_results,
+                        final_messages: req.core.messages.clone(),
+                        terminal: false,
+                    },
+                );
                 continue;
             }
             FinishDecision::Return(result) => match result {
@@ -1852,9 +1956,25 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                             })
                             .await;
                     }
+                    record_chat_debug_step(
+                        &debug_sink,
+                        ChatDebugStep {
+                            session_id,
+                            parent_id,
+                            assistant_message_id,
+                            step_index: chain_index,
+                            request_messages: request_snapshot,
+                            response: full_response.clone(),
+                            tool_calls: debug_calls,
+                            tool_results: debug_results,
+                            final_messages: req.core.messages.clone(),
+                            terminal: true,
+                        },
+                    );
                     report.outcome = SessionOutcome::Completed;
                     report.commit_phase = commit_phase;
                     report.attempts = attempts;
+                    report.final_messages = req.core.messages.clone();
                     match state_cmd_tx
                         .send(StateCommand::DecrementChatTtl {
                             included_message_ids: included_message_ids.clone(),
@@ -1893,6 +2013,21 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
                         &loop_error,
                     )
                     .await;
+                    record_chat_debug_step(
+                        &debug_sink,
+                        ChatDebugStep {
+                            session_id,
+                            parent_id,
+                            assistant_message_id,
+                            step_index: chain_index,
+                            request_messages: request_snapshot,
+                            response: full_response.clone(),
+                            tool_calls: debug_calls,
+                            tool_results: debug_results,
+                            final_messages: req.core.messages.clone(),
+                            terminal: true,
+                        },
+                    );
                     report.record_error(loop_error.clone());
                     report.outcome = SessionOutcome::Exhausted {
                         error_id: loop_error.error_id,
@@ -1928,6 +2063,50 @@ pub async fn run_chat_session<R: Router + RouterCalibration>(
     report.commit_phase = commit_phase;
     report.attempts = attempts;
     report
+}
+
+fn debug_tool_results(
+    results: &[(
+        ploke_core::ArcStr,
+        Result<ToolCallUiResult, ToolCallUiError>,
+    )],
+    call_name_by_id: &HashMap<ploke_core::ArcStr, ploke_core::ArcStr>,
+) -> Vec<ChatDebugToolResult> {
+    results
+        .iter()
+        .map(|(call_id, result)| {
+            let tool = call_name_by_id
+                .get(call_id)
+                .map(std::string::ToString::to_string);
+            match result {
+                Ok(result) => ChatDebugToolResult::Completed {
+                    call_id: call_id.clone(),
+                    tool,
+                    content: result.content.clone(),
+                    ui_payload: result.ui_payload.clone(),
+                },
+                Err(error) => ChatDebugToolResult::Failed {
+                    call_id: call_id.clone(),
+                    tool,
+                    error: error.error.clone(),
+                    ui_payload: error.ui_payload.clone(),
+                },
+            }
+        })
+        .collect()
+}
+
+fn record_chat_debug_step(debug_sink: &Option<Arc<dyn ChatDebugSink>>, step: ChatDebugStep) {
+    let Some(sink) = debug_sink else {
+        return;
+    };
+    if let Err(error) = sink.record_step(step) {
+        tracing::warn!(
+            target = "chat-loop",
+            error,
+            "chat debug sink failed to persist response checkpoint"
+        );
+    }
 }
 
 fn emit_full_response_trace(
@@ -2558,6 +2737,11 @@ mod tests {
     use ploke_llm::router_only::openrouter::ProviderPreferences;
     use serde::{Deserialize, Serialize};
     use serde_json::json;
+    use tracing::Event;
+    use tracing::field::{Field, Visit};
+    use tracing_subscriber::layer::{Context, SubscriberExt};
+    use tracing_subscriber::registry::LookupSpan;
+    use tracing_subscriber::{Layer, Registry};
 
     use super::*;
     use crate::EventBus;
@@ -2581,6 +2765,91 @@ mod tests {
 
     const TEST_ROUTER_URL: &str = "http://127.0.0.1:39181/v1/chat/completions";
     const TEST_ROUTER_URL_ALT: &str = "http://127.0.0.1:39182/v1/chat/completions";
+
+    #[derive(Clone, Default)]
+    struct DebugSteps(StdArc<StdMutex<Vec<ChatDebugStep>>>);
+
+    impl DebugSteps {
+        fn snapshot(&self) -> Vec<ChatDebugStep> {
+            self.0.lock().expect("debug steps lock").clone()
+        }
+    }
+
+    impl ChatDebugSink for DebugSteps {
+        fn record_step(&self, step: ChatDebugStep) -> Result<(), String> {
+            self.0.lock().expect("debug steps lock").push(step);
+            Ok(())
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct TraceLines(StdArc<StdMutex<Vec<String>>>);
+
+    impl TraceLines {
+        fn push(&self, line: String) {
+            self.0.lock().expect("trace lock").push(line);
+        }
+
+        fn snapshot(&self) -> Vec<String> {
+            self.0.lock().expect("trace lock").clone()
+        }
+    }
+
+    #[derive(Default)]
+    struct TraceFields {
+        values: Vec<String>,
+    }
+
+    impl TraceFields {
+        fn push(&mut self, field: &Field, value: impl Into<String>) {
+            self.values
+                .push(format!("{}={}", field.name(), value.into()));
+        }
+
+        fn finish(self) -> String {
+            self.values.join(" ")
+        }
+    }
+
+    impl Visit for TraceFields {
+        fn record_bool(&mut self, field: &Field, value: bool) {
+            self.push(field, value.to_string());
+        }
+
+        fn record_i64(&mut self, field: &Field, value: i64) {
+            self.push(field, value.to_string());
+        }
+
+        fn record_u64(&mut self, field: &Field, value: u64) {
+            self.push(field, value.to_string());
+        }
+
+        fn record_str(&mut self, field: &Field, value: &str) {
+            self.push(field, value.to_string());
+        }
+
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            self.push(field, format!("{value:?}"));
+        }
+    }
+
+    struct TraceLayer {
+        lines: TraceLines,
+    }
+
+    impl<S> Layer<S> for TraceLayer
+    where
+        S: tracing::Subscriber + for<'span> LookupSpan<'span>,
+    {
+        fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+            if event.metadata().target() != FULL_RESPONSE_TARGET {
+                return;
+            }
+            let mut fields = TraceFields::default();
+            event.record(&mut fields);
+            self.lines.push(fields.finish());
+        }
+    }
 
     #[derive(Copy, Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize, Default, Eq)]
     struct TestRouter;
@@ -2847,6 +3116,31 @@ mod tests {
                 "message": {
                     "role": "assistant",
                     "refusal": "Malformed function call: print(default_api.apply_code_edit(edits=[default_api.ApplyCodeEditEdits(file=\"crates/printer/src/standard.rs\", canon=\"crate::standard::StandardSink::print_replacement\")]))"
+                }
+            }],
+            "created": 0,
+            "model": "test/model",
+            "object": "chat.completion"
+        })
+        .to_string()
+    }
+
+    fn list_dir_tool_call_response(index: usize) -> String {
+        json!({
+            "id": format!("tool-step-{index}"),
+            "choices": [{
+                "index": 0,
+                "finish_reason": "tool_calls",
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": format!("call_{index}"),
+                        "type": "function",
+                        "function": {
+                            "name": "list_dir",
+                            "arguments": "{\"dir\":\".\",\"max_entries\":3}"
+                        }
+                    }]
                 }
             }],
             "created": 0,
@@ -3571,6 +3865,336 @@ mod tests {
         );
         assert_eq!(captured_responses[0].index(), 0);
         assert_eq!(captured_responses[1].index(), 1);
+    }
+
+    #[tokio::test]
+    async fn run_chat_session_live_step_executes_tool_batch_before_boundary() {
+        let _router_guard = TEST_ROUTER_LOCK.lock().await;
+        let _api_key = ApiKeyGuard::set("test-key");
+        let responses = vec![list_dir_tool_call_response(0)];
+        let request_count = std::sync::Arc::new(AtomicUsize::new(0));
+        let server =
+            spawn_test_router_server("127.0.0.1:39181", responses, request_count.clone()).await;
+
+        let db = Arc::new(Database::new_init().expect("database initializes"));
+        let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db.active_embedding_set),
+            EmbeddingProcessor::new(EmbeddingSource::Local(
+                LocalEmbedder::new(EmbeddingConfig::default()).expect("local embedder initializes"),
+            )),
+        ));
+        let rag = Arc::new(
+            RagService::new(Arc::clone(&db), Arc::clone(&embedder))
+                .expect("rag service initializes"),
+        );
+        let (rag_tx, _rag_rx) = mpsc::channel(16);
+        let state = Arc::new(AppState::new(
+            db,
+            embedder,
+            ploke_io::IoManagerHandle::new(),
+            rag,
+            TokenBudget::default(),
+            rag_tx,
+        ));
+        let workspace = std::env::current_dir().expect("current dir is available");
+        state
+            .with_system_txn(|txn| {
+                txn.set_loaded_workspace(
+                    workspace.clone(),
+                    vec![workspace.clone()],
+                    Some(workspace),
+                );
+            })
+            .await;
+
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let mut tool_rx = event_bus.subscribe(crate::EventPriority::Realtime);
+        let requested = Arc::new(AtomicUsize::new(0));
+        let completed = Arc::new(AtomicUsize::new(0));
+        let tool_state = Arc::clone(&state);
+        let tool_bus = Arc::clone(&event_bus);
+        let requested_a = Arc::clone(&requested);
+        let completed_a = Arc::clone(&completed);
+        let tool_task = tokio::spawn(async move {
+            while let Ok(event) = tool_rx.recv().await {
+                if let AppEvent::System(SystemEvent::ToolCallRequested {
+                    tool_call,
+                    request_id,
+                    parent_id,
+                }) = event
+                {
+                    requested_a.fetch_add(1, Ordering::SeqCst);
+                    let ctx = crate::tools::Ctx {
+                        state: Arc::clone(&tool_state),
+                        event_bus: Arc::clone(&tool_bus),
+                        request_id,
+                        parent_id,
+                        call_id: tool_call.call_id.clone(),
+                    };
+                    if crate::tools::process_tool(tool_call, ctx).await.is_ok() {
+                        completed_a.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            }
+        });
+
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let drain = tokio::spawn(async move { while state_cmd_rx.recv().await.is_some() {} });
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let req = ChatCompRequest::<TestRouter>::default()
+            .with_model_str("moonshotai/kimi-k2")
+            .expect("model id")
+            .with_message(RequestMessage::new_user(
+                "Call list_dir for the current directory.".to_owned(),
+            ))
+            .with_tools(Some(vec![crate::tools::list_dir::ListDir::tool_def()]))
+            .with_tool_choice(Some(ToolChoice::Auto));
+        let tape = RecordedResponseTape::new(Vec::new());
+        let (request_tx, request_rx) = std::sync::mpsc::channel();
+        let _request_tap = install_request_tap(request_tx);
+        let (response_tx, response_rx) = std::sync::mpsc::channel();
+        let _response_tap = install_response_tap(response_tx);
+        let debug_steps = DebugSteps::default();
+        let _debug_guard = install_chat_debug_sink(StdArc::new(debug_steps.clone()));
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::recorded_prefix_then_live_steps(tape, 1),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id: Uuid::new_v4(),
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+            },
+            2,
+        )
+        .await;
+
+        server.await.expect("server task");
+        tool_task.abort();
+        drain.abort();
+        let captured_requests = request_rx.try_iter().collect::<Vec<_>>();
+        let captured_responses = response_rx.try_iter().collect::<Vec<_>>();
+
+        assert!(matches!(report.outcome, SessionOutcome::Completed));
+        assert_eq!(
+            request_count.load(Ordering::SeqCst),
+            1,
+            "exactly one live provider response should be allowed"
+        );
+        assert_eq!(
+            requested.load(Ordering::SeqCst),
+            1,
+            "the live response's tool request should execute before the boundary"
+        );
+        assert_eq!(
+            completed.load(Ordering::SeqCst),
+            1,
+            "the tool batch should complete before the boundary"
+        );
+        assert_eq!(
+            captured_requests.len(),
+            2,
+            "expected live request, then boundary request before the next provider call"
+        );
+        assert_eq!(captured_responses.len(), 1);
+        assert_eq!(captured_responses[0].index(), 0);
+        let steps = debug_steps.snapshot();
+        assert_eq!(
+            steps.len(),
+            1,
+            "debug sink should pause after one response step"
+        );
+        assert_eq!(steps[0].step_index, 0);
+        assert_eq!(steps[0].tool_calls.len(), 1);
+        assert_eq!(steps[0].tool_results.len(), 1);
+        assert!(!steps[0].terminal);
+        assert_eq!(steps[0].final_messages.len(), 3);
+        assert_eq!(report.final_messages.len(), 3);
+        assert!(
+            report
+                .final_messages
+                .iter()
+                .any(|message| message.role == Role::Assistant && message.tool_calls.is_some()),
+            "resume state should include the assistant tool-call message"
+        );
+        assert!(
+            report
+                .final_messages
+                .iter()
+                .any(|message| message.role == Role::Tool),
+            "resume state should include the completed tool result"
+        );
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "live_api_tests")]
+    #[ignore = "requires direct Google auth/env, a tool-capable Gemini model, and quota"]
+    async fn live_google_chat_session_live_step_tool_batch_success_or_quota() {
+        if !google_live_ready("live_google_chat_session_live_step_tool_batch_success_or_quota") {
+            return;
+        }
+
+        let db = Arc::new(Database::new_init().expect("database initializes"));
+        let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
+            Arc::clone(&db.active_embedding_set),
+            EmbeddingProcessor::new(EmbeddingSource::Local(
+                LocalEmbedder::new(EmbeddingConfig::default()).expect("local embedder initializes"),
+            )),
+        ));
+        let rag = Arc::new(
+            RagService::new(Arc::clone(&db), Arc::clone(&embedder))
+                .expect("rag service initializes"),
+        );
+        let (rag_tx, _rag_rx) = mpsc::channel(16);
+        let state = Arc::new(AppState::new(
+            db,
+            embedder,
+            ploke_io::IoManagerHandle::new(),
+            rag,
+            TokenBudget::default(),
+            rag_tx,
+        ));
+        let workspace = std::env::current_dir().expect("current dir is available");
+        state
+            .with_system_txn(|txn| {
+                txn.set_loaded_workspace(
+                    workspace.clone(),
+                    vec![workspace.clone()],
+                    Some(workspace),
+                );
+            })
+            .await;
+
+        let event_bus = Arc::new(EventBus::new(EventBusCaps::default()));
+        let mut tool_rx = event_bus.subscribe(crate::EventPriority::Realtime);
+        let requested = Arc::new(AtomicUsize::new(0));
+        let completed = Arc::new(AtomicUsize::new(0));
+        let tool_state = Arc::clone(&state);
+        let tool_bus = Arc::clone(&event_bus);
+        let requested_a = Arc::clone(&requested);
+        let completed_a = Arc::clone(&completed);
+        let tool_task = tokio::spawn(async move {
+            while let Ok(event) = tool_rx.recv().await {
+                if let AppEvent::System(SystemEvent::ToolCallRequested {
+                    tool_call,
+                    request_id,
+                    parent_id,
+                }) = event
+                {
+                    requested_a.fetch_add(1, Ordering::SeqCst);
+                    let ctx = crate::tools::Ctx {
+                        state: Arc::clone(&tool_state),
+                        event_bus: Arc::clone(&tool_bus),
+                        request_id,
+                        parent_id,
+                        call_id: tool_call.call_id.clone(),
+                    };
+                    if crate::tools::process_tool(tool_call, ctx).await.is_ok() {
+                        completed_a.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            }
+        });
+
+        let (state_cmd_tx, mut state_cmd_rx) = mpsc::channel(128);
+        let drain = tokio::spawn(async move { while state_cmd_rx.recv().await.is_some() {} });
+        let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+        let model = std::env::var("PLOKE_LIVE_GOOGLE_CHAT_MODEL")
+            .unwrap_or_else(|_| "google/gemini-2.5-flash".to_string());
+        let req = ChatCompRequest::<Google>::default()
+            .with_model_str(&model)
+            .expect("Google model id parses")
+            .with_message(RequestMessage::new_user(
+                "Call the list_dir tool exactly once with dir \".\" and max_entries 3.".to_string(),
+            ))
+            .with_max_tokens(160)
+            .with_temperature(0.0)
+            .with_tools(Some(vec![crate::tools::list_dir::ListDir::tool_def()]))
+            .with_tool_choice(Some(ToolChoice::Required));
+        let tape = RecordedResponseTape::new(Vec::new());
+        let (request_tx, request_rx) = std::sync::mpsc::channel();
+        let _request_tap = install_request_tap(request_tx);
+        let (response_tx, response_rx) = std::sync::mpsc::channel();
+        let _response_tap = install_response_tap(response_tx);
+
+        let report = run_chat_session(
+            ChatSession {
+                client: Client::new(),
+                req,
+                chat_step_source: ChatStepSource::recorded_prefix_then_live_steps(tape, 1),
+                parent_id: Uuid::new_v4(),
+                assistant_message_id: Uuid::new_v4(),
+                event_bus,
+                state_cmd_tx,
+                included_message_ids: Vec::new(),
+                chat_policy: ChatPolicy::default(),
+                cancel_rx,
+            },
+            90,
+        )
+        .await;
+
+        tool_task.abort();
+        drain.abort();
+        let captured_requests = request_rx.try_iter().collect::<Vec<_>>();
+        let captured_responses = response_rx.try_iter().collect::<Vec<_>>();
+
+        if matches!(report.outcome, SessionOutcome::Completed) && report.errors.is_empty() {
+            assert_eq!(requested.load(Ordering::SeqCst), 1, "report={report:#?}");
+            assert_eq!(completed.load(Ordering::SeqCst), 1, "report={report:#?}");
+            assert_eq!(
+                captured_requests.len(),
+                2,
+                "expected live request and next-request boundary, report={report:#?}"
+            );
+            assert_eq!(captured_responses.len(), 1, "report={report:#?}");
+            assert_eq!(captured_responses[0].index(), 0);
+        } else {
+            assert!(
+                live_google_failure_is_classified(&report),
+                "unexpected live Google failure: {report:#?}"
+            );
+        }
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn google_live_ready(test_name: &str) -> bool {
+        let has_route = std::env::var_os("GOOGLE_PROJECT_ID").is_some()
+            && std::env::var_os("GOOGLE_REGION").is_some();
+        let has_key = std::env::var_os("PLOKE_GOOGLE_AI_STUDIO_API_KEY").is_some()
+            || std::env::var_os("GEMINI_API_KEY").is_some()
+            || std::env::var_os("GOOGLE_API_KEY").is_some();
+        if has_route || has_key {
+            return true;
+        }
+        eprintln!(
+            "skipping {test_name}: set GOOGLE_PROJECT_ID/GOOGLE_REGION with Google auth or a Google API key"
+        );
+        false
+    }
+
+    #[cfg(feature = "live_api_tests")]
+    fn live_google_failure_is_classified(report: &ChatSessionReport) -> bool {
+        let text = format!("{report:#?}").to_ascii_lowercase();
+        [
+            "quota",
+            "rate",
+            "429",
+            "401",
+            "403",
+            "auth",
+            "credential",
+            "permission",
+            "provider",
+            "unavailable",
+        ]
+        .iter()
+        .any(|needle| text.contains(needle))
     }
 
     #[test]

@@ -3350,7 +3350,7 @@ mod tests {
         let graph = ploke_tree::Graph {
             forest: Some(RunForest {
                 campaign: CampaignRef {
-                    campaign_id: "campaign".to_owned(),
+                    campaign_id: CampaignId::from("campaign"),
                     updated_at: "now".to_owned(),
                 },
                 roots: vec![parent.clone()],
@@ -3510,7 +3510,7 @@ mod tests {
         let graph = ploke_tree::Graph {
             forest: Some(RunForest {
                 campaign: CampaignRef {
-                    campaign_id: "campaign".to_owned(),
+                    campaign_id: CampaignId::from("campaign"),
                     updated_at: "now".to_owned(),
                 },
                 roots: vec![parent.clone()],
@@ -3783,7 +3783,7 @@ mod tests {
         let graph = ploke_tree::Graph {
             forest: Some(RunForest {
                 campaign: CampaignRef {
-                    campaign_id: "campaign".to_owned(),
+                    campaign_id: CampaignId::from("campaign"),
                     updated_at: "now".to_owned(),
                 },
                 roots: vec![parent.clone()],
@@ -3831,7 +3831,7 @@ mod tests {
         let mut graph = artifact_graph_with_mixed_identity_sources();
         graph.forest = Some(RunForest {
             campaign: CampaignRef {
-                campaign_id: "campaign".to_owned(),
+                campaign_id: CampaignId::from("campaign"),
                 updated_at: "now".to_owned(),
             },
             roots: vec![key("parent")],
@@ -3859,7 +3859,7 @@ mod tests {
         let mut graph = artifact_graph_with_mixed_identity_sources();
         graph.forest = Some(RunForest {
             campaign: CampaignRef {
-                campaign_id: "campaign".to_owned(),
+                campaign_id: CampaignId::from("campaign"),
                 updated_at: "now".to_owned(),
             },
             roots: vec![key("parent")],
@@ -4454,7 +4454,7 @@ mod tests {
         ploke_tree::Graph {
             forest: Some(RunForest {
                 campaign: CampaignRef {
-                    campaign_id: "campaign".to_owned(),
+                    campaign_id: CampaignId::from("campaign"),
                     updated_at: "now".to_owned(),
                 },
                 roots: vec![parent.clone()],
@@ -4567,7 +4567,7 @@ mod tests {
         ploke_tree::Graph {
             forest: Some(RunForest {
                 campaign: CampaignRef {
-                    campaign_id: "campaign".to_owned(),
+                    campaign_id: CampaignId::from("campaign"),
                     updated_at: "now".to_owned(),
                 },
                 roots: Vec::new(),
@@ -4975,7 +4975,7 @@ mod tests {
         InvocationRecord {
             schema_version: "prototype1-invocation.v1".to_owned(),
             role,
-            campaign_id: "campaign".to_owned(),
+            campaign_id: CampaignId::from("campaign"),
             node_id: node_id.to_owned(),
             runtime_id: RuntimeId(runtime_id.to_owned()),
             journal_path: PathBuf::from("transition-journal.jsonl"),

@@ -1,6 +1,9 @@
-#![allow(dead_code)] // REMOVE BY 2026-04-26: typed C4 -> C5 scaffold is not wired into the live controller yet
+#![allow(dead_code)]
+// C4 -> C5 is used by run_planned_child; some replay/test helpers remain intentionally unused.
 
+// ANCHOR: prototype1_c4_to_c5
 //! Explicit parent-side observation of child completion after `C4`.
+// ANCHOR_END: prototype1_c4_to_c5
 
 use std::path::PathBuf;
 use std::thread;
@@ -432,6 +435,7 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    use ploke_records::ids::CampaignId;
     use tempfile::tempdir;
 
     use crate::campaign::EvalCampaignPolicy;
@@ -462,7 +466,7 @@ mod tests {
             branch_id: runtime.node.branch_id.clone(),
             status: Prototype1NodeStatus::Succeeded,
             disposition: Prototype1RunnerDisposition::Succeeded,
-            treatment_campaign_id: Some("treatment-campaign".to_string()),
+            treatment_campaign_id: Some(CampaignId::from("treatment-campaign")),
             evaluation_artifact_path: None,
             detail: None,
             exit_code: Some(0),
@@ -474,9 +478,9 @@ mod tests {
 
     fn treatment_evidence() -> Prototype1TreatmentEvidence {
         Prototype1TreatmentEvidence {
-            baseline_campaign_id: "campaign".to_string(),
+            baseline_campaign_id: CampaignId::from("campaign"),
             branch_id: "branch".to_string(),
-            treatment_campaign_id: "treatment-campaign".to_string(),
+            treatment_campaign_id: CampaignId::from("treatment-campaign"),
             treatment_campaign_manifest: "treatment/campaign.json".into(),
             treatment_closure_state_path: "treatment/closure-state.json".into(),
             eval_policy: EvalCampaignPolicy::default(),
@@ -554,7 +558,7 @@ mod tests {
         };
         let request = Prototype1RunnerRequest {
             schema_version: "prototype1-runner-request.v1".to_string(),
-            campaign_id: "campaign".to_string(),
+            campaign_id: CampaignId::from("campaign"),
             node_id: "node".to_string(),
             generation: 1,
             instance_id: "instance".to_string(),
@@ -572,7 +576,7 @@ mod tests {
         };
 
         Prototype {
-            campaign_id: "campaign".to_string(),
+            campaign_id: CampaignId::from("campaign"),
             campaign_manifest_path: root.join("campaign.json"),
             node,
             request,
@@ -601,7 +605,7 @@ mod tests {
             .parse()
             .expect("historical runtime id");
         let mut runtime = c4(root, runtime_id);
-        runtime.campaign_id = "p1-gemini35-flash-direct-15g2x3-20260525-035000".to_string();
+        runtime.campaign_id = CampaignId::from("p1-gemini35-flash-direct-15g2x3-20260525-035000");
         runtime.node.node_id = "node-15006265e24b3b9b".to_string();
         runtime.node.generation = 1;
         runtime.node.branch_id = "branch-c56614c6e6a63aa9".to_string();
@@ -879,7 +883,9 @@ mod tests {
         };
         assert_eq!(
             success.treatment.treatment_campaign_id,
-            "p1-gemini35-flash-direct-15g2x3-20260525-035000-treatment-branch-c56614c6e6a63aa9-1779711014414"
+            CampaignId::from(
+                "p1-gemini35-flash-direct-15g2x3-20260525-035000-treatment-branch-c56614c6e6a63aa9-1779711014414"
+            )
         );
     }
 }

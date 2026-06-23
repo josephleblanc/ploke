@@ -1421,6 +1421,15 @@ pub(crate) fn ensure_msb_submission_patch_evidence(
     Ok(())
 }
 
+pub(crate) fn non_exportable_msb_submission_detail(err: &PrepareError) -> Option<&str> {
+    if let PrepareError::InvalidBatchSelection { detail } = err {
+        if detail.starts_with("non-empty MBE fix_patch requires ") {
+            return Some(detail.as_str());
+        }
+    }
+    None
+}
+
 pub(crate) fn record_packaging_failure(
     run_record: &mut RunRecord,
     registration: &mut crate::inner::registry::RunRegistration,

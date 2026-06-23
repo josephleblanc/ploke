@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 
+use crate::ids::CampaignId;
 use serde::{Deserialize, Serialize};
 
 use crate::branch::Disposition;
@@ -17,9 +18,9 @@ pub const BENCHMARK_PATCH_PROJECTION_SCHEMA_V1: &str = "benchmark-patch-projecti
 /// One persisted Prototype 1 branch evaluation artifact.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Artifact {
-    pub baseline_campaign_id: String,
+    pub baseline_campaign_id: CampaignId,
     pub branch_id: String,
-    pub treatment_campaign_id: String,
+    pub treatment_campaign_id: CampaignId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evaluation_procedure_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

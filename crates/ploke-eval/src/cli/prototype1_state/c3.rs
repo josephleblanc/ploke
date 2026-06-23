@@ -1,14 +1,15 @@
-#![allow(dead_code)] // REMOVE BY 2026-04-26: typed C3 -> C4 scaffold is not wired into the live controller yet
+#![allow(dead_code)]
+// C3 -> C4 is used by run_planned_child; some replay/test helpers remain intentionally unused.
 
+// ANCHOR: prototype1_c3_to_c4
 //! Explicit `C3 -> C4` prototype configuration transition.
 //!
 //! Temporary note:
 //! This file models the runtime handoff seam that the current prototype still
-//! handles inside the old parent/child process helper. It introduces a
-//! journal-backed handshake for child acknowledgement, but it does not yet
-//! replace the live runner path. The journal now has replay classification for
-//! these entries as well, even though the live runner is not yet wired to
-//! append `ChildReady`.
+//! handles inside the parent/child process helper. It introduces a
+//! journal-backed handshake for child acknowledgement. The live child path uses
+//! this typed carrier, and the journal has replay classification for these
+//! entries even when a particular child exits before a ready acknowledgement.
 //!
 //! The current scaffold assumes:
 //! - `C3` means the child binary exists but has not yet acknowledged itself
@@ -16,6 +17,7 @@
 //! - the handshake is mediated through the shared transition journal
 //! - the fresh child process bootstraps from one persisted invocation record
 //!   written before spawn
+// ANCHOR_END: prototype1_c3_to_c4
 
 use crate::prelude::*;
 
@@ -492,7 +494,7 @@ impl Intervention<C3, C4> for SpawnChild {
         command
             .args(&child_argv)
             .current_dir(&from.artifact.repo_root)
-            .env(CAMPAIGN_ID_ENV, &from.campaign_id)
+            .env(CAMPAIGN_ID_ENV, from.campaign_id.as_str())
             .env(NODE_ID_ENV, &from.node.node_id)
             .env(RUNTIME_ID_ENV, self.runtime_id.to_string())
             .env(JOURNAL_PATH_ENV, handoff.path.as_os_str())

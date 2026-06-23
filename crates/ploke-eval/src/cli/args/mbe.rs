@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use ploke_records::ids::CampaignId;
+
 use clap::{Args, Parser, Subcommand};
 
 #[derive(Debug, Parser)]
@@ -67,7 +69,7 @@ pub struct MbeRunsCommand {
 pub struct MbeCampaignCandidatesCommand {
     /// Prototype 1 campaign id.
     #[arg(long)]
-    pub campaign: String,
+    pub campaign: CampaignId,
 
     /// Show only candidates whose fix_patch is non-empty.
     #[arg(long)]
@@ -78,7 +80,7 @@ pub struct MbeCampaignCandidatesCommand {
 pub struct MbeRunCampaignCandidateCommand {
     /// Prototype 1 campaign id.
     #[arg(long)]
-    pub campaign: String,
+    pub campaign: CampaignId,
 
     /// Prototype 1 node id to test.
     #[arg(long)]

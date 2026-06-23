@@ -38,7 +38,7 @@ pub struct FrameworkToolConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PreparedCampaignContext {
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -454,7 +454,7 @@ pub enum Prototype1ParentError {
         "selected instance '{selected_instance}' does not match parent for campaign '{campaign_id}': {parent}"
     )]
     SelectionMismatch {
-        campaign_id: String,
+        campaign_id: CampaignId,
         selected_instance: String,
         parent: Prototype1ParentNodeContext,
     },

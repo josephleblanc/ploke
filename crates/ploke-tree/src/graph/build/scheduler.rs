@@ -112,7 +112,7 @@ mod tests {
                 node_records: Vec::new(),
                 parent_identity: Some(ParentIdentityRecord {
                     schema_version: "prototype1-parent-identity.v1".to_owned(),
-                    campaign_id: "campaign-1".to_owned(),
+                    campaign_id: CampaignId::from("campaign-1"),
                     parent_id: "parent-1".to_owned(),
                     node_id: "node-1".to_owned(),
                     generation: 1,
@@ -125,7 +125,7 @@ mod tests {
                 }),
                 successor_ready: vec![SuccessorReadyRecord {
                     schema_version: "prototype1-successor-ready.v1".to_owned(),
-                    campaign_id: "campaign-1".to_owned(),
+                    campaign_id: CampaignId::from("campaign-1"),
                     node_id: "node-1".to_owned(),
                     runtime_id: runtime_id.clone(),
                     pid: 42,
@@ -133,7 +133,7 @@ mod tests {
                 }],
                 successor_completion: vec![SuccessorCompletionRecord {
                     schema_version: "prototype1-successor-completion.v1".to_owned(),
-                    campaign_id: "campaign-1".to_owned(),
+                    campaign_id: CampaignId::from("campaign-1"),
                     node_id: "node-1".to_owned(),
                     runtime_id: runtime_id.clone(),
                     status: SuccessorCompletionStatus::Succeeded,

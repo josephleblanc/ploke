@@ -885,6 +885,7 @@ impl RunMsbAgentSingleRequest {
             persist_registration(&registration)?;
 
             let packaging_started_at = chrono::Utc::now().to_rfc3339();
+            let mut suppressed_submission_detail = None;
             let msb_submission_artifact = match write_msb_submission_artifact(
                 &prepared,
                 &run_arm,
@@ -895,58 +896,69 @@ impl RunMsbAgentSingleRequest {
             ) {
                 Ok(artifact) => artifact,
                 Err(err) => {
-                    let detail = err.to_string();
-                    steps.push("write_msb_submission_failed".to_string());
-                    record_packaging_failure(
-                        &mut run_record,
-                        &mut registration,
-                        packaging_started_at,
-                        detail.clone(),
-                    );
-                    persist_registration(&registration)?;
-
-                    finalize_run_timing(
-                        &mut run_record,
-                        setup_start_time,
-                        run_start_instant,
-                        setup_wall_clock_secs,
-                        agent_wall_clock_secs,
-                    );
-
-                    let execution_log = ExecutionLog {
-                        task_id: prepared.task_id.clone(),
-                        run_arm: run_arm.clone(),
-                        repo_root: prepared.repo_root.clone(),
-                        output_dir: run_output_dir.clone(),
-                        selected_model: selected_model_id.clone(),
-                        selected_provider: Some(selected_provider.clone()),
-                        selected_endpoint: selected_endpoint.clone(),
-                        full_response_trace: full_response_trace.clone(),
-                        steps,
-                    };
-                    if let Err(write_err) = write_json(&execution_log_path, &execution_log) {
+                    if let Some(detail) = non_exportable_msb_submission_detail(&err) {
+                        let detail = detail.to_string();
                         warn!(
-                            path = %execution_log_path.display(),
-                            error = %write_err,
-                            "runner phase: failed to write packaging-failure execution log"
+                            detail = %detail,
+                            "runner phase: suppressing non-exportable benchmark submission"
                         );
-                    } else if let Err(write_err) = record_last_run(&execution_log.output_dir) {
-                        warn!(
-                            output_dir = %execution_log.output_dir.display(),
-                            error = %write_err,
-                            "runner phase: failed to record packaging-failure last run"
+                        steps.push("suppress_non_exportable_msb_submission".to_string());
+                        suppressed_submission_detail = Some(detail);
+                        None
+                    } else {
+                        let detail = err.to_string();
+                        steps.push("write_msb_submission_failed".to_string());
+                        record_packaging_failure(
+                            &mut run_record,
+                            &mut registration,
+                            packaging_started_at,
+                            detail.clone(),
                         );
+                        persist_registration(&registration)?;
+
+                        finalize_run_timing(
+                            &mut run_record,
+                            setup_start_time,
+                            run_start_instant,
+                            setup_wall_clock_secs,
+                            agent_wall_clock_secs,
+                        );
+
+                        let execution_log = ExecutionLog {
+                            task_id: prepared.task_id.clone(),
+                            run_arm: run_arm.clone(),
+                            repo_root: prepared.repo_root.clone(),
+                            output_dir: run_output_dir.clone(),
+                            selected_model: selected_model_id.clone(),
+                            selected_provider: Some(selected_provider.clone()),
+                            selected_endpoint: selected_endpoint.clone(),
+                            full_response_trace: full_response_trace.clone(),
+                            steps,
+                        };
+                        if let Err(write_err) = write_json(&execution_log_path, &execution_log) {
+                            warn!(
+                                path = %execution_log_path.display(),
+                                error = %write_err,
+                                "runner phase: failed to write packaging-failure execution log"
+                            );
+                        } else if let Err(write_err) = record_last_run(&execution_log.output_dir) {
+                            warn!(
+                                output_dir = %execution_log.output_dir.display(),
+                                error = %write_err,
+                                "runner phase: failed to record packaging-failure last run"
+                            );
+                        }
+
+                        if let Err(write_err) = write_compressed_record(&record_path, &run_record) {
+                            warn!(
+                                path = %record_path.display(),
+                                error = %write_err,
+                                "runner phase: failed to write packaging-failure compressed run record"
+                            );
+                        }
+
+                        return Err(err);
                     }
-
-                    if let Err(write_err) = write_compressed_record(&record_path, &run_record) {
-                        warn!(
-                            path = %record_path.display(),
-                            error = %write_err,
-                            "runner phase: failed to write packaging-failure compressed run record"
-                        );
-                    }
-
-                    return Err(err);
                 }
             };
             if let Some(submission) = msb_submission_artifact.as_ref() {
@@ -960,6 +972,13 @@ impl RunMsbAgentSingleRequest {
                     RunPhaseStatus::Completed,
                     Some("submission artifact written".to_string()),
                 );
+            } else if let Some(detail) = suppressed_submission_detail.as_deref() {
+                registration.update_submission_status(None);
+                registration.update_phase(
+                    RunLifecyclePhase::Packaging,
+                    RunPhaseStatus::Skipped,
+                    Some(format!("benchmark submission suppressed: {detail}")),
+                );
             } else {
                 registration.update_submission_status(None);
                 registration.update_phase(
@@ -971,12 +990,16 @@ impl RunMsbAgentSingleRequest {
             run_record.phases.packaging = Some(PackagingPhase {
                 started_at: packaging_started_at,
                 ended_at: chrono::Utc::now().to_rfc3339(),
-                submission_artifact_state: match msb_submission_artifact.as_ref() {
-                    Some(submission) if submission.fix_patch.trim().is_empty() => {
-                        SubmissionArtifactState::Empty
+                submission_artifact_state: if suppressed_submission_detail.is_some() {
+                    SubmissionArtifactState::Missing
+                } else {
+                    match msb_submission_artifact.as_ref() {
+                        Some(submission) if submission.fix_patch.trim().is_empty() => {
+                            SubmissionArtifactState::Empty
+                        }
+                        Some(_) => SubmissionArtifactState::Nonempty,
+                        None => SubmissionArtifactState::NotApplicable,
                     }
-                    Some(_) => SubmissionArtifactState::Nonempty,
-                    None => SubmissionArtifactState::NotApplicable,
                 },
                 msb_submission_path: msb_submission_artifact
                     .as_ref()
@@ -984,10 +1007,14 @@ impl RunMsbAgentSingleRequest {
                 patch_projection_path: msb_submission_artifact
                     .as_ref()
                     .map(|artifact| artifact.patch_projection_path.clone()),
-                patch_projection_check_state: msb_submission_artifact
-                    .as_ref()
-                    .map(|artifact| artifact.patch_projection_check_state)
-                    .unwrap_or(PatchProjectionCheckState::NotApplicable),
+                patch_projection_check_state: if suppressed_submission_detail.is_some() {
+                    PatchProjectionCheckState::Failed
+                } else {
+                    msb_submission_artifact
+                        .as_ref()
+                        .map(|artifact| artifact.patch_projection_check_state)
+                        .unwrap_or(PatchProjectionCheckState::NotApplicable)
+                },
             });
             registration.update_phase(
                 RunLifecyclePhase::Validation,

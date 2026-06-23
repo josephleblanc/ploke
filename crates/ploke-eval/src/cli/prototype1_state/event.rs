@@ -93,7 +93,7 @@ impl fmt::Display for ContentHash {
 /// Identity-bearing references attached to one recorded transition.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Refs {
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub node_id: String,
     pub instance_id: String,
     pub source_state_id: String,

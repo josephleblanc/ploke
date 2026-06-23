@@ -216,9 +216,12 @@ fn is_google_openai_chat_model(slug: &str) -> bool {
 
 fn google_context_length(model: &ModelSlug) -> Option<u32> {
     match model.as_str() {
-        "gemini-2.5-flash-lite" | "gemini-2.5-flash" | "gemini-2.5-pro" | "gemini-3.5-flash" => {
-            Some(1_048_576)
-        }
+        "gemini-2.5-flash-lite"
+        | "gemini-2.5-flash"
+        | "gemini-2.5-pro"
+        | "gemini-3.1-pro-preview"
+        | "gemini-3.1-pro-preview-customtools"
+        | "gemini-3.5-flash" => Some(1_048_576),
         _ => None,
     }
 }
@@ -260,8 +263,10 @@ fn google_catalog_model(slug: &str) -> Model {
 // gemini-2.5-flash-lite for parallel eval/protocol runs; for pro, lower
 // parallelism, add backoff, and/or try GOOGLE_REGION=global. Routable Vertex
 // slugs: gemini-2.5-flash-lite (200 ok), gemini-2.5-flash (200 ok),
-// gemini-2.5-pro (200 ok), gemini-3.5-flash (routable but DSQ-shadow,
-// 429-prone); gemini-3.0-flash is NOT routable (404).
+// gemini-2.5-pro (200 ok), gemini-3.1-pro-preview (200 ok),
+// gemini-3.1-pro-preview-customtools (200 ok; custom-tool optimized preview),
+// gemini-3.5-flash (routable but DSQ-shadow, 429-prone); gemini-3.0-flash is
+// NOT routable (404).
 //
 // Sources: https://cloud.google.com/vertex-ai/generative-ai/docs/dynamic-shared-quota
 // and https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/faq
@@ -272,6 +277,8 @@ fn google_catalog_models_response() -> ModelsResponse {
             google_catalog_model("gemini-2.5-flash-lite"),
             google_catalog_model("gemini-2.5-flash"),
             google_catalog_model("gemini-2.5-pro"),
+            google_catalog_model("gemini-3.1-pro-preview"),
+            google_catalog_model("gemini-3.1-pro-preview-customtools"),
             google_catalog_model("gemini-3.5-flash"),
         ],
         object: Some(ArcStr::from("list")),
@@ -1373,7 +1380,7 @@ mod tests {
             .map(crate::request::models::ResponseItem::from)
             .collect::<Vec<_>>();
 
-        assert_eq!(items.len(), 4);
+        assert_eq!(items.len(), 6);
         let lite = items
             .iter()
             .find(|item| item.id.to_string() == "google/gemini-2.5-flash-lite")
@@ -1400,6 +1407,20 @@ mod tests {
             .expect("2.5 pro direct row");
         assert!(pro.supports_tools());
         assert!(pro.route_source.is_direct_google());
+        let pro_31 = items
+            .iter()
+            .find(|item| item.id.to_string() == "google/gemini-3.1-pro-preview")
+            .expect("3.1 pro preview direct row");
+        assert_eq!(pro_31.context_length, Some(1_048_576));
+        assert!(pro_31.supports_tools());
+        assert!(pro_31.route_source.is_direct_google());
+        let pro_31_customtools = items
+            .iter()
+            .find(|item| item.id.to_string() == "google/gemini-3.1-pro-preview-customtools")
+            .expect("3.1 pro preview customtools direct row");
+        assert_eq!(pro_31_customtools.context_length, Some(1_048_576));
+        assert!(pro_31_customtools.supports_tools());
+        assert!(pro_31_customtools.route_source.is_direct_google());
 
         Ok(())
     }
@@ -1915,10 +1936,11 @@ answer in prose and do not ask for more information."
     -> Result<()> {
         const TEST_NAME: &str =
             "live_google_low_token_budget_multiline_patch_reproduces_malformed_or_quota";
-        const MODEL_ID: &str = "google/gemini-2.5-flash-lite";
+        const DEFAULT_MODEL_ID: &str = "google/gemini-2.5-flash-lite";
         // `gemini-2.5-flash-lite` can emit this patch successfully at 256 tokens,
         // but still reproduces MALFORMED_FUNCTION_CALL at 128 (2026-06-13).
-        // Override with PLOKE_LIVE_GOOGLE_LOW_MAX_TOKENS when probing provider drift.
+        // Override with PLOKE_LIVE_GOOGLE_PATCH_MODEL and/or
+        // PLOKE_LIVE_GOOGLE_LOW_MAX_TOKENS when probing provider drift.
         const LOW_MAX_TOKENS: u32 = 128;
         // Do not reduce this baseline without rerunning this live repro. Lower
         // candidates near 2.7k still produced malformed or invalid structured
@@ -1937,13 +1959,17 @@ answer in prose and do not ask for more information."
             .map(|value| value.parse::<u32>())
             .transpose()?
             .unwrap_or(FLOOR_MAX_TOKENS);
+        let model_id = env::var("PLOKE_LIVE_GOOGLE_PATCH_MODEL")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_MODEL_ID.to_string());
         eprintln!(
-            "{TEST_NAME}: probing low max_tokens={low_max_tokens}, floor max_tokens={floor_max_tokens}"
+            "{TEST_NAME}: probing model={model_id}, low max_tokens={low_max_tokens}, floor max_tokens={floor_max_tokens}"
         );
 
         let build_request = |max_tokens| -> Result<ChatCompRequest<Google>> {
             Ok(ChatCompRequest::<Google>::default()
-                .with_model_str(MODEL_ID)?
+                .with_model_str(&model_id)?
                 .with_message(RequestMessage::new_user(multiline_patch_eval_prompt()))
                 .with_max_tokens(max_tokens)
                 .with_temperature(0.0)
@@ -2031,16 +2057,26 @@ answer in prose and do not ask for more information."
     {
         const TEST_NAME: &str =
             "live_google_floor_token_budget_multiline_patch_avoids_malformed_or_quota";
-        const MODEL_ID: &str = "google/gemini-2.5-flash-lite";
+        const DEFAULT_MODEL_ID: &str = "google/gemini-2.5-flash-lite";
         // Mirror the production floor from
         // `ploke-tui::llm::model_overrides::google_gemini::MAX_TOKENS_FLOOR`.
         const FLOOR_MAX_TOKENS: u32 = 16384;
         if !live_google_env_or_skip(TEST_NAME) {
             return Ok(());
         }
+        let model_id = env::var("PLOKE_LIVE_GOOGLE_PATCH_MODEL")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| DEFAULT_MODEL_ID.to_string());
+        let require_tool_call = env::var("PLOKE_LIVE_GOOGLE_PATCH_REQUIRE_TOOL_CALL")
+            .ok()
+            .is_some_and(|value| matches!(value.trim(), "1" | "true" | "TRUE" | "yes" | "YES"));
+        eprintln!(
+            "{TEST_NAME}: probing model={model_id}, max_tokens={FLOOR_MAX_TOKENS}, require_tool_call={require_tool_call}"
+        );
 
         let request = ChatCompRequest::<Google>::default()
-            .with_model_str(MODEL_ID)?
+            .with_model_str(&model_id)?
             .with_message(RequestMessage::new_user(multiline_patch_eval_prompt()))
             // The fix under test: a generous budget so the call is not truncated.
             .with_max_tokens(FLOOR_MAX_TOKENS)
@@ -2069,15 +2105,30 @@ answer in prose and do not ask for more information."
 
         match step.outcome {
             ChatStepOutcome::ToolCalls { calls, .. } => {
+                eprintln!(
+                    "{TEST_NAME}: {FLOOR_MAX_TOKENS}-token request produced {} tool call(s)",
+                    calls.len()
+                );
                 assert!(
                     !calls.is_empty(),
                     "expected a non-empty structured tool call at the floor budget"
                 );
             }
             // A terminal prose reply (no tool call) is also non-malformed; the
-            // fix's contract is "no MALFORMED_FUNCTION_CALL", not "always a tool
-            // call" (that would be the loop-trapping Required behavior).
-            ChatStepOutcome::Content { .. } => {}
+            // fix's default contract is "no MALFORMED_FUNCTION_CALL", not
+            // "always a tool call". Set PLOKE_LIVE_GOOGLE_PATCH_REQUIRE_TOOL_CALL
+            // when using this as a patch-generation canary.
+            ChatStepOutcome::Content { content, .. } => {
+                eprintln!(
+                    "{TEST_NAME}: {FLOOR_MAX_TOKENS}-token request produced content_len={}",
+                    content.as_deref().unwrap_or_default().len()
+                );
+                if require_tool_call {
+                    bail!(
+                        "expected a structured tool call for patch-generation canary, got content outcome"
+                    );
+                }
+            }
         }
 
         Ok(())

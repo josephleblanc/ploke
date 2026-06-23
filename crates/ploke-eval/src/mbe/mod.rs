@@ -1195,10 +1195,10 @@ impl CampaignCandidate {
         &self.node.instance_id
     }
 
-    pub fn treatment_campaign_id(&self) -> Result<&str, PrepareError> {
+    pub fn treatment_campaign_id(&self) -> Result<&CampaignId, PrepareError> {
         self.runner_result
             .treatment_campaign_id
-            .as_deref()
+            .as_ref()
             .ok_or_else(|| PrepareError::InvalidMbeRequest {
                 detail: format!("node '{}' has no treatment campaign id", self.node.node_id),
             })
@@ -1309,11 +1309,11 @@ impl CampaignInstance {
 }
 
 pub fn campaign_candidates(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     nonempty_only: bool,
 ) -> Result<Vec<CampaignCandidate>, PrepareError> {
     let prototype_root = crate::layout::campaigns_dir()?
-        .join(campaign_id)
+        .join(campaign_id.as_str())
         .join("prototype1");
     let nodes_dir = prototype_root.join("nodes");
     let entries = fs::read_dir(&nodes_dir).map_err(|source| PrepareError::ReadManifest {
@@ -1357,7 +1357,7 @@ pub fn campaign_candidates(
 }
 
 pub fn campaign_candidate_by_node(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     node_id: &str,
 ) -> Result<CampaignCandidate, PrepareError> {
     let candidates = campaign_candidates(campaign_id, false)?;
@@ -1413,7 +1413,7 @@ fn candidates_for_result(
     if result.disposition != Prototype1RunnerDisposition::Succeeded {
         return Ok(Vec::new());
     }
-    let Some(treatment_campaign_id) = result.treatment_campaign_id.as_deref() else {
+    let Some(treatment_campaign_id) = result.treatment_campaign_id.as_ref() else {
         return Ok(Vec::new());
     };
 

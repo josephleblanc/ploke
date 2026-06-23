@@ -29,10 +29,11 @@ mod attempt;
 pub(crate) mod driver;
 pub(crate) mod harness;
 mod harness_io;
+mod tool_loop_debug;
 mod tui_bridge;
 #[cfg(test)]
 use tui_bridge::run_headless;
-pub(crate) use tui_bridge::run_headless_with_model;
+pub(crate) use tui_bridge::{LlmDebugStepSource, run_headless_with_model, run_llm_debug_step};
 
 pub(crate) mod state {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]

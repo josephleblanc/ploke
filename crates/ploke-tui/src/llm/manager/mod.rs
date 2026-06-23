@@ -13,8 +13,9 @@ pub(crate) mod events;
 pub use crate::llm::manager::session::CancelChatToken;
 #[cfg(feature = "test_harness")]
 pub use crate::llm::manager::session::{
-    RequestTapGuard, ResponseTapGuard, clear_recorded_response_tape, clear_request_tap,
-    clear_response_tap, install_recorded_response_prefix_then_live,
+    ChatDebugSink, ChatDebugSinkGuard, ChatDebugStep, ChatDebugToolResult, RequestTapGuard,
+    ResponseTapGuard, clear_chat_debug_sink, clear_recorded_response_tape, clear_request_tap,
+    clear_response_tap, install_chat_debug_sink, install_recorded_response_prefix_then_live,
     install_recorded_response_prefix_then_live_steps, install_recorded_response_tape,
     install_request_tap, install_response_tap,
 };
@@ -695,6 +696,60 @@ pub struct LlmCallArgs {
     parent_id: Uuid,
     cmd_tx: mpsc::Sender<StateCommand>,
     cancel_rx: watch::Receiver<CancelChatToken>,
+}
+
+#[cfg(feature = "test_harness")]
+#[derive(Clone)]
+pub struct ChatDebugRunArgs {
+    pub state: Arc<AppState>,
+    pub client: Client,
+    pub messages: Vec<RequestMessage>,
+    pub event_bus: Arc<EventBus>,
+    pub assistant_message_id: Uuid,
+    pub parent_id: Uuid,
+    pub cmd_tx: mpsc::Sender<StateCommand>,
+}
+
+#[cfg(feature = "test_harness")]
+#[derive(Clone, Debug)]
+pub struct ChatDebugRunReport {
+    pub session_id: Uuid,
+    pub request_id: Uuid,
+    pub parent_id: Uuid,
+    pub assistant_message_id: Uuid,
+    pub outcome: String,
+    pub attempts: u32,
+    pub final_messages: Vec<RequestMessage>,
+}
+
+#[cfg(feature = "test_harness")]
+pub async fn run_chat_debug_messages(args: ChatDebugRunArgs) -> ChatDebugRunReport {
+    let (_cancel_tx, cancel_rx) = watch::channel(CancelChatToken::KeepOpen);
+    let report = prepare_and_run_llm_call(LlmCallArgs {
+        state: args.state,
+        client: args.client,
+        messages: args.messages,
+        included_message_ids: Vec::new(),
+        event_bus: args.event_bus,
+        assistant_message_id: args.assistant_message_id,
+        parent_id: args.parent_id,
+        cmd_tx: args.cmd_tx,
+        cancel_rx,
+    })
+    .await;
+    ChatDebugRunReport {
+        session_id: report.session_id,
+        request_id: report.request_id,
+        parent_id: report.parent_id,
+        assistant_message_id: report.assistant_message_id,
+        outcome: match report.outcome {
+            SessionOutcome::Completed => "completed".to_string(),
+            SessionOutcome::Aborted { error_id } => format!("aborted:{error_id}"),
+            SessionOutcome::Exhausted { error_id } => format!("exhausted:{error_id}"),
+        },
+        attempts: report.attempts,
+        final_messages: report.final_messages,
+    }
 }
 
 #[instrument(skip_all)]

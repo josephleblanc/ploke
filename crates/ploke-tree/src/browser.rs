@@ -11,7 +11,7 @@ use crate::{
     playback::fine_history_steps_from_sealed_history,
 };
 use ploke_records::branch::Disposition;
-use ploke_records::ids::{ArtifactId, Coordinate, OperationTarget, PatchId, RuntimeId};
+use ploke_records::ids::{ArtifactId, CampaignId, Coordinate, OperationTarget, PatchId, RuntimeId};
 use ploke_records::playback::{EvidenceStrength, FineOrder, FineStepKind};
 #[cfg(feature = "projection")]
 use ploke_records::{evaluation::Artifact as EvaluationArtifact, history::SealedBlockRecord};
@@ -105,7 +105,7 @@ pub enum ExecutionEdgeKind {
 /// Top-level summary of a completed (or in-progress) run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunSummary {
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub node_count: usize,
     pub generation_count: u64,
     pub sealed_block_count: usize,
@@ -814,7 +814,7 @@ fn extract_node_id_from_label(label: Option<&str>) -> Option<String> {
 /// Build a `RunSummary` from loaded evidence counts.
 #[cfg(feature = "projection")]
 pub fn build_run_summary(
-    campaign_id: String,
+    campaign_id: CampaignId,
     node_count: usize,
     max_generation: u64,
     sealed_block_count: usize,
@@ -1011,7 +1011,7 @@ mod tests {
             }],
             execution_graph: None,
             run_summary: Some(RunSummary {
-                campaign_id: "campaign-a".to_owned(),
+                campaign_id: CampaignId::from("campaign-a"),
                 node_count: 12,
                 generation_count: 4,
                 sealed_block_count: 7,

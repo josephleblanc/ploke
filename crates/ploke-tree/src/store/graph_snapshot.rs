@@ -142,7 +142,7 @@ mod tests {
         let graph = loaded.graph();
         assert_eq!(
             graph.forest.as_ref().expect("forest").campaign.campaign_id,
-            "campaign-1"
+            CampaignId::from("campaign-1")
         );
     }
 

@@ -13,6 +13,7 @@ target/
 syn_parser/book/
 book/*.js
 docs/book/book/
+crates/ploke-eval/book/
 
 ## AI stuff
 .aider*

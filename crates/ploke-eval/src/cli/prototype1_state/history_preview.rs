@@ -457,7 +457,7 @@ impl FsEvidenceStore {
 
 /// Build a preview from the current filesystem-backed campaign records.
 pub(crate) fn build(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
 ) -> Result<HistoryPreview, PreviewError> {
     let store = FsEvidenceStore::new(manifest_path);
@@ -465,7 +465,7 @@ pub(crate) fn build(
 }
 
 pub(crate) fn run(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     format: InspectOutputFormat,
 ) -> Result<(), PrepareError> {
@@ -488,7 +488,7 @@ pub(crate) fn run(
 
 /// Build a read-only operator projection over grouped child evidence.
 pub(crate) fn build_child_evidence(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
 ) -> Result<ChildEvidenceProjection, PreviewError> {
     let store = FsEvidenceStore::new(manifest_path);
@@ -496,7 +496,7 @@ pub(crate) fn build_child_evidence(
     Ok(ChildEvidenceProjection {
         schema_version: evidence.schema_version.clone(),
         generated_at: Utc::now().to_rfc3339(),
-        campaign_id: campaign_id.to_string(),
+        campaign_id: campaign_id.clone(),
         manifest_path: manifest_path.to_path_buf(),
         prototype_root: prototype_root(manifest_path),
         evidence,
@@ -504,7 +504,7 @@ pub(crate) fn build_child_evidence(
 }
 
 pub(crate) fn run_child_evidence(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     format: InspectOutputFormat,
 ) -> Result<(), PrepareError> {
@@ -634,7 +634,7 @@ pub(crate) struct SelectionShowRequest {
 #[derive(Debug, Clone, Serialize)]
 struct SelectionShow {
     schema_version: &'static str,
-    campaign_id: String,
+    campaign_id: CampaignId,
     manifest_path: PathBuf,
     row: usize,
     segment_line_index: u64,
@@ -674,7 +674,7 @@ struct SelectionCandidateShow {
 }
 
 pub(crate) fn run_selection_show(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     request: SelectionShowRequest,
 ) -> Result<(), PrepareError> {
@@ -697,7 +697,7 @@ pub(crate) fn run_selection_show(
 }
 
 fn build_selection_show(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     request: &SelectionShowRequest,
 ) -> Result<SelectionShow, PreviewError> {
@@ -736,7 +736,7 @@ fn build_selection_show(
 }
 
 fn selection_show_from_entry(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     row: usize,
     segment_line_index: u64,
@@ -800,7 +800,7 @@ fn selection_show_from_entry(
         .collect();
     SelectionShow {
         schema_version: "prototype1-history-selection-show.v1",
-        campaign_id: campaign_id.to_string(),
+        campaign_id: campaign_id.clone(),
         manifest_path: manifest_path.to_path_buf(),
         row,
         segment_line_index,
@@ -1058,7 +1058,7 @@ fn collect_selection_decision_rows(
 }
 
 fn build_from_store<S>(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     store: &S,
 ) -> Result<HistoryPreview, PreviewError>
@@ -1092,7 +1092,7 @@ where
     Ok(HistoryPreview {
         schema_version: SCHEMA_VERSION,
         generated_at: Utc::now().to_rfc3339(),
-        campaign_id: campaign_id.to_string(),
+        campaign_id: campaign_id.clone(),
         manifest_path: manifest_path.to_path_buf(),
         prototype_root,
         sources,
@@ -1109,7 +1109,7 @@ where
 pub(crate) struct HistoryPreview {
     schema_version: &'static str,
     generated_at: String,
-    campaign_id: String,
+    campaign_id: CampaignId,
     manifest_path: PathBuf,
     prototype_root: PathBuf,
     sources: Vec<SourceSummary>,
@@ -1127,7 +1127,7 @@ pub(crate) struct HistoryPreview {
 pub(crate) struct ChildEvidenceProjection {
     schema_version: String,
     generated_at: String,
-    campaign_id: String,
+    campaign_id: CampaignId,
     manifest_path: PathBuf,
     prototype_root: PathBuf,
     evidence: ChildEvidenceSet,
@@ -3056,7 +3056,7 @@ mod tests {
     fn identity() -> ParentIdentity {
         ParentIdentity::from_record_for_test(ParentIdentityRecord {
             schema_version: PARENT_IDENTITY_SCHEMA_VERSION.to_string(),
-            campaign_id: "campaign-a".to_string(),
+            campaign_id: CampaignId::from("campaign-a"),
             parent_id: "parent-0".to_string(),
             node_id: "node-0".to_string(),
             generation: 0,
@@ -3078,7 +3078,7 @@ mod tests {
         fs::create_dir_all(journal_path.parent().unwrap()).expect("journal dir");
         let entry = JournalEntry::ParentStarted(ParentStartedEntry {
             recorded_at: RecordedAt(100),
-            campaign_id: "campaign-a".to_string(),
+            campaign_id: CampaignId::from("campaign-a"),
             parent_identity: identity(),
             repo_root: tmp.path().join("repo"),
             handoff_runtime_id: None,
@@ -3090,7 +3090,7 @@ mod tests {
         )
         .expect("journal");
 
-        let preview = build("campaign-a", &manifest).expect("preview");
+        let preview = build(&CampaignId::from("campaign-a"), &manifest).expect("preview");
 
         assert_eq!(preview.sources[0].class, "transition_journal");
         assert_eq!(preview.sources[0].count, 1);
@@ -3114,7 +3114,7 @@ mod tests {
         )
         .expect("scheduler");
 
-        let preview = build("campaign-a", &manifest).expect("preview");
+        let preview = build(&CampaignId::from("campaign-a"), &manifest).expect("preview");
 
         assert!(
             preview
@@ -3167,7 +3167,7 @@ mod tests {
         )
         .expect("invocation");
 
-        let preview = build("campaign-a", &manifest).expect("preview");
+        let preview = build(&CampaignId::from("campaign-a"), &manifest).expect("preview");
         let invocation = preview
             .entries
             .iter()
@@ -3194,7 +3194,7 @@ mod tests {
             "empty segment must not report decision-grade coverage"
         );
 
-        let preview = build("campaign-a", &manifest).expect("preview");
+        let preview = build(&CampaignId::from("campaign-a"), &manifest).expect("preview");
         assert_eq!(preview.sealed_selection_commitments.blocks_scanned, 0);
         assert!(preview.sealed_selection_commitments.all_checks_pass);
         assert!(

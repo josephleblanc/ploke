@@ -1,4 +1,5 @@
 use super::*;
+use crate::cli::prototype1_state::walk::phase::WalkPhase;
 use crate::inner::core::{RegisteredRunRole, RunIntent, RunStorageRoots};
 use crate::inner::registry::RunRegistration;
 use crate::model_registry::save_parent_patcher_model;
@@ -520,7 +521,7 @@ fn protocol_report(
     failures: Vec<String>,
 ) -> ClosureAdvanceProtocolReport {
     ClosureAdvanceProtocolReport {
-        campaign_id: "campaign-google".to_string(),
+        campaign_id: CampaignId::from("campaign-google"),
         dry_run: false,
         before,
         after,
@@ -625,7 +626,7 @@ fn eval_closure_repo_cache_override_accepts_child_owned_run_roots() {
         .path()
         .join("node")
         .join("instance-targets")
-        .join("campaign");
+        .join(&CampaignId::from("campaign"));
     let repo_root = repo_cache.join("BurntSushi").join("ripgrep");
     fs::create_dir_all(&repo_root).expect("repo root");
 
@@ -645,7 +646,7 @@ fn eval_closure_repo_cache_override_rejects_shared_cache_escape() {
         .path()
         .join("node")
         .join("instance-targets")
-        .join("campaign");
+        .join(&CampaignId::from("campaign"));
     let shared_root = tmp.path().join("shared").join("BurntSushi").join("ripgrep");
     fs::create_dir_all(&repo_cache).expect("repo cache");
     fs::create_dir_all(&shared_root).expect("shared root");
@@ -672,7 +673,7 @@ fn repo_cache_clone_preflight_accepts_child_owned_cache() {
         .path()
         .join("node")
         .join("instance-targets")
-        .join("campaign");
+        .join(&CampaignId::from("campaign"));
     fs::create_dir_all(&source).expect("source repo");
     fs::create_dir_all(&repo_cache).expect("repo cache");
 
@@ -713,7 +714,7 @@ fn repo_cache_clone_preflight_rejects_path_components() {
         .path()
         .join("node")
         .join("instance-targets")
-        .join("campaign");
+        .join(&CampaignId::from("campaign"));
     fs::create_dir_all(&source).expect("source repo");
     fs::create_dir_all(&repo_cache).expect("repo cache");
 
@@ -733,7 +734,7 @@ fn eval_closure_repo_cache_override_rejects_dotdot_spelled_escape() {
         .path()
         .join("node")
         .join("instance-targets")
-        .join("campaign");
+        .join(&CampaignId::from("campaign"));
     let shared_root = tmp.path().join("shared").join("BurntSushi").join("ripgrep");
     fs::create_dir_all(&repo_cache).expect("repo cache");
     fs::create_dir_all(&shared_root).expect("shared root");
@@ -837,7 +838,7 @@ async fn live_google_protocol_override_uses_direct_route_success_or_quota() {
         format!("google/{model_id}")
     };
     let config = ResolvedCampaignConfig {
-        campaign_id: "live-google-protocol-override".to_string(),
+        campaign_id: CampaignId::from("live-google-protocol-override"),
         benchmark_family: BenchmarkFamily::MultiSweBenchRust,
         dataset_sources: Vec::new(),
         model_id: "anthropic/claude-3.5-sonnet".to_string(),
@@ -1575,7 +1576,10 @@ fn loop_prototype1_command_parses_continued_branch_source() {
         Command::Loop(LoopCommand {
             command: LoopSubcommand::Prototype1(cmd),
         }) => {
-            assert_eq!(cmd.source_campaign.as_deref(), Some("prototype1-campaign"));
+            assert_eq!(
+                cmd.source_campaign.as_ref().map(|id| id.as_str()),
+                Some("prototype1-campaign")
+            );
             assert_eq!(cmd.source_branch_id.as_deref(), Some("branch-123"));
             assert_eq!(cmd.stop_after, Prototype1LoopStopAfter::Compare);
         }
@@ -1621,7 +1625,7 @@ fn loop_prototype1_setup_command_parses() {
                 Some("perplexity/pplx-embed-v1-4b")
             );
             assert_eq!(cmd.embedding_provider.as_deref(), Some("perplexity"));
-            assert_eq!(cmd.campaign.as_deref(), Some("p1-clap"));
+            assert_eq!(cmd.campaign.as_ref().map(|id| id.as_str()), Some("p1-clap"));
             assert_eq!(cmd.profile.as_deref(), Some("overnight-edit-surface"));
         }
         other => panic!("unexpected command shape: {:?}", other),
@@ -1651,7 +1655,10 @@ fn loop_prototype1_state_command_parses() {
         Command::Loop(LoopCommand {
             command: LoopSubcommand::Prototype1State(cmd),
         }) => {
-            assert_eq!(cmd.campaign.as_deref(), Some("prototype1-campaign"));
+            assert_eq!(
+                cmd.campaign.as_ref().map(|id| id.as_str()),
+                Some("prototype1-campaign")
+            );
             assert_eq!(cmd.node_id.as_deref(), Some("branch-abc-g1"));
             assert_eq!(
                 cmd.handoff_invocation.as_deref(),
@@ -1663,6 +1670,472 @@ fn loop_prototype1_state_command_parses() {
                 Prototype1CandidateGenerator::BroadHarnessRequest
             );
         }
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
+fn loop_walk_use_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "use",
+        "/tmp/parent",
+        "--socket",
+        "/tmp/walk.sock",
+    ])
+    .expect("loop walk use should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Use(cmd) => {
+                assert_eq!(cmd.repo_root, Some(PathBuf::from("/tmp/parent")));
+                assert_eq!(cmd.socket, Some(PathBuf::from("/tmp/walk.sock")));
+                assert_eq!(cmd.format, InspectOutputFormat::Table);
+            }
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
+fn loop_walk_start_ttl_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "start",
+        "--repo-root",
+        "/tmp/parent",
+        "--ttl-secs",
+        "60",
+        "--until",
+        "r5",
+    ])
+    .expect("loop walk start should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Start(cmd) => {
+                assert_eq!(cmd.repo_root, Some(PathBuf::from("/tmp/parent")));
+                assert_eq!(cmd.ttl_secs, Some(60));
+                assert!(!cmd.no_ttl);
+                assert_eq!(cmd.until, WalkPhase::R5);
+                assert_eq!(cmd.format, InspectOutputFormat::Table);
+                assert!(!cmd.with_version);
+            }
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
+fn loop_walk_step_handoff_admission_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "step",
+        "--repo-root",
+        "/tmp/parent",
+        "--until",
+        "r13b",
+        "--watch",
+        "--allow",
+        "git-changes",
+    ])
+    .expect("loop walk step should parse handoff admission flags");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Step(cmd) => {
+                assert_eq!(cmd.repo_root, Some(PathBuf::from("/tmp/parent")));
+                assert_eq!(cmd.until, Some(WalkPhase::R13b));
+                assert!(cmd.watch);
+                assert_eq!(cmd.allow, vec!["git-changes".to_string()]);
+            }
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
+fn loop_walk_summary_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "summary",
+        "--repo-root",
+        "/tmp/parent",
+        "--format",
+        "json",
+        "-v",
+    ])
+    .expect("loop walk summary should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Summary(cmd) => {
+                assert_eq!(cmd.repo_root, Some(PathBuf::from("/tmp/parent")));
+                assert_eq!(cmd.format, InspectOutputFormat::Json);
+                assert!(cmd.verbose);
+            }
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
+fn loop_walk_show_with_version_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "show",
+        "--repo-root",
+        "/tmp/parent",
+        "--with-version",
+    ])
+    .expect("loop walk show should parse --with-version");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Show(cmd) => {
+                assert_eq!(cmd.control.repo_root, Some(PathBuf::from("/tmp/parent")));
+                assert_eq!(cmd.control.format, InspectOutputFormat::Table);
+                assert!(cmd.control.with_version);
+                assert!(cmd.command.is_none());
+            }
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
+fn loop_walk_show_delta_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "show",
+        "delta",
+        "--verbose",
+        "--no-color",
+    ])
+    .expect("loop walk show delta should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Show(cmd) => match cmd.command {
+                Some(Prototype1StateWalkShowSubcommand::Delta(delta)) => {
+                    assert!(delta.verbose);
+                    assert!(delta.no_color);
+                }
+                other => panic!("unexpected show subcommand: {:?}", other),
+            },
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
+fn loop_walk_llm_timeline_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "llm",
+        "--repo-root",
+        "/tmp/parent",
+        "timeline",
+        "--lane",
+        "node-1",
+        "--session-id",
+        "session-1",
+    ])
+    .expect("loop walk llm timeline should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Llm(cmd) => {
+                assert_eq!(cmd.control.repo_root, Some(PathBuf::from("/tmp/parent")));
+                match cmd.command {
+                    Prototype1StateWalkLlmSubcommand::Timeline(timeline) => {
+                        assert_eq!(timeline.lane.as_deref(), Some("node-1"));
+                        assert_eq!(timeline.session_id.as_deref(), Some("session-1"));
+                    }
+                    other => panic!("unexpected llm subcommand: {:?}", other),
+                }
+            }
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
+fn loop_walk_llm_prompt_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "llm",
+        "prompt",
+        "--lane",
+        "node-1",
+        "--step",
+        "0",
+        "--role",
+        "user",
+        "--message",
+        "4",
+        "--full",
+        "--json",
+    ])
+    .expect("loop walk llm prompt should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Llm(cmd) => match cmd.command {
+                Prototype1StateWalkLlmSubcommand::Prompt(prompt) => {
+                    assert_eq!(prompt.lane.as_deref(), Some("node-1"));
+                    assert_eq!(prompt.step, Some(0));
+                    assert_eq!(prompt.role.as_deref(), Some("user"));
+                    assert_eq!(prompt.message, Some(4));
+                    assert!(prompt.full);
+                    assert!(prompt.json);
+                }
+                other => panic!("unexpected llm subcommand: {:?}", other),
+            },
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
+fn loop_walk_llm_protocol_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "llm",
+        "protocol",
+        "--lane",
+        "node-1",
+        "--session-id",
+        "session-1",
+        "--json",
+    ])
+    .expect("loop walk llm protocol should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Llm(cmd) => match cmd.command {
+                Prototype1StateWalkLlmSubcommand::Protocol(protocol) => {
+                    assert_eq!(protocol.lane.as_deref(), Some("node-1"));
+                    assert_eq!(protocol.session_id.as_deref(), Some("session-1"));
+                    assert!(protocol.json);
+                }
+                other => panic!("unexpected llm subcommand: {:?}", other),
+            },
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
+fn loop_walk_llm_tool_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "llm",
+        "tool",
+        "--lane",
+        "node-1",
+        "--step",
+        "11",
+        "--call",
+        "1",
+        "--name",
+        "non_semantic_patch",
+        "--json",
+    ])
+    .expect("loop walk llm tool should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Llm(cmd) => match cmd.command {
+                Prototype1StateWalkLlmSubcommand::Tool(tool) => {
+                    assert_eq!(tool.lane.as_deref(), Some("node-1"));
+                    assert_eq!(tool.step, Some(11));
+                    assert_eq!(tool.call, Some(1));
+                    assert_eq!(tool.name.as_deref(), Some("non_semantic_patch"));
+                    assert!(tool.json);
+                }
+                other => panic!("unexpected llm subcommand: {:?}", other),
+            },
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
+fn loop_walk_replay_and_back_commands_parse() {
+    let replay = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "replay",
+        "--repo-root",
+        "/tmp/parent",
+        "--index",
+        "7",
+    ])
+    .expect("loop walk replay should parse");
+
+    match replay.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Replay(cmd) => {
+                assert_eq!(cmd.control.repo_root, Some(PathBuf::from("/tmp/parent")));
+                assert_eq!(cmd.index, Some(7));
+                assert_eq!(cmd.tail, 3);
+            }
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+
+    let back = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "back",
+        "--steps",
+        "2",
+        "--tail",
+        "4",
+    ])
+    .expect("loop walk back should parse");
+
+    match back.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Back(cmd) => {
+                assert_eq!(cmd.steps, 2);
+                assert_eq!(cmd.tail, 4);
+            }
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+
+    let forward = Cli::try_parse_from(["ploke-eval", "loop", "walk", "forward"])
+        .expect("loop walk forward should parse");
+
+    match forward.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Forward(cmd) => {
+                assert_eq!(cmd.steps, 1);
+                assert_eq!(cmd.tail, 3);
+            }
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
+fn loop_walk_branch_live_requires_explicit_provenance_capability() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "branch-live",
+        "--repo-root",
+        "/tmp/parent",
+        "--reason",
+        "debug from historical cursor",
+        "--allow",
+        "provenance-record",
+    ])
+    .expect("loop walk branch-live should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::BranchLive(cmd) => {
+                assert_eq!(cmd.control.repo_root, Some(PathBuf::from("/tmp/parent")));
+                assert_eq!(cmd.reason, "debug from historical cursor");
+                assert_eq!(cmd.allow, vec!["provenance-record".to_string()]);
+            }
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
+fn loop_walk_serve_no_ttl_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "serve",
+        "--repo-root",
+        "/tmp/parent",
+        "--no-ttl",
+    ])
+    .expect("loop walk serve should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::Serve(cmd) => {
+                assert_eq!(cmd.repo_root, Some(PathBuf::from("/tmp/parent")));
+                assert!(cmd.ttl_secs.is_none());
+                assert!(cmd.no_ttl);
+            }
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
         other => panic!("unexpected command shape: {:?}", other),
     }
 }
@@ -1879,7 +2352,10 @@ fn loop_prototype1_state_identity_init_command_parses() {
         Command::Loop(LoopCommand {
             command: LoopSubcommand::Prototype1State(cmd),
         }) => {
-            assert_eq!(cmd.campaign.as_deref(), Some("prototype1-campaign"));
+            assert_eq!(
+                cmd.campaign.as_ref().map(|id| id.as_str()),
+                Some("prototype1-campaign")
+            );
             assert_eq!(cmd.node_id.as_deref(), Some("node-639a992e45ac3533"));
             assert!(cmd.init_parent_identity);
             assert_eq!(
@@ -1937,7 +2413,10 @@ fn history_score_selection_review_command_parses() {
             command: HistorySubcommand::ScoreSelectionReview(review),
             ..
         }) => {
-            assert_eq!(campaign.as_deref(), Some("prototype1-campaign"));
+            assert_eq!(
+                campaign.as_ref().map(|id| id.as_str()),
+                Some("prototype1-campaign")
+            );
             assert_eq!(review.format, InspectOutputFormat::Json);
             assert_eq!(review.rows, 12);
             assert_eq!(review.generation, Some(2));
@@ -2122,7 +2601,7 @@ fn inspect_tool_overview_accepts_campaign_and_tool() {
         Command::Inspect(InspectCommand {
             command: InspectSubcommand::ToolOverview(cmd),
         }) => {
-            assert_eq!(cmd.campaign, "rust-baseline-grok4-xai");
+            assert_eq!(cmd.campaign, CampaignId::from("rust-baseline-grok4-xai"));
             assert_eq!(cmd.tool.as_deref(), Some("apply_code_edit"));
         }
         other => panic!("unexpected command shape: {:?}", other),
@@ -2610,7 +3089,7 @@ fn sample_closure_state_for_submission_export(
 ) -> crate::closure::ClosureState {
     crate::closure::ClosureState {
         schema_version: crate::closure::CLOSURE_STATE_SCHEMA_VERSION.to_string(),
-        campaign_id: "campaign-1".to_string(),
+        campaign_id: CampaignId::from("campaign-1"),
         updated_at: "2026-04-17T00:00:00Z".to_string(),
         config: crate::closure::ClosureConfig {
             benchmark_family: BenchmarkFamily::MultiSweBenchRust,
@@ -2704,11 +3183,13 @@ fn sample_closure_state_for_submission_export(
 
 #[test]
 fn default_campaign_submission_export_path_uses_campaign_directory() {
-    let path = default_campaign_submission_export_path("campaign-1", false).expect("default path");
+    let path = default_campaign_submission_export_path(&CampaignId::from("campaign-1"), false)
+        .expect("default path");
     assert!(path.ends_with("campaign-1/multi-swe-bench-submission.jsonl"));
 
     let nonempty_path =
-        default_campaign_submission_export_path("campaign-1", true).expect("nonempty path");
+        default_campaign_submission_export_path(&CampaignId::from("campaign-1"), true)
+            .expect("nonempty path");
     assert!(nonempty_path.ends_with("campaign-1/multi-swe-bench-submission.nonempty.jsonl"));
 }
 
@@ -2728,7 +3209,7 @@ fn campaign_export_submissions_parses_nonempty_flag() {
         Command::Campaign(CampaignCommand {
             command: CampaignSubcommand::ExportSubmissions(cmd),
         }) => {
-            assert_eq!(cmd.campaign, "campaign-1");
+            assert_eq!(cmd.campaign, CampaignId::from("campaign-1"));
             assert!(cmd.nonempty_only);
         }
         other => panic!("unexpected command shape: {:?}", other),
@@ -2884,7 +3365,7 @@ fn mbe_campaign_candidates_parses_campaign() {
         Command::Mbe(MbeCommand {
             command: MbeSubcommand::CampaignCandidates(cmd),
         }) => {
-            assert_eq!(cmd.campaign, "campaign-1");
+            assert_eq!(cmd.campaign, CampaignId::from("campaign-1"));
             assert!(cmd.nonempty_only);
         }
         other => panic!("unexpected command shape: {:?}", other),
@@ -2916,7 +3397,7 @@ fn mbe_run_campaign_candidate_parses_node() {
         Command::Mbe(MbeCommand {
             command: MbeSubcommand::RunCampaignCandidate(cmd),
         }) => {
-            assert_eq!(cmd.campaign, "campaign-1");
+            assert_eq!(cmd.campaign, CampaignId::from("campaign-1"));
             assert_eq!(cmd.node, "node-1");
             assert_eq!(cmd.output_dir, Some(PathBuf::from("/tmp/mbe")));
             assert_eq!(cmd.repo_dir, Some(PathBuf::from("/tmp/repos")));

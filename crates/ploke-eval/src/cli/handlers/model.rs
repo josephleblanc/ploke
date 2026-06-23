@@ -201,6 +201,7 @@ impl ProviderCommand {
     }
 }
 
+// ANCHOR: model_providers_route_behavior
 async fn print_model_providers(model_id: Option<String>) -> Result<(), PrepareError> {
     let model_id = match model_id {
         Some(model_id) => model_id,
@@ -254,6 +255,7 @@ async fn print_model_providers(model_id: Option<String>) -> Result<(), PrepareEr
     }
     Ok(())
 }
+// ANCHOR_END: model_providers_route_behavior
 
 fn print_provider_row(ep: &Endpoint, selected_provider: Option<&ProviderKey>) {
     let provider_slug = ep.tag.provider_name.as_str();

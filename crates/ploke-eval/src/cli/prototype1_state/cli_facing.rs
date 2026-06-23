@@ -6,6 +6,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     io::{self},
+    marker::PhantomData,
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, Mutex},
@@ -17,6 +18,7 @@ use ploke_core::EXECUTION_DEBUG_TARGET;
 use ploke_llm::{ModelId, ProviderKey, request::models::ModelRouteSource};
 use ploke_records::{
     agent_turn::{AgentTurnSummaryRecord, AgentTurnTraceRecord},
+    ids::CampaignId,
     llm_response::FULL_RESPONSE_TRACE_FILE,
 };
 use ploke_tui::tools::ToolName;
@@ -25,6 +27,13 @@ use sha2::{Digest, Sha256};
 use tracing::{Instrument, debug, error, info, instrument, warn};
 
 use crate::cli::handlers::run::default_batch_id;
+#[cfg(test)]
+use crate::cli::prototype1_state::live_edges::r0_to_r1;
+#[cfg(test)]
+use crate::cli::prototype1_state::{
+    journal::ParentStartedEntry,
+    parent::{Check, Genesis, Startup, Unchecked},
+};
 use crate::cli::{
     handlers::closure::{advance_eval_closure, advance_protocol_closure},
     prototype1_state::edit_surface::harness_request,
@@ -37,20 +46,19 @@ use crate::{
     campaign::campaign_closure_state_path,
     campaign_manifest_path,
     cli::{
-        HistoryCommand, InspectOutputFormat, Prototype1CandidateGenerator,
-        Prototype1ChildEvidenceCommand, Prototype1ChildScheduleMode as CliChildScheduleMode,
-        Prototype1EditSurface, Prototype1EvidenceInventoryCommand, Prototype1HistoryPreviewCommand,
-        Prototype1LoopCommand, Prototype1LoopStopAfter, Prototype1MetricsCommand,
-        Prototype1ScoreCommand, Prototype1SelectionShowCommand, Prototype1StateCommand,
-        Prototype1StateStopAfter, Prototype1SuccessorSelection, Prototype1TraversalMetrics,
-        TimingTrace, pending_prototype1_stages, persist_intervention_apply_for_record,
+        HistoryCommand, Prototype1CandidateGenerator, Prototype1ChildEvidenceCommand,
+        Prototype1ChildScheduleMode as CliChildScheduleMode, Prototype1EditSurface,
+        Prototype1EvidenceInventoryCommand, Prototype1HistoryPreviewCommand, Prototype1LoopCommand,
+        Prototype1LoopStopAfter, Prototype1MetricsCommand, Prototype1ScoreCommand,
+        Prototype1SelectionShowCommand, Prototype1StateCommand, Prototype1StateStopAfter,
+        Prototype1SuccessorSelection, Prototype1TraversalMetrics, TimingTrace,
+        pending_prototype1_stages, persist_intervention_apply_for_record,
         persist_intervention_synthesis_for_record, persist_issue_detection_for_record,
         print_issue_case_block,
         prototype1_process::{
             SuccessorHandoffMode, cleanup_prototype1_child_build_products,
             persist_prototype1_buildable_child_artifact, record_prototype1_successor_completion,
-            record_prototype1_successor_ready, spawn_and_handoff_prototype1_successor,
-            validate_child_surface, validate_prototype1_successor_continuation,
+            validate_child_surface,
         },
         prototype1_state::{
             backend::{
@@ -58,10 +66,14 @@ use crate::{
                 EVAL_CORE_SURFACE_ROOT, EditProposal, EditSurfaceAdmission, GitWorktreeBackend,
                 ProposedTouch, TuiAttemptOutcome, WorkspaceBackend, edit_surface_paths,
             },
-            c1::{C1, MaterializeBranch},
+            c1::{
+                Acknowledged, Artifact, Binary, C1, Child as ChildLineage, MaterializeBranch,
+                Parent as ParentLineage, Present, Prototype,
+            },
             c2::BuildChild,
-            c3::SpawnChild,
+            c3::{C4, SpawnChild},
             c4::{ObserveChild, ObservedChild},
+            channel::{Channel, Cursor, FileTransport, ToParent},
             edit_surface::{
                 harness_result::{
                     SubmittedBroadHarnessResult, SubmittedChangeSummary,
@@ -70,38 +82,33 @@ use crate::{
                 },
                 tui_adapter,
             },
-            event::RecordedAt,
+            event::{ContentHash, RecordedAt, RuntimeId},
             history::{
-                ArtifactSurface, CandidateArtifact, CandidateCoordinate, CandidateLifecycle,
-                CandidateMembershipId, CandidateOccurrenceId, CandidateSetCommitment,
-                EvaluationPayload, Generation, History, HistoryCandidates, HistoryHash,
-                ProcedureRef, Scope, ScopeFor, SealedBranchEvidence, SealedCandidateEvidence,
-                SealedComparedRunEvidence, SealedEvalSetIdentity, SealedEvaluationEvidence,
-                SealedEvaluatorIdentity, SealedEvidenceCitation, SealedRuntimeEvidence,
-                SelectionDecisionEntry, SelectionProjectionFailure, SelectionProjectionFailureKind,
-                SelectionScope, SubjectRef, SurfaceEvidence, TraversalCandidateSource,
-                TraversalEvidence, surface_attempt,
+                ArtifactSurface, CHILD_ATTEMPT_RUNNER_RESULT_RECORD,
+                CHILD_CHANNEL_TERMINAL_RESULT_RECORD, CHILD_INVOCATION_RECORD, CandidateArtifact,
+                CandidateCoordinate, CandidateLifecycle, CandidateMembershipId,
+                CandidateOccurrenceId, CandidateSetCommitment, EvaluationPayload, Generation,
+                History, HistoryCandidates, HistoryHash, ProcedureRef, Scope, ScopeFor,
+                SealedBranchEvidence, SealedCandidateEvidence, SealedComparedRunEvidence,
+                SealedEvalSetIdentity, SealedEvaluationEvidence, SealedEvaluatorIdentity,
+                SealedEvidenceCitation, SealedRuntimeEvidence, SelectionDecisionEntry,
+                SelectionProjectionFailure, SelectionProjectionFailureKind, SelectionScope,
+                SubjectRef, SurfaceEvidence, TraversalCandidateSource, TraversalEvidence,
+                is_child_channel_terminal_result, surface_attempt,
             },
             identity::{
                 ParentIdentity, load_parent_identity_optional, parent_identity_commit_message,
                 parent_identity_relpath, write_parent_identity,
             },
             inner::{Locked, Open, Received},
-            invocation::{
-                self, InvocationAuthority, SuccessorCompletionStatus, SuccessorInvocation,
-            },
-            journal::{
-                self, JournalEntry, ParentStartedEntry, PrototypeJournal,
-                prototype1_transition_journal_path,
-            },
+            invocation::{self, InvocationAuthority, SuccessorCompletionStatus},
+            journal::{self, JournalEntry, PrototypeJournal, prototype1_transition_journal_path},
             observe,
             parent::{
-                AwaitingHarnessPlan, Check, ChildFiles, ChildPlan, ChildPlanFile, ChildPlanFiles,
-                Genesis, LockChildPlan, Parent, Planned, Predecessor, Ready, Selectable, Startup,
-                Unchecked, UnlockChildPlan,
+                AwaitingHarnessPlan, ChildFiles, ChildPlan, ChildPlanFile, ChildPlanFiles,
+                LockChildPlan, Parent, Planned, Ready, Selectable, UnlockChildPlan,
             },
             profile, selection as state_selection,
-            successor::Record as SuccessorRecord,
             telemetry::RuntimeTelemetry,
         },
         resolve_batch_manifest, resolve_protocol_model_id, resolve_protocol_provider_slug,
@@ -114,13 +121,14 @@ use crate::{
         PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1ChildBudget,
         Prototype1ChildScheduleMode, Prototype1ContinuationDecision,
         Prototype1ContinuationDisposition, Prototype1NodeRecord, Prototype1NodeStatus,
-        Prototype1SearchPolicy, RecordStore, TreatmentBranchNode, TreatmentBranchStatus,
-        ValidationPolicy, branch_log, execute_intervention_apply, load_node_record,
-        load_runner_result, load_scheduler_state, project_node_status,
-        prototype1_branch_registry_path, prototype1_node_id, prototype1_nodes_dir,
-        prototype1_scheduler_path, register_root_parent_node,
-        resolved_treatment_branches_from_synthesis, select_primary_issue, treatment_branch_id,
-        write_node_projection, write_treatment_evaluation_projection,
+        Prototype1RunnerDisposition, Prototype1RunnerResult, Prototype1SearchPolicy, RecordStore,
+        TreatmentBranchNode, TreatmentBranchStatus, ValidationPolicy, branch_log,
+        execute_intervention_apply, load_node_record, load_runner_result, load_runner_result_at,
+        load_scheduler_state, project_node_status, prototype1_branch_registry_path,
+        prototype1_node_id, prototype1_nodes_dir, prototype1_scheduler_path,
+        register_root_parent_node, resolved_treatment_branches_from_synthesis,
+        select_primary_issue, treatment_branch_id, write_node_projection,
+        write_treatment_evaluation_projection,
     },
     load_campaign_manifest, load_closure_state,
     model_registry::resolve_model_for_run,
@@ -143,7 +151,7 @@ use crate::{
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct Prototype1SetupReport {
-    pub(crate) campaign_id: String,
+    pub(crate) campaign_id: CampaignId,
     campaign_manifest: PathBuf,
     closure_state_path: PathBuf,
     slice_dataset_path: PathBuf,
@@ -211,7 +219,7 @@ pub(crate) fn prepare_prototype1_parent_setup(
     };
     let artifact_branch = format!(
         "prototype1-parent-{}-gen0",
-        sanitize_batch_component(&campaign.campaign_id)
+        sanitize_batch_component(campaign.campaign_id.as_str())
     );
     let node = register_root_parent_node(
         &campaign.campaign_id,
@@ -351,7 +359,7 @@ fn resolve_setup_primary_instance(
 }
 
 fn load_existing_prototype1_campaign(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
 ) -> Result<Prototype1LoopCampaign, PrepareError> {
     let manifest_path = campaign_manifest_path(campaign_id)?;
     let manifest = load_campaign_manifest(campaign_id)?;
@@ -369,7 +377,7 @@ fn load_existing_prototype1_campaign(
         });
 
     Ok(Prototype1LoopCampaign {
-        campaign_id: campaign_id.to_string(),
+        campaign_id: campaign_id.clone(),
         manifest_path,
         closure_state_path,
         slice_dataset_path,
@@ -389,7 +397,7 @@ pub(crate) fn ensure_prototype1_baseline_closure_state(
 }
 
 pub(crate) async fn establish_parent_baseline(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     config: &ResolvedCampaignConfig,
     manifest_path: &Path,
     parent: &ParentIdentity,
@@ -401,6 +409,39 @@ pub(crate) async fn establish_parent_baseline(
     };
     baseline.validate_for_parent(campaign_id, parent.node_id(), parent.branch_id())?;
     Ok(baseline)
+}
+
+pub(crate) async fn establish_parent_baseline_for_id(
+    campaign_id: &CampaignId,
+    config: &ResolvedCampaignConfig,
+    manifest_path: &Path,
+    parent: &ParentIdentity,
+) -> Result<CompleteBaseline, PrepareError> {
+    establish_parent_baseline(campaign_id, config, manifest_path, parent).await
+}
+
+pub(crate) fn load_parent_baseline_for_id(
+    campaign_id: &CampaignId,
+    config: &ResolvedCampaignConfig,
+    manifest_path: &Path,
+    parent: &ParentIdentity,
+) -> Result<Option<CompleteBaseline>, PrepareError> {
+    let baseline = if parent.generation() == 0 {
+        let path = campaign_closure_state_path(campaign_id)?;
+        if !path.exists() {
+            return Ok(None);
+        }
+        let closure = load_closure_state(campaign_id)?;
+        complete_baseline_from_closure(parent, &closure, &config.eval)?
+    } else {
+        let report_path = prototype1_branch_evaluation_path(manifest_path, parent.branch_id());
+        if !report_path.exists() {
+            return Ok(None);
+        }
+        promote_selected_child_baseline(campaign_id, manifest_path, parent)?
+    };
+    baseline.validate_for_parent(campaign_id, parent.node_id(), parent.branch_id())?;
+    Ok(Some(baseline))
 }
 
 async fn establish_initial_parent_baseline(
@@ -420,7 +461,7 @@ async fn establish_initial_parent_baseline(
 }
 
 fn promote_selected_child_baseline(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     parent: &ParentIdentity,
 ) -> Result<CompleteBaseline, PrepareError> {
@@ -434,7 +475,7 @@ fn promote_selected_child_baseline(
             path: report_path.clone(),
             source,
         })?;
-    if report.baseline_campaign_id != campaign_id {
+    if report.baseline_campaign_id != *campaign_id {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
                 "selected child baseline report campaign mismatch for parent '{}': expected {}, got {}",
@@ -649,7 +690,7 @@ impl BatchLedger {
 
 #[derive(Clone, Copy)]
 struct ChildPlanEnv<'a> {
-    campaign_id: &'a str,
+    campaign_id: &'a CampaignId,
     manifest_path: &'a Path,
     repo_root: &'a Path,
     broad_tui: profile::BroadTui,
@@ -768,6 +809,14 @@ pub(crate) struct PlannedChildren {
     pub(crate) rejected_surface_attempts: Vec<surface_attempt::Evidence>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct ChildChannelEvidenceRefs {
+    pub(crate) runtime_id: String,
+    pub(crate) terminal_result: SealedEvidenceCitation,
+    pub(crate) attempt_result: Option<SealedEvidenceCitation>,
+    pub(crate) invocation: Option<SealedEvidenceCitation>,
+}
+
 #[derive(Debug)]
 pub(crate) struct PlannedChildOutcome {
     pub(crate) plan_index: usize,
@@ -779,6 +828,7 @@ pub(crate) struct PlannedChildOutcome {
     pub(crate) binary_path: PathBuf,
     pub(crate) resolved: crate::intervention::ResolvedTreatmentBranch,
     pub(crate) child_runtime: Option<String>,
+    pub(crate) channel_evidence: Option<ChildChannelEvidenceRefs>,
     pub(crate) evaluation_report: Option<Prototype1BranchEvaluationReport>,
     pub(crate) selection_input: Option<SelectionInput>,
     pub(crate) surface: Option<SurfaceEvidence>,
@@ -920,7 +970,7 @@ impl SelectionSealMaterial {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CandidateGenerationConfig {
+pub(crate) enum CandidateGenerationConfig {
     Legacy,
     BroadHarnessRequest,
     DeterministicTuiTools,
@@ -943,7 +993,7 @@ impl CandidateGenerationConfig {
         }
     }
 
-    fn ensure_live_complete_admitted(self) -> Result<(), PrepareError> {
+    pub(crate) fn ensure_live_complete_admitted(self) -> Result<(), PrepareError> {
         match self {
             Self::Legacy => Err(PrepareError::InvalidBatchSelection {
                 detail: "prototype1 hard stop before child planning: legacy candidate generation is disabled for live complete runs".to_string(),
@@ -973,18 +1023,18 @@ impl CandidateGenerationConfig {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Prototype1StateRunShape {
-    stop_after: Prototype1StateStopAfter,
-    observe_child_stale_after: Duration,
-    broad_tui: profile::BroadTui,
-    anti_attractor_policy: profile::AntiAttractorPolicy,
-    candidate_generation: CandidateGenerationConfig,
-    successor_selection: Prototype1SuccessorSelection,
-    successor_selection_seed: u64,
-    successor_selection_metrics: Prototype1TraversalMetrics,
-    successor_oracle_mode: crate::successor_selection::OracleMode,
-    successor_oracle_require_evidence: bool,
-    successor_metrics_policy: crate::successor_selection::metrics::Policy,
+pub(crate) struct Prototype1StateRunShape {
+    pub(crate) stop_after: Prototype1StateStopAfter,
+    pub(crate) observe_child_stale_after: Duration,
+    pub(crate) broad_tui: profile::BroadTui,
+    pub(crate) anti_attractor_policy: profile::AntiAttractorPolicy,
+    pub(crate) candidate_generation: CandidateGenerationConfig,
+    pub(crate) successor_selection: Prototype1SuccessorSelection,
+    pub(crate) successor_selection_seed: u64,
+    pub(crate) successor_selection_metrics: Prototype1TraversalMetrics,
+    pub(crate) successor_oracle_mode: crate::successor_selection::OracleMode,
+    pub(crate) successor_oracle_require_evidence: bool,
+    pub(crate) successor_metrics_policy: crate::successor_selection::metrics::Policy,
 }
 
 impl Prototype1StateRunShape {
@@ -1022,7 +1072,7 @@ impl Prototype1StateRunShape {
         }
     }
 
-    fn resolve(
+    pub(crate) fn resolve(
         command: &Prototype1StateCommand,
         manifest_path: &Path,
     ) -> Result<Self, PrepareError> {
@@ -1074,7 +1124,7 @@ impl CandidateGenerationError {
 }
 
 fn child_files_from_checked_edit(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     edit_surface: Prototype1EditSurface,
     mut node: Prototype1NodeRecord,
     checked: &CheckedSurfaceEdit,
@@ -2590,6 +2640,49 @@ fn broad_harness_child_from_admitted(
     )
 }
 
+fn broad_harness_materialization_rejection(
+    env: ChildPlanEnv<'_>,
+    admitted: &AdmittedBroadHarnessResult,
+) -> Option<String> {
+    if admitted.changed_paths().is_empty() {
+        return Some("broad harness admitted transaction had no changed paths".to_string());
+    }
+    let target_relpath = &admitted.changed_paths()[0];
+    let source_path = env.repo_root.join(target_relpath);
+    if let Err(source) = fs::read_to_string(&source_path) {
+        return Some(format!(
+            "broad harness admitted transaction '{}' was not materialized as a child: could not read source file '{}' for broad child plan: {source}",
+            admitted.request_id(),
+            source_path.display()
+        ));
+    }
+    let candidate_path = admitted.workspace_root().join(target_relpath);
+    if let Err(source) = fs::read_to_string(&candidate_path) {
+        return Some(format!(
+            "broad harness admitted transaction '{}' was not materialized as a child: could not read candidate file '{}' for broad child plan: {source}",
+            admitted.request_id(),
+            candidate_path.display()
+        ));
+    }
+    None
+}
+
+fn broad_harness_admitted_slot_index(
+    batch: &HarnessRequestBatch,
+    admitted: &AdmittedBroadHarnessResult,
+) -> Result<usize, PrepareError> {
+    batch
+        .slots
+        .iter()
+        .position(|slot| slot.published.request_id() == admitted.request_id())
+        .ok_or_else(|| PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "admitted broad harness transaction '{}' did not match any published request slot",
+                admitted.request_id()
+            ),
+        })
+}
+
 #[cfg_attr(not(test), allow(dead_code))] // Batch-completed child-plan publisher; live path uses from_attempts; exercised in cli_tests.
 fn publish_broad_harness_child_plan_from_admitted_batch(
     env: ChildPlanEnv<'_>,
@@ -2628,10 +2721,30 @@ fn publish_broad_harness_child_plan_from_attempts(
     rejections: &BTreeMap<usize, String>,
     fail_parent_on_below_minimum: bool,
 ) -> Result<ChildPlanReceipt, PrepareError> {
-    if admitted.len() < batch.child_budget.min as usize {
-        let rejected_attempts =
-            batch_attempt_evidence(&batch, &admitted, attempted, rejections, true);
-        if admitted.is_empty() && !rejected_attempts.is_empty() && !fail_parent_on_below_minimum {
+    let admitted_count = admitted.len();
+    let mut materialized_admitted = Vec::new();
+    let mut materialization_attempted = attempted.clone();
+    let mut materialization_rejections = rejections.clone();
+    for admitted_result in admitted {
+        if let Some(reason) = broad_harness_materialization_rejection(env, &admitted_result) {
+            let slot_index = broad_harness_admitted_slot_index(&batch, &admitted_result)?;
+            materialization_attempted.insert(slot_index);
+            materialization_rejections.insert(slot_index, reason);
+        } else {
+            materialized_admitted.push(admitted_result);
+        }
+    }
+
+    // ANCHOR: prototype1_broad_harness_below_min_persist_rejected_plan
+    if materialized_admitted.len() < batch.child_budget.min as usize {
+        let rejected_attempts = batch_attempt_evidence(
+            &batch,
+            &materialized_admitted,
+            &materialization_attempted,
+            &materialization_rejections,
+            true,
+        );
+        if admitted_count == 0 && !rejected_attempts.is_empty() && !fail_parent_on_below_minimum {
             let parent_identity = batch.parent.identity().clone();
             let files = ChildPlanFiles::for_parent(env.manifest_path, &parent_identity, Vec::new())
                 .with_rejected_surface_attempts(rejected_attempts);
@@ -2670,15 +2783,16 @@ fn publish_broad_harness_child_plan_from_attempts(
         write_node_projection(&failed_parent)?;
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
-                "broad harness admitted {} child transaction(s), fewer than required minimum {}",
-                admitted.len(),
+                "broad harness materialized {} child transaction(s), fewer than required minimum {}",
+                materialized_admitted.len(),
                 batch.child_budget.min
             ),
         });
     }
+    // ANCHOR_END: prototype1_broad_harness_below_min_persist_rejected_plan
     let parent_identity = batch.parent.identity().clone();
     let parent_runtime_id = *batch.parent.runtime_id();
-    let children = admitted
+    let children = materialized_admitted
         .iter()
         .enumerate()
         .map(|(index, admitted)| {
@@ -2691,7 +2805,13 @@ fn publish_broad_harness_child_plan_from_attempts(
             )
         })
         .collect::<Result<Vec<_>, PrepareError>>()?;
-    let attempts = batch_attempt_evidence(&batch, &admitted, attempted, rejections, false);
+    let attempts = batch_attempt_evidence(
+        &batch,
+        &materialized_admitted,
+        &materialization_attempted,
+        &materialization_rejections,
+        false,
+    );
     let files = ChildPlanFiles::for_parent(env.manifest_path, &parent_identity, children)
         .with_rejected_surface_attempts(attempts);
     let at = files.message_at();
@@ -2713,6 +2833,7 @@ fn publish_broad_harness_child_plan_from_attempts(
     receive_child_plan(env, &parent_identity, planned, locked)
 }
 
+// ANCHOR: prototype1_persist_rejected_child_plan
 fn persist_rejected_plan(
     manifest_path: &Path,
     parent: Parent<Ready>,
@@ -2738,6 +2859,7 @@ fn persist_rejected_plan(
         })?;
     Ok(())
 }
+// ANCHOR_END: prototype1_persist_rejected_child_plan
 
 #[allow(dead_code)] // Rejected-attempt roll-up helper; exercised in below-min cli_tests.
 fn rejected_attempts(
@@ -3850,6 +3972,72 @@ fn comment_replacement_for(relpath: &Path, body: String) -> String {
     }
 }
 
+pub(crate) fn child_plan_message_path_for_parent(
+    manifest_path: &Path,
+    parent: &ParentIdentity,
+) -> PathBuf {
+    crate::cli::prototype1_state::inner::At::<ChildPlanFile>::resolve((
+        manifest_path.to_path_buf(),
+        parent.node_id().to_string(),
+    ))
+    .into_path()
+}
+
+pub(crate) fn validate_existing_child_plan_for_id(
+    manifest_path: &Path,
+    parent: &ParentIdentity,
+) -> Result<(), PrepareError> {
+    let at = crate::cli::prototype1_state::inner::At::<ChildPlanFile>::resolve((
+        manifest_path.to_path_buf(),
+        parent.node_id().to_string(),
+    ));
+    let body = read_child_plan_message(&at)?;
+    body.validate_receiver(parent)
+        .map_err(|source| PrepareError::InvalidBatchSelection {
+            detail: source.to_string(),
+        })
+}
+
+pub(crate) fn load_existing_child_plan_for_id(
+    manifest_path: &Path,
+    parent: Parent<Ready>,
+) -> Result<PlannedChildren, PrepareError> {
+    let parent_identity = parent.identity().clone();
+    let at = crate::cli::prototype1_state::inner::At::<ChildPlanFile>::resolve((
+        manifest_path.to_path_buf(),
+        parent_identity.node_id().to_string(),
+    ));
+    let observed_at = at.clone();
+    let locked = observe::transition::<LockChildPlan>(&parent_identity)
+        .stage(observe::Stage::RetryReplay)
+        .reads(observe::RecordRef::ChildPlanFile(&observed_at))
+        .try_commit(|| Locked::<ChildPlan>::from_box(at, read_child_plan_message))
+        .map_err(|err| {
+            let (_at, source) = err.into_parts();
+            source
+        })?;
+    let planned = parent.planned_from_locked_child_plan();
+    let observed_at = locked.at().clone();
+    let (parent, plan) = observe::transition::<UnlockChildPlan>(&parent_identity)
+        .stage(observe::Stage::MessageReceive)
+        .reads(observe::RecordRef::ChildPlanFile(&observed_at))
+        .try_commit(|| locked.unlock(planned))
+        .map_err(|err| {
+            let (_failed, source) = err.into_parts();
+            PrepareError::InvalidBatchSelection {
+                detail: source.to_string(),
+            }
+        })?;
+    let children = plan.body().children().to_vec();
+    let rejected_surface_attempts = plan.body().rejected_surface_attempts().to_vec();
+    Ok(PlannedChildren {
+        parent,
+        plan,
+        children,
+        rejected_surface_attempts,
+    })
+}
+
 fn receive_existing_child_plan(
     env: ChildPlanEnv<'_>,
     parent: Parent<Ready>,
@@ -4047,7 +4235,7 @@ pub(crate) struct Prototype1LoopControllerInput {
     protocol_model_id: Option<String>,
     protocol_provider: Option<String>,
     search_policy: Prototype1SearchPolicy,
-    source_campaign: Option<String>,
+    source_campaign: Option<CampaignId>,
     source_branch_id: Option<String>,
     source_parent: Option<ParentIdentity>,
     repo_root: PathBuf,
@@ -4500,7 +4688,7 @@ struct Prototype1MonitorSnapshotEntry {
 }
 
 pub(crate) fn run_metric_slice(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     command: &Prototype1MetricsCommand,
 ) -> Result<(), PrepareError> {
@@ -4517,7 +4705,7 @@ pub(crate) fn run_metric_slice(
 }
 
 pub(crate) fn run_history_preview(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     command: &Prototype1HistoryPreviewCommand,
 ) -> Result<(), PrepareError> {
@@ -4525,7 +4713,7 @@ pub(crate) fn run_history_preview(
 }
 
 pub(crate) fn run_child_evidence(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     command: &Prototype1ChildEvidenceCommand,
 ) -> Result<(), PrepareError> {
@@ -4543,7 +4731,7 @@ pub(crate) fn run_evidence_inventory(
 }
 
 pub(crate) fn run_score_report(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     command: &Prototype1ScoreCommand,
 ) -> Result<(), PrepareError> {
@@ -4559,7 +4747,7 @@ pub(crate) fn run_score_report(
 }
 
 pub(crate) fn run_score_selection_review(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     command: &Prototype1ScoreCommand,
 ) -> Result<(), PrepareError> {
@@ -4575,7 +4763,7 @@ pub(crate) fn run_score_selection_review(
 }
 
 pub(crate) fn run_selection_show(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     command: &Prototype1SelectionShowCommand,
 ) -> Result<(), PrepareError> {
@@ -4597,7 +4785,7 @@ fn prototype1_campaign_root(campaign_manifest_path: &Path) -> PathBuf {
         .join("prototype1")
 }
 
-fn prototype1_state_transition_error(
+pub(crate) fn prototype1_state_transition_error(
     phase: &'static str,
     detail: impl Into<String>,
 ) -> PrepareError {
@@ -4607,7 +4795,7 @@ fn prototype1_state_transition_error(
     }
 }
 
-fn same_existing_path(left: &Path, right: &Path) -> bool {
+pub(crate) fn same_existing_path(left: &Path, right: &Path) -> bool {
     let normalize = |path: &Path| fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     normalize(left) == normalize(right)
 }
@@ -4624,9 +4812,9 @@ fn infer_campaign_from_parent_identity(repo_root: &Path) -> Result<Option<String
         .map(|identity| identity.map(|identity| identity.campaign_id().to_string()))
 }
 
-pub(crate) fn record_active_prototype1_monitor_target(campaign_id: &str, repo_root: &Path) {
+pub(crate) fn record_active_prototype1_monitor_target(campaign_id: &CampaignId, repo_root: &Path) {
     let target = ActivePrototype1MonitorTarget {
-        campaign_id: campaign_id.to_string(),
+        campaign_id: campaign_id.clone(),
         repo_root: repo_root.to_path_buf(),
     };
     if let Err(error) = save_active_prototype1_monitor_target(&target) {
@@ -4634,15 +4822,28 @@ pub(crate) fn record_active_prototype1_monitor_target(campaign_id: &str, repo_ro
     }
 }
 
-fn resolve_prototype1_state_campaign(
+pub(crate) fn campaign_manifest_path_for_id(
+    campaign_id: &CampaignId,
+) -> Result<PathBuf, PrepareError> {
+    campaign_manifest_path(campaign_id)
+}
+
+pub(crate) fn resolve_campaign_config_for_id(
+    campaign_id: &CampaignId,
+    overrides: &CampaignOverrides,
+) -> Result<ResolvedCampaignConfig, PrepareError> {
+    resolve_campaign_config(campaign_id, overrides)
+}
+
+pub(crate) fn resolve_prototype1_state_campaign(
     command: &Prototype1StateCommand,
     repo_root: &Path,
-) -> Result<String, PrepareError> {
+) -> Result<CampaignId, PrepareError> {
     if let Some(campaign) = command.campaign.as_ref() {
-        return Ok(campaign.clone());
+        return Ok(CampaignId::from(campaign.as_str()));
     }
     if let Some(campaign) = infer_campaign_from_parent_identity(repo_root)? {
-        return Ok(campaign);
+        return Ok(CampaignId::from(campaign));
     }
 
     Err(PrepareError::InvalidBatchSelection {
@@ -4656,12 +4857,12 @@ fn resolve_prototype1_state_campaign(
 pub(crate) fn resolve_history_campaign(
     command: &HistoryCommand,
     repo_root: &Path,
-) -> Result<String, PrepareError> {
+) -> Result<CampaignId, PrepareError> {
     if let Some(campaign) = command.campaign.as_ref() {
         return Ok(campaign.clone());
     }
     if let Some(campaign) = infer_campaign_from_parent_identity(repo_root)? {
-        return Ok(campaign);
+        return Ok(CampaignId::from(campaign.as_str()));
     }
     if let Some(campaign) = load_active_selection(OperatorProjectionRead::cli_operator())?.campaign
     {
@@ -4680,13 +4881,13 @@ pub(crate) fn resolve_history_campaign(
     })
 }
 
-fn latest_prototype1_campaign() -> Result<Option<String>, PrepareError> {
+fn latest_prototype1_campaign() -> Result<Option<CampaignId>, PrepareError> {
     let root = crate::layout::campaigns_dir()?;
     if !root.exists() {
         return Ok(None);
     }
 
-    let mut latest = None::<(SystemTime, String)>;
+    let mut latest = None::<(SystemTime, CampaignId)>;
     for entry in fs::read_dir(&root).map_err(|source| PrepareError::ReadCampaignManifest {
         path: root.clone(),
         source,
@@ -4706,7 +4907,7 @@ fn latest_prototype1_campaign() -> Result<Option<String>, PrepareError> {
             .metadata()
             .and_then(|metadata| metadata.modified())
             .unwrap_or(SystemTime::UNIX_EPOCH);
-        let campaign_id = entry.file_name().to_string_lossy().to_string();
+        let campaign_id = CampaignId::from(entry.file_name().to_string_lossy().as_ref());
         if latest
             .as_ref()
             .map(|(current, _)| modified > *current)
@@ -4721,7 +4922,7 @@ fn latest_prototype1_campaign() -> Result<Option<String>, PrepareError> {
 
 fn resolve_prototype1_candidate_node_id(
     command: &Prototype1StateCommand,
-    _campaign_id: &str,
+    _campaign_id: &CampaignId,
     _manifest_path: &Path,
     required_generation: Option<u32>,
     _parent_node_id: Option<&str>,
@@ -4743,7 +4944,7 @@ fn resolve_prototype1_candidate_node_id(
 
 fn resolve_initial_parent_node_id(
     command: &Prototype1StateCommand,
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
 ) -> Result<String, PrepareError> {
     resolve_prototype1_candidate_node_id(
@@ -4757,7 +4958,7 @@ fn resolve_initial_parent_node_id(
 }
 
 async fn resolve_child_plan(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     repo_root: &Path,
     parent: Parent<Ready>,
@@ -4867,6 +5068,33 @@ async fn resolve_child_plan(
         children,
         rejected_surface_attempts: receipt.rejected_surface_attempts,
     })
+}
+
+pub(crate) async fn resolve_child_plan_for_id(
+    campaign_id: &CampaignId,
+    manifest_path: &Path,
+    repo_root: &Path,
+    parent: Parent<Ready>,
+    candidate_generation: CandidateGenerationConfig,
+    selected_node_id: Option<&str>,
+    child_budget: Prototype1ChildBudget,
+    broad_tui: profile::BroadTui,
+    anti_attractor_policy: profile::AntiAttractorPolicy,
+    route_source: ModelRouteSource,
+) -> Result<PlannedChildren, PrepareError> {
+    resolve_child_plan(
+        campaign_id,
+        manifest_path,
+        repo_root,
+        parent,
+        candidate_generation,
+        selected_node_id,
+        child_budget,
+        broad_tui,
+        anti_attractor_policy,
+        route_source,
+    )
+    .await
 }
 
 async fn create_child_plan(
@@ -5307,7 +5535,7 @@ fn warn_broad_slot_missing_result(
 }
 
 pub(crate) async fn resolve_profile_child_plan(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     repo_root: &Path,
     parent: Parent<Ready>,
@@ -5331,7 +5559,7 @@ pub(crate) async fn resolve_profile_child_plan(
 }
 
 pub(crate) fn compare_observed_child_treatment(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     parent_baseline: &CompleteBaseline,
     resolved: &crate::intervention::ResolvedTreatmentBranch,
@@ -5339,7 +5567,7 @@ pub(crate) fn compare_observed_child_treatment(
     branch_log_gate: &Mutex<()>,
 ) -> Result<Prototype1BranchEvaluationReport, PrepareError> {
     let branch_id = resolved.branch.branch_id.as_str();
-    if treatment.baseline_campaign_id != campaign_id || treatment.branch_id != branch_id {
+    if treatment.baseline_campaign_id != *campaign_id || treatment.branch_id != branch_id {
         return Err(PrepareError::InvalidBatchSelection {
             detail: format!(
                 "child treatment evidence does not match active parent comparison: expected campaign={} branch={}, got campaign={} branch={}",
@@ -5370,7 +5598,7 @@ pub(crate) fn compare_observed_child_treatment(
         })
         .count();
     let summary = branch_log::ComparisonSummary {
-        baseline_campaign_id: campaign_id.to_string(),
+        baseline_campaign_id: campaign_id.clone(),
         treatment_campaign_id: report.treatment_campaign_id.clone(),
         compared_instances: report.compared_instances.len(),
         rejected_instances,
@@ -5387,8 +5615,9 @@ pub(crate) fn compare_observed_child_treatment(
     Ok(report)
 }
 
+// ANCHOR: prototype1_run_planned_child
 pub(crate) fn run_planned_child(
-    campaign_id: String,
+    campaign_id: CampaignId,
     manifest_path: PathBuf,
     repo_root: PathBuf,
     journal_path: PathBuf,
@@ -5407,7 +5636,14 @@ pub(crate) fn run_planned_child(
     let surface = child.surface().cloned();
     let harness = child.harness_evidence().cloned();
     let node_id = node.node_id.clone();
-    if let Some(outcome) = stored_child_outcome(&manifest_path, plan_index, &child)? {
+    if let Some(outcome) = stored_child_outcome(
+        &campaign_id,
+        &manifest_path,
+        &parent_baseline,
+        &branch_log_gate,
+        plan_index,
+        &child,
+    )? {
         return Ok(outcome);
     }
     let child_path_span = tracing::info_span!(
@@ -5679,6 +5915,20 @@ pub(crate) fn run_planned_child(
             }
         }
     };
+    let channel_evidence = if is_terminal_child_status(report_node.status) {
+        let latest = load_runner_result(
+            &manifest_path,
+            &report_node.node_id,
+            OperatorProjectionRead::cli_operator(),
+        )?;
+        let evidence =
+            terminal_channel_runtime(&campaign_id, &manifest_path, &report_node, &child, &latest)?;
+        child_runtime = Some(evidence.runtime_id.clone());
+        Some(evidence)
+    } else {
+        None
+    };
+
     if stop_after == Prototype1StateStopAfter::Complete {
         cleanup_prototype1_child_build_products(&manifest_path, &campaign_id, &report_node)?;
     }
@@ -5693,6 +5943,7 @@ pub(crate) fn run_planned_child(
         binary_path: report_node.binary_path,
         resolved: report_resolved,
         child_runtime,
+        channel_evidence,
         evaluation_report,
         selection_input,
         surface,
@@ -5701,9 +5952,13 @@ pub(crate) fn run_planned_child(
         // and projected as payload-only candidates.
     })
 }
+// ANCHOR_END: prototype1_run_planned_child
 
 fn stored_child_outcome(
+    campaign_id: &CampaignId,
     manifest_path: &Path,
+    parent_baseline: &CompleteBaseline,
+    branch_log_gate: &Mutex<()>,
     plan_index: usize,
     child: &ChildFiles,
 ) -> Result<Option<PlannedChildOutcome>, PrepareError> {
@@ -5763,7 +6018,23 @@ fn stored_child_outcome(
         return Ok(None);
     }
 
-    let report = branch_report(manifest_path, &stored.branch_id)?;
+    let mut report = branch_report(manifest_path, &stored.branch_id)?;
+    let mut channel_evidence = None;
+    let mut child_runtime = None;
+    if stored.status == Prototype1NodeStatus::Succeeded && report.is_none() {
+        let recovered = recover_child_report_from_channel(
+            campaign_id,
+            manifest_path,
+            parent_baseline,
+            branch_log_gate,
+            &stored,
+            child,
+            runner_result.as_ref(),
+        )?;
+        child_runtime = Some(recovered.channel_evidence.runtime_id.clone());
+        channel_evidence = Some(recovered.channel_evidence);
+        report = Some(recovered.report);
+    }
     let outcome = match stored.status {
         Prototype1NodeStatus::Succeeded => {
             let report = report.as_ref().ok_or_else(|| PrepareError::InvalidBatchSelection {
@@ -5796,13 +6067,648 @@ fn stored_child_outcome(
         workspace_root: stored.workspace_root.clone(),
         binary_path: stored.binary_path.clone(),
         resolved: child.resolved().clone(),
-        child_runtime: None,
+        child_runtime,
+        channel_evidence,
         evaluation_report: report,
         selection_input,
         surface: child.surface().cloned(),
         artifact_surface,
         node: stored,
     }))
+}
+
+#[derive(Debug)]
+struct RecoveredReport {
+    channel_evidence: ChildChannelEvidenceRefs,
+    report: Prototype1BranchEvaluationReport,
+}
+
+#[derive(Debug)]
+struct ChannelTerminal {
+    result: Prototype1RunnerResult,
+    has_treatment: bool,
+    terminal_result: SealedEvidenceCitation,
+}
+
+fn recover_child_report_from_channel(
+    campaign_id: &CampaignId,
+    manifest_path: &Path,
+    parent_baseline: &CompleteBaseline,
+    branch_log_gate: &Mutex<()>,
+    stored: &Prototype1NodeRecord,
+    child: &ChildFiles,
+    latest: Option<&Prototype1RunnerResult>,
+) -> Result<RecoveredReport, PrepareError> {
+    let latest = latest.ok_or_else(|| PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "terminal child '{}' is missing branch evaluation report and runner-result.json; observe recovery requires runner-result agreement",
+            stored.node_id
+        ),
+    })?;
+    let dir = invocation::invocations_dir(&stored.node_dir);
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "terminal child '{}' is missing branch evaluation report, but no child invocation directory exists at '{}'; run observe recovery before direct prototype1-state re-entry",
+                    stored.node_id,
+                    dir.display()
+                ),
+            });
+        }
+        Err(source) => return Err(PrepareError::ReadManifest { path: dir, source }),
+    };
+
+    let mut diagnostics = Vec::new();
+    for entry in entries {
+        let path = entry
+            .map_err(|source| PrepareError::ReadManifest {
+                path: dir.clone(),
+                source,
+            })?
+            .path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let authority = invocation::load_authority(&path)?;
+        let InvocationAuthority::Child(invocation) = authority else {
+            continue;
+        };
+        validate_recovery_invocation(campaign_id, stored, child, &invocation, &path)?;
+        let runtime_id = invocation.runtime_id();
+        let runtime = recovered_c4(campaign_id, manifest_path, stored, child, runtime_id);
+        let Some(terminal) = channel_terminal(&runtime, &invocation)? else {
+            diagnostics.push(format!(
+                "runtime '{runtime_id}' had no terminal channel Result"
+            ));
+            continue;
+        };
+        let attempt_result =
+            match validate_terminal_result(campaign_id, stored, runtime_id, latest, &terminal) {
+                Ok(citation) => citation,
+                Err(detail) => {
+                    diagnostics.push(detail);
+                    continue;
+                }
+            };
+        let channel_evidence = channel_refs(&invocation, &terminal, attempt_result)?;
+
+        let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(manifest_path));
+        let c5 = match ObserveChild::new(Duration::ZERO)
+            .transition(runtime, &mut journal)
+            .map_err(|err| PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "observe recovery failed for terminal child '{}' runtime '{}': {err:?}",
+                    stored.node_id, runtime_id
+                ),
+            })? {
+            Outcome::Advanced(c5) => c5,
+            Outcome::Rejected(never) => match never {},
+        };
+        let ObservedChild::Succeeded(successful) = &c5.observed else {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "observe recovery for terminal child '{}' runtime '{}' did not yield successful treatment evidence",
+                    stored.node_id, runtime_id
+                ),
+            });
+        };
+        let report = compare_observed_child_treatment(
+            campaign_id,
+            manifest_path,
+            parent_baseline,
+            c5.base.resolved(),
+            &successful.treatment,
+            branch_log_gate,
+        )?;
+        return Ok(RecoveredReport {
+            channel_evidence,
+            report,
+        });
+    }
+
+    let suffix = if diagnostics.is_empty() {
+        String::new()
+    } else {
+        format!("; recovery diagnostics: {}", diagnostics.join("; "))
+    };
+    Err(PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "terminal child '{}' is missing branch evaluation report, and no valid terminal child channel Result was available for observe recovery{}",
+            stored.node_id, suffix
+        ),
+    })
+}
+
+fn validate_recovery_invocation(
+    campaign_id: &CampaignId,
+    stored: &Prototype1NodeRecord,
+    child: &ChildFiles,
+    invocation: &invocation::ChildInvocation,
+    path: &Path,
+) -> Result<(), PrepareError> {
+    if invocation.campaign_id() != campaign_id || invocation.node_id() != stored.node_id {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "child invocation '{}' does not match terminal child '{}': campaign={} node={}",
+                path.display(),
+                stored.node_id,
+                invocation.campaign_id(),
+                invocation.node_id()
+            ),
+        });
+    }
+    let payload = invocation.node_record()?;
+    if payload.node_id != stored.node_id
+        || payload.branch_id != stored.branch_id
+        || payload.generation != stored.generation
+        || payload.instance_id != stored.instance_id
+        || payload.source_state_id != stored.source_state_id
+        || payload.candidate_id != stored.candidate_id
+        || payload.workspace_root != stored.workspace_root
+        || payload.binary_path != stored.binary_path
+        || payload.node_dir != stored.node_dir
+        || payload.runner_request_path != stored.runner_request_path
+        || payload.runner_result_path != stored.runner_result_path
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "child invocation '{}' node payload does not match terminal child '{}'",
+                path.display(),
+                stored.node_id
+            ),
+        });
+    }
+    let request = invocation.runner_request()?;
+    let planned = child.runner_request();
+    if request.schema_version != planned.schema_version
+        || request.campaign_id != planned.campaign_id
+        || request.node_id != planned.node_id
+        || request.generation != planned.generation
+        || request.instance_id != planned.instance_id
+        || request.source_state_id != planned.source_state_id
+        || request.operation_target != planned.operation_target
+        || request.base_artifact_id != planned.base_artifact_id
+        || request.patch_id != planned.patch_id
+        || request.derived_artifact_id != planned.derived_artifact_id
+        || request.branch_id != planned.branch_id
+        || request.target_relpath != planned.target_relpath
+        || request.binary_path != stored.binary_path
+        || request.stop_on_error != planned.stop_on_error
+        || request.runner_args != planned.runner_args
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "child invocation '{}' runner request does not match child-plan identity for '{}'",
+                path.display(),
+                stored.node_id
+            ),
+        });
+    }
+    if invocation.resolved()? != child.resolved() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "child invocation '{}' resolved branch does not match child-plan payload for '{}'",
+                path.display(),
+                stored.node_id
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn recovered_c4(
+    campaign_id: &CampaignId,
+    manifest_path: &Path,
+    stored: &Prototype1NodeRecord,
+    child: &ChildFiles,
+    runtime_id: RuntimeId,
+) -> C4 {
+    Prototype {
+        campaign_id: campaign_id.clone(),
+        campaign_manifest_path: manifest_path.to_path_buf(),
+        node: stored.clone(),
+        request: child.runner_request().clone(),
+        resolved: child.resolved().clone(),
+        artifact: Artifact {
+            repo_root: stored.workspace_root.clone(),
+            target_relpath: child.resolved().target_relpath.clone(),
+            source_content_hash: ContentHash(child.resolved().source_content_hash.clone()),
+            current_content_hash: ContentHash(
+                child.resolved().branch.proposed_content_hash.clone(),
+            ),
+            proposed_content_hash: ContentHash(
+                child.resolved().branch.proposed_content_hash.clone(),
+            ),
+            _lineage: PhantomData::<ChildLineage>,
+        },
+        binary: Binary {
+            parent_running: true,
+            child_path: stored.binary_path.clone(),
+            child_runtime: Some(runtime_id),
+            _lineage: PhantomData::<ParentLineage>,
+            _child: PhantomData::<Present>,
+            _ack: PhantomData::<Acknowledged>,
+        },
+    }
+}
+
+fn channel_terminal(
+    runtime: &C4,
+    invocation: &invocation::ChildInvocation,
+) -> Result<Option<ChannelTerminal>, PrepareError> {
+    let endpoints =
+        invocation
+            .channel_endpoints()
+            .ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "child invocation for node '{}' runtime '{}' is missing channel endpoints",
+                    invocation.node_id(),
+                    invocation.runtime_id()
+                ),
+            })?;
+    let channel = Channel::for_role(runtime, endpoints, FileTransport);
+    let (_, messages) = channel.recv_from_child(Cursor::start()).map_err(|err| {
+        PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "failed to read child channel for node '{}' runtime '{}': {err:?}",
+                invocation.node_id(),
+                invocation.runtime_id()
+            ),
+        }
+    })?;
+    let mut terminal = None;
+    for message in messages {
+        if let ToParent::Result {
+            runner_result,
+            treatment,
+        } = message.body()
+        {
+            if terminal.is_some() {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "child channel for node '{}' runtime '{}' carried multiple terminal Result messages",
+                        invocation.node_id(),
+                        invocation.runtime_id()
+                    ),
+                });
+            }
+            let terminal_result = terminal_result_citation(
+                invocation.node_id(),
+                invocation.runtime_id(),
+                message.body(),
+            )?;
+            terminal = Some(ChannelTerminal {
+                result: runner_result.clone(),
+                has_treatment: treatment.is_some(),
+                terminal_result,
+            });
+        }
+    }
+    Ok(terminal)
+}
+
+fn terminal_result_citation(
+    node_id: &str,
+    runtime_id: RuntimeId,
+    body: &ToParent,
+) -> Result<SealedEvidenceCitation, PrepareError> {
+    let content_hash =
+        HistoryHash::of_domain_json("prototype1.history.child_channel_terminal_result.v1", body)
+            .map_err(|err| PrepareError::InvalidBatchSelection {
+                detail: format!("failed to hash child channel terminal Result: {err}"),
+            })?;
+    Ok(SealedEvidenceCitation {
+        ref_id: format!("channel:child-to-parent:terminal-result:{node_id}:{runtime_id}"),
+        content_hash: Some(content_hash),
+        record_name: Some(CHILD_CHANNEL_TERMINAL_RESULT_RECORD.to_string()),
+    })
+}
+
+fn attempt_result_citation(
+    node_id: &str,
+    runtime_id: RuntimeId,
+    result: &Prototype1RunnerResult,
+) -> Result<SealedEvidenceCitation, crate::cli::prototype1_state::history::HistoryError> {
+    let content_hash =
+        HistoryHash::of_domain_json("prototype1.history.child_attempt_runner_result.v1", result)?;
+    Ok(SealedEvidenceCitation {
+        ref_id: format!("child-store:attempt-runner-result:{node_id}:{runtime_id}"),
+        content_hash: Some(content_hash),
+        record_name: Some(CHILD_ATTEMPT_RUNNER_RESULT_RECORD.to_string()),
+    })
+}
+
+fn invocation_citation(
+    invocation: &invocation::ChildInvocation,
+) -> Result<SealedEvidenceCitation, PrepareError> {
+    let content_hash = HistoryHash::of_domain_json(
+        "prototype1.history.child_invocation.v1",
+        invocation.as_invocation(),
+    )
+    .map_err(|err| PrepareError::InvalidBatchSelection {
+        detail: format!("failed to hash child invocation: {err}"),
+    })?;
+    Ok(SealedEvidenceCitation {
+        ref_id: format!(
+            "bootstrap:child-invocation:{}:{}",
+            invocation.node_id(),
+            invocation.runtime_id()
+        ),
+        content_hash: Some(content_hash),
+        record_name: Some(CHILD_INVOCATION_RECORD.to_string()),
+    })
+}
+
+fn channel_refs(
+    invocation: &invocation::ChildInvocation,
+    terminal: &ChannelTerminal,
+    attempt_result: SealedEvidenceCitation,
+) -> Result<ChildChannelEvidenceRefs, PrepareError> {
+    Ok(ChildChannelEvidenceRefs {
+        runtime_id: invocation.runtime_id().to_string(),
+        terminal_result: terminal.terminal_result.clone(),
+        attempt_result: Some(attempt_result),
+        invocation: Some(invocation_citation(invocation)?),
+    })
+}
+
+fn validate_terminal_result(
+    campaign_id: &CampaignId,
+    stored: &Prototype1NodeRecord,
+    runtime_id: RuntimeId,
+    latest: &Prototype1RunnerResult,
+    terminal: &ChannelTerminal,
+) -> Result<SealedEvidenceCitation, String> {
+    let result = &terminal.result;
+    if result.campaign_id != *campaign_id
+        || result.node_id != stored.node_id
+        || result.branch_id != stored.branch_id
+        || result.generation != stored.generation
+        || result.status != stored.status
+    {
+        return Err(format!(
+            "runtime '{runtime_id}' terminal Result does not match stored child identity/status"
+        ));
+    }
+    if result.disposition == Prototype1RunnerDisposition::Succeeded && !terminal.has_treatment {
+        return Err(format!(
+            "runtime '{runtime_id}' succeeded terminal Result is missing treatment evidence"
+        ));
+    }
+    if result != latest {
+        return Err(format!(
+            "runtime '{runtime_id}' terminal Result does not match runner-result.json"
+        ));
+    }
+    let path = invocation::result_path(&stored.node_dir, runtime_id);
+    let attempt =
+        load_runner_result_at(&path, OperatorProjectionRead::cli_operator()).map_err(|err| {
+            format!(
+                "failed to read attempt runner result '{}': {err}",
+                path.display()
+            )
+        })?;
+    if attempt != *result {
+        return Err(format!(
+            "runtime '{runtime_id}' terminal Result does not match attempt runner result '{}'",
+            path.display()
+        ));
+    }
+    attempt_result_citation(&stored.node_id, runtime_id, &attempt)
+        .map_err(|err| format!("failed to hash attempt runner result: {err}"))
+}
+
+pub(crate) fn reconstruct_child_outcomes_from_store(
+    campaign_id: &CampaignId,
+    manifest_path: &Path,
+    children: &[ChildFiles],
+) -> Result<Vec<PlannedChildOutcome>, PrepareError> {
+    children
+        .iter()
+        .enumerate()
+        .map(|(plan_index, child)| {
+            read_only_child_outcome(campaign_id, manifest_path, plan_index, child)?.ok_or_else(
+                || PrepareError::InvalidBatchSelection {
+                    detail: format!(
+                        "planned child '{}' has no terminal stored outcome for durable R11 reconstruction",
+                        child.node_id()
+                    ),
+                },
+            )
+        })
+        .collect()
+}
+
+fn read_only_child_outcome(
+    campaign_id: &CampaignId,
+    manifest_path: &Path,
+    plan_index: usize,
+    child: &ChildFiles,
+) -> Result<Option<PlannedChildOutcome>, PrepareError> {
+    let planned = child.node_record();
+    let stored = match load_node_record(
+        manifest_path,
+        &planned.node_id,
+        OperatorProjectionRead::cli_operator(),
+    ) {
+        Ok(node) => node,
+        Err(err) if manifest_not_found(&err) => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    if !is_terminal_child_status(stored.status) {
+        return Ok(None);
+    }
+    let runner_result = match load_runner_result(
+        manifest_path,
+        &planned.node_id,
+        OperatorProjectionRead::cli_operator(),
+    ) {
+        Ok(result) => result,
+        Err(err) if manifest_not_found(&err) => {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "terminal child '{}' is missing runner-result.json for durable R11 reconstruction",
+                    planned.node_id
+                ),
+            });
+        }
+        Err(err) => return Err(err),
+    };
+    if runner_result.branch_id != stored.branch_id
+        || runner_result.generation != stored.generation
+        || runner_result.status != stored.status
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "stored runner result for terminal child '{}' does not match node record: runner branch={} generation={} status={:?}, node branch={} generation={} status={:?}",
+                planned.node_id,
+                runner_result.branch_id,
+                runner_result.generation,
+                runner_result.status,
+                stored.branch_id,
+                stored.generation,
+                stored.status
+            ),
+        });
+    }
+    let channel_evidence =
+        terminal_channel_runtime(campaign_id, manifest_path, &stored, child, &runner_result)?;
+    let runtime_id = channel_evidence.runtime_id.clone();
+    let report = branch_report(manifest_path, &stored.branch_id)?;
+    if let Some(report) = report.as_ref() {
+        validate_child_branch_report(campaign_id, &stored, &runner_result, report)?;
+    }
+    let outcome = match stored.status {
+        Prototype1NodeStatus::Succeeded => {
+            let report = report.as_ref().ok_or_else(|| PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "terminal child '{}' is missing branch evaluation report; run observe recovery before durable R11 reconstruction",
+                    stored.node_id
+                ),
+            })?;
+            format!("completed:{:?}", report.overall_disposition)
+        }
+        Prototype1NodeStatus::Failed => "completed:Reject".to_string(),
+        _ => unreachable!("terminal status checked above"),
+    };
+    let selection_input = report
+        .as_ref()
+        .map(|report| selection_input_from_child_report(&stored, report));
+    let artifact_surface = if stored.workspace_root.exists() {
+        GitWorktreeBackend
+            .artifact_surface(&stored.workspace_root)
+            .ok()
+    } else {
+        None
+    };
+
+    Ok(Some(PlannedChildOutcome {
+        plan_index,
+        node_id: stored.node_id.clone(),
+        outcome,
+        node_status: stored.status,
+        workspace_root: stored.workspace_root.clone(),
+        binary_path: stored.binary_path.clone(),
+        resolved: child.resolved().clone(),
+        child_runtime: Some(runtime_id),
+        channel_evidence: Some(channel_evidence),
+        evaluation_report: report,
+        selection_input,
+        surface: child.surface().cloned(),
+        artifact_surface,
+        node: stored,
+    }))
+}
+
+fn terminal_channel_runtime(
+    campaign_id: &CampaignId,
+    manifest_path: &Path,
+    stored: &Prototype1NodeRecord,
+    child: &ChildFiles,
+    latest: &Prototype1RunnerResult,
+) -> Result<ChildChannelEvidenceRefs, PrepareError> {
+    let dir = invocation::invocations_dir(&stored.node_dir);
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "terminal child '{}' is missing child invocation directory '{}' for durable R11 reconstruction",
+                    stored.node_id,
+                    dir.display()
+                ),
+            });
+        }
+        Err(source) => return Err(PrepareError::ReadManifest { path: dir, source }),
+    };
+
+    let mut diagnostics = Vec::new();
+    for entry in entries {
+        let path = entry
+            .map_err(|source| PrepareError::ReadManifest {
+                path: dir.clone(),
+                source,
+            })?
+            .path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let authority = invocation::load_authority(&path)?;
+        let InvocationAuthority::Child(invocation) = authority else {
+            continue;
+        };
+        validate_recovery_invocation(campaign_id, stored, child, &invocation, &path)?;
+        let runtime_id = invocation.runtime_id();
+        let runtime = recovered_c4(campaign_id, manifest_path, stored, child, runtime_id);
+        let Some(terminal) = channel_terminal(&runtime, &invocation)? else {
+            diagnostics.push(format!(
+                "runtime '{runtime_id}' had no terminal channel Result"
+            ));
+            continue;
+        };
+        let attempt_result =
+            match validate_terminal_result(campaign_id, stored, runtime_id, latest, &terminal) {
+                Ok(citation) => citation,
+                Err(detail) => {
+                    diagnostics.push(detail);
+                    continue;
+                }
+            };
+        return channel_refs(&invocation, &terminal, attempt_result);
+    }
+    let suffix = if diagnostics.is_empty() {
+        String::new()
+    } else {
+        format!("; diagnostics: {}", diagnostics.join("; "))
+    };
+    Err(PrepareError::InvalidBatchSelection {
+        detail: format!(
+            "terminal child '{}' has no valid terminal child channel Result for durable R11 reconstruction{}",
+            stored.node_id, suffix
+        ),
+    })
+}
+
+fn validate_child_branch_report(
+    campaign_id: &CampaignId,
+    stored: &Prototype1NodeRecord,
+    latest: &Prototype1RunnerResult,
+    report: &Prototype1BranchEvaluationReport,
+) -> Result<(), PrepareError> {
+    if report.baseline_campaign_id != *campaign_id
+        || report.branch_id != stored.branch_id
+        || latest
+            .treatment_campaign_id
+            .as_ref()
+            .is_some_and(|treatment| treatment != &report.treatment_campaign_id)
+    {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "branch evaluation report for terminal child '{}' does not match child identity/treatment: report baseline={} branch={} treatment={}, node branch={}, runner treatment={}",
+                stored.node_id,
+                report.baseline_campaign_id,
+                report.branch_id,
+                report.treatment_campaign_id,
+                stored.branch_id,
+                latest
+                    .treatment_campaign_id
+                    .as_ref()
+                    .map(|id| id.as_str())
+                    .unwrap_or("<none>")
+            ),
+        });
+    }
+    if stored.status == Prototype1NodeStatus::Succeeded && latest.treatment_campaign_id.is_none() {
+        return Err(PrepareError::InvalidBatchSelection {
+            detail: format!(
+                "succeeded terminal child '{}' has a branch evaluation report but runner-result.json is missing treatment_campaign_id",
+                stored.node_id
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn branch_report(
@@ -5835,8 +6741,8 @@ fn manifest_not_found(err: &PrepareError) -> bool {
     )
 }
 
-async fn run_child_fanout(
-    campaign_id: &str,
+pub(crate) async fn run_child_fanout(
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     repo_root: &Path,
     journal_path: &Path,
@@ -5889,7 +6795,7 @@ async fn run_child_fanout(
         let mut join_set = tokio::task::JoinSet::new();
         for (offset, child) in children[next..end].iter().cloned().enumerate() {
             let plan_index = plan_index_offset + next + offset;
-            let campaign_id = campaign_id.to_string();
+            let campaign_id = campaign_id.clone();
             let manifest_path = manifest_path.to_path_buf();
             let repo_root = repo_root.to_path_buf();
             let journal_path = journal_path.to_path_buf();
@@ -5960,8 +6866,8 @@ async fn run_child_fanout(
     Ok(completed)
 }
 
-async fn run_adaptive_child_fanout(
-    campaign_id: &str,
+pub(crate) async fn run_adaptive_child_fanout(
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     repo_root: &Path,
     journal_path: &Path,
@@ -6146,7 +7052,9 @@ fn historical_traversal_guard(
     })
 }
 
-fn persisted_prototype1_node_count(campaign_manifest_path: &Path) -> Result<u32, PrepareError> {
+pub(crate) fn persisted_prototype1_node_count(
+    campaign_manifest_path: &Path,
+) -> Result<u32, PrepareError> {
     let nodes_dir = prototype1_nodes_dir(campaign_manifest_path);
     let entries = match fs::read_dir(&nodes_dir) {
         Ok(entries) => entries,
@@ -6189,7 +7097,46 @@ fn persisted_prototype1_node_count(campaign_manifest_path: &Path) -> Result<u32,
     Ok(count)
 }
 
-fn reserve_complete_child_budget(
+pub(crate) fn resolve_parent_policy_budget(
+    manifest_path: &Path,
+    run_shape: &Prototype1StateRunShape,
+    parent_identity: &ParentIdentity,
+) -> Result<(Option<Prototype1SearchPolicy>, Prototype1ChildBudget), PrepareError> {
+    let complete_search_policy = if run_shape.stop_after == Prototype1StateStopAfter::Complete {
+        Some(
+            if let Some(admitted) = profile::load_admitted_run_profile(manifest_path)? {
+                admitted.profile.search_policy()
+            } else {
+                load_scheduler_state(manifest_path, OperatorProjectionRead::cli_operator())?.policy
+            },
+        )
+    } else {
+        None
+    };
+    if run_shape.stop_after == Prototype1StateStopAfter::Complete {
+        run_shape
+            .candidate_generation
+            .ensure_live_complete_admitted()?;
+    }
+    let plan_child_budget = if let Some(policy) = complete_search_policy.as_ref() {
+        let current_node_count = persisted_prototype1_node_count(manifest_path)?;
+        if parent_identity.generation() >= policy.max_generations {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "prototype1 hard stop before child planning: parent generation {} has reached max_generations {}",
+                    parent_identity.generation(),
+                    policy.max_generations
+                ),
+            });
+        }
+        reserve_complete_child_budget(policy, current_node_count)?
+    } else {
+        Prototype1ChildBudget::new(1, 1)
+    };
+    Ok((complete_search_policy, plan_child_budget))
+}
+
+pub(crate) fn reserve_complete_child_budget(
     policy: &Prototype1SearchPolicy,
     current_node_count: u32,
 ) -> Result<Prototype1ChildBudget, PrepareError> {
@@ -6225,12 +7172,12 @@ pub(crate) fn reserve_profile_child_budget(
     reserve_complete_child_budget(policy, current_node_count)
 }
 
-struct GenerationCandidateProjection {
-    considered: Vec<EvaluationPayload>,
+pub(crate) struct GenerationCandidateProjection {
+    pub(crate) considered: Vec<EvaluationPayload>,
     projection_failures: Vec<SelectionProjectionFailure>,
 }
 
-struct ParentSelection<'a> {
+pub(crate) struct ParentSelection<'a> {
     manifest_path: &'a Path,
     parent_identity: &'a ParentIdentity,
     child_outcomes: &'a [PlannedChildOutcome],
@@ -6244,14 +7191,14 @@ enum SelectionCandidateScope {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct ActiveSelectionStrategy {
+pub(crate) struct ActiveSelectionStrategy {
     candidate_scope: SelectionCandidateScope,
     traversal: StrategyKind,
     metrics_policy: crate::successor_selection::metrics::Policy,
 }
 
 impl Prototype1SuccessorSelection {
-    fn active_strategy(
+    pub(crate) fn active_strategy(
         self,
         metrics: crate::metric::Inputs,
         oracle: crate::successor_selection::OracleMode,
@@ -6332,9 +7279,30 @@ fn current_generation_candidate_evidence(
                 .to_string(),
         );
     }
+    if let (Some(runtime_id), Some(channel)) = (
+        outcome.child_runtime.as_deref(),
+        outcome.channel_evidence.as_ref(),
+    ) && channel.runtime_id != runtime_id
+    {
+        child_diagnostics.push(format!(
+            "current_generation_candidate: channel evidence runtime mismatch: child_runtime={runtime_id}, channel={}",
+            channel.runtime_id
+        ));
+    }
+    if outcome.child_runtime.is_some() && outcome.channel_evidence.is_none() {
+        child_diagnostics.push(
+            "current_generation_candidate: missing terminal child channel evidence refs"
+                .to_string(),
+        );
+    }
 
+    let schema_version = if outcome.channel_evidence.is_some() {
+        4
+    } else {
+        3
+    };
     let evidence = SealedCandidateEvidence {
-        schema_version: 3,
+        schema_version,
         coordinate: CandidateCoordinate {
             node_id: outcome.node_id.clone(),
             parent_node_id: outcome.node.parent_node_id.clone(),
@@ -6357,10 +7325,27 @@ fn current_generation_candidate_evidence(
         runtimes: outcome
             .child_runtime
             .as_ref()
-            .map(|runtime_id| SealedRuntimeEvidence {
-                runtime_id: runtime_id.clone(),
-                document_citations: Vec::new(),
-                journal_citations: Vec::new(),
+            .map(|runtime_id| {
+                let mut document_citations = Vec::new();
+                let mut journal_citations = Vec::new();
+                if let Some(channel) = outcome
+                    .channel_evidence
+                    .as_ref()
+                    .filter(|channel| channel.runtime_id.as_str() == runtime_id.as_str())
+                {
+                    document_citations.push(channel.terminal_result.clone());
+                    if let Some(citation) = channel.attempt_result.clone() {
+                        document_citations.push(citation);
+                    }
+                    if let Some(citation) = channel.invocation.clone() {
+                        journal_citations.push(citation);
+                    }
+                }
+                SealedRuntimeEvidence {
+                    runtime_id: runtime_id.clone(),
+                    document_citations,
+                    journal_citations,
+                }
             })
             .into_iter()
             .collect(),
@@ -6425,18 +7410,19 @@ fn current_generation_evaluation_evidence(
         eval_set_identity,
         evaluation_artifact_citation: Some(SealedEvidenceCitation {
             ref_id: format!(
-                "opaque_evaluation_artifact:{}",
+                "parent-comparison:evaluation-artifact:{}",
                 report.evaluation_artifact_path.display()
             ),
-            content_hash: None,
-            record_name: None,
+            content_hash: Some(report_hash.clone()),
+            record_name: Some("prototype1_parent_comparison_artifact".to_string()),
         }),
         overall_disposition: Some(serde_name(&report.overall_disposition).to_string()),
         primary_report_citation: SealedEvidenceCitation {
-            ref_id: format!(
-                "inline:child-channel:evaluation-report:{}",
-                report.branch_id
-            ),
+            // The branch evaluation report is parent-computed comparison
+            // evidence. It is supported by child-channel terminal/treatment
+            // refs carried elsewhere in the sealed candidate payload, but it is
+            // not itself a child-channel message.
+            ref_id: format!("parent-comparison:evaluation-report:{}", report.branch_id),
             content_hash: Some(report_hash),
             record_name: Some("prototype1_branch_evaluation_report".to_string()),
         },
@@ -6534,7 +7520,7 @@ fn current_generation_protocol(
 }
 
 impl<'a> ParentSelection<'a> {
-    fn new(
+    pub(crate) fn new(
         manifest_path: &'a Path,
         parent_identity: &'a ParentIdentity,
         child_outcomes: &'a [PlannedChildOutcome],
@@ -6559,7 +7545,9 @@ impl<'a> ParentSelection<'a> {
             child_count = self.child_outcomes.len(),
         )
     )]
-    fn current_generation_candidates(&self) -> Result<GenerationCandidateProjection, PrepareError> {
+    pub(crate) fn current_generation_candidates(
+        &self,
+    ) -> Result<GenerationCandidateProjection, PrepareError> {
         let mut projection_failures = Vec::new();
         let mut considered = Vec::new();
         for outcome in self.child_outcomes {
@@ -6647,7 +7635,7 @@ impl<'a> ParentSelection<'a> {
         })
     }
 
-    fn select_successor(
+    pub(crate) fn select_successor(
         &self,
         seed: u64,
         strategy: ActiveSelectionStrategy,
@@ -6876,6 +7864,32 @@ pub(crate) fn select_artifact_for_handoff(
             ),
         });
     }
+    if material.selected_from_generation_outcomes {
+        let runtime_id = sealed.coordinate.primary_runtime_id.as_deref().ok_or_else(|| {
+            PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "selected current-generation candidate {} lacks sealed runtime identity for channel validation",
+                    material.selected_candidate.as_str()
+                ),
+            }
+        })?;
+        let has_terminal = sealed.runtimes.iter().any(|runtime| {
+            runtime.runtime_id == runtime_id
+                && runtime
+                    .document_citations
+                    .iter()
+                    .any(is_child_channel_terminal_result)
+        });
+        if !has_terminal {
+            return Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "selected current-generation candidate {} lacks terminal child channel Result citation for runtime {}",
+                    material.selected_candidate.as_str(),
+                    runtime_id
+                ),
+            });
+        }
+    }
     let primary_runtime_id = sealed.coordinate.primary_runtime_id.clone();
 
     let source = if material.selected_from_generation_outcomes {
@@ -6905,7 +7919,7 @@ pub(crate) fn select_artifact_for_handoff(
     })
 }
 
-fn outcome_for_report<'a>(
+pub(crate) fn outcome_for_report<'a>(
     outcomes: &'a [PlannedChildOutcome],
     selected_node_id: Option<&str>,
 ) -> Option<&'a PlannedChildOutcome> {
@@ -6914,9 +7928,9 @@ fn outcome_for_report<'a>(
         .or_else(|| outcomes.last())
 }
 
-fn initialize_prototype1_parent_identity(
+pub(crate) fn initialize_prototype1_parent_identity(
     command: &Prototype1StateCommand,
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     repo_root: &Path,
 ) -> Result<ParentIdentity, PrepareError> {
@@ -6975,8 +7989,8 @@ fn initialize_prototype1_parent_identity(
     Ok(identity)
 }
 
-fn resolve_prototype1_parent_identity(
-    campaign_id: &str,
+pub(crate) fn resolve_prototype1_parent_identity(
+    campaign_id: &CampaignId,
     repo_root: &Path,
 ) -> Result<ParentIdentity, PrepareError> {
     if let Some(identity) = load_parent_identity_optional(repo_root)? {
@@ -6990,101 +8004,6 @@ fn resolve_prototype1_parent_identity(
             repo_root.join(parent_identity_relpath()).display()
         ),
     })
-}
-
-fn acknowledge_prototype1_state_handoff(
-    command: &Prototype1StateCommand,
-    campaign_id: &str,
-    parent: Parent<Unchecked>,
-    manifest_path: &Path,
-    repo_root: &Path,
-) -> Result<(Parent<Ready>, Option<SuccessorInvocation>), PrepareError> {
-    let Some(invocation_path) = command.handoff_invocation.as_deref() else {
-        let backend = GitWorktreeBackend;
-        let parent = parent.check(
-            &backend,
-            manifest_path,
-            Check {
-                campaign_id,
-                active_root: repo_root,
-            },
-        )?;
-        let startup = Startup::<Genesis>::from_history(parent.identity(), manifest_path)?;
-        return Ok((parent.ready(startup)?, None));
-    };
-    let invocation = match invocation::load_executable(invocation_path)? {
-        InvocationAuthority::Successor(invocation) => invocation,
-        InvocationAuthority::Child(_) => {
-            return Err(PrepareError::InvalidBatchSelection {
-                detail: format!(
-                    "handoff invocation '{}' is a child invocation, expected successor",
-                    invocation_path.display()
-                ),
-            });
-        }
-    };
-    let identity = parent.identity();
-
-    if invocation.campaign_id() != campaign_id {
-        return Err(PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "handoff invocation campaign '{}' does not match command campaign '{}'",
-                invocation.campaign_id(),
-                campaign_id
-            ),
-        });
-    }
-    if invocation.node_id() != identity.node_id() {
-        return Err(PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "handoff invocation node '{}' does not match parent identity node '{}'",
-                invocation.node_id(),
-                identity.node_id()
-            ),
-        });
-    }
-    let active_parent_root =
-        invocation
-            .active_parent_root()
-            .ok_or_else(|| PrepareError::InvalidBatchSelection {
-                detail: format!(
-                    "handoff invocation '{}' is missing active_parent_root",
-                    invocation_path.display()
-                ),
-            })?;
-    if !same_existing_path(active_parent_root, repo_root) {
-        return Err(PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "handoff invocation active_parent_root '{}' does not match command repo_root '{}'",
-                active_parent_root.display(),
-                repo_root.display()
-            ),
-        });
-    }
-
-    let sealed_identity = validate_prototype1_successor_continuation(&invocation, manifest_path)?;
-    if &sealed_identity != identity {
-        return Err(PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "sealed successor parent identity for node '{}' does not match loaded parent identity",
-                invocation.node_id()
-            ),
-        });
-    }
-    let startup = Startup::<Predecessor>::from_history(identity, manifest_path, repo_root)?;
-    let parent = parent.ready_from_predecessor_startup(startup)?;
-    let ready = record_prototype1_successor_ready(&invocation)?;
-    debug!(
-        target: EXECUTION_DEBUG_TARGET,
-        campaign = %invocation.campaign_id(),
-        node_id = %invocation.node_id(),
-        runtime_id = %invocation.runtime_id(),
-        pid = ready.pid,
-        invocation_path = %invocation_path.display(),
-        active_parent_root = %active_parent_root.display(),
-        "prototype1 successor acknowledged handoff before entering typed parent run"
-    );
-    Ok((parent, Some(invocation)))
 }
 
 pub(crate) fn record_failed_successor_turn(invocation_path: &Path, error: &PrepareError) {
@@ -7127,9 +8046,9 @@ fn directory_size_bytes(path: &Path) -> io::Result<u64> {
     Ok(bytes)
 }
 
-fn append_parent_target_sample(
+pub(crate) fn append_parent_target_sample(
     journal: &mut PrototypeJournal,
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     parent_identity: &ParentIdentity,
     runtime_id: Option<crate::cli::prototype1_state::event::RuntimeId>,
     repo_root: &Path,
@@ -7149,7 +8068,7 @@ fn append_parent_target_sample(
     };
     let sample = journal::resource::Sample {
         recorded_at: RecordedAt::now(),
-        campaign_id: campaign_id.to_string(),
+        campaign_id: campaign_id.clone(),
         parent_id: parent_identity.parent_id().to_string(),
         node_id: parent_identity.node_id().to_string(),
         generation: parent_identity.generation(),
@@ -7193,12 +8112,12 @@ fn append_parent_target_sample(
 }
 
 #[cfg(feature = "demo")]
-fn prototype1_state_successor_handoff_mode() -> SuccessorHandoffMode {
+pub(crate) fn prototype1_state_successor_handoff_mode() -> SuccessorHandoffMode {
     SuccessorHandoffMode::Exec
 }
 
 #[cfg(not(feature = "demo"))]
-fn prototype1_state_successor_handoff_mode() -> SuccessorHandoffMode {
+pub(crate) fn prototype1_state_successor_handoff_mode() -> SuccessorHandoffMode {
     SuccessorHandoffMode::Detached
 }
 
@@ -7211,560 +8130,10 @@ fn prototype1_state_successor_handoff_mode() -> SuccessorHandoffMode {
 pub(crate) async fn run_prototype1_state_turn(
     command: Prototype1StateCommand,
 ) -> Result<(), PrepareError> {
-    let repo_root = if let Some(path) = command.repo_root.clone() {
-        path
-    } else {
-        current_dir_as_repo_root()?
-    };
-    let campaign_id = resolve_prototype1_state_campaign(&command, &repo_root)?;
-    record_active_prototype1_monitor_target(&campaign_id, &repo_root);
-    let manifest_path = campaign_manifest_path(&campaign_id)?;
-    let run_shape = Prototype1StateRunShape::resolve(&command, &manifest_path)?;
-    let resolved_campaign = resolve_campaign_config(&campaign_id, &CampaignOverrides::default())?;
-    ensure_prototype1_baseline_closure_state(&resolved_campaign)?;
-    let journal_path = prototype1_transition_journal_path(&manifest_path);
-    let mut journal = PrototypeJournal::new(journal_path.clone());
-    let turn_span = tracing::info_span!(
-        target: EXECUTION_DEBUG_TARGET,
-        "prototype1.parent.turn",
-        role = "parent",
-        phase = "parent_turn",
-        campaign = %campaign_id,
-    );
-    let _turn_entered = turn_span.enter();
-
-    if command.init_parent_identity {
-        let identity = initialize_prototype1_parent_identity(
-            &command,
-            &campaign_id,
-            &manifest_path,
-            &repo_root,
-        )?;
-        match command.format {
-            InspectOutputFormat::Json => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&identity).map_err(PrepareError::Serialize)?
-                );
-            }
-            InspectOutputFormat::Table => {
-                println!("prototype1 parent identity");
-                println!("{}", "-".repeat(40));
-                println!("campaign_id: {}", identity.campaign_id());
-                println!("parent_id: {}", identity.parent_id());
-                println!("node_id: {}", identity.node_id());
-                println!("generation: {}", identity.generation());
-                println!("branch_id: {}", identity.branch_id());
-                println!(
-                    "artifact_branch: {}",
-                    identity.artifact_branch().unwrap_or("-")
-                );
-            }
-        }
-        return Ok(());
-    }
-
-    let parent_identity = if let Some(invocation_path) = command.handoff_invocation.as_deref() {
-        match invocation::load_executable(invocation_path)? {
-            InvocationAuthority::Successor(invocation) => {
-                validate_prototype1_successor_continuation(&invocation, &manifest_path)?
-            }
-            InvocationAuthority::Child(_) => {
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: format!(
-                        "handoff invocation '{}' is a child invocation, expected successor",
-                        invocation_path.display()
-                    ),
-                });
-            }
-        }
-    } else {
-        resolve_prototype1_parent_identity(&campaign_id, &repo_root)?
-    };
-    info!(
-        target: EXECUTION_DEBUG_TARGET,
-        role = "parent",
-        authority = if command.handoff_invocation.is_some() { "successor_invocation" } else { "artifact_identity" },
-        transition = if command.handoff_invocation.is_some() { "SuccessorInvocation->ParentIdentity" } else { "active_checkout->ParentIdentity" },
-        campaign = %campaign_id,
-        parent_id = %parent_identity.parent_id(),
-        node_id = %parent_identity.node_id(),
-        generation = parent_identity.generation(),
-        branch_id = %parent_identity.branch_id(),
-        "resolved active parent identity"
-    );
-    let parent = if let Some(invocation_path) = command.handoff_invocation.as_deref() {
-        let runtime_id = match invocation::load_executable(invocation_path)? {
-            InvocationAuthority::Successor(invocation) => {
-                if invocation.campaign_id() != campaign_id {
-                    return Err(PrepareError::InvalidBatchSelection {
-                        detail: format!(
-                            "handoff invocation campaign '{}' does not match command campaign '{}'",
-                            invocation.campaign_id(),
-                            campaign_id
-                        ),
-                    });
-                }
-                if invocation.node_id() != parent_identity.node_id() {
-                    return Err(PrepareError::InvalidBatchSelection {
-                        detail: format!(
-                            "handoff invocation node '{}' does not match parent identity node '{}'",
-                            invocation.node_id(),
-                            parent_identity.node_id()
-                        ),
-                    });
-                }
-                invocation.runtime_id()
-            }
-            InvocationAuthority::Child(_) => {
-                return Err(PrepareError::InvalidBatchSelection {
-                    detail: format!(
-                        "handoff invocation '{}' is a child invocation, expected successor",
-                        invocation_path.display()
-                    ),
-                });
-            }
-        };
-        Parent::<Unchecked>::load_with_runtime_id(&manifest_path, parent_identity, runtime_id)?
-    } else {
-        Parent::<Unchecked>::load(&manifest_path, parent_identity)?
-    };
-    let (parent, handoff_invocation) = acknowledge_prototype1_state_handoff(
-        &command,
-        &campaign_id,
-        parent,
-        &manifest_path,
-        &repo_root,
-    )?;
-    let parent_identity = parent.identity().clone();
-    info!(
-        target: EXECUTION_DEBUG_TARGET,
-        role = "parent",
-        authority = "history_startup",
-        transition = "Parent<Checked>->Parent<Ready>",
-        campaign = %campaign_id,
-        parent_id = %parent_identity.parent_id(),
-        node_id = %parent_identity.node_id(),
-        generation = parent_identity.generation(),
-        branch_id = %parent_identity.branch_id(),
-        handoff_runtime_id = ?handoff_invocation.as_ref().map(|invocation| invocation.runtime_id()),
-        "parent entered ready state for active turn"
-    );
-    journal
-        .append(JournalEntry::ParentStarted(ParentStartedEntry {
-            recorded_at: RecordedAt::now(),
-            campaign_id: campaign_id.clone(),
-            parent_identity: parent_identity.clone(),
-            repo_root: repo_root.clone(),
-            handoff_runtime_id: handoff_invocation
-                .as_ref()
-                .map(|invocation| invocation.runtime_id()),
-            pid: std::process::id(),
-        }))
-        .map_err(|err| {
-            prototype1_state_transition_error("prototype1_parent_start", err.to_string())
-        })?;
-    append_parent_target_sample(
-        &mut journal,
-        &campaign_id,
-        &parent_identity,
-        handoff_invocation
-            .as_ref()
-            .map(|invocation| invocation.runtime_id()),
-        &repo_root,
-        journal::resource::Phase::ParentStart,
-    );
-
-    debug!(
-        target: EXECUTION_DEBUG_TARGET,
-        campaign = %campaign_id,
-        parent_id = %parent_identity.parent_id(),
-        generation = parent_identity.generation(),
-        repo_root = %repo_root.display(),
-        journal_path = %journal_path.display(),
-        "starting typed prototype1 parent turn"
-    );
-    let parent_baseline = establish_parent_baseline(
-        &campaign_id,
-        &resolved_campaign,
-        &manifest_path,
-        &parent_identity,
-    )
-    .await?;
-    let complete_search_policy = if run_shape.stop_after == Prototype1StateStopAfter::Complete {
-        Some(
-            if let Some(admitted) = profile::load_admitted_run_profile(&manifest_path)? {
-                admitted.profile.search_policy()
-            } else {
-                load_scheduler_state(&manifest_path, OperatorProjectionRead::cli_operator())?.policy
-            },
-        )
-    } else {
-        None
-    };
-    if run_shape.stop_after == Prototype1StateStopAfter::Complete {
-        run_shape
-            .candidate_generation
-            .ensure_live_complete_admitted()?;
-    }
-    let plan_child_budget = if let Some(policy) = complete_search_policy.as_ref() {
-        let current_node_count = persisted_prototype1_node_count(&manifest_path)?;
-        if parent_identity.generation() >= policy.max_generations {
-            return Err(PrepareError::InvalidBatchSelection {
-                detail: format!(
-                    "prototype1 hard stop before child planning: parent generation {} has reached max_generations {}",
-                    parent_identity.generation(),
-                    policy.max_generations
-                ),
-            });
-        }
-        reserve_complete_child_budget(policy, current_node_count)?
-    } else {
-        Prototype1ChildBudget::new(1, 1)
-    };
-    let planned_children = resolve_child_plan(
-        &campaign_id,
-        &manifest_path,
-        &repo_root,
-        parent,
-        run_shape.candidate_generation,
-        command.node_id.as_deref(),
-        plan_child_budget,
-        run_shape.broad_tui,
-        run_shape.anti_attractor_policy,
-        resolved_campaign.route_source,
-    )
-    .await?;
-    let PlannedChildren {
-        parent,
-        plan,
-        mut children,
-        rejected_surface_attempts,
-    } = planned_children;
-    let planned_child_count = plan.body().children().len();
-    let (mut child_budget, mut child_schedule_mode) =
-        if let Some(policy) = complete_search_policy.as_ref() {
-            (plan_child_budget, policy.child_schedule_mode)
-        } else {
-            // Non-Complete modes intentionally run one child as a debug/inspection slice.
-            (
-                Prototype1ChildBudget::new(1, 1),
-                Prototype1ChildScheduleMode::AdaptiveBatch,
-            )
-        };
-    if run_shape.stop_after != Prototype1StateStopAfter::Complete && command.node_id.is_some() {
-        // Non-Complete + explicit node id is a single-node debug path.
-        child_budget = Prototype1ChildBudget::new(1, 1);
-        child_schedule_mode = Prototype1ChildScheduleMode::AdaptiveBatch;
-    }
-    if command.node_id.is_none() {
-        children.truncate(child_budget.max as usize);
-    }
-
-    let metric_inputs = traversal_metric_inputs(run_shape.successor_selection_metrics);
-    let selection_strategy = run_shape.successor_selection.active_strategy(
-        metric_inputs,
-        run_shape.successor_oracle_mode,
-        run_shape.successor_oracle_require_evidence,
-        run_shape.successor_metrics_policy,
-    );
-    let rejected_only_plan = run_shape.stop_after == Prototype1StateStopAfter::Complete
-        && children.is_empty()
-        && !rejected_surface_attempts.is_empty();
-    let (child_outcomes, selection, rejected_attempt_payloads) = if rejected_only_plan {
-        let projection = ParentSelection::new(
-            &manifest_path,
-            &parent_identity,
-            &[],
-            &rejected_surface_attempts,
-        )
-        .current_generation_candidates()?;
-        (Vec::new(), None, Some(projection.considered.len()))
-    } else if run_shape.stop_after == Prototype1StateStopAfter::Complete
-        && child_schedule_mode == Prototype1ChildScheduleMode::AdaptiveBatch
-    {
-        let (outcomes, selection) = run_adaptive_child_fanout(
-            &campaign_id,
-            &manifest_path,
-            &repo_root,
-            &journal_path,
-            &parent_identity,
-            &parent_baseline,
-            child_budget,
-            run_shape.observe_child_stale_after,
-            children,
-            &rejected_surface_attempts,
-            run_shape.successor_selection_seed,
-            selection_strategy,
-        )
-        .await?;
-        (outcomes, selection, None)
-    } else {
-        let child_outcomes = run_child_fanout(
-            &campaign_id,
-            &manifest_path,
-            &repo_root,
-            &journal_path,
-            &parent_identity,
-            &parent_baseline,
-            run_shape.stop_after,
-            run_shape.observe_child_stale_after,
-            child_schedule_mode,
-            child_budget,
-            0,
-            children,
-        )
-        .await?;
-        let parent_selection = ParentSelection::new(
-            &manifest_path,
-            &parent_identity,
-            &child_outcomes,
-            &rejected_surface_attempts,
-        );
-        let selection = if run_shape.stop_after == Prototype1StateStopAfter::Complete {
-            parent_selection
-                .select_successor(run_shape.successor_selection_seed, selection_strategy)?
-        } else {
-            None
-        };
-        (child_outcomes, selection, None)
-    };
-    let fallback_node = parent.node().clone();
-    let report_child = if rejected_attempt_payloads.is_some() {
-        None
-    } else {
-        let selected_node_id = selection
-            .as_ref()
-            .map(|(decision, _)| decision.candidate_node_id.as_str());
-        outcome_for_report(&child_outcomes, selected_node_id)
-    };
-    let (mut outcome, child_runtime) = if let Some(payloads) = rejected_attempt_payloads {
-        (
-            format!(
-                "rejected_surface_attempts_only;children_ran=0;children_planned={};rejected_attempt_payloads={payloads}",
-                planned_child_count
-            ),
-            None,
-        )
-    } else {
-        let report_child =
-            report_child
-                .as_ref()
-                .ok_or_else(|| PrepareError::InvalidBatchSelection {
-                    detail: "child fanout completed without any child outcome".to_string(),
-                })?;
-        (
-            format!(
-                "{};children_ran={};children_planned={}",
-                report_child.outcome,
-                child_outcomes.len(),
-                planned_child_count
-            ),
-            report_child.child_runtime.clone(),
-        )
-    };
-    let mut successor_runtime = None;
-    let mut successor_pid = None;
-    let mut successor_ready_path = None;
-
-    if let Some((selection_decision, selection_material)) = selection {
-        let material = selection_material;
-        let artifact = material.selected_artifact()?;
-        let node = artifact.node().clone();
-        let search_policy =
-                complete_search_policy
-                    .as_ref()
-                    .ok_or_else(|| PrepareError::InvalidBatchSelection {
-                        detail:
-                            "successor selection reached handoff without an admitted or scheduler search policy"
-                                .to_string(),
-                    })?;
-        let decision = live_successor_continuation_decision(
-            &manifest_path,
-            &parent_identity,
-            search_policy,
-            &selection_decision,
-            &material,
-            &node,
-        )?;
-        let handoff = if decision.disposition.allows_successor() {
-            let selected_artifact = select_artifact_for_handoff(&selection_decision, &material)?;
-            let selection_entry = material.into_entry(selection_decision.clone())?;
-            Some((selected_artifact, selection_entry))
-        } else {
-            None
-        };
-        observe::Step::start(observe::span!(
-            "prototype1.parent.select_successor",
-            campaign_id = %campaign_id,
-            node_id = %node.node_id,
-            generation = node.generation,
-            selection_procedure = %selection_decision.procedure_id,
-            selection_outcome = ?selection_decision.outcome,
-            disposition = ?decision.disposition,
-            selected_next_branch_id = ?decision.selected_next_branch_id,
-            next_generation = decision.next_generation,
-            total_nodes_after_continue = decision.total_nodes_after_continue,
-        ))
-        .success();
-        journal
-            .append(JournalEntry::Successor(
-                SuccessorRecord::selected_with_decision(
-                    campaign_id.clone(),
-                    node.node_id.clone(),
-                    decision.clone(),
-                    selection_decision.clone(),
-                ),
-            ))
-            .map_err(|err| {
-                prototype1_state_transition_error("prototype1_successor_selection", err.to_string())
-            })?;
-        outcome.push_str(&format!(
-            ";selection={:?};successor={}",
-            selection_decision.outcome, selection_decision.candidate_node_id
-        ));
-        if let Some((selected_artifact, selection_entry)) = handoff {
-            match spawn_and_handoff_prototype1_successor(
-                &campaign_id,
-                selected_artifact,
-                &repo_root,
-                parent,
-                selection_entry,
-                prototype1_state_successor_handoff_mode(),
-            )? {
-                (_retired, Some(successor)) => {
-                    successor_runtime = Some(successor.runtime_id.to_string());
-                    successor_pid = Some(successor.pid);
-                    successor_ready_path = Some(successor.ready_path);
-                    outcome.push_str(";successor_handoff=acknowledged");
-                }
-                (_retired, None) => {
-                    outcome.push_str(";successor_handoff=timed_out");
-                }
-            }
-        } else {
-            journal
-                .append(JournalEntry::Successor(SuccessorRecord::stopped(
-                    campaign_id.clone(),
-                    node.node_id.clone(),
-                    decision.clone(),
-                    selection_decision.clone(),
-                )))
-                .map_err(|err| {
-                    prototype1_state_transition_error(
-                        "prototype1_successor_stopped",
-                        err.to_string(),
-                    )
-                })?;
-            outcome.push_str(&format!(
-                ";successor_handoff=skipped:{:?}",
-                decision.disposition
-            ));
-        }
-    } else if run_shape.stop_after == Prototype1StateStopAfter::Complete {
-        outcome.push_str(";selection=none");
-    }
-
-    append_parent_target_sample(
-        &mut journal,
-        &campaign_id,
-        &parent_identity,
-        handoff_invocation
-            .as_ref()
-            .map(|invocation| invocation.runtime_id()),
-        &repo_root,
-        journal::resource::Phase::ParentComplete,
-    );
-    let report = Prototype1StateReport {
-        campaign_id,
-        node_id: report_child
-            .as_ref()
-            .map(|child| child.node_id.clone())
-            .unwrap_or_else(|| fallback_node.node_id.clone()),
-        repo_root,
-        journal_path,
-        stop_after: run_shape.stop_after,
-        outcome,
-        node_status: report_child
-            .as_ref()
-            .map(|child| child.node_status)
-            .unwrap_or(fallback_node.status),
-        workspace_root: report_child
-            .as_ref()
-            .map(|child| child.workspace_root.clone())
-            .unwrap_or_else(|| fallback_node.workspace_root.clone()),
-        binary_path: report_child
-            .as_ref()
-            .map(|child| child.binary_path.clone())
-            .unwrap_or_else(|| fallback_node.binary_path.clone()),
-        child_runtime,
-        successor_runtime,
-        successor_pid,
-        successor_ready_path,
-    };
-
-    #[cfg(not(feature = "demo"))]
-    {
-        match command.format {
-            InspectOutputFormat::Json => {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&report).map_err(PrepareError::Serialize)?
-                );
-            }
-            InspectOutputFormat::Table => {
-                println!("prototype1 state");
-                println!("{}", "-".repeat(40));
-                println!("campaign_id: {}", report.campaign_id);
-                println!("node_id: {}", report.node_id);
-                println!("repo_root: {}", report.repo_root.display());
-                println!("journal_path: {}", report.journal_path.display());
-                println!("stop_after: {:?}", report.stop_after);
-                println!("outcome: {}", report.outcome);
-                println!("node_status: {:?}", report.node_status);
-                println!("workspace_root: {}", report.workspace_root.display());
-                println!("binary_path: {}", report.binary_path.display());
-                println!(
-                    "child_runtime: {}",
-                    report.child_runtime.as_deref().unwrap_or("-")
-                );
-                println!(
-                    "successor_runtime: {}",
-                    report.successor_runtime.as_deref().unwrap_or("-")
-                );
-                println!(
-                    "successor_pid: {}",
-                    report
-                        .successor_pid
-                        .map(|pid| pid.to_string())
-                        .unwrap_or_else(|| "-".to_string())
-                );
-                println!(
-                    "successor_ready_path: {}",
-                    report
-                        .successor_ready_path
-                        .as_ref()
-                        .map(|path| path.display().to_string())
-                        .unwrap_or_else(|| "-".to_string())
-                );
-            }
-        }
-    }
-    #[cfg(feature = "demo")]
-    let _ = report;
-    if let Some(invocation) = handoff_invocation {
-        let _ = record_prototype1_successor_completion(
-            &invocation,
-            &manifest_path,
-            SuccessorCompletionStatus::Succeeded,
-            None,
-            None,
-        )?;
-    }
-    Ok(())
+    crate::cli::prototype1_state::driver::advance::run_to_terminal(command).await
 }
 
-fn traversal_metric_inputs(input: Prototype1TraversalMetrics) -> crate::metric::Inputs {
+pub(crate) fn traversal_metric_inputs(input: Prototype1TraversalMetrics) -> crate::metric::Inputs {
     match input {
         Prototype1TraversalMetrics::Operational => crate::metric::Inputs::Operational,
         Prototype1TraversalMetrics::OperationalAndProtocol => {
@@ -7851,12 +8220,12 @@ pub(crate) fn prepare_prototype1_treatment_campaign(
     baseline: &ResolvedCampaignConfig,
     branch_id: &str,
 ) -> Result<Prototype1LoopCampaign, PrepareError> {
-    let campaign_id = format!(
+    let campaign_id = CampaignId::from(format!(
         "{}-treatment-{}-{}",
         baseline.campaign_id,
         branch_id,
         Utc::now().timestamp_millis()
-    );
+    ));
     let manifest_path = campaign_manifest_path(&campaign_id)?;
     let baseline_manifest = load_campaign_manifest(&baseline.campaign_id)?;
 
@@ -7886,7 +8255,7 @@ pub(crate) fn prepare_prototype1_treatment_campaign(
     let closure_state_path = campaign_closure_state_path(&campaign_id)?;
 
     Ok(Prototype1LoopCampaign {
-        campaign_id,
+        campaign_id: campaign_id.clone(),
         manifest_path,
         closure_state_path,
         slice_dataset_path: baseline_manifest
@@ -7910,13 +8279,27 @@ pub(crate) fn prototype1_branch_evaluation_path(
         .join(format!("{branch_id}.json"))
 }
 
+pub(crate) fn prototype1_state_report_path(
+    campaign_manifest_path: &Path,
+    parent_identity: &ParentIdentity,
+) -> PathBuf {
+    campaign_manifest_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("prototype1")
+        .join("nodes")
+        .join(parent_identity.node_id())
+        .join("reports")
+        .join("state-report.json")
+}
+
 const PROTOTYPE1_BRANCH_EVALUATOR_ID: &str = "prototype1.branch_evaluation.mechanized";
 const PROTOTYPE1_BRANCH_EVALUATOR_VERSION: &str = "v1";
 const PROTOTYPE1_CLOSURE_EVAL_SET_KIND: &str = "closure_instance_slice";
 const PROTOTYPE1_CLOSURE_EVAL_SET_AUTHORITY: &str = "typed_closure_context";
 
 pub(crate) fn build_prototype1_branch_evaluation_report(
-    baseline_campaign_id: &str,
+    baseline_campaign_id: &CampaignId,
     branch_id: &str,
     branch_registry_path: &Path,
     evaluation_artifact_path: &Path,
@@ -7992,7 +8375,7 @@ pub(crate) fn build_prototype1_branch_evaluation_report(
     };
 
     Ok(Prototype1BranchEvaluationReport {
-        baseline_campaign_id: baseline_campaign_id.to_string(),
+        baseline_campaign_id: baseline_campaign_id.clone(),
         branch_id: branch_id.to_string(),
         treatment_campaign_id: treatment.treatment_campaign_id.clone(),
         evaluation_procedure_id: Some(
@@ -8020,7 +8403,7 @@ pub(crate) fn build_prototype1_branch_evaluation_report(
 }
 
 pub(crate) fn build_prototype1_treatment_evidence(
-    baseline_campaign_id: &str,
+    baseline_campaign_id: &CampaignId,
     branch_id: &str,
     treatment_campaign: &Prototype1LoopCampaign,
     treatment_state: &crate::closure::ClosureState,
@@ -8064,7 +8447,7 @@ pub(crate) fn build_prototype1_treatment_evidence(
         .collect::<Result<Vec<_>, PrepareError>>()?;
 
     Ok(Prototype1TreatmentEvidence {
-        baseline_campaign_id: baseline_campaign_id.to_string(),
+        baseline_campaign_id: baseline_campaign_id.clone(),
         branch_id: branch_id.to_string(),
         treatment_campaign_id: treatment_campaign.campaign_id.clone(),
         treatment_campaign_manifest: treatment_campaign.manifest_path.clone(),
@@ -8077,7 +8460,7 @@ pub(crate) fn build_prototype1_treatment_evidence(
 }
 
 fn build_prototype1_eval_set_identity(
-    baseline_campaign_id: &str,
+    baseline_campaign_id: &CampaignId,
     treatment: &Prototype1TreatmentEvidence,
     baseline: &CompleteBaseline,
     compared_instances: &[Prototype1ComparedInstanceReport],
@@ -8126,8 +8509,8 @@ fn build_prototype1_eval_set_identity(
 }
 
 fn prototype1_eval_set_id(
-    baseline_campaign_id: &str,
-    treatment_campaign_id: &str,
+    baseline_campaign_id: &CampaignId,
+    treatment_campaign_id: &CampaignId,
     benchmark_family: BenchmarkFamily,
     dataset_sources: &[RegistryDatasetSource],
     eval_policy: &EvalCampaignPolicy,
@@ -8136,9 +8519,9 @@ fn prototype1_eval_set_id(
     let mut hasher = Sha256::new();
     hasher.update(PROTOTYPE1_CLOSURE_EVAL_SET_KIND.as_bytes());
     hasher.update(b"\0");
-    hasher.update(baseline_campaign_id.as_bytes());
+    hasher.update(baseline_campaign_id.as_str().as_bytes());
     hasher.update(b"\0");
-    hasher.update(treatment_campaign_id.as_bytes());
+    hasher.update(treatment_campaign_id.as_str().as_bytes());
     hasher.update(b"\0");
     hasher.update(prototype1_benchmark_family_id(benchmark_family).as_bytes());
     hasher.update(b"\0");
@@ -8373,10 +8756,10 @@ fn prepare_prototype1_loop_campaign(
     }
 
     let campaign_id = command.campaign.clone().unwrap_or_else(|| {
-        format!(
+        CampaignId::from(format!(
             "prototype1-{}",
             sanitize_batch_component(&prepared_batch.batch_id)
-        )
+        ))
     });
     let manifest_path = campaign_manifest_path(&campaign_id)?;
     if manifest_path.exists() {
@@ -8515,11 +8898,11 @@ pub(crate) struct Prototype1LoopReport {
     dry_run: bool,
     search_policy: Prototype1SearchPolicy,
     continuation_decision: Option<Prototype1ContinuationDecision>,
-    continued_from_campaign: Option<String>,
+    continued_from_campaign: Option<CampaignId>,
     continued_from_branch_id: Option<String>,
     batch_id: String,
     batch_manifest: PathBuf,
-    campaign_id: String,
+    campaign_id: CampaignId,
     campaign_manifest: PathBuf,
     closure_state_path: PathBuf,
     slice_dataset_path: PathBuf,
@@ -8583,7 +8966,7 @@ pub(crate) struct Prototype1LoopBranchEvaluationSummary {
     branch_id: String,
     candidate_id: String,
     branch_label: String,
-    treatment_campaign_id: String,
+    treatment_campaign_id: CampaignId,
     overall_disposition: BranchDisposition,
     evaluation_artifact_path: PathBuf,
     oracle_eligible_instances: usize,
@@ -8594,28 +8977,28 @@ pub(crate) struct Prototype1LoopBranchEvaluationSummary {
     failed_tool_calls: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Prototype1StateReport {
-    campaign_id: String,
-    node_id: String,
-    repo_root: PathBuf,
-    journal_path: PathBuf,
-    stop_after: Prototype1StateStopAfter,
-    outcome: String,
-    node_status: Prototype1NodeStatus,
-    workspace_root: PathBuf,
-    binary_path: PathBuf,
-    child_runtime: Option<String>,
-    successor_runtime: Option<String>,
-    successor_pid: Option<u32>,
-    successor_ready_path: Option<PathBuf>,
+    pub(crate) campaign_id: CampaignId,
+    pub(crate) node_id: String,
+    pub(crate) repo_root: PathBuf,
+    pub(crate) journal_path: PathBuf,
+    pub(crate) stop_after: Prototype1StateStopAfter,
+    pub(crate) outcome: String,
+    pub(crate) node_status: Prototype1NodeStatus,
+    pub(crate) workspace_root: PathBuf,
+    pub(crate) binary_path: PathBuf,
+    pub(crate) child_runtime: Option<String>,
+    pub(crate) successor_runtime: Option<String>,
+    pub(crate) successor_pid: Option<u32>,
+    pub(crate) successor_ready_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Prototype1TreatmentEvidence {
-    pub(crate) baseline_campaign_id: String,
+    pub(crate) baseline_campaign_id: CampaignId,
     pub(crate) branch_id: String,
-    pub(crate) treatment_campaign_id: String,
+    pub(crate) treatment_campaign_id: CampaignId,
     pub(crate) treatment_campaign_manifest: PathBuf,
     pub(crate) treatment_closure_state_path: PathBuf,
     pub(crate) eval_policy: EvalCampaignPolicy,
@@ -8640,9 +9023,9 @@ pub(crate) struct Prototype1TreatmentInstanceEvidence {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Prototype1BranchEvaluationReport {
-    pub(crate) baseline_campaign_id: String,
+    pub(crate) baseline_campaign_id: CampaignId,
     pub(crate) branch_id: String,
-    pub(crate) treatment_campaign_id: String,
+    pub(crate) treatment_campaign_id: CampaignId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) evaluation_procedure_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -8726,7 +9109,7 @@ pub(crate) fn selection_input_from_child_report(
 }
 
 pub(crate) struct Prototype1LoopCampaign {
-    pub(crate) campaign_id: String,
+    pub(crate) campaign_id: CampaignId,
     pub(crate) manifest_path: PathBuf,
     pub(crate) closure_state_path: PathBuf,
     pub(crate) slice_dataset_path: PathBuf,
@@ -8769,7 +9152,8 @@ pub(crate) fn print_prototype1_loop_report(report: &Prototype1LoopReport) {
         "continued_from_campaign: {}",
         report
             .continued_from_campaign
-            .as_deref()
+            .as_ref()
+            .map(|id| id.as_str())
             .unwrap_or("(none)")
     );
     println!(

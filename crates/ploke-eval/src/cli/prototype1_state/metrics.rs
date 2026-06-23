@@ -57,7 +57,7 @@ impl MetricRequest {
 }
 
 pub(crate) fn run(
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     request: MetricRequest,
 ) -> Result<(), PrepareError> {
@@ -79,7 +79,7 @@ pub(crate) fn run(
     Ok(())
 }
 
-pub(crate) fn build(campaign_id: &str, manifest_path: &Path) -> Result<Dashboard, String> {
+pub(crate) fn build(campaign_id: &CampaignId, manifest_path: &Path) -> Result<Dashboard, String> {
     let store = FsEvidenceStore::new(manifest_path);
     let child_records = store.child_records().map_err(|source| source.to_string())?;
     let child_evidence = ChildEvidenceSet::from_records(&child_records);
@@ -105,7 +105,7 @@ pub(crate) fn build(campaign_id: &str, manifest_path: &Path) -> Result<Dashboard
 pub(crate) struct Dashboard {
     schema_version: &'static str,
     generated_at: String,
-    campaign_id: String,
+    campaign_id: CampaignId,
     manifest_path: PathBuf,
     derivation: &'static str,
     rows: Vec<Row>,
@@ -213,7 +213,7 @@ impl Dashboard {
 struct Slice {
     schema_version: &'static str,
     generated_at: String,
-    campaign_id: String,
+    campaign_id: CampaignId,
     derivation: &'static str,
     row_count: usize,
     generation_count: usize,
@@ -1388,7 +1388,7 @@ impl Assembly {
         }
     }
 
-    fn finish(mut self, campaign_id: &str, manifest_path: &Path) -> Dashboard {
+    fn finish(mut self, campaign_id: &CampaignId, manifest_path: &Path) -> Dashboard {
         for (branch_id, selections) in self.selected_branches.clone() {
             if let Some(node_id) = self.branch_to_node.get(&branch_id).cloned() {
                 let row = self.row(&node_id);
@@ -1421,7 +1421,7 @@ impl Assembly {
         Dashboard {
             schema_version: SCHEMA_VERSION,
             generated_at: Utc::now().to_rfc3339(),
-            campaign_id: campaign_id.to_string(),
+            campaign_id: campaign_id.clone(),
             manifest_path: manifest_path.to_path_buf(),
             derivation: DERIVATION,
             rows,
@@ -2461,13 +2461,13 @@ mod tests {
         let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(&manifest));
         journal
             .append(JournalEntry::Successor(successor::Record::selected(
-                "campaign-a".to_string(),
+                CampaignId::from("campaign-a"),
                 "node-b".to_string(),
                 decision,
             )))
             .expect("journal append");
 
-        let dashboard = build("campaign-a", &manifest).expect("dashboard");
+        let dashboard = build(&CampaignId::from("campaign-a"), &manifest).expect("dashboard");
         let selected = dashboard
             .rows
             .iter()
@@ -2528,7 +2528,7 @@ mod tests {
         )
         .expect("branch record jsonl");
 
-        let dashboard = build("campaign-a", &manifest).expect("dashboard");
+        let dashboard = build(&CampaignId::from("campaign-a"), &manifest).expect("dashboard");
 
         assert_eq!(dashboard.rows.len(), 1);
         assert_eq!(dashboard.rows[0].node_id, "node-a");
@@ -2566,7 +2566,7 @@ mod tests {
         )
         .expect("branch snapshot jsonl");
 
-        let dashboard = build("campaign-a", &manifest).expect("dashboard");
+        let dashboard = build(&CampaignId::from("campaign-a"), &manifest).expect("dashboard");
 
         assert_eq!(dashboard.rows.len(), 1);
         assert_eq!(dashboard.rows[0].node_id, "node-a");
@@ -2986,7 +2986,7 @@ mod tests {
         )
         .expect("branch registry");
 
-        build("campaign-a", &manifest).expect("dashboard")
+        build(&CampaignId::from("campaign-a"), &manifest).expect("dashboard")
     }
 
     fn dashboard_from_nodes(
@@ -3012,6 +3012,6 @@ mod tests {
         )
         .expect("branch registry");
 
-        build("campaign-a", &manifest).expect("dashboard")
+        build(&CampaignId::from("campaign-a"), &manifest).expect("dashboard")
     }
 }

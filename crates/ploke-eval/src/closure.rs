@@ -35,7 +35,7 @@ const STORED_TOOL_CALL_SEGMENT_REVIEW: &str = "tool_call_segment_review";
 
 #[derive(Debug, Clone)]
 pub struct ClosureRecomputeRequest {
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub benchmark_family: Option<BenchmarkFamily>,
     pub model_id: Option<String>,
     pub provider_slug: Option<String>,
@@ -51,7 +51,7 @@ pub struct ClosureRecomputeRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClosureState {
     pub schema_version: String,
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub updated_at: String,
     pub config: ClosureConfig,
     pub registry: RegistryClosureSummary,
@@ -233,13 +233,13 @@ struct SegmentEvidenceCounts {
     missing: usize,
 }
 
-pub fn closure_state_path(campaign_id: &str) -> Result<PathBuf, PrepareError> {
+pub fn closure_state_path(campaign_id: &CampaignId) -> Result<PathBuf, PrepareError> {
     Ok(campaigns_dir()?
-        .join(campaign_id)
+        .join(campaign_id.as_str())
         .join("closure-state.json"))
 }
 
-pub fn load_closure_state(campaign_id: &str) -> Result<ClosureState, PrepareError> {
+pub fn load_closure_state(campaign_id: &CampaignId) -> Result<ClosureState, PrepareError> {
     let path = closure_state_path(campaign_id)?;
     let text = fs::read_to_string(&path).map_err(|source| PrepareError::ReadManifest {
         path: path.clone(),
@@ -424,7 +424,7 @@ fn summarize_failure_lines(message: &str) -> Vec<&str> {
         .collect()
 }
 
-fn full_failure_command(campaign_id: &str, row: &ClosureInstanceRow) -> String {
+fn full_failure_command(campaign_id: &CampaignId, row: &ClosureInstanceRow) -> String {
     if let Some(path) = row
         .artifacts
         .indexing_status
@@ -534,8 +534,8 @@ fn resolve_config(
     ))
 }
 
-fn config_campaign_id(_config: &ClosureConfig, requested: &str) -> String {
-    requested.to_string()
+fn config_campaign_id(_config: &ClosureConfig, requested: &CampaignId) -> CampaignId {
+    requested.clone()
 }
 
 fn collect_batch_failures(root: &Path) -> Result<HashMap<String, BatchFailureInfo>, PrepareError> {
@@ -1639,7 +1639,7 @@ mod tests {
             budget: crate::spec::EvalBudget::default(),
             model_id: Some("google/gemini-3.5-flash".to_string()),
             provider_slug: Some("google".to_string()),
-            campaign_id: Some("campaign".to_string()),
+            campaign_id: Some(CampaignId::from("campaign")),
             batch_id: Some("batch".to_string()),
             run_arm_id: "structured-current-policy".to_string(),
             run_role: RegisteredRunRole::Treatment,

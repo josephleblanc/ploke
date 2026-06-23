@@ -641,7 +641,7 @@
 //! ## Persisted artifact map
 //!
 //! Operator appendix (commands, path table, glossary: scheduler generations vs
-//! History, channel vs journal): `crates/ploke-eval/docs/prototype1-loop-operator.md`.
+//! History, channel vs journal): `crates/ploke-eval/docs/prototype1/operator-map.md`.
 //! The old source-side `PROTOTYPE1_LOOP_OPERATOR.md` is retained only as a
 //! redirect. The labelled local path list is `prototype1_monitor_locations` in
 //! `cli_facing.rs`.
@@ -780,6 +780,7 @@ pub(crate) mod c4;
 pub(crate) mod channel;
 pub(crate) mod child;
 pub(crate) mod cli_facing;
+pub(crate) mod driver;
 pub(crate) mod edit_surface;
 pub(crate) mod event;
 pub(crate) mod evidence;
@@ -791,6 +792,7 @@ pub(crate) mod identity;
 pub(crate) mod inner;
 pub(crate) mod invocation;
 pub(crate) mod journal;
+pub(crate) mod live_edges;
 pub(crate) mod metrics;
 pub(crate) mod observe;
 pub(crate) mod parent;
@@ -801,4 +803,6 @@ pub(crate) mod score;
 pub(crate) mod selection;
 pub(crate) mod successor;
 pub(crate) mod telemetry;
+pub(crate) mod typestate;
+pub(crate) mod walk;
 pub(crate) mod workspace;

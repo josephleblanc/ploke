@@ -27,6 +27,7 @@ pub use playback::{
 pub use store::*;
 
 use ploke_records::identity::ParentIdentityRecord;
+use ploke_records::ids::CampaignId;
 use ploke_records::invocation::{
     SuccessorCompletionRecord, SuccessorCompletionStatus, SuccessorReadyRecord,
 };
@@ -64,7 +65,7 @@ pub fn assemble_run_forest(input: RunForestInput) -> RunForest {
         passive_evidence,
     } = input;
 
-    let campaign_id = scheduler.campaign_id.as_str().to_owned();
+    let campaign_id = scheduler.campaign_id.clone();
     let mut diagnostics = Vec::new();
     let merged_node_records = merge_node_records(&scheduler.nodes, node_records, &mut diagnostics);
     let mut nodes = merged_node_records
@@ -211,7 +212,7 @@ fn attach_parent_identity(
     nodes: &mut [TreeNode],
     index_by_key: &BTreeMap<NodeKey, usize>,
     diagnostics: &mut Vec<Diagnostic>,
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     parent: ParentIdentityRecord,
 ) {
     let evidence = EvidenceRef {
@@ -223,7 +224,7 @@ fn attach_parent_identity(
         detail: Some(format!("parent_id={}", parent.parent_id)),
     };
 
-    if parent.campaign_id != campaign_id {
+    if parent.campaign_id != *campaign_id {
         diagnostics.push(Diagnostic::forest_with_evidence(
             DiagnosticSeverity::Warning,
             "parent_identity_campaign_mismatch",
@@ -259,7 +260,7 @@ fn attach_successor_ready(
     nodes: &mut [TreeNode],
     index_by_key: &BTreeMap<NodeKey, usize>,
     diagnostics: &mut Vec<Diagnostic>,
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     ready: SuccessorReadyRecord,
 ) {
     let key = NodeKey::from(ready.node_id.as_str());
@@ -272,7 +273,7 @@ fn attach_successor_ready(
         detail: Some(format!("pid={}", ready.pid)),
     };
 
-    if ready.campaign_id != campaign_id {
+    if ready.campaign_id != *campaign_id {
         diagnostics.push(Diagnostic::forest_with_evidence(
             DiagnosticSeverity::Warning,
             "successor_ready_campaign_mismatch",
@@ -304,7 +305,7 @@ fn attach_successor_completion(
     nodes: &mut [TreeNode],
     index_by_key: &BTreeMap<NodeKey, usize>,
     diagnostics: &mut Vec<Diagnostic>,
-    campaign_id: &str,
+    campaign_id: &CampaignId,
     completion: SuccessorCompletionRecord,
 ) {
     let key = NodeKey::from(completion.node_id.as_str());
@@ -318,7 +319,7 @@ fn attach_successor_completion(
         detail: completion.detail,
     };
 
-    if completion.campaign_id != campaign_id {
+    if completion.campaign_id != *campaign_id {
         diagnostics.push(Diagnostic::forest_with_evidence(
             DiagnosticSeverity::Warning,
             "successor_completion_campaign_mismatch",
@@ -546,7 +547,7 @@ pub enum DiagnosticSeverity {
 /// Lightweight campaign identity for renderers.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CampaignRef {
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub updated_at: String,
 }
 

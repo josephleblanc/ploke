@@ -1393,6 +1393,12 @@ pub(crate) struct CandidateLifecycle {
     pub(crate) node_status: String,
 }
 
+pub(crate) const CHILD_CHANNEL_TERMINAL_RESULT_RECORD: &str =
+    "prototype1_child_channel_terminal_result";
+pub(crate) const CHILD_ATTEMPT_RUNNER_RESULT_RECORD: &str =
+    "prototype1_child_attempt_runner_result";
+pub(crate) const CHILD_INVOCATION_RECORD: &str = "prototype1_child_invocation";
+
 /// Citation to a typed evidence source (`ref_id` + optional content hash).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct SealedEvidenceCitation {
@@ -1401,6 +1407,11 @@ pub(crate) struct SealedEvidenceCitation {
     pub(crate) content_hash: Option<HistoryHash>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) record_name: Option<String>,
+}
+
+pub(crate) fn is_child_channel_terminal_result(citation: &SealedEvidenceCitation) -> bool {
+    citation.record_name.as_deref() == Some(CHILD_CHANNEL_TERMINAL_RESULT_RECORD)
+        && citation.content_hash.is_some()
 }
 
 /// Compared-run slice carried from child evaluation evidence (metrics + citations).
@@ -2712,6 +2723,32 @@ impl EvaluationPayload {
         {
             gaps.push("coordinate.primary_runtime_id_missing".into());
         }
+        if let Some(runtime_id) = sealed.coordinate.primary_runtime_id.as_deref() {
+            let matches: Vec<_> = sealed
+                .runtimes
+                .iter()
+                .filter(|runtime| runtime.runtime_id == runtime_id)
+                .collect();
+            match matches.len() {
+                0 => gaps.push(format!(
+                    "sealed_runtime_for_primary_runtime_missing:runtime_id={runtime_id}"
+                )),
+                1 => {
+                    let has_terminal = matches[0]
+                        .document_citations
+                        .iter()
+                        .any(is_child_channel_terminal_result);
+                    if !has_terminal {
+                        gaps.push(format!(
+                            "primary_runtime_terminal_channel_citation_missing:runtime_id={runtime_id}"
+                        ));
+                    }
+                }
+                count => gaps.push(format!(
+                    "sealed_runtime_for_primary_runtime_ambiguous:runtime_id={runtime_id},count={count}"
+                )),
+            }
+        }
 
         if sealed.evaluations.is_empty() {
             gaps.push("sealed_evaluations_empty".into());
@@ -3403,6 +3440,7 @@ fn append_sealed_evidence_citation_pairs(
     }
 }
 
+// ANCHOR: prototype1_selection_decision_entry
 /// Block-sealable selection decision payload.
 ///
 /// This is intended to be committed into an `EntryKind::Decision` entry, using
@@ -3474,6 +3512,7 @@ pub(crate) struct SelectionDecisionEntry {
     /// Decision result under `procedure_or_policy`.
     pub(crate) decision: crate::successor_selection::SuccessorDecision,
 }
+// ANCHOR_END: prototype1_selection_decision_entry
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct TraversalEvidence {
@@ -3582,6 +3621,7 @@ impl SelectionDecisionEntry {
         )
     }
 
+    // ANCHOR: prototype1_selection_entry_with_metrics
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_with_traversal_identity_metrics(
         procedure_or_policy: ProcedureRef,
@@ -3645,6 +3685,7 @@ impl SelectionDecisionEntry {
         entry.formula = crate::successor_selection::traversal::score_child_prop_formula(&entry)?;
         Ok(entry)
     }
+    // ANCHOR_END: prototype1_selection_entry_with_metrics
 
     fn contributes_candidates_to_history_projection(&self) -> bool {
         matches!(

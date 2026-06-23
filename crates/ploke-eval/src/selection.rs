@@ -8,11 +8,12 @@ use crate::campaign::load_campaign_manifest;
 use crate::layout::{active_selection_file, batches_dir, prototype1_monitor_target_file};
 use crate::projection::OperatorProjectionRead;
 use crate::spec::{PrepareError, PreparedMsbBatch};
+use ploke_records::ids::CampaignId;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActiveSelection {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub campaign: Option<String>,
+    pub campaign: Option<CampaignId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub batch: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -23,7 +24,7 @@ pub struct ActiveSelection {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActivePrototype1MonitorTarget {
-    pub campaign_id: String,
+    pub campaign_id: CampaignId,
     pub repo_root: PathBuf,
 }
 
@@ -160,7 +161,7 @@ pub fn render_selection_warnings(selection: &ActiveSelection) -> Vec<String> {
     let mut warnings = Vec::new();
 
     if let (Some(campaign_id), Some(instance_id)) =
-        (selection.campaign.as_deref(), selection.instance.as_deref())
+        (selection.campaign.as_ref(), selection.instance.as_deref())
     {
         match campaign_includes_instance(campaign_id, instance_id) {
             Ok(true) => {}
@@ -190,7 +191,10 @@ pub fn render_selection_warnings(selection: &ActiveSelection) -> Vec<String> {
     warnings
 }
 
-fn campaign_includes_instance(campaign_id: &str, instance_id: &str) -> Result<bool, PrepareError> {
+fn campaign_includes_instance(
+    campaign_id: &CampaignId,
+    instance_id: &str,
+) -> Result<bool, PrepareError> {
     let manifest = load_campaign_manifest(campaign_id)?;
     let Some(instance_family) = instance_family(instance_id) else {
         return Ok(false);
@@ -229,7 +233,7 @@ mod tests {
     #[test]
     fn instance_slot_unset_also_clears_attempt() {
         let mut selection = ActiveSelection {
-            campaign: Some("camp".to_string()),
+            campaign: Some(CampaignId::from("camp")),
             batch: Some("batch".to_string()),
             instance: Some("org__repo-1".to_string()),
             attempt: Some(2),
@@ -264,7 +268,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("prototype1-monitor-target.json");
         let target = ActivePrototype1MonitorTarget {
-            campaign_id: "campaign-a".to_string(),
+            campaign_id: CampaignId::from("campaign-a"),
             repo_root: PathBuf::from("/tmp/prototype-worktree"),
         };
 

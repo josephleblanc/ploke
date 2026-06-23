@@ -1,6 +1,6 @@
 # 2026-06-02 Prototype 1 state-loop walkthrough
 
-Status: draft walkthrough / implementation audit
+Status: historical draft walkthrough / implementation audit. Current code has since moved the batch parent turn into `driver::advance::run_to_terminal`, with `run_prototype1_state_turn` as a thin wrapper.
 Command: `ploke-eval loop prototype1-state`
 Base branch: `feature/ploke-loop`
 Audit branch: `docs/prototype1-state-loop-walkthrough`
@@ -19,7 +19,7 @@ The command is not just a CLI wrapper. It is the typed runtime for one **parent 
 - File/line references are from branch `docs/prototype1-state-loop-walkthrough`, current local merge `09375711` with turn-live replay emission commit `5a7dbe83` included.
 - This document intentionally distinguishes setup/admission (`loop prototype1-setup`) from the runtime parent turn (`loop prototype1-state`).
 - No secrets are recorded here. Model/provider names and source paths are code/config provenance, not credentials.
-- `prototype1-state` is the live typed path in `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`; the `prototype1_state/run` module still documents extraction work, but the live parent turn remains in `cli_facing.rs`.
+- Historical note: when this was written, `prototype1-state` lived primarily in `cli_facing.rs`. Current code routes the live parent turn through `crates/ploke-eval/src/cli/prototype1_state/driver/advance.rs`; `cli_facing.rs` now supplies setup, projections, selection/handoff helpers, and a wrapper entrypoint.
 - Companion docs:
   - [`campaign-configs.md`](campaign-configs.md): expanded campaign/run-profile config audit, model/provider/route precedence, and config footguns.
   - [`model-api-brief.md`](model-api-brief.md): short source trace of `prototype1-state` live API call boundaries, runtime model provenance, and current local model config values.

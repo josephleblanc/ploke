@@ -59,6 +59,7 @@ pub(crate) struct Prototype1RunProfile {
 }
 
 impl Prototype1RunProfile {
+    // ANCHOR: prototype1_run_profile_validate
     pub(crate) fn validate(&self) -> Result<(), PrepareError> {
         if self.schema_version != RUN_PROFILE_SCHEMA_VERSION {
             return Err(profile_error(format!(
@@ -83,6 +84,7 @@ impl Prototype1RunProfile {
         }
         Ok(())
     }
+    // ANCHOR_END: prototype1_run_profile_validate
 
     pub(crate) fn default_parallel_cap(&self) -> u32 {
         self.search.default_parallel_cap()
@@ -137,6 +139,7 @@ impl Default for Storage {
     }
 }
 
+// ANCHOR: prototype1_model_defaults
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ModelDefaults {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -194,6 +197,7 @@ impl ModelDefaults {
         Ok(())
     }
 }
+// ANCHOR_END: prototype1_model_defaults
 
 mod optional_profile_route_source {
     use serde::{Deserialize, Deserializer, Serializer};
@@ -898,6 +902,7 @@ pub(crate) struct Control {
 }
 
 impl Control {
+    // ANCHOR: prototype1_control_parallel_cap_validate
     fn validate(self, search: &Search) -> Result<(), PrepareError> {
         if let Some(parallel_cap) = self.parallel_cap {
             let derived_parallel_cap = search.default_parallel_cap();
@@ -910,6 +915,7 @@ impl Control {
         }
         Ok(())
     }
+    // ANCHOR_END: prototype1_control_parallel_cap_validate
 }
 
 impl Default for Control {

@@ -34,7 +34,7 @@ impl ParentIdentity {
         &self.0.schema_version
     }
 
-    pub(crate) fn campaign_id(&self) -> &str {
+    pub(crate) fn campaign_id(&self) -> &CampaignId {
         &self.0.campaign_id
     }
 
@@ -83,7 +83,7 @@ impl ParentIdentity {
     ///
     /// Root parents have no predecessor parent or parent node.
     pub(crate) fn root_bootstrap(
-        campaign_id: impl Into<String>,
+        campaign_id: impl Into<CampaignId>,
         node_id: impl Into<String>,
         instance_id: impl Into<String>,
         branch_id: impl Into<String>,
@@ -110,7 +110,7 @@ impl ParentIdentity {
     /// The node supplies the parent coordinate; the previous parent supplies
     /// predecessor linkage for startup and History validation.
     pub(crate) fn from_node(
-        campaign_id: impl Into<String>,
+        campaign_id: impl Into<CampaignId>,
         node: &Prototype1NodeRecord,
         previous_parent: Option<&ParentIdentity>,
         artifact_branch: Option<String>,
@@ -136,7 +136,7 @@ impl ParentIdentity {
     /// depends on later checkout/startup/History validation.
     pub(crate) fn validate_for_command(
         &self,
-        campaign_id: &str,
+        campaign_id: &CampaignId,
         command_node_id: Option<&str>,
     ) -> Result<(), PrepareError> {
         if self.schema_version() != PARENT_IDENTITY_SCHEMA_VERSION {
@@ -241,7 +241,7 @@ mod tests {
     fn identity() -> ParentIdentity {
         ParentIdentity::from_record_for_test(ParentIdentityRecord {
             schema_version: PARENT_IDENTITY_SCHEMA_VERSION.to_string(),
-            campaign_id: "campaign-1".to_string(),
+            campaign_id: CampaignId::from("campaign-1"),
             parent_id: "node-1".to_string(),
             node_id: "node-1".to_string(),
             generation: 0,
@@ -257,14 +257,14 @@ mod tests {
     #[test]
     fn validates_matching_command_identity() {
         identity()
-            .validate_for_command("campaign-1", Some("node-1"))
+            .validate_for_command(&CampaignId::from("campaign-1"), Some("node-1"))
             .expect("matching identity");
     }
 
     #[test]
     fn rejects_mismatched_command_identity() {
         let err = identity()
-            .validate_for_command("campaign-1", Some("node-2"))
+            .validate_for_command(&CampaignId::from("campaign-1"), Some("node-2"))
             .expect_err("mismatched node should reject");
         assert!(err.to_string().contains("does not match command node"));
     }

@@ -307,6 +307,7 @@ impl<S> Child<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ploke_records::ids::CampaignId;
     use tempfile::tempdir;
 
     #[test]
@@ -314,7 +315,7 @@ mod tests {
         let tmp = tempdir().expect("tmp");
         let runtime_id = RuntimeId::new();
         let refs = Refs {
-            campaign_id: "campaign-a".to_string(),
+            campaign_id: CampaignId::from("campaign-a"),
             node_id: "node-child".to_string(),
             instance_id: "instance-a".to_string(),
             source_state_id: "source-a".to_string(),
@@ -356,7 +357,7 @@ mod tests {
 
         assert_eq!(records[0].runtime_id, runtime_id);
         assert_eq!(records[0].generation, 1);
-        assert_eq!(records[0].refs.campaign_id, "campaign-a");
+        assert_eq!(records[0].refs.campaign_id, CampaignId::from("campaign-a"));
         assert_eq!(records[0].refs.node_id, "node-child");
         assert_eq!(records[0].refs.branch_id, "branch-child");
         assert_eq!(records[0].state, State::Ready);

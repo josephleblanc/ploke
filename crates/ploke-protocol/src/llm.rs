@@ -9,7 +9,9 @@ use ploke_llm::response::OpenAiResponse;
 use ploke_llm::router_only::google::Google;
 use ploke_llm::router_only::openrouter::{OpenRouter, ProviderPreferences};
 use ploke_llm::router_only::{ChatCompRequest, Router};
-use ploke_llm::{AttemptTimeout, ModelId, ProviderSlug, ReasoningConfig, ReasoningEffort};
+use ploke_llm::{
+    AttemptTimeout, ModelId, ProviderSlug, ReasoningConfig, ReasoningEffort, RouterCalibration,
+};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -647,6 +649,13 @@ fn google_json_request(
 }
 
 fn chat_http_config_for_json_llm(cfg: &JsonLlmConfig) -> ChatHttpConfig {
+    if cfg.route_source.is_direct_google() {
+        let mut timing = Google::default_provider_timing();
+        timing.attempt_timeout = AttemptTimeout::fixed(Duration::from_secs(cfg.timeout_secs));
+        timing.max_attempts = timing.max_attempts.max(cfg.max_attempts.max(1));
+        return ChatHttpConfig::from(&timing);
+    }
+
     let mut http = ChatHttpConfig::default();
     http.attempt_timeout = AttemptTimeout::fixed(Duration::from_secs(cfg.timeout_secs));
     http.max_attempts = cfg.max_attempts;
@@ -703,6 +712,51 @@ mod tests {
     struct SegmentationLike {
         segments: Vec<SegmentLike>,
         overall_rationale: String,
+    }
+
+    #[test]
+    fn direct_google_json_http_config_uses_calibrated_dsq_retry_budget() {
+        let cfg = JsonLlmConfig {
+            model_id: "google/gemini-2.5-pro".to_string(),
+            route_source: ModelRouteSource::DirectGoogle,
+            provider_slug: Some("google".to_string()),
+            timeout_secs: 45,
+            max_attempts: 1,
+            max_tokens: 400,
+            reasoning: ProtocolReasoningPolicy::default(),
+        };
+
+        let http = chat_http_config_for_json_llm(&cfg);
+
+        assert_eq!(http.attempt_timeout.for_attempt(1), Duration::from_secs(45));
+        assert_eq!(http.attempt_timeout.for_attempt(2), Duration::from_secs(45));
+        assert_eq!(
+            http.max_attempts,
+            Google::default_provider_timing().max_attempts
+        );
+        assert_eq!(http.initial_backoff, Duration::from_millis(500));
+        assert_eq!(http.max_backoff, Duration::from_secs(8));
+        assert_eq!(http.max_total_elapsed, Some(Duration::from_secs(60)));
+        assert!(http.retry.retry_statuses.contains(&429));
+        assert!(http.retry.retry_statuses.contains(&503));
+        assert!(!http.retry.retry_statuses.contains(&404));
+    }
+
+    #[test]
+    fn openrouter_json_http_config_preserves_explicit_attempt_budget() {
+        let cfg = JsonLlmConfig {
+            timeout_secs: 45,
+            max_attempts: 3,
+            ..JsonLlmConfig::default()
+        };
+
+        let http = chat_http_config_for_json_llm(&cfg);
+
+        assert_eq!(http.attempt_timeout.for_attempt(1), Duration::from_secs(45));
+        assert_eq!(http.max_attempts, 3);
+        assert_eq!(http.initial_backoff, Duration::from_millis(250));
+        assert_eq!(http.max_backoff, Duration::from_secs(2));
+        assert_eq!(http.max_total_elapsed, None);
     }
 
     #[test]

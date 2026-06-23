@@ -6,6 +6,25 @@
 //! `Channel<Parent<S>, T>` and `Channel<Child<S>, T>` use the existing
 //! role/state carriers as authority tokens, while `T: Transport` decides how
 //! bytes move between runtimes.
+//!
+//! The design target is transport-agnostic parent/child communication: today's
+//! transport is a pair of per-runtime file buffers, but the same role/state
+//! contract must be able to run over a socket, websocket, queue, object-store
+//! stream, or VM boundary. After the bootstrap/invocation step gives a runtime
+//! its role, all parent/child messages that can affect parent selection,
+//! successor promotion, or sealed History must cross a dedicated channel for
+//! that child/runtime. Local files, git commits, branch registries, journals,
+//! and result sidecars may remain as durable projections or child-owned stores,
+//! but the parent must learn about selection-grade child facts through channel
+//! payloads or channel-carried verifiable references to those stores.
+//!
+//! This rule is what lets local file-buffer execution scale later to cloud
+//! execution: each child VM owns its own channel endpoint and can retain or git
+//! commit its local evidence, while the parent consumes channel messages and
+//! writes parent-owned projections. A raw path in a shared filesystem is not a
+//! communication authority by itself; it becomes usable by the parent only when
+//! the admitted channel message names it with enough identity/hash/tree context
+//! for replay and later checkout/cherry-pick validation.
 
 use std::{
     fs::{self, File, OpenOptions},
@@ -14,6 +33,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use ploke_records::ids::CampaignId;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -178,7 +198,7 @@ pub(crate) trait Transport {
 /// Concrete endpoint for one directed side of a runtime channel.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Endpoint {
-    campaign_id: String,
+    campaign_id: CampaignId,
     node_id: String,
     runtime_id: RuntimeId,
     direction: Direction,
@@ -187,7 +207,7 @@ pub(crate) struct Endpoint {
 
 impl Endpoint {
     /// Campaign that owns this runtime attempt.
-    pub(crate) fn campaign_id(&self) -> &str {
+    pub(crate) fn campaign_id(&self) -> &CampaignId {
         &self.campaign_id
     }
 
@@ -213,10 +233,16 @@ impl Endpoint {
 }
 
 /// Both directed endpoints for one parent/child runtime channel.
+///
+/// An `Endpoints` value is scoped to one concrete `(campaign, node, runtime)`
+/// tuple. Fanout must allocate distinct endpoints per child runtime so that
+/// child outputs do not contend on shared mutable parent files. The file paths
+/// here are the current transport projection; a non-file transport should
+/// preserve the same identity and direction split.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Endpoints {
     root: PathBuf,
-    campaign_id: String,
+    campaign_id: CampaignId,
     node_id: String,
     runtime_id: RuntimeId,
 }
@@ -225,7 +251,7 @@ impl Endpoints {
     /// Construct endpoints rooted at `nodes/<node-id>/channels/<runtime-id>/`.
     pub(crate) fn new(
         root: PathBuf,
-        campaign_id: String,
+        campaign_id: CampaignId,
         node_id: String,
         runtime_id: RuntimeId,
     ) -> Self {
@@ -268,7 +294,7 @@ impl Endpoints {
 pub(crate) struct Envelope<M> {
     schema_version: String,
     direction: Direction,
-    campaign_id: String,
+    campaign_id: CampaignId,
     node_id: String,
     runtime_id: RuntimeId,
     message_id: Uuid,
@@ -308,8 +334,8 @@ impl<M> Envelope<M> {
         }
         if self.campaign_id != endpoint.campaign_id {
             return Err(EnvelopeError::Campaign {
-                expected: endpoint.campaign_id.clone(),
-                actual: self.campaign_id.clone(),
+                expected: endpoint.campaign_id.to_string(),
+                actual: self.campaign_id.to_string(),
             });
         }
         if self.node_id != endpoint.node_id {
@@ -380,6 +406,13 @@ pub(crate) enum ToChild {
 }
 
 /// Child-to-parent protocol messages.
+///
+/// Messages in this family are the parent-visible boundary for child facts that
+/// may later influence selection or History. A child may keep richer local
+/// records and commit them to its own checkout/tree, but any parent decision
+/// that depends on those records must be based on a `ToParent` payload or a
+/// `ToParent`-carried reference that can locate and verify the child-owned
+/// data later.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ToParent {
@@ -388,6 +421,13 @@ pub(crate) enum ToParent {
     /// Child runtime entered evaluation.
     Evaluating,
     /// Child completed execution and returned its terminal payload.
+    ///
+    /// This is the selection-grade terminal message. For a successful child it
+    /// must either carry the treatment evidence directly or carry enough typed
+    /// references to recover that evidence from the child's durable store. The
+    /// parent may write `runner-result.json`, branch evaluations, journals, or
+    /// monitor projections after consuming this message, but those projections
+    /// are not substitutes for the channel boundary.
     Result {
         /// Attempt-scoped runner result produced by the child runtime.
         runner_result: Prototype1RunnerResult,
@@ -398,7 +438,10 @@ pub(crate) enum ToParent {
     /// Child persisted its attempt-scoped runner result.
     ///
     /// Compatibility projection for callers that still exchange result paths.
-    /// New execution handoff should prefer `Result`.
+    /// This notification is useful for reconstruction and operator diagnostics,
+    /// but it must not by itself make a child selectable or History-sealable.
+    /// New execution handoff should prefer `Result` carrying the runner result
+    /// plus treatment evidence or verifiable child-store references.
     ResultWritten { runner_result_path: PathBuf },
     /// Successor runtime acknowledged bootstrap.
     SuccessorReady { record: SuccessorReadyRecord },
@@ -411,6 +454,19 @@ pub(crate) enum ToParent {
 }
 
 /// Role-indexed parent/child channel.
+///
+/// `Channel<R, T>` is the protocol authority; `T` is only the byte-moving
+/// backend. Code that needs parent/child evidence should depend on the
+/// role-shaped channel, not on whether the current transport is JSONL files,
+/// sockets, or something else.
+///
+/// Design constraint for Prototype 1 loop safety: any datum used by the parent
+/// to compare children, select/promote a successor, or seal History must be
+/// received over this child's channel, either inline or as a verifiable
+/// reference to child-owned durable storage such as a git commit/tree plus
+/// content hashes. Parent-owned files may cache or project those facts, but a
+/// projection that was not derived from an admitted channel message is not
+/// sufficient authority for selection or History.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Channel<R, T> {
     transport: T,
@@ -858,7 +914,7 @@ mod tests {
     fn endpoints(root: PathBuf) -> Endpoints {
         Endpoints::new(
             root,
-            "campaign-1".to_string(),
+            CampaignId::from("campaign-1"),
             "node-1".to_string(),
             RuntimeId::new(),
         )
@@ -870,7 +926,7 @@ mod tests {
             RuntimeId::new(),
             1,
             Refs {
-                campaign_id: "campaign-1".to_string(),
+                campaign_id: CampaignId::from("campaign-1"),
                 node_id: "node-1".to_string(),
                 instance_id: "instance-1".to_string(),
                 source_state_id: "source-1".to_string(),
