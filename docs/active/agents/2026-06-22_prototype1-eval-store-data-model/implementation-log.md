@@ -1074,6 +1074,31 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: successful C3 child spawn now writes queryable spawn/binary provenance rows when the owner eval DB exists. The authority-negative test proves preexisting spawn/binary DB rows do not replace filesystem binary authority.
 - Commit: `feat: mirror child spawn binary provenance`.
 
+### Slice 10e — Selected successor active-checkout install provenance rows
+
+- Status: complete for selected-artifact active-checkout install provenance rows using `eval_artifact`, `eval_artifact_surface`, and `eval_artifact_ref`.
+- Assumptions:
+  - This sub-slice mirrors only after `install_committed_successor_artifact` verifies the selected branch tree, verifies target content, switches the active checkout, commits selected parent identity, validates parent checkout authority, verifies target content again, appends successor checkout before/after records, and appends `ActiveCheckoutAdvanced`.
+  - The active checkout install remains artifact/backend authority. Eval-store rows do not replace checkout existence, branch tree validation, parent identity validation, History sealing, successor invocation, or successor ready acknowledgement.
+  - Owner DB presence remains the opt-in boundary. If `prototype1/eval-store.cozo.sqlite` does not already exist, handoff install behavior is unchanged and no DB file is created by install.
+  - The mirror uses the existing selected `ArtifactRef` handle, installed branch, installed commit, selected artifact surface hash, and `active_checkout:<root>@<commit>` source ref.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_process.rs`
+- Tests added/changed:
+  - existing `successor_install_commits_selected_parent_identity` now seeds an owner eval DB and asserts the selected successor artifact row plus active-checkout artifact ref row.
+  - new `successor_install_rows_do_not_replace_missing_active_checkout` seeds matching install rows, deletes the active checkout, and asserts backend install still fails before any DB row can stand in for checkout authority.
+- Commands run:
+  - `gitnexus impact ... install_committed_successor_artifact`: HIGH risk; 3 direct callers, affected process `spawn_and_handoff_prototype1_successor`. Edit kept the mirror after existing backend validation and checkout journal writes.
+  - `gitnexus impact ... install_prototype1_successor_artifact`: HIGH risk; affected processes `spawn_and_handoff_prototype1_successor` and `r12_to_r13`. The actual edit is in the lower helper after artifact install, not in selection or continuation decision logic.
+  - `gitnexus impact ... successor_install_commits_selected_parent_identity`: LOW risk; test-only target.
+  - `cargo fmt --all`
+  - test-runner sub-agent: `cargo check -p ploke-eval` passed.
+  - test-runner sub-agent: `cargo test -p ploke-eval successor_install_commits_selected_parent_identity -- --nocapture` passed.
+  - test-runner sub-agent: `cargo test -p ploke-eval successor_install_rows_do_not_replace_missing_active_checkout -- --nocapture` passed.
+- Live API used: no. This sub-slice uses local git/checkout install tests and does not modify provider execution, child generation, child terminal result production, or successor ready behavior.
+- Result: selected successor active-checkout install now writes queryable artifact provenance rows when the owner eval DB exists. The authority-negative test proves install rows do not replace active checkout/backend authority.
+- Commit: `feat: mirror selected successor install provenance`.
+
 ### Later slices
 
 Create a new subsection per slice before editing.
