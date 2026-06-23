@@ -34,6 +34,7 @@ use crate::intervention::{
 
 use super::c1::{Acknowledged, Binary, Child, ChildAckState, Parent, Present, Prototype};
 use super::channel::{Channel, Cursor, FileTransport, ToParent};
+use super::eval_store;
 use super::event::{ChildRuntimeLifecycle, ContentHash, Paths, RecordedAt, Refs, RuntimeId};
 use super::invocation::{ChildInvocation, channel_root, invocation_path, write_child_invocation};
 use super::journal::{
@@ -319,6 +320,12 @@ pub(crate) enum SpawnChildError {
         #[source]
         source: PrepareError,
     },
+    #[error("failed to mirror child spawn '{node_id}' binary provenance to eval-store")]
+    EvalStoreSpawnProvenance {
+        node_id: String,
+        #[source]
+        source: eval_store::EvalStoreError,
+    },
     #[error("invalid invocation bootstrap for node '{node_id}'")]
     InvalidInvocationBootstrap {
         node_id: String,
@@ -602,6 +609,12 @@ impl Intervention<C3, C4> for SpawnChild {
                     child_pid,
                     "recorded spawn observed entry"
                 );
+                mirror_child_spawn_provenance(&next).map_err(|source| {
+                    CommitError::Transition(SpawnChildError::EvalStoreSpawnProvenance {
+                        node_id: next.node.node_id.clone(),
+                        source,
+                    })
+                })?;
 
                 Ok(Outcome::Advanced(next))
             }
@@ -655,6 +668,54 @@ impl Intervention<C3, C4> for SpawnChild {
             }
         }
     }
+}
+
+fn mirror_child_spawn_provenance(next: &C4) -> Result<(), eval_store::EvalStoreError> {
+    let db_path = eval_store::prototype1_eval_store_db_path(&next.campaign_manifest_path);
+    if !db_path.exists() {
+        return Ok(());
+    }
+
+    let runtime_id = next
+        .binary
+        .child_runtime
+        .as_ref()
+        .expect("C4 carries acknowledged child runtime")
+        .to_string();
+    let artifact_id = next
+        .node
+        .derived_artifact_id
+        .as_ref()
+        .map(|id| id.to_string());
+    let binary_path = next.binary.child_path.clone();
+    let binary_hash = eval_store::file_sha256(&binary_path)?;
+    let recorded_at = chrono::Utc::now().to_rfc3339();
+    eval_store::write_build_provenance_to_owner_db(
+        &db_path,
+        eval_store::BuildProvenanceEvidence {
+            binary_ref: eval_store::BinaryRefEvidence {
+                campaign_id: next.campaign_id.clone(),
+                artifact_id: artifact_id.clone(),
+                built_by: Some(runtime_id.clone()),
+                source_ref: binary_path.display().to_string(),
+                content_sha256: Some(binary_hash),
+                protocol_digest: None,
+                recorded_at: Some(recorded_at.clone()),
+            },
+            build_event: eval_store::BuildEventEvidence {
+                campaign_id: next.campaign_id.clone(),
+                node_id: next.node.node_id.clone(),
+                runtime_id: Some(runtime_id),
+                artifact_id,
+                phase: "spawn".to_string(),
+                outcome: "acknowledged".to_string(),
+                binary_ref: None,
+                log_ref: None,
+                recorded_at,
+            },
+        },
+    )?;
+    Ok(())
 }
 
 enum WaitOutcome {

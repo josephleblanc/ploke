@@ -1048,6 +1048,32 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: broad-harness child materialization now writes queryable operation, patch, and apply-event provenance rows when the owner eval DB exists. The authority-negative test proves eval-store rows do not replace candidate workspace/backend authority.
 - Commit: `feat: mirror broad harness operation provenance`.
 
+### Slice 10d — Child spawn binary provenance rows
+
+- Status: complete for successful `C3 -> C4` spawn provenance rows using `eval_build_event` and `eval_binary_ref`.
+- Assumptions:
+  - This sub-slice mirrors only successful child spawn acknowledgement after the promoted binary exists, invocation/bootstrap is written, the child ready message is observed, node status is updated to running, and the observed spawn journal entry is appended.
+  - The spawn row uses `eval_build_event.phase = "spawn"` and `outcome = "acknowledged"` to keep build promotion evidence separate from runtime hydration evidence.
+  - Owner DB presence remains the opt-in boundary. If `prototype1/eval-store.cozo.sqlite` does not already exist, C3 behavior is unchanged and no DB file is created by the spawn transition.
+  - Spawn binary refs are passive evidence only. They do not prove the promoted binary file exists, do not replace invocation/bootstrap authority, and do not authorize C3 spawn.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/c3.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs`
+- Tests added/changed:
+  - existing `child_spawn_observes_ready` now seeds an owner eval DB and asserts the spawn build-event row plus runtime-specific binary ref row.
+  - existing `binary_ref_rows_do_not_replace_missing_promoted_binary` now seeds both promote and spawn binary provenance rows, deletes the promoted binary, and still asserts `MissingChildBinary` before spawn journal or invocation bootstrap writes.
+- Commands run:
+  - `gitnexus impact ... SpawnChild.transition`: LOW risk; no direct upstream callers or affected execution flows found by the index.
+  - `gitnexus impact ... child_build_promotes_binary_and_cleans_scratch`: LOW risk; test-only target.
+  - `gitnexus impact ... binary_ref_rows_do_not_replace_missing_promoted_binary`: target not found by index; treated as local test-only scope.
+  - `cargo fmt --all`
+  - test-runner sub-agent: `cargo check -p ploke-eval` passed.
+  - test-runner sub-agent: `cargo test -p ploke-eval child_spawn_observes_ready -- --nocapture` passed.
+  - test-runner sub-agent: `cargo test -p ploke-eval binary_ref_rows_do_not_replace_missing_promoted_binary -- --nocapture` passed.
+- Live API used: no. This sub-slice uses local fake-cargo spawn tests and does not modify provider execution, child generation, terminal result production, or selected-artifact handoff.
+- Result: successful C3 child spawn now writes queryable spawn/binary provenance rows when the owner eval DB exists. The authority-negative test proves preexisting spawn/binary DB rows do not replace filesystem binary authority.
+- Commit: `feat: mirror child spawn binary provenance`.
+
 ### Later slices
 
 Create a new subsection per slice before editing.

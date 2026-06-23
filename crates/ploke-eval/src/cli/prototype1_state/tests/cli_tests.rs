@@ -4927,7 +4927,7 @@ async fn binary_ref_rows_do_not_replace_missing_promoted_binary() {
                     .map(|id| id.to_string()),
                 built_by: None,
                 source_ref: outcome.binary_path.display().to_string(),
-                content_sha256: Some(binary_hash),
+                content_sha256: Some(binary_hash.clone()),
                 protocol_digest: None,
                 recorded_at: Some("2026-06-23T00:00:00Z".to_string()),
             },
@@ -4949,6 +4949,40 @@ async fn binary_ref_rows_do_not_replace_missing_promoted_binary() {
         },
     )
     .expect("seed binary provenance rows");
+    eval_store::write_build_provenance_to_owner_db(
+        &db_path,
+        eval_store::BuildProvenanceEvidence {
+            binary_ref: eval_store::BinaryRefEvidence {
+                campaign_id: CLI_TEST_CAMPAIGN.clone(),
+                artifact_id: child
+                    .node_record()
+                    .derived_artifact_id
+                    .as_ref()
+                    .map(|id| id.to_string()),
+                built_by: Some("runtime-seeded-spawn".to_string()),
+                source_ref: outcome.binary_path.display().to_string(),
+                content_sha256: Some(binary_hash),
+                protocol_digest: None,
+                recorded_at: Some("2026-06-23T00:00:00Z".to_string()),
+            },
+            build_event: eval_store::BuildEventEvidence {
+                campaign_id: CLI_TEST_CAMPAIGN.clone(),
+                node_id: child.node_record().node_id.clone(),
+                runtime_id: Some("runtime-seeded-spawn".to_string()),
+                artifact_id: child
+                    .node_record()
+                    .derived_artifact_id
+                    .as_ref()
+                    .map(|id| id.to_string()),
+                phase: "spawn".to_string(),
+                outcome: "acknowledged".to_string(),
+                binary_ref: None,
+                log_ref: None,
+                recorded_at: "2026-06-23T00:00:00Z".to_string(),
+            },
+        },
+    )
+    .expect("seed spawn binary provenance rows");
     fs::remove_file(&outcome.binary_path).expect("remove promoted binary");
 
     let stored = load_test_node_record(&manifest_path, child.node_id());
@@ -5620,6 +5654,12 @@ async fn succeeded_child_without_evaluation_recovers_from_terminal_channel() {
 async fn child_spawn_observes_ready() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+    ploke_db::Database::new_init()
+        .expect("empty eval db")
+        .write_backup_to_path(&db_path)
+        .expect("seed owner eval db");
     let repo_root = tmp.path().join("repo");
     let fake_bin = tmp.path().join("fake-bin");
     let path = install_fake_cargo(
@@ -5740,9 +5780,105 @@ exit 0
                     && matches!(
                         spawn.result,
                         Some(crate::cli::prototype1_state::journal::SpawnObservation::Acknowledged)
-                    )
+                )
         )
     }));
+
+    let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "node_id".to_string(),
+        cozo::DataValue::from(node.node_id.clone()),
+    );
+    params.insert("phase".to_string(), cozo::DataValue::from("spawn"));
+    let builds = db
+        .raw_query_params(
+            r#"
+?[
+    build_id,
+    runtime_id,
+    artifact_id,
+    outcome,
+    binary_ref
+] :=
+    *eval_build_event {
+        build_id,
+        node_id,
+        runtime_id,
+        artifact_id,
+        phase,
+        outcome,
+        binary_ref
+    },
+    node_id = $node_id,
+    phase = $phase
+"#,
+            params,
+        )
+        .expect("query spawn build event");
+    assert_eq!(builds.rows.len(), 1);
+    let build_row = builds.row_refs().next().expect("spawn build row");
+    assert_eq!(
+        build_row.get::<String>("runtime_id").expect("runtime"),
+        runtime
+    );
+    assert_eq!(
+        build_row.get::<String>("artifact_id").expect("artifact"),
+        node.derived_artifact_id
+            .as_ref()
+            .expect("derived artifact")
+            .to_string()
+    );
+    assert_eq!(
+        build_row.get::<String>("outcome").expect("outcome"),
+        "acknowledged"
+    );
+    let binary_ref_id = build_row
+        .get::<String>("binary_ref")
+        .expect("binary ref id");
+    assert!(!binary_ref_id.is_empty());
+
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "binary_ref_id".to_string(),
+        cozo::DataValue::from(binary_ref_id),
+    );
+    let binaries = db
+        .raw_query_params(
+            r#"
+?[
+    binary_ref_id,
+    built_by,
+    source_ref,
+    content_sha256
+] :=
+    *eval_binary_ref {
+        binary_ref_id,
+        built_by,
+        source_ref,
+        content_sha256
+    },
+    binary_ref_id = $binary_ref_id
+"#,
+            params,
+        )
+        .expect("query spawn binary ref");
+    assert_eq!(binaries.rows.len(), 1);
+    let binary_row = binaries.row_refs().next().expect("spawn binary row");
+    assert_eq!(
+        binary_row.get::<String>("built_by").expect("built by"),
+        runtime
+    );
+    assert_eq!(
+        binary_row.get::<String>("source_ref").expect("source ref"),
+        outcome.binary_path.display().to_string()
+    );
+    assert!(
+        !binary_row
+            .get::<String>("content_sha256")
+            .expect("binary hash")
+            .is_empty()
+    );
 }
 
 #[tokio::test]
