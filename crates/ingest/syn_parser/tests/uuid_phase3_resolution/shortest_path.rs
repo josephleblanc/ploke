@@ -312,7 +312,7 @@ fn test_spp_reexported_item_finds_original_path() {
         reexport_node.source_path,
         ["crate", "top_pub_mod", "top_pub_func"]
     ); // Path points to original item
-       // Check that the re-export is contained in the crate root module
+    // Check that the re-export is contained in the crate root module
     let crate_root_id = tree.root().into_inner();
     assert!(graph.module_contains_node(crate_root_id, reexport_node.id));
 

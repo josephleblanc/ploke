@@ -2,9 +2,9 @@
 
 use colored::*; // Import colored for terminal colors
 use log::debug;
+use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::parser::nodes::{AsAnyNodeId, ModuleKind};
 use syn_parser::parser::relations::SyntacticRelation;
-use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::resolve::RelationIndexer;
 use syn_parser::run_phases_and_collect;
 

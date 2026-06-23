@@ -857,11 +857,6 @@ fn fixtures_command(args: Vec<String>) -> Result<(), XtaskError> {
             ensure_all_snapshot_fixture_profiles()
         }
         [command, flag] if command == "ensure" && flag == "--typed" => {
-            if !cfg!(feature = "typed_type_graph") {
-                return Err(XtaskError::new(
-                    "Typed type graph fixture validation requires xtask's `typed_type_graph` feature. Run `cargo run -p xtask --features typed_type_graph -- fixtures ensure --typed`.",
-                ));
-            }
             ensure_typed_fixture_sources()?;
             ensure_snapshot_fixtures(SnapshotFixtureSelection::TypedTypeGraph)
         }
@@ -897,79 +892,16 @@ fn snapshot_fixture_matches_selection(
 }
 
 fn regenerate_all_snapshot_fixture_profiles() -> Result<(), XtaskError> {
-    if cfg!(feature = "typed_type_graph") {
-        return Err(XtaskError::new(
-            "`fixtures regenerate --all` must be run without `typed_type_graph`; it regenerates active fixtures in the normal profile, then invokes the typed-only pass itself.",
-        ));
-    }
-
     regenerate_snapshot_fixtures(SnapshotFixtureSelection::Active)?;
-    run_typed_fixture_regeneration_pass()?;
+    regenerate_snapshot_fixtures(SnapshotFixtureSelection::TypedTypeGraph)?;
     Ok(())
 }
 
 fn ensure_all_snapshot_fixture_profiles() -> Result<(), XtaskError> {
-    if cfg!(feature = "typed_type_graph") {
-        return Err(XtaskError::new(
-            "`fixtures ensure --snapshots` must be run without `typed_type_graph`; it validates active fixtures in the normal profile, then invokes the typed-only pass itself.",
-        ));
-    }
-
     ensure_snapshot_fixtures(SnapshotFixtureSelection::Active)?;
-    run_typed_fixture_ensure_pass()?;
+    ensure_typed_fixture_sources()?;
+    ensure_snapshot_fixtures(SnapshotFixtureSelection::TypedTypeGraph)?;
     Ok(())
-}
-
-fn run_typed_fixture_regeneration_pass() -> Result<(), XtaskError> {
-    println!("Regenerating typed graph fixtures with xtask's typed_type_graph feature");
-    let status = ProcessCommand::new("cargo")
-        .current_dir(workspace_root())
-        .args([
-            "run",
-            "-p",
-            "xtask",
-            "--features",
-            "typed_type_graph",
-            "--",
-            "fixtures",
-            "regenerate",
-            "--typed",
-        ])
-        .status()
-        .map_err(|err| XtaskError::new(format!("spawn typed fixture regeneration pass: {err}")))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(XtaskError::new(format!(
-            "typed fixture regeneration pass exited with status {status}"
-        )))
-    }
-}
-
-fn run_typed_fixture_ensure_pass() -> Result<(), XtaskError> {
-    println!("Ensuring typed graph fixtures with xtask's typed_type_graph feature");
-    let status = ProcessCommand::new("cargo")
-        .current_dir(workspace_root())
-        .args([
-            "run",
-            "-p",
-            "xtask",
-            "--features",
-            "typed_type_graph",
-            "--",
-            "fixtures",
-            "ensure",
-            "--typed",
-        ])
-        .status()
-        .map_err(|err| XtaskError::new(format!("spawn typed fixture ensure pass: {err}")))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(XtaskError::new(format!(
-            "typed fixture ensure pass exited with status {status}"
-        )))
-    }
 }
 
 fn regenerate_snapshot_fixtures(selection: SnapshotFixtureSelection) -> Result<(), XtaskError> {
@@ -986,15 +918,6 @@ fn regenerate_snapshot_fixtures(selection: SnapshotFixtureSelection) -> Result<(
     if fixtures.is_empty() {
         println!("No automated fixtures matched the requested regeneration selection.");
         return Ok(());
-    }
-
-    let typed_selected = fixtures
-        .iter()
-        .any(|(fixture, _)| fixture.status == FixtureStatus::TypedTypeGraph);
-    if typed_selected && !cfg!(feature = "typed_type_graph") {
-        return Err(XtaskError::new(
-            "Typed type graph fixture regeneration requires xtask's `typed_type_graph` feature. Run `cargo run -p xtask --features typed_type_graph -- fixtures regenerate --typed`.",
-        ));
     }
 
     let shared_count = fixtures

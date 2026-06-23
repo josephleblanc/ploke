@@ -4,15 +4,15 @@
 #[cfg(test)]
 mod export_tests {
     use ploke_core::NodeId; // Removed unused PROJECT_NAMESPACE_UUID
-                            // Removed unused HashMap import
+    // Removed unused HashMap import
     use syn_parser::resolve::module_tree::ModuleTree;
     use syn_parser::{
         error::SynParserError,
         parser::{
+            CodeGraph, // Keep CodeGraph
             graph::{GraphAccess, ParsedCodeGraph},
             nodes::{GraphId, ModuleNode, NodePath},
             relations::{Relation, RelationKind},
-            CodeGraph, // Keep CodeGraph
         },
         resolve::module_tree::TreeRelation,
     };

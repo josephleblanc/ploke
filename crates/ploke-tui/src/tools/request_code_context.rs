@@ -364,7 +364,7 @@ mod gat_tests {
         assert!(params.search_term.is_none());
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     #[tokio::test]
     async fn request_code_context_degrades_on_non_typed_db() -> color_eyre::Result<()> {
         use crate::app::commands::harness::TestRuntime;
@@ -538,7 +538,7 @@ mod gat_tests {
         Ok(())
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     #[tokio::test]
     #[ignore = "quarantined: do not force BM25/top_k behavior to satisfy matrix payload assertions"]
     async fn request_code_context_tool_emits_matrix_type_context() -> color_eyre::Result<()> {
@@ -676,7 +676,7 @@ mod gat_tests {
         Ok(())
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     #[tokio::test(flavor = "multi_thread")]
     #[ignore = "live OpenRouter model/tool matrix test; requires OPENROUTER_API_KEY"]
     async fn live_request_code_context_matrix_uses_production_tool_payload()
@@ -865,7 +865,7 @@ mod gat_tests {
         Ok(())
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn assert_matrix_payload_has_type_context(
         case: &ploke_test_utils::TypeShapeCase,
         expected_target_id: uuid::Uuid,
@@ -893,7 +893,7 @@ mod gat_tests {
         );
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn covers(
         case: &ploke_test_utils::TypeShapeCase,
         coverage: ploke_test_utils::ShapePipelineCoverage,
@@ -901,7 +901,7 @@ mod gat_tests {
         case.coverage.iter().any(|candidate| *candidate == coverage)
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn resolve_matrix_target(
         db: &ploke_db::Database,
         selector: ploke_test_utils::TargetSelector,
@@ -938,7 +938,7 @@ mod gat_tests {
         }
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn type_context_kind(
         relation: ploke_db::TypeContextRelation,
     ) -> ploke_core::rag_types::TypeContextKind {
@@ -973,7 +973,7 @@ mod gat_tests {
         }
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn resolve_matrix_expected_type_context_seed_ids(
         db: &ploke_db::Database,
         case: &ploke_test_utils::TypeShapeCase,
@@ -1009,7 +1009,7 @@ mod gat_tests {
         Ok(seeds)
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn resolve_matrix_owner(
         db: &ploke_db::Database,
         selector: ploke_test_utils::OwnerSelector,
@@ -1075,7 +1075,7 @@ mod gat_tests {
         }
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn one_uuid(db: &ploke_db::Database, script: &str) -> color_eyre::Result<uuid::Uuid> {
         let rows = db.raw_query(script)?;
         assert_eq!(
@@ -1087,7 +1087,7 @@ mod gat_tests {
         Ok(ploke_db::to_uuid(&rows.rows[0][0])?)
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn one_uuid_by_file_suffix(
         db: &ploke_db::Database,
         script: &str,
@@ -1114,7 +1114,7 @@ mod gat_tests {
         Ok(ploke_db::to_uuid(&matching[0])?)
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn module_path(items: &[&str]) -> String {
         format!(
             "[{}]",
@@ -1126,7 +1126,7 @@ mod gat_tests {
         )
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn function_in_module_query(module_path_items: &[&str], name: &str) -> String {
         let module_path = module_path(module_path_items);
         format!(
@@ -1136,17 +1136,17 @@ mod gat_tests {
         )
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn function_in_file_query(name: &str) -> String {
         item_in_file_query("function", name)
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn struct_in_file_query(name: &str) -> String {
         item_in_file_query("struct", name)
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn item_in_file_query(relation: &str, name: &str) -> String {
         format!(
             r#"?[id, file_path] :=
@@ -1160,7 +1160,7 @@ mod gat_tests {
         )
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn struct_in_module_query(module_path_items: &[&str], name: &str) -> String {
         let module_path = module_path(module_path_items);
         format!(
@@ -1175,12 +1175,12 @@ mod gat_tests {
         )
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn trait_in_file_query(name: &str) -> String {
         item_in_file_query("trait", name)
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn trait_in_module_query(module_path_items: &[&str], name: &str) -> String {
         let module_path = module_path(module_path_items);
         format!(
@@ -1195,7 +1195,7 @@ mod gat_tests {
         )
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn method_by_impl_self_query(self_type: &str, method: &str) -> String {
         format!(
             r#"?[method_id] :=
@@ -1215,7 +1215,7 @@ mod gat_tests {
         )
     }
 
-    #[cfg(all(feature = "test_harness", feature = "typed_type_graph"))]
+    #[cfg(feature = "test_harness")]
     fn method_by_impl_trait_self_query(trait_name: &str, self_type: &str, method: &str) -> String {
         format!(
             r#"?[method_id] :=

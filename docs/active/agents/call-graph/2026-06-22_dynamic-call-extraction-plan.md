@@ -47,9 +47,9 @@ Completed after implementation:
 
 ```bash
 cargo check -p syn_parser
-cargo check -p syn_parser --features typed_type_graph
-cargo test -p syn_parser --features typed_type_graph call_sites -- --nocapture
-cargo test -p ploke-transform --features typed_type_graph transform::tests -- --nocapture
+cargo check -p syn_parser
+cargo test -p syn_parser call_sites -- --nocapture
+cargo test -p ploke-transform transform::tests -- --nocapture
 ```
 
 All commands passed. The `call_sites` filter ran seventeen paranoid fixture tests and all passed.

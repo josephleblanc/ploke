@@ -84,16 +84,16 @@ default workspace test suite must remain green while the feature is incomplete.
 
 ```bash
 # Existing typed graph baseline before and after parser graph changes.
-cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --nocapture
+cargo test -p syn_parser type_relations_v2 -- --nocapture
 
 # First structural target; exact module path may be adjusted after the test file lands.
-cargo test -p syn_parser --features typed_type_graph fixture_nodes_public_method_records_self_private_method_call_site -- --nocapture
+cargo test -p syn_parser fixture_nodes_public_method_records_self_private_method_call_site -- --nocapture
 
 # Resolver target; only run after structural call-site extraction is green.
-cargo test -p syn_parser --features typed_type_graph fixture_nodes_public_method_resolves_self_private_method_edge -- --nocapture
+cargo test -p syn_parser fixture_nodes_public_method_resolves_self_private_method_edge -- --nocapture
 
 # Broad parser check after each green implementation slice.
-cargo test -p syn_parser --features typed_type_graph -- --nocapture
+cargo test -p syn_parser -- --nocapture
 
 # Fixture/workspace checkpoint before and after schema-affecting slices and before handoff.
 cargo xtask verify-fixtures
@@ -107,7 +107,7 @@ cargo test -p ploke-db --features call_graph call_graph -- --nocapture
 
 # Formatting/checks before handoff.
 cargo fmt --all --check
-cargo check -p syn_parser --features typed_type_graph
+cargo check -p syn_parser
 ```
 
 When a slice adds, removes, or renames a persisted relation, run the
@@ -115,7 +115,7 @@ registry-backed fixture commands before claiming the workspace checkpoint:
 
 ```bash
 cargo xtask fixtures ensure --snapshots
-cargo run -p xtask --features typed_type_graph -- fixtures regenerate --typed
+cargo xtask fixtures regenerate --typed
 ```
 
 Fixture lifecycle docs:
@@ -165,7 +165,7 @@ Files:
 
 Steps:
 1. Run `git status --short` from repo root and save/quote the output.
-2. Run `cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --nocapture 2>&1 | tee target/test-output/call-graph/00-preflight-baseline.log`.
+2. Run `cargo test -p syn_parser type_relations_v2 -- --nocapture 2>&1 | tee target/test-output/call-graph/00-preflight-baseline.log`.
 3. Run fixture preflight:
    `cargo xtask verify-fixtures 2>&1 | tee target/test-output/call-graph/00-verify-fixtures.log`
    and
@@ -256,7 +256,7 @@ The call site is a method call for self.private_method():
 Steps:
 1. Follow the existing `AssocParanoidArgs` style from `uuid_phase2_partial_graphs/assoc_nodes/methods.rs` to regenerate `public_method` and `private_method` IDs from fixture, relative path, path, owner, name, span, and cfgs.
 2. Reference the intended parser API names in the test even though they do not exist yet: `CallBodyOwnerId`, `AnyCallSiteId`, `MethodCallSiteId`, `CallNode`, `CallSiteRelation::BodyContainsCall`, and graph accessors for call sites/relations.
-3. Gate the module with `#[cfg(feature = "typed_type_graph")]` in `uuid_phase3_resolution/mod.rs` unless the implementer proves the API is feature-independent and all default tests still compile.
+3. Add the module directly under `uuid_phase3_resolution/mod.rs`; typed graph support is baseline and no longer has a `typed_type_graph` feature gate.
 4. Run the focused test command.
 
 Expected RED:
@@ -266,7 +266,7 @@ Expected RED:
 Completion conditions:
 - The test file exists and is included by `uuid_phase3_resolution/mod.rs`.
 - The test is strict: no `Ok(_) | Err(_)` acceptance, no `todo!()` in the test as the source of failure, no fallback branch accepting missing implementation.
-- Running `cargo test -p syn_parser --features typed_type_graph fixture_nodes_public_method_records_self_private_method_call_site -- --nocapture` produces the expected RED failure.
+- Running `cargo test -p syn_parser fixture_nodes_public_method_records_self_private_method_call_site -- --nocapture` produces the expected RED failure.
 - The task report includes the exact compiler/assertion failure.
 
 Stop/escalate if:
@@ -339,7 +339,7 @@ Steps:
 5. Keep naming within the repo rule: no variables/fields with more than three semantic parts. If a name wants four parts, use a nested typed carrier instead.
 
 Completion conditions:
-- `cargo check -p syn_parser --features typed_type_graph` compiles past the new type definitions or fails only because graph storage/accessors are not implemented yet in Task 2.2.
+- `cargo check -p syn_parser` compiles past the new type definitions or fails only because graph storage/accessors are not implemented yet in Task 2.2.
 - The structural RED test failure moves from missing type names toward missing graph accessors/storage or zero parsed call sites.
 - No broad `AnyNodeId`-only resolved call relation is introduced.
 
@@ -386,9 +386,9 @@ Steps:
 4. Add relation uniqueness/cardinality helpers only if needed by tests; do not overbuild indexes yet.
 
 Completion conditions:
-- `cargo check -p syn_parser --features typed_type_graph` passes.
+- `cargo check -p syn_parser` passes.
 - The structural RED test runs and fails because there are zero call sites or zero `BodyContainsCall` relations, not because the API is missing.
-- Existing baseline `cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --nocapture` still passes or any failure is explained as unrelated/pre-existing.
+- Existing baseline `cargo test -p syn_parser type_relations_v2 -- --nocapture` still passes or any failure is explained as unrelated/pre-existing.
 
 Stop/escalate if:
 - Existing graph validation assumes every relation is a `SyntacticRelation` over primary nodes and there is no safe place for secondary call-site relations without a broader design decision.
@@ -449,7 +449,7 @@ Completion conditions:
 - `fixture_nodes_public_method_records_self_private_method_call_site` passes.
 - The test asserts `private_method` owns zero call sites and that assertion passes.
 - The body visitor does not alter existing method node IDs, method spans, impl relations, or type relations.
-- `cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --nocapture` passes after the change.
+- `cargo test -p syn_parser type_relations_v2 -- --nocapture` passes after the change.
 
 Stop/escalate if:
 - Calling the body visitor changes existing method ID generation order or parent scope IDs.
@@ -596,7 +596,7 @@ Steps:
 3. Update graph initialization and merge paths.
 
 Completion conditions:
-- `cargo check -p syn_parser --features typed_type_graph` passes.
+- `cargo check -p syn_parser` passes.
 - Resolver RED test runs and fails because no resolved edge/status is emitted, not because storage is missing.
 - Structural tests remain green.
 
@@ -767,15 +767,15 @@ Files:
 Commands:
 
 ```bash
-cargo test -p syn_parser --features typed_type_graph fixture_nodes_public_method_records_self_private_method_call_site -- --nocapture 2>&1 | tee target/test-output/call-graph/final-structural.log
-cargo test -p syn_parser --features typed_type_graph fixture_nodes_public_method_resolves_self_private_method_edge -- --nocapture 2>&1 | tee target/test-output/call-graph/final-resolver.log
-cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --nocapture 2>&1 | tee target/test-output/call-graph/final-type-relations-v2.log
+cargo test -p syn_parser fixture_nodes_public_method_records_self_private_method_call_site -- --nocapture 2>&1 | tee target/test-output/call-graph/final-structural.log
+cargo test -p syn_parser fixture_nodes_public_method_resolves_self_private_method_edge -- --nocapture 2>&1 | tee target/test-output/call-graph/final-resolver.log
+cargo test -p syn_parser type_relations_v2 -- --nocapture 2>&1 | tee target/test-output/call-graph/final-type-relations-v2.log
 cargo xtask verify-fixtures 2>&1 | tee target/test-output/call-graph/final-verify-fixtures.log
 cargo xtask verify-backup-dbs 2>&1 | tee target/test-output/call-graph/final-verify-backup-dbs.log
 cargo test --workspace --no-fail-fast 2>&1 | tee target/test-output/call-graph/final-workspace.log
 cargo test -p syn_parser --features call_graph call_sites -- --nocapture 2>&1 | tee target/test-output/call-graph/final-syn-parser-call-graph.log
 cargo test -p ploke-transform --features call_graph transform::tests -- --nocapture 2>&1 | tee target/test-output/call-graph/final-transform-call-graph.log
-cargo check -p syn_parser --features typed_type_graph 2>&1 | tee target/test-output/call-graph/final-check.log
+cargo check -p syn_parser 2>&1 | tee target/test-output/call-graph/final-check.log
 cargo fmt --all --check 2>&1 | tee target/test-output/call-graph/final-fmt.log
 ```
 

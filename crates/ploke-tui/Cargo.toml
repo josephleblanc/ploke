@@ -120,7 +120,6 @@ default = [
     "test_harness",
     "live_api_tests",
     "ploke-llm-refactor",
-    "typed_type_graph",
 ]
 tool_contracts = []
 flakey_test = ["live_api_tests"]
@@ -130,12 +129,6 @@ ploke-llm-refactor = []
 llm_refactor = []
 live_api_tests = []
 test_harness = []
-typed_type_graph = [
-    "syn_parser/typed_type_graph",
-    "ploke-transform/typed_type_graph",
-    "ploke-db/typed_type_graph",
-    "ploke-rag/typed_type_graph",
-]
 # CALL_GRAPH_GATE:db-projection - propagated rollout feature for call graph DB projection consumers.
 call_graph = [
     "syn_parser/call_graph",

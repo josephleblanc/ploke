@@ -1,5 +1,3 @@
-#![cfg(feature = "typed_type_graph")]
-
 //! Paranoid tests for parser-owned call-site records and call-resolution facts.
 //!
 //! These tests intentionally mirror the node-level `paranoid_test_*` style:

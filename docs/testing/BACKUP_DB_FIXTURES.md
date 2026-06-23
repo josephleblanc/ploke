@@ -1,7 +1,7 @@
 # Backup DB Fixtures
 
 Last reviewed: 2026-06-12
-Last updated: 2026-06-12
+Last updated: 2026-06-23
 
 This document is the current inventory for backup database fixtures under
 the shared DB snapshot fixture directory. It records which source targets
@@ -56,8 +56,7 @@ recreation guidance:
 - `cargo xtask fixtures ensure --snapshots`
   - ensures current active and typed graph fixtures are available without
     sharing checkout-local DB rows
-  - runs active fixture validation in the normal profile, then invokes a
-    typed-only xtask pass for typed graph fixtures
+  - runs active fixture validation, then validates typed graph fixtures in the same baseline profile
   - creates or repairs checkout-local active fixtures under
     `tests/backup_dbs/local/`
   - stages committed seed artifacts from `tests/backup_dbs/` only when a
@@ -76,8 +75,7 @@ recreation guidance:
   - writes shared-snapshot fixtures under the shared DB snapshot fixture
     directory using the registered filenames
   - skips manual legacy/orphaned snapshots
-  - runs active fixtures in the normal profile, then invokes a typed-only xtask
-    pass for typed graph fixtures
+  - runs active fixtures, then regenerates typed graph fixtures in the same baseline profile
   - use `--active` or `--typed` instead of `--all` for narrower regeneration
 - `cargo xtask repair-backup-db-schema --fixture <id>`
   - repairs a stale legacy backup in place when it is missing the current
@@ -129,10 +127,9 @@ Registry status note:
   `cargo xtask recreate-backup-db --fixture <id>`, but they are not part of the
   default verification set until promoted to `Active`.
 - `TypedTypeGraph` fixtures are current-schema typed type graph backups. They
-  are intentionally excluded from default backup verification because the
-  default import path still exercises the legacy type-resolution schema. Verify
-  them with `cargo run -p xtask --features typed_type_graph --
-  verify-backup-dbs --fixture <id>`.
+  are intentionally excluded from default backup verification because plain
+  fixture imports intentionally exclude typed graph relations. Verify them with
+  `cargo xtask verify-backup-dbs --fixture <id>`.
 - `Legacy` and `Orphaned` fixtures remain outside the default active validation
   set unless explicitly selected.
 
@@ -222,7 +219,7 @@ impl Drop for FixtureRestoreGuard {
 - Parsed target(s): `tests/fixture_crates/fixture_nodes`
 - Expected DB config:
   - plain backup import
-  - normal type-resolution profile fixture; under `typed_type_graph` workspace
+  - normal type-resolution profile fixture; under current typed graph baseline workspace
     builds, active fixture loaders import the same code graph while leaving
     typed graph relations empty rather than treating this as typed graph corpus
     coverage
@@ -348,7 +345,7 @@ contracts. The checkout identity, backup stem, and test intent live in one
 registry-backed place instead of in local symlinks under
 `tests/fixture_github_clones/corpus`.
 
-Run `cargo run -p xtask --features typed_type_graph -- recreate-backup-db
+Run `cargo xtask recreate-backup-db
 --fixture <id>` to clone or reuse the pinned checkout, check out the recorded
 commit, parse and transform the crate with typed type graph relations enabled,
 write the dated backup under the fixture's configured shared-snapshot path, and

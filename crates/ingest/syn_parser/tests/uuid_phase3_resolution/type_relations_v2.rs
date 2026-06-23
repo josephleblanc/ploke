@@ -1,5 +1,3 @@
-#![cfg(feature = "typed_type_graph")]
-
 //! Integration tests for the typed type-resolution v2 relation surface.
 //!
 //! These cases assert exact typed relation endpoints rather than legacy
@@ -54,16 +52,17 @@ use syn_parser::{
     parser::ParsedCodeGraph,
     resolve::{
         module_tree::ModuleTree,
-        type_resolution_v2::{resolve_type_relations_after_tree, TypeRelationReport},
+        type_resolution_v2::{TypeRelationReport, resolve_type_relations_after_tree},
     },
 };
 
 use crate::common::build_tree_for_tests;
 use crate::common::type_relation_resolution::{
-    enum_variant_field, impl_associated_const, impl_associated_type, impl_block, impl_selector,
-    item, method, named, ordinary_item, ordinary_relation, ordinary_source, ordinary_type_param,
-    root, struct_field, trait_associated_const, trait_associated_type, trait_item, trait_relation,
-    trait_source, union_field, FieldSelector, TypeUseSourceSlot,
+    FieldSelector, TypeUseSourceSlot, enum_variant_field, impl_associated_const,
+    impl_associated_type, impl_block, impl_selector, item, method, named, ordinary_item,
+    ordinary_relation, ordinary_source, ordinary_type_param, root, struct_field,
+    trait_associated_const, trait_associated_type, trait_item, trait_relation, trait_source,
+    union_field,
 };
 use crate::{type_relation_cases, type_relations_exact_sources_case};
 

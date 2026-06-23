@@ -136,9 +136,9 @@ Those fixtures are registered in `crates/test-utils/src/fixture_dbs.rs` and docu
 
 Verification checkpoint from earlier on 2026-05-10:
 
-- `cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --nocapture`
+- `cargo test -p syn_parser type_relations_v2 -- --nocapture`
   Passed via test sub-agent: 28 passed, 0 failed, 368 filtered out.
-- `cargo test -p ploke-db --features typed_type_graph type_graph_queries::corpus_contracts -- --nocapture`
+- `cargo test -p ploke-db type_graph_queries::corpus_contracts -- --nocapture`
   Passed via test sub-agent: 5 passed, 0 failed, 6 ignored, 55 filtered out.
 
 Current corpus-contract status after adding edge-pushing real-corpus tests and reorganizing `corpus_contracts.rs`:
@@ -160,9 +160,9 @@ Current corpus-contract status after adding edge-pushing real-corpus tests and r
   - `ConstArrayLength = <Const<N> as IntoArrayLength>::ArrayLength` reaches `IntoArrayLength`.
 - Associated type bound contracts now pass over the regenerated `corpus_chrono_type_graph` backup:
   - `TimeZone { type Offset: Offset; }` reaches `Offset`.
-- `cargo check -p ploke-db --tests --features typed_type_graph` passed after the module split, with existing unrelated warnings.
+- `cargo check -p ploke-db --tests` passed after the module split, with existing unrelated warnings.
 - Focused associated-type-bound run:
-  `cargo test -p ploke-db --features typed_type_graph chrono_backup_timezone_associated_offset_bound_reaches_offset_trait -- --nocapture`
+  `cargo test -p ploke-db chrono_backup_timezone_associated_offset_bound_reaches_offset_trait -- --nocapture`
   passed after regenerating `corpus_chrono_type_graph`.
 
 ## Known Gaps

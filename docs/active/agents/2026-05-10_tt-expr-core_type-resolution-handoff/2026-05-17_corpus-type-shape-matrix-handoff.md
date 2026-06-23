@@ -97,13 +97,13 @@ Final focused verification was run by a Spark test-runner subagent with:
 
 ```sh
 PLOKE_DB_SNAPSHOT_FIXTURE_DIR=/home/brasides/code/agent-dir/ploke/tests/backup_dbs \
-  cargo test -p ploke-db --features typed_type_graph corpus_matrix_ -- --nocapture
+  cargo test -p ploke-db corpus_matrix_ -- --nocapture
 
 PLOKE_DB_SNAPSHOT_FIXTURE_DIR=/home/brasides/code/agent-dir/ploke/tests/backup_dbs \
-  cargo test -p ploke-rag --features typed_type_graph corpus_type_shape_matrix -- --nocapture
+  cargo test -p ploke-rag corpus_type_shape_matrix -- --nocapture
 
 PLOKE_DB_SNAPSHOT_FIXTURE_DIR=/home/brasides/code/agent-dir/ploke/tests/backup_dbs \
-  cargo test -p ploke-tui --features test_harness,typed_type_graph request_code_context_tool_emits_matrix_type_context -- --nocapture
+  cargo test -p ploke-tui --features test_harness request_code_context_tool_emits_matrix_type_context -- --nocapture
 ```
 
 All three passed:
@@ -125,7 +125,7 @@ PLOKE_DB_SNAPSHOT_FIXTURE_DIR=/home/brasides/code/agent-dir/ploke/tests/backup_d
   cargo test --workspace
 
 PLOKE_DB_SNAPSHOT_FIXTURE_DIR=/home/brasides/code/agent-dir/ploke/tests/backup_dbs \
-  cargo test -p ploke-tui --features test_harness,typed_type_graph \
+  cargo test -p ploke-tui --features test_harness \
     live_request_code_context_matrix_uses_production_tool_payload -- --ignored --nocapture
 ```
 

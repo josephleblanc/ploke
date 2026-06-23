@@ -132,9 +132,8 @@ must be isolated with a Cargo feature, not `#[ignore]`.
 
 Use `call_graph` as the single Cargo feature name for this rollout. As the
 feature crosses crate boundaries, propagate that same feature through dependency
-features instead of inventing crate-local names. Where the implementation still
-requires typed graph internals, `call_graph` may depend on the existing
-`typed_type_graph` feature; keep that dependency explicit in `Cargo.toml`.
+features instead of inventing crate-local names. Typed type graph support is now
+baseline and no longer has a `typed_type_graph` Cargo feature.
 
 At the start of a call-graph work session, after every schema/fixture-affecting
 slice, and before handoff, run and log the default workspace checkpoint:
@@ -172,7 +171,7 @@ registry-backed commands rather than weakening import validation:
 
 ```bash
 cargo xtask fixtures ensure --snapshots
-cargo run -p xtask --features typed_type_graph -- fixtures regenerate --typed
+cargo xtask fixtures regenerate --typed
 ```
 
 Fixture lifecycle docs:
@@ -215,7 +214,7 @@ Current workspace audit rows:
 | Marker | Classification | Evidence | Gate or owner | Expected pass/update point |
 | --- | --- | --- | --- | --- |
 | `CALL_GRAPH_GATE:db-projection` | Recent call-graph DB projection changed default schema/import expectations. | `ploke-db --test mod` and `ploke-rag --lib` fail on stale backups with `Cannot find requested stored relation 'call_relation'`; `git log` points at `a07c4b4e Project call graph facts into Cozo`. | Gate DB schema/projection and consuming tests behind Cargo feature `call_graph`; regenerate fixtures before ungating. | DB projection integration slice is complete, registered active + typed corpus fixtures have current call-graph relations, and default `cargo test --workspace --no-fail-fast` is green without the feature. |
-| `CALL_GRAPH_GATE:fixture-regeneration` | Fixture maintenance required by schema-affecting work, not a reason to weaken import validation. | Typed corpus backups predate `call_relation`; active checkout-local snapshots may need `cargo xtask fixtures ensure --snapshots`; typed shared snapshots may need `cargo run -p xtask --features typed_type_graph -- fixtures regenerate --typed`. | Fixture registry/docs owner; see `docs/testing/BACKUP_DB_FIXTURES.md` and `docs/how-to/recreate-backup-db-fixtures.md`. | Fixture regeneration/review slice updates registry/docs/seeds or records a credential/provider blocker. |
+| `CALL_GRAPH_GATE:fixture-regeneration` | Fixture maintenance required by schema-affecting work, not a reason to weaken import validation. | Typed corpus backups predate `call_relation`; active checkout-local snapshots may need `cargo xtask fixtures ensure --snapshots`; typed shared snapshots may need `cargo xtask fixtures regenerate --typed`. | Fixture registry/docs owner; see `docs/testing/BACKUP_DB_FIXTURES.md` and `docs/how-to/recreate-backup-db-fixtures.md`. | Fixture regeneration/review slice updates registry/docs/seeds or records a credential/provider blocker. |
 | `CALL_GRAPH_GATE:non-callgraph-reds` | Broad-run failures not explained by call-graph DB projection. | Current examples: `ploke-eval` traversal/history failures, `ploke-tree` `todo!()`, `ploke-tui` `SampleStruct` edit-apply resolution failures, and `ploke-tui --test integration` workspace subset interference. | Do not hide these under `call_graph`; route to their owning plans or fix separately. | Each owning plan either makes the test green or records a separate strict feature gate/fixture contract without weakening assertions. |
 
 Post-gate evidence, 2026-06-23:
@@ -445,14 +444,14 @@ Known-good baseline after the ID-domain correction:
 
 ```bash
 cargo check -p syn_parser
-cargo check -p syn_parser --features typed_type_graph
-cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --nocapture
+cargo check -p syn_parser
+cargo test -p syn_parser type_relations_v2 -- --nocapture
 ```
 
 Focused structural/resolver call-site fixture tests now expected GREEN:
 
 ```bash
-cargo test -p syn_parser --features typed_type_graph call_sites -- --nocapture
+cargo test -p syn_parser call_sites -- --nocapture
 ```
 
 ## Drift prevention checklist
@@ -472,12 +471,12 @@ Commands run after structural extraction, resolver slices, path-call extraction,
 
 ```bash
 cargo check -p syn_parser
-cargo check -p syn_parser --features typed_type_graph
-cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --nocapture
-cargo test -p syn_parser --features typed_type_graph call_sites -- --nocapture
+cargo check -p syn_parser
+cargo test -p syn_parser type_relations_v2 -- --nocapture
+cargo test -p syn_parser call_sites -- --nocapture
 cargo check -p ploke-transform
-cargo check -p ploke-transform --features typed_type_graph
-cargo test -p ploke-transform --features typed_type_graph transform::tests -- --nocapture
+cargo check -p ploke-transform
+cargo test -p ploke-transform transform::tests -- --nocapture
 ```
 
 Result: all passed. The `call_sites` filter ran nineteen paranoid fixture tests and all passed; transform projection tests passed for type relations, resolved call edges, and unsupported call statuses.

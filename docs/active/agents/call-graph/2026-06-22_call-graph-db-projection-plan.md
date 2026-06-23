@@ -102,9 +102,9 @@ Completed after implementation:
 
 ```bash
 cargo check -p ploke-transform
-cargo check -p ploke-transform --features typed_type_graph
-cargo test -p ploke-transform --features typed_type_graph transform::tests -- --nocapture
-cargo test -p syn_parser --features typed_type_graph call_sites -- --nocapture
+cargo check -p ploke-transform
+cargo test -p ploke-transform transform::tests -- --nocapture
+cargo test -p syn_parser call_sites -- --nocapture
 ```
 
 All commands passed. Transform tests assert persisted `call_site`, `call_site_edge`, `call_relation`, and `call_resolution_status` rows for the resolved `super::restricted_func()` path call, the resolved `self.private_method()` method call, and the unsupported/no-edge `PathBuf::new()` path call.
@@ -127,7 +127,7 @@ must pass or its failures must be explicitly classified. In particular:
 
 ```bash
 cargo xtask fixtures ensure --snapshots
-cargo run -p xtask --features typed_type_graph -- fixtures regenerate --typed
+cargo xtask fixtures regenerate --typed
 cargo xtask verify-fixtures
 cargo xtask verify-backup-dbs
 cargo test --workspace --no-fail-fast

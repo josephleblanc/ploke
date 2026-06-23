@@ -1,16 +1,12 @@
 #![cfg(test)]
 use itertools::Itertools;
 use ploke_core::{ItemKind, NodeId};
-#[cfg(not(feature = "typed_type_graph"))]
-use ploke_core::{TypeId, TypeKind};
 use std::fs::File;
 use std::io::{Read, Seek};
 use std::path::{self, Path};
 use syn_parser::TestIds;
 use syn_parser::error::SynParserError; // Import directly from ploke_core
 use syn_parser::parser::graph::{CodeGraph, GraphAccess}; // Added GraphNode
-#[cfg(not(feature = "typed_type_graph"))]
-use syn_parser::parser::types::TypeNode;
 use syn_parser::parser::types::{GenericParamKind, GenericParamNode};
 use syn_parser::parser::visitor::calculate_cfg_hash_bytes;
 use syn_parser::parser::{ExtractSpan, ParsedCodeGraph, nodes::*};
@@ -22,17 +18,13 @@ use syn_parser::{
 use thiserror::Error; // Ensure thiserror is imported
 
 pub mod assoc_paranoid;
-#[cfg(feature = "typed_type_graph")]
 pub mod call_site_paranoid;
 pub mod debug_printers;
 pub mod macro_rule_tests;
 pub mod paranoid;
 pub mod parsed_fixtures;
 pub mod relation_paranoid;
-#[cfg(feature = "typed_type_graph")]
 pub mod type_relation_resolution;
-#[cfg(not(feature = "typed_type_graph"))]
-pub mod type_use_resolution;
 pub use assoc_paranoid::{AssocOwner, AssocParanoidArgs, AssocTestInfo};
 pub use parsed_fixtures::{
     PARSED_FIXTURE_CRATE_DIR_DETECTION, PARSED_FIXTURE_CRATE_NODES,
@@ -277,16 +269,6 @@ pub fn new_path_attribute(value: &str) -> Attribute {
         args: Vec::new(),
         value: Some(value.to_string()),
     }
-}
-
-/// Helper to find a TypeNode by its ID. Panics if not found.
-#[cfg(not(feature = "typed_type_graph"))]
-pub fn find_type_node(graph: &CodeGraph, type_id: TypeId) -> &TypeNode {
-    graph
-        .type_graph
-        .iter()
-        .find(|tn| tn.id == type_id)
-        .unwrap_or_else(|| panic!("TypeNode not found for TypeId: {}", type_id))
 }
 
 #[derive(Debug, Clone)]
@@ -568,20 +550,4 @@ pub fn find_generic_param_by_name<'a>(
 #[cfg(not(feature = "type_bearing_ids"))]
 pub fn test_module_path(segments: &[&str]) -> Vec<String> {
     segments.iter().map(|s| s.to_string()).collect()
-}
-
-#[cfg(not(feature = "typed_type_graph"))]
-pub fn find_impl_for_type<'a>(graph: &'a CodeGraph, type_name: &str) -> Option<&'a ImplNode> {
-    graph.impls.iter().find(|i| {
-        if let Some(self_type) = graph
-            .type_graph
-            .iter()
-            .find(|t| t.id == i.self_type && i.trait_type.is_none())
-        {
-            if let TypeKind::Named { path, .. } = &self_type.kind {
-                return path.last().map(|s| s == type_name).unwrap_or(false);
-            }
-        }
-        false
-    })
 }

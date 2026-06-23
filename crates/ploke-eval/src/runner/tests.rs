@@ -920,10 +920,7 @@ mod tests {
         let selection = test_eval_embedding_selection();
         let baseline = starting_db_cache_metadata(&prepared, &selection);
 
-        assert_eq!(
-            baseline.typed_type_graph,
-            cfg!(feature = "typed_type_graph")
-        );
+        assert!(baseline.typed_type_graph);
 
         let mut with_typed = baseline.clone();
         with_typed.typed_type_graph = true;

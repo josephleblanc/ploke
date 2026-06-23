@@ -28,6 +28,5 @@ criterion = { version = "0.7", features = ["async_tokio"] }
 
 [features]
 default = []
-typed_type_graph = ["ploke-db/typed_type_graph"]
 # CALL_GRAPH_GATE:db-projection - propagated rollout feature for call graph DB projection consumers.
 call_graph = ["ploke-db/call_graph"]

@@ -161,17 +161,17 @@ support.
 Regression tests added with the fix:
 
 ```text
-cargo test -p ploke-rag --features typed_type_graph type_context_disabled_safely_when_relations_absent
+cargo test -p ploke-rag type_context_disabled_safely_when_relations_absent
 cargo test -p ploke-tui request_code_context_degrades_on_non_typed_db
 cargo test -p ploke-eval starting_db_cache_key_differs_by_typed_graph_surface
-cargo test -p ploke-eval --features typed_type_graph doctor_flags_stale_starting_db_missing_typed_graph_relations
+cargo test -p ploke-eval doctor_flags_stale_starting_db_missing_typed_graph_relations
 ```
 
 Existing tests cover the happy typed graph fixture path:
 
 ```text
-cargo test -p ploke-db --features typed_type_graph unit::type_graph_queries -- --nocapture
-cargo test -p ploke-rag --features typed_type_graph corpus_type_shape_matrix -- --nocapture
+cargo test -p ploke-db unit::type_graph_queries -- --nocapture
+cargo test -p ploke-rag corpus_type_shape_matrix -- --nocapture
 ```
 
 ## Resolution

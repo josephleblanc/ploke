@@ -7,6 +7,8 @@
 
 This directory tracks restart context for the `tt-expr-core` type-resolution work. Add future handoff notes here when the branch state or next task boundary changes enough that a new restart summary would be useful.
 
+2026-06-23 update: typed type graph support is now baseline and no longer has a `typed_type_graph` Cargo feature. Older documents in this directory may describe the former feature-gated rollout as historical context.
+
 ## Handoff Docs
 
 - [`2026-05-10_current-type-resolution-state.md`](2026-05-10_current-type-resolution-state.md)

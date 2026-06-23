@@ -1428,7 +1428,6 @@ fn extend_prompt_preflight_blockers(preflight: &PromptPreflight, blockers: &mut 
     }
 }
 
-#[cfg(feature = "typed_type_graph")]
 async fn attach_typed_graph_starting_db_check(repo_root: &Path, status: &mut ActiveParentStatus) {
     if let Some(blocker) = typed_graph_starting_db_cache_blocker(repo_root).await {
         status.blockers.push(blocker);
@@ -1438,18 +1437,12 @@ async fn attach_typed_graph_starting_db_check(repo_root: &Path, status: &mut Act
     }
 }
 
-#[cfg(not(feature = "typed_type_graph"))]
-async fn attach_typed_graph_starting_db_check(_repo_root: &Path, _status: &mut ActiveParentStatus) {
-}
-
-#[cfg(feature = "typed_type_graph")]
 async fn typed_graph_starting_db_cache_blocker(repo_root: &Path) -> Option<String> {
     use crate::layout::starting_db_cache_dir;
     let cache_dir = starting_db_cache_dir().ok()?;
     typed_graph_starting_db_cache_blocker_at(&cache_dir, repo_root).await
 }
 
-#[cfg(feature = "typed_type_graph")]
 async fn typed_graph_starting_db_cache_blocker_at(
     cache_dir: &Path,
     repo_root: &Path,
@@ -4878,7 +4871,6 @@ Suggested validation after editing: run `cargo test`.
         })
     }
 
-    #[cfg(feature = "typed_type_graph")]
     #[tokio::test]
     async fn doctor_flags_stale_starting_db_missing_typed_graph_relations() {
         use crate::runner::STARTING_DB_CACHE_VERSION;

@@ -2,7 +2,7 @@ use std::path::Path;
 
 use colored::Colorize;
 // Removed unused: use ploke_core::NodeId;
-use syn_parser::parser::{graph::GraphAccess as _, ParsedCodeGraph};
+use syn_parser::parser::{ParsedCodeGraph, graph::GraphAccess as _};
 
 use crate::common::{debug_printers::print_module_tree, uuid_ids_utils::run_phases_and_collect};
 

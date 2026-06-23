@@ -110,7 +110,7 @@ The current restart context is tracked in
 Current focused command:
 
 ```text
-cargo test -p ploke-db --features typed_type_graph type_graph_queries::corpus_contracts -- --nocapture
+cargo test -p ploke-db type_graph_queries::corpus_contracts -- --nocapture
 ```
 
 Expected current result: the ordinary, generic-bound, qualified-projection, and

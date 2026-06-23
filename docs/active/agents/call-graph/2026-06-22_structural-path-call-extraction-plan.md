@@ -47,9 +47,9 @@ Completed after implementation:
 
 ```bash
 cargo check -p syn_parser
-cargo check -p syn_parser --features typed_type_graph
-cargo test -p syn_parser --features typed_type_graph call_sites -- --nocapture
-cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --nocapture
+cargo check -p syn_parser
+cargo test -p syn_parser call_sites -- --nocapture
+cargo test -p syn_parser type_relations_v2 -- --nocapture
 ```
 
 All commands passed. The `call_sites` filter ran three focused tests and all passed.

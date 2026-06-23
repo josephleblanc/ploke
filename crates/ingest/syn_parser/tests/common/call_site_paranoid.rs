@@ -1,5 +1,3 @@
-#![cfg(feature = "typed_type_graph")]
-
 //! Paranoid call-site test helpers.
 //!
 //! This module is the call-site analogue of the node-level paranoid helpers in
