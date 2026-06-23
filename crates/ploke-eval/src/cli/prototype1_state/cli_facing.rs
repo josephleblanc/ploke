@@ -128,7 +128,7 @@ use crate::{
         prototype1_node_id, prototype1_nodes_dir, prototype1_scheduler_path,
         register_root_parent_node, resolved_treatment_branches_from_synthesis,
         select_primary_issue, treatment_branch_id, write_node_projection,
-        write_treatment_evaluation_projection,
+        write_parent_node_projection, write_treatment_evaluation_projection,
     },
     load_campaign_manifest, load_closure_state,
     model_registry::resolve_model_for_run,
@@ -3036,7 +3036,7 @@ fn publish_deterministic_tui_tools_child_plan(
     let parent_identity = parent.identity().clone();
     let root_node = parent.node().clone();
     let running_parent = project_node_status(&root_node, Prototype1NodeStatus::Running);
-    write_node_projection(&running_parent)?;
+    write_parent_node_projection(env.campaign_id, &running_parent)?;
 
     let generated =
         produce_deterministic_tui_tools_candidates(env.repo_root, &parent, child_budget)?;
@@ -3097,7 +3097,7 @@ fn publish_deterministic_tui_tools_child_plan(
             generated.rejected_attempts.clone(),
         )?;
         let failed_parent = project_node_status(&root_node, Prototype1NodeStatus::Failed);
-        write_node_projection(&failed_parent)?;
+        write_parent_node_projection(env.campaign_id, &failed_parent)?;
         return Err(CandidateGenerationError::InsufficientUniqueProposals {
             surface: edit_surface,
             min: child_budget.min as usize,

@@ -539,6 +539,35 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: root-parent registration still writes the scheduler node file before scheduler state and runner request persistence. When `prototype1/eval-store.cozo.sqlite` exists, it also mirrors that root `node.json` projection as a parent-visible `scheduler_node` compatibility `eval_record_ref` with source coordinates, payload JSON, and payload hash. Existing node authority-negative coverage still proves DB rows cannot replace the missing `node.json` gate.
 - Commit: current slice commit, `feat: mirror root parent node refs`.
 
+### Slice 7g — Deterministic TUI-tools parent-node compatibility record refs
+
+- Status: complete for deterministic TUI-tools parent Running/Failed node projections only; broad/default planning parent writes, child-plan child node projections, provider-facing broad planning outputs, and legacy process writes remain deferred.
+- Assumptions:
+  - `publish_deterministic_tui_tools_child_plan` is a deterministic/local child-plan producer and does not call a provider.
+  - The parent `node.json` projection remains the scheduler-node file authority.
+  - DB rows are parent-visible `eval_record_ref` compatibility evidence only; they do not replace the child-plan MessageBox, scheduler files, History, channel, or artifact/worktree authority.
+  - Changing the shared `write_treatment_evaluation_projection` helper would also affect provider-facing broad planning outputs, so this slice does not change it.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs`
+- Tests added/changed:
+  - updated `tui_edit_surface_parent_selection_publishes_child_plan` with owner eval DB row assertions for the parent Running projection.
+  - existing `prototype1_storage_authority_negative_node_ref_cannot_replace_file`
+  - existing `broad_harness_rejects_unbound_existing_child_plan`
+- Commands run:
+  - `gitnexus impact ... publish_deterministic_tui_tools_child_plan`: LOW risk; direct caller `run_parent_target_selection`, no affected processes.
+  - `cargo fmt --all`
+  - `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval tui_edit_surface_parent_selection_publishes_child_plan -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_record_ref -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_storage_authority_negative_node_ref_cannot_replace_file -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval broad_harness_rejects_unbound_existing_child_plan -- --nocapture`
+- Live API used: no; this sub-slice covers deterministic TUI-tools parent status projections only. Provider-facing broad planning remains unchanged and still requires live Google confidence when touched.
+- Checkpoints created/updated: none
+- Artifacts retained: none
+- Result: deterministic TUI-tools child-plan publication still writes and validates the child-plan MessageBox plus child node/request projection files. When `prototype1/eval-store.cozo.sqlite` exists, the parent Running/Failed `node.json` projections are also mirrored as parent-visible `scheduler_node` compatibility `eval_record_ref` rows with source coordinates, payload JSON, and payload hash. The broad-harness rejection test still proves deterministic child plans are not accepted as request-bound broad harness evidence.
+- Commit: current slice commit, `feat: mirror deterministic parent node refs`.
+
 ### Slice 7+ — Later evidence slices
 
 Create a new subsection per slice before editing.

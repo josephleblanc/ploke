@@ -2087,6 +2087,12 @@ fn deterministic_surface_producer_dedupes_duplicate_proposed_contents() {
 fn tui_edit_surface_parent_selection_publishes_child_plan() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+    ploke_db::Database::new_init()
+        .expect("empty eval db")
+        .write_backup_to_path(&db_path)
+        .expect("seed owner eval db");
     let repo_root = tmp.path().join("repo");
     write_broad_surface_targets(&repo_root);
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
@@ -2112,6 +2118,99 @@ fn tui_edit_surface_parent_selection_publishes_child_plan() {
     assert!(receipt.rejected_surface_attempts.is_empty());
     assert_eq!(body.parent_node_id(), "node-parent");
     assert!(body.message().exists());
+    let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "campaign_id".to_string(),
+        cozo::DataValue::from(CLI_TEST_CAMPAIGN.to_string()),
+    );
+    params.insert(
+        "producer_id".to_string(),
+        cozo::DataValue::from("node-parent".to_string()),
+    );
+    let rows = db
+        .raw_query_params(
+            r#"
+?[
+    family,
+    schema_version,
+    store_scope,
+    producer_role,
+    source_class,
+    evidence_class,
+    visibility_scope,
+    validation_status,
+    source_ref,
+    content_sha256,
+    payload_json
+] :=
+    *eval_record_ref {
+        campaign_id,
+        family,
+        schema_version,
+        store_scope,
+        producer_role,
+        producer_id,
+        source_class,
+        evidence_class,
+        visibility_scope,
+        validation_status,
+        source_ref,
+        content_sha256,
+        payload_json
+    },
+    campaign_id = $campaign_id,
+    producer_id = $producer_id,
+    family = "scheduler_node"
+"#,
+            params,
+        )
+        .expect("query deterministic parent scheduler-node refs");
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("record ref row");
+    assert_eq!(
+        row.get::<String>("family").expect("family"),
+        "scheduler_node"
+    );
+    assert_eq!(
+        row.get::<String>("schema_version").expect("schema"),
+        PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION
+    );
+    assert_eq!(row.get::<String>("store_scope").expect("scope"), "parent");
+    assert_eq!(row.get::<String>("producer_role").expect("role"), "parent");
+    assert_eq!(
+        row.get::<String>("source_class").expect("source"),
+        "compatibility_import"
+    );
+    assert_eq!(
+        row.get::<String>("evidence_class").expect("evidence"),
+        "compatibility"
+    );
+    assert_eq!(
+        row.get::<String>("visibility_scope").expect("visibility"),
+        "parent_visible"
+    );
+    assert_eq!(
+        row.get::<String>("validation_status").expect("status"),
+        "valid"
+    );
+    assert!(
+        row.get::<String>("source_ref")
+            .expect("source ref")
+            .contains("node.json:L1")
+    );
+    assert!(
+        !row.get::<String>("content_sha256")
+            .expect("hash")
+            .is_empty(),
+        "record ref carries payload hash"
+    );
+    assert!(
+        row.get::<String>("payload_json")
+            .expect("payload")
+            .contains("\"running\""),
+        "payload remains a compatibility ref for deterministic parent Running projection"
+    );
     for child in body.children() {
         let node = child.node_record();
         assert_eq!(node.parent_node_id.as_deref(), Some("node-parent"));
