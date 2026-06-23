@@ -1644,6 +1644,7 @@ mod tests {
     }
 
     fn evaluation_payload(node_id: &str, branch_id: &str, plan_index: u32) -> EvaluationPayload {
+        let runtime_id = format!("runtime:{node_id}");
         let input = crate::successor_selection::SelectionInput::new(
             crate::successor_selection::CandidateRef {
                 node_id: node_id.to_string(),
@@ -1674,14 +1675,14 @@ mod tests {
                 branch_id: Some(branch_id.to_string()),
                 generation: Some(2),
                 plan_index: Some(plan_index),
-                primary_runtime_id: Some(format!("runtime:{node_id}")),
+                primary_runtime_id: Some(runtime_id.clone()),
             },
             lifecycle: CandidateLifecycle {
                 planner_outcome: "done".to_string(),
                 node_status: "completed".to_string(),
             },
             evaluations: vec![test_sealed_evaluation(branch_id)],
-            runtimes: Vec::new(),
+            runtimes: test_runtime_evidence(&runtime_id),
             branches: Vec::new(),
             extra_document_citations: Vec::new(),
             extra_journal_citations: Vec::new(),

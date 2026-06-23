@@ -1679,15 +1679,25 @@ async fn zero_admission_batch_is_persisted() {
         Vec::new(),
     );
     let err = match result {
-        Ok(_) => panic!("zero admitted broad harness batch must not seal children"),
+        Ok(_) => panic!("zero accepted broad harness batch must not seal children"),
         Err(err) => err,
     };
-    assert!(
-        err.to_string()
-            .contains("broad harness admitted 0 child transaction(s)"),
-        "{err}"
-    );
+    let PrepareError::ChildPlanBelowMinimum {
+        runnable_children,
+        required_min,
+        attempted_slots,
+        accepted_results,
+        child_plan_path,
+    } = err
+    else {
+        panic!("unexpected error: {err:?}");
+    };
+    assert_eq!(runnable_children, 0);
+    assert_eq!(required_min, 2);
+    assert_eq!(attempted_slots, 9);
+    assert_eq!(accepted_results, 0);
     let files = ChildPlanFiles::for_parent(&manifest_path, &parent_identity, Vec::new());
+    assert_eq!(child_plan_path, files.message_at().path().to_path_buf());
     let bytes = fs::read(files.message_at().path())
         .expect("failed batch must persist a rejected-attempt child plan");
     let body: ChildPlanFiles = serde_json::from_slice(&bytes).expect("decode child plan");
@@ -3223,14 +3233,23 @@ async fn broad_slots_run_in_parallel() {
     )
     .await;
     let err = match result {
-        Ok(_) => panic!("fixture-backed parallel slots should not admit children"),
+        Ok(_) => panic!("fixture-backed parallel slots should not produce runnable children"),
         Err(err) => err,
     };
-    assert!(
-        err.to_string()
-            .contains("broad harness admitted 0 child transaction(s)"),
-        "{err}"
-    );
+    let PrepareError::ChildPlanBelowMinimum {
+        runnable_children,
+        required_min,
+        attempted_slots,
+        accepted_results,
+        ..
+    } = err
+    else {
+        panic!("unexpected error: {err:?}");
+    };
+    assert_eq!(runnable_children, 0);
+    assert_eq!(required_min, 2);
+    assert_eq!(attempted_slots, 2);
+    assert_eq!(accepted_results, 0);
 
     for slot_index in [0, 1] {
         assert!(
@@ -4952,6 +4971,7 @@ JSON
 cat > "$node_dir/results/$runtime_id.json" <<'RESULT'
 {result_json}
 RESULT
+cp "$node_dir/results/$runtime_id.json" "$node_dir/runner-result.json"
 cat >> "$channel_dir/child-to-parent.jsonl" <<JSON
 {{"schema_version":"prototype1-runtime-channel.v1","direction":"child_to_parent","campaign_id":"${{PLOKE_PROTOTYPE1_CAMPAIGN_ID:?missing campaign}}","node_id":"${{PLOKE_PROTOTYPE1_NODE_ID:?missing node}}","runtime_id":"$runtime_id","message_id":"00000000-0000-4000-8000-000000000003","recorded_at":0,"body_hash":"{terminal_hash}","body":{terminal_body}}}
 JSON
@@ -5060,10 +5080,20 @@ fn broad_harness_batch_rejects_below_minimum_admitted_transactions() {
         Err(err) => err,
     };
 
-    let PrepareError::InvalidBatchSelection { detail } = err else {
-        panic!("unexpected error variant");
+    let PrepareError::ChildPlanBelowMinimum {
+        runnable_children,
+        required_min,
+        attempted_slots,
+        accepted_results,
+        ..
+    } = err
+    else {
+        panic!("unexpected error variant: {err:?}");
     };
-    assert!(detail.contains("fewer than required minimum 3"));
+    assert_eq!(runnable_children, 2);
+    assert_eq!(required_min, 3);
+    assert_eq!(attempted_slots, 3);
+    assert_eq!(accepted_results, 2);
 }
 
 #[test]

@@ -337,10 +337,10 @@ mod tests {
 
     use ploke_records::ids::{ArtifactId, Coordinate, EntryId, OperationTarget, RuntimeId};
     use ploke_records::run_profile::{
-        Execution, ExecutionStopAfter, Generation, GenerationSource, GenerationSurface, Protocol,
-        RUN_PROFILE_COMMITMENT_SCHEMA_VERSION, RUN_PROFILE_SCHEMA_VERSION,
-        RunProfileCommitmentRecord, RunProfileRecord, Search, Selection, SelectionEvidence,
-        SelectionStrategy, Storage, Target, TraceJsonl,
+        EvalStorage, Execution, ExecutionStopAfter, Generation, GenerationSource,
+        GenerationSurface, Protocol, RUN_PROFILE_COMMITMENT_SCHEMA_VERSION,
+        RUN_PROFILE_SCHEMA_VERSION, RunProfileCommitmentRecord, RunProfileRecord, Search,
+        Selection, SelectionEvidence, SelectionStrategy, Storage, Target, TraceJsonl,
     };
     use ploke_records::scheduler::{ChildBudgetRecord, ChildScheduleModeRecord};
 
@@ -605,7 +605,7 @@ mod tests {
             name: "overnight-edit-surface".to_owned(),
             storage: Storage {
                 worktree_root: PathBuf::from("worktrees"),
-                eval: todo!(),
+                eval: EvalStorage::default(),
             },
             target: Target {
                 dataset_key: Some("ripgrep".to_owned()),

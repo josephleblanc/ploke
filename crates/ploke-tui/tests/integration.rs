@@ -50,6 +50,10 @@ mod eval_embedding_selection_live;
 #[path = "integration/get_code_edges_regression.rs"]
 mod get_code_edges_regression;
 
+#[cfg(feature = "live_api_tests")]
+#[path = "integration/google_ns_patch_live.rs"]
+mod google_ns_patch_live;
+
 #[path = "integration/index_workspace_targets.rs"]
 mod index_workspace_targets;
 

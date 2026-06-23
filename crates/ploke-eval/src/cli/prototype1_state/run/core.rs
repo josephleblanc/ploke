@@ -3556,11 +3556,20 @@ Suggested validation after editing: run `cargo test`.
         .await
         .expect_err("zero-admission child planning still returns the below-minimum error");
 
-        assert!(
-            err.to_string()
-                .contains("broad harness admitted 0 child transaction(s)"),
-            "{err}"
-        );
+        let PrepareError::ChildPlanBelowMinimum {
+            runnable_children,
+            required_min,
+            attempted_slots,
+            accepted_results,
+            ..
+        } = err
+        else {
+            panic!("unexpected error: {err:?}");
+        };
+        assert_eq!(runnable_children, 0);
+        assert_eq!(required_min, 2);
+        assert_eq!(attempted_slots, 9);
+        assert_eq!(accepted_results, 0);
         let plan_path = child_plan_path(&world.manifest_path, world.parent_identity.node_id());
         let bytes = fs::read(&plan_path).expect("child plan was persisted by prototype1-step");
         let plan: ChildPlanFiles =
@@ -3871,12 +3880,17 @@ Suggested validation after editing: run `cargo test`.
                     "successful live prototype1-step should admit at least the required minimum child"
                 );
             }
-            Err(err) => {
-                assert!(
-                    err.to_string()
-                        .contains("broad harness admitted 0 child transaction(s)"),
-                    "unexpected live prototype1-step error: {err}"
-                );
+            Err(PrepareError::ChildPlanBelowMinimum {
+                runnable_children,
+                required_min,
+                attempted_slots,
+                accepted_results,
+                ..
+            }) => {
+                assert_eq!(runnable_children, 0);
+                assert_eq!(required_min, 1);
+                assert_eq!(attempted_slots, 2);
+                assert_eq!(accepted_results, 0);
                 assert_eq!(
                     admitted_children, 0,
                     "below-minimum live prototype1-step should not persist runnable children"
@@ -3886,6 +3900,7 @@ Suggested validation after editing: run `cargo test`.
                     "below-minimum live prototype1-step should persist both rejected live slots"
                 );
             }
+            Err(err) => panic!("unexpected live prototype1-step error: {err:?}"),
         }
     }
 

@@ -2709,27 +2709,34 @@ fn publish_broad_harness_child_plan_from_attempts(
     attempted: &BTreeSet<usize>,
     rejections: &BTreeMap<usize, String>,
 ) -> Result<ChildPlanReceipt, PrepareError> {
-    let mut materialized_admitted = Vec::new();
-    let mut materialization_attempted = attempted.clone();
-    let mut materialization_rejections = rejections.clone();
+    let accepted_results = admitted.len();
+    let mut usable_results = Vec::new();
+    let mut attempted_slots = attempted.clone();
+    let mut slot_rejections = rejections.clone();
     for admitted_result in admitted {
         if let Some(reason) = broad_harness_materialization_rejection(env, &admitted_result) {
             let slot_index = broad_harness_admitted_slot_index(&batch, &admitted_result)?;
-            materialization_attempted.insert(slot_index);
-            materialization_rejections.insert(slot_index, reason);
+            attempted_slots.insert(slot_index);
+            slot_rejections.insert(slot_index, reason);
         } else {
-            materialized_admitted.push(admitted_result);
+            usable_results.push(admitted_result);
         }
     }
 
     // ANCHOR: prototype1_broad_harness_below_min_persist_rejected_plan
-    if materialized_admitted.len() < batch.child_budget.min as usize {
+    if usable_results.len() < batch.child_budget.min as usize {
         let failed_parent = project_node_status(batch.parent.node(), Prototype1NodeStatus::Failed);
+        let parent_identity = batch.parent.identity().clone();
+        let child_plan_path =
+            ChildPlanFiles::for_parent(env.manifest_path, &parent_identity, Vec::new())
+                .message_at()
+                .path()
+                .to_path_buf();
         let rejected_attempts = batch_attempt_evidence(
             &batch,
-            &materialized_admitted,
-            &materialization_attempted,
-            &materialization_rejections,
+            &usable_results,
+            &attempted_slots,
+            &slot_rejections,
             true,
         );
         let ready_parent = batch.parent.accept_harness_plan();
@@ -2741,18 +2748,18 @@ fn publish_broad_harness_child_plan_from_attempts(
         // signal to propagate.
         persist_rejected_plan(env.manifest_path, ready_parent, rejected_attempts)?;
         write_node_projection(&failed_parent)?;
-        return Err(PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "broad harness materialized {} child transaction(s), fewer than required minimum {}",
-                materialized_admitted.len(),
-                batch.child_budget.min
-            ),
+        return Err(PrepareError::ChildPlanBelowMinimum {
+            runnable_children: usable_results.len(),
+            required_min: batch.child_budget.min as usize,
+            attempted_slots: attempted_slots.len(),
+            accepted_results,
+            child_plan_path,
         });
     }
     // ANCHOR_END: prototype1_broad_harness_below_min_persist_rejected_plan
     let parent_identity = batch.parent.identity().clone();
     let parent_runtime_id = *batch.parent.runtime_id();
-    let children = materialized_admitted
+    let children = usable_results
         .iter()
         .enumerate()
         .map(|(index, admitted)| {
@@ -2767,9 +2774,9 @@ fn publish_broad_harness_child_plan_from_attempts(
         .collect::<Result<Vec<_>, PrepareError>>()?;
     let attempts = batch_attempt_evidence(
         &batch,
-        &materialized_admitted,
-        &materialization_attempted,
-        &materialization_rejections,
+        &usable_results,
+        &attempted_slots,
+        &slot_rejections,
         false,
     );
     let files = ChildPlanFiles::for_parent(env.manifest_path, &parent_identity, children)
@@ -5176,7 +5183,7 @@ async fn admit_broad_harness_batch(
                     &ledger.rejections,
                 );
                 return match result {
-                    Err(PrepareError::InvalidBatchSelection { .. }) if below_min => Err(source),
+                    Err(PrepareError::ChildPlanBelowMinimum { .. }) if below_min => Err(source),
                     // Task B: at or above the child minimum the batch published
                     // children and the fatal slot error is intentionally not
                     // propagated. Log the dropped blocker (e.g. a swallowed

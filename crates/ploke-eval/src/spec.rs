@@ -361,6 +361,16 @@ pub enum PrepareError {
     },
     #[error("instance '{instance_id}' was not found in dataset '{path}'")]
     MissingDatasetInstance { path: PathBuf, instance_id: String },
+    #[error(
+        "child plan has {runnable_children} runnable child candidate(s), fewer than required minimum {required_min}"
+    )]
+    ChildPlanBelowMinimum {
+        runnable_children: usize,
+        required_min: usize,
+        attempted_slots: usize,
+        accepted_results: usize,
+        child_plan_path: PathBuf,
+    },
     #[error("batch selection is invalid: {detail}")]
     InvalidBatchSelection { detail: String },
     #[error("MBE submission artifact '{0}' does not exist")]
