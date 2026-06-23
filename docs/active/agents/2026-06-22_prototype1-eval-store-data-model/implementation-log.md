@@ -1017,6 +1017,37 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: successful C2 child build promotion now writes queryable build and binary provenance rows when the owner eval DB exists. The authority-negative test proves binary refs do not replace filesystem binary authority for C3 spawn.
 - Commit: `feat: mirror child build provenance`.
 
+### Slice 10c — Broad harness patch and apply operation provenance rows
+
+- Status: complete for broad-harness `C1 -> C2` materialization provenance rows: `eval_operation`, `eval_patch`, and `eval_apply_event`.
+- Assumptions:
+  - This sub-slice only mirrors operation, patch, and apply-event provenance for the broad-harness materialization path after the candidate workspace is validated, artifact surface evidence is accepted, child projections are updated, and the C1 After journal entry is appended.
+  - Existing `Prototype1NodeRecord`, `ResolvedTreatmentBranch`, and harness child evidence remain the authority carriers for patch/apply/materialization facts. The new eval-store structs are private row evidence for normalized Cozo writes only.
+  - Owner DB presence remains the opt-in boundary. If `prototype1/eval-store.cozo.sqlite` does not already exist, C1 behavior is unchanged and no DB file is created by materialization.
+  - Operation, patch, and apply rows are passive evidence only. They do not prove candidate workspace existence, backend materialization, changed-path validity, or selected-artifact install authority.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/c1.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/operation.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/cozo_schema.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/mod.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/tests.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs`
+- Tests added/changed:
+  - existing `broad_harness_multi_file_admission_mints_one_artifact_child` now asserts operation, patch, and apply-event rows alongside the artifact provenance rows.
+  - renamed/extended authority-negative test `broad_harness_eval_store_rows_do_not_replace_missing_candidate_workspace` seeds artifact plus operation/patch/apply rows, removes the candidate workspace, and asserts `HarnessWorkspaceMissing` before any C1 journal entry is written.
+  - existing `prototype1_eval_store_parent_start_db_schema_installs_idempotently` now asserts operation, patch, and apply-event relation installation.
+- Commands run:
+  - `gitnexus impact ... transition_with_harness`: HIGH risk; 4 direct callers, impacted count 17, no affected execution flows. Edit kept the new mirror after existing harness workspace/surface validation and after journaled C2 materialization.
+  - `gitnexus impact ... install_schema`: HIGH risk; 8 direct callers, no affected execution flows. Schema coverage extended with idempotent operation/patch/apply-event relations.
+  - `cargo fmt --all`
+  - test-runner sub-agent: `cargo check -p ploke-eval` passed.
+  - test-runner sub-agent: `cargo test -p ploke-eval prototype1_eval_store_parent_start_db_schema_installs_idempotently -- --nocapture` passed.
+  - test-runner sub-agent: `cargo test -p ploke-eval broad_harness_multi_file_admission_mints_one_artifact_child -- --nocapture` passed.
+  - test-runner sub-agent: `cargo test -p ploke-eval broad_harness_eval_store_rows_do_not_replace_missing_candidate_workspace -- --nocapture` passed.
+- Live API used: no. This sub-slice mirrors local backend/harness materialization evidence and does not modify provider execution, child generation, terminal result production, or selected-artifact handoff.
+- Result: broad-harness child materialization now writes queryable operation, patch, and apply-event provenance rows when the owner eval DB exists. The authority-negative test proves eval-store rows do not replace candidate workspace/backend authority.
+- Commit: `feat: mirror broad harness operation provenance`.
+
 ### Later slices
 
 Create a new subsection per slice before editing.

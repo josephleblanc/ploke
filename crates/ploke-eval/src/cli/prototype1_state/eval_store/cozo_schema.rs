@@ -13,6 +13,7 @@ use super::{
         ATTEMPT_REL, CHANNEL_MESSAGE_REL, CHANNEL_RECEIPT_REL, EVENT_REL, IMPORT_EVENT_REL,
         INVOCATION_REL, LOG_REF_REL, RECORD_REL, TRACE_EVENT_REL,
     },
+    operation::ensure_operation_schema,
     selection::ensure_selection_schema,
 };
 
@@ -300,6 +301,7 @@ pub(super) fn ensure_eval_store_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(),
     ensure_selection_schema(db)?;
     ensure_artifact_schema(db)?;
     ensure_build_schema(db)?;
+    ensure_operation_schema(db)?;
 
     Ok(())
 }

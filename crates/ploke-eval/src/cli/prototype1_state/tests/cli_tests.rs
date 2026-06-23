@@ -3115,10 +3115,216 @@ fn broad_harness_multi_file_admission_mints_one_artifact_child() {
             .expect("content hash")
             .is_empty()
     );
+
+    let patch_id = child
+        .node_record()
+        .patch_id
+        .as_ref()
+        .expect("child patch id")
+        .to_string();
+    let apply_id = child
+        .resolved()
+        .branch
+        .apply_id
+        .as_ref()
+        .expect("child apply id")
+        .clone();
+    let base_artifact = evidence
+        .artifact()
+        .expect("artifact evidence")
+        .base_artifact_id
+        .to_string();
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "patch_id".to_string(),
+        cozo::DataValue::from(patch_id.clone()),
+    );
+    let operations = db
+        .raw_query_params(
+            r#"
+?[
+    operation_id,
+    generator_id,
+    target_kind,
+    target_ref,
+    procedure_id,
+    output_artifact_id,
+    output_patch_id
+] :=
+    *eval_operation {
+        operation_id,
+        generator_id,
+        target_kind,
+        target_ref,
+        procedure_id,
+        output_artifact_id,
+        output_patch_id
+    },
+    output_patch_id = $patch_id
+"#,
+            params.clone(),
+        )
+        .expect("query operation provenance");
+    assert_eq!(operations.rows.len(), 1);
+    let operation_row = operations.row_refs().next().expect("operation row");
+    assert!(
+        !operation_row
+            .get::<String>("operation_id")
+            .expect("operation id")
+            .is_empty()
+    );
+    assert_eq!(
+        operation_row
+            .get::<String>("generator_id")
+            .expect("generator"),
+        child.node_record().instance_id
+    );
+    assert_eq!(
+        operation_row
+            .get::<String>("target_kind")
+            .expect("target kind"),
+        "artifact"
+    );
+    assert_eq!(
+        operation_row
+            .get::<String>("target_ref")
+            .expect("target ref"),
+        base_artifact
+    );
+    assert_eq!(
+        operation_row
+            .get::<String>("procedure_id")
+            .expect("procedure id"),
+        child.resolved().branch.synthesized_spec_id
+    );
+    assert_eq!(
+        operation_row
+            .get::<String>("output_artifact_id")
+            .expect("output artifact"),
+        admitted_derived.to_string()
+    );
+    assert_eq!(
+        operation_row
+            .get::<String>("output_patch_id")
+            .expect("output patch"),
+        patch_id
+    );
+
+    let patches = db
+        .raw_query_params(
+            r#"
+?[
+    patch_id,
+    base_artifact_id,
+    creator_id,
+    target_relpath,
+    patch_ref,
+    content_sha256,
+    status
+] :=
+    *eval_patch {
+        patch_id,
+        base_artifact_id,
+        creator_id,
+        target_relpath,
+        patch_ref,
+        content_sha256,
+        status
+    },
+    patch_id = $patch_id
+"#,
+            params.clone(),
+        )
+        .expect("query patch provenance");
+    assert_eq!(patches.rows.len(), 1);
+    let patch_row = patches.row_refs().next().expect("patch row");
+    assert_eq!(
+        patch_row
+            .get::<String>("base_artifact_id")
+            .expect("base artifact"),
+        base_artifact
+    );
+    assert_eq!(
+        patch_row.get::<String>("creator_id").expect("creator"),
+        child.node_record().instance_id
+    );
+    assert_eq!(
+        patch_row
+            .get::<String>("target_relpath")
+            .expect("target relpath"),
+        child.resolved().target_relpath.display().to_string()
+    );
+    assert_eq!(
+        patch_row.get::<String>("patch_ref").expect("patch ref"),
+        apply_id
+    );
+    assert_eq!(
+        patch_row
+            .get::<String>("content_sha256")
+            .expect("content hash"),
+        eval_store::content_sha256(&child.resolved().branch.proposed_content)
+    );
+    assert_eq!(
+        patch_row.get::<String>("status").expect("status"),
+        "applied"
+    );
+
+    let mut params = std::collections::BTreeMap::new();
+    params.insert("apply_id".to_string(), cozo::DataValue::from(apply_id));
+    let applies = db
+        .raw_query_params(
+            r#"
+?[
+    apply_id,
+    patch_id,
+    runtime_id,
+    artifact_id,
+    outcome,
+    output_artifact_id
+] :=
+    *eval_apply_event {
+        apply_id,
+        patch_id,
+        runtime_id,
+        artifact_id,
+        outcome,
+        output_artifact_id
+    },
+    apply_id = $apply_id
+"#,
+            params,
+        )
+        .expect("query apply event");
+    assert_eq!(applies.rows.len(), 1);
+    let apply_row = applies.row_refs().next().expect("apply event row");
+    assert_eq!(
+        apply_row.get::<String>("patch_id").expect("patch"),
+        patch_id
+    );
+    assert_eq!(
+        apply_row.get::<String>("runtime_id").expect("runtime"),
+        child.node_record().instance_id
+    );
+    assert_eq!(
+        apply_row
+            .get::<String>("artifact_id")
+            .expect("input artifact"),
+        base_artifact
+    );
+    assert_eq!(
+        apply_row.get::<String>("outcome").expect("outcome"),
+        "applied"
+    );
+    assert_eq!(
+        apply_row
+            .get::<String>("output_artifact_id")
+            .expect("output artifact"),
+        admitted_derived.to_string()
+    );
 }
 
 #[test]
-fn broad_harness_artifact_rows_do_not_replace_missing_candidate_workspace() {
+fn broad_harness_eval_store_rows_do_not_replace_missing_candidate_workspace() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
     let repo_root = tmp.path().join("repo");
@@ -3185,6 +3391,19 @@ fn broad_harness_artifact_rows_do_not_replace_missing_candidate_workspace() {
     .expect("multi-file admitted transaction should mint one child artifact");
     let child = &child_plan.plan.body().children()[0];
     let evidence = child.harness_evidence().expect("harness evidence");
+    let patch_id = child
+        .node_record()
+        .patch_id
+        .as_ref()
+        .expect("child patch id")
+        .to_string();
+    let apply_id = child
+        .resolved()
+        .branch
+        .apply_id
+        .as_ref()
+        .expect("child apply id")
+        .clone();
     let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
     eval_store::write_artifact_provenance_to_owner_db(
         &db_path,
@@ -3198,7 +3417,7 @@ fn broad_harness_artifact_rows_do_not_replace_missing_candidate_workspace() {
                 source: "broad_harness".to_string(),
                 store_scope: "parent".to_string(),
                 created_by: Some(child.node_record().node_id.clone()),
-                parent_artifact_id: Some(base_artifact),
+                parent_artifact_id: Some(base_artifact.clone()),
             },
             surface: Some(eval_store::ArtifactSurfaceEvidence {
                 campaign_id: CLI_TEST_CAMPAIGN.clone(),
@@ -3224,6 +3443,49 @@ fn broad_harness_artifact_rows_do_not_replace_missing_candidate_workspace() {
         },
     )
     .expect("seed artifact provenance rows");
+    eval_store::write_operation_provenance_to_owner_db(
+        &db_path,
+        eval_store::OperationProvenanceEvidence {
+            operation: eval_store::OperationEvidence {
+                campaign_id: CLI_TEST_CAMPAIGN.clone(),
+                generator_id: child.node_record().instance_id.clone(),
+                target_kind: "artifact".to_string(),
+                target_ref: base_artifact.clone(),
+                procedure_id: Some(child.resolved().branch.synthesized_spec_id.clone()),
+                output_artifact_id: Some(admitted_derived.to_string()),
+                output_patch_id: Some(patch_id.clone()),
+                recorded_at: Some("2026-06-23T00:00:00Z".to_string()),
+            },
+            patch: eval_store::PatchEvidence {
+                campaign_id: CLI_TEST_CAMPAIGN.clone(),
+                patch_id: patch_id.clone(),
+                base_artifact_id: Some(base_artifact),
+                creator_id: Some(child.node_record().instance_id.clone()),
+                tool_call_id: None,
+                target_relpath: Some(child.resolved().target_relpath.display().to_string()),
+                patch_ref: Some(apply_id.clone()),
+                content_sha256: Some(eval_store::content_sha256(
+                    &child.resolved().branch.proposed_content,
+                )),
+                status: Some("applied".to_string()),
+            },
+            apply_event: eval_store::ApplyEventEvidence {
+                campaign_id: CLI_TEST_CAMPAIGN.clone(),
+                apply_id: apply_id.clone(),
+                patch_id: patch_id.clone(),
+                runtime_id: Some(child.node_record().instance_id.clone()),
+                artifact_id: child
+                    .node_record()
+                    .base_artifact_id
+                    .as_ref()
+                    .map(|id| id.to_string()),
+                outcome: "applied".to_string(),
+                output_artifact_id: Some(admitted_derived.to_string()),
+                recorded_at: "2026-06-23T00:00:00Z".to_string(),
+            },
+        },
+    )
+    .expect("seed operation provenance rows");
     fs::remove_dir_all(&candidate_root).expect("remove candidate workspace");
 
     let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path));
@@ -3271,6 +3533,19 @@ fn broad_harness_artifact_rows_do_not_replace_missing_candidate_workspace() {
             params,
         )
         .expect("query seeded artifact row");
+    assert_eq!(rows.rows.len(), 1);
+    let mut params = std::collections::BTreeMap::new();
+    params.insert("apply_id".to_string(), cozo::DataValue::from(apply_id));
+    let rows = db
+        .raw_query_params(
+            r#"
+?[apply_id, patch_id] :=
+    *eval_apply_event { apply_id, patch_id },
+    apply_id = $apply_id
+"#,
+            params,
+        )
+        .expect("query seeded apply event row");
     assert_eq!(rows.rows.len(), 1);
 }
 

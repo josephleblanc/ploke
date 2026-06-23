@@ -16,6 +16,7 @@ mod error;
 mod evaluation;
 mod evidence;
 mod observation;
+mod operation;
 mod selection;
 
 #[cfg(test)]
@@ -63,6 +64,12 @@ pub(crate) use evidence::{
 pub(crate) use evidence::{LogRefEvidence, ParentStartedReceipt};
 #[cfg(test)]
 pub(crate) use observation::ObservationJsonlImport;
+#[cfg(test)]
+pub(crate) use operation::{APPLY_EVENT_REL, OPERATION_REL, PATCH_REL};
+pub(crate) use operation::{
+    ApplyEventEvidence, OperationEvidence, OperationProvenanceEvidence, PatchEvidence,
+    content_sha256, write_operation_provenance_to_owner_db,
+};
 #[cfg(test)]
 pub(crate) use selection::{
     SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL, SELECTION_FINDING_REL, SELECTION_SCORE_REL,
