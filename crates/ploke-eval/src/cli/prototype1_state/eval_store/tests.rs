@@ -12,7 +12,7 @@ use super::{
     cozo_schema::eval_relation_exists,
     error::EvalStoreError,
     evidence::{
-        EVENT_REL, LOG_REF_REL, PARENT_STARTED_OUTCOME, PARENT_STARTED_PHASE,
+        ATTEMPT_REL, EVENT_REL, LOG_REF_REL, PARENT_STARTED_OUTCOME, PARENT_STARTED_PHASE,
         PARENT_STARTED_TRANSITION, RECORD_REL, STORE_SCOPE, TRACE_EVENT_REL,
         parent_started_db_receipt,
     },
@@ -100,6 +100,7 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
         .expect("schema install is idempotent");
 
     assert!(eval_relation_exists(&db, EVENT_REL).expect("event rel exists"));
+    assert!(eval_relation_exists(&db, ATTEMPT_REL).expect("attempt rel exists"));
     assert!(eval_relation_exists(&db, RECORD_REL).expect("record rel exists"));
     assert!(eval_relation_exists(&db, LOG_REF_REL).expect("log rel exists"));
     assert!(eval_relation_exists(&db, TRACE_EVENT_REL).expect("trace rel exists"));

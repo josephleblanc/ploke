@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use cozo::DataValue;
 
 use super::evidence::{
-    EvalChannelMessageRow, EvalChannelReceiptRow, EvalImportEventRow, EvalInvocationRow,
-    EvalLogRefRow, EvalRecordRefRow, EvalTraceEventRow, EvalTransitionEventRow,
+    EvalAttemptRow, EvalChannelMessageRow, EvalChannelReceiptRow, EvalImportEventRow,
+    EvalInvocationRow, EvalLogRefRow, EvalRecordRefRow, EvalTraceEventRow, EvalTransitionEventRow,
 };
 
 pub(super) fn transition_event_params(row: &EvalTransitionEventRow) -> BTreeMap<String, DataValue> {
@@ -180,6 +180,38 @@ pub(super) fn invocation_params(row: &EvalInvocationRow) -> BTreeMap<String, Dat
     );
     params.insert("recorded_at".to_string(), row.recorded_at.clone().into());
     params.insert("ingested_at".to_string(), row.ingested_at.clone().into());
+    params
+}
+
+pub(super) fn attempt_params(row: &EvalAttemptRow) -> BTreeMap<String, DataValue> {
+    let mut params = BTreeMap::new();
+    params.insert("attempt_id".to_string(), row.attempt_id.clone().into());
+    params.insert("campaign_id".to_string(), row.campaign_id.clone().into());
+    params.insert("runtime_id".to_string(), row.runtime_id.clone().into());
+    params.insert("role".to_string(), row.role.clone().into());
+    params.insert("parent_id".to_string(), option_string_param(&row.parent_id));
+    params.insert("node_id".to_string(), option_string_param(&row.node_id));
+    params.insert(
+        "invocation_id".to_string(),
+        option_string_param(&row.invocation_id),
+    );
+    params.insert(
+        "channel_id".to_string(),
+        option_string_param(&row.channel_id),
+    );
+    params.insert(
+        "artifact_id".to_string(),
+        option_string_param(&row.artifact_id),
+    );
+    params.insert(
+        "binary_ref".to_string(),
+        option_string_param(&row.binary_ref),
+    );
+    params.insert(
+        "started_at".to_string(),
+        option_string_param(&row.started_at),
+    );
+    params.insert("status".to_string(), option_string_param(&row.status));
     params
 }
 

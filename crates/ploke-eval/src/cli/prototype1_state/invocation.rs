@@ -674,6 +674,7 @@ mod tests {
             .raw_query_params(
                 r#"
 ?[
+    invocation_id,
     role,
     store_scope,
     producer_role,
@@ -686,6 +687,7 @@ mod tests {
     content_sha256
 ] :=
     *eval_invocation {
+        invocation_id,
         campaign_id,
         node_id,
         runtime_id,
@@ -710,6 +712,7 @@ mod tests {
 
         assert_eq!(rows.rows.len(), 1);
         let row = rows.row_refs().next().expect("invocation row");
+        let invocation_id = row.get::<String>("invocation_id").expect("invocation id");
         assert_eq!(row.get::<String>("role").expect("role"), "child");
         assert_eq!(row.get::<String>("store_scope").expect("scope"), "parent");
         assert_eq!(row.get::<String>("producer_role").expect("role"), "parent");
@@ -744,6 +747,75 @@ mod tests {
                 .is_empty(),
             "invocation row carries file content hash"
         );
+
+        let mut attempt_params = std::collections::BTreeMap::new();
+        attempt_params.insert(
+            "campaign_id".to_string(),
+            cozo::DataValue::from("campaign-1".to_string()),
+        );
+        attempt_params.insert(
+            "runtime_id".to_string(),
+            cozo::DataValue::from(runtime_id.to_string()),
+        );
+        let attempt_rows = db
+            .raw_query_params(
+                r#"
+?[
+    attempt_id,
+    role,
+    node_id,
+    invocation_id,
+    binary_ref,
+    started_at,
+    status
+] :=
+    *eval_attempt {
+        attempt_id,
+        campaign_id,
+        runtime_id,
+        role,
+        node_id,
+        invocation_id,
+        binary_ref,
+        started_at,
+        status
+    },
+    campaign_id = $campaign_id,
+    runtime_id = $runtime_id
+"#,
+                attempt_params,
+            )
+            .expect("query child attempt rows");
+
+        assert_eq!(attempt_rows.rows.len(), 1);
+        let attempt = attempt_rows.row_refs().next().expect("attempt row");
+        assert_eq!(
+            attempt.get::<String>("attempt_id").expect("attempt id"),
+            runtime_id.to_string()
+        );
+        assert_eq!(attempt.get::<String>("role").expect("role"), "child");
+        assert_eq!(
+            attempt.get::<String>("node_id").expect("node"),
+            "node-child"
+        );
+        assert_eq!(
+            attempt
+                .get::<String>("invocation_id")
+                .expect("invocation id"),
+            invocation_id
+        );
+        assert_eq!(
+            attempt.get::<String>("binary_ref").expect("binary ref"),
+            invocation_path.display().to_string()
+        );
+        assert_eq!(
+            attempt.get::<String>("started_at").expect("started"),
+            invocation.inner.created_at
+        );
+        assert_eq!(
+            attempt.get::<String>("status").expect("status"),
+            "invocation_written"
+        );
     }
 
     #[test]
@@ -767,6 +839,33 @@ mod tests {
             },
         )
         .expect("write invocation row");
+
+        let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(
+            "runtime_id".to_string(),
+            cozo::DataValue::from(runtime_id.to_string()),
+        );
+        let rows = db
+            .raw_query_params(
+                r#"
+?[attempt_id, status] :=
+    *eval_attempt { attempt_id, runtime_id, status },
+    runtime_id = $runtime_id
+"#,
+                params,
+            )
+            .expect("query attempt row");
+        assert_eq!(rows.rows.len(), 1);
+        let row = rows.row_refs().next().expect("attempt row");
+        assert_eq!(
+            row.get::<String>("attempt_id").expect("attempt"),
+            runtime_id.to_string()
+        );
+        assert_eq!(
+            row.get::<String>("status").expect("status"),
+            "invocation_written"
+        );
 
         let err = load_executable(&invocation_path)
             .expect_err("DB invocation row must not replace executable invocation file");

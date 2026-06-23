@@ -6,8 +6,8 @@ use super::{
     cozo_store::EvalDb,
     error::EvalStoreError,
     evidence::{
-        CHANNEL_MESSAGE_REL, CHANNEL_RECEIPT_REL, EVENT_REL, IMPORT_EVENT_REL, INVOCATION_REL,
-        LOG_REF_REL, RECORD_REL, TRACE_EVENT_REL,
+        ATTEMPT_REL, CHANNEL_MESSAGE_REL, CHANNEL_RECEIPT_REL, EVENT_REL, IMPORT_EVENT_REL,
+        INVOCATION_REL, LOG_REF_REL, RECORD_REL, TRACE_EVENT_REL,
     },
 };
 
@@ -103,6 +103,32 @@ pub(super) fn ensure_eval_store_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(),
         )
         .map_err(|source| EvalStoreError::Db {
             phase: "schema.eval_log_ref",
+            source,
+        })?;
+    }
+
+    if !eval_relation_exists(db, ATTEMPT_REL)? {
+        db.eval_query_mut_params(
+            r#"
+:create eval_attempt {
+    attempt_id: String =>
+    campaign_id: String,
+    runtime_id: String,
+    role: String,
+    parent_id: String?,
+    node_id: String?,
+    invocation_id: String?,
+    channel_id: String?,
+    artifact_id: String?,
+    binary_ref: String?,
+    started_at: String?,
+    status: String?
+}
+"#,
+            BTreeMap::new(),
+        )
+        .map_err(|source| EvalStoreError::Db {
+            phase: "schema.eval_attempt",
             source,
         })?;
     }

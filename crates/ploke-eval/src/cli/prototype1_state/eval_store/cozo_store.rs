@@ -9,20 +9,21 @@ use ploke_db::{Database, DbError, QueryResult};
 
 use super::{
     cozo_params::{
-        channel_message_params, channel_receipt_params, import_event_params, invocation_params,
-        log_ref_params, record_ref_params, trace_event_params, transition_event_params,
+        attempt_params, channel_message_params, channel_receipt_params, import_event_params,
+        invocation_params, log_ref_params, record_ref_params, trace_event_params,
+        transition_event_params,
     },
     cozo_schema::ensure_eval_store_schema,
     error::EvalStoreError,
     evidence::{
         ChannelMessageEvidence, ChannelMessageReceipt, ChannelReceiptEvidence,
-        ChannelReceiptReceipt, EvalChannelMessageRow, EvalChannelReceiptRow, EvalImportEventRow,
-        EvalInvocationRow, EvalLogRefRow, EvalRecordRefRow, EvalTraceEventRow,
+        ChannelReceiptReceipt, EvalAttemptRow, EvalChannelMessageRow, EvalChannelReceiptRow,
+        EvalImportEventRow, EvalInvocationRow, EvalLogRefRow, EvalRecordRefRow, EvalTraceEventRow,
         EvalTransitionEventRow, ImportEventEvidence, ImportEventReceipt, LogRefEvidence,
         LogRefReceipt, ParentStartedDbReceipt, ParentStartedEvidence, ParentStartedReceipt,
         ParentStartedRows, RecordRefEvidence, RecordRefReceipt, TraceEventEvidence,
-        TraceEventReceipt, TraceImportReceipt, channel_message_row, channel_receipt_row,
-        import_event_row, invocation_row, log_ref_row, parent_started_rows,
+        TraceEventReceipt, TraceImportReceipt, attempt_row_from_invocation, channel_message_row,
+        channel_receipt_row, import_event_row, invocation_row, log_ref_row, parent_started_rows,
         record_ref_row_from_evidence, trace_event_row,
     },
     observation::{ObservationJsonlImport, parse_observation_jsonl},
@@ -117,7 +118,9 @@ impl<'a, D: EvalDb + ?Sized> DbEvalStore<'a, D> {
     ) -> Result<super::evidence::InvocationReceipt, EvalStoreError> {
         self.install_schema()?;
         let row = invocation_row(evidence)?;
+        let attempt = attempt_row_from_invocation(&row);
         put_invocation_row(self.db, &row)?;
+        put_attempt_row(self.db, &attempt)?;
         Ok(super::evidence::InvocationReceipt {
             invocation_id: row.invocation_id,
             content_sha256: row.content_sha256,
@@ -500,6 +503,34 @@ fn existing_invocation_content_hash<D: EvalDb + ?Sized>(
     }))
 }
 
+fn existing_attempt_invocation_id<D: EvalDb + ?Sized>(
+    db: &D,
+    attempt_id: &str,
+) -> Result<Option<String>, EvalStoreError> {
+    let mut params = BTreeMap::new();
+    params.insert(
+        "attempt_id".to_string(),
+        DataValue::from(attempt_id.to_string()),
+    );
+    let result = db
+        .eval_query_params(
+            r#"
+?[invocation_id] :=
+    *eval_attempt { attempt_id, invocation_id },
+    attempt_id = $attempt_id
+"#,
+            params,
+        )
+        .map_err(|source| EvalStoreError::Db {
+            phase: "query.eval_attempt.invocation_id",
+            source,
+        })?;
+    Ok(result.rows.first().and_then(|row| match row.first() {
+        Some(DataValue::Str(value)) => Some(value.to_string()),
+        _ => None,
+    }))
+}
+
 fn existing_channel_message_content_hash<D: EvalDb + ?Sized>(
     db: &D,
     channel_message_id: &str,
@@ -692,6 +723,73 @@ fn put_invocation_row<D: EvalDb + ?Sized>(
     )
     .map_err(|source| EvalStoreError::Db {
         phase: "put.eval_invocation",
+        source,
+    })?;
+    Ok(())
+}
+
+fn put_attempt_row<D: EvalDb + ?Sized>(db: &D, row: &EvalAttemptRow) -> Result<(), EvalStoreError> {
+    if let Some(existing) = existing_attempt_invocation_id(db, &row.attempt_id)? {
+        if row.invocation_id.as_deref() == Some(existing.as_str()) {
+            return Ok(());
+        }
+        return Err(EvalStoreError::Validation {
+            field: "eval_attempt.invocation_id",
+            detail: format!(
+                "attempt '{}' already exists with invocation id {}, attempted {}",
+                row.attempt_id,
+                existing,
+                row.invocation_id.as_deref().unwrap_or("<none>")
+            ),
+        });
+    }
+    db.eval_query_mut_params(
+        r#"
+?[
+    attempt_id,
+    campaign_id,
+    runtime_id,
+    role,
+    parent_id,
+    node_id,
+    invocation_id,
+    channel_id,
+    artifact_id,
+    binary_ref,
+    started_at,
+    status
+] :=
+    attempt_id = $attempt_id,
+    campaign_id = $campaign_id,
+    runtime_id = $runtime_id,
+    role = $role,
+    parent_id = $parent_id,
+    node_id = $node_id,
+    invocation_id = $invocation_id,
+    channel_id = $channel_id,
+    artifact_id = $artifact_id,
+    binary_ref = $binary_ref,
+    started_at = $started_at,
+    status = $status
+:put eval_attempt {
+    attempt_id =>
+    campaign_id,
+    runtime_id,
+    role,
+    parent_id,
+    node_id,
+    invocation_id,
+    channel_id,
+    artifact_id,
+    binary_ref,
+    started_at,
+    status
+}
+"#,
+        attempt_params(row),
+    )
+    .map_err(|source| EvalStoreError::Db {
+        phase: "put.eval_attempt",
         source,
     })?;
     Ok(())

@@ -11,6 +11,7 @@ use super::super::{
 use super::error::EvalStoreError;
 
 pub(super) const EVENT_REL: &str = "eval_transition_event";
+pub(super) const ATTEMPT_REL: &str = "eval_attempt";
 pub(super) const INVOCATION_REL: &str = "eval_invocation";
 pub(super) const CHANNEL_MESSAGE_REL: &str = "eval_channel_message";
 pub(super) const CHANNEL_RECEIPT_REL: &str = "eval_channel_receipt";
@@ -363,6 +364,22 @@ pub(super) struct EvalInvocationRow {
     pub(super) content_sha256: String,
     pub(super) recorded_at: String,
     pub(super) ingested_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct EvalAttemptRow {
+    pub(super) attempt_id: String,
+    pub(super) campaign_id: String,
+    pub(super) runtime_id: String,
+    pub(super) role: String,
+    pub(super) parent_id: Option<String>,
+    pub(super) node_id: Option<String>,
+    pub(super) invocation_id: Option<String>,
+    pub(super) channel_id: Option<String>,
+    pub(super) artifact_id: Option<String>,
+    pub(super) binary_ref: Option<String>,
+    pub(super) started_at: Option<String>,
+    pub(super) status: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -773,6 +790,23 @@ pub(super) fn invocation_row(
         recorded_at: evidence.recorded_at,
         ingested_at: chrono::Utc::now().to_rfc3339(),
     })
+}
+
+pub(super) fn attempt_row_from_invocation(row: &EvalInvocationRow) -> EvalAttemptRow {
+    EvalAttemptRow {
+        attempt_id: row.runtime_id.clone(),
+        campaign_id: row.campaign_id.clone(),
+        runtime_id: row.runtime_id.clone(),
+        role: row.role.clone(),
+        parent_id: None,
+        node_id: Some(row.node_id.clone()),
+        invocation_id: Some(row.invocation_id.clone()),
+        channel_id: None,
+        artifact_id: None,
+        binary_ref: Some(row.invocation_path.clone()),
+        started_at: Some(row.recorded_at.clone()),
+        status: Some("invocation_written".to_string()),
+    }
 }
 
 pub(super) fn channel_message_row(

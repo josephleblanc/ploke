@@ -748,6 +748,40 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: `ResultWritten`, `Failed`, `Exited`, `SuccessorReady`, and `SuccessorCompletion` now write `eval_channel_message` rows with explicit message kinds after the channel append succeeds. The result-written consumer guard still proves the compatibility projection does not become success authority. A successor-specific channel-message row still cannot replace the missing channel envelope. Channel mirror helpers now live in `channel/mirror.rs`, leaving `channel.rs` under the rough LOC bound.
 - Commit: current slice commit, `feat: mirror remaining channel messages`.
 
+### Slice 8e — Child invocation attempt mirror
+
+- Status: complete for child invocation-backed `eval_attempt` rows. Terminal `ToParent::Result` remains blocked/deferred because the existing live Google terminal-result test is intentionally quarantined and cannot satisfy the provider-facing confidence gate.
+- Assumptions:
+  - `eval_attempt` is passive evidence. It records the attempt occurrence after the executable invocation file is written and must not replace invocation/bootstrap authority.
+  - For this first implementation, `attempt_id == runtime_id`, matching the planning note that keeps the concepts distinct while allowing the initial row key to reuse runtime identity.
+  - Child invocation rows are the source carrier for this sub-slice. Existing edit-surface/harness attempt types are flow-specific and do not represent the base `eval_attempt` relation.
+  - Successor invocation mirroring to `eval_attempt` is not changed here; GitNexus reported HIGH risk through successor spawn/handoff flows, so that remains a separate bounded sub-slice.
+  - Direct terminal `send_terminal_result` is provider-facing. The current `live_google_child_runner_success` test panics intentionally before exercising the live path, so this log treats terminal-result confidence as blocked rather than passed.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/evidence.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/cozo_params.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/cozo_schema.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/cozo_store.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/tests.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/invocation.rs`
+- Tests added/changed:
+  - existing `prototype1_eval_store_child_invocation_writes_owner_db_row` now asserts linked `eval_attempt` content.
+  - existing `prototype1_storage_authority_negative_invocation_row_cannot_replace_file` now confirms a DB attempt row also cannot replace the executable invocation file.
+  - existing `prototype1_eval_store_parent_start_db_schema_installs_idempotently` now asserts the `eval_attempt` relation installs idempotently.
+- Commands run:
+  - `gitnexus impact ... install_schema`: HIGH risk; 8 direct callers, 25 impacted symbols, no affected execution flows. Treated as requiring schema and focused eval-store verification.
+  - `gitnexus impact ... write_child_invocation`: LOW risk; 3 direct callers, affected process `live_google_child_runner_success`.
+  - `gitnexus impact ... write_successor_invocation`: HIGH risk through successor handoff/spawn flows; no successor edits made in this sub-slice.
+  - `gitnexus impact ... send_terminal_result`: LOW risk; provider-facing terminal-result path inspected but not edited because live confidence is blocked by the quarantined test.
+  - `cargo fmt --all`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_child_invocation_writes_owner_db_row -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_storage_authority_negative_invocation_row_cannot_replace_file -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_parent_start_db_schema_installs_idempotently -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
+- Live API used: no. This sub-slice mirrors local child invocation evidence. The provider-facing terminal-result path is explicitly blocked/deferred until a live Google/direct-Google gate can run instead of the quarantined `live_google_child_runner_success` test.
+- Result: `eval_attempt` now installs in the owner eval DB schema. Child invocation writes derive a passive attempt row linked to the invocation id, with `attempt_id` equal to the runtime id and `status = invocation_written`. The authority-negative test still proves DB invocation/attempt rows cannot launch a missing executable invocation file.
+- Commit: current slice commit, pending.
+
 ### Later slices
 
 Create a new subsection per slice before editing.
