@@ -1099,6 +1099,33 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: selected successor active-checkout install now writes queryable artifact provenance rows when the owner eval DB exists. The authority-negative test proves install rows do not replace active checkout/backend authority.
 - Commit: `feat: mirror selected successor install provenance`.
 
+### Slice 11 — DB-only readiness review
+
+- Status: complete as an audit gate. DB-only runtime enablement is not ready and was not enabled.
+- Assumptions:
+  - Slice 11 is a read-path and authority-boundary review, not a producer transition slice.
+  - Eval-store rows from Slices 1-10 are useful for query/review evidence, but they remain passive unless a production consumer is explicitly migrated and tested.
+  - History, Channel, MessageBox, invocation/bootstrap, artifact/worktree mutation, and transition-journal replay remain protected authority domains and are not candidates for generic eval-store DB-only replacement.
+- Documents touched:
+  - `docs/active/agents/2026-06-22_prototype1-eval-store-data-model/slice-11-db-only-readiness-audit.md`
+  - `docs/active/agents/2026-06-22_prototype1-eval-store-data-model/README.md`
+  - `docs/active/agents/2026-06-22_prototype1-eval-store-data-model/implementation-log.md`
+- Audit findings:
+  - Active runnable-node discovery no longer reads `scheduler.json`, `branches.json`, or `selection.json` to infer candidates, but scheduler compatibility and admitted-profile fallback paths still retain filesystem reads.
+  - `node.json` and latest `runner-result.json` remain filesystem compatibility authority; existing authority-negative tests prove DB record refs cannot replace the missing files.
+  - `branches.json` remains the branch registry read surface through `load_or_default_branch_registry`.
+  - Invocation JSON remains executable bootstrap authority; existing authority-negative tests prove invocation/attempt DB rows cannot replace the executable invocation file.
+  - Channel terminal evidence still requires `Channel<FileTransport>` reads and agreement with runner results.
+  - Child-plan MessageBox files, transition journal JSONL, sealed History, Crown, and artifact/worktree mutation remain protected authority paths.
+- Commands run:
+  - GitNexus query/read-path audit over scheduler, runner-result, branch registry, invocation, channel, MessageBox, transition journal, and History surfaces.
+  - `cargo fmt --all`
+  - `git diff --check`
+  - test-runner sub-agent: `cargo check -p ploke-eval` passed.
+- Live API used: no. This slice does not modify provider-facing producers and does not need live provider confidence.
+- Result: no DB-only production runtime mode was enabled. The next implementation work should be consumer migration/checkpoint parity for selected compatibility surfaces, not a permissive DB-only flag.
+- Commit: `docs: record db-only readiness audit`.
+
 ### Later slices
 
 Create a new subsection per slice before editing.

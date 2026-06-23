@@ -26,6 +26,7 @@ Supporting references:
 - [`codegraph-eval-join-model.md`](codegraph-eval-join-model.md) — follow-on join model for eval evidence over the parsed Ploke code graph; not part of the first file/db migration pass.
 - [`debugging-and-research-query-workloads.md`](debugging-and-research-query-workloads.md) — workload review for debugging, trajectory reconstruction, benchmark aggregation, and schema pressure beyond file-shaped persistence; workload ideas must be promoted through `relational-data-model.md` before implementation.
 - [`record-usefulness-triage.md`](record-usefulness-triage.md) — cleanup/refactor ledger for legacy, projection-only, compatibility, or superseded records.
+- [`slice-11-db-only-readiness-audit.md`](slice-11-db-only-readiness-audit.md) — source-backed Slice 11 audit of DB-only readiness and remaining read-path/authority blockers after Slice 10.
 - [`open-questions.md`](open-questions.md) — remaining modeling and implementation questions.
 - [`schema-review.md`](schema-review.md) — archived source-checked review; folded into `relational-data-model.md` and kept only as provenance.
 
