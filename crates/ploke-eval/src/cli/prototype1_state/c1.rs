@@ -38,7 +38,7 @@ use crate::intervention::{
     CommitError, CommitPhase, Configuration, Intervention, Outcome,
     PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1NodeRecord, Prototype1NodeStatus,
     Prototype1RunnerRequest, RecordStore, ResolvedTreatmentBranch, Surface, project_node_status,
-    project_node_workspace_root, write_node_projection, write_runner_request_projection,
+    project_node_workspace_root, write_parent_node_projection, write_runner_request_projection,
 };
 
 use super::backend::{BackendError, GitWorktreeBackend, RealizeRequest, WorkspaceBackend};
@@ -724,7 +724,7 @@ impl<B> MaterializeBranch<B> {
         );
         let mut updated_request = from.request.clone();
         updated_request.workspace_root = workspace.candidate_root.clone();
-        write_node_projection(&updated_node).map_err(|source| {
+        write_parent_node_projection(&from.campaign_id, &updated_node).map_err(|source| {
             CommitError::Transition(MaterializeBranchError::UpdateNodeStatus {
                 node_id: from.node.node_id.clone(),
                 source,
@@ -879,7 +879,7 @@ where
         );
         let mut updated_request = from.request.clone();
         updated_request.workspace_root = realized.root.clone();
-        write_node_projection(&updated_node).map_err(|source| {
+        write_parent_node_projection(&from.campaign_id, &updated_node).map_err(|source| {
             CommitError::Transition(MaterializeBranchError::UpdateNodeStatus {
                 node_id: from.node.node_id.clone(),
                 source,

@@ -130,6 +130,29 @@ pub(crate) fn emit_eval_record_ref_for_jsonl_if_owner_db_exists(
     )
 }
 
+pub(crate) fn emit_parent_eval_record_ref_for_json_file_if_owner_db_exists(
+    path: &Path,
+    campaign_id: &CampaignId,
+    family: &'static str,
+    schema_version: &str,
+    producer_id: &str,
+) -> Result<(), PrepareError> {
+    let payload_json = fs::read_to_string(path).map_err(|source| PrepareError::ReadManifest {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    emit_eval_record_ref_payload_if_owner_db_exists(
+        path,
+        campaign_id,
+        family,
+        schema_version,
+        producer_id,
+        0,
+        1,
+        payload_json,
+    )
+}
+
 pub(crate) fn emit_child_runtime_eval_record_ref_if_owner_db_exists(
     receipt: &EmittedRecord,
     campaign_id: &CampaignId,

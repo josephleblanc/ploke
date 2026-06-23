@@ -29,7 +29,7 @@ use tracing::{debug, instrument, warn};
 
 use crate::intervention::{
     CommitError, CommitPhase, Intervention, Outcome, Prototype1NodeStatus, RecordStore, Surface,
-    project_node_status, write_node_projection,
+    project_node_status, write_parent_node_projection,
 };
 
 use super::c1::{
@@ -380,7 +380,7 @@ impl Intervention<C2, C3> for BuildChild {
                 "cargo check rejected child build"
             );
             let node = project_node_status(&from.node, Prototype1NodeStatus::Failed);
-            write_node_projection(&node).map_err(|source| {
+            write_parent_node_projection(&from.campaign_id, &node).map_err(|source| {
                 CommitError::Transition(BuildChildError::UpdateNodeStatus {
                     node_id: from.node.node_id.clone(),
                     source,
@@ -444,7 +444,7 @@ impl Intervention<C2, C3> for BuildChild {
                 "cargo build rejected child build"
             );
             let node = project_node_status(&from.node, Prototype1NodeStatus::Failed);
-            write_node_projection(&node).map_err(|source| {
+            write_parent_node_projection(&from.campaign_id, &node).map_err(|source| {
                 CommitError::Transition(BuildChildError::UpdateNodeStatus {
                     node_id: from.node.node_id.clone(),
                     source,
@@ -500,7 +500,7 @@ impl Intervention<C2, C3> for BuildChild {
         })?;
         cleanup_scratch_dir(&scratch_dir);
         let node = project_node_status(&from.node, Prototype1NodeStatus::BinaryBuilt);
-        write_node_projection(&node).map_err(|source| {
+        write_parent_node_projection(&from.campaign_id, &node).map_err(|source| {
             CommitError::Transition(BuildChildError::UpdateNodeStatus {
                 node_id: from.node.node_id.clone(),
                 source,

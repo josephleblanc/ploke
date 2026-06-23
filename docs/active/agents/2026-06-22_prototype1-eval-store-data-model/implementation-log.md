@@ -471,6 +471,46 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: `write_runner_result_at` still writes the passive shared `RunnerResultRecord` first. When `prototype1/eval-store.cozo.sqlite` exists, attempt-scoped and latest runner-result files are mirrored as child-local compatibility `eval_record_ref` rows with payload JSON and hashes. DB runner-result refs do not replace the file gate, and success sidecars still cannot advance C4 without terminal channel results.
 - Commit: current slice commit, `feat: mirror child runner result refs`.
 
+### Slice 7e — Parent-owned scheduler-node compatibility record refs
+
+- Status: complete for deterministic parent-owned C1/C2/C3 scheduler node projection refs only; broad planning/root parent node refs, child terminal node refs, and legacy generic node writes remain deferred.
+- Assumptions:
+  - `node.json` remains the scheduler-node projection file and current loader authority.
+  - DB rows are parent-visible `eval_record_ref` compatibility evidence only; they do not replace scheduler files, channel results, History, selection, or artifact authority.
+  - The generic `write_node_projection` path is mixed-authority because it is used by parent deterministic transitions, broad planning, and child terminal/result paths, so this slice adds a narrower parent-owned wrapper instead of changing generic semantics.
+  - Default filesystem runs with no owner eval DB remain unchanged.
+- Code touched:
+  - `crates/ploke-eval/src/record_emission.rs`
+  - `crates/ploke-eval/src/intervention/scheduler.rs`
+  - `crates/ploke-eval/src/intervention/mod.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/c1.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/c2.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/c3.rs`
+- Tests added/changed:
+  - `prototype1_eval_store_record_ref_parent_node_projection_writes_owner_db_row`
+  - `prototype1_storage_authority_negative_node_ref_cannot_replace_file`
+  - existing `child_build_promotes_binary_and_cleans_scratch`
+  - existing `child_spawn_observes_ready`
+  - existing `child_spawn_observes_failed_result`
+- Commands run:
+  - `gitnexus impact ... write_node_projection`: HIGH risk; affects `run_prototype1_loop_controller` and `live_google_child_runner_success`; avoided changing generic writer behavior and added a parent-owned wrapper.
+  - `gitnexus impact ... MaterializeBranch::transition`: LOW risk.
+  - `gitnexus impact ... BuildChild.transition`: LOW risk.
+  - `gitnexus impact ... SpawnChild.transition`: LOW risk.
+  - `cargo fmt --all`
+  - `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_record_ref_parent_node_projection_writes_owner_db_row -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_storage_authority_negative_node_ref_cannot_replace_file -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_record_ref -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval child_build_promotes_binary_and_cleans_scratch -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval child_spawn_observes_ready -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval child_spawn_observes_failed_result -- --nocapture`
+- Live API used: no. This sub-slice mirrors deterministic local parent-owned scheduler node projections only. Provider-facing broad planning node refs and child terminal/provider-result facts remain future slices and must run or explicitly block live Google confidence when touched.
+- Checkpoints created/updated: none
+- Artifacts retained: none
+- Result: C1 materialization, C2 build status, and C3 spawn status now write `node.json` first and, when `prototype1/eval-store.cozo.sqlite` exists, mirror that exact JSON projection as a `scheduler_node` compatibility `eval_record_ref` row with parent scope, source coordinates, payload JSON, and payload hash. A DB row claiming a scheduler node does not replace the missing `node.json` file gate.
+- Commit: current slice commit, `feat: mirror parent node projection refs`.
+
 ### Slice 7+ — Later evidence slices
 
 Create a new subsection per slice before editing.
