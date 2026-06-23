@@ -63,17 +63,17 @@ Each implementation slice below names:
 
 Checkpoint ladder from the matrix:
 
-| Checkpoint | Boundary | Main use | Live API to create? |
+| Checkpoint | Boundary | Main use | Live API to create/regenerate? |
 | --- | --- | --- | --- |
-| `F0_setup` | campaign/profile admitted, root parent identity ready or init path prepared | R0/R1/R2/R3 startup and profile/config tests | No |
-| `F1_ready_parent` | after `R4b -> R4c` or predecessor `R4a -> R4c`, before `R4c -> R5` | parent-start and baseline tests | No, unless derived from live handoff |
-| `F2_baseline_complete` | after `R5 -> R6` | policy/schedule/fanout tests | Maybe, if baseline computation calls providers |
-| `F3_child_plan_received` | after `R7 -> R8` | schedule/fanout/C1 tests | Yes for broad/provider planning; no for deterministic modes |
-| `F4_child_materialized_built` | after `C2 -> C3` plus artifact commit | spawn/ready tests | No |
-| `F5_child_terminal_result` | after child terminal result with channel/result/treatment evidence | observe/compare/selection tests | Yes |
-| `F6_child_compared` | after `C5 -> ParentCompared` | report/selection/continuation tests | No if built from `F5` |
-| `F7_selection_ready` | after `R11 -> R12`, before `R12 -> R13` | stopped/handoff branch tests | No if built from `F6` |
-| `F8_handoff_committed` | after `R12 -> R13` handoff with sealed History and successor invocation | successor startup/finalization tests | No if built from `F7`, but may spawn successor locally |
+| `F0_setup` | campaign/profile admitted, root parent identity ready or init path prepared | R0/R1/R2/R3 startup and profile/config tests | **No provider API.** Create locally. |
+| `F1_ready_parent` | after `R4b -> R4c` or predecessor `R4a -> R4c`, before `R4c -> R5` | parent-start and baseline tests | **No provider API.** Genesis F1 is local. Predecessor F1 is derived from `F8_handoff_committed`, which may spawn a successor locally but must not call an LLM/provider at F1 time. |
+| `F2_baseline_complete` | after `R5 -> R6` | policy/schedule/fanout tests | **Yes for genesis baseline regeneration when the baseline closure/eval/protocol producer is missing or intentionally refreshed.** **No** when restoring an existing verified closure baseline or promoting a selected-child baseline from upstream evidence. If F2 is absent and the path is genesis/default-live, regenerate it with the live suite instead of faking it from projection rows. |
+| `F3_child_plan_received` | after `R7 -> R8` | schedule/fanout/C1 tests | **Yes for the default broad/provider planning producer.** **No only for an explicitly deterministic fixture profile** such as deterministic TUI tools. Storage-migration confidence for the default path must include a real provider-produced F3 checkpoint. |
+| `F4_child_materialized_built` | after `C2 -> C3` plus artifact commit | spawn/ready tests | **No provider API.** Derive locally from verified `F3_child_plan_received`. If F3 is missing for the default path, regenerate F3 live first. |
+| `F5_child_terminal_result` | after child terminal result with channel/result/treatment evidence | observe/compare/selection tests | **Yes for provider-dependent treatment execution / terminal result production.** Deterministic/local child fixtures may skip provider calls only when explicitly labeled as deterministic and not used as the provider confidence checkpoint. |
+| `F6_child_compared` | after `C5 -> ParentCompared` | report/selection/continuation tests | **No provider API.** Derive locally from verified `F5_child_terminal_result`. If F5 is absent or stale for provider confidence, regenerate F5 with live provider calls first, then derive F6 locally. |
+| `F7_selection_ready` | after `R11 -> R12`, before `R12 -> R13` | stopped/handoff branch tests | **No provider API.** Derive locally from verified `F6_child_compared`. If F6 is missing, rebuild upstream; provider calls occur only while regenerating F5, not at F7. |
+| `F8_handoff_committed` | after `R12 -> R13` handoff with sealed History and successor invocation | successor startup/finalization tests | **No provider API.** Derive locally from verified `F7_selection_ready`; this may spawn/exec the successor process, seal History, and mutate/install selected artifact state, but it must not call an LLM/provider at F8. |
 
 Live provider command shape remains explicit and opt-in:
 
@@ -82,6 +82,8 @@ PLOKE_EVAL_LIVE_API_TESTS=1 PLOKE_RUN_LIVE_TESTS=1 cargo test -p ploke-eval --fe
 ```
 
 Provider-facing producer transitions use real provider calls. Checkpointed outputs are for downstream consumer coverage and time savings, not for pretending the provider producer ran.
+
+Live-call intent rule: when the operator says to “go ahead”, “proceed”, or otherwise authorizes implementation, and the live opt-in variables/credentials are present, autonomous implementation should run the required live producer gates for provider-facing slices. Do not substitute deterministic checkpoints for `F3_child_plan_received` or `F5_child_terminal_result` provider confidence. If credentials or opt-in variables are missing, report the live gate as blocked rather than silently treating a skipped test as success.
 
 ## Validation-critical details for autonomous implementation
 
