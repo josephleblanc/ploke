@@ -645,6 +645,39 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: `eval_channel_message` schema now records child channel envelope identity, direction, message kind/id, source endpoint/cursor/byte counts, body hash, serialized envelope hash, and timestamps. `send_ready` and `send_evaluating` still append the JSONL envelope first, then optionally mirror to `prototype1/eval-store.cozo.sqlite` when present. A DB channel-message row does not replace or synthesize a missing channel envelope.
 - Commit: current slice commit, `feat: mirror child channel message rows`.
 
+### Post-8b hygiene — Channel and eval-store module split
+
+- Status: complete for behavior-preserving module split before continuing Slice 8.
+- Reason:
+  - `channel.rs`, `eval_store/evidence.rs`, and `eval_store/cozo_store.rs` had grown past the requested rough 800-1000 LOC hygiene bound after Slice 8b.
+  - More Slice 8 channel/import relations would have compounded mixed responsibilities in those files.
+- Assumptions:
+  - This is a mechanical refactor only; no storage semantics, relation schemas, authority boundaries, or transition behavior should change.
+  - Public/crate-visible API paths stay preserved through `eval_store/mod.rs` re-exports.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/channel.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/channel/tests.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/cozo_store.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/cozo_schema.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/evidence.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/observation.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/mod.rs`
+- Commands run:
+  - `gitnexus impact ... Channel`: LOW risk; no affected processes.
+  - `gitnexus impact ... ensure_eval_store_schema`: LOW risk; no affected processes.
+  - `gitnexus impact ... parse_observation_jsonl`: LOW risk; no affected processes.
+  - `cargo fmt --all`
+  - `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_channel_ready_writes_owner_db_row -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_storage_authority_negative_channel_row_cannot_replace_envelope -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval file_transport_reads_only_new_complete_records -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_parent_start_db_schema_installs_idempotently -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_trace_observation_jsonl_imports_rows_idempotently -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_trace_observation_jsonl_invalid_line_fails_without_rows -- --nocapture`
+- Live API used: no. This split does not touch provider-facing producers.
+- Result: channel tests now live under `channel/tests.rs`; eval-store schema installation lives under `cozo_schema.rs`; observation JSONL parsing/import shaping lives under `observation.rs`; `channel.rs` and `cozo_store.rs` are back under the rough LOC bound, and `evidence.rs` is limited to shared evidence/row vocabulary plus row constructors.
+- Commit: current hygiene commit, `refactor: split eval store channel modules`.
+
 ### Later slices
 
 Create a new subsection per slice before editing.

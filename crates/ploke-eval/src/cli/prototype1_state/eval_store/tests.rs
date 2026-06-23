@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use super::*;
 use super::{
     api::EvalStorageMode,
-    cozo_store::eval_relation_exists,
+    cozo_schema::eval_relation_exists,
     error::EvalStoreError,
     evidence::{
         EVENT_REL, LOG_REF_REL, PARENT_STARTED_OUTCOME, PARENT_STARTED_PHASE,

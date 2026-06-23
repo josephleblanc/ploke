@@ -7,9 +7,11 @@
 
 mod api;
 mod cozo_params;
+mod cozo_schema;
 mod cozo_store;
 mod error;
 mod evidence;
+mod observation;
 
 #[cfg(test)]
 mod tests;
@@ -30,4 +32,6 @@ pub(crate) use evidence::{
     TraceEventEvidence,
 };
 #[cfg(test)]
-pub(crate) use evidence::{LogRefEvidence, ObservationJsonlImport, ParentStartedReceipt};
+pub(crate) use evidence::{LogRefEvidence, ParentStartedReceipt};
+#[cfg(test)]
+pub(crate) use observation::ObservationJsonlImport;
