@@ -780,7 +780,7 @@ Commit only after the slice's required tests pass or, for expected-failing tests
   - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
 - Live API used: no. This sub-slice mirrors local child invocation evidence. The provider-facing terminal-result path is explicitly blocked/deferred until a live Google/direct-Google gate can run instead of the quarantined `live_google_child_runner_success` test.
 - Result: `eval_attempt` now installs in the owner eval DB schema. Child invocation writes derive a passive attempt row linked to the invocation id, with `attempt_id` equal to the runtime id and `status = invocation_written`. The authority-negative test still proves DB invocation/attempt rows cannot launch a missing executable invocation file.
-- Commit: current slice commit, pending.
+- Commit: `feat: mirror child invocation attempts` (`7e57ff77`).
 
 ### Slice 8f — Successor invocation attempt mirror
 
@@ -805,7 +805,25 @@ Commit only after the slice's required tests pass or, for expected-failing tests
   - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
 - Live API used: no. This sub-slice mirrors local successor bootstrap invocation evidence after the invocation file write and does not change provider execution or terminal result production.
 - Result: successor invocation writes now use the same owner-DB mirror path as child invocations, with role-specific `eval_invocation` and `eval_attempt` rows. The successor authority-negative test proves DB rows cannot replace a missing executable invocation file.
-- Commit: current slice commit, pending.
+- Commit: `feat: mirror successor invocation attempts` (`7534eae9`).
+
+### Slice 8g — Terminal result live-gate blocker
+
+- Status: blocked/deferred for direct terminal `ToParent::Result` channel-message mirroring.
+- Assumptions:
+  - `send_terminal_result` is the provider-facing terminal child result producer for successful treatment evidence and therefore requires `F5_child_terminal_result` live provider confidence before the sub-slice can be accepted.
+  - Deterministic/local terminal channel tests can prove channel authority mechanics, but they cannot substitute for the provider-facing F5 confidence checkpoint.
+  - The existing live Google child-runner success test remains intentionally quarantined with an unconditional panic before it exercises the child runner. That test cannot serve as live confidence for terminal-result production.
+  - Ambient provider route variables are present for Google project/region/API key, but the suite opt-in variables are not ambient; even with opt-in, the current live F5 test body would panic before provider execution.
+- Evidence:
+  - `crates/ploke-eval/src/cli/prototype1_state/channel.rs`: `send_terminal_result` writes direct `ToParent::Result { runner_result, treatment }`.
+  - `crates/ploke-eval/src/cli/prototype1_process.rs`: `live_google_child_runner_success` is ignored and starts with an unconditional quarantine panic.
+  - `slice-by-slice-implementation-plan.md`: `F5_child_terminal_result` requires live API for provider-dependent treatment execution / terminal result production.
+- Code touched: none.
+- Tests run: none; the relevant live test is source-blocked by quarantine.
+- Live API used: no. This entry records that missing provider confidence is not accepted.
+- Result: terminal `ToParent::Result` mirroring remains an explicit provider-gated follow-up. Slice 9 downstream work may proceed only from existing/restored F5 evidence and must not claim terminal-result producer confidence until the live F5 gate is repaired and run.
+- Commit: current blocker note commit, pending.
 
 ### Later slices
 
