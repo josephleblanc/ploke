@@ -6556,7 +6556,7 @@ schema_version = "prototype1-run-profile.v1"
 name = "historical-node-150-handoff"
 
 [selection]
-strategy = "generation-local"
+strategy = "history-score-child-prop"
 evidence = "operational"
 seed = 0
 "#,
@@ -6649,7 +6649,7 @@ seed = 0
     let mut candidate_params = std::collections::BTreeMap::new();
     candidate_params.insert(
         "decision_id".to_string(),
-        cozo::DataValue::from(decision_id),
+        cozo::DataValue::from(decision_id.clone()),
     );
     let candidate_rows = db
         .raw_query_params(
@@ -6687,6 +6687,103 @@ seed = 0
     );
     assert!(candidate_row.get::<bool>("selectable").expect("selectable"));
     assert!(candidate_row.get::<bool>("selected").expect("selected"));
+    let mut finding_params = std::collections::BTreeMap::new();
+    finding_params.insert(
+        "decision_id".to_string(),
+        cozo::DataValue::from(decision_id.clone()),
+    );
+    finding_params.insert(
+        "domain".to_string(),
+        cozo::DataValue::from("operational".to_string()),
+    );
+    let finding_rows = db
+        .raw_query_params(
+            r#"
+?[
+    domain,
+    verdict,
+    confidence,
+    member_id
+] :=
+    *eval_selection_finding {
+        decision_id,
+        domain,
+        verdict,
+        confidence,
+        member_id
+    },
+    decision_id = $decision_id,
+    domain = $domain
+"#,
+            finding_params,
+        )
+        .expect("query selection finding rows");
+    assert_eq!(finding_rows.rows.len(), 1);
+    let finding_row = finding_rows
+        .row_refs()
+        .next()
+        .expect("selection finding row");
+    assert_eq!(
+        finding_row.get::<String>("domain").expect("domain"),
+        "operational"
+    );
+    assert_eq!(
+        finding_row.get::<String>("verdict").expect("verdict"),
+        "better"
+    );
+    assert_eq!(
+        finding_row.get::<String>("confidence").expect("confidence"),
+        "high"
+    );
+    assert!(
+        !finding_row
+            .get::<String>("member_id")
+            .expect("finding member id")
+            .is_empty()
+    );
+
+    let mut score_params = std::collections::BTreeMap::new();
+    score_params.insert(
+        "decision_id".to_string(),
+        cozo::DataValue::from(decision_id),
+    );
+    let score_rows = db
+        .raw_query_params(
+            r#"
+?[
+    formula_id,
+    score_json,
+    weight,
+    selected
+] :=
+    *eval_selection_score {
+        decision_id,
+        formula_id,
+        score_json,
+        weight,
+        selected
+    },
+    decision_id = $decision_id
+"#,
+            score_params,
+        )
+        .expect("query selection score rows");
+    assert_eq!(score_rows.rows.len(), 1);
+    let score_row = score_rows.row_refs().next().expect("selection score row");
+    assert!(
+        score_row
+            .get::<String>("formula_id")
+            .expect("formula")
+            .starts_with("score_child_prop:")
+    );
+    assert!(
+        score_row
+            .get::<String>("score_json")
+            .expect("score json")
+            .contains("\"selected\":true")
+    );
+    assert!(score_row.get::<f64>("weight").expect("weight") > 0.0);
+    assert!(score_row.get::<bool>("selected").expect("selected score"));
     let journal_entries = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path))
         .load_entries()
         .expect("load journal entries");

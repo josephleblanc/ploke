@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 use crate::cli::prototype1_state::history::{
     CandidateSetMembership, EvaluationPayload, SelectionDecisionEntry,
 };
+use crate::successor_selection::traversal::{Formula, ScoreChildPropFormulaRow};
 
 use super::{
     cozo_schema::eval_relation_exists,
@@ -16,6 +17,8 @@ use super::{
 
 pub(crate) const SELECTION_DECISION_REL: &str = "eval_selection_decision";
 pub(crate) const SELECTION_CANDIDATE_REL: &str = "eval_selection_candidate";
+pub(crate) const SELECTION_FINDING_REL: &str = "eval_selection_finding";
+pub(crate) const SELECTION_SCORE_REL: &str = "eval_selection_score";
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SelectionDecisionEvidence {
@@ -30,11 +33,15 @@ pub(crate) struct SelectionDecisionEvidence {
 pub(crate) struct SelectionDecisionReceipt {
     pub(crate) decision_id: String,
     pub(crate) candidate_count: usize,
+    pub(crate) finding_count: usize,
+    pub(crate) score_count: usize,
 }
 
 struct SelectionRows {
     decision: EvalSelectionDecisionRow,
     candidates: Vec<EvalSelectionCandidateRow>,
+    findings: Vec<EvalSelectionFindingRow>,
+    scores: Vec<EvalSelectionScoreRow>,
 }
 
 struct EvalSelectionDecisionRow {
@@ -60,6 +67,27 @@ struct EvalSelectionCandidateRow {
     selectable: bool,
     selected: bool,
     exclusion_ref: Option<String>,
+}
+
+struct EvalSelectionFindingRow {
+    finding_id: String,
+    decision_id: String,
+    member_id: Option<String>,
+    domain: String,
+    verdict: String,
+    confidence: String,
+    evidence_ref: Option<String>,
+    rationale_ref: Option<String>,
+}
+
+struct EvalSelectionScoreRow {
+    decision_id: String,
+    member_id: String,
+    formula_id: String,
+    score_json: String,
+    weight: Option<f64>,
+    rank: Option<i64>,
+    selected: bool,
 }
 
 pub(super) fn ensure_selection_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), EvalStoreError> {
@@ -110,6 +138,49 @@ pub(super) fn ensure_selection_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), 
         })?;
     }
 
+    if !eval_relation_exists(db, SELECTION_FINDING_REL)? {
+        db.eval_query_mut_params(
+            r#"
+:create eval_selection_finding {
+    finding_id: String =>
+    decision_id: String,
+    member_id: String?,
+    domain: String,
+    verdict: String,
+    confidence: String,
+    evidence_ref: String?,
+    rationale_ref: String?
+}
+"#,
+            BTreeMap::new(),
+        )
+        .map_err(|source| EvalStoreError::Db {
+            phase: "schema.eval_selection_finding",
+            source,
+        })?;
+    }
+
+    if !eval_relation_exists(db, SELECTION_SCORE_REL)? {
+        db.eval_query_mut_params(
+            r#"
+:create eval_selection_score {
+    decision_id: String,
+    member_id: String =>
+    formula_id: String,
+    score_json: String,
+    weight: Float?,
+    rank: Int?,
+    selected: Bool
+}
+"#,
+            BTreeMap::new(),
+        )
+        .map_err(|source| EvalStoreError::Db {
+            phase: "schema.eval_selection_score",
+            source,
+        })?;
+    }
+
     Ok(())
 }
 
@@ -124,10 +195,18 @@ pub(crate) fn write_selection_decision_to_owner_db(
     for candidate in &rows.candidates {
         put_selection_candidate_row(&db, candidate)?;
     }
+    for finding in &rows.findings {
+        put_selection_finding_row(&db, finding)?;
+    }
+    for score in &rows.scores {
+        put_selection_score_row(&db, score)?;
+    }
     persist_owner_eval_database(&db, db_path)?;
     Ok(SelectionDecisionReceipt {
         decision_id: rows.decision.decision_id,
         candidate_count: rows.candidates.len(),
+        finding_count: rows.findings.len(),
+        score_count: rows.scores.len(),
     })
 }
 
@@ -179,6 +258,9 @@ fn selection_rows(evidence: SelectionDecisionEvidence) -> Result<SelectionRows, 
             selection_candidate_row(&decision_id, &evidence.entry, index, payload)
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let selected_member_id = selected_member_id(&evidence.entry)?;
+    let findings = selection_finding_rows(&decision_id, selected_member_id.as_deref(), &evidence)?;
+    let scores = selection_score_rows(&decision_id, &evidence.entry)?;
     Ok(SelectionRows {
         decision: EvalSelectionDecisionRow {
             decision_id,
@@ -195,6 +277,8 @@ fn selection_rows(evidence: SelectionDecisionEvidence) -> Result<SelectionRows, 
             recorded_at: evidence.recorded_at,
         },
         candidates,
+        findings,
+        scores,
     })
 }
 
@@ -221,6 +305,107 @@ fn selection_candidate_row(
         selected: payload_selected_by_decision(entry, membership, payload),
         exclusion_ref: None,
     })
+}
+
+fn selection_finding_rows(
+    decision_id: &str,
+    member_id: Option<&str>,
+    evidence: &SelectionDecisionEvidence,
+) -> Result<Vec<EvalSelectionFindingRow>, EvalStoreError> {
+    evidence
+        .entry
+        .decision
+        .findings
+        .iter()
+        .enumerate()
+        .map(|(index, finding)| {
+            let domain = serde_name(&finding.domain)?;
+            let verdict = serde_name(&finding.verdict)?;
+            let confidence = serde_name(&finding.confidence)?;
+            Ok(EvalSelectionFindingRow {
+                finding_id: finding_id(
+                    &evidence.campaign_id,
+                    &evidence.parent_id,
+                    decision_id,
+                    index,
+                    &domain,
+                    &verdict,
+                    &confidence,
+                ),
+                decision_id: decision_id.to_string(),
+                member_id: member_id.map(ToOwned::to_owned),
+                domain,
+                verdict,
+                confidence,
+                evidence_ref: finding.evidence_refs.first().cloned(),
+                rationale_ref: finding
+                    .rationale
+                    .first()
+                    .map(|_| rationale_ref(decision_id, index, &finding.rationale)),
+            })
+        })
+        .collect()
+}
+
+fn selection_score_rows(
+    decision_id: &str,
+    entry: &SelectionDecisionEntry,
+) -> Result<Vec<EvalSelectionScoreRow>, EvalStoreError> {
+    let Some(formula) = entry.formula.as_ref() else {
+        return Ok(Vec::new());
+    };
+    let Formula::ScoreChildProp(score) = &formula.formula;
+    score
+        .rows
+        .iter()
+        .map(|row| {
+            let payload = entry.considered.get(row.payload_index).ok_or_else(|| {
+                EvalStoreError::Validation {
+                    field: "selection_score.payload_index",
+                    detail: format!(
+                        "score row payload_index={} exceeds considered count={}",
+                        row.payload_index,
+                        entry.considered.len()
+                    ),
+                }
+            })?;
+            let membership = entry
+                .candidate_set_membership_for_payload(row.payload_index, payload)
+                .map_err(|source| EvalStoreError::Validation {
+                    field: "selection_score.membership",
+                    detail: source.to_string(),
+                })?;
+            Ok(EvalSelectionScoreRow {
+                decision_id: decision_id.to_string(),
+                member_id: member_id(membership, payload)?,
+                formula_id: format!("score_child_prop:{}", formula.metric_set_id.as_str()),
+                score_json: serde_json::to_string(row).map_err(|source| {
+                    EvalStoreError::Validation {
+                        field: "selection_score.score_json",
+                        detail: source.to_string(),
+                    }
+                })?,
+                weight: row.weight,
+                rank: score_rank(row),
+                selected: row.selected,
+            })
+        })
+        .collect()
+}
+
+fn selected_member_id(entry: &SelectionDecisionEntry) -> Result<Option<String>, EvalStoreError> {
+    for (index, payload) in entry.considered.iter().enumerate() {
+        let membership = entry
+            .candidate_set_membership_for_payload(index, payload)
+            .map_err(|source| EvalStoreError::Validation {
+                field: "selection.selected_member_id",
+                detail: source.to_string(),
+            })?;
+        if payload_selected_by_decision(entry, membership, payload) {
+            return member_id(membership, payload).map(Some);
+        }
+    }
+    Ok(None)
 }
 
 fn selected_artifact_id(entry: &SelectionDecisionEntry) -> Result<Option<String>, EvalStoreError> {
@@ -251,6 +436,20 @@ fn selected_artifact_id(entry: &SelectionDecisionEntry) -> Result<Option<String>
             }));
     }
     Ok(None)
+}
+
+fn score_rank(row: &ScoreChildPropFormulaRow) -> Option<i64> {
+    row.performance.map(|_| row.payload_index as i64)
+}
+
+fn rationale_ref(decision_id: &str, index: usize, rationale: &[String]) -> String {
+    let payload = serde_json::to_string(rationale).unwrap_or_else(|_| format!("{rationale:?}"));
+    let hash = hash_parts(&[
+        "p1.eval.selection_finding.rationale.v1",
+        decision_id,
+        &payload,
+    ]);
+    format!("inline:rationale:{index}:sha256:{hash}")
 }
 
 fn member_id(
@@ -414,6 +613,91 @@ fn put_selection_candidate_row<D: EvalDb + ?Sized>(
     Ok(())
 }
 
+fn put_selection_finding_row<D: EvalDb + ?Sized>(
+    db: &D,
+    row: &EvalSelectionFindingRow,
+) -> Result<(), EvalStoreError> {
+    db.eval_query_mut_params(
+        r#"
+?[
+    finding_id,
+    decision_id,
+    member_id,
+    domain,
+    verdict,
+    confidence,
+    evidence_ref,
+    rationale_ref
+] :=
+    finding_id = $finding_id,
+    decision_id = $decision_id,
+    member_id = $member_id,
+    domain = $domain,
+    verdict = $verdict,
+    confidence = $confidence,
+    evidence_ref = $evidence_ref,
+    rationale_ref = $rationale_ref
+:put eval_selection_finding {
+    finding_id =>
+    decision_id,
+    member_id,
+    domain,
+    verdict,
+    confidence,
+    evidence_ref,
+    rationale_ref
+}
+"#,
+        selection_finding_params(row),
+    )
+    .map_err(|source| EvalStoreError::Db {
+        phase: "put.eval_selection_finding",
+        source,
+    })?;
+    Ok(())
+}
+
+fn put_selection_score_row<D: EvalDb + ?Sized>(
+    db: &D,
+    row: &EvalSelectionScoreRow,
+) -> Result<(), EvalStoreError> {
+    db.eval_query_mut_params(
+        r#"
+?[
+    decision_id,
+    member_id,
+    formula_id,
+    score_json,
+    weight,
+    rank,
+    selected
+] :=
+    decision_id = $decision_id,
+    member_id = $member_id,
+    formula_id = $formula_id,
+    score_json = $score_json,
+    weight = $weight,
+    rank = $rank,
+    selected = $selected
+:put eval_selection_score {
+    decision_id,
+    member_id =>
+    formula_id,
+    score_json,
+    weight,
+    rank,
+    selected
+}
+"#,
+        selection_score_params(row),
+    )
+    .map_err(|source| EvalStoreError::Db {
+        phase: "put.eval_selection_score",
+        source,
+    })?;
+    Ok(())
+}
+
 fn selection_decision_params(row: &EvalSelectionDecisionRow) -> BTreeMap<String, DataValue> {
     let mut params = BTreeMap::new();
     params.insert("decision_id".to_string(), row.decision_id.clone().into());
@@ -440,6 +724,37 @@ fn selection_decision_params(row: &EvalSelectionDecisionRow) -> BTreeMap<String,
     params
 }
 
+fn selection_finding_params(row: &EvalSelectionFindingRow) -> BTreeMap<String, DataValue> {
+    let mut params = BTreeMap::new();
+    params.insert("finding_id".to_string(), row.finding_id.clone().into());
+    params.insert("decision_id".to_string(), row.decision_id.clone().into());
+    params.insert("member_id".to_string(), option_string(&row.member_id));
+    params.insert("domain".to_string(), row.domain.clone().into());
+    params.insert("verdict".to_string(), row.verdict.clone().into());
+    params.insert("confidence".to_string(), row.confidence.clone().into());
+    params.insert("evidence_ref".to_string(), option_string(&row.evidence_ref));
+    params.insert(
+        "rationale_ref".to_string(),
+        option_string(&row.rationale_ref),
+    );
+    params
+}
+
+fn selection_score_params(row: &EvalSelectionScoreRow) -> BTreeMap<String, DataValue> {
+    let mut params = BTreeMap::new();
+    params.insert("decision_id".to_string(), row.decision_id.clone().into());
+    params.insert("member_id".to_string(), row.member_id.clone().into());
+    params.insert("formula_id".to_string(), row.formula_id.clone().into());
+    params.insert("score_json".to_string(), row.score_json.clone().into());
+    params.insert("weight".to_string(), option_f64(row.weight));
+    params.insert(
+        "rank".to_string(),
+        row.rank.map(DataValue::from).unwrap_or(DataValue::Null),
+    );
+    params.insert("selected".to_string(), DataValue::Bool(row.selected));
+    params
+}
+
 fn selection_candidate_params(row: &EvalSelectionCandidateRow) -> BTreeMap<String, DataValue> {
     let mut params = BTreeMap::new();
     params.insert("decision_id".to_string(), row.decision_id.clone().into());
@@ -453,6 +768,12 @@ fn selection_candidate_params(row: &EvalSelectionCandidateRow) -> BTreeMap<Strin
         option_string(&row.exclusion_ref),
     );
     params
+}
+
+fn option_f64(value: Option<f64>) -> DataValue {
+    value
+        .map(|value| DataValue::Num(cozo::Num::Float(value)))
+        .unwrap_or(DataValue::Null)
 }
 
 fn option_string(value: &Option<String>) -> DataValue {
@@ -482,6 +803,27 @@ fn serde_name<T: serde::Serialize>(value: &T) -> Result<String, EvalStoreError> 
             serde_json::Value::String(value) => value,
             other => other.to_string(),
         })
+}
+
+fn finding_id(
+    campaign_id: &CampaignId,
+    parent_id: &str,
+    decision_id: &str,
+    index: usize,
+    domain: &str,
+    verdict: &str,
+    confidence: &str,
+) -> String {
+    hash_parts(&[
+        "p1.eval.selection_finding.v1",
+        campaign_id.as_str(),
+        parent_id,
+        decision_id,
+        &index.to_string(),
+        domain,
+        verdict,
+        confidence,
+    ])
 }
 
 fn decision_id(

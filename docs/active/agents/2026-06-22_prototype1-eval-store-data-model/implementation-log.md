@@ -925,6 +925,34 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: selection now writes queryable decision and candidate rows when the owner eval DB exists. The handoff test still exercises the real artifact selection path, and the journal assertion proves DB rows do not replace successor transition authority.
 - Commit: `feat: mirror selection decision summaries`.
 
+### Slice 9d — Selection finding and score summary rows
+
+- Status: complete for `eval_selection_finding` and `eval_selection_score` rows derived from sealed selection entries.
+- Assumptions:
+  - `DomainFinding` remains the source carrier for finding rows, and `SelectionFormula` remains the source carrier for score rows. The eval-store row structs are private Cozo carriers only.
+  - Score rows are emitted when the sealed selection entry carries a formula. Strategies without formula rows remain valid and simply write no `eval_selection_score` rows.
+  - Finding and score rows are passive query evidence. They do not replace selection decisions, History admission, successor transition authority, or artifact handoff validation.
+  - `eval_selection_score.rank` is a first-pass stable payload index for scored rows, not a semantic ordering claim across formulas.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/selection.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/mod.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/tests.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs`
+- Tests added/changed:
+  - existing `historical_node_150_channel_treatment_reaches_current_generation_handoff` now uses `history-score-child-prop` and asserts persisted operational finding plus selected score rows.
+  - existing `prototype1_eval_store_parent_start_db_schema_installs_idempotently`
+- Commands run:
+  - `gitnexus impact ... install_schema`: HIGH risk; 8 direct callers, no affected execution flows. Schema coverage extended for finding and score relations.
+  - `cargo fmt --all`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval historical_node_150_channel_treatment_reaches_current_generation_handoff -- --nocapture` failed first with `E0382` from moving `decision_id`; fixed by cloning for earlier query params.
+  - test-runner sub-agent: same focused handoff test failed next because finding rows had count 2 while the test assumed 1; fixed by querying the operational finding row explicitly.
+  - test-runner sub-agent: same focused handoff test passed.
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_parent_start_db_schema_installs_idempotently -- --nocapture` passed.
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval` passed.
+- Live API used: no. This sub-slice mirrors sealed local selection evidence and does not modify provider execution or terminal result production.
+- Result: selection finding and score evidence now lands in queryable eval-store relations when the owner DB exists. The handoff test still validates the real artifact selection path and still asserts passive DB rows do not replace successor journal authority.
+- Commit: `feat: mirror selection finding scores`.
+
 ### Later slices
 
 Create a new subsection per slice before editing.
