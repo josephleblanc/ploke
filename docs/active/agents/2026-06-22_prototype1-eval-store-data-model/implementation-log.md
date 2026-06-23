@@ -309,7 +309,29 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Checkpoints created/updated: none
 - Artifacts retained: none
 - Result: `DbEvalStore` installs `eval_log_ref`/`eval_trace_event`, writes deterministic log refs, imports observation JSONL into deterministic trace ids, maps common structured trace fields, is idempotent on reimport, rejects invalid JSONL without trace/log rows, and accepts direct `TraceEventEvidence` rows. `observe::TransitionBuilder` and `observe::Step` now mirror trace rows to the owner-scoped eval DB when `prototype1-step/continue` runs with `database` or `dual-strict`; `fs` remains unchanged. Existing parent-start DB/dual-strict tests still pass.
-- Commit: pending
+- Commit: `2470842a feat: mirror prototype1 trace evidence rows`
+
+### Post-Slice 6 cleanup — EvalStore module split
+
+- Status: refactor-only cleanup before Slice 7; no storage behavior or external `prototype1_state::eval_store::...` API path changed.
+- Assumptions:
+  - Split by responsibility now to keep Slice 7 record-ref work out of a 2,700+ line monolith.
+  - Keep authority semantics and backend behavior unchanged; this is not a DB schema or writer change.
+- Code touched:
+  - replaced `crates/ploke-eval/src/cli/prototype1_state/eval_store.rs` with `crates/ploke-eval/src/cli/prototype1_state/eval_store/{mod.rs,api.rs,cozo_store.rs,evidence.rs,error.rs,tests.rs}`.
+- Commands run:
+  - refreshed GitNexus index after Slice 6 so new symbols were visible.
+  - `gitnexus impact ...` for `EvalStore`, `ConfiguredEvalStore`, `FsEvalStore`, `FileDbEvalStore`, `DbEvalStore`, `ParentStartedEvidence`, `TraceEventEvidence`, `prototype1_eval_store_db_path`, `load_owner_eval_database`, `write_trace_event_to_owner_db`, and `EvalStoreError`: LOW risk; no HIGH/CRITICAL warnings.
+  - `cargo fmt --all`
+  - `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
+  - `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store -- --nocapture`
+  - `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_observe_ -- --nocapture`
+  - `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_transition_contract_r4c_to_r5 -- --nocapture`
+- Live API used: no; refactor-only cleanup.
+- Checkpoints created/updated: none
+- Artifacts retained: none
+- Result: EvalStore storage code is split into focused modules while focused eval-store, observe, and R4c→R5 contract tests still pass.
+- Commit: current cleanup commit, `refactor: split eval-store module`
 
 ### Slice 7+ — Later evidence slices
 
