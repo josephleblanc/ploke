@@ -805,6 +805,7 @@ pub(crate) mod score;
 pub(crate) mod selection;
 pub(crate) mod successor;
 pub(crate) mod telemetry;
+#[cfg(test)]
 pub(crate) mod transition_inventory;
 pub(crate) mod typestate;
 pub(crate) mod walk;
