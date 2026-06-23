@@ -233,7 +233,7 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 
 ### Slice 5 — Production DB construction and dual-strict for first slice
 
-- Status: complete for local/storage/typestate gates; direct-Google broad headless-TUI canary attempted eagerly but remains red due model-output behavior unrelated to parent-start DB persistence.
+- Status: complete for local/storage/typestate gates; direct-Google broad headless-TUI canary was attempted eagerly and later retired as stale because current broad admission runs declared validation in the harness after applied batches, so the old `AppliedValidationMissing` expectation no longer matches the validation model.
 - Assumptions:
   - Use an owner-scoped eval DB backup file under the campaign tree: `prototype1/eval-store.cozo.sqlite`.
   - Do not use `records/mirror.cozo.sqlite` for typed eval-store parity.
@@ -261,14 +261,14 @@ Commit only after the slice's required tests pass or, for expected-failing tests
   - `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_storage_authority_negative -- --nocapture`
   - `PLOKE_EVAL_LIVE_API_TESTS=1 PLOKE_RUN_LIVE_TESTS=1 PLOKE_EVAL_LIVE_GOOGLE_MODEL_ID=google/gemini-2.5-flash-lite TMPDIR=$PWD/target/tmp cargo test -p ploke-eval --features live_api_tests -- --ignored prototype1_live_transition --nocapture` matched/runs 0 tests; not counted as a live pass.
   - `PLOKE_EVAL_LIVE_API_TESTS=1 PLOKE_RUN_LIVE_TESTS=1 PLOKE_EVAL_LIVE_GOOGLE_MODEL_ID=google/gemini-2.5-flash-lite PLOKE_EVAL_HEADLESS_TUI_GOOGLE_MODEL_ID=google/gemini-2.5-flash-lite TMPDIR=$PWD/target/tmp cargo test -p ploke-eval --features live_api_tests live_google_direct_broad_headless_tui_rejects_applied_edit_missing_declared_validation -- --ignored --nocapture` failed after live Google call: model completed without staging an edit.
-  - Same broad headless-TUI canary with `google/gemini-2.5-flash` failed after live Google call: model applied an edit but hit requested-validation failure instead of the expected missing-validation rejection.
-  - Same broad headless-TUI canary with `google/gemini-2.5-pro` failed with the same requested-validation path.
+  - Same broad headless-TUI canary with `google/gemini-2.5-flash` failed after live Google call: model applied an edit and harness-owned declared validation failed, exposing that the canary's `AppliedValidationMissing` expectation was stale.
+  - Same broad headless-TUI canary with `google/gemini-2.5-pro` failed with the same requested-validation path; a parent-commit repro showed this was not introduced by Slice 5.
   - `PLOKE_EVAL_LIVE_API_TESTS=1 PLOKE_RUN_LIVE_TESTS=1 PLOKE_EVAL_LIVE_GOOGLE_MODEL_ID=google/gemini-2.5-flash-lite TMPDIR=$PWD/target/tmp cargo test -p ploke-eval --features live_api_tests live_google_protocol_json_adjudication_uses_direct_route_success_or_quota -- --ignored --nocapture` passed and returned sentinel JSON through the direct-Google route.
-- Live API used: yes, direct-Google. Provider route/auth was confirmed by the protocol JSON canary. The broad headless-TUI live canary remains a follow-up failure and was not treated as a pass.
+- Live API used: yes, direct-Google. Provider route/auth was confirmed by the protocol JSON canary. The broad headless-TUI live canary was not treated as a pass and has been retired as stale in `docs/active/agents/expected-failing-regression-tests.md`.
 - Checkpoints created/updated: none
 - Artifacts retained:
   - Live broad headless-TUI artifacts under `~/.ploke-eval/probes/live-google-broad-headless/run-*`; no artifacts were checked in.
-- Result: production `database` and `dual-strict` parent-start modes now write compatibility journal evidence plus owner-scoped eval DB rows. `dual-strict` fails loudly with journal path, source event indices, line hashes, expected semantic hash, and repair guidance if DB persistence fails after filesystem append. Focused local/storage/typestate/checkpoint/authority tests pass. Direct-Google protocol route passes; broad headless-TUI live canary is red and should be investigated before using it as a storage-slice confidence gate.
+- Result: production `database` and `dual-strict` parent-start modes now write compatibility journal evidence plus owner-scoped eval DB rows. `dual-strict` fails loudly with journal path, source event indices, line hashes, expected semantic hash, and repair guidance if DB persistence fails after filesystem append. Focused local/storage/typestate/checkpoint/authority tests pass. Direct-Google protocol route passes; broad headless-TUI missing-validation live canary was stale relative to harness-owned validation and is no longer used as a storage-slice confidence gate.
 - Commit: current slice commit, `feat: enable dual-strict parent-start eval storage`.
 
 ### Slice 6+ — Later evidence slices
