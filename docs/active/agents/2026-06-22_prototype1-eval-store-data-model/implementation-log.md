@@ -953,6 +953,37 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: selection finding and score evidence now lands in queryable eval-store relations when the owner DB exists. The handoff test still validates the real artifact selection path and still asserts passive DB rows do not replace successor journal authority.
 - Commit: `feat: mirror selection finding scores`.
 
+### Slice 10a — Broad harness materialization artifact provenance rows
+
+- Status: complete for broad-harness `C1 -> C2` materialization provenance rows: `eval_artifact`, `eval_artifact_surface`, and `eval_artifact_ref`.
+- Assumptions:
+  - This sub-slice only mirrors artifact provenance after `transition_with_harness` validates the harness workspace, validates changed paths, measures the artifact surface, updates child projections, and appends the After journal entry.
+  - The generic `WorkspaceBackend` C1 path, child build/spawn binary refs, patch/apply/build operation rows, and selected-artifact active-checkout install remain later Slice 10 work.
+  - Owner DB presence is the opt-in boundary for this mirror. If `prototype1/eval-store.cozo.sqlite` does not already exist, materialization remains unchanged and no DB file is created by C1.
+  - DB artifact rows are passive evidence only. They do not prove candidate workspace existence, backend materialization, surface validity, selected artifact admission, or active checkout install.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/c1.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/artifact.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/cozo_schema.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/mod.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/tests.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs`
+- Tests added/changed:
+  - existing `broad_harness_multi_file_admission_mints_one_artifact_child` now seeds an owner eval DB and asserts the derived artifact row, artifact surface row, and child artifact ref row.
+  - new `broad_harness_artifact_rows_do_not_replace_missing_candidate_workspace` seeds matching artifact rows, removes the candidate workspace, and asserts `HarnessWorkspaceMissing` before any C1 journal entry is written.
+  - existing `prototype1_eval_store_parent_start_db_schema_installs_idempotently` now asserts artifact relation installation.
+- Commands run:
+  - `gitnexus impact ... transition_with_harness`: HIGH risk; 4 direct callers, affected modules `Prototype1_state`, `Run`, and tests. Edit kept the mirror after existing harness workspace/surface validation and after journaled C2 materialization.
+  - `gitnexus impact ... install_schema`: HIGH risk; 8 direct callers, no affected execution flows. Schema coverage extended with idempotent artifact relations.
+  - `cargo fmt --all`
+  - test-runner sub-agent: `cargo check -p ploke-eval` passed.
+  - test-runner sub-agent: `cargo test -p ploke-eval prototype1_eval_store_parent_start_db_schema_installs_idempotently -- --nocapture` first failed on missing test imports, then passed after importing `CommitError` and `MaterializeBranchError`.
+  - test-runner sub-agent: `cargo test -p ploke-eval broad_harness_multi_file_admission_mints_one_artifact_child -- --nocapture` passed.
+  - test-runner sub-agent: `cargo test -p ploke-eval broad_harness_artifact_rows_do_not_replace_missing_candidate_workspace -- --nocapture` passed.
+- Live API used: no. This sub-slice mirrors local backend/harness materialization evidence and does not modify provider execution, child generation, or handoff/selected-artifact install.
+- Result: broad-harness child materialization now writes queryable artifact provenance rows when the owner eval DB exists. The authority-negative test proves artifact rows do not replace candidate workspace/backend authority.
+- Commit: `feat: mirror materialized artifact provenance`.
+
 ### Later slices
 
 Create a new subsection per slice before editing.

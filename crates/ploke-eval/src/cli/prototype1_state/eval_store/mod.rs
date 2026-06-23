@@ -6,6 +6,7 @@
 //! invocation/bootstrap, or artifact/worktree mutation.
 
 mod api;
+mod artifact;
 mod continuation;
 mod cozo_params;
 mod cozo_schema;
@@ -22,6 +23,12 @@ mod tests;
 pub(crate) use api::{ConfiguredEvalStore, EvalStore};
 #[cfg(test)]
 pub(crate) use api::{FileDbEvalStore, FsEvalStore};
+#[cfg(test)]
+pub(crate) use artifact::{ARTIFACT_REF_REL, ARTIFACT_REL, ARTIFACT_SURFACE_REL};
+pub(crate) use artifact::{
+    ArtifactEvidence, ArtifactProvenanceEvidence, ArtifactRefEvidence, ArtifactSurfaceEvidence,
+    artifact_surface_hash, write_artifact_provenance_to_owner_db,
+};
 #[cfg(test)]
 pub(crate) use continuation::CONTINUATION_DECISION_REL;
 pub(crate) use continuation::{

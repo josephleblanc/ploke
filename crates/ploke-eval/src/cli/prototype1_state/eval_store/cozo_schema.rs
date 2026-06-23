@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use cozo::DataValue;
 
 use super::{
+    artifact::ensure_artifact_schema,
     continuation::ensure_continuation_schema,
     cozo_store::EvalDb,
     error::EvalStoreError,
@@ -296,6 +297,7 @@ pub(super) fn ensure_eval_store_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(),
     ensure_evaluation_schema(db)?;
     ensure_continuation_schema(db)?;
     ensure_selection_schema(db)?;
+    ensure_artifact_schema(db)?;
 
     Ok(())
 }

@@ -30,7 +30,7 @@
 
 use crate::prelude::*;
 
-use std::marker::PhantomData;
+use std::{marker::PhantomData, path::Path};
 
 use tracing::{debug, instrument};
 
@@ -43,6 +43,7 @@ use crate::intervention::{
 
 use super::backend::{BackendError, GitWorktreeBackend, RealizeRequest, WorkspaceBackend};
 use super::edit_surface::harness_request;
+use super::eval_store;
 use super::event::{
     ContentHash, Hashes, LineageMark, Paths, RecordedAt, Refs, RuntimeId, TransitionId, World,
 };
@@ -432,6 +433,12 @@ pub(crate) enum MaterializeBranchError {
         expected_tree: String,
         observed_tree: String,
     },
+    #[error("failed to mirror broad harness child '{node_id}' artifact provenance to eval-store")]
+    EvalStoreArtifactProvenance {
+        node_id: String,
+        #[source]
+        source: eval_store::EvalStoreError,
+    },
 }
 
 impl Prototype<Parent, Parent, Absent, Unacknowledged> {
@@ -781,9 +788,71 @@ impl<B> MaterializeBranch<B> {
             workspace_root = %next.artifact.repo_root.display(),
             "recorded broad harness materialize after entry"
         );
+        mirror_broad_harness_artifact_provenance(
+            &next,
+            artifact,
+            &observed_surface,
+            &workspace.candidate_root,
+        )
+        .map_err(|source| {
+            CommitError::Transition(MaterializeBranchError::EvalStoreArtifactProvenance {
+                node_id: next.node.node_id.clone(),
+                source,
+            })
+        })?;
 
         Ok(Outcome::Advanced(next))
     }
+}
+
+fn mirror_broad_harness_artifact_provenance(
+    next: &Prototype<Parent, Child, Absent, Unacknowledged>,
+    artifact: &harness_request::child::ArtifactEvidence,
+    surface: &super::history::ArtifactSurface,
+    candidate_root: &Path,
+) -> Result<(), eval_store::EvalStoreError> {
+    let db_path = eval_store::prototype1_eval_store_db_path(&next.campaign_manifest_path);
+    if !db_path.exists() {
+        return Ok(());
+    }
+
+    let derived_artifact_id = artifact.derived_artifact_id.to_string();
+    let surface_hash = eval_store::artifact_surface_hash(surface)?;
+    let recorded_at = chrono::Utc::now().to_rfc3339();
+    let source_ref = format!("broad_harness:workspace:{}", candidate_root.display());
+    let evidence = eval_store::ArtifactProvenanceEvidence {
+        artifact: eval_store::ArtifactEvidence {
+            campaign_id: next.campaign_id.clone(),
+            artifact_id: derived_artifact_id.clone(),
+            tree_hash: Some(format!("{:?}", surface.tree_key())),
+            git_branch: None,
+            git_commit: None,
+            source: "broad_harness".to_string(),
+            store_scope: "parent".to_string(),
+            created_by: Some(next.node.node_id.clone()),
+            parent_artifact_id: Some(artifact.base_artifact_id.to_string()),
+        },
+        surface: Some(eval_store::ArtifactSurfaceEvidence {
+            campaign_id: next.campaign_id.clone(),
+            artifact_id: derived_artifact_id.clone(),
+            immutable_root: None,
+            mutated_root: None,
+            ambient_root: None,
+            surface_hash: Some(surface_hash.clone()),
+            source_ref: Some(source_ref.clone()),
+            recorded_at: Some(recorded_at.clone()),
+        }),
+        refs: vec![eval_store::ArtifactRefEvidence {
+            campaign_id: next.campaign_id.clone(),
+            artifact_id: Some(derived_artifact_id),
+            kind: "broad_harness_child_artifact".to_string(),
+            source_ref,
+            content_sha256: Some(surface_hash),
+            recorded_at: Some(recorded_at),
+        }],
+    };
+    eval_store::write_artifact_provenance_to_owner_db(&db_path, evidence)?;
+    Ok(())
 }
 
 impl<B>

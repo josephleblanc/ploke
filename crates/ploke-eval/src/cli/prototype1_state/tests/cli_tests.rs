@@ -28,8 +28,9 @@ use tracing_subscriber::layer::{Context, SubscriberExt};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::{Layer, Registry};
 
+use crate::cli::prototype1_state::c1::MaterializeBranchError;
 use crate::intervention::{
-    CommitPhase, PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1RunnerResult,
+    CommitError, CommitPhase, PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1RunnerResult,
     Prototype1SearchPolicy, RecordStore, TreatmentBranchNode, TreatmentBranchStatus,
 };
 use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, RuntimeId};
@@ -2878,6 +2879,12 @@ fn broad_harness_child_requires_request_bound_evidence() {
 fn broad_harness_multi_file_admission_mints_one_artifact_child() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+    ploke_db::Database::new_init()
+        .expect("empty eval db")
+        .write_backup_to_path(&db_path)
+        .expect("seed owner eval db");
     let repo_root = tmp.path().join("repo");
     let changed_paths = {
         let allowed = write_broad_surface_targets(&repo_root);
@@ -2979,6 +2986,291 @@ fn broad_harness_multi_file_admission_mints_one_artifact_child() {
     assert_eq!(c2.artifact().repo_root(), candidate_root.as_path());
     assert_eq!(c2.node().workspace_root, candidate_root);
     assert_eq!(c2.request().workspace_root, c2.node().workspace_root);
+    let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "artifact_id".to_string(),
+        cozo::DataValue::from(admitted_derived.to_string()),
+    );
+    let artifacts = db
+        .raw_query_params(
+            r#"
+?[
+    artifact_id,
+    source,
+    store_scope,
+    created_by,
+    parent_artifact_id,
+    tree_hash
+] :=
+    *eval_artifact {
+        artifact_id,
+        source,
+        store_scope,
+        created_by,
+        parent_artifact_id,
+        tree_hash
+    },
+    artifact_id = $artifact_id
+"#,
+            params.clone(),
+        )
+        .expect("query artifact provenance");
+    assert_eq!(artifacts.rows.len(), 1);
+    let artifact_row = artifacts.row_refs().next().expect("artifact row");
+    assert_eq!(
+        artifact_row.get::<String>("source").expect("source"),
+        "broad_harness"
+    );
+    assert_eq!(
+        artifact_row
+            .get::<String>("store_scope")
+            .expect("store scope"),
+        "parent"
+    );
+    assert_eq!(
+        artifact_row
+            .get::<String>("created_by")
+            .expect("created by"),
+        child.node_record().node_id
+    );
+    assert_eq!(
+        artifact_row
+            .get::<String>("parent_artifact_id")
+            .expect("parent artifact"),
+        evidence
+            .artifact()
+            .expect("artifact evidence")
+            .base_artifact_id
+            .to_string()
+    );
+    assert!(
+        !artifact_row
+            .get::<String>("tree_hash")
+            .expect("tree hash")
+            .is_empty()
+    );
+    let surfaces = db
+        .raw_query_params(
+            r#"
+?[
+    artifact_id,
+    surface_hash,
+    source_ref
+] :=
+    *eval_artifact_surface {
+        artifact_id,
+        surface_hash,
+        source_ref
+    },
+    artifact_id = $artifact_id
+"#,
+            params.clone(),
+        )
+        .expect("query artifact surface");
+    assert_eq!(surfaces.rows.len(), 1);
+    let surface_row = surfaces.row_refs().next().expect("surface row");
+    assert!(
+        !surface_row
+            .get::<String>("surface_hash")
+            .expect("surface hash")
+            .is_empty()
+    );
+    assert!(
+        surface_row
+            .get::<String>("source_ref")
+            .expect("source ref")
+            .contains(&candidate_root.display().to_string())
+    );
+    let refs = db
+        .raw_query_params(
+            r#"
+?[
+    artifact_id,
+    kind,
+    source_ref,
+    content_sha256
+] :=
+    *eval_artifact_ref {
+        artifact_id,
+        kind,
+        source_ref,
+        content_sha256
+    },
+    artifact_id = $artifact_id
+"#,
+            params,
+        )
+        .expect("query artifact refs");
+    assert_eq!(refs.rows.len(), 1);
+    let ref_row = refs.row_refs().next().expect("artifact ref row");
+    assert_eq!(
+        ref_row.get::<String>("kind").expect("kind"),
+        "broad_harness_child_artifact"
+    );
+    assert!(
+        !ref_row
+            .get::<String>("content_sha256")
+            .expect("content hash")
+            .is_empty()
+    );
+}
+
+#[test]
+fn broad_harness_artifact_rows_do_not_replace_missing_candidate_workspace() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let changed_paths = {
+        let allowed = write_broad_surface_targets(&repo_root);
+        commit_indexed_repo(&repo_root, "broad surface fixture");
+        vec![allowed[0].clone(), allowed[1].clone()]
+    };
+    let parent = ready_parent_for_test(&manifest_path, &repo_root);
+    let publication = publish_broad_edit_harness_request_with_graph_limit(
+        &manifest_path,
+        &repo_root,
+        parent.identity(),
+        Prototype1ChildBudget::new(1, 1),
+        test_broad_request_admission_binding(),
+        DEFAULT_GRAPH_NEAREST_ITEMS,
+    )
+    .expect("published request");
+    let awaiting_parent = parent.awaiting_harness_plan_for_request((&publication.published).into());
+    let receipt = HarnessRequestReceipt {
+        parent: awaiting_parent,
+        request_path: publication.request_path,
+        published: publication.published,
+    };
+    let candidate_root = receipt.published.workspace_path().to_path_buf();
+    GitWorktreeBackend
+        .prepare_broad_harness_workspace(&repo_root, &receipt.published)
+        .expect("prepare broad harness workspace");
+    for relpath in &changed_paths {
+        write_surface_target(
+            &candidate_root,
+            relpath,
+            &format!("candidate edit for {}\n", relpath.display()),
+        );
+    }
+    let submitted = submitted_broad_harness_result_for_paths(&receipt.published, &changed_paths);
+    let admitted = GitWorktreeBackend
+        .admit_submitted_broad_harness_result(
+            &repo_root,
+            EditSurfaceAdmission::new(
+                receipt.published.admission_binding().coordinate().clone(),
+                SurfacePolicyId::new(receipt.published.admission_binding().policy_id().as_str()),
+            ),
+            &receipt.published,
+            &submitted,
+        )
+        .expect("admit broad harness result");
+    let base_artifact = admitted.base_artifact_id().to_string();
+    let admitted_derived = admitted.derived_artifact_id().clone();
+    let surface_hash =
+        eval_store::artifact_surface_hash(admitted.artifact_surface()).expect("surface hash");
+
+    let child_plan = publish_broad_harness_child_plan_from_admitted(
+        ChildPlanEnv {
+            campaign_id: &CLI_TEST_CAMPAIGN,
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
+            route_source: ModelRouteSource::DirectGoogle,
+        },
+        receipt,
+        admitted,
+    )
+    .expect("multi-file admitted transaction should mint one child artifact");
+    let child = &child_plan.plan.body().children()[0];
+    let evidence = child.harness_evidence().expect("harness evidence");
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    eval_store::write_artifact_provenance_to_owner_db(
+        &db_path,
+        eval_store::ArtifactProvenanceEvidence {
+            artifact: eval_store::ArtifactEvidence {
+                campaign_id: CLI_TEST_CAMPAIGN.clone(),
+                artifact_id: admitted_derived.to_string(),
+                tree_hash: Some(format!("{:?}", evidence.artifact_surface().tree_key())),
+                git_branch: None,
+                git_commit: None,
+                source: "broad_harness".to_string(),
+                store_scope: "parent".to_string(),
+                created_by: Some(child.node_record().node_id.clone()),
+                parent_artifact_id: Some(base_artifact),
+            },
+            surface: Some(eval_store::ArtifactSurfaceEvidence {
+                campaign_id: CLI_TEST_CAMPAIGN.clone(),
+                artifact_id: admitted_derived.to_string(),
+                immutable_root: None,
+                mutated_root: None,
+                ambient_root: None,
+                surface_hash: Some(surface_hash.clone()),
+                source_ref: Some(format!(
+                    "broad_harness:workspace:{}",
+                    candidate_root.display()
+                )),
+                recorded_at: Some("2026-06-23T00:00:00Z".to_string()),
+            }),
+            refs: vec![eval_store::ArtifactRefEvidence {
+                campaign_id: CLI_TEST_CAMPAIGN.clone(),
+                artifact_id: Some(admitted_derived.to_string()),
+                kind: "broad_harness_child_artifact".to_string(),
+                source_ref: format!("broad_harness:workspace:{}", candidate_root.display()),
+                content_sha256: Some(surface_hash),
+                recorded_at: Some("2026-06-23T00:00:00Z".to_string()),
+            }],
+        },
+    )
+    .expect("seed artifact provenance rows");
+    fs::remove_dir_all(&candidate_root).expect("remove candidate workspace");
+
+    let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path));
+    let c1 = C1::from_child_plan(
+        "campaign",
+        manifest_path.clone(),
+        child.node_record().clone(),
+        child.runner_request().clone(),
+        child.resolved().clone(),
+        repo_root,
+    )
+    .expect("load c1");
+    let err = MaterializeBranch::new()
+        .transition_with_harness(c1, evidence, &mut journal)
+        .expect_err("DB artifact rows cannot replace the candidate workspace");
+
+    match err {
+        CommitError::Transition(MaterializeBranchError::HarnessWorkspaceMissing {
+            node_id,
+            path,
+        }) => {
+            assert_eq!(node_id, child.node_record().node_id);
+            assert_eq!(path, candidate_root);
+        }
+        other => panic!("unexpected materialization error: {other:?}"),
+    }
+    let entries = journal.load_entries().expect("journal entries");
+    assert!(
+        entries.is_empty(),
+        "workspace authority failure must occur before C1 journal commits"
+    );
+    let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "artifact_id".to_string(),
+        cozo::DataValue::from(admitted_derived.to_string()),
+    );
+    let rows = db
+        .raw_query_params(
+            r#"
+?[artifact_id] :=
+    *eval_artifact { artifact_id },
+    artifact_id = $artifact_id
+"#,
+            params,
+        )
+        .expect("query seeded artifact row");
+    assert_eq!(rows.rows.len(), 1);
 }
 
 #[test]
