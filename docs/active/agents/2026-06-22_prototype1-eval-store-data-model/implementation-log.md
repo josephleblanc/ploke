@@ -782,6 +782,31 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: `eval_attempt` now installs in the owner eval DB schema. Child invocation writes derive a passive attempt row linked to the invocation id, with `attempt_id` equal to the runtime id and `status = invocation_written`. The authority-negative test still proves DB invocation/attempt rows cannot launch a missing executable invocation file.
 - Commit: current slice commit, pending.
 
+### Slice 8f — Successor invocation attempt mirror
+
+- Status: complete for successor invocation-backed `eval_invocation`/`eval_attempt` rows. Terminal `ToParent::Result` remains blocked/deferred behind the provider-facing live gate.
+- Assumptions:
+  - The retired-parent gate for successor invocation construction remains the authority boundary. This sub-slice only mirrors after `write_invocation` has created the executable successor invocation file.
+  - The DB mirror is passive evidence. It does not permit handoff, spawn, or successor startup without the executable invocation file.
+  - The same first-pass `attempt_id == runtime_id` rule applies to successor bootstrap attempts.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/invocation.rs`
+  - `docs/active/agents/2026-06-22_prototype1-eval-store-data-model/implementation-log.md`
+- Tests added/changed:
+  - `prototype1_eval_store_successor_invocation_writes_owner_db_rows`
+  - `prototype1_storage_authority_negative_successor_attempt_row_cannot_replace_file`
+  - existing `prototype1_state::invocation::tests`
+- Commands run:
+  - `gitnexus impact ... write_successor_invocation`: HIGH risk through successor handoff/spawn flows; edit kept to append-first passive mirroring after executable invocation write.
+  - `cargo fmt --all`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_successor_invocation_writes_owner_db_rows -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_storage_authority_negative_successor_attempt_row_cannot_replace_file -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_state::invocation::tests -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
+- Live API used: no. This sub-slice mirrors local successor bootstrap invocation evidence after the invocation file write and does not change provider execution or terminal result production.
+- Result: successor invocation writes now use the same owner-DB mirror path as child invocations, with role-specific `eval_invocation` and `eval_attempt` rows. The successor authority-negative test proves DB rows cannot replace a missing executable invocation file.
+- Commit: current slice commit, pending.
+
 ### Later slices
 
 Create a new subsection per slice before editing.
