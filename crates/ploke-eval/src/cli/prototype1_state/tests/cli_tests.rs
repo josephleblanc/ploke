@@ -465,6 +465,108 @@ fn historical_selection_rejects_already_active_parent_cycle() {
 }
 
 #[test]
+fn continuation_decision_mirrors_owned_eval_store_row_without_successor_authority() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = test_manifest_path(tmp.path());
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+    ploke_db::Database::new_init()
+        .expect("empty eval db")
+        .write_backup_to_path(&db_path)
+        .expect("seed owner eval db");
+    let parent = parent_identity_for("node-current", 1);
+    append_parent_started(&manifest_path, parent.clone());
+    let mut node = test_node(tmp.path(), "node-history", "branch-history", "candidate-1");
+    node.generation = 1;
+    node.parent_node_id = Some("node-root".to_string());
+    write_test_node(&manifest_path, &node);
+    let policy = Prototype1SearchPolicy {
+        max_generations: 15,
+        max_total_nodes: 96,
+        ..Prototype1SearchPolicy::default()
+    };
+
+    let decision = live_successor_continuation_decision(
+        &manifest_path,
+        &parent,
+        &policy,
+        &successor_decision_for(&node),
+        &selection_material_from_history(),
+        &node,
+    )
+    .expect("continuation decision");
+
+    assert_eq!(
+        decision.disposition,
+        Prototype1ContinuationDisposition::ContinueHistoricalTraversal
+    );
+    let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+    let rows = db
+        .raw_query_params(
+            r#"
+?[
+    campaign_id,
+    parent_id,
+    disposition,
+    selected_branch_id,
+    next_generation,
+    total_nodes,
+    policy_ref
+] :=
+    *eval_continuation_decision {
+        campaign_id,
+        parent_id,
+        disposition,
+        selected_branch_id,
+        next_generation,
+        total_nodes,
+        policy_ref
+    }
+"#,
+            std::collections::BTreeMap::new(),
+        )
+        .expect("query continuation rows");
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("continuation row");
+    assert_eq!(
+        row.get::<String>("campaign_id").expect("campaign"),
+        parent.campaign_id().to_string()
+    );
+    assert_eq!(
+        row.get::<String>("parent_id").expect("parent"),
+        parent.parent_id()
+    );
+    assert_eq!(
+        row.get::<String>("disposition").expect("disposition"),
+        "continue_historical_traversal"
+    );
+    assert_eq!(
+        row.get::<String>("selected_branch_id")
+            .expect("selected branch"),
+        "branch-history"
+    );
+    assert_eq!(
+        row.get::<i64>("next_generation").expect("generation"),
+        i64::from(node.generation)
+    );
+    assert_eq!(row.get::<i64>("total_nodes").expect("total nodes"), 1);
+    assert_eq!(
+        row.get::<String>("policy_ref").expect("policy"),
+        "prototype1.search_policy"
+    );
+
+    let journal_entries = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path))
+        .load_entries()
+        .expect("load journal entries");
+    assert!(
+        journal_entries
+            .iter()
+            .all(|entry| !matches!(entry, JournalEntry::Successor(_))),
+        "passive eval-store continuation rows must not replace successor transition authority"
+    );
+}
+
+#[test]
 fn history_candidate_filter_excludes_active_parent_before_sampling() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let parent = parent_identity_for("node-current", 2);

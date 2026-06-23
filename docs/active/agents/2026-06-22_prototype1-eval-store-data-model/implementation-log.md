@@ -864,6 +864,37 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: parent comparison now writes queryable evaluation summary rows after the JSON evaluation artifact and branch comparison log succeed. Selection reconstruction still refuses to proceed without a file-backed/in-memory evaluation report, proving DB evaluation rows do not replace evaluation authority.
 - Commit: `feat: mirror parent evaluation summaries`.
 
+### Slice 9b — Continuation decision summary rows
+
+- Status: complete for `eval_continuation_decision` rows written after `live_successor_continuation_decision` computes the typed continuation result.
+- Assumptions:
+  - `Prototype1ContinuationDecision` remains the source carrier. The new eval-store evidence struct is a private DB row carrier, not a second continuation model.
+  - Continuation rows are passive query evidence. They do not replace transition-journal successor authority, History traversal, active checkout advancement, or successor startup validation.
+  - The mirror is owner-DB opportunistic: if the campaign-local `prototype1/eval-store.cozo.sqlite` file does not exist, continuation decision behavior remains unchanged.
+  - Selection decision/candidate/finding/score rows remain a separate Slice 9 follow-up because they depend on `SelectionSealMaterial` and History candidate-set evidence, not only the continuation result.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/continuation.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/cozo_schema.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/mod.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/tests.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs`
+- Tests added/changed:
+  - `continuation_decision_mirrors_owned_eval_store_row_without_successor_authority`
+  - existing `prototype1_eval_store_parent_start_db_schema_installs_idempotently`
+  - existing `historical_selection_can_continue_when_unspent_and_bounded`
+- Commands run:
+  - `gitnexus impact ... live_successor_continuation_decision`: HIGH risk; 4 direct callers, affected processes `r12_to_r13` and `reconstruct_early`. Edit kept decision computation unchanged and added only a post-decision passive mirror.
+  - `gitnexus impact ... install_schema`: HIGH risk; 8 direct callers, no affected execution flows. Schema coverage added.
+  - `cargo fmt --all`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval continuation_decision_mirrors_owned_eval_store_row_without_successor_authority -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_parent_start_db_schema_installs_idempotently -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval historical_selection_can_continue_when_unspent_and_bounded -- --nocapture`
+  - `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
+- Live API used: no. This sub-slice mirrors local parent-side continuation decisions and does not modify provider execution or terminal result production.
+- Result: continuation decisions now install and write queryable `eval_continuation_decision` rows when the owner eval DB exists. The authority-negative test proves the passive row does not append a successor journal entry or replace successor transition authority.
+- Commit: `feat: mirror continuation decision summaries`.
+
 ### Later slices
 
 Create a new subsection per slice before editing.

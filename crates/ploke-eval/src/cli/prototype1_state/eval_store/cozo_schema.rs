@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use cozo::DataValue;
 
 use super::{
+    continuation::ensure_continuation_schema,
     cozo_store::EvalDb,
     error::EvalStoreError,
     evaluation::ensure_evaluation_schema,
@@ -292,6 +293,7 @@ pub(super) fn ensure_eval_store_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(),
     }
 
     ensure_evaluation_schema(db)?;
+    ensure_continuation_schema(db)?;
 
     Ok(())
 }

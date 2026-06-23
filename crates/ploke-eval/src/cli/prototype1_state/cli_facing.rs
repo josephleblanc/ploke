@@ -7063,7 +7063,7 @@ pub(crate) fn live_successor_continuation_decision(
         Prototype1ContinuationDisposition::ContinueReady
     };
 
-    Ok(Prototype1ContinuationDecision {
+    let continuation = Prototype1ContinuationDecision {
         disposition,
         selected_next_branch_id: decision.selected_branch_id.clone(),
         selected_branch_disposition: decision
@@ -7071,7 +7071,44 @@ pub(crate) fn live_successor_continuation_decision(
             .map(ToOwned::to_owned),
         next_generation: selected_node.generation,
         total_nodes_after_continue,
-    })
+    };
+    emit_continuation_decision_if_owner_db_exists(
+        campaign_manifest_path,
+        parent_identity,
+        &continuation,
+    )?;
+    Ok(continuation)
+}
+
+fn emit_continuation_decision_if_owner_db_exists(
+    campaign_manifest_path: &Path,
+    parent_identity: &ParentIdentity,
+    decision: &Prototype1ContinuationDecision,
+) -> Result<(), PrepareError> {
+    let db_path = eval_store::prototype1_eval_store_db_path(campaign_manifest_path);
+    if !db_path.is_file() {
+        return Ok(());
+    }
+    let evidence = eval_store::ContinuationDecisionEvidence {
+        campaign_id: parent_identity.campaign_id().clone(),
+        parent_id: parent_identity.parent_id().to_string(),
+        disposition: serde_name(&decision.disposition).to_string(),
+        selected_branch_id: decision.selected_next_branch_id.clone(),
+        next_generation: decision.next_generation,
+        total_nodes: decision.total_nodes_after_continue,
+        policy_ref: Some("prototype1.search_policy".to_string()),
+        recorded_at: Some(Utc::now().to_rfc3339()),
+    };
+    eval_store::write_continuation_decision_to_owner_db(&db_path, evidence).map_err(|source| {
+        PrepareError::DatabaseSetup {
+            phase: "eval_continuation_decision_put",
+            detail: format!(
+                "failed to persist continuation decision row for '{}': {source}",
+                db_path.display()
+            ),
+        }
+    })?;
+    Ok(())
 }
 
 struct HistoricalTraversalGuard {

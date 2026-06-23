@@ -6,6 +6,7 @@
 //! invocation/bootstrap, or artifact/worktree mutation.
 
 mod api;
+mod continuation;
 mod cozo_params;
 mod cozo_schema;
 mod cozo_store;
@@ -20,6 +21,11 @@ mod tests;
 pub(crate) use api::{ConfiguredEvalStore, EvalStore};
 #[cfg(test)]
 pub(crate) use api::{FileDbEvalStore, FsEvalStore};
+#[cfg(test)]
+pub(crate) use continuation::CONTINUATION_DECISION_REL;
+pub(crate) use continuation::{
+    ContinuationDecisionEvidence, write_continuation_decision_to_owner_db,
+};
 #[cfg(test)]
 pub(crate) use cozo_store::{DbEvalStore, load_owner_eval_database};
 pub(crate) use cozo_store::{

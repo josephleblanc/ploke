@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 
 use super::*;
 use super::{
-    EVALUATION_INSTANCE_REL, EVALUATION_REL,
+    CONTINUATION_DECISION_REL, EVALUATION_INSTANCE_REL, EVALUATION_REL,
     api::EvalStorageMode,
     cozo_schema::eval_relation_exists,
     error::EvalStoreError,
@@ -105,6 +105,10 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
     assert!(eval_relation_exists(&db, EVALUATION_REL).expect("evaluation rel exists"));
     assert!(
         eval_relation_exists(&db, EVALUATION_INSTANCE_REL).expect("evaluation instance rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, CONTINUATION_DECISION_REL)
+            .expect("continuation decision rel exists")
     );
     assert!(eval_relation_exists(&db, RECORD_REL).expect("record rel exists"));
     assert!(eval_relation_exists(&db, LOG_REF_REL).expect("log rel exists"));
