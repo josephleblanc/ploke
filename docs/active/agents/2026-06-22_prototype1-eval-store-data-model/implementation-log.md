@@ -511,6 +511,34 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: C1 materialization, C2 build status, and C3 spawn status now write `node.json` first and, when `prototype1/eval-store.cozo.sqlite` exists, mirror that exact JSON projection as a `scheduler_node` compatibility `eval_record_ref` row with parent scope, source coordinates, payload JSON, and payload hash. A DB row claiming a scheduler node does not replace the missing `node.json` file gate.
 - Commit: current slice commit, `feat: mirror parent node projection refs`.
 
+### Slice 7f — Root-parent scheduler-node compatibility record refs
+
+- Status: complete for root-parent node registration refs only; broad planning child-node projections, child terminal node refs, and legacy process writes remain deferred.
+- Assumptions:
+  - `register_root_parent_node` is a parent-owned setup/registration writer, not a provider-facing producer.
+  - `node.json` remains the scheduler-node projection file and current loader authority.
+  - DB rows are parent-visible `eval_record_ref` compatibility evidence only; they do not replace parent identity, scheduler state, runner request files, History, channel, or artifact authority.
+  - Default filesystem setup with no owner eval DB remains unchanged.
+- Code touched:
+  - `crates/ploke-eval/src/intervention/scheduler.rs`
+- Tests added/changed:
+  - `prototype1_eval_store_record_ref_root_parent_node_registration_writes_owner_db_row`
+  - existing `prototype1_storage_authority_negative_node_ref_cannot_replace_file`
+  - existing `register_treatment_node_persists_scheduler_and_runner_request`
+- Commands run:
+  - `gitnexus impact ... register_root_parent_node`: LOW risk; 1 direct caller, `prepare_prototype1_parent_setup`.
+  - `cargo fmt --all`
+  - `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_record_ref_root_parent_node_registration_writes_owner_db_row -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_record_ref -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_storage_authority_negative_node_ref_cannot_replace_file -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval register_treatment_node_persists_scheduler_and_runner_request -- --nocapture`
+- Live API used: no; this sub-slice mirrors setup-time root-parent node projection evidence and does not touch provider-facing broad planning or child treatment execution.
+- Checkpoints created/updated: none
+- Artifacts retained: none
+- Result: root-parent registration still writes the scheduler node file before scheduler state and runner request persistence. When `prototype1/eval-store.cozo.sqlite` exists, it also mirrors that root `node.json` projection as a parent-visible `scheduler_node` compatibility `eval_record_ref` with source coordinates, payload JSON, and payload hash. Existing node authority-negative coverage still proves DB rows cannot replace the missing `node.json` gate.
+- Commit: current slice commit, `feat: mirror root parent node refs`.
+
 ### Slice 7+ — Later evidence slices
 
 Create a new subsection per slice before editing.

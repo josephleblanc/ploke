@@ -510,7 +510,7 @@ pub fn register_root_parent_node(
         path: node_dir.join("bin"),
         source,
     })?;
-    save_node_record(&record)?;
+    write_parent_node_projection(campaign_id, &record)?;
     save_runner_request(&request, &runner_request_path)?;
 
     match scheduler
@@ -1585,6 +1585,127 @@ mod tests {
         assert_eq!(
             <ploke_records::scheduler::RunnerRequestRecord as ploke_records::record::Record>::FAMILY,
             ploke_records::record::RecordFamily::RunnerRequest
+        );
+    }
+
+    #[test]
+    fn prototype1_eval_store_record_ref_root_parent_node_registration_writes_owner_db_row() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+        let db_path = eval_store::prototype1_eval_store_db_path(&manifest);
+        fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+        ploke_db::Database::new_init()
+            .expect("empty eval db")
+            .write_backup_to_path(&db_path)
+            .expect("seed owner eval db");
+
+        let node = register_root_parent_node(
+            &CampaignId::from("test-campaign"),
+            &manifest,
+            "root-instance",
+            "main",
+            tmp.path(),
+            Prototype1SearchPolicy::default(),
+        )
+        .expect("register root parent node");
+
+        let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+        let mut params = BTreeMap::new();
+        params.insert(
+            "campaign_id".to_string(),
+            cozo::DataValue::from("test-campaign".to_string()),
+        );
+        params.insert(
+            "producer_id".to_string(),
+            cozo::DataValue::from(node.node_id.clone()),
+        );
+        let rows = db
+            .raw_query_params(
+                r#"
+?[
+    family,
+    schema_version,
+    store_scope,
+    producer_role,
+    producer_id,
+    source_class,
+    evidence_class,
+    visibility_scope,
+    validation_status,
+    source_ref,
+    content_sha256,
+    payload_json
+] :=
+    *eval_record_ref {
+        campaign_id,
+        family,
+        schema_version,
+        store_scope,
+        producer_role,
+        producer_id,
+        source_class,
+        evidence_class,
+        visibility_scope,
+        validation_status,
+        source_ref,
+        content_sha256,
+        payload_json
+    },
+    campaign_id = $campaign_id,
+    producer_id = $producer_id,
+    family = "scheduler_node"
+"#,
+                params,
+            )
+            .expect("query root scheduler node record refs");
+
+        assert_eq!(rows.rows.len(), 1);
+        let row = rows.row_refs().next().expect("record ref row");
+        assert_eq!(
+            row.get::<String>("family").expect("family"),
+            "scheduler_node"
+        );
+        assert_eq!(
+            row.get::<String>("schema_version").expect("schema"),
+            PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION
+        );
+        assert_eq!(row.get::<String>("store_scope").expect("scope"), "parent");
+        assert_eq!(row.get::<String>("producer_role").expect("role"), "parent");
+        assert_eq!(
+            row.get::<String>("source_class").expect("source"),
+            "compatibility_import"
+        );
+        assert_eq!(
+            row.get::<String>("evidence_class").expect("evidence"),
+            "compatibility"
+        );
+        assert_eq!(
+            row.get::<String>("visibility_scope").expect("visibility"),
+            "parent_visible"
+        );
+        assert_eq!(
+            row.get::<String>("validation_status").expect("status"),
+            "valid"
+        );
+        assert!(
+            row.get::<String>("source_ref")
+                .expect("source ref")
+                .contains("node.json:L1")
+        );
+        assert!(
+            !row.get::<String>("content_sha256")
+                .expect("hash")
+                .is_empty(),
+            "record ref carries payload hash"
+        );
+        let payload = row.get::<String>("payload_json").expect("payload");
+        assert!(
+            payload.contains("\"root-parent\""),
+            "payload remains a compatibility ref for the root node projection JSON"
+        );
+        assert!(
+            payload.contains("\"planned\""),
+            "root registration keeps planned scheduler-node status"
         );
     }
 
