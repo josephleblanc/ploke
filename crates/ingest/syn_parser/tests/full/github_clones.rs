@@ -3,7 +3,7 @@
 /// These tests exercise `try_run_phases_and_merge` against production-grade
 /// Rust code to surface parse failures, merge conflicts, or module-tree
 /// construction bugs that smaller fixtures do not expose.
-use ploke_common::fixture_github_clones_dir;
+use ploke_common::{fixture_github_clones_dir, workspace_root};
 use syn_parser::{parser::graph::ParsedCodeGraph, try_run_phases_and_merge};
 use tracing_subscriber::fmt::format::FmtSpan;
 
@@ -13,8 +13,14 @@ use crate::common::{WorkspaceParsePair, parse_workspace_both};
 // Tracing helper
 // ---------------------------------------------------------------------------
 
-/// Log file directory for test tracing output.
-const LOG_DIR: &str = "/home/brasides/code/ploke/logs";
+/// Workspace-local log file directory for test tracing output.
+fn github_clone_log_dir() -> std::path::PathBuf {
+    workspace_root()
+        .join("target")
+        .join("test-logs")
+        .join("syn_parser")
+        .join("github_clones")
+}
 
 /// Initialize `tracing-subscriber` for a single test run.
 ///
@@ -25,7 +31,8 @@ const LOG_DIR: &str = "/home/brasides/code/ploke/logs";
 ///
 /// Output is written to both:
 /// - Console (via `with_test_writer` for cargo test output)
-/// - Log files in `LOG_DIR` (one file per test invocation with timestamp)
+/// - Log files under `target/test-logs/syn_parser/github_clones`
+///   (one file per test invocation with timestamp)
 ///
 /// The subscriber is silently ignored if another test in the same process
 /// already initialized it (`try_init` returns `Err` instead of panicking).
@@ -34,8 +41,10 @@ fn init_tracing() {
         EnvFilter, Layer, fmt, layer::SubscriberExt, util::SubscriberInitExt,
     };
 
-    // Create log directory if it doesn't exist
-    let _ = std::fs::create_dir_all(LOG_DIR);
+    // Create log directory if it doesn't exist.
+    let log_dir = github_clone_log_dir();
+    std::fs::create_dir_all(&log_dir)
+        .expect("Failed to create GitHub clone parser test log directory");
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         // Default: TRACE on the targets we care about, WARN for everything else.
@@ -46,7 +55,7 @@ fn init_tracing() {
 
     // File appender for "debug_dup" target
     let debug_dup_file =
-        tracing_appender::rolling::never(LOG_DIR, format!("debug_dup_{}.log", std::process::id()));
+        tracing_appender::rolling::never(&log_dir, format!("debug_dup_{}.log", std::process::id()));
     let debug_dup_layer = fmt::layer()
         .with_writer(debug_dup_file)
         .with_ansi(false)
@@ -56,7 +65,7 @@ fn init_tracing() {
 
     // File appender for "mod_tree_build" target
     let mod_tree_file = tracing_appender::rolling::never(
-        LOG_DIR,
+        &log_dir,
         format!("mod_tree_build_{}.log", std::process::id()),
     );
     let mod_tree_layer = fmt::layer()
@@ -68,7 +77,7 @@ fn init_tracing() {
 
     // File appender for relation-validation diagnostics
     let validate_rels_file = tracing_appender::rolling::never(
-        LOG_DIR,
+        &log_dir,
         format!("validate_rels_{}.log", std::process::id()),
     );
     let validate_rels_layer = fmt::layer()
@@ -79,7 +88,7 @@ fn init_tracing() {
         .with_filter(EnvFilter::new("validate_rels=trace"));
 
     let catchall_file =
-        tracing_appender::rolling::never(LOG_DIR, format!("catchall_{}.log", std::process::id()));
+        tracing_appender::rolling::never(&log_dir, format!("catchall_{}.log", std::process::id()));
 
     let catchall_layer = fmt::layer()
         .with_writer(catchall_file)

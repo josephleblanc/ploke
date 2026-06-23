@@ -106,6 +106,137 @@ Not implemented yet:
 - `ploke-db` query helper surface over persisted call graph relations.
 - Proof-fact projection.
 
+## 2026-06-23 workspace test audit
+
+The initial call-graph implementation was verified with focused parser and
+transform commands only. A later `cargo test --workspace --no-fail-fast` audit
+surfaced failures that the plan did not anticipate:
+
+- persisted backup fixtures created before the DB projection slice are stale
+  after adding `call_site`, `call_site_edge`, `call_relation`, and
+  `call_resolution_status`; typed corpus fixtures fail with
+  `Cannot find requested stored relation 'call_relation'` until regenerated;
+- active checkout-local fixtures can be repaired with
+  `cargo xtask fixtures ensure --snapshots`, but the typed corpus shared
+  snapshots also need typed fixture regeneration or refreshed reviewed seeds;
+- unrelated broad-test failures must not be hidden under the call-graph plan;
+  classify and fix them separately instead of ignoring them.
+
+Treat this as a correction to the verification policy below: any future
+call-graph slice that changes parser relations, transform schema, fixture
+shape, or downstream DB import expectations must run a workspace checkpoint and
+record the result before moving to the next slice. Incomplete call-graph surfaces
+must be isolated with a Cargo feature, not `#[ignore]`.
+
+## Workspace checkpoint and feature-gate protocol
+
+Use `call_graph` as the single Cargo feature name for this rollout. As the
+feature crosses crate boundaries, propagate that same feature through dependency
+features instead of inventing crate-local names. Where the implementation still
+requires typed graph internals, `call_graph` may depend on the existing
+`typed_type_graph` feature; keep that dependency explicit in `Cargo.toml`.
+
+At the start of a call-graph work session, after every schema/fixture-affecting
+slice, and before handoff, run and log the default workspace checkpoint:
+
+```bash
+cargo xtask verify-fixtures 2>&1 | tee target/test-output/call-graph/<slug>-verify-fixtures.log
+cargo xtask verify-backup-dbs 2>&1 | tee target/test-output/call-graph/<slug>-verify-backup-dbs.log
+cargo test --workspace --no-fail-fast 2>&1 | tee target/test-output/call-graph/<slug>-workspace.log
+```
+
+Then run feature-enabled checks for every crate touched by the slice. Use the
+same propagated feature name at each layer, for example:
+
+```bash
+cargo test -p syn_parser --features call_graph <focused-call-graph-filter> -- --nocapture
+cargo test -p ploke-transform --features call_graph <focused-call-graph-filter> -- --nocapture
+cargo test -p ploke-db --features call_graph <focused-call-graph-filter> -- --nocapture
+```
+
+Once all workspace members that expose the call graph have propagated the
+feature, add a full feature-enabled checkpoint in addition to the default one
+(if Cargo feature selection for the workspace supports the exact crate set):
+
+```bash
+cargo test --workspace --features call_graph --no-fail-fast
+```
+
+If that command is not supported for the selected virtual-workspace package set,
+record the equivalent `-p <crate> --features call_graph` matrix instead.
+Default `cargo test --workspace --no-fail-fast` must remain green throughout the
+rollout.
+
+If a DB relation was added, removed, or renamed, first refresh fixtures with the
+registry-backed commands rather than weakening import validation:
+
+```bash
+cargo xtask fixtures ensure --snapshots
+cargo run -p xtask --features typed_type_graph -- fixtures regenerate --typed
+```
+
+Fixture lifecycle docs:
+
+- [`docs/testing/BACKUP_DB_FIXTURES.md`](../../../testing/BACKUP_DB_FIXTURES.md)
+  is the fixture registry/consumer inventory and command reference.
+- [`docs/how-to/recreate-backup-db-fixtures.md`](../../../how-to/recreate-backup-db-fixtures.md)
+  is the operator workflow for `xtask` validation, recreation, and regeneration.
+
+If the typed pass requires provider-backed embedding snapshots and credentials
+are unavailable, record that as a blocker with the exact fixture ids; do not
+silently skip stale shared snapshots.
+
+Broad-test failures discovered at a checkpoint must be classified before the
+next implementation task starts:
+
+1. **Unexpected regression**: stop and fix or explicitly split into a new
+   blocker before continuing.
+2. **Environment or stale fixture**: repair/regenerate fixtures or configure the
+   environment; do not ignore the test.
+3. **Incomplete call-graph feature**: gate the new production surface and its
+   tests behind `call_graph`, propagate that same feature through inter-crate
+   dependencies, and keep the default workspace tests green. Do not add
+   `#[ignore]` for this rollout.
+
+Feature-gated tests should be strict when the feature is enabled. If a
+fail-first test is added for a later slice, keep it behind `call_graph` and run
+it in that slice's feature-enabled checkpoint; do not commit an ignored
+placeholder test.
+
+## Gate/triage marker convention
+
+Use the searchable marker `CALL_GRAPH_GATE:<id>` in source comments and planning
+rows for every temporary `call_graph` gate. The marker must say which slice is
+expected to remove or update the gate, and tests behind the gate must keep strict
+assertions when the feature is enabled.
+
+Current workspace audit rows:
+
+| Marker | Classification | Evidence | Gate or owner | Expected pass/update point |
+| --- | --- | --- | --- | --- |
+| `CALL_GRAPH_GATE:db-projection` | Recent call-graph DB projection changed default schema/import expectations. | `ploke-db --test mod` and `ploke-rag --lib` fail on stale backups with `Cannot find requested stored relation 'call_relation'`; `git log` points at `a07c4b4e Project call graph facts into Cozo`. | Gate DB schema/projection and consuming tests behind Cargo feature `call_graph`; regenerate fixtures before ungating. | DB projection integration slice is complete, registered active + typed corpus fixtures have current call-graph relations, and default `cargo test --workspace --no-fail-fast` is green without the feature. |
+| `CALL_GRAPH_GATE:fixture-regeneration` | Fixture maintenance required by schema-affecting work, not a reason to weaken import validation. | Typed corpus backups predate `call_relation`; active checkout-local snapshots may need `cargo xtask fixtures ensure --snapshots`; typed shared snapshots may need `cargo run -p xtask --features typed_type_graph -- fixtures regenerate --typed`. | Fixture registry/docs owner; see `docs/testing/BACKUP_DB_FIXTURES.md` and `docs/how-to/recreate-backup-db-fixtures.md`. | Fixture regeneration/review slice updates registry/docs/seeds or records a credential/provider blocker. |
+| `CALL_GRAPH_GATE:non-callgraph-reds` | Broad-run failures not explained by call-graph DB projection. | Current examples: `ploke-eval` traversal/history failures, `ploke-tree` `todo!()`, `ploke-tui` `SampleStruct` edit-apply resolution failures, and `ploke-tui --test integration` workspace subset interference. | Do not hide these under `call_graph`; route to their owning plans or fix separately. | Each owning plan either makes the test green or records a separate strict feature gate/fixture contract without weakening assertions. |
+
+Post-gate evidence, 2026-06-23:
+
+- Implemented `CALL_GRAPH_GATE:db-projection` with Cargo feature `call_graph`
+  on `syn_parser`, `ploke-transform`, `ploke-db`, `ploke-rag`, `ploke-tui`,
+  `ploke-test-utils`, and `xtask`.
+- Default `ploke-transform` schema/transform no longer creates or imports
+  `call_site`, `call_site_edge`, `call_relation`, or `call_resolution_status`.
+- Feature-enabled projection tests still assert real call graph rows with strict
+  counts and no fabricated unsupported edges.
+- `cargo xtask verify-backup-dbs`, `cargo xtask verify-fixtures`, and
+  `cargo test -p ploke-transform --features call_graph transform::tests -- --nocapture`
+  passed after the gate.
+- `cargo test --workspace --no-fail-fast` no longer reports `call_relation`
+  missing from stale backups. Remaining red targets are non-call-graph or typed
+  fixture/context issues: `ploke-eval --lib`, `ploke-rag --lib`,
+  `ploke-test-utils --lib`, `ploke-tree --lib`, `ploke-tui --lib`, and
+  `ploke-tui --test integration`. See
+  `target/test-output/workspace-after-call-graph-gate.log` in the local run.
+
 ## Binding design decisions
 
 ### Call-site IDs are not NodeIds

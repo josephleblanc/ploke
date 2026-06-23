@@ -573,7 +573,7 @@ Add strict tests for call-site extraction before resolver work:
 Stage gate:
 
 - parser fixture command passes for `call_site` extraction.
-- coverage document records every fixture row as pass, fail, ignored, or explicitly out of scope.
+- coverage document records every fixture row as pass, fail, feature-gated/manual, or explicitly out of scope.
 
 ### Stage 2: Parser resolver tests on artificial fixtures
 
@@ -656,7 +656,7 @@ Include real rows for at least:
 Stage gate:
 
 - DB matrix tests pass over registered real backup fixtures.
-- source-parse variants are either run and recorded, or deliberately ignored with the reason documented.
+- source-parse variants are either run and recorded, or recorded as feature-gated/manual/out of scope with the reason documented.
 - coverage document distinguishes “backup persisted snapshot proof” from “fresh source parse proof.”
 
 ### Stage 6: RAG and application-layer payload tests
@@ -668,7 +668,7 @@ Tests should be separated by responsibility:
 - owner-seeded RAG expansion proves call-neighbor context assembly independent of search.
 - search retrieval smoke tests prove that expected owners can be found by sparse/dense/hybrid search.
 - `request_code_context` or successor tool payload tests prove the production payload contains the expected call context by UUID/strict selector identity, not by ambiguous labels.
-- live/provider tests remain ignored/manual until event call-id correlation and payload identity are strict enough to be authoritative.
+- live/provider tests remain behind explicit feature/manual execution paths until event call-id correlation and payload identity are strict enough to be authoritative.
 
 Stage gate:
 
@@ -684,8 +684,20 @@ Before claiming the feature is working:
 - run focused transform/database tests.
 - run real-target matrix tests.
 - run application-layer tests that are not quarantined/manual.
-- run workspace compile/test checks appropriate to the touched crates.
-- update `docs/testing/CALL_GRAPH_COVERAGE.md` with command output, pass/fail/ignored state, known gaps, and weaknesses in the current approach.
+- run fixture validation and regeneration commands whenever schema relations or fixture shape change.
+- run full workspace checkpoints (`cargo test --workspace --no-fail-fast`), not only crate-local checks.
+- gate incomplete rollout surfaces behind the single feature name `call_graph`; propagate that feature through inter-crate dependencies as downstream crates opt in.
+- update `docs/testing/CALL_GRAPH_COVERAGE.md` with command output, pass/fail/feature-gated state, known gaps, and weaknesses in the current approach.
+
+2026-06-23 correction: focused parser/transform tests were not enough for the
+first DB projection implementation. Adding `call_site`, `call_site_edge`,
+`call_relation`, and `call_resolution_status` invalidated existing backup
+fixtures and caused workspace failures with `Cannot find requested stored
+relation 'call_relation'`. Treat fixture regeneration, feature-gating of
+incomplete default-facing surfaces, and a full workspace test as required
+checkpoints for any persistence/schema slice. Do not add ignored tests for this
+rollout; keep default workspace tests green and put in-progress behavior behind
+`call_graph` until the feature is ready to remove.
 
 This stage should mirror the type-resolution coverage discipline: never claim exhaustive Rust semantic coverage; claim only the fixture, matrix, and application surfaces that were actually exercised.
 
@@ -712,6 +724,29 @@ Transform and database checks after persistence is added:
 cargo test -p ploke-transform call_graph -- --nocapture
 cargo test -p ploke-db call_graph -- --nocapture
 ```
+
+Fixture and workspace checkpoints after persistence/schema changes:
+
+```bash
+cargo xtask fixtures ensure --snapshots
+cargo run -p xtask --features typed_type_graph -- fixtures regenerate --typed
+cargo xtask verify-fixtures
+cargo xtask verify-backup-dbs
+cargo test --workspace --no-fail-fast
+```
+
+Feature-gated rollout checks for crates that expose `call_graph`:
+
+```bash
+cargo test -p syn_parser --features call_graph call_relation -- --nocapture
+cargo test -p ploke-transform --features call_graph call_graph -- --nocapture
+cargo test -p ploke-db --features call_graph call_graph -- --nocapture
+```
+
+Use the fixture docs before changing registered backups or fixture consumers:
+
+- `docs/testing/BACKUP_DB_FIXTURES.md`
+- `docs/how-to/recreate-backup-db-fixtures.md`
 
 General compile check:
 
@@ -743,7 +778,9 @@ Tuple struct and tuple variant callability should require payload proof. This ad
 
 ### 5. Schema churn
 
-Adding call graph persistence will affect backup fixtures. Do parser/resolver work first; add database persistence once the typed model is stable.
+Adding call graph persistence will affect backup fixtures. Do parser/resolver work first; add database persistence once the typed model is stable. When persistence adds stored relations, regenerate/refresh registered active and typed corpus fixtures before considering the slice complete; do not make import paths more permissive to hide stale snapshots.
+
+If a workspace checkpoint discovers a failure because a later named call-graph slice has not landed yet, do not ignore the test. Put the new production surface and tests behind `call_graph`, propagate that same feature through inter-crate dependencies, and keep the default workspace test suite green. Remove the feature flag only after the plan is complete enough for the default build and regenerated fixtures to satisfy the contract.
 
 ## Open questions
 

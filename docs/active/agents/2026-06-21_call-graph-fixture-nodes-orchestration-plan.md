@@ -71,7 +71,16 @@ Phase C projects typed parser facts into `ploke-records` proof facts only after 
 
 ## Standard verification commands
 
-Use focused commands first, then broaden.
+Use focused commands first, then broaden. Focused parser commands are not a
+substitute for workspace checkpoints: the 2026-06-23 audit showed that the first
+DB projection slice added `call_relation`-family stored relations and left
+backup/typed corpus fixtures stale while focused parser and transform tests
+remained green.
+
+Do not ignore tests to get through this plan. Isolate incomplete call-graph
+surfaces behind the rollout feature `call_graph`, and propagate that same
+feature through inter-crate dependencies as each downstream crate opts in. The
+default workspace test suite must remain green while the feature is incomplete.
 
 ```bash
 # Existing typed graph baseline before and after parser graph changes.
@@ -86,10 +95,32 @@ cargo test -p syn_parser --features typed_type_graph fixture_nodes_public_method
 # Broad parser check after each green implementation slice.
 cargo test -p syn_parser --features typed_type_graph -- --nocapture
 
+# Fixture/workspace checkpoint before and after schema-affecting slices and before handoff.
+cargo xtask verify-fixtures
+cargo xtask verify-backup-dbs
+cargo test --workspace --no-fail-fast
+
+# Feature-gated checks for crates touched by the slice once call_graph is wired.
+cargo test -p syn_parser --features call_graph call_sites -- --nocapture
+cargo test -p ploke-transform --features call_graph transform::tests -- --nocapture
+cargo test -p ploke-db --features call_graph call_graph -- --nocapture
+
 # Formatting/checks before handoff.
 cargo fmt --all --check
 cargo check -p syn_parser --features typed_type_graph
 ```
+
+When a slice adds, removes, or renames a persisted relation, run the
+registry-backed fixture commands before claiming the workspace checkpoint:
+
+```bash
+cargo xtask fixtures ensure --snapshots
+cargo run -p xtask --features typed_type_graph -- fixtures regenerate --typed
+```
+
+Fixture lifecycle docs:
+- [`docs/testing/BACKUP_DB_FIXTURES.md`](../../testing/BACKUP_DB_FIXTURES.md)
+- [`docs/how-to/recreate-backup-db-fixtures.md`](../../how-to/recreate-backup-db-fixtures.md)
 
 If a command is long/noisy, save full output to `target/test-output/call-graph/<task-slug>.log` and summarize only the high-signal result in the orchestrator thread.
 
@@ -109,6 +140,12 @@ For every task below:
 5. Only after spec review passes, dispatch a code-quality reviewer.
 6. If quality review requests changes, dispatch a fix subagent and re-run both reviews as needed.
 7. Mark the task complete only when all completion conditions pass and the worktree contains no unrelated changes.
+8. At each checkpoint, classify every broad-test failure before advancing:
+   - unexpected regression: fix or split as a blocker;
+   - environment/stale fixture: configure or regenerate, do not ignore;
+   - incomplete call-graph behavior: move the new production surface and tests
+     behind `call_graph`, propagate the feature through dependencies, and keep
+     default workspace tests green. Do not add `#[ignore]` for this plan.
 
 Parallelization rule: tasks that touch parser call-site data structures, visitors, and resolver code are sequential. Do not dispatch multiple implementation agents against the same parser files at once. Documentation/review-only tasks may run in parallel only after the orchestrator confirms they will not edit the same files.
 
@@ -129,17 +166,25 @@ Files:
 Steps:
 1. Run `git status --short` from repo root and save/quote the output.
 2. Run `cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --nocapture 2>&1 | tee target/test-output/call-graph/00-preflight-baseline.log`.
-3. Record whether the baseline is green, red, or blocked.
-4. Record any pre-existing dirty files before implementation starts.
+3. Run fixture preflight:
+   `cargo xtask verify-fixtures 2>&1 | tee target/test-output/call-graph/00-verify-fixtures.log`
+   and
+   `cargo xtask verify-backup-dbs 2>&1 | tee target/test-output/call-graph/00-verify-backup-dbs.log`.
+4. Run workspace preflight:
+   `cargo test --workspace --no-fail-fast 2>&1 | tee target/test-output/call-graph/00-workspace-preflight.log`.
+5. Record whether each baseline is green, red, or blocked.
+6. Record any pre-existing dirty files before implementation starts.
 
 Completion conditions:
 - `git status --short` is captured in the task report.
-- The baseline command was actually run, or a blocker is reported with the exact error.
-- If the baseline fails, the failure is classified as pre-existing and the orchestrator decides whether to pause or continue with a narrower RED test.
+- The focused baseline, fixture preflight, and workspace preflight commands were actually run, or blockers are reported with exact errors.
+- If any baseline fails, the failure is classified as pre-existing, environment/fixture, unexpected regression, or feature-gated in-progress behavior before implementation starts.
 - No source files are changed by this task.
 
 Stop/escalate if:
 - Disk pressure, missing toolchain, or dependency failure prevents Cargo from running.
+- Fixture validation fails because backup snapshots are stale after a schema/relation change; regenerate or repair fixtures before starting implementation.
+- The workspace preflight is red and the failures are not already classified in the task report.
 - The worktree has unrelated dirty implementation files that would make task attribution ambiguous.
 
 ### Task 0.2: Map existing extension points and blast radius
@@ -725,6 +770,11 @@ Commands:
 cargo test -p syn_parser --features typed_type_graph fixture_nodes_public_method_records_self_private_method_call_site -- --nocapture 2>&1 | tee target/test-output/call-graph/final-structural.log
 cargo test -p syn_parser --features typed_type_graph fixture_nodes_public_method_resolves_self_private_method_edge -- --nocapture 2>&1 | tee target/test-output/call-graph/final-resolver.log
 cargo test -p syn_parser --features typed_type_graph type_relations_v2 -- --nocapture 2>&1 | tee target/test-output/call-graph/final-type-relations-v2.log
+cargo xtask verify-fixtures 2>&1 | tee target/test-output/call-graph/final-verify-fixtures.log
+cargo xtask verify-backup-dbs 2>&1 | tee target/test-output/call-graph/final-verify-backup-dbs.log
+cargo test --workspace --no-fail-fast 2>&1 | tee target/test-output/call-graph/final-workspace.log
+cargo test -p syn_parser --features call_graph call_sites -- --nocapture 2>&1 | tee target/test-output/call-graph/final-syn-parser-call-graph.log
+cargo test -p ploke-transform --features call_graph transform::tests -- --nocapture 2>&1 | tee target/test-output/call-graph/final-transform-call-graph.log
 cargo check -p syn_parser --features typed_type_graph 2>&1 | tee target/test-output/call-graph/final-check.log
 cargo fmt --all --check 2>&1 | tee target/test-output/call-graph/final-fmt.log
 ```
@@ -732,11 +782,13 @@ cargo fmt --all --check 2>&1 | tee target/test-output/call-graph/final-fmt.log
 Completion conditions:
 - All commands complete successfully, or any failing command is classified with exact output and open blocker.
 - No command reports running 0 intended tests.
+- Fixture/schema failures are either repaired/regenerated or explicitly recorded as blocking the handoff.
 - Logs exist at the stated paths.
 - `git diff --stat` and `git status --short` are reported.
 
 Stop/escalate if:
 - Full workspace tests reveal unrelated failures that would be expensive to triage. Report them as separate blockers rather than hiding them.
+- A proposed in-progress call-graph surface cannot be isolated behind `call_graph` while keeping default workspace tests green.
 
 ### Task 8.2: Final spec and quality review
 

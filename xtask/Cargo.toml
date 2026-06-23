@@ -12,6 +12,13 @@ typed_type_graph = [
     "ploke-transform/typed_type_graph",
     "syn_parser/typed_type_graph",
 ]
+# CALL_GRAPH_GATE:db-projection - opt-in fixture regeneration/verification with call graph relations.
+call_graph = [
+    "ploke-db/call_graph",
+    "ploke-transform/call_graph",
+    "ploke-test-utils/call_graph",
+    "syn_parser/call_graph",
+]
 
 [dependencies]
 clap = { version = "4.5", features = ["derive", "env", "cargo"] }

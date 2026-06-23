@@ -109,6 +109,43 @@ cargo test -p syn_parser --features typed_type_graph call_sites -- --nocapture
 
 All commands passed. Transform tests assert persisted `call_site`, `call_site_edge`, `call_relation`, and `call_resolution_status` rows for the resolved `super::restricted_func()` path call, the resolved `self.private_method()` method call, and the unsupported/no-edge `PathBuf::new()` path call.
 
+## 2026-06-23 workspace checkpoint and feature-gate correction
+
+The focused verification above was insufficient. A later workspace run showed
+that adding the persisted call graph relation family made existing backup DB
+fixtures stale, especially typed corpus snapshots that predate `call_relation`.
+The failure signature is:
+
+```text
+Cannot find requested stored relation 'call_relation'
+```
+
+Before this database projection slice can be considered fully integrated, the
+fixture/workspace checkpoint from
+[`README.md#workspace-checkpoint-and-feature-gate-protocol`](README.md#workspace-checkpoint-and-feature-gate-protocol)
+must pass or its failures must be explicitly classified. In particular:
+
+```bash
+cargo xtask fixtures ensure --snapshots
+cargo run -p xtask --features typed_type_graph -- fixtures regenerate --typed
+cargo xtask verify-fixtures
+cargo xtask verify-backup-dbs
+cargo test --workspace --no-fail-fast
+```
+
+Do not ignore tests to land the projection early. If downstream crates or
+fixtures are not ready for the new persisted relations in the default build,
+keep the projection and consuming tests behind the rollout feature
+`call_graph`, and propagate that feature through crate dependencies until the
+whole plan is complete and the flag can be removed.
+
+Do not make backup import paths silently tolerate missing `call_relation`; that
+would weaken the schema contract. Regenerate or refresh fixtures instead, and
+record provider-backed typed embedding fixture blockers separately if
+credentials are unavailable. Fixture lifecycle details live in
+[`docs/testing/BACKUP_DB_FIXTURES.md`](../../../testing/BACKUP_DB_FIXTURES.md)
+and [`docs/how-to/recreate-backup-db-fixtures.md`](../../../how-to/recreate-backup-db-fixtures.md).
+
 ## Non-goals
 
 - No proof-fact projection in this slice.

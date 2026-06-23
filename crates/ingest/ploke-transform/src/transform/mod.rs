@@ -11,6 +11,7 @@ use syn_parser::parser::nodes::*;
 use syn_parser::parser::types::TypeNode;
 use syn_parser::parser::{graph::CodeGraph, nodes::TypeDefNode, types::VisibilityKind};
 use syn_parser::resolve::RelationIndexer;
+#[cfg(feature = "call_graph")]
 use syn_parser::resolve::call_resolution::resolve_call_relations_after_tree;
 use syn_parser::resolve::module_tree::ModuleTree;
 use syn_parser::resolve::type_resolution_v2::resolve_type_relations_after_tree;
@@ -25,8 +26,11 @@ use crate::error::TransformError;
 
 // -- transforms
 use consts::transform_consts;
+#[cfg(feature = "call_graph")]
 use edges::transform_call_resolution_report;
+#[cfg(feature = "call_graph")]
 use edges::transform_call_site_relations;
+#[cfg(feature = "call_graph")]
 use edges::transform_call_sites;
 use edges::transform_relations;
 use edges::transform_type_relations;
@@ -140,6 +144,9 @@ pub fn transform_parsed_graph(
         resolve_type_relations_after_tree(&parsed_graph, tree).map_err(|err| {
             TransformError::Transformation(format!("typed type relation resolution failed: {err}"))
         })?;
+    // CALL_GRAPH_GATE:db-projection - keep call graph DB facts out of the default transform path
+    // until registered backup fixtures have been regenerated with call graph relations.
+    #[cfg(feature = "call_graph")]
     let call_resolution_report =
         resolve_call_relations_after_tree(&parsed_graph, tree).map_err(|err| {
             TransformError::Transformation(format!("typed call relation resolution failed: {err}"))
@@ -178,12 +185,17 @@ pub fn transform_parsed_graph(
     transform_relations(db, code_graph.relations)?;
     tracing::trace!("{}: Starting", "type_relations".log_step());
     transform_type_relations(db, &type_relation_report)?;
-    tracing::trace!("{}: Starting", "call_sites".log_step());
-    transform_call_sites(db, &code_graph.call_sites)?;
-    tracing::trace!("{}: Starting", "call_site_relations".log_step());
-    transform_call_site_relations(db, &code_graph.call_site_relations)?;
-    tracing::trace!("{}: Starting", "call_resolution".log_step());
-    transform_call_resolution_report(db, &call_resolution_report)?;
+    // CALL_GRAPH_GATE:db-projection - feature-enabled tests keep strict call graph projection
+    // assertions while default DB imports remain compatible with current registered fixtures.
+    #[cfg(feature = "call_graph")]
+    {
+        tracing::trace!("{}: Starting", "call_sites".log_step());
+        transform_call_sites(db, &code_graph.call_sites)?;
+        tracing::trace!("{}: Starting", "call_site_relations".log_step());
+        transform_call_site_relations(db, &code_graph.call_site_relations)?;
+        tracing::trace!("{}: Starting", "call_resolution".log_step());
+        transform_call_resolution_report(db, &call_resolution_report)?;
+    }
 
     tracing::trace!("{}: Starting", "crate_context".log_step());
     transform_crate_context(db, crate_context)?;
@@ -218,13 +230,19 @@ fn transform_defined_types(
 
 #[cfg(test)]
 mod tests {
-    use cozo::{DataValue, Db, MemStorage, ScriptMutability};
+    #[cfg(feature = "call_graph")]
+    use cozo::DataValue;
+    use cozo::{Db, MemStorage, ScriptMutability};
     use ploke_test_utils::test_run_phases_and_collect;
     use std::collections::BTreeMap;
     use syn_parser::parser::ParsedCodeGraph;
+    #[cfg(feature = "call_graph")]
     use syn_parser::parser::graph::GraphAccess;
+    #[cfg(feature = "call_graph")]
     use syn_parser::parser::nodes::{AnyCallSiteId, CallBodyOwnerId, CallNode, ToCozoUuid};
+    #[cfg(feature = "call_graph")]
     use syn_parser::parser::relations::{CallRelation, CallResolutionStatus};
+    #[cfg(feature = "call_graph")]
     use syn_parser::resolve::call_resolution::resolve_call_relations_after_tree;
 
     use crate::{error::TransformError, schema::create_schema_all};
@@ -274,6 +292,8 @@ mod tests {
         Ok(())
     }
 
+    // CALL_GRAPH_GATE:db-projection - strict projection assertion for the feature-enabled DB slice.
+    #[cfg(feature = "call_graph")]
     #[test]
     fn test_call_graph_projection_for_resolved_path_call() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -417,6 +437,8 @@ mod tests {
         Ok(())
     }
 
+    // CALL_GRAPH_GATE:db-projection - strict projection assertion for the feature-enabled DB slice.
+    #[cfg(feature = "call_graph")]
     #[test]
     fn test_call_graph_projection_for_method_edge_and_unsupported_path_call()
     -> Result<(), Box<dyn std::error::Error>> {

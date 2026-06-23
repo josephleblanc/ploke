@@ -16,6 +16,15 @@ Every tracked regression test should have a nearby source comment:
 - The timestamp is local time when the marker was added.
 - Use `rg -n 'regr:'` from the repo root to find all marked tests.
 
+Do not use this tracker as a shortcut for temporary plan isolation. For the
+call-graph rollout, new incomplete behavior should be isolated behind a Cargo
+feature such as `call_graph`, not by adding ignored tests. Feature-gated
+regression tests still need real assertions when the feature is enabled; default
+workspace tests should stay green while the feature is incomplete.
+
+Fixture/schema drift, live-provider setup, and accidental workspace regressions
+are blockers to fix or classify, not expected-failing tracker candidates.
+
 ## Active Tracker
 
 | Marker | Status | File path | Exact test name or command | Expected result | Removal or update condition |

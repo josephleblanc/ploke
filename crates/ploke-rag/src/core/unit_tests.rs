@@ -1565,15 +1565,10 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
     }
 
     #[cfg(feature = "typed_type_graph")]
-    async fn stale_plain_starting_db() -> Result<Arc<Database>, Error> {
+    fn plain_fixture_starting_db() -> Result<Arc<Database>, Error> {
         use ploke_test_utils::FIXTURE_NODES_CANONICAL;
-        use ploke_test_utils::fixture_dbs::backup_fixture_path_or_seed;
 
-        let path = backup_fixture_path_or_seed(&FIXTURE_NODES_CANONICAL).map_err(Error::from)?;
-        let db = Database::create_new_backup_default(&path)
-            .await
-            .map_err(Error::from)?;
-        Ok(Arc::new(db))
+        Ok(Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL)?))
     }
 
     #[cfg(feature = "typed_type_graph")]
@@ -1581,10 +1576,10 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
     async fn type_context_disabled_safely_when_relations_absent() -> Result<(), Error> {
         init_tracing_once();
 
-        let db = stale_plain_starting_db().await?;
+        let db = plain_fixture_starting_db()?;
         assert!(
             !db.has_typed_type_graph_relations().map_err(Error::from)?,
-            "stale plain starting-db restore must lack typed-graph relations for this regression"
+            "plain fixture import must not expose populated typed-graph relations for this regression"
         );
 
         let rag = {

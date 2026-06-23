@@ -1235,11 +1235,12 @@ mod tests {
     #[test]
     fn default_fixture_path_or_matching_seed_prefers_seed_when_candidate_differs() {
         let temp_dir = unique_fixture_test_dir("fixture-path-differs");
-        let candidate_path = temp_dir.join(FIXTURE_NODES_CANONICAL.filename());
+        let candidate_path = temp_dir.join("candidate.sqlite");
+        let seed_path = temp_dir.join("seed.sqlite");
         std::fs::write(&candidate_path, b"not this worktree's fixture")
             .expect("write differing fixture candidate");
+        std::fs::write(&seed_path, b"this worktree's fixture").expect("write fixture seed");
 
-        let seed_path = FIXTURE_NODES_CANONICAL.repo_path();
         let resolved = default_fixture_path_or_matching_seed(candidate_path, &seed_path)
             .expect("resolve fixture candidate");
 
@@ -1250,8 +1251,9 @@ mod tests {
     #[test]
     fn default_fixture_path_or_matching_seed_keeps_candidate_when_seed_matches() {
         let temp_dir = unique_fixture_test_dir("fixture-path-matches");
-        let candidate_path = temp_dir.join(FIXTURE_NODES_CANONICAL.filename());
-        let seed_path = FIXTURE_NODES_CANONICAL.repo_path();
+        let candidate_path = temp_dir.join("candidate.sqlite");
+        let seed_path = temp_dir.join("seed.sqlite");
+        std::fs::write(&seed_path, b"this worktree's fixture").expect("write fixture seed");
         std::fs::copy(&seed_path, &candidate_path).expect("copy matching fixture candidate");
 
         let resolved = default_fixture_path_or_matching_seed(candidate_path.clone(), &seed_path)

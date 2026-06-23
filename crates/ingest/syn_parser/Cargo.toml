@@ -94,6 +94,8 @@ temp_target = []
 not_wip_marker = []
 type_bearing_ids = []
 typed_type_graph = []
+# CALL_GRAPH_GATE:db-projection - rollout feature for parser-owned call graph facts.
+call_graph = []
 ghost_data_graphs = []
 validate = []
 public_path = []

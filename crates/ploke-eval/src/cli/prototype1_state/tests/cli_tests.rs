@@ -5328,6 +5328,7 @@ fn prototype1_storage_authority_negative_projection_cannot_replace_child_plan_bo
                 manifest_path: &manifest_path,
                 repo_root: &repo_root,
                 broad_tui: profile::BroadTui::default(),
+                anti_attractor_policy: profile::AntiAttractorPolicy::None,
                 route_source: ModelRouteSource::DirectGoogle,
             },
             parent,

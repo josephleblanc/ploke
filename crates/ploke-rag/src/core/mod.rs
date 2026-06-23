@@ -709,7 +709,7 @@ impl RagService {
         let expanded_ids = expanded.iter().map(|(id, _)| *id).collect::<Vec<_>>();
         let materialized_ids = self
             .db
-            .get_nodes_ordered(expanded_ids)
+            .get_snippet_nodes_ordered(expanded_ids)
             .map_err(|e| RagError::Embed(e.to_string()))?
             .into_iter()
             .map(|node| node.id)

@@ -371,25 +371,19 @@ mod gat_tests {
         use crate::user_config::RetrievalStrategyUser;
         use ploke_core::ArcStr;
         use ploke_core::rag_types::RequestCodeContextResult;
-        use ploke_db::Database;
         use ploke_db::bm25_index::bm25_service::Bm25Status;
         use ploke_embed::indexer::EmbeddingProcessor;
-        use ploke_test_utils::fixture_dbs::backup_fixture_path_or_seed;
+        use ploke_test_utils::fixture_dbs::fresh_backup_fixture_db;
         use ploke_test_utils::{FIXTURE_NODES_CANONICAL, workspace_root};
         use std::borrow::Cow;
         use std::sync::Arc;
         use tokio::time::{Duration, sleep};
         use uuid::Uuid;
 
-        let snapshot = backup_fixture_path_or_seed(&FIXTURE_NODES_CANONICAL)?;
-        let db = Arc::new(
-            Database::create_new_backup_default(&snapshot)
-                .await
-                .map_err(color_eyre::eyre::Report::from)?,
-        );
+        let db = Arc::new(fresh_backup_fixture_db(&FIXTURE_NODES_CANONICAL)?);
         assert!(
             !db.has_typed_type_graph_relations()?,
-            "stale plain starting-db restore must lack typed-graph relations for this regression"
+            "plain fixture import must not expose populated typed-graph relations for this regression"
         );
         let rt = TestRuntime::new_with_embedding_processor(&db, EmbeddingProcessor::new_mock());
         rt.setup_loaded_standalone_crate(workspace_root()).await;
