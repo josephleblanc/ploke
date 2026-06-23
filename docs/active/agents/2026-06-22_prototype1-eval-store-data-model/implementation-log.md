@@ -713,6 +713,41 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: `eval_channel_receipt` and `eval_import_event` schemas now install idempotently. Parent `recv_from_child` writes receipt/import rows only after a valid child-to-parent envelope is read from the channel. DB receipt/import rows cannot replace a missing envelope, and a body-hash mismatch fails before any receipt/import row is written.
 - Commit: current slice commit, `feat: mirror parent channel receipt imports`.
 
+### Slice 8d — Remaining non-provider channel message mirrors
+
+- Status: complete for non-provider `ToParent` channel-message mirrors: `ResultWritten`, `Failed`, `Exited`, `SuccessorReady`, and `SuccessorCompletion`. Direct terminal `Result` remains deferred because it is tied to provider-produced treatment evidence.
+- Assumptions:
+  - The JSONL `Envelope<ToParent>` remains the transport authority. DB `eval_channel_message` rows do not synthesize messages, advance cursors, replace `FileTransport`, or make a successor/child observable without a channel envelope.
+  - These sends now reuse the same append-first, mirror-after-append behavior already used by `Ready` and `Evaluating`.
+  - Successor ready/completion record payloads use the existing passive `record_runtime_id` projection where the persisted record schema requires `ploke_records::ids::RuntimeId`; the channel endpoint runtime id remains the transport identity.
+  - Direct terminal `send_terminal_result` is not changed in this sub-slice; provider-facing terminal result confidence remains deferred to the provider-gated terminal-result sub-slice.
+  - Channel mirror helpers were split into `channel/mirror.rs` because `channel.rs` crossed the rough LOC hygiene bound during this sub-slice.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/channel.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/channel/mirror.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/channel/tests.rs`
+- Tests added/changed:
+  - `prototype1_eval_store_remaining_channel_messages_write_owner_db_rows`
+  - `prototype1_storage_authority_negative_successor_channel_row_cannot_replace_envelope`
+  - existing `prototype1_state::channel::tests`
+  - existing `observe_child_ignores_result_written_projection_for_success`
+- Commands run:
+  - `gitnexus impact ... send_result_written`: LOW risk; 1 direct caller, 0 affected execution flows.
+  - `gitnexus impact ... send_failed`: LOW risk; 0 direct callers, 0 affected execution flows.
+  - `gitnexus impact ... send_exited`: LOW risk; 0 direct callers, 0 affected execution flows.
+  - `gitnexus impact ... send_successor_ready`: LOW risk; 1 direct caller, affected process `r4a_to_r4b_or_r4c`.
+  - `gitnexus impact ... send_successor_completion`: LOW risk; 1 direct caller, 0 affected execution flows.
+  - `cargo fmt --all`
+  - `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_remaining_channel_messages_write_owner_db_rows -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_storage_authority_negative_successor_channel_row_cannot_replace_envelope -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_state::channel::tests -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval observe_child_ignores_result_written_projection_for_success -- --nocapture`
+  - `gitnexus detect_changes`: LOW risk; 0 affected execution flows.
+- Live API used: no. This sub-slice mirrors existing local channel sends and does not change treatment execution or direct terminal `Result` production.
+- Result: `ResultWritten`, `Failed`, `Exited`, `SuccessorReady`, and `SuccessorCompletion` now write `eval_channel_message` rows with explicit message kinds after the channel append succeeds. The result-written consumer guard still proves the compatibility projection does not become success authority. A successor-specific channel-message row still cannot replace the missing channel envelope. Channel mirror helpers now live in `channel/mirror.rs`, leaving `channel.rs` under the rough LOC bound.
+- Commit: current slice commit, `feat: mirror remaining channel messages`.
+
 ### Later slices
 
 Create a new subsection per slice before editing.

@@ -93,6 +93,10 @@ pub(crate) mod stream {
     pub(crate) enum FromParent {}
 }
 
+mod mirror;
+
+use mirror::{mirror_channel_message, mirror_parent_channel_imports};
+
 /// State marker `S` may send message marker `M` through its role channel.
 pub(crate) trait CanSend<M> {}
 
@@ -634,9 +638,9 @@ where
         self,
         runner_result_path: PathBuf,
     ) -> Result<(Channel<Child<child::ResultWritten>, T>, Receipt), ChannelError<T::Error>> {
-        let receipt = self.write(
-            &self.endpoints.child_to_parent(),
+        let receipt = self.write_child_message(
             ToParent::ResultWritten { runner_result_path },
+            "result_written",
         )?;
         Ok((self.cast(), receipt))
     }
@@ -652,11 +656,11 @@ where
         &self,
         detail: impl Into<String>,
     ) -> Result<Receipt, ChannelError<T::Error>> {
-        self.write(
-            &self.endpoints.child_to_parent(),
+        self.write_child_message(
             ToParent::Failed {
                 detail: detail.into(),
             },
+            "failed",
         )
     }
 }
@@ -671,10 +675,7 @@ where
         &self,
         status: Option<i32>,
     ) -> Result<Receipt, ChannelError<T::Error>> {
-        self.write(
-            &self.endpoints.child_to_parent(),
-            ToParent::Exited { status },
-        )
+        self.write_child_message(ToParent::Exited { status }, "exited")
     }
 }
 
@@ -687,10 +688,7 @@ where
         &self,
         record: SuccessorReadyRecord,
     ) -> Result<Receipt, ChannelError<T::Error>> {
-        self.write(
-            &self.endpoints.child_to_parent(),
-            ToParent::SuccessorReady { record },
-        )
+        self.write_child_message(ToParent::SuccessorReady { record }, "successor_ready")
     }
 
     /// Send successor bounded-turn completion through the runtime channel.
@@ -698,9 +696,9 @@ where
         &self,
         record: SuccessorCompletionRecord,
     ) -> Result<Receipt, ChannelError<T::Error>> {
-        self.write(
-            &self.endpoints.child_to_parent(),
+        self.write_child_message(
             ToParent::SuccessorCompletion { record },
+            "successor_completion",
         )
     }
 
@@ -759,105 +757,6 @@ where
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok((cursor, envelopes))
-    }
-}
-
-fn mirror_channel_message(
-    endpoint: &Endpoint,
-    envelope: &Envelope<ToParent>,
-    bytes: &[u8],
-    receipt: &Receipt,
-    message_kind: &'static str,
-) -> Result<(), eval_store::EvalStoreError> {
-    let db_path = match eval_store::owner_eval_db_file_for_record_path(receipt.endpoint()) {
-        Ok(path) => path,
-        Err(eval_store::EvalStoreError::Validation { .. }) => return Ok(()),
-        Err(source) => return Err(source),
-    };
-    if !db_path.is_file() {
-        return Ok(());
-    }
-    eval_store::write_channel_message_to_owner_db(
-        &db_path,
-        eval_store::ChannelMessageEvidence {
-            campaign_id: endpoint.campaign_id.clone(),
-            node_id: endpoint.node_id.clone(),
-            runtime_id: endpoint.runtime_id.to_string(),
-            direction: direction_label(endpoint.direction).to_string(),
-            message_kind: message_kind.to_string(),
-            message_id: envelope.message_id.to_string(),
-            endpoint_path: receipt.endpoint().to_path_buf(),
-            cursor_offset: receipt.cursor().offset() as i64,
-            bytes_written: receipt.bytes_written() as i64,
-            body_hash: envelope.body_hash.clone(),
-            content_sha256: format!("{:x}", Sha256::digest(bytes)),
-            recorded_at: envelope.recorded_at.0.to_string(),
-        },
-    )?;
-    Ok(())
-}
-
-fn mirror_parent_channel_imports(
-    endpoint: &Endpoint,
-    envelopes: &[Envelope<ToParent>],
-) -> Result<(), eval_store::EvalStoreError> {
-    if envelopes.is_empty() {
-        return Ok(());
-    }
-
-    let db_path = match eval_store::owner_eval_db_file_for_record_path(endpoint.path()) {
-        Ok(path) => path,
-        Err(eval_store::EvalStoreError::Validation { .. }) => return Ok(()),
-        Err(source) => return Err(source),
-    };
-    if !db_path.is_file() {
-        return Ok(());
-    }
-
-    for envelope in envelopes {
-        let imported_at = RecordedAt::now().0.to_string();
-        let evidence_ref = channel_message_ref(envelope);
-        let receipt_id = eval_store::write_channel_receipt_to_owner_db(
-            &db_path,
-            eval_store::ChannelReceiptEvidence {
-                campaign_id: endpoint.campaign_id.clone(),
-                node_id: endpoint.node_id.clone(),
-                runtime_id: endpoint.runtime_id.to_string(),
-                direction: direction_label(endpoint.direction).to_string(),
-                message_id: envelope.message_id.to_string(),
-                observed_by: "parent".to_string(),
-                validation_status: "valid".to_string(),
-                imported_ref: Some(evidence_ref.clone()),
-                observed_at: imported_at.clone(),
-            },
-        )?;
-        eval_store::write_import_event_to_owner_db(
-            &db_path,
-            eval_store::ImportEventEvidence {
-                campaign_id: endpoint.campaign_id.clone(),
-                importer_id: "parent".to_string(),
-                source_runtime_id: Some(endpoint.runtime_id.to_string()),
-                source_scope: format!("child_runtime:{}", endpoint.runtime_id),
-                target_scope: "parent_visible".to_string(),
-                evidence_ref,
-                receipt_id: Some(receipt_id),
-                validation_status: "valid".to_string(),
-                imported_at,
-            },
-        )?;
-    }
-
-    Ok(())
-}
-
-fn channel_message_ref(envelope: &Envelope<ToParent>) -> String {
-    format!("channel_message:{}", envelope.message_id)
-}
-
-fn direction_label(direction: Direction) -> &'static str {
-    match direction {
-        Direction::ParentToChild => "parent_to_child",
-        Direction::ChildToParent => "child_to_parent",
     }
 }
 

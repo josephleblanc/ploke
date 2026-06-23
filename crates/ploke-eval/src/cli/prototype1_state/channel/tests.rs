@@ -1,4 +1,9 @@
 use super::super::event::{Paths, Refs};
+use super::super::invocation::{
+    SUCCESSOR_COMPLETION_SCHEMA_VERSION, SUCCESSOR_READY_SCHEMA_VERSION, SuccessorCompletionStatus,
+    record_runtime_id,
+};
+use super::mirror::{channel_message_ref, direction_label};
 use super::*;
 
 fn endpoints(root: PathBuf) -> Endpoints {
@@ -202,6 +207,141 @@ fn prototype1_eval_store_channel_ready_writes_owner_db_row() {
 }
 
 #[test]
+fn prototype1_eval_store_remaining_channel_messages_write_owner_db_rows() {
+    let temp = tempfile::tempdir().unwrap();
+    let prototype1_root = temp.path().join("prototype1");
+    let db_path = prototype1_root.join("eval-store.cozo.sqlite");
+    seed_owner_db(&db_path);
+    let endpoints = endpoints(prototype1_root.join("nodes/node-1/channels/runtime-1"));
+    let endpoint = endpoints.child_to_parent();
+    let child_role = child();
+    let child = Channel::for_child(&child_role, endpoints.clone(), FileTransport);
+    let successor_channel = channel::<Parent<parent::Selectable>>(endpoints);
+
+    let (child, _) = child.send_ready().expect("send ready");
+    let (child, _) = child.send_evaluating().expect("send evaluating");
+    child
+        .send_failed("diagnostic failure")
+        .expect("send failed");
+    child.send_exited(Some(1)).expect("send exited");
+    child
+        .send_result_written(PathBuf::from("results/runtime-1.json"))
+        .expect("send result-written projection");
+    successor_channel
+        .send_successor_ready(SuccessorReadyRecord {
+            schema_version: SUCCESSOR_READY_SCHEMA_VERSION.to_string(),
+            campaign_id: endpoint.campaign_id().clone(),
+            node_id: endpoint.node_id().to_string(),
+            runtime_id: record_runtime_id(endpoint.runtime_id()),
+            pid: 42,
+            recorded_at: "0".to_string(),
+        })
+        .expect("send successor ready");
+    successor_channel
+        .send_successor_completion(SuccessorCompletionRecord {
+            schema_version: SUCCESSOR_COMPLETION_SCHEMA_VERSION.to_string(),
+            campaign_id: endpoint.campaign_id().clone(),
+            node_id: endpoint.node_id().to_string(),
+            runtime_id: record_runtime_id(endpoint.runtime_id()),
+            status: SuccessorCompletionStatus::Succeeded,
+            trace_path: Some(PathBuf::from("successor-trace.json")),
+            detail: None,
+            recorded_at: "0".to_string(),
+        })
+        .expect("send successor completion");
+
+    let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "campaign_id".to_string(),
+        cozo::DataValue::from(endpoint.campaign_id().to_string()),
+    );
+    params.insert(
+        "node_id".to_string(),
+        cozo::DataValue::from(endpoint.node_id().to_string()),
+    );
+    params.insert(
+        "runtime_id".to_string(),
+        cozo::DataValue::from(endpoint.runtime_id().to_string()),
+    );
+    let rows = db
+        .raw_query_params(
+            r#"
+?[
+    message_kind,
+    direction,
+    source_class,
+    evidence_class,
+    validation_status,
+    endpoint_path,
+    body_hash,
+    content_sha256
+] :=
+    *eval_channel_message {
+        campaign_id,
+        node_id,
+        runtime_id,
+        message_kind,
+        direction,
+        source_class,
+        evidence_class,
+        validation_status,
+        endpoint_path,
+        body_hash,
+        content_sha256
+    },
+    campaign_id = $campaign_id,
+    node_id = $node_id,
+    runtime_id = $runtime_id
+"#,
+            params,
+        )
+        .expect("query channel message rows");
+
+    let expected = std::collections::BTreeSet::from([
+        "result_written".to_string(),
+        "failed".to_string(),
+        "exited".to_string(),
+        "successor_ready".to_string(),
+        "successor_completion".to_string(),
+    ]);
+    let mut observed = std::collections::BTreeSet::new();
+    for row in rows.row_refs() {
+        let kind = row.get::<String>("message_kind").expect("kind");
+        if expected.contains(&kind) {
+            observed.insert(kind);
+            assert_eq!(
+                row.get::<String>("direction").expect("direction"),
+                "child_to_parent"
+            );
+            assert_eq!(
+                row.get::<String>("source_class").expect("source"),
+                "direct_write"
+            );
+            assert_eq!(
+                row.get::<String>("evidence_class").expect("evidence"),
+                "channel_message"
+            );
+            assert_eq!(
+                row.get::<String>("validation_status").expect("status"),
+                "valid"
+            );
+            assert_eq!(
+                row.get::<String>("endpoint_path").expect("path"),
+                endpoint.path().display().to_string()
+            );
+            assert!(!row.get::<String>("body_hash").expect("body").is_empty());
+            assert!(
+                !row.get::<String>("content_sha256")
+                    .expect("content")
+                    .is_empty()
+            );
+        }
+    }
+    assert_eq!(observed, expected);
+}
+
+#[test]
 fn prototype1_eval_store_parent_ready_read_writes_receipt_and_import_rows() {
     let temp = tempfile::tempdir().unwrap();
     let prototype1_root = temp.path().join("prototype1");
@@ -391,6 +531,45 @@ fn prototype1_storage_authority_negative_channel_row_cannot_replace_envelope() {
     assert!(
         messages.is_empty(),
         "eval_channel_message row must not synthesize a channel envelope"
+    );
+    assert!(!endpoint.path().exists());
+    assert!(db_path.is_file());
+}
+
+#[test]
+fn prototype1_storage_authority_negative_successor_channel_row_cannot_replace_envelope() {
+    let temp = tempfile::tempdir().unwrap();
+    let prototype1_root = temp.path().join("prototype1");
+    let db_path = prototype1_root.join("eval-store.cozo.sqlite");
+    let endpoints = endpoints(prototype1_root.join("nodes/node-1/channels/runtime-1"));
+    let endpoint = endpoints.child_to_parent();
+    eval_store::write_channel_message_to_owner_db(
+        &db_path,
+        eval_store::ChannelMessageEvidence {
+            campaign_id: endpoint.campaign_id().clone(),
+            node_id: endpoint.node_id().to_string(),
+            runtime_id: endpoint.runtime_id().to_string(),
+            direction: direction_label(endpoint.direction()).to_string(),
+            message_kind: "successor_ready".to_string(),
+            message_id: Uuid::new_v4().to_string(),
+            endpoint_path: endpoint.path().to_path_buf(),
+            cursor_offset: 1,
+            bytes_written: 1,
+            body_hash: "missing-successor-body-hash".to_string(),
+            content_sha256: "missing-successor-content-hash".to_string(),
+            recorded_at: "0".to_string(),
+        },
+    )
+    .expect("write successor channel mirror row");
+    let parent = channel::<Parent<parent::Selectable>>(endpoints);
+
+    let (_, messages) = parent
+        .recv_from_child(Cursor::start())
+        .expect("read child channel");
+
+    assert!(
+        messages.is_empty(),
+        "successor eval_channel_message row must not synthesize a channel envelope"
     );
     assert!(!endpoint.path().exists());
     assert!(db_path.is_file());
