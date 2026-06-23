@@ -18,12 +18,10 @@ pub(crate) use api::{ConfiguredEvalStore, EvalStore};
 #[cfg(test)]
 pub(crate) use api::{FileDbEvalStore, FsEvalStore};
 #[cfg(test)]
-pub(crate) use cozo_store::write_record_ref_to_owner_db;
-#[cfg(test)]
 pub(crate) use cozo_store::{DbEvalStore, load_owner_eval_database};
-pub(crate) use cozo_store::{prototype1_eval_store_db_path, write_trace_event_to_owner_db};
-#[cfg(test)]
-pub(crate) use evidence::{
-    LogRefEvidence, ObservationJsonlImport, ParentStartedReceipt, RecordRefEvidence,
+pub(crate) use cozo_store::{
+    prototype1_eval_store_db_path, write_record_ref_to_owner_db, write_trace_event_to_owner_db,
 };
-pub(crate) use evidence::{ParentStartedEvidence, TraceEventEvidence};
+#[cfg(test)]
+pub(crate) use evidence::{LogRefEvidence, ObservationJsonlImport, ParentStartedReceipt};
+pub(crate) use evidence::{ParentStartedEvidence, RecordRefEvidence, TraceEventEvidence};

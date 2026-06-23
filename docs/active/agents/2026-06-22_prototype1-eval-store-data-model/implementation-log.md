@@ -368,6 +368,41 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: `DbEvalStore::put_record_ref` writes queryable compatibility `eval_record_ref` rows with store scope, producer role, source class, evidence class, visibility, validation status, source coordinates, payload hash, and payload JSON. Missing axes fail before row writes. Compatibility record refs do not create `eval_transition_event` rows, and an owner eval DB row claiming child-plan projection does not replace the child-plan `MessageBox` file gate.
 - Commit: current slice commit, `feat: add compatibility eval record refs`.
 
+### Slice 7b — Runner-request compatibility record refs
+
+- Status: complete for runner-request projection refs only; node projections, runner results, and branch registry refs are intentionally left for later Slice 7 sub-slices.
+- Assumptions:
+  - `runner-request.json` remains the filesystem authority for runner request loading.
+  - The eval-store row is a compatibility `eval_record_ref` beside the existing passive mirror, not a scheduler/request authority table.
+  - The writer should be a no-op for default filesystem runs with no owner eval DB file, preserving current setup behavior.
+  - If an owner eval DB file is already present and the compatibility row cannot be written, the projection write should fail loudly with repairable context instead of silently losing configured DB parity.
+- Code touched:
+  - `crates/ploke-eval/src/record_emission.rs`
+  - `crates/ploke-eval/src/intervention/scheduler.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/mod.rs`
+- Tests added/changed:
+  - `prototype1_eval_store_record_ref_runner_request_projection_writes_owner_db_row`
+  - `prototype1_storage_authority_negative_runner_request_ref_cannot_replace_file`
+- Commands run:
+  - `npx gitnexus analyze` refreshed a stale index before impact analysis.
+  - `gitnexus impact ... save_node_record`: CRITICAL risk, 5 direct callers; avoided in this sub-slice.
+  - `gitnexus impact ... save_runner_request`: LOW risk.
+  - `gitnexus impact ... write_node_projection`: HIGH risk; avoided in this sub-slice.
+  - `gitnexus impact ... write_runner_request_projection`: HIGH risk because it feeds the loop controller; proceeded with the narrower lower-level additive write after warning.
+  - `gitnexus impact ... write_record_ref_to_owner_db`: LOW risk.
+  - `gitnexus impact ... JsonRecordFile`, `JsonRecordFile::emit`, and `record_family`: LOW risk.
+  - `cargo fmt --all`
+  - `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_record_ref_runner_request_projection_writes_owner_db_row -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_storage_authority_negative_runner_request_ref_cannot_replace_file -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_record_ref -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval register_treatment_node_persists_scheduler_and_runner_request -- --nocapture`
+- Live API used: no; this sub-slice only mirrors a deterministic local runner-request projection into an existing owner eval DB.
+- Checkpoints created/updated: none
+- Artifacts retained: none
+- Result: `save_runner_request` still writes `runner-request.json` and the passive shared record first. When `prototype1/eval-store.cozo.sqlite` already exists, it also writes a compatibility `eval_record_ref` row with explicit axes, source coordinates, payload JSON, and payload hash. A DB row claiming a runner request does not replace the missing `runner-request.json` gate.
+- Commit: current slice commit, `feat: mirror runner request record refs`.
+
 ### Slice 7+ — Later evidence slices
 
 Create a new subsection per slice before editing.
