@@ -5,6 +5,7 @@ use cozo::DataValue;
 use super::{
     cozo_store::EvalDb,
     error::EvalStoreError,
+    evaluation::ensure_evaluation_schema,
     evidence::{
         ATTEMPT_REL, CHANNEL_MESSAGE_REL, CHANNEL_RECEIPT_REL, EVENT_REL, IMPORT_EVENT_REL,
         INVOCATION_REL, LOG_REF_REL, RECORD_REL, TRACE_EVENT_REL,
@@ -289,6 +290,8 @@ pub(super) fn ensure_eval_store_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(),
             source,
         })?;
     }
+
+    ensure_evaluation_schema(db)?;
 
     Ok(())
 }

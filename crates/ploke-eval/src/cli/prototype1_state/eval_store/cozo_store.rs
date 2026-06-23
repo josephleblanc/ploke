@@ -322,7 +322,10 @@ pub(crate) fn write_record_ref_to_owner_db(
     Ok(receipt)
 }
 
-fn persist_owner_eval_database(db: &Database, path: &Path) -> Result<(), EvalStoreError> {
+pub(super) fn persist_owner_eval_database(
+    db: &Database,
+    path: &Path,
+) -> Result<(), EvalStoreError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent).map_err(|source| EvalStoreError::Io {
         phase: "owner_eval_db.create_dir",

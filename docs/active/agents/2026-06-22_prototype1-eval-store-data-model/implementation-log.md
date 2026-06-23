@@ -823,7 +823,46 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Tests run: none; the relevant live test is source-blocked by quarantine.
 - Live API used: no. This entry records that missing provider confidence is not accepted.
 - Result: terminal `ToParent::Result` mirroring remains an explicit provider-gated follow-up. Slice 9 downstream work may proceed only from existing/restored F5 evidence and must not claim terminal-result producer confidence until the live F5 gate is repaired and run.
-- Commit: current blocker note commit, pending.
+- Commit: `docs: record terminal result live gate blocker` (`e4114429`).
+
+### Slice 9a — Parent comparison evaluation summary rows
+
+- Status: complete for `eval_evaluation` and `eval_evaluation_instance` rows written after parent comparison artifacts.
+- Assumptions:
+  - `Prototype1BranchEvaluationReport` remains the source carrier and `prototype1/evaluations/<branch-id>.json` remains the artifact authority. The DB rows are passive query evidence only.
+  - This sub-slice starts from existing/restored F5 terminal treatment evidence. It does not modify terminal result production, so no live provider call is required for this writer.
+  - `CompleteBaseline` carries parent node/branch ids, not `ParentIdentity.parent_id`. This first-pass row leaves `parent_id = null` rather than flattening node identity into the parent-id column.
+  - Evaluation row identity includes the evaluation artifact content hash so rewritten branch reports do not silently overwrite earlier evidence.
+  - Evaluation-specific schema/write code lives in `eval_store/evaluation.rs` to avoid growing the already large shared eval-store modules further.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/cli_facing.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/evaluation.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/cozo_schema.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/cozo_store.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/mod.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/tests.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/run/core.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs`
+- Tests added/changed:
+  - existing `parent_compares_treatment_evidence_against_owned_baseline` now calls the production comparison writer and asserts `eval_evaluation` / `eval_evaluation_instance` DB content.
+  - `evaluation_db_rows_do_not_replace_file_backed_report`
+  - existing `succeeded_child_without_evaluation_stays_in_observe`
+  - existing `succeeded_child_with_evaluation_can_enter_selection`
+  - existing `prototype1_eval_store_parent_start_db_schema_installs_idempotently`
+- Commands run:
+  - `gitnexus impact ... compare_observed_child_treatment`: HIGH risk; 4 direct callers, 18 impacted symbols, no affected execution flows. Edit kept artifact/branch-log authority first and DB mirror second.
+  - `gitnexus impact ... install_schema`: HIGH risk; 8 direct callers, 25 impacted symbols, no affected execution flows. Schema coverage added.
+  - `cargo fmt --all`
+  - `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval parent_compares_treatment_evidence_against_owned_baseline -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval evaluation_db_rows_do_not_replace_file_backed_report -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval succeeded_child_without_evaluation_stays_in_observe -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval succeeded_child_with_evaluation_can_enter_selection -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_parent_start_db_schema_installs_idempotently -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
+- Live API used: no. Parent comparison is local when starting from existing terminal treatment evidence; provider confidence for terminal result production remains blocked in Slice 8g.
+- Result: parent comparison now writes queryable evaluation summary rows after the JSON evaluation artifact and branch comparison log succeed. Selection reconstruction still refuses to proceed without a file-backed/in-memory evaluation report, proving DB evaluation rows do not replace evaluation authority.
+- Commit: `feat: mirror parent evaluation summaries`.
 
 ### Later slices
 

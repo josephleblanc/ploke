@@ -82,6 +82,7 @@ use crate::{
                 },
                 tui_adapter,
             },
+            eval_store,
             event::{ContentHash, RecordedAt, RuntimeId},
             history::{
                 ArtifactSurface, CHILD_ATTEMPT_RUNNER_RESULT_RECORD,
@@ -5565,8 +5566,103 @@ pub(crate) fn compare_observed_child_treatment(
             detail: "parent branch comparison log lock was poisoned".to_string(),
         })?;
     branch_log::record_parent_comparison(campaign_id, manifest_path, resolved, summary)?;
+    emit_parent_evaluation_if_owner_db_exists(campaign_id, parent_baseline, &report)?;
 
     Ok(report)
+}
+
+fn emit_parent_evaluation_if_owner_db_exists(
+    campaign_id: &CampaignId,
+    parent_baseline: &CompleteBaseline,
+    report: &Prototype1BranchEvaluationReport,
+) -> Result<(), PrepareError> {
+    let db_path = eval_store::owner_eval_db_file_for_record_path(&report.evaluation_artifact_path)
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "eval_evaluation_path",
+            detail: source.to_string(),
+        })?;
+    if !db_path.is_file() {
+        return Ok(());
+    }
+    let bytes = fs::read(&report.evaluation_artifact_path).map_err(|source| {
+        PrepareError::ReadManifest {
+            path: report.evaluation_artifact_path.clone(),
+            source,
+        }
+    })?;
+    let content_sha256 = format!("{:x}", Sha256::digest(&bytes));
+    let record_ref = format!(
+        "path:{}#sha256:{}",
+        report.evaluation_artifact_path.display(),
+        content_sha256
+    );
+    let eval_set_id = report
+        .eval_set_identity
+        .as_ref()
+        .map(|identity| identity.id.clone());
+    let policy_ref = eval_set_id
+        .as_ref()
+        .map(|eval_set_id| format!("eval_set:{eval_set_id}:policy"));
+    let evidence = eval_store::EvaluationEvidence {
+        campaign_id: campaign_id.clone(),
+        parent_id: None,
+        branch_id: report.branch_id.clone(),
+        baseline_id: Some(parent_baseline.campaign_id().to_string()),
+        treatment_id: Some(report.treatment_campaign_id.to_string()),
+        procedure_id: report.evaluation_procedure_id.clone(),
+        evaluator_id: report
+            .evaluator_identity
+            .as_ref()
+            .map(|identity| identity.id.clone()),
+        eval_set_id,
+        policy_ref,
+        disposition: serde_name(&report.overall_disposition).to_string(),
+        record_ref: Some(record_ref),
+        recorded_at: Some(Utc::now().to_rfc3339()),
+        content_sha256,
+        instances: report
+            .compared_instances
+            .iter()
+            .map(evaluation_instance_evidence)
+            .collect(),
+    };
+    eval_store::write_evaluation_to_owner_db(&db_path, evidence).map_err(|source| {
+        PrepareError::DatabaseSetup {
+            phase: "eval_evaluation_put",
+            detail: format!(
+                "failed to persist evaluation rows for '{}': {source}",
+                report.evaluation_artifact_path.display()
+            ),
+        }
+    })?;
+    Ok(())
+}
+
+fn evaluation_instance_evidence(
+    row: &Prototype1ComparedInstanceReport,
+) -> eval_store::EvaluationInstanceEvidence {
+    eval_store::EvaluationInstanceEvidence {
+        instance_id: row.instance_id.clone(),
+        baseline_run_id: None,
+        treatment_run_id: None,
+        baseline_ref: row
+            .baseline_record_path
+            .as_ref()
+            .map(|path| format!("path:{}", path.display())),
+        treatment_ref: row
+            .treatment_record_path
+            .as_ref()
+            .map(|path| format!("path:{}", path.display())),
+        status: row.status.clone(),
+        outcome: row
+            .evaluation
+            .as_ref()
+            .map(|evaluation| serde_name(&evaluation.disposition).to_string()),
+        oracle_ref: row
+            .oracle_evaluation
+            .as_ref()
+            .map(|_| format!("oracle-evaluation:{}", row.instance_id)),
+    }
 }
 
 // ANCHOR: prototype1_run_planned_child

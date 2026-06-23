@@ -5900,13 +5900,19 @@ fn selected_child_treatment_promotes_to_parent_baseline() {
 
 #[test]
 fn parent_compares_treatment_evidence_against_owned_baseline() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let campaign_root = tmp.path().join("campaign");
+    let prototype1_root = campaign_root.join("prototype1");
+    let manifest_path = campaign_root.join("campaign.json");
+    let db_path = prototype1_root.join("eval-store.cozo.sqlite");
+    fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+    ploke_db::Database::new_init()
+        .expect("empty eval db")
+        .write_backup_to_path(&db_path)
+        .expect("seed owner eval db");
+
     let parent = test_parent_identity();
-    let node = test_node(
-        Path::new("/tmp/campaign"),
-        "node-child",
-        "branch-child",
-        "candidate-1",
-    );
+    let node = test_node(&campaign_root, "node-child", "branch-child", "candidate-1");
     let baseline = CompleteBaseline::complete(
         CampaignId::from("baseline"),
         parent.node_id().to_string(),
@@ -5922,17 +5928,29 @@ fn parent_compares_treatment_evidence_against_owned_baseline() {
     .expect("complete baseline");
     let treatment = test_treatment_evidence(&node);
 
-    let report = build_prototype1_branch_evaluation_report(
+    let branch_log_gate = Mutex::new(());
+    let report = compare_observed_child_treatment(
+        &CampaignId::from("baseline"),
+        &manifest_path,
+        &baseline,
+        &test_resolved(&node),
+        &treatment,
+        &branch_log_gate,
+    )
+    .expect("parent comparison");
+
+    let pure_report = build_prototype1_branch_evaluation_report(
         &CampaignId::from("baseline"),
         &node.branch_id,
-        Path::new("/tmp/prototype1/branches.json"),
-        Path::new("/tmp/prototype1/evaluations/branch-child.json"),
+        &prototype1_root.join("branches.json"),
+        &prototype1_root.join("evaluations/branch-child.json"),
         &baseline,
         &treatment,
     )
     .expect("parent comparison");
 
     assert_eq!(report.overall_disposition, BranchDisposition::Keep);
+    assert_eq!(report.branch_id, pure_report.branch_id);
     assert_eq!(report.compared_instances.len(), 1);
     assert_eq!(report.compared_instances[0].status, "compared");
     assert_eq!(
@@ -5943,6 +5961,130 @@ fn parent_compares_treatment_evidence_against_owned_baseline() {
         report.compared_instances[0].treatment_record_path,
         Some(PathBuf::from("/tmp/treatment/record.json.gz"))
     );
+
+    let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "branch_id".to_string(),
+        cozo::DataValue::from(node.branch_id.clone()),
+    );
+    let rows = db
+        .raw_query_params(
+            r#"
+?[
+    evaluation_id,
+    baseline_id,
+    treatment_id,
+    procedure_id,
+    evaluator_id,
+    eval_set_id,
+    disposition,
+    record_ref
+] :=
+    *eval_evaluation {
+        evaluation_id,
+        branch_id,
+        baseline_id,
+        treatment_id,
+        procedure_id,
+        evaluator_id,
+        eval_set_id,
+        disposition,
+        record_ref
+    },
+    branch_id = $branch_id
+"#,
+            params,
+        )
+        .expect("query evaluation rows");
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("evaluation row");
+    let evaluation_id = row.get::<String>("evaluation_id").expect("evaluation id");
+    assert_eq!(
+        row.get::<String>("baseline_id").expect("baseline"),
+        "baseline"
+    );
+    assert_eq!(
+        row.get::<String>("treatment_id").expect("treatment"),
+        "treatment"
+    );
+    assert_eq!(
+        row.get::<String>("procedure_id").expect("procedure"),
+        crate::cli::prototype1_state::evidence::PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID
+    );
+    assert_eq!(
+        row.get::<String>("evaluator_id").expect("evaluator"),
+        "prototype1.branch_evaluation.mechanized"
+    );
+    assert!(
+        !row.get::<String>("eval_set_id")
+            .expect("eval set")
+            .is_empty()
+    );
+    assert_eq!(
+        row.get::<String>("disposition").expect("disposition"),
+        "keep"
+    );
+    assert!(
+        row.get::<String>("record_ref")
+            .expect("record ref")
+            .contains("prototype1/evaluations/branch-child.json#sha256:")
+    );
+
+    let mut instance_params = std::collections::BTreeMap::new();
+    instance_params.insert(
+        "evaluation_id".to_string(),
+        cozo::DataValue::from(evaluation_id),
+    );
+    let instance_rows = db
+        .raw_query_params(
+            r#"
+?[
+    instance_id,
+    baseline_ref,
+    treatment_ref,
+    status,
+    outcome
+] :=
+    *eval_evaluation_instance {
+        evaluation_id,
+        instance_id,
+        baseline_ref,
+        treatment_ref,
+        status,
+        outcome
+    },
+    evaluation_id = $evaluation_id
+"#,
+            instance_params,
+        )
+        .expect("query evaluation instance rows");
+    assert_eq!(instance_rows.rows.len(), 1);
+    let instance = instance_rows
+        .row_refs()
+        .next()
+        .expect("evaluation instance");
+    assert_eq!(
+        instance.get::<String>("instance_id").expect("instance"),
+        node.instance_id
+    );
+    assert_eq!(
+        instance
+            .get::<String>("baseline_ref")
+            .expect("baseline ref"),
+        "path:/tmp/baseline/record.json.gz"
+    );
+    assert_eq!(
+        instance
+            .get::<String>("treatment_ref")
+            .expect("treatment ref"),
+        "path:/tmp/treatment/record.json.gz"
+    );
+    assert_eq!(
+        instance.get::<String>("status").expect("status"),
+        "compared"
+    );
+    assert_eq!(instance.get::<String>("outcome").expect("outcome"), "keep");
 }
 
 fn bind_test_tui_surface_fields(

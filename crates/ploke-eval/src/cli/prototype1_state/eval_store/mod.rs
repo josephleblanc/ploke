@@ -10,6 +10,7 @@ mod cozo_params;
 mod cozo_schema;
 mod cozo_store;
 mod error;
+mod evaluation;
 mod evidence;
 mod observation;
 
@@ -28,6 +29,11 @@ pub(crate) use cozo_store::{
     write_trace_event_to_owner_db,
 };
 pub(crate) use error::EvalStoreError;
+#[cfg(test)]
+pub(crate) use evaluation::{EVALUATION_INSTANCE_REL, EVALUATION_REL};
+pub(crate) use evaluation::{
+    EvaluationEvidence, EvaluationInstanceEvidence, write_evaluation_to_owner_db,
+};
 pub(crate) use evidence::{
     ChannelMessageEvidence, ChannelReceiptEvidence, ImportEventEvidence, InvocationEvidence,
     ParentStartedEvidence, RecordRefEvidence, TraceEventEvidence,

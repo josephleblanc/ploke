@@ -3011,6 +3011,54 @@ mod tests {
     }
 
     #[test]
+    fn evaluation_db_rows_do_not_replace_file_backed_report() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+        crate::cli::prototype1_state::eval_store::write_evaluation_to_owner_db(
+            &db_path,
+            crate::cli::prototype1_state::eval_store::EvaluationEvidence {
+                campaign_id: CampaignId::from("campaign"),
+                parent_id: None,
+                branch_id: "branch-child".to_string(),
+                baseline_id: Some("campaign".to_string()),
+                treatment_id: Some("treatment".to_string()),
+                procedure_id: Some("procedure".to_string()),
+                evaluator_id: Some("evaluator".to_string()),
+                eval_set_id: Some("eval-set".to_string()),
+                policy_ref: Some("eval_set:eval-set:policy".to_string()),
+                disposition: "keep".to_string(),
+                record_ref: Some("path:/tmp/prototype1/evaluations/branch-child.json".to_string()),
+                recorded_at: Some("2026-06-23T00:00:00Z".to_string()),
+                content_sha256: "evaluation-row-hash".to_string(),
+                instances: vec![
+                    crate::cli::prototype1_state::eval_store::EvaluationInstanceEvidence {
+                        instance_id: "clap-rs__clap-3670".to_string(),
+                        baseline_run_id: None,
+                        treatment_run_id: None,
+                        baseline_ref: Some("path:/tmp/baseline/record.json.gz".to_string()),
+                        treatment_ref: Some("path:/tmp/treatment/record.json.gz".to_string()),
+                        status: "compared".to_string(),
+                        outcome: Some("keep".to_string()),
+                        oracle_ref: None,
+                    },
+                ],
+            },
+        )
+        .expect("write passive evaluation rows");
+
+        let snapshot = phase_test_snapshot(Prototype1NodeStatus::Succeeded, None);
+        let err = reconstruct_terminal_outcomes(&[snapshot])
+            .expect_err("DB evaluation rows must not replace file-backed evaluation report");
+        match err {
+            PrepareError::InvalidBatchSelection { detail } => {
+                assert!(detail.contains("missing branch evaluation report"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+        assert!(db_path.is_file());
+    }
+
+    #[test]
     fn succeeded_child_with_evaluation_can_enter_selection() {
         let snapshot = phase_test_snapshot(
             Prototype1NodeStatus::Succeeded,
