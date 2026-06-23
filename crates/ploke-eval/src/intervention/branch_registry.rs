@@ -12,6 +12,7 @@ use super::spec::{
 use crate::branch_evaluation::BranchDisposition;
 use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, PatchId};
 use crate::projection::OperatorProjectionRead;
+use crate::record_emission::emit_eval_record_ref_for_jsonl_if_owner_db_exists;
 
 pub const PROTOTYPE1_BRANCH_REGISTRY_SCHEMA_VERSION: &str = "prototype1-branch-registry.v1";
 
@@ -29,6 +30,7 @@ pub mod branch_log {
     use super::*;
 
     pub const SCHEMA_VERSION: &str = "prototype1-branch-record.v1";
+    const RECORD_REF_FAMILY: &str = "branch_registry";
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub struct ComparisonSummary {
@@ -74,8 +76,8 @@ pub mod branch_log {
             source,
         })?;
         let path = prototype1_branch_registry_path(campaign_manifest_path);
-        let mut line = serde_json::to_vec(record).map_err(PrepareError::Serialize)?;
-        line.push(b'\n');
+        let source_event_index = count_jsonl_records(&path)?;
+        let payload_json = serde_json::to_string(record).map_err(PrepareError::Serialize)?;
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -84,8 +86,50 @@ pub mod branch_log {
                 path: path.clone(),
                 source,
             })?;
-        file.write_all(&line)
-            .map_err(|source| PrepareError::WriteManifest { path, source })
+        file.write_all(payload_json.as_bytes())
+            .map_err(|source| PrepareError::WriteManifest {
+                path: path.clone(),
+                source,
+            })?;
+        file.write_all(b"\n")
+            .map_err(|source| PrepareError::WriteManifest {
+                path: path.clone(),
+                source,
+            })?;
+        emit_eval_record_ref_for_jsonl_if_owner_db_exists(
+            &path,
+            record_campaign_id(record),
+            RECORD_REF_FAMILY,
+            &record.schema_version,
+            &record_producer_id(record),
+            source_event_index,
+            payload_json,
+        )
+    }
+
+    fn count_jsonl_records(path: &Path) -> Result<usize, PrepareError> {
+        match fs::read_to_string(path) {
+            Ok(text) => Ok(text.lines().filter(|line| !line.trim().is_empty()).count()),
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(0),
+            Err(source) => Err(PrepareError::ReadManifest {
+                path: path.to_path_buf(),
+                source,
+            }),
+        }
+    }
+
+    fn record_campaign_id(record: &Record) -> &CampaignId {
+        match &record.body {
+            Body::RegistrySnapshot(registry) => &registry.campaign_id,
+            Body::ParentComparison(comparison) => &comparison.campaign_id,
+        }
+    }
+
+    fn record_producer_id(record: &Record) -> String {
+        match &record.body {
+            Body::RegistrySnapshot(registry) => registry.campaign_id.to_string(),
+            Body::ParentComparison(comparison) => comparison.branch_id.clone(),
+        }
     }
 
     pub fn snapshot(registry: &Prototype1BranchRegistry) -> Record {
@@ -894,6 +938,7 @@ mod tests {
         InterventionSpec, ValidationPolicy,
     };
     use super::*;
+    use crate::cli::prototype1_state::eval_store;
     use ploke_core::tool_types::ToolName;
 
     fn campaign_manifest_path(tmp: &Path) -> PathBuf {
@@ -1141,6 +1186,180 @@ mod tests {
         assert_eq!(lines.len(), 1);
         let stored: branch_log::Record = serde_json::from_str(lines[0]).expect("stored record");
         assert_eq!(stored, record);
+    }
+
+    #[test]
+    fn prototype1_eval_store_record_ref_branch_registry_append_writes_owner_db_row() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+        let db_path = eval_store::prototype1_eval_store_db_path(&manifest);
+        fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+        ploke_db::Database::new_init()
+            .expect("empty eval db")
+            .write_backup_to_path(&db_path)
+            .expect("seed owner eval db");
+
+        record_synthesized_branches(
+            &CampaignId::from("test-campaign"),
+            &manifest,
+            "clap-rs__clap-3670",
+            &synthesis_output(),
+            Some("candidate-1"),
+            None,
+        )
+        .expect("record synthesis");
+
+        let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+        let mut params = BTreeMap::new();
+        params.insert(
+            "campaign_id".to_string(),
+            cozo::DataValue::from("test-campaign".to_string()),
+        );
+        let rows = db
+            .raw_query_params(
+                r#"
+?[
+    family,
+    schema_version,
+    store_scope,
+    producer_role,
+    producer_id,
+    source_class,
+    evidence_class,
+    visibility_scope,
+    validation_status,
+    source_ref,
+    content_sha256,
+    payload_json
+] :=
+    *eval_record_ref {
+        campaign_id,
+        family,
+        schema_version,
+        store_scope,
+        producer_role,
+        producer_id,
+        source_class,
+        evidence_class,
+        visibility_scope,
+        validation_status,
+        source_ref,
+        content_sha256,
+        payload_json
+    },
+    campaign_id = $campaign_id,
+    family = "branch_registry"
+"#,
+                params,
+            )
+            .expect("query branch registry record refs");
+
+        assert_eq!(rows.rows.len(), 1);
+        let row = rows.row_refs().next().expect("record ref row");
+        assert_eq!(
+            row.get::<String>("family").expect("family"),
+            "branch_registry"
+        );
+        assert_eq!(
+            row.get::<String>("schema_version").expect("schema"),
+            branch_log::SCHEMA_VERSION
+        );
+        assert_eq!(row.get::<String>("store_scope").expect("scope"), "parent");
+        assert_eq!(row.get::<String>("producer_role").expect("role"), "parent");
+        assert_eq!(
+            row.get::<String>("producer_id").expect("producer"),
+            "test-campaign"
+        );
+        assert_eq!(
+            row.get::<String>("source_class").expect("source"),
+            "compatibility_import"
+        );
+        assert_eq!(
+            row.get::<String>("evidence_class").expect("evidence"),
+            "compatibility"
+        );
+        assert_eq!(
+            row.get::<String>("visibility_scope").expect("visibility"),
+            "parent_visible"
+        );
+        assert_eq!(
+            row.get::<String>("validation_status").expect("status"),
+            "valid"
+        );
+        assert!(
+            row.get::<String>("source_ref")
+                .expect("source ref")
+                .contains("branches.json:L1")
+        );
+        assert!(
+            !row.get::<String>("content_sha256")
+                .expect("hash")
+                .is_empty(),
+            "record ref carries payload hash"
+        );
+        assert!(
+            row.get::<String>("payload_json")
+                .expect("payload")
+                .contains("\"registry_snapshot\""),
+            "payload remains a compatibility ref for the branch registry JSONL record"
+        );
+    }
+
+    #[test]
+    fn prototype1_storage_authority_negative_branch_ref_cannot_replace_registry_log() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+        let target_relpath = PathBuf::from("crates/ploke-core/tool_text/request_code_context.md");
+        let branch_id = treatment_branch_id("baseline-run-1", &target_relpath, "candidate-1");
+        let db_path = eval_store::prototype1_eval_store_db_path(&manifest);
+        eval_store::write_record_ref_to_owner_db(
+            &db_path,
+            eval_store::RecordRefEvidence::compatibility_import(
+                CampaignId::from("test-campaign"),
+                "branch_registry",
+                branch_log::SCHEMA_VERSION,
+                &branch_id,
+                "prototype1-record:test-campaign:missing-branches",
+                0,
+                1,
+                format!(
+                    "{}:L1",
+                    prototype1_branch_registry_path(&manifest).display()
+                ),
+                serde_json::json!({
+                    "schema_version": branch_log::SCHEMA_VERSION,
+                    "recorded_at": "2026-05-07T00:00:00Z",
+                    "body": {
+                        "kind": "registry_snapshot",
+                        "schema_version": PROTOTYPE1_BRANCH_REGISTRY_SCHEMA_VERSION,
+                        "campaign_id": "test-campaign",
+                        "updated_at": "2026-05-07T00:00:00Z",
+                        "source_nodes": []
+                    }
+                })
+                .to_string(),
+                1000,
+            ),
+        )
+        .expect("write eval DB record ref");
+
+        let selection = active_branch_selection_for_target(
+            &CampaignId::from("test-campaign"),
+            &manifest,
+            &target_relpath,
+        )
+        .expect("branch registry loader does not consult eval DB refs");
+        let registry = load_or_default_branch_registry(
+            &CampaignId::from("test-campaign"),
+            &manifest,
+            OperatorProjectionRead::projection_module(),
+        )
+        .expect("missing branches.json falls back to default registry");
+
+        assert!(selection.is_none());
+        assert!(registry.source_nodes.is_empty());
+        assert!(db_path.is_file());
+        assert!(!prototype1_branch_registry_path(&manifest).exists());
     }
 
     #[test]

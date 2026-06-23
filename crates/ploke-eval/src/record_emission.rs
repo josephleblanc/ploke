@@ -77,24 +77,82 @@ pub(crate) fn emit_eval_record_ref_if_owner_db_exists(
     campaign_id: &CampaignId,
     producer_id: &str,
 ) -> Result<(), PrepareError> {
-    let db_path = owner_eval_db_file_for_record(&receipt.path)?;
-    if !db_path.is_file() {
-        return Ok(());
-    }
     let payload_json =
         fs::read_to_string(&receipt.path).map_err(|source| PrepareError::ReadManifest {
             path: receipt.path.clone(),
             source,
         })?;
-    let evidence = RecordRefEvidence::compatibility_import(
-        campaign_id.clone(),
+    emit_eval_record_ref_payload_if_owner_db_exists(
+        &receipt.path,
+        campaign_id,
         record_family(receipt.family),
         receipt.schema,
         producer_id,
-        format!("prototype1-record:{campaign_id}:{}", receipt.path.display()),
         0,
         1,
-        format!("{}:L1", receipt.path.display()),
+        payload_json,
+    )
+}
+
+pub(crate) fn emit_eval_record_ref_for_jsonl_if_owner_db_exists(
+    path: &Path,
+    campaign_id: &CampaignId,
+    family: &'static str,
+    schema_version: &str,
+    producer_id: &str,
+    source_event_index: usize,
+    payload_json: String,
+) -> Result<(), PrepareError> {
+    let source_event_index =
+        i64::try_from(source_event_index).map_err(|_| PrepareError::DatabaseSetup {
+            phase: "eval_record_ref_coordinates",
+            detail: format!(
+                "source event index for '{}' does not fit in i64",
+                path.display()
+            ),
+        })?;
+    let source_line =
+        source_event_index
+            .checked_add(1)
+            .ok_or_else(|| PrepareError::DatabaseSetup {
+                phase: "eval_record_ref_coordinates",
+                detail: format!("source line for '{}' overflowed i64", path.display()),
+            })?;
+    emit_eval_record_ref_payload_if_owner_db_exists(
+        path,
+        campaign_id,
+        family,
+        schema_version,
+        producer_id,
+        source_event_index,
+        source_line,
+        payload_json,
+    )
+}
+
+fn emit_eval_record_ref_payload_if_owner_db_exists(
+    path: &Path,
+    campaign_id: &CampaignId,
+    family: &'static str,
+    schema_version: &str,
+    producer_id: &str,
+    source_event_index: i64,
+    source_line: i64,
+    payload_json: String,
+) -> Result<(), PrepareError> {
+    let db_path = owner_eval_db_file_for_record(path)?;
+    if !db_path.is_file() {
+        return Ok(());
+    }
+    let evidence = RecordRefEvidence::compatibility_import(
+        campaign_id.clone(),
+        family,
+        schema_version,
+        producer_id,
+        format!("prototype1-record:{campaign_id}:{}", path.display()),
+        source_event_index,
+        source_line,
+        format!("{}:L{}", path.display(), source_line),
         payload_json,
         Utc::now().timestamp_millis(),
     );
@@ -103,7 +161,7 @@ pub(crate) fn emit_eval_record_ref_if_owner_db_exists(
             phase: "eval_record_ref_put",
             detail: format!(
                 "failed to persist eval record ref for '{}': {source}",
-                receipt.path.display()
+                path.display()
             ),
         }
     })?;

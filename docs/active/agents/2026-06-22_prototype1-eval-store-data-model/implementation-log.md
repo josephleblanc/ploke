@@ -403,6 +403,38 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: `save_runner_request` still writes `runner-request.json` and the passive shared record first. When `prototype1/eval-store.cozo.sqlite` already exists, it also writes a compatibility `eval_record_ref` row with explicit axes, source coordinates, payload JSON, and payload hash. A DB row claiming a runner request does not replace the missing `runner-request.json` gate.
 - Commit: current slice commit, `feat: mirror runner request record refs`.
 
+### Slice 7c — Branch registry compatibility record refs
+
+- Status: complete for append-only `branches.json` compatibility refs; candidate, evaluation, selection, and continuation facts remain deferred to Slice 9 typed relations.
+- Assumptions:
+  - `branches.json` remains the append-only compatibility source for current branch registry loaders.
+  - DB rows are parent-visible `eval_record_ref` compatibility evidence only; they do not select branches, replace branch registry replay, or provide evaluation/selection authority.
+  - The writer should remain a no-op for filesystem runs with no owner eval DB file.
+  - JSONL source coordinates must use the actual appended line index so multiple branch records do not collide.
+- Code touched:
+  - `crates/ploke-eval/src/record_emission.rs`
+  - `crates/ploke-eval/src/intervention/branch_registry.rs`
+- Tests added/changed:
+  - `prototype1_eval_store_record_ref_branch_registry_append_writes_owner_db_row`
+  - `prototype1_storage_authority_negative_branch_ref_cannot_replace_registry_log`
+- Commands run:
+  - `gitnexus impact ... branch_log::append`: LOW risk; 2 direct callers; no affected processes.
+  - `gitnexus impact ... save_branch_registry`: LOW risk; 4 direct callers; no affected processes.
+  - `gitnexus impact ... record_parent_comparison`: LOW risk; 2 direct callers; no affected processes.
+  - `gitnexus impact ... write_record_ref_to_owner_db`: LOW risk.
+  - `cargo fmt --all`
+  - `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_record_ref_branch_registry_append_writes_owner_db_row -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_storage_authority_negative_branch_ref_cannot_replace_registry_log -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval append_resolved_comparison_records_parent_comparison -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval record_synthesis_creates_source_node_and_selected_branch -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_record_ref -- --nocapture`
+- Live API used: no; this sub-slice mirrors local branch registry JSONL appends into an existing owner eval DB.
+- Checkpoints created/updated: none
+- Artifacts retained: none
+- Result: branch registry append still writes the JSONL line first. When `prototype1/eval-store.cozo.sqlite` already exists, the appended line is also mirrored as a `branch_registry` compatibility `eval_record_ref` row with source line/index, payload JSON, and payload hash. A DB row claiming branch registry evidence does not replace the missing `branches.json` log for branch selection or registry loading.
+- Commit: current slice commit, `feat: mirror branch registry record refs`.
+
 ### Slice 7+ — Later evidence slices
 
 Create a new subsection per slice before editing.
