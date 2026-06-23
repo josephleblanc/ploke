@@ -76,17 +76,17 @@
 
 use lazy_static::lazy_static;
 use ploke_core::ItemKind;
-use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::parser::graph::GraphAccess;
 use syn_parser::parser::relations::SyntacticRelation;
+use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::resolve::module_tree::ModuleTree;
 
 use crate::common::build_tree_for_tests;
 use crate::common::relation_paranoid::{
-    ImportParanoidArgs, ModuleParanoidArgs, ModuleParanoidKind, paranoid_import, paranoid_item,
-    paranoid_module,
+    paranoid_import, paranoid_item, paranoid_module, ImportParanoidArgs, ModuleParanoidArgs,
+    ModuleParanoidKind,
 };
-use crate::common::{ParanoidArgs, run_phases_and_collect};
+use crate::common::{run_phases_and_collect, ParanoidArgs};
 use crate::paranoid_imported_by_case;
 
 const FIXTURE_NAME: &str = "fixture_spp_edge_cases";

@@ -19,7 +19,7 @@
 //! reappear, this test will fail during `build_tree_and_prune`.
 
 use ploke_common::workspace_root;
-use syn_parser::{ParsedCodeGraph, discovery::run_discovery_phase, parser::analyze_files_parallel};
+use syn_parser::{discovery::run_discovery_phase, parser::analyze_files_parallel, ParsedCodeGraph};
 
 /// Builds the module tree for a workspace crate. Mirrors the logic used by the full
 /// `parse_self` tests so any fixes applied there remain covered here.

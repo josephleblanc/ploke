@@ -12,10 +12,10 @@ use syn_parser::resolve::module_tree::ModuleTree;
 
 use crate::common::build_tree_for_tests;
 use crate::common::relation_paranoid::{
-    ImportParanoidArgs, ModuleParanoidArgs, ModuleParanoidKind, assert_imported_by_sources_exact,
-    paranoid_import, paranoid_item, paranoid_module,
+    assert_imported_by_sources_exact, paranoid_import, paranoid_item, paranoid_module,
+    ImportParanoidArgs, ModuleParanoidArgs, ModuleParanoidKind,
 };
-use crate::common::{ParanoidArgs, run_phases_and_collect};
+use crate::common::{run_phases_and_collect, ParanoidArgs};
 use crate::paranoid_imported_by_case;
 
 const FIXTURE_NAME: &str = "fixture_spp_edge_cases_no_cfg";

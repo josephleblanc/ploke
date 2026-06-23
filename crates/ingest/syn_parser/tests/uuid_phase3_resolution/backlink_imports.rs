@@ -28,7 +28,7 @@ use syn_parser::parser::ParsedCodeGraph;
 use syn_parser::resolve::module_tree::ModuleTree;
 
 use crate::common::build_tree_for_tests;
-use crate::common::relation_paranoid::{ExpectedTreeRelation, import, item};
+use crate::common::relation_paranoid::{import, item, ExpectedTreeRelation};
 use crate::paranoid_tree_relation_case;
 
 const FIXTURE_NAME: &str = "fixture_nodes";
