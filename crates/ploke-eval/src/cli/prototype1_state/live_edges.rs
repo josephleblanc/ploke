@@ -31,7 +31,10 @@ use crate::{
                 resolve_prototype1_state_campaign, run_adaptive_child_fanout, run_child_fanout,
                 same_existing_path, select_artifact_for_handoff, traversal_metric_inputs,
             },
-            eval_store::{ConfiguredEvalStore, EvalStore, ParentStartedEvidence},
+            eval_store::{
+                ConfiguredEvalStore, EvalStore, ParentStartedEvidence,
+                prototype1_eval_store_db_path,
+            },
             event::RecordedAt,
             invocation::{self, InvocationAuthority, SuccessorCompletionStatus},
             journal::{self, JournalEntry, PrototypeJournal, prototype1_transition_journal_path},
@@ -45,14 +48,6 @@ use crate::{
     intervention::{Prototype1ChildBudget, Prototype1ChildScheduleMode, RecordStore},
     spec::PrepareError,
 };
-
-fn eval_storage_backend_name(backend: EvalStorageBackend) -> &'static str {
-    match backend {
-        EvalStorageBackend::Fs => "fs",
-        EvalStorageBackend::Database => "database",
-        EvalStorageBackend::DualStrict => "dual-strict",
-    }
-}
 
 // ANCHOR: prototype1_live_edges
 /// Resolve command-derived context and open the transition journal.
@@ -417,14 +412,19 @@ pub(crate) fn r4c_to_r5(
                 prototype1_state_transition_error("prototype1_parent_start", err.to_string())
             })?;
         }
-        EvalStorageBackend::Database | EvalStorageBackend::DualStrict => {
-            return Err(PrepareError::DatabaseSetup {
-                phase: "prototype1_eval_store",
-                detail: format!(
-                    "eval storage backend '{}' is not wired for production parent-start until the DB handle slice",
-                    eval_storage_backend_name(parts.run_shape.eval_storage_backend)
-                ),
-            });
+        EvalStorageBackend::Database => {
+            let db_path = prototype1_eval_store_db_path(&parts.manifest_path);
+            let mut store = ConfiguredEvalStore::database(&mut parts.journal, db_path);
+            store.put_parent_started(evidence).map_err(|err| {
+                prototype1_state_transition_error("prototype1_parent_start", err.to_string())
+            })?;
+        }
+        EvalStorageBackend::DualStrict => {
+            let db_path = prototype1_eval_store_db_path(&parts.manifest_path);
+            let mut store = ConfiguredEvalStore::dual_strict(&mut parts.journal, db_path);
+            store.put_parent_started(evidence).map_err(|err| {
+                prototype1_state_transition_error("prototype1_parent_start", err.to_string())
+            })?;
         }
     }
 

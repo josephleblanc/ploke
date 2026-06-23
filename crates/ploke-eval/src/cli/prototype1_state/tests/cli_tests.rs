@@ -5,6 +5,7 @@ use crate::cli::prototype1_state::edit_surface::harness_request::{
     PublishedBroadHarnessRequest, RequestAdmissionBinding,
 };
 use crate::cli::prototype1_state::edit_surface::surface::SurfacePolicyId;
+use crate::cli::prototype1_state::eval_store;
 use crate::cli::prototype1_state::typestate::{self, StepInput};
 use crate::cli::{
     InspectOutputFormat, Prototype1CandidateGenerator,
@@ -1304,33 +1305,99 @@ fn prototype1_transition_contract_r4c_to_r5_fs_records_parent_start() {
 }
 
 #[test]
-fn prototype1_transition_contract_r4c_to_r5_db_backends_fail_loudly_without_writes() {
+fn prototype1_transition_contract_r4c_to_r5_db_backends_record_parent_start_rows() {
     for backend in [
         profile::EvalStorageBackend::Database,
         profile::EvalStorageBackend::DualStrict,
     ] {
         let tmp = tempfile::tempdir().expect("tempdir");
         let fixture = r4c_fixture(tmp.path(), backend);
-        let err = match crate::cli::prototype1_state::live_edges::r4c_to_r5(fixture.r4c) {
-            Ok(_) => panic!("R4c -> R5 must not silently fall back for {backend:?}"),
-            Err(err) => err,
-        };
-        match err {
-            PrepareError::DatabaseSetup { phase, detail } => {
-                assert_eq!(phase, "prototype1_eval_store");
-                assert!(detail.contains("is not wired for production parent-start"));
-                let name = match backend {
-                    profile::EvalStorageBackend::Fs => "fs",
-                    profile::EvalStorageBackend::Database => "database",
-                    profile::EvalStorageBackend::DualStrict => "dual-strict",
-                };
-                assert!(detail.contains(name));
-            }
-            other => panic!("unexpected {backend:?} R4c -> R5 error: {other:?}"),
+        let parent = fixture.parent.clone();
+        let manifest_path = fixture.manifest_path.clone();
+        let journal_path = fixture.journal_path.clone();
+
+        let r5: typestate::R5<Prototype1StateRunShape, ResolvedCampaignConfig> =
+            crate::cli::prototype1_state::live_edges::r4c_to_r5(fixture.r4c)
+                .unwrap_or_else(|err| panic!("R4c -> R5 succeeds for {backend:?}: {err:?}"));
+
+        let parts = r5.into_parts();
+        assert_eq!(parts.parent.identity(), &parent);
+        assert_eq!(parts.collected.into_parts().journal_path, journal_path);
+        let entries = PrototypeJournal::new(&journal_path)
+            .load_entries()
+            .expect("journal loads");
+        assert_eq!(entries.len(), 2, "{backend:?} preserves JSONL evidence");
+        let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+        assert!(db_path.is_file(), "{backend:?} writes owner eval DB");
+        let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(
+            "campaign_id".to_string(),
+            cozo::DataValue::from(parent.campaign_id().to_string()),
+        );
+        let events = db
+            .raw_query_params(
+                r#"
+?[event_id, transition, store_scope, source_class, evidence_class, validation_status] :=
+    *eval_transition_event {
+        event_id,
+        campaign_id,
+        transition,
+        store_scope,
+        source_class,
+        evidence_class,
+        validation_status
+    },
+    campaign_id = $campaign_id
+"#,
+                params.clone(),
+            )
+            .expect("query transition rows");
+        assert_eq!(events.rows.len(), 1);
+        let event = events.row_refs().next().expect("event row");
+        assert_eq!(
+            event.get::<String>("transition").expect("transition"),
+            "r4c_to_r5"
+        );
+        assert_eq!(event.get::<String>("store_scope").expect("scope"), "parent");
+        assert_eq!(
+            event.get::<String>("source_class").expect("source"),
+            "direct_write"
+        );
+        assert_eq!(
+            event.get::<String>("evidence_class").expect("evidence"),
+            "typed_transition"
+        );
+        assert_eq!(
+            event.get::<String>("validation_status").expect("status"),
+            "valid"
+        );
+
+        let refs = db
+            .raw_query_params(
+                r#"
+?[record_ref_id, family, evidence_class] :=
+    *eval_record_ref { record_ref_id, campaign_id, family, evidence_class },
+    campaign_id = $campaign_id
+"#,
+                params,
+            )
+            .expect("query record refs");
+        assert_eq!(refs.rows.len(), 2);
+        let mut classes = std::collections::BTreeMap::new();
+        for row in refs.row_refs() {
+            classes.insert(
+                row.get::<String>("family").expect("family"),
+                row.get::<String>("evidence_class").expect("class"),
+            );
         }
-        assert!(
-            !fixture.journal_path.exists(),
-            "{backend:?} must fail before writing parent-start journal evidence"
+        assert_eq!(
+            classes.get("parent_started").map(String::as_str),
+            Some("typed_transition")
+        );
+        assert_eq!(
+            classes.get("resource_parent_start").map(String::as_str),
+            Some("diagnostic")
         );
     }
 }

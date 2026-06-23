@@ -229,20 +229,47 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Checkpoints created/updated: none
 - Artifacts retained: none
 - Result: `DbEvalStore<D>` and narrow `EvalDb` trait now support idempotent schema install and deterministic parent-start DB rows in tests. The DB writer creates one `eval_transition_event` row plus two `eval_record_ref` rows from filesystem append receipts, treats duplicate identical semantic hashes as idempotent, rejects duplicate event IDs with semantic hash mismatches, and validates required source/hash fields before row writes.
-- Commit: pending
+- Commit: `3b45c47d`
 
 ### Slice 5 — Production DB construction and dual-strict for first slice
 
-- Status: not started
+- Status: complete for local/storage/typestate gates; direct-Google broad headless-TUI canary attempted eagerly but remains red due model-output behavior unrelated to parent-start DB persistence.
 - Assumptions:
+  - Use an owner-scoped eval DB backup file under the campaign tree: `prototype1/eval-store.cozo.sqlite`.
+  - Do not use `records/mirror.cozo.sqlite` for typed eval-store parity.
+  - `database` mode for this first writer still appends compatibility JSONL first because DB rows and current consumers depend on journal source receipts.
+  - `dual-strict` requires DB semantic hash parity after the filesystem append and reports repair data if DB persistence fails after journal evidence is written.
 - Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/live_edges.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs`
 - Tests added/changed:
+  - `prototype1_eval_store_parent_start_dual_strict_persists_owner_db`
+  - `prototype1_eval_store_parent_start_dual_strict_failure_keeps_repairable_journal`
+  - `prototype1_transition_contract_r4c_to_r5_db_backends_record_parent_start_rows`
+  - updated `prototype1_transition_contract_r4c_to_r5_db_backends_fail_loudly_without_writes` into the DB/dual-strict success contract above.
+  - updated DB duplicate semantic mismatch coverage to preserve deterministic event id while changing semantic evidence.
 - Commands run:
-- Live API used: no for parent-start slice
-- Checkpoints created/updated:
+  - `gitnexus status` reported stale index; `npx gitnexus analyze` refreshed the index.
+  - `gitnexus impact ...` for `ConfiguredEvalStore`, `DbEvalStore`, `EvalStore`, `parent_started_rows`, and `r4c_to_r5`: LOW risk; no HIGH/CRITICAL warnings.
+  - `cargo fmt --all`
+  - `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
+  - `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_parent_start -- --nocapture`
+  - `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_transition_contract_r4c_to_r5 -- --nocapture`
+  - `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_transition_inventory -- --nocapture`
+  - `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_checkpoint -- --nocapture`
+  - `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_storage_authority_negative -- --nocapture`
+  - `PLOKE_EVAL_LIVE_API_TESTS=1 PLOKE_RUN_LIVE_TESTS=1 PLOKE_EVAL_LIVE_GOOGLE_MODEL_ID=google/gemini-2.5-flash-lite TMPDIR=$PWD/target/tmp cargo test -p ploke-eval --features live_api_tests -- --ignored prototype1_live_transition --nocapture` matched/runs 0 tests; not counted as a live pass.
+  - `PLOKE_EVAL_LIVE_API_TESTS=1 PLOKE_RUN_LIVE_TESTS=1 PLOKE_EVAL_LIVE_GOOGLE_MODEL_ID=google/gemini-2.5-flash-lite PLOKE_EVAL_HEADLESS_TUI_GOOGLE_MODEL_ID=google/gemini-2.5-flash-lite TMPDIR=$PWD/target/tmp cargo test -p ploke-eval --features live_api_tests live_google_direct_broad_headless_tui_rejects_applied_edit_missing_declared_validation -- --ignored --nocapture` failed after live Google call: model completed without staging an edit.
+  - Same broad headless-TUI canary with `google/gemini-2.5-flash` failed after live Google call: model applied an edit but hit requested-validation failure instead of the expected missing-validation rejection.
+  - Same broad headless-TUI canary with `google/gemini-2.5-pro` failed with the same requested-validation path.
+  - `PLOKE_EVAL_LIVE_API_TESTS=1 PLOKE_RUN_LIVE_TESTS=1 PLOKE_EVAL_LIVE_GOOGLE_MODEL_ID=google/gemini-2.5-flash-lite TMPDIR=$PWD/target/tmp cargo test -p ploke-eval --features live_api_tests live_google_protocol_json_adjudication_uses_direct_route_success_or_quota -- --ignored --nocapture` passed and returned sentinel JSON through the direct-Google route.
+- Live API used: yes, direct-Google. Provider route/auth was confirmed by the protocol JSON canary. The broad headless-TUI live canary remains a follow-up failure and was not treated as a pass.
+- Checkpoints created/updated: none
 - Artifacts retained:
-- Result:
-- Commit:
+  - Live broad headless-TUI artifacts under `~/.ploke-eval/probes/live-google-broad-headless/run-*`; no artifacts were checked in.
+- Result: production `database` and `dual-strict` parent-start modes now write compatibility journal evidence plus owner-scoped eval DB rows. `dual-strict` fails loudly with journal path, source event indices, line hashes, expected semantic hash, and repair guidance if DB persistence fails after filesystem append. Focused local/storage/typestate/checkpoint/authority tests pass. Direct-Google protocol route passes; broad headless-TUI live canary is red and should be investigated before using it as a storage-slice confidence gate.
+- Commit: current slice commit, `feat: enable dual-strict parent-start eval storage`.
 
 ### Slice 6+ — Later evidence slices
 

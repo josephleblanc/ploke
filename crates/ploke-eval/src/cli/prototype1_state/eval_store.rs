@@ -5,7 +5,11 @@
 //! and must not replace History, channel transport, MessageBox authority,
 //! invocation/bootstrap, or artifact/worktree mutation.
 
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use cozo::DataValue;
 use ploke_db::{Database, DbError, QueryResult};
@@ -32,11 +36,29 @@ pub(crate) trait EvalStore {
 
 pub(crate) enum ConfiguredEvalStore<'a> {
     Fs(FsEvalStore<'a>),
+    Db(FileDbEvalStore<'a>),
+    DualStrict(FileDbEvalStore<'a>),
 }
 
 impl<'a> ConfiguredEvalStore<'a> {
     pub(crate) fn fs(journal: &'a mut PrototypeJournal) -> Self {
         Self::Fs(FsEvalStore::new(journal))
+    }
+
+    pub(crate) fn database(journal: &'a mut PrototypeJournal, db_path: PathBuf) -> Self {
+        Self::Db(FileDbEvalStore::new(
+            journal,
+            db_path,
+            EvalStorageMode::Database,
+        ))
+    }
+
+    pub(crate) fn dual_strict(journal: &'a mut PrototypeJournal, db_path: PathBuf) -> Self {
+        Self::DualStrict(FileDbEvalStore::new(
+            journal,
+            db_path,
+            EvalStorageMode::DualStrict,
+        ))
     }
 }
 
@@ -47,6 +69,7 @@ impl EvalStore for ConfiguredEvalStore<'_> {
     ) -> Result<ParentStartedReceipt, EvalStoreError> {
         match self {
             Self::Fs(store) => store.put_parent_started(evidence),
+            Self::Db(store) | Self::DualStrict(store) => store.put_parent_started(evidence),
         }
     }
 }
@@ -66,52 +89,130 @@ impl EvalStore for FsEvalStore<'_> {
         &mut self,
         evidence: ParentStartedEvidence,
     ) -> Result<ParentStartedReceipt, EvalStoreError> {
-        let parent = self
-            .journal
-            .append_with_receipt(JournalEntry::ParentStarted(ParentStartedEntry {
-                recorded_at: evidence.parent_recorded_at,
-                campaign_id: evidence.campaign_id.clone(),
-                parent_identity: evidence.parent_identity.clone(),
-                repo_root: evidence.repo_root.clone(),
-                handoff_runtime_id: evidence.handoff_runtime_id,
-                pid: evidence.pid,
-            }))
-            .map_err(|source| EvalStoreError::Journal {
-                phase: "parent_started",
-                source,
-            })?;
-
-        let sample = parent_target_sample(
-            &evidence.campaign_id,
-            &evidence.parent_identity,
-            evidence.handoff_runtime_id,
-            &evidence.repo_root,
-            journal::resource::Phase::ParentStart,
-            evidence.resource_recorded_at,
-        );
-        let resource = self
-            .journal
-            .append_with_receipt(JournalEntry::Resource(sample))
-            .map_err(|source| EvalStoreError::Journal {
-                phase: "parent_start_resource",
-                source,
-            })?;
-
-        Ok(ParentStartedReceipt { parent, resource })
+        append_parent_started_entries(self.journal, &evidence)
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EvalStorageMode {
+    Database,
+    DualStrict,
+}
+
+impl EvalStorageMode {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Database => "database",
+            Self::DualStrict => "dual-strict",
+        }
+    }
+}
+
+pub(crate) struct FileDbEvalStore<'a> {
+    journal: &'a mut PrototypeJournal,
+    db_path: PathBuf,
+    mode: EvalStorageMode,
+}
+
+impl<'a> FileDbEvalStore<'a> {
+    fn new(journal: &'a mut PrototypeJournal, db_path: PathBuf, mode: EvalStorageMode) -> Self {
+        Self {
+            journal,
+            db_path,
+            mode,
+        }
+    }
+}
+
+impl EvalStore for FileDbEvalStore<'_> {
+    fn put_parent_started(
+        &mut self,
+        evidence: ParentStartedEvidence,
+    ) -> Result<ParentStartedReceipt, EvalStoreError> {
+        let receipt = append_parent_started_entries(self.journal, &evidence)?;
+        let expected = parent_started_db_receipt(&evidence, &receipt).ok();
+        let db_result = write_parent_started_to_owner_db(&self.db_path, &evidence, &receipt);
+        match db_result {
+            Ok(db_receipt) => {
+                if self.mode == EvalStorageMode::DualStrict {
+                    let expected = expected.ok_or_else(|| EvalStoreError::post_fs_db(
+                        self.mode,
+                        &receipt,
+                        None,
+                        "failed to construct expected parent-start semantic receipt after filesystem append".to_string(),
+                    ))?;
+                    if db_receipt.semantic_hash != expected.semantic_hash {
+                        return Err(EvalStoreError::post_fs_db(
+                            self.mode,
+                            &receipt,
+                            Some(expected.semantic_hash.clone()),
+                            format!(
+                                "db semantic hash mismatch: wrote {}, expected {}",
+                                db_receipt.semantic_hash, expected.semantic_hash
+                            ),
+                        ));
+                    }
+                }
+                Ok(receipt)
+            }
+            Err(err) => Err(EvalStoreError::post_fs_db(
+                self.mode,
+                &receipt,
+                expected.map(|receipt| receipt.semantic_hash),
+                err.to_string(),
+            )),
+        }
+    }
+}
+
+fn append_parent_started_entries(
+    journal: &mut PrototypeJournal,
+    evidence: &ParentStartedEvidence,
+) -> Result<ParentStartedReceipt, EvalStoreError> {
+    let parent = journal
+        .append_with_receipt(JournalEntry::ParentStarted(ParentStartedEntry {
+            recorded_at: evidence.parent_recorded_at,
+            campaign_id: evidence.campaign_id.clone(),
+            parent_identity: evidence.parent_identity.clone(),
+            repo_root: evidence.repo_root.clone(),
+            handoff_runtime_id: evidence.handoff_runtime_id,
+            pid: evidence.pid,
+        }))
+        .map_err(|source| EvalStoreError::Journal {
+            phase: "parent_started",
+            source,
+        })?;
+
+    let sample = parent_target_sample(
+        &evidence.campaign_id,
+        &evidence.parent_identity,
+        evidence.handoff_runtime_id,
+        &evidence.repo_root,
+        journal::resource::Phase::ParentStart,
+        evidence.resource_recorded_at,
+    );
+    let resource = journal
+        .append_with_receipt(JournalEntry::Resource(sample))
+        .map_err(|source| EvalStoreError::Journal {
+            phase: "parent_start_resource",
+            source,
+        })?;
+
+    Ok(ParentStartedReceipt { parent, resource })
 }
 
 const EVENT_REL: &str = "eval_transition_event";
 const RECORD_REL: &str = "eval_record_ref";
-const PARENT_STARTED_TRANSITION: &str = "R4c->R5";
+const PARENT_STARTED_TRANSITION: &str = "r4c_to_r5";
 const PARENT_STARTED_PHASE: &str = "parent_started";
 const PARENT_STARTED_OUTCOME: &str = "recorded";
-const STORE_SCOPE: &str = "prototype1_eval_store";
+const STORE_SCOPE: &str = "parent";
 const PRODUCER_ROLE_PARENT: &str = "parent";
-const VISIBILITY_SCOPE: &str = "ordinary_eval_evidence";
-const JOURNAL_SOURCE_CLASS: &str = "transition_journal";
-const PARENT_START_CLASS: &str = "parent_start";
-const VALID_STATUS: &str = "validated";
+const VISIBILITY_SCOPE: &str = "parent_visible";
+const JOURNAL_SOURCE_CLASS: &str = "direct_write";
+const TYPED_TRANSITION_CLASS: &str = "typed_transition";
+const DIAGNOSTIC_CLASS: &str = "diagnostic";
+const VALID_STATUS: &str = "valid";
 const JOURNAL_SCHEMA: &str = "prototype1-transition-journal.jsonl";
 
 pub(crate) trait EvalDb {
@@ -174,12 +275,14 @@ impl<'a, D: EvalDb + ?Sized> DbEvalStore<'a, D> {
                     attempted_semantic_hash: rows.event.semantic_hash,
                 });
             }
+            verify_parent_started_db_rows(self.db, &rows)?;
             return Ok(rows.receipt);
         }
         put_transition_event_row(self.db, &rows.event)?;
         for record in &rows.records {
             put_record_ref_row(self.db, record)?;
         }
+        verify_parent_started_db_rows(self.db, &rows)?;
         Ok(rows.receipt)
     }
 }
@@ -264,6 +367,91 @@ pub(crate) struct ParentStartedEvidence {
 pub(crate) struct ParentStartedReceipt {
     pub(crate) parent: JournalAppendReceipt,
     pub(crate) resource: JournalAppendReceipt,
+}
+
+pub(crate) fn prototype1_eval_store_db_path(campaign_manifest_path: &Path) -> PathBuf {
+    campaign_manifest_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("prototype1")
+        .join("eval-store.cozo.sqlite")
+}
+
+pub(crate) fn load_owner_eval_database(path: &Path) -> Result<Database, EvalStoreError> {
+    if path.exists() {
+        if !path.is_file() {
+            return Err(EvalStoreError::DbSetup {
+                phase: "owner_eval_db.restore",
+                detail: format!("eval DB path '{}' is not a file", path.display()),
+            });
+        }
+        let db = cozo::new_cozo_mem().map_err(|source| EvalStoreError::DbSetup {
+            phase: "owner_eval_db.open_mem",
+            detail: source.to_string(),
+        })?;
+        db.restore_backup(path)
+            .map_err(|source| EvalStoreError::DbSetup {
+                phase: "owner_eval_db.restore",
+                detail: source.to_string(),
+            })?;
+        Ok(Database::new(db))
+    } else {
+        Database::new_init().map_err(|source| EvalStoreError::DbSetup {
+            phase: "owner_eval_db.new",
+            detail: source.to_string(),
+        })
+    }
+}
+
+fn write_parent_started_to_owner_db(
+    db_path: &Path,
+    evidence: &ParentStartedEvidence,
+    receipt: &ParentStartedReceipt,
+) -> Result<ParentStartedDbReceipt, EvalStoreError> {
+    let db = load_owner_eval_database(db_path)?;
+    let store = DbEvalStore::new(&db);
+    let db_receipt = store.put_parent_started_from_receipt(evidence, receipt)?;
+    persist_owner_eval_database(&db, db_path)?;
+    Ok(db_receipt)
+}
+
+fn persist_owner_eval_database(db: &Database, path: &Path) -> Result<(), EvalStoreError> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent).map_err(|source| EvalStoreError::Io {
+        phase: "owner_eval_db.create_dir",
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    let temp_path = owner_eval_db_temp_path(path)?;
+    if temp_path.exists() {
+        fs::remove_file(&temp_path).map_err(|source| EvalStoreError::Io {
+            phase: "owner_eval_db.remove_stale_temp",
+            path: temp_path.clone(),
+            source,
+        })?;
+    }
+    db.write_backup_to_path(&temp_path)
+        .map_err(|source| EvalStoreError::Db {
+            phase: "owner_eval_db.backup",
+            source,
+        })?;
+    fs::rename(&temp_path, path).map_err(|source| EvalStoreError::Io {
+        phase: "owner_eval_db.rename_backup",
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok(())
+}
+
+fn owner_eval_db_temp_path(path: &Path) -> Result<PathBuf, EvalStoreError> {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| EvalStoreError::DbSetup {
+            phase: "owner_eval_db.temp_path",
+            detail: format!("eval DB path '{}' has no valid file name", path.display()),
+        })?;
+    Ok(path.with_file_name(format!(".{file_name}.tmp-{}", std::process::id())))
 }
 
 fn ensure_eval_store_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), EvalStoreError> {
@@ -384,6 +572,71 @@ fn existing_transition_semantic_hash<D: EvalDb + ?Sized>(
         Some(DataValue::Str(value)) => Some(value.to_string()),
         _ => None,
     }))
+}
+
+fn verify_parent_started_db_rows<D: EvalDb + ?Sized>(
+    db: &D,
+    rows: &ParentStartedRows,
+) -> Result<(), EvalStoreError> {
+    let Some(actual) = existing_transition_semantic_hash(db, &rows.event.event_id)? else {
+        return Err(EvalStoreError::Validation {
+            field: "eval_transition_event.semantic_hash",
+            detail: format!(
+                "missing transition event row '{}' after parent-start DB write",
+                rows.event.event_id
+            ),
+        });
+    };
+    if actual != rows.event.semantic_hash {
+        return Err(EvalStoreError::SemanticConflict {
+            event_id: rows.event.event_id.clone(),
+            existing_semantic_hash: actual,
+            attempted_semantic_hash: rows.event.semantic_hash.clone(),
+        });
+    }
+    for record in &rows.records {
+        if !record_ref_exists(db, &record.record_ref_id, &record.content_sha256)? {
+            return Err(EvalStoreError::Validation {
+                field: "eval_record_ref.content_sha256",
+                detail: format!(
+                    "missing record ref '{}' with expected content hash after parent-start DB write",
+                    record.record_ref_id
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn record_ref_exists<D: EvalDb + ?Sized>(
+    db: &D,
+    record_ref_id: &str,
+    content_sha256: &str,
+) -> Result<bool, EvalStoreError> {
+    let mut params = BTreeMap::new();
+    params.insert(
+        "record_ref_id".to_string(),
+        DataValue::from(record_ref_id.to_string()),
+    );
+    params.insert(
+        "content_sha256".to_string(),
+        DataValue::from(content_sha256.to_string()),
+    );
+    let result = db
+        .eval_query_params(
+            r#"
+?[record_ref_id] :=
+    *eval_record_ref { record_ref_id, content_sha256 },
+    record_ref_id = $record_ref_id,
+    content_sha256 = $content_sha256
+"#,
+            params,
+        )
+        .map_err(|source| EvalStoreError::Db {
+            phase: "query.eval_record_ref.content_hash",
+            source,
+        })?;
+    Ok(!result.rows.is_empty())
 }
 
 fn put_transition_event_row<D: EvalDb + ?Sized>(
@@ -552,6 +805,13 @@ fn put_record_ref_row<D: EvalDb + ?Sized>(
     Ok(())
 }
 
+fn parent_started_db_receipt(
+    evidence: &ParentStartedEvidence,
+    receipt: &ParentStartedReceipt,
+) -> Result<ParentStartedDbReceipt, EvalStoreError> {
+    Ok(parent_started_rows(evidence, receipt)?.receipt)
+}
+
 fn parent_started_rows(
     evidence: &ParentStartedEvidence,
     receipt: &ParentStartedReceipt,
@@ -573,13 +833,14 @@ fn parent_started_rows(
         .map(|id| id.to_string())
         .unwrap_or_default();
     let ingested_at = chrono::Utc::now().to_rfc3339();
+    let source_stream_id = source_stream_id(&evidence.campaign_id, &stream);
     let content_sha256 = hash_parts(&[
-        "prototype1.eval.parent_started.content.v1",
+        "p1.eval.parent_started.content.v1",
         &receipt.parent.content_sha256,
         &receipt.resource.content_sha256,
     ]);
     let semantic_hash = hash_parts(&[
-        "prototype1.eval.parent_started.semantic.v1",
+        "p1.eval.parent_started.semantic.v1",
         evidence.campaign_id.as_str(),
         evidence.parent_identity.parent_id(),
         evidence.parent_identity.node_id(),
@@ -590,22 +851,32 @@ fn parent_started_rows(
         &evidence.pid.to_string(),
         &evidence.parent_recorded_at.0.to_string(),
         &evidence.resource_recorded_at.0.to_string(),
-        &receipt.parent.content_sha256,
-        &receipt.resource.content_sha256,
+        &receipt.parent.payload_json,
+        &receipt.resource.payload_json,
     ]);
     let event_id = hash_parts(&[
-        "prototype1.eval.transition_event.parent_started.v1",
+        "p1.eval.transition_event.v1",
         evidence.campaign_id.as_str(),
         evidence.parent_identity.parent_id(),
-        evidence.parent_identity.node_id(),
-        &evidence.parent_identity.generation().to_string(),
         PARENT_STARTED_TRANSITION,
-        &stream,
+        &source_stream_id,
         &parent_index.to_string(),
-        &resource_index.to_string(),
+        &receipt.parent.content_sha256,
     ]);
-    let parent_ref_id = record_ref_id("parent_started", &stream, parent_index);
-    let resource_ref_id = record_ref_id("resource_parent_start", &stream, resource_index);
+    let parent_ref_id = record_ref_id(
+        evidence.campaign_id.as_str(),
+        "parent_started",
+        &source_stream_id,
+        parent_index,
+        &receipt.parent.content_sha256,
+    );
+    let resource_ref_id = record_ref_id(
+        evidence.campaign_id.as_str(),
+        "resource_parent_start",
+        &source_stream_id,
+        resource_index,
+        &receipt.resource.content_sha256,
+    );
     let event = EvalTransitionEventRow {
         event_id: event_id.clone(),
         campaign_id: evidence.campaign_id.to_string(),
@@ -620,9 +891,9 @@ fn parent_started_rows(
         producer_role: PRODUCER_ROLE_PARENT.to_string(),
         visibility_scope: VISIBILITY_SCOPE.to_string(),
         source_class: JOURNAL_SOURCE_CLASS.to_string(),
-        evidence_class: PARENT_START_CLASS.to_string(),
+        evidence_class: TYPED_TRANSITION_CLASS.to_string(),
         validation_status: VALID_STATUS.to_string(),
-        source_stream_id: stream.clone(),
+        source_stream_id: source_stream_id.clone(),
         source_event_index: parent_index,
         source_line: parent_line,
         source_ref: event_source_ref(&stream, parent_line, resource_line),
@@ -635,6 +906,8 @@ fn parent_started_rows(
         parent_ref_id.clone(),
         evidence,
         "parent_started",
+        TYPED_TRANSITION_CLASS,
+        &source_stream_id,
         &stream,
         parent_index,
         parent_line,
@@ -646,6 +919,8 @@ fn parent_started_rows(
         resource_ref_id.clone(),
         evidence,
         "resource_parent_start",
+        DIAGNOSTIC_CLASS,
+        &source_stream_id,
         &stream,
         resource_index,
         resource_line,
@@ -670,7 +945,9 @@ fn record_ref_row(
     record_ref_id: String,
     evidence: &ParentStartedEvidence,
     family: &str,
-    stream: &str,
+    evidence_class: &str,
+    source_stream_id: &str,
+    source_path: &str,
     index: i64,
     line: i64,
     receipt: &JournalAppendReceipt,
@@ -686,13 +963,13 @@ fn record_ref_row(
         producer_role: PRODUCER_ROLE_PARENT.to_string(),
         producer_id: evidence.parent_identity.parent_id().to_string(),
         source_class: JOURNAL_SOURCE_CLASS.to_string(),
-        evidence_class: PARENT_START_CLASS.to_string(),
+        evidence_class: evidence_class.to_string(),
         visibility_scope: VISIBILITY_SCOPE.to_string(),
         validation_status: VALID_STATUS.to_string(),
-        source_stream_id: stream.to_string(),
+        source_stream_id: source_stream_id.to_string(),
         source_event_index: index,
         source_line: line,
-        source_ref: source_ref(stream, line),
+        source_ref: source_ref(source_path, line),
         content_sha256: receipt.content_sha256.clone(),
         payload_json: receipt.payload_json.clone(),
         recorded_at,
@@ -747,12 +1024,24 @@ fn event_source_ref(stream: &str, parent_line: i64, resource_line: i64) -> Strin
     format!("{stream}:L{parent_line}-L{resource_line}")
 }
 
-fn record_ref_id(family: &str, stream: &str, index: i64) -> String {
+fn source_stream_id(campaign_id: &CampaignId, stream: &str) -> String {
+    format!("prototype1-transition-journal:{campaign_id}:{stream}")
+}
+
+fn record_ref_id(
+    campaign_id: &str,
+    family: &str,
+    source_stream_id: &str,
+    index: i64,
+    content_sha256: &str,
+) -> String {
     hash_parts(&[
-        "prototype1.eval.record_ref.v1",
+        "p1.eval.record_ref.v1",
+        campaign_id,
         family,
-        stream,
+        source_stream_id,
         &index.to_string(),
+        content_sha256,
     ])
 }
 
@@ -890,6 +1179,14 @@ pub(crate) enum EvalStoreError {
         phase: &'static str,
         source: DbError,
     },
+    #[error("eval-store db setup {phase} failed: {detail}")]
+    DbSetup { phase: &'static str, detail: String },
+    #[error("eval-store filesystem operation {phase} failed for {path:?}: {source}")]
+    Io {
+        phase: &'static str,
+        path: PathBuf,
+        source: std::io::Error,
+    },
     #[error("eval-store validation failed for {field}: {detail}")]
     Validation { field: &'static str, detail: String },
     #[error(
@@ -900,6 +1197,41 @@ pub(crate) enum EvalStoreError {
         existing_semantic_hash: String,
         attempted_semantic_hash: String,
     },
+    #[error(
+        "eval-store {backend} DB write failed after filesystem parent-start append: journal_path={journal_path}, parent_started_source_event_index={parent_started_source_event_index}, resource_source_event_index={resource_source_event_index}, parent_started_content_sha256={parent_started_content_sha256}, resource_content_sha256={resource_content_sha256}, expected_semantic_hash={expected_semantic_hash:?}, db_error_or_mismatch={db_error_or_mismatch}, suggested_recovery={suggested_recovery}"
+    )]
+    PostFsDb {
+        backend: &'static str,
+        journal_path: String,
+        parent_started_source_event_index: usize,
+        resource_source_event_index: usize,
+        parent_started_content_sha256: String,
+        resource_content_sha256: String,
+        expected_semantic_hash: Option<String>,
+        db_error_or_mismatch: String,
+        suggested_recovery: &'static str,
+    },
+}
+
+impl EvalStoreError {
+    fn post_fs_db(
+        mode: EvalStorageMode,
+        receipt: &ParentStartedReceipt,
+        expected_semantic_hash: Option<String>,
+        db_error_or_mismatch: String,
+    ) -> Self {
+        Self::PostFsDb {
+            backend: mode.as_str(),
+            journal_path: receipt.parent.path.display().to_string(),
+            parent_started_source_event_index: receipt.parent.source_event_index,
+            resource_source_event_index: receipt.resource.source_event_index,
+            parent_started_content_sha256: receipt.parent.content_sha256.clone(),
+            resource_content_sha256: receipt.resource.content_sha256.clone(),
+            expected_semantic_hash,
+            db_error_or_mismatch,
+            suggested_recovery: "re-run deterministic import for these source indices",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1096,16 +1428,17 @@ mod tests {
     #[test]
     fn prototype1_eval_store_parent_start_db_duplicate_semantic_mismatch_fails() {
         let tmp = tempfile::tempdir().expect("tmp");
-        let (evidence, mut receipt) = parent_started_fixture(tmp.path());
+        let (evidence, receipt) = parent_started_fixture(tmp.path());
         let db = Database::new_init().expect("db");
         let store = DbEvalStore::new(&db);
         let first = store
             .put_parent_started_from_receipt(&evidence, &receipt)
             .expect("first db write");
-        receipt.parent.content_sha256 = "different-parent-hash".to_string();
+        let mut changed_evidence = evidence.clone();
+        changed_evidence.pid = evidence.pid + 1;
 
         let err = store
-            .put_parent_started_from_receipt(&evidence, &receipt)
+            .put_parent_started_from_receipt(&changed_evidence, &receipt)
             .expect_err("semantic mismatch fails");
 
         match err {
@@ -1151,6 +1484,89 @@ mod tests {
         );
     }
 
+    #[test]
+    fn prototype1_eval_store_parent_start_dual_strict_persists_owner_db() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let repo = tmp.path().join("repo");
+        fs::create_dir_all(&repo).expect("repo dir");
+        let journal_path = tmp.path().join("prototype1/transition-journal.jsonl");
+        let db_path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+        let mut journal = PrototypeJournal::new(&journal_path);
+        let evidence = parent_started_evidence(repo);
+        let mut store =
+            FileDbEvalStore::new(&mut journal, db_path.clone(), EvalStorageMode::DualStrict);
+
+        let receipt = store
+            .put_parent_started(evidence.clone())
+            .expect("dual-strict parent start writes");
+
+        assert!(db_path.is_file());
+        let db = load_owner_eval_database(&db_path).expect("owner eval db loads");
+        let expected = parent_started_db_receipt(&evidence, &receipt).expect("expected receipt");
+        assert_eq!(
+            query_transition_event(&db, &expected.event_id).rows.len(),
+            1
+        );
+        assert_eq!(query_record_refs(&db, &evidence.campaign_id).rows.len(), 2);
+    }
+
+    #[test]
+    fn prototype1_eval_store_parent_start_dual_strict_failure_keeps_repairable_journal() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let repo = tmp.path().join("repo");
+        fs::create_dir_all(&repo).expect("repo dir");
+        let journal_path = tmp.path().join("prototype1/transition-journal.jsonl");
+        let db_path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+        fs::create_dir_all(&db_path).expect("poison db path as directory");
+        let mut journal = PrototypeJournal::new(&journal_path);
+        let evidence = parent_started_evidence(repo);
+        let mut store =
+            FileDbEvalStore::new(&mut journal, db_path.clone(), EvalStorageMode::DualStrict);
+
+        let err = store
+            .put_parent_started(evidence.clone())
+            .expect_err("db failure after fs append fails loudly");
+        let receipt = receipt_from_journal(&journal_path);
+        let expected = parent_started_db_receipt(&evidence, &receipt).expect("expected receipt");
+        match err {
+            EvalStoreError::PostFsDb {
+                backend,
+                journal_path: err_journal_path,
+                parent_started_source_event_index,
+                resource_source_event_index,
+                parent_started_content_sha256,
+                resource_content_sha256,
+                expected_semantic_hash,
+                suggested_recovery,
+                ..
+            } => {
+                assert_eq!(backend, "dual-strict");
+                assert_eq!(err_journal_path, journal_path.display().to_string());
+                assert_eq!(parent_started_source_event_index, 0);
+                assert_eq!(resource_source_event_index, 1);
+                assert_eq!(parent_started_content_sha256, receipt.parent.content_sha256);
+                assert_eq!(resource_content_sha256, receipt.resource.content_sha256);
+                assert_eq!(expected_semantic_hash, Some(expected.semantic_hash.clone()));
+                assert_eq!(
+                    suggested_recovery,
+                    "re-run deterministic import for these source indices"
+                );
+            }
+            other => panic!("unexpected dual-strict failure: {other:?}"),
+        }
+
+        let db = Database::new_init().expect("repair db");
+        let repaired = DbEvalStore::new(&db)
+            .put_parent_started_from_receipt(&evidence, &receipt)
+            .expect("deterministic repair import");
+        assert_eq!(repaired.semantic_hash, expected.semantic_hash);
+        assert_eq!(
+            query_transition_event(&db, &repaired.event_id).rows.len(),
+            1
+        );
+        assert_eq!(query_record_refs(&db, &evidence.campaign_id).rows.len(), 2);
+    }
+
     fn parent_started_evidence(repo_root: PathBuf) -> ParentStartedEvidence {
         ParentStartedEvidence {
             campaign_id: CampaignId::from("campaign"),
@@ -1176,6 +1592,36 @@ mod tests {
             .put_parent_started(evidence.clone())
             .expect("fs parent start write");
         (evidence, receipt)
+    }
+
+    fn receipt_from_journal(path: &std::path::Path) -> ParentStartedReceipt {
+        let text = fs::read_to_string(path).expect("journal text");
+        let mut offset = 0_u64;
+        let mut receipts = Vec::new();
+        for (index, line) in text.lines().enumerate() {
+            let byte_len = line.len();
+            receipts.push(JournalAppendReceipt {
+                path: path.to_path_buf(),
+                source_event_index: index,
+                source_line: index + 1,
+                byte_start: offset,
+                byte_len,
+                content_sha256: sha256_for_test(line.as_bytes()),
+                payload_json: line.to_string(),
+            });
+            offset += byte_len as u64 + 1;
+        }
+        assert_eq!(receipts.len(), 2);
+        ParentStartedReceipt {
+            parent: receipts.remove(0),
+            resource: receipts.remove(0),
+        }
+    }
+
+    fn sha256_for_test(bytes: &[u8]) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        hex_lower(&hasher.finalize())
     }
 
     fn query_transition_event(db: &Database, event_id: &str) -> QueryResult {
