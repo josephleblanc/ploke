@@ -435,6 +435,42 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: branch registry append still writes the JSONL line first. When `prototype1/eval-store.cozo.sqlite` already exists, the appended line is also mirrored as a `branch_registry` compatibility `eval_record_ref` row with source line/index, payload JSON, and payload hash. A DB row claiming branch registry evidence does not replace the missing `branches.json` log for branch selection or registry loading.
 - Commit: current slice commit, `feat: mirror branch registry record refs`.
 
+### Slice 7d — Child-local runner-result compatibility record refs
+
+- Status: complete for child-local runner-result refs; parent-imported terminal channel facts remain deferred to the channel/import slices.
+- Assumptions:
+  - `runner-result.json` and `nodes/<node>/results/<runtime>.json` remain child-local/projection evidence.
+  - Runner-result DB rows must use `store_scope = child_runtime`, `producer_role = child`, and `visibility_scope = local`; they are not parent-visible terminal evidence.
+  - Parent-visible success still requires terminal channel `Result` plus treatment evidence, and stored runner results must agree with channel payloads before recovery/selection.
+  - Default filesystem runs with no owner eval DB remain unchanged.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/evidence.rs`
+  - `crates/ploke-eval/src/record_emission.rs`
+  - `crates/ploke-eval/src/intervention/scheduler.rs`
+- Tests added/changed:
+  - `prototype1_eval_store_record_ref_runner_result_writes_child_local_rows`
+  - `prototype1_storage_authority_negative_runner_result_ref_cannot_replace_file`
+  - existing `observe_child_times_out_on_success_sidecar_without_channel_result` retained as the channel authority-negative gate.
+- Commands run:
+  - `npx gitnexus analyze` refreshed the index so Slice 7b/7c helper symbols were visible; generated AGENTS/CLAUDE count churn was removed before commit.
+  - `gitnexus impact ... save_runner_result`: HIGH risk; 2 direct callers; no affected processes.
+  - `gitnexus impact ... write_runner_result_at`: HIGH risk; affects `live_google_child_runner_success`; proceeded with additive/no-op-without-owner-DB mirror and local channel-authority coverage only.
+  - `gitnexus impact ... record_attempt_runner_result`: LOW risk; affects `live_google_child_runner_success`.
+  - `gitnexus impact ... RecordRefEvidence impl`: LOW risk.
+  - `gitnexus impact ... emit_eval_record_ref_if_owner_db_exists`: CRITICAL risk because it feeds parent setup; avoided changing that existing helper's behavior and added a separate child-runtime helper.
+  - `cargo fmt --all`
+  - `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_record_ref_runner_result_writes_child_local_rows -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_storage_authority_negative_runner_result_ref_cannot_replace_file -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval runner_result_projection_parses_as_shared_passive_record -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_record_ref -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval observe_child_times_out_on_success_sidecar_without_channel_result -- --nocapture`
+- Live API used: no. This sub-slice touches the child-runner result path, but no live-provider gate was claimed; focused local tests cover DB rows and existing channel authority. A future provider-facing channel/import slice must run or explicitly block live Google confidence.
+- Checkpoints created/updated: none
+- Artifacts retained: none
+- Result: `write_runner_result_at` still writes the passive shared `RunnerResultRecord` first. When `prototype1/eval-store.cozo.sqlite` exists, attempt-scoped and latest runner-result files are mirrored as child-local compatibility `eval_record_ref` rows with payload JSON and hashes. DB runner-result refs do not replace the file gate, and success sidecars still cannot advance C4 without terminal channel results.
+- Commit: current slice commit, `feat: mirror child runner result refs`.
+
 ### Slice 7+ — Later evidence slices
 
 Create a new subsection per slice before editing.

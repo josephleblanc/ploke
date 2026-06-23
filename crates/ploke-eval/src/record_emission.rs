@@ -130,6 +130,47 @@ pub(crate) fn emit_eval_record_ref_for_jsonl_if_owner_db_exists(
     )
 }
 
+pub(crate) fn emit_child_runtime_eval_record_ref_if_owner_db_exists(
+    receipt: &EmittedRecord,
+    campaign_id: &CampaignId,
+    producer_id: &str,
+) -> Result<(), PrepareError> {
+    let db_path = owner_eval_db_file_for_record(&receipt.path)?;
+    if !db_path.is_file() {
+        return Ok(());
+    }
+    let payload_json =
+        fs::read_to_string(&receipt.path).map_err(|source| PrepareError::ReadManifest {
+            path: receipt.path.clone(),
+            source,
+        })?;
+    let evidence = RecordRefEvidence::compatibility_import_with_axes(
+        campaign_id.clone(),
+        record_family(receipt.family),
+        receipt.schema,
+        "child_runtime",
+        "child",
+        producer_id,
+        "local",
+        format!("prototype1-record:{campaign_id}:{}", receipt.path.display()),
+        0,
+        1,
+        format!("{}:L1", receipt.path.display()),
+        payload_json,
+        Utc::now().timestamp_millis(),
+    );
+    write_record_ref_to_owner_db(&db_path, evidence).map_err(|source| {
+        PrepareError::DatabaseSetup {
+            phase: "eval_record_ref_put",
+            detail: format!(
+                "failed to persist child runtime eval record ref for '{}': {source}",
+                receipt.path.display()
+            ),
+        }
+    })?;
+    Ok(())
+}
+
 fn emit_eval_record_ref_payload_if_owner_db_exists(
     path: &Path,
     campaign_id: &CampaignId,
