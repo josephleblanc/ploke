@@ -678,6 +678,41 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: channel tests now live under `channel/tests.rs`; eval-store schema installation lives under `cozo_schema.rs`; observation JSONL parsing/import shaping lives under `observation.rs`; `channel.rs` and `cozo_store.rs` are back under the rough LOC bound, and `evidence.rs` is limited to shared evidence/row vocabulary plus row constructors.
 - Commit: current hygiene commit, `refactor: split eval store channel modules`.
 
+### Slice 8c — Parent channel receipt/import eval mirror
+
+- Status: complete for parent-side `Ready`/`Evaluating` receive-path receipt/import mirrors; terminal `Result`, `ResultWritten`, failure/exit, successor handoff, and provider-dependent child terminal-result surfaces remain deferred.
+- Assumptions:
+  - `Channel<Parent<_>, T>::recv_from_child` remains the parent read authority. DB rows do not synthesize messages, advance cursors, validate payloads, or replace `FileTransport`/channel envelope files.
+  - Receipt/import rows are written only after `read` has decoded the envelope and verified endpoint identity plus body hash.
+  - A parent-visible import is represented separately from the channel message itself: `eval_channel_receipt` records the parent observation/validation, and `eval_import_event` records the child-runtime-to-parent-visible boundary.
+  - This sub-slice uses `observed_by = "parent"` and `importer_id = "parent"` because the current file channel does not carry a separate parent runtime id. `source_runtime_id` remains the child runtime id and source/target scopes are explicit.
+  - The new `ChannelReceiptEvidence` and `ImportEventEvidence` carriers are persisted relation contracts, not test-only wrappers; no existing typed carrier represented these schemas.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/channel.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/channel/tests.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/evidence.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/cozo_params.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/cozo_schema.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/cozo_store.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/mod.rs`
+- Tests added/changed:
+  - `prototype1_eval_store_parent_ready_read_writes_receipt_and_import_rows`
+  - `prototype1_storage_authority_negative_receipt_import_rows_cannot_replace_envelope`
+  - `prototype1_storage_authority_negative_bad_body_hash_writes_no_receipt_or_import`
+  - existing `prototype1_state::channel::tests`
+  - existing `prototype1_eval_store_parent_start_db_schema_installs_idempotently`
+- Commands run:
+  - `gitnexus impact ... recv_from_child`: MEDIUM risk; 6 direct callers, 9 impacted symbols, no affected execution flows, all in `Prototype1_state`.
+  - `gitnexus impact ... install_schema`: MEDIUM risk; 8 direct callers, 20 impacted symbols, no affected execution flows, all in `Eval_store`.
+  - `cargo fmt --all`
+  - `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_state::channel::tests -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_parent_start_db_schema_installs_idempotently -- --nocapture`
+  - `gitnexus detect_changes`: LOW risk; 8 changed files, 0 affected execution flows.
+- Live API used: no. This sub-slice mirrors local parent channel reads after validation and does not change provider execution, treatment evaluation, or terminal result production.
+- Result: `eval_channel_receipt` and `eval_import_event` schemas now install idempotently. Parent `recv_from_child` writes receipt/import rows only after a valid child-to-parent envelope is read from the channel. DB receipt/import rows cannot replace a missing envelope, and a body-hash mismatch fails before any receipt/import row is written.
+- Commit: current slice commit, `feat: mirror parent channel receipt imports`.
+
 ### Later slices
 
 Create a new subsection per slice before editing.

@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use cozo::DataValue;
 
 use super::evidence::{
-    EvalChannelMessageRow, EvalInvocationRow, EvalLogRefRow, EvalRecordRefRow, EvalTraceEventRow,
-    EvalTransitionEventRow,
+    EvalChannelMessageRow, EvalChannelReceiptRow, EvalImportEventRow, EvalInvocationRow,
+    EvalLogRefRow, EvalRecordRefRow, EvalTraceEventRow, EvalTransitionEventRow,
 };
 
 pub(super) fn transition_event_params(row: &EvalTransitionEventRow) -> BTreeMap<String, DataValue> {
@@ -227,6 +227,55 @@ pub(super) fn channel_message_params(row: &EvalChannelMessageRow) -> BTreeMap<St
     params.insert("source_ref".to_string(), row.source_ref.clone().into());
     params.insert("recorded_at".to_string(), row.recorded_at.clone().into());
     params.insert("ingested_at".to_string(), row.ingested_at.clone().into());
+    params
+}
+
+pub(super) fn channel_receipt_params(row: &EvalChannelReceiptRow) -> BTreeMap<String, DataValue> {
+    let mut params = BTreeMap::new();
+    params.insert("receipt_id".to_string(), row.receipt_id.clone().into());
+    params.insert("channel_id".to_string(), row.channel_id.clone().into());
+    params.insert("message_id".to_string(), row.message_id.clone().into());
+    params.insert("campaign_id".to_string(), row.campaign_id.clone().into());
+    params.insert("node_id".to_string(), row.node_id.clone().into());
+    params.insert("runtime_id".to_string(), row.runtime_id.clone().into());
+    params.insert(
+        "observed_by".to_string(),
+        option_string_param(&row.observed_by),
+    );
+    params.insert("direction".to_string(), row.direction.clone().into());
+    params.insert(
+        "validation_status".to_string(),
+        row.validation_status.clone().into(),
+    );
+    params.insert(
+        "imported_ref".to_string(),
+        option_string_param(&row.imported_ref),
+    );
+    params.insert("observed_at".to_string(), row.observed_at.clone().into());
+    params
+}
+
+pub(super) fn import_event_params(row: &EvalImportEventRow) -> BTreeMap<String, DataValue> {
+    let mut params = BTreeMap::new();
+    params.insert("import_id".to_string(), row.import_id.clone().into());
+    params.insert("campaign_id".to_string(), row.campaign_id.clone().into());
+    params.insert("importer_id".to_string(), row.importer_id.clone().into());
+    params.insert(
+        "source_runtime_id".to_string(),
+        option_string_param(&row.source_runtime_id),
+    );
+    params.insert("source_scope".to_string(), row.source_scope.clone().into());
+    params.insert("target_scope".to_string(), row.target_scope.clone().into());
+    params.insert("evidence_ref".to_string(), row.evidence_ref.clone().into());
+    params.insert(
+        "receipt_id".to_string(),
+        option_string_param(&row.receipt_id),
+    );
+    params.insert(
+        "validation_status".to_string(),
+        row.validation_status.clone().into(),
+    );
+    params.insert("imported_at".to_string(), row.imported_at.clone().into());
     params
 }
 

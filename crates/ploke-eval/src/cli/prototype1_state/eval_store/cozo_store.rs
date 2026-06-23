@@ -9,18 +9,21 @@ use ploke_db::{Database, DbError, QueryResult};
 
 use super::{
     cozo_params::{
-        channel_message_params, invocation_params, log_ref_params, record_ref_params,
-        trace_event_params, transition_event_params,
+        channel_message_params, channel_receipt_params, import_event_params, invocation_params,
+        log_ref_params, record_ref_params, trace_event_params, transition_event_params,
     },
     cozo_schema::ensure_eval_store_schema,
     error::EvalStoreError,
     evidence::{
-        ChannelMessageEvidence, ChannelMessageReceipt, EvalChannelMessageRow, EvalInvocationRow,
-        EvalLogRefRow, EvalRecordRefRow, EvalTraceEventRow, EvalTransitionEventRow, LogRefEvidence,
+        ChannelMessageEvidence, ChannelMessageReceipt, ChannelReceiptEvidence,
+        ChannelReceiptReceipt, EvalChannelMessageRow, EvalChannelReceiptRow, EvalImportEventRow,
+        EvalInvocationRow, EvalLogRefRow, EvalRecordRefRow, EvalTraceEventRow,
+        EvalTransitionEventRow, ImportEventEvidence, ImportEventReceipt, LogRefEvidence,
         LogRefReceipt, ParentStartedDbReceipt, ParentStartedEvidence, ParentStartedReceipt,
         ParentStartedRows, RecordRefEvidence, RecordRefReceipt, TraceEventEvidence,
-        TraceEventReceipt, TraceImportReceipt, channel_message_row, invocation_row, log_ref_row,
-        parent_started_rows, record_ref_row_from_evidence, trace_event_row,
+        TraceEventReceipt, TraceImportReceipt, channel_message_row, channel_receipt_row,
+        import_event_row, invocation_row, log_ref_row, parent_started_rows,
+        record_ref_row_from_evidence, trace_event_row,
     },
     observation::{ObservationJsonlImport, parse_observation_jsonl},
 };
@@ -131,6 +134,30 @@ impl<'a, D: EvalDb + ?Sized> DbEvalStore<'a, D> {
         Ok(ChannelMessageReceipt {
             channel_message_id: row.channel_message_id,
             content_sha256: row.content_sha256,
+        })
+    }
+
+    pub(crate) fn put_channel_receipt(
+        &self,
+        evidence: ChannelReceiptEvidence,
+    ) -> Result<ChannelReceiptReceipt, EvalStoreError> {
+        self.install_schema()?;
+        let row = channel_receipt_row(evidence)?;
+        put_channel_receipt_row(self.db, &row)?;
+        Ok(ChannelReceiptReceipt {
+            receipt_id: row.receipt_id,
+        })
+    }
+
+    pub(crate) fn put_import_event(
+        &self,
+        evidence: ImportEventEvidence,
+    ) -> Result<ImportEventReceipt, EvalStoreError> {
+        self.install_schema()?;
+        let row = import_event_row(evidence)?;
+        put_import_event_row(self.db, &row)?;
+        Ok(ImportEventReceipt {
+            import_id: row.import_id,
         })
     }
 
@@ -257,6 +284,28 @@ pub(crate) fn write_channel_message_to_owner_db(
     let receipt = store.put_channel_message(evidence)?;
     persist_owner_eval_database(&db, db_path)?;
     Ok(receipt)
+}
+
+pub(crate) fn write_channel_receipt_to_owner_db(
+    db_path: &Path,
+    evidence: ChannelReceiptEvidence,
+) -> Result<String, EvalStoreError> {
+    let db = load_owner_eval_database(db_path)?;
+    let store = DbEvalStore::new(&db);
+    let receipt = store.put_channel_receipt(evidence)?;
+    persist_owner_eval_database(&db, db_path)?;
+    Ok(receipt.receipt_id)
+}
+
+pub(crate) fn write_import_event_to_owner_db(
+    db_path: &Path,
+    evidence: ImportEventEvidence,
+) -> Result<String, EvalStoreError> {
+    let db = load_owner_eval_database(db_path)?;
+    let store = DbEvalStore::new(&db);
+    let receipt = store.put_import_event(evidence)?;
+    persist_owner_eval_database(&db, db_path)?;
+    Ok(receipt.import_id)
 }
 
 pub(crate) fn write_record_ref_to_owner_db(
@@ -738,6 +787,109 @@ fn put_channel_message_row<D: EvalDb + ?Sized>(
     )
     .map_err(|source| EvalStoreError::Db {
         phase: "put.eval_channel_message",
+        source,
+    })?;
+    Ok(())
+}
+
+fn put_channel_receipt_row<D: EvalDb + ?Sized>(
+    db: &D,
+    row: &EvalChannelReceiptRow,
+) -> Result<(), EvalStoreError> {
+    db.eval_query_mut_params(
+        r#"
+?[
+    receipt_id,
+    channel_id,
+    message_id,
+    campaign_id,
+    node_id,
+    runtime_id,
+    observed_by,
+    direction,
+    validation_status,
+    imported_ref,
+    observed_at
+] :=
+    receipt_id = $receipt_id,
+    channel_id = $channel_id,
+    message_id = $message_id,
+    campaign_id = $campaign_id,
+    node_id = $node_id,
+    runtime_id = $runtime_id,
+    observed_by = $observed_by,
+    direction = $direction,
+    validation_status = $validation_status,
+    imported_ref = $imported_ref,
+    observed_at = $observed_at
+:put eval_channel_receipt {
+    receipt_id =>
+    channel_id,
+    message_id,
+    campaign_id,
+    node_id,
+    runtime_id,
+    observed_by,
+    direction,
+    validation_status,
+    imported_ref,
+    observed_at
+}
+"#,
+        channel_receipt_params(row),
+    )
+    .map_err(|source| EvalStoreError::Db {
+        phase: "put.eval_channel_receipt",
+        source,
+    })?;
+    Ok(())
+}
+
+fn put_import_event_row<D: EvalDb + ?Sized>(
+    db: &D,
+    row: &EvalImportEventRow,
+) -> Result<(), EvalStoreError> {
+    db.eval_query_mut_params(
+        r#"
+?[
+    import_id,
+    campaign_id,
+    importer_id,
+    source_runtime_id,
+    source_scope,
+    target_scope,
+    evidence_ref,
+    receipt_id,
+    validation_status,
+    imported_at
+] :=
+    import_id = $import_id,
+    campaign_id = $campaign_id,
+    importer_id = $importer_id,
+    source_runtime_id = $source_runtime_id,
+    source_scope = $source_scope,
+    target_scope = $target_scope,
+    evidence_ref = $evidence_ref,
+    receipt_id = $receipt_id,
+    validation_status = $validation_status,
+    imported_at = $imported_at
+:put eval_import_event {
+    import_id =>
+    campaign_id,
+    importer_id,
+    source_runtime_id,
+    source_scope,
+    target_scope,
+    evidence_ref,
+    receipt_id,
+    validation_status,
+    imported_at
+}
+"#,
+        import_event_params(row),
+    )
+    .map_err(|source| EvalStoreError::Db {
+        phase: "put.eval_import_event",
         source,
     })?;
     Ok(())

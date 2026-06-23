@@ -13,6 +13,8 @@ use super::error::EvalStoreError;
 pub(super) const EVENT_REL: &str = "eval_transition_event";
 pub(super) const INVOCATION_REL: &str = "eval_invocation";
 pub(super) const CHANNEL_MESSAGE_REL: &str = "eval_channel_message";
+pub(super) const CHANNEL_RECEIPT_REL: &str = "eval_channel_receipt";
+pub(super) const IMPORT_EVENT_REL: &str = "eval_import_event";
 pub(super) const RECORD_REL: &str = "eval_record_ref";
 pub(super) const TRACE_EVENT_REL: &str = "eval_trace_event";
 pub(super) const LOG_REF_REL: &str = "eval_log_ref";
@@ -155,6 +157,42 @@ pub(crate) struct ChannelMessageEvidence {
 pub(crate) struct ChannelMessageReceipt {
     pub(crate) channel_message_id: String,
     pub(crate) content_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ChannelReceiptEvidence {
+    pub(crate) campaign_id: CampaignId,
+    pub(crate) node_id: String,
+    pub(crate) runtime_id: String,
+    pub(crate) direction: String,
+    pub(crate) message_id: String,
+    pub(crate) observed_by: String,
+    pub(crate) validation_status: String,
+    pub(crate) imported_ref: Option<String>,
+    pub(crate) observed_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ChannelReceiptReceipt {
+    pub(crate) receipt_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ImportEventEvidence {
+    pub(crate) campaign_id: CampaignId,
+    pub(crate) importer_id: String,
+    pub(crate) source_runtime_id: Option<String>,
+    pub(crate) source_scope: String,
+    pub(crate) target_scope: String,
+    pub(crate) evidence_ref: String,
+    pub(crate) receipt_id: Option<String>,
+    pub(crate) validation_status: String,
+    pub(crate) imported_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ImportEventReceipt {
+    pub(crate) import_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -350,6 +388,35 @@ pub(super) struct EvalChannelMessageRow {
     pub(super) source_ref: String,
     pub(super) recorded_at: String,
     pub(super) ingested_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct EvalChannelReceiptRow {
+    pub(super) receipt_id: String,
+    pub(super) channel_id: String,
+    pub(super) message_id: String,
+    pub(super) campaign_id: String,
+    pub(super) node_id: String,
+    pub(super) runtime_id: String,
+    pub(super) observed_by: Option<String>,
+    pub(super) direction: String,
+    pub(super) validation_status: String,
+    pub(super) imported_ref: Option<String>,
+    pub(super) observed_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct EvalImportEventRow {
+    pub(super) import_id: String,
+    pub(super) campaign_id: String,
+    pub(super) importer_id: String,
+    pub(super) source_runtime_id: Option<String>,
+    pub(super) source_scope: String,
+    pub(super) target_scope: String,
+    pub(super) evidence_ref: String,
+    pub(super) receipt_id: Option<String>,
+    pub(super) validation_status: String,
+    pub(super) imported_at: String,
 }
 
 #[derive(Debug, Clone)]
@@ -759,6 +826,96 @@ pub(super) fn channel_message_row(
     })
 }
 
+pub(super) fn channel_receipt_row(
+    evidence: ChannelReceiptEvidence,
+) -> Result<EvalChannelReceiptRow, EvalStoreError> {
+    require_non_empty("channel_receipt.node_id", &evidence.node_id)?;
+    require_non_empty("channel_receipt.runtime_id", &evidence.runtime_id)?;
+    require_non_empty("channel_receipt.direction", &evidence.direction)?;
+    require_non_empty("channel_receipt.message_id", &evidence.message_id)?;
+    require_non_empty("channel_receipt.observed_by", &evidence.observed_by)?;
+    require_non_empty(
+        "channel_receipt.validation_status",
+        &evidence.validation_status,
+    )?;
+    require_non_empty("channel_receipt.observed_at", &evidence.observed_at)?;
+    if let Some(imported_ref) = &evidence.imported_ref {
+        require_non_empty("channel_receipt.imported_ref", imported_ref)?;
+    }
+
+    let channel_id = channel_id(
+        &evidence.campaign_id,
+        &evidence.node_id,
+        &evidence.runtime_id,
+        &evidence.direction,
+    );
+    let receipt_id = channel_receipt_id(
+        &evidence.campaign_id,
+        &evidence.node_id,
+        &evidence.runtime_id,
+        &evidence.direction,
+        &evidence.message_id,
+        &evidence.observed_by,
+        &evidence.validation_status,
+    );
+    Ok(EvalChannelReceiptRow {
+        receipt_id,
+        channel_id,
+        message_id: evidence.message_id,
+        campaign_id: evidence.campaign_id.to_string(),
+        node_id: evidence.node_id,
+        runtime_id: evidence.runtime_id,
+        observed_by: Some(evidence.observed_by),
+        direction: evidence.direction,
+        validation_status: evidence.validation_status,
+        imported_ref: evidence.imported_ref,
+        observed_at: evidence.observed_at,
+    })
+}
+
+pub(super) fn import_event_row(
+    evidence: ImportEventEvidence,
+) -> Result<EvalImportEventRow, EvalStoreError> {
+    require_non_empty("import_event.importer_id", &evidence.importer_id)?;
+    if let Some(source_runtime_id) = &evidence.source_runtime_id {
+        require_non_empty("import_event.source_runtime_id", source_runtime_id)?;
+    }
+    require_non_empty("import_event.source_scope", &evidence.source_scope)?;
+    require_non_empty("import_event.target_scope", &evidence.target_scope)?;
+    require_non_empty("import_event.evidence_ref", &evidence.evidence_ref)?;
+    if let Some(receipt_id) = &evidence.receipt_id {
+        require_non_empty("import_event.receipt_id", receipt_id)?;
+    }
+    require_non_empty(
+        "import_event.validation_status",
+        &evidence.validation_status,
+    )?;
+    require_non_empty("import_event.imported_at", &evidence.imported_at)?;
+
+    let import_id = import_event_id(
+        &evidence.campaign_id,
+        &evidence.importer_id,
+        evidence.source_runtime_id.as_deref(),
+        &evidence.source_scope,
+        &evidence.target_scope,
+        &evidence.evidence_ref,
+        evidence.receipt_id.as_deref(),
+        &evidence.validation_status,
+    );
+    Ok(EvalImportEventRow {
+        import_id,
+        campaign_id: evidence.campaign_id.to_string(),
+        importer_id: evidence.importer_id,
+        source_runtime_id: evidence.source_runtime_id,
+        source_scope: evidence.source_scope,
+        target_scope: evidence.target_scope,
+        evidence_ref: evidence.evidence_ref,
+        receipt_id: evidence.receipt_id,
+        validation_status: evidence.validation_status,
+        imported_at: evidence.imported_at,
+    })
+}
+
 pub(super) fn trace_event_row(
     evidence: TraceEventEvidence,
 ) -> Result<EvalTraceEventRow, EvalStoreError> {
@@ -981,6 +1138,65 @@ fn channel_message_id(
         direction,
         message_id,
         content_sha256,
+    ])
+}
+
+fn channel_id(
+    campaign_id: &CampaignId,
+    node_id: &str,
+    runtime_id: &str,
+    direction: &str,
+) -> String {
+    hash_parts(&[
+        "p1.eval.channel.v1",
+        &campaign_id.to_string(),
+        node_id,
+        runtime_id,
+        direction,
+    ])
+}
+
+fn channel_receipt_id(
+    campaign_id: &CampaignId,
+    node_id: &str,
+    runtime_id: &str,
+    direction: &str,
+    message_id: &str,
+    observed_by: &str,
+    validation_status: &str,
+) -> String {
+    hash_parts(&[
+        "p1.eval.channel_receipt.v1",
+        &campaign_id.to_string(),
+        node_id,
+        runtime_id,
+        direction,
+        message_id,
+        observed_by,
+        validation_status,
+    ])
+}
+
+fn import_event_id(
+    campaign_id: &CampaignId,
+    importer_id: &str,
+    source_runtime_id: Option<&str>,
+    source_scope: &str,
+    target_scope: &str,
+    evidence_ref: &str,
+    receipt_id: Option<&str>,
+    validation_status: &str,
+) -> String {
+    hash_parts(&[
+        "p1.eval.import_event.v1",
+        &campaign_id.to_string(),
+        importer_id,
+        source_runtime_id.unwrap_or(""),
+        source_scope,
+        target_scope,
+        evidence_ref,
+        receipt_id.unwrap_or(""),
+        validation_status,
     ])
 }
 

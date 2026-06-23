@@ -549,7 +549,10 @@ where
         &self,
         cursor: Cursor,
     ) -> Result<(Cursor, Vec<Envelope<ToParent>>), ChannelError<T::Error>> {
-        self.read(&self.endpoints.child_to_parent(), cursor)
+        let endpoint = self.endpoints.child_to_parent();
+        let (cursor, envelopes) = self.read(&endpoint, cursor)?;
+        mirror_parent_channel_imports(&endpoint, &envelopes).map_err(ChannelError::EvalStore)?;
+        Ok((cursor, envelopes))
     }
 }
 
@@ -792,6 +795,63 @@ fn mirror_channel_message(
         },
     )?;
     Ok(())
+}
+
+fn mirror_parent_channel_imports(
+    endpoint: &Endpoint,
+    envelopes: &[Envelope<ToParent>],
+) -> Result<(), eval_store::EvalStoreError> {
+    if envelopes.is_empty() {
+        return Ok(());
+    }
+
+    let db_path = match eval_store::owner_eval_db_file_for_record_path(endpoint.path()) {
+        Ok(path) => path,
+        Err(eval_store::EvalStoreError::Validation { .. }) => return Ok(()),
+        Err(source) => return Err(source),
+    };
+    if !db_path.is_file() {
+        return Ok(());
+    }
+
+    for envelope in envelopes {
+        let imported_at = RecordedAt::now().0.to_string();
+        let evidence_ref = channel_message_ref(envelope);
+        let receipt_id = eval_store::write_channel_receipt_to_owner_db(
+            &db_path,
+            eval_store::ChannelReceiptEvidence {
+                campaign_id: endpoint.campaign_id.clone(),
+                node_id: endpoint.node_id.clone(),
+                runtime_id: endpoint.runtime_id.to_string(),
+                direction: direction_label(endpoint.direction).to_string(),
+                message_id: envelope.message_id.to_string(),
+                observed_by: "parent".to_string(),
+                validation_status: "valid".to_string(),
+                imported_ref: Some(evidence_ref.clone()),
+                observed_at: imported_at.clone(),
+            },
+        )?;
+        eval_store::write_import_event_to_owner_db(
+            &db_path,
+            eval_store::ImportEventEvidence {
+                campaign_id: endpoint.campaign_id.clone(),
+                importer_id: "parent".to_string(),
+                source_runtime_id: Some(endpoint.runtime_id.to_string()),
+                source_scope: format!("child_runtime:{}", endpoint.runtime_id),
+                target_scope: "parent_visible".to_string(),
+                evidence_ref,
+                receipt_id: Some(receipt_id),
+                validation_status: "valid".to_string(),
+                imported_at,
+            },
+        )?;
+    }
+
+    Ok(())
+}
+
+fn channel_message_ref(envelope: &Envelope<ToParent>) -> String {
+    format!("channel_message:{}", envelope.message_id)
 }
 
 fn direction_label(direction: Direction) -> &'static str {

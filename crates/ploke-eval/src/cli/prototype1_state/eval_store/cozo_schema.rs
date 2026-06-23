@@ -6,7 +6,8 @@ use super::{
     cozo_store::EvalDb,
     error::EvalStoreError,
     evidence::{
-        CHANNEL_MESSAGE_REL, EVENT_REL, INVOCATION_REL, LOG_REF_REL, RECORD_REL, TRACE_EVENT_REL,
+        CHANNEL_MESSAGE_REL, CHANNEL_RECEIPT_REL, EVENT_REL, IMPORT_EVENT_REL, INVOCATION_REL,
+        LOG_REF_REL, RECORD_REL, TRACE_EVENT_REL,
     },
 };
 
@@ -167,6 +168,55 @@ pub(super) fn ensure_eval_store_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(),
         )
         .map_err(|source| EvalStoreError::Db {
             phase: "schema.eval_channel_message",
+            source,
+        })?;
+    }
+
+    if !eval_relation_exists(db, CHANNEL_RECEIPT_REL)? {
+        db.eval_query_mut_params(
+            r#"
+:create eval_channel_receipt {
+    receipt_id: String =>
+    channel_id: String,
+    message_id: String,
+    campaign_id: String,
+    node_id: String,
+    runtime_id: String,
+    observed_by: String?,
+    direction: String,
+    validation_status: String,
+    imported_ref: String?,
+    observed_at: String
+}
+"#,
+            BTreeMap::new(),
+        )
+        .map_err(|source| EvalStoreError::Db {
+            phase: "schema.eval_channel_receipt",
+            source,
+        })?;
+    }
+
+    if !eval_relation_exists(db, IMPORT_EVENT_REL)? {
+        db.eval_query_mut_params(
+            r#"
+:create eval_import_event {
+    import_id: String =>
+    campaign_id: String,
+    importer_id: String,
+    source_runtime_id: String?,
+    source_scope: String,
+    target_scope: String,
+    evidence_ref: String,
+    receipt_id: String?,
+    validation_status: String,
+    imported_at: String
+}
+"#,
+            BTreeMap::new(),
+        )
+        .map_err(|source| EvalStoreError::Db {
+            phase: "schema.eval_import_event",
             source,
         })?;
     }

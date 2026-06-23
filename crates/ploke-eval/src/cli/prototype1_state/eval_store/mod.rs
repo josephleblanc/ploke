@@ -23,13 +23,14 @@ pub(crate) use api::{FileDbEvalStore, FsEvalStore};
 pub(crate) use cozo_store::{DbEvalStore, load_owner_eval_database};
 pub(crate) use cozo_store::{
     owner_eval_db_file_for_record_path, prototype1_eval_store_db_path,
-    write_channel_message_to_owner_db, write_invocation_to_owner_db, write_record_ref_to_owner_db,
+    write_channel_message_to_owner_db, write_channel_receipt_to_owner_db,
+    write_import_event_to_owner_db, write_invocation_to_owner_db, write_record_ref_to_owner_db,
     write_trace_event_to_owner_db,
 };
 pub(crate) use error::EvalStoreError;
 pub(crate) use evidence::{
-    ChannelMessageEvidence, InvocationEvidence, ParentStartedEvidence, RecordRefEvidence,
-    TraceEventEvidence,
+    ChannelMessageEvidence, ChannelReceiptEvidence, ImportEventEvidence, InvocationEvidence,
+    ParentStartedEvidence, RecordRefEvidence, TraceEventEvidence,
 };
 #[cfg(test)]
 pub(crate) use evidence::{LogRefEvidence, ParentStartedReceipt};
