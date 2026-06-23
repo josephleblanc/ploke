@@ -271,6 +271,46 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: production `database` and `dual-strict` parent-start modes now write compatibility journal evidence plus owner-scoped eval DB rows. `dual-strict` fails loudly with journal path, source event indices, line hashes, expected semantic hash, and repair guidance if DB persistence fails after filesystem append. Focused local/storage/typestate/checkpoint/authority tests pass. Direct-Google protocol route passes; broad headless-TUI missing-validation live canary was stale relative to harness-owned validation and is no longer used as a storage-slice confidence gate.
 - Commit: current slice commit, `feat: enable dual-strict parent-start eval storage`.
 
-### Slice 6+ — Later evidence slices
+### Slice 6 — Trace/log/ref evidence lane
+
+- Status: implemented a local trace/log/ref evidence slice; no transition authority or provider-facing producer changed.
+- Assumptions:
+  - Existing Prototype 1 observation JSONL remains importable as queryable evidence.
+  - `observe::TransitionBuilder` and `observe::Step` can additionally mirror direct producer rows when an owner-scoped eval DB sink is configured by the run boundary.
+  - `eval_trace_event` and `eval_log_ref` rows are diagnostic/evidence refs only; they do not replace History, channel transport, MessageBox receipts, artifact mutation, invocation/bootstrap authority, or transition success/failure decisions.
+  - Invalid observation JSONL should fail loudly before writing trace/log rows; direct producer mirror failures are warned but do not make trace rows authoritative.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/observe.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/run/core.rs`
+- Tests added/changed:
+  - `prototype1_eval_store_trace_log_ref_round_trips_row`
+  - `prototype1_eval_store_trace_observation_jsonl_imports_rows_idempotently`
+  - `prototype1_eval_store_trace_observation_jsonl_invalid_line_fails_without_rows`
+  - `prototype1_observe_transition_builder_mirrors_trace_row_to_eval_db`
+  - `prototype1_observe_step_mirrors_trace_row_to_eval_db`
+  - updated `prototype1_eval_store_parent_start_db_schema_installs_idempotently` to assert `eval_log_ref` and `eval_trace_event` relation installation.
+- Commands run:
+  - `gitnexus impact ... ensure_eval_store_schema`: LOW risk; 1 direct caller, 0 affected processes.
+  - `gitnexus impact ... observe::TransitionBuilder`: LOW risk; 1 direct caller, 0 affected processes.
+  - `gitnexus impact ... observe::Step`: LOW risk; 0 direct callers, 0 affected processes.
+  - `gitnexus impact ... run/core.rs::advance`: LOW risk; 2 direct callers, 2 live test processes.
+  - `cargo fmt --all`
+  - `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_trace -- --nocapture`
+  - `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_parent_start -- --nocapture`
+  - `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
+  - `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store -- --nocapture`
+  - `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_observe_ -- --nocapture`
+  - `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_trace -- --nocapture`
+  - `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
+  - `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store -- --nocapture`
+  - `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_transition_contract_r4c_to_r5 -- --nocapture`
+- Live API used: no; this slice imports local observation JSONL and mirrors local observe producers into queryable diagnostic refs.
+- Checkpoints created/updated: none
+- Artifacts retained: none
+- Result: `DbEvalStore` installs `eval_log_ref`/`eval_trace_event`, writes deterministic log refs, imports observation JSONL into deterministic trace ids, maps common structured trace fields, is idempotent on reimport, rejects invalid JSONL without trace/log rows, and accepts direct `TraceEventEvidence` rows. `observe::TransitionBuilder` and `observe::Step` now mirror trace rows to the owner-scoped eval DB when `prototype1-step/continue` runs with `database` or `dual-strict`; `fs` remains unchanged. Existing parent-start DB/dual-strict tests still pass.
+- Commit: pending
+
+### Slice 7+ — Later evidence slices
 
 Create a new subsection per slice before editing.

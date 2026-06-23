@@ -203,6 +203,8 @@ fn append_parent_started_entries(
 
 const EVENT_REL: &str = "eval_transition_event";
 const RECORD_REL: &str = "eval_record_ref";
+const TRACE_EVENT_REL: &str = "eval_trace_event";
+const LOG_REF_REL: &str = "eval_log_ref";
 const PARENT_STARTED_TRANSITION: &str = "r4c_to_r5";
 const PARENT_STARTED_PHASE: &str = "parent_started";
 const PARENT_STARTED_OUTCOME: &str = "recorded";
@@ -285,6 +287,50 @@ impl<'a, D: EvalDb + ?Sized> DbEvalStore<'a, D> {
         verify_parent_started_db_rows(self.db, &rows)?;
         Ok(rows.receipt)
     }
+
+    pub(crate) fn put_log_ref(
+        &self,
+        evidence: LogRefEvidence,
+    ) -> Result<LogRefReceipt, EvalStoreError> {
+        self.install_schema()?;
+        let row = log_ref_row(evidence)?;
+        put_log_ref_row(self.db, &row)?;
+        Ok(LogRefReceipt {
+            log_ref_id: row.log_ref_id,
+        })
+    }
+
+    pub(crate) fn import_observation_jsonl(
+        &self,
+        import: ObservationJsonlImport,
+    ) -> Result<TraceImportReceipt, EvalStoreError> {
+        let parsed = parse_observation_jsonl(import)?;
+        self.install_schema()?;
+        put_log_ref_row(self.db, &parsed.log)?;
+        for trace in &parsed.traces {
+            put_trace_event_row(self.db, trace)?;
+        }
+        Ok(TraceImportReceipt {
+            log_ref_id: parsed.log.log_ref_id,
+            trace_event_ids: parsed
+                .traces
+                .into_iter()
+                .map(|trace| trace.trace_event_id)
+                .collect(),
+        })
+    }
+
+    pub(crate) fn put_trace_event(
+        &self,
+        evidence: TraceEventEvidence,
+    ) -> Result<TraceEventReceipt, EvalStoreError> {
+        self.install_schema()?;
+        let row = trace_event_row(evidence)?;
+        put_trace_event_row(self.db, &row)?;
+        Ok(TraceEventReceipt {
+            trace_event_id: row.trace_event_id,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -353,6 +399,128 @@ struct EvalRecordRefRow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LogRefEvidence {
+    pub(crate) campaign_id: Option<CampaignId>,
+    pub(crate) runtime_id: Option<RuntimeId>,
+    pub(crate) store_scope: String,
+    pub(crate) log_kind: String,
+    pub(crate) source_ref: String,
+    pub(crate) byte_start: Option<i64>,
+    pub(crate) byte_len: Option<i64>,
+    pub(crate) content_sha256: Option<String>,
+    pub(crate) sensitivity: Option<String>,
+    pub(crate) recorded_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LogRefReceipt {
+    pub(crate) log_ref_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ObservationJsonlImport {
+    pub(crate) campaign_id: Option<CampaignId>,
+    pub(crate) path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TraceImportReceipt {
+    pub(crate) log_ref_id: String,
+    pub(crate) trace_event_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TraceEventEvidence {
+    pub(crate) campaign_id: Option<CampaignId>,
+    pub(crate) parent_id: Option<String>,
+    pub(crate) runtime_id: Option<String>,
+    pub(crate) node_id: Option<String>,
+    pub(crate) generation: Option<i64>,
+    pub(crate) branch_id: Option<String>,
+    pub(crate) role: Option<String>,
+    pub(crate) pipeline: Option<String>,
+    pub(crate) stage: Option<String>,
+    pub(crate) authority: Option<String>,
+    pub(crate) transition: Option<String>,
+    pub(crate) event_name: Option<String>,
+    pub(crate) span_name: Option<String>,
+    pub(crate) target: String,
+    pub(crate) level: String,
+    pub(crate) outcome: Option<String>,
+    pub(crate) duration_ms: Option<i64>,
+    pub(crate) record_access: Option<String>,
+    pub(crate) record_kind: Option<String>,
+    pub(crate) record_path: Option<String>,
+    pub(crate) record_index: Option<i64>,
+    pub(crate) record_count: Option<i64>,
+    pub(crate) program: Option<String>,
+    pub(crate) exit_code: Option<i64>,
+    pub(crate) error: Option<String>,
+    pub(crate) source_log_ref: Option<String>,
+    pub(crate) source_event_index: Option<i64>,
+    pub(crate) recorded_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TraceEventReceipt {
+    pub(crate) trace_event_id: String,
+}
+
+#[derive(Debug, Clone)]
+struct ParsedObservationJsonl {
+    log: EvalLogRefRow,
+    traces: Vec<EvalTraceEventRow>,
+}
+
+#[derive(Debug, Clone)]
+struct EvalLogRefRow {
+    log_ref_id: String,
+    campaign_id: Option<String>,
+    runtime_id: Option<String>,
+    store_scope: String,
+    log_kind: String,
+    source_ref: String,
+    byte_start: Option<i64>,
+    byte_len: Option<i64>,
+    content_sha256: Option<String>,
+    sensitivity: Option<String>,
+    recorded_at: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct EvalTraceEventRow {
+    trace_event_id: String,
+    campaign_id: Option<String>,
+    parent_id: Option<String>,
+    runtime_id: Option<String>,
+    node_id: Option<String>,
+    generation: Option<i64>,
+    branch_id: Option<String>,
+    role: Option<String>,
+    pipeline: Option<String>,
+    stage: Option<String>,
+    authority: Option<String>,
+    transition: Option<String>,
+    event_name: Option<String>,
+    span_name: Option<String>,
+    target: String,
+    level: String,
+    outcome: Option<String>,
+    duration_ms: Option<i64>,
+    record_access: Option<String>,
+    record_kind: Option<String>,
+    record_path: Option<String>,
+    record_index: Option<i64>,
+    record_count: Option<i64>,
+    program: Option<String>,
+    exit_code: Option<i64>,
+    error: Option<String>,
+    source_log_ref: Option<String>,
+    source_event_index: Option<i64>,
+    recorded_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ParentStartedEvidence {
     pub(crate) campaign_id: CampaignId,
     pub(crate) parent_identity: ParentIdentity,
@@ -413,6 +581,17 @@ fn write_parent_started_to_owner_db(
     let db_receipt = store.put_parent_started_from_receipt(evidence, receipt)?;
     persist_owner_eval_database(&db, db_path)?;
     Ok(db_receipt)
+}
+
+pub(crate) fn write_trace_event_to_owner_db(
+    db_path: &Path,
+    evidence: TraceEventEvidence,
+) -> Result<TraceEventReceipt, EvalStoreError> {
+    let db = load_owner_eval_database(db_path)?;
+    let store = DbEvalStore::new(&db);
+    let receipt = store.put_trace_event(evidence)?;
+    persist_owner_eval_database(&db, db_path)?;
+    Ok(receipt)
 }
 
 fn persist_owner_eval_database(db: &Database, path: &Path) -> Result<(), EvalStoreError> {
@@ -521,6 +700,74 @@ fn ensure_eval_store_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), EvalStoreE
         )
         .map_err(|source| EvalStoreError::Db {
             phase: "schema.eval_record_ref",
+            source,
+        })?;
+    }
+
+    if !eval_relation_exists(db, LOG_REF_REL)? {
+        db.eval_query_mut_params(
+            r#"
+:create eval_log_ref {
+    log_ref_id: String =>
+    campaign_id: String?,
+    runtime_id: String?,
+    store_scope: String,
+    log_kind: String,
+    source_ref: String,
+    byte_start: Int?,
+    byte_len: Int?,
+    content_sha256: String?,
+    sensitivity: String?,
+    recorded_at: String?
+}
+"#,
+            BTreeMap::new(),
+        )
+        .map_err(|source| EvalStoreError::Db {
+            phase: "schema.eval_log_ref",
+            source,
+        })?;
+    }
+
+    if !eval_relation_exists(db, TRACE_EVENT_REL)? {
+        db.eval_query_mut_params(
+            r#"
+:create eval_trace_event {
+    trace_event_id: String =>
+    campaign_id: String?,
+    parent_id: String?,
+    runtime_id: String?,
+    node_id: String?,
+    generation: Int?,
+    branch_id: String?,
+    role: String?,
+    pipeline: String?,
+    stage: String?,
+    authority: String?,
+    transition: String?,
+    event_name: String?,
+    span_name: String?,
+    target: String,
+    level: String,
+    outcome: String?,
+    duration_ms: Int?,
+    record_access: String?,
+    record_kind: String?,
+    record_path: String?,
+    record_index: Int?,
+    record_count: Int?,
+    program: String?,
+    exit_code: Int?,
+    error: String?,
+    source_log_ref: String?,
+    source_event_index: Int?,
+    recorded_at: String?
+}
+"#,
+            BTreeMap::new(),
+        )
+        .map_err(|source| EvalStoreError::Db {
+            phase: "schema.eval_trace_event",
             source,
         })?;
     }
@@ -805,6 +1052,163 @@ fn put_record_ref_row<D: EvalDb + ?Sized>(
     Ok(())
 }
 
+fn put_log_ref_row<D: EvalDb + ?Sized>(db: &D, row: &EvalLogRefRow) -> Result<(), EvalStoreError> {
+    db.eval_query_mut_params(
+        r#"
+?[
+    log_ref_id,
+    campaign_id,
+    runtime_id,
+    store_scope,
+    log_kind,
+    source_ref,
+    byte_start,
+    byte_len,
+    content_sha256,
+    sensitivity,
+    recorded_at
+] :=
+    log_ref_id = $log_ref_id,
+    campaign_id = $campaign_id,
+    runtime_id = $runtime_id,
+    store_scope = $store_scope,
+    log_kind = $log_kind,
+    source_ref = $source_ref,
+    byte_start = $byte_start,
+    byte_len = $byte_len,
+    content_sha256 = $content_sha256,
+    sensitivity = $sensitivity,
+    recorded_at = $recorded_at
+:put eval_log_ref {
+    log_ref_id =>
+    campaign_id,
+    runtime_id,
+    store_scope,
+    log_kind,
+    source_ref,
+    byte_start,
+    byte_len,
+    content_sha256,
+    sensitivity,
+    recorded_at
+}
+"#,
+        log_ref_params(row),
+    )
+    .map_err(|source| EvalStoreError::Db {
+        phase: "put.eval_log_ref",
+        source,
+    })?;
+    Ok(())
+}
+
+fn put_trace_event_row<D: EvalDb + ?Sized>(
+    db: &D,
+    row: &EvalTraceEventRow,
+) -> Result<(), EvalStoreError> {
+    db.eval_query_mut_params(
+        r#"
+?[
+    trace_event_id,
+    campaign_id,
+    parent_id,
+    runtime_id,
+    node_id,
+    generation,
+    branch_id,
+    role,
+    pipeline,
+    stage,
+    authority,
+    transition,
+    event_name,
+    span_name,
+    target,
+    level,
+    outcome,
+    duration_ms,
+    record_access,
+    record_kind,
+    record_path,
+    record_index,
+    record_count,
+    program,
+    exit_code,
+    error,
+    source_log_ref,
+    source_event_index,
+    recorded_at
+] :=
+    trace_event_id = $trace_event_id,
+    campaign_id = $campaign_id,
+    parent_id = $parent_id,
+    runtime_id = $runtime_id,
+    node_id = $node_id,
+    generation = $generation,
+    branch_id = $branch_id,
+    role = $role,
+    pipeline = $pipeline,
+    stage = $stage,
+    authority = $authority,
+    transition = $transition,
+    event_name = $event_name,
+    span_name = $span_name,
+    target = $target,
+    level = $level,
+    outcome = $outcome,
+    duration_ms = $duration_ms,
+    record_access = $record_access,
+    record_kind = $record_kind,
+    record_path = $record_path,
+    record_index = $record_index,
+    record_count = $record_count,
+    program = $program,
+    exit_code = $exit_code,
+    error = $error,
+    source_log_ref = $source_log_ref,
+    source_event_index = $source_event_index,
+    recorded_at = $recorded_at
+:put eval_trace_event {
+    trace_event_id =>
+    campaign_id,
+    parent_id,
+    runtime_id,
+    node_id,
+    generation,
+    branch_id,
+    role,
+    pipeline,
+    stage,
+    authority,
+    transition,
+    event_name,
+    span_name,
+    target,
+    level,
+    outcome,
+    duration_ms,
+    record_access,
+    record_kind,
+    record_path,
+    record_index,
+    record_count,
+    program,
+    exit_code,
+    error,
+    source_log_ref,
+    source_event_index,
+    recorded_at
+}
+"#,
+        trace_event_params(row),
+    )
+    .map_err(|source| EvalStoreError::Db {
+        phase: "put.eval_trace_event",
+        source,
+    })?;
+    Ok(())
+}
+
 fn parent_started_db_receipt(
     evidence: &ParentStartedEvidence,
     receipt: &ParentStartedReceipt,
@@ -977,6 +1381,311 @@ fn record_ref_row(
     }
 }
 
+fn log_ref_row(evidence: LogRefEvidence) -> Result<EvalLogRefRow, EvalStoreError> {
+    require_non_empty("log_ref.store_scope", &evidence.store_scope)?;
+    require_non_empty("log_ref.log_kind", &evidence.log_kind)?;
+    require_non_empty("log_ref.source_ref", &evidence.source_ref)?;
+    let campaign_id = evidence.campaign_id.map(|id| id.to_string());
+    let runtime_id = evidence.runtime_id.map(|id| id.to_string());
+    let byte_start = evidence
+        .byte_start
+        .map(|value| validate_non_negative_i64(value, "log_ref.byte_start"))
+        .transpose()?;
+    let byte_len = evidence
+        .byte_len
+        .map(|value| validate_non_negative_i64(value, "log_ref.byte_len"))
+        .transpose()?;
+    let log_ref_id = log_ref_id(
+        campaign_id.as_deref(),
+        runtime_id.as_deref(),
+        &evidence.store_scope,
+        &evidence.log_kind,
+        &evidence.source_ref,
+        byte_start,
+        byte_len,
+        evidence.content_sha256.as_deref(),
+    );
+    Ok(EvalLogRefRow {
+        log_ref_id,
+        campaign_id,
+        runtime_id,
+        store_scope: evidence.store_scope,
+        log_kind: evidence.log_kind,
+        source_ref: evidence.source_ref,
+        byte_start,
+        byte_len,
+        content_sha256: evidence.content_sha256,
+        sensitivity: evidence.sensitivity,
+        recorded_at: evidence.recorded_at,
+    })
+}
+
+fn trace_event_row(evidence: TraceEventEvidence) -> Result<EvalTraceEventRow, EvalStoreError> {
+    require_non_empty("trace.target", &evidence.target)?;
+    require_non_empty("trace.level", &evidence.level)?;
+    let source_event_index =
+        evidence
+            .source_event_index
+            .ok_or_else(|| EvalStoreError::Validation {
+                field: "trace.source_event_index",
+                detail: "direct trace events require a scoped source event index".to_string(),
+            })?;
+    let recorded_at = evidence
+        .recorded_at
+        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+    let campaign_id = evidence.campaign_id.map(|id| id.to_string());
+    let source_index = source_event_index.to_string();
+    let generation = evidence
+        .generation
+        .map(|value| value.to_string())
+        .unwrap_or_default();
+    let duration_ms = evidence
+        .duration_ms
+        .map(|value| value.to_string())
+        .unwrap_or_default();
+    let record_index = evidence
+        .record_index
+        .map(|value| value.to_string())
+        .unwrap_or_default();
+    let record_count = evidence
+        .record_count
+        .map(|value| value.to_string())
+        .unwrap_or_default();
+    let exit_code = evidence
+        .exit_code
+        .map(|value| value.to_string())
+        .unwrap_or_default();
+    let trace_event_id = hash_parts(&[
+        "p1.eval.trace_event.direct.v1",
+        campaign_id.as_deref().unwrap_or(""),
+        evidence.parent_id.as_deref().unwrap_or(""),
+        evidence.runtime_id.as_deref().unwrap_or(""),
+        evidence.node_id.as_deref().unwrap_or(""),
+        &generation,
+        evidence.branch_id.as_deref().unwrap_or(""),
+        evidence.role.as_deref().unwrap_or(""),
+        evidence.pipeline.as_deref().unwrap_or(""),
+        evidence.stage.as_deref().unwrap_or(""),
+        evidence.authority.as_deref().unwrap_or(""),
+        evidence.transition.as_deref().unwrap_or(""),
+        evidence.event_name.as_deref().unwrap_or(""),
+        evidence.span_name.as_deref().unwrap_or(""),
+        &evidence.target,
+        &evidence.level,
+        evidence.outcome.as_deref().unwrap_or(""),
+        &duration_ms,
+        evidence.record_access.as_deref().unwrap_or(""),
+        evidence.record_kind.as_deref().unwrap_or(""),
+        evidence.record_path.as_deref().unwrap_or(""),
+        &record_index,
+        &record_count,
+        evidence.program.as_deref().unwrap_or(""),
+        &exit_code,
+        evidence.error.as_deref().unwrap_or(""),
+        evidence.source_log_ref.as_deref().unwrap_or(""),
+        &source_index,
+        &recorded_at,
+    ]);
+    Ok(EvalTraceEventRow {
+        trace_event_id,
+        campaign_id,
+        parent_id: evidence.parent_id,
+        runtime_id: evidence.runtime_id,
+        node_id: evidence.node_id,
+        generation: evidence.generation,
+        branch_id: evidence.branch_id,
+        role: evidence.role,
+        pipeline: evidence.pipeline,
+        stage: evidence.stage,
+        authority: evidence.authority,
+        transition: evidence.transition,
+        event_name: evidence.event_name,
+        span_name: evidence.span_name,
+        target: evidence.target,
+        level: evidence.level,
+        outcome: evidence.outcome,
+        duration_ms: evidence.duration_ms,
+        record_access: evidence.record_access,
+        record_kind: evidence.record_kind,
+        record_path: evidence.record_path,
+        record_index: evidence.record_index,
+        record_count: evidence.record_count,
+        program: evidence.program,
+        exit_code: evidence.exit_code,
+        error: evidence.error,
+        source_log_ref: evidence.source_log_ref,
+        source_event_index: Some(source_event_index),
+        recorded_at: Some(recorded_at),
+    })
+}
+
+fn parse_observation_jsonl(
+    import: ObservationJsonlImport,
+) -> Result<ParsedObservationJsonl, EvalStoreError> {
+    let bytes = fs::read(&import.path).map_err(|source| EvalStoreError::Io {
+        phase: "observation_jsonl.read",
+        path: import.path.clone(),
+        source,
+    })?;
+    let text = String::from_utf8(bytes.clone()).map_err(|source| EvalStoreError::Validation {
+        field: "observation_jsonl.utf8",
+        detail: source.to_string(),
+    })?;
+    let content_sha256 = sha256_bytes(&bytes);
+    let byte_len = i64::try_from(bytes.len()).map_err(|_| EvalStoreError::Validation {
+        field: "log_ref.byte_len",
+        detail: format!("observation log '{}' is too large", import.path.display()),
+    })?;
+    let log = log_ref_row(LogRefEvidence {
+        campaign_id: import.campaign_id.clone(),
+        runtime_id: None,
+        store_scope: STORE_SCOPE.to_string(),
+        log_kind: "observation_jsonl".to_string(),
+        source_ref: import.path.display().to_string(),
+        byte_start: Some(0),
+        byte_len: Some(byte_len),
+        content_sha256: Some(content_sha256),
+        sensitivity: Some("internal_diagnostic".to_string()),
+        recorded_at: None,
+    })?;
+
+    let campaign_id = import.campaign_id.as_ref().map(|id| id.to_string());
+    let mut traces = Vec::new();
+    for (line_index, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            return Err(EvalStoreError::Validation {
+                field: "observation_jsonl.line",
+                detail: format!(
+                    "blank JSONL line {} in '{}'",
+                    line_index + 1,
+                    import.path.display()
+                ),
+            });
+        }
+        let value = serde_json::from_str::<serde_json::Value>(line).map_err(|source| {
+            EvalStoreError::Validation {
+                field: "observation_jsonl.line",
+                detail: format!(
+                    "invalid JSONL line {} in '{}': {source}",
+                    line_index + 1,
+                    import.path.display()
+                ),
+            }
+        })?;
+        traces.push(trace_event_row_from_value(
+            &value,
+            campaign_id.as_deref(),
+            &log.log_ref_id,
+            line_index,
+            line,
+        )?);
+    }
+
+    Ok(ParsedObservationJsonl { log, traces })
+}
+
+fn trace_event_row_from_value(
+    value: &serde_json::Value,
+    default_campaign_id: Option<&str>,
+    log_ref_id: &str,
+    source_event_index: usize,
+    raw_line: &str,
+) -> Result<EvalTraceEventRow, EvalStoreError> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| EvalStoreError::Validation {
+            field: "observation_jsonl.line",
+            detail: "observation JSONL line must be an object".to_string(),
+        })?;
+    let target = required_string_field(object, "target")?;
+    let level = required_string_field(object, "level")?;
+    let index = usize_to_i64(source_event_index, "trace.source_event_index")?;
+    let content_sha256 = sha256_bytes(raw_line.as_bytes());
+    let trace_event_id = hash_parts(&[
+        "p1.eval.trace_event.v1",
+        log_ref_id,
+        &index.to_string(),
+        &content_sha256,
+    ]);
+    Ok(EvalTraceEventRow {
+        trace_event_id,
+        campaign_id: optional_string_field(object, "campaign_id")
+            .or_else(|| default_campaign_id.map(str::to_string)),
+        parent_id: optional_string_field(object, "parent_id"),
+        runtime_id: optional_string_field(object, "runtime_id"),
+        node_id: optional_string_field(object, "node_id"),
+        generation: optional_i64_field(object, "generation"),
+        branch_id: optional_string_field(object, "branch_id"),
+        role: optional_string_field(object, "role"),
+        pipeline: optional_string_field(object, "pipeline"),
+        stage: optional_string_field(object, "stage")
+            .or_else(|| optional_string_field(object, "phase")),
+        authority: optional_string_field(object, "authority"),
+        transition: optional_string_field(object, "transition"),
+        event_name: optional_string_field(object, "event"),
+        span_name: span_name_field(object),
+        target,
+        level,
+        outcome: optional_string_field(object, "outcome"),
+        duration_ms: optional_i64_field(object, "duration_ms"),
+        record_access: optional_string_field(object, "record_access"),
+        record_kind: optional_string_field(object, "record_kind"),
+        record_path: optional_string_field(object, "record_path"),
+        record_index: optional_i64_field(object, "record_index"),
+        record_count: optional_i64_field(object, "record_count"),
+        program: optional_string_field(object, "program"),
+        exit_code: optional_i64_field(object, "exit_code"),
+        error: optional_string_field(object, "error"),
+        source_log_ref: Some(log_ref_id.to_string()),
+        source_event_index: Some(index),
+        recorded_at: optional_string_field(object, "timestamp")
+            .or_else(|| optional_string_field(object, "time")),
+    })
+}
+
+fn required_string_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &'static str,
+) -> Result<String, EvalStoreError> {
+    optional_string_field(object, field).ok_or_else(|| EvalStoreError::Validation {
+        field,
+        detail: "required observation JSONL string field is missing".to_string(),
+    })
+}
+
+fn optional_string_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Option<String> {
+    match object.get(field)? {
+        serde_json::Value::String(value) => Some(value.clone()),
+        serde_json::Value::Number(value) => Some(value.to_string()),
+        serde_json::Value::Bool(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn optional_i64_field(
+    object: &serde_json::Map<String, serde_json::Value>,
+    field: &str,
+) -> Option<i64> {
+    match object.get(field)? {
+        serde_json::Value::Number(value) => value.as_i64(),
+        serde_json::Value::String(value) => value.parse().ok(),
+        _ => None,
+    }
+}
+
+fn span_name_field(object: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    optional_string_field(object, "span_name").or_else(|| {
+        object
+            .get("span")?
+            .get("name")?
+            .as_str()
+            .map(str::to_string)
+    })
+}
+
 fn validate_parent_started_receipt(receipt: &ParentStartedReceipt) -> Result<(), EvalStoreError> {
     let stream = receipt.parent.path.display().to_string();
     require_non_empty("source_stream_id", &stream)?;
@@ -1009,6 +1718,16 @@ fn require_non_empty(field: &'static str, value: &str) -> Result<(), EvalStoreEr
     Ok(())
 }
 
+fn validate_non_negative_i64(value: i64, field: &'static str) -> Result<i64, EvalStoreError> {
+    if value < 0 {
+        return Err(EvalStoreError::Validation {
+            field,
+            detail: format!("value {value} must be non-negative"),
+        });
+    }
+    Ok(value)
+}
+
 fn usize_to_i64(value: usize, field: &'static str) -> Result<i64, EvalStoreError> {
     i64::try_from(value).map_err(|_| EvalStoreError::Validation {
         field,
@@ -1026,6 +1745,31 @@ fn event_source_ref(stream: &str, parent_line: i64, resource_line: i64) -> Strin
 
 fn source_stream_id(campaign_id: &CampaignId, stream: &str) -> String {
     format!("prototype1-transition-journal:{campaign_id}:{stream}")
+}
+
+fn log_ref_id(
+    campaign_id: Option<&str>,
+    runtime_id: Option<&str>,
+    store_scope: &str,
+    log_kind: &str,
+    source_ref: &str,
+    byte_start: Option<i64>,
+    byte_len: Option<i64>,
+    content_sha256: Option<&str>,
+) -> String {
+    hash_parts(&[
+        "p1.eval.log_ref.v1",
+        campaign_id.unwrap_or(""),
+        runtime_id.unwrap_or(""),
+        store_scope,
+        log_kind,
+        source_ref,
+        &byte_start
+            .map(|value| value.to_string())
+            .unwrap_or_default(),
+        &byte_len.map(|value| value.to_string()).unwrap_or_default(),
+        content_sha256.unwrap_or(""),
+    ])
 }
 
 fn record_ref_id(
@@ -1051,6 +1795,12 @@ fn hash_parts(parts: &[&str]) -> String {
         hasher.update((part.len() as u64).to_be_bytes());
         hasher.update(part.as_bytes());
     }
+    hex_lower(&hasher.finalize())
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
     hex_lower(&hasher.finalize())
 }
 
@@ -1165,6 +1915,121 @@ fn record_ref_params(row: &EvalRecordRefRow) -> BTreeMap<String, DataValue> {
     params.insert("recorded_at".to_string(), row.recorded_at.into());
     params.insert("ingested_at".to_string(), row.ingested_at.clone().into());
     params
+}
+
+fn log_ref_params(row: &EvalLogRefRow) -> BTreeMap<String, DataValue> {
+    let mut params = BTreeMap::new();
+    params.insert("log_ref_id".to_string(), row.log_ref_id.clone().into());
+    params.insert(
+        "campaign_id".to_string(),
+        option_string_param(&row.campaign_id),
+    );
+    params.insert(
+        "runtime_id".to_string(),
+        option_string_param(&row.runtime_id),
+    );
+    params.insert("store_scope".to_string(), row.store_scope.clone().into());
+    params.insert("log_kind".to_string(), row.log_kind.clone().into());
+    params.insert("source_ref".to_string(), row.source_ref.clone().into());
+    params.insert("byte_start".to_string(), option_i64_param(row.byte_start));
+    params.insert("byte_len".to_string(), option_i64_param(row.byte_len));
+    params.insert(
+        "content_sha256".to_string(),
+        option_string_param(&row.content_sha256),
+    );
+    params.insert(
+        "sensitivity".to_string(),
+        option_string_param(&row.sensitivity),
+    );
+    params.insert(
+        "recorded_at".to_string(),
+        option_string_param(&row.recorded_at),
+    );
+    params
+}
+
+fn trace_event_params(row: &EvalTraceEventRow) -> BTreeMap<String, DataValue> {
+    let mut params = BTreeMap::new();
+    params.insert(
+        "trace_event_id".to_string(),
+        row.trace_event_id.clone().into(),
+    );
+    params.insert(
+        "campaign_id".to_string(),
+        option_string_param(&row.campaign_id),
+    );
+    params.insert("parent_id".to_string(), option_string_param(&row.parent_id));
+    params.insert(
+        "runtime_id".to_string(),
+        option_string_param(&row.runtime_id),
+    );
+    params.insert("node_id".to_string(), option_string_param(&row.node_id));
+    params.insert("generation".to_string(), option_i64_param(row.generation));
+    params.insert("branch_id".to_string(), option_string_param(&row.branch_id));
+    params.insert("role".to_string(), option_string_param(&row.role));
+    params.insert("pipeline".to_string(), option_string_param(&row.pipeline));
+    params.insert("stage".to_string(), option_string_param(&row.stage));
+    params.insert("authority".to_string(), option_string_param(&row.authority));
+    params.insert(
+        "transition".to_string(),
+        option_string_param(&row.transition),
+    );
+    params.insert(
+        "event_name".to_string(),
+        option_string_param(&row.event_name),
+    );
+    params.insert("span_name".to_string(), option_string_param(&row.span_name));
+    params.insert("target".to_string(), row.target.clone().into());
+    params.insert("level".to_string(), row.level.clone().into());
+    params.insert("outcome".to_string(), option_string_param(&row.outcome));
+    params.insert("duration_ms".to_string(), option_i64_param(row.duration_ms));
+    params.insert(
+        "record_access".to_string(),
+        option_string_param(&row.record_access),
+    );
+    params.insert(
+        "record_kind".to_string(),
+        option_string_param(&row.record_kind),
+    );
+    params.insert(
+        "record_path".to_string(),
+        option_string_param(&row.record_path),
+    );
+    params.insert(
+        "record_index".to_string(),
+        option_i64_param(row.record_index),
+    );
+    params.insert(
+        "record_count".to_string(),
+        option_i64_param(row.record_count),
+    );
+    params.insert("program".to_string(), option_string_param(&row.program));
+    params.insert("exit_code".to_string(), option_i64_param(row.exit_code));
+    params.insert("error".to_string(), option_string_param(&row.error));
+    params.insert(
+        "source_log_ref".to_string(),
+        option_string_param(&row.source_log_ref),
+    );
+    params.insert(
+        "source_event_index".to_string(),
+        option_i64_param(row.source_event_index),
+    );
+    params.insert(
+        "recorded_at".to_string(),
+        option_string_param(&row.recorded_at),
+    );
+    params
+}
+
+fn option_string_param(value: &Option<String>) -> DataValue {
+    value
+        .clone()
+        .map(DataValue::from)
+        .unwrap_or(DataValue::Null)
+}
+
+fn option_i64_param(value: Option<i64>) -> DataValue {
+    value.map(DataValue::from).unwrap_or(DataValue::Null)
 }
 
 #[derive(Debug, Error)]
@@ -1321,6 +2186,152 @@ mod tests {
 
         assert!(eval_relation_exists(&db, EVENT_REL).expect("event rel exists"));
         assert!(eval_relation_exists(&db, RECORD_REL).expect("record rel exists"));
+        assert!(eval_relation_exists(&db, LOG_REF_REL).expect("log rel exists"));
+        assert!(eval_relation_exists(&db, TRACE_EVENT_REL).expect("trace rel exists"));
+    }
+
+    #[test]
+    fn prototype1_eval_store_trace_log_ref_round_trips_row() {
+        let db = Database::new_init().expect("db");
+        let store = DbEvalStore::new(&db);
+
+        let receipt = store
+            .put_log_ref(LogRefEvidence {
+                campaign_id: Some(CampaignId::from("campaign")),
+                runtime_id: None,
+                store_scope: STORE_SCOPE.to_string(),
+                log_kind: "observation_jsonl".to_string(),
+                source_ref: "/tmp/prototype1-observation.jsonl".to_string(),
+                byte_start: Some(0),
+                byte_len: Some(12),
+                content_sha256: Some("abc123".to_string()),
+                sensitivity: Some("internal_diagnostic".to_string()),
+                recorded_at: Some("2026-06-23T00:00:00Z".to_string()),
+            })
+            .expect("log ref writes");
+
+        let refs = query_log_refs(&db);
+        assert_eq!(refs.rows.len(), 1);
+        let row = refs.row_refs().next().expect("log ref row");
+        assert_eq!(
+            row.get::<String>("log_ref_id").expect("id"),
+            receipt.log_ref_id
+        );
+        assert_eq!(
+            row.get::<String>("log_kind").expect("kind"),
+            "observation_jsonl"
+        );
+        assert_eq!(
+            row.get::<String>("source_ref").expect("source"),
+            "/tmp/prototype1-observation.jsonl"
+        );
+        assert_eq!(row.get::<String>("content_sha256").expect("hash"), "abc123");
+    }
+
+    #[test]
+    fn prototype1_eval_store_trace_observation_jsonl_imports_rows_idempotently() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let log_path = tmp.path().join("prototype1-observation.jsonl");
+        fs::write(
+            &log_path,
+            concat!(
+                r#"{"timestamp":"2026-06-23T00:00:00Z","target":"ploke_exec","level":"INFO","event":"typestate_transition","role":"parent","pipeline":"prototype1.child_plan_authority","phase":"typestate_transition","transition":"R7->R8","outcome":"committed","campaign_id":"campaign","parent_id":"parent","node_id":"parent","generation":0,"branch_id":"main","record_access":"write","record_kind":"child_plan_file","record_path":"prototype1/messages/child-plan.json","record_index":0,"record_count":1,"duration_ms":17}"#,
+                "\n",
+                r#"{"timestamp":"2026-06-23T00:00:01Z","target":"ploke_exec","level":"INFO","span":{"name":"child-build"},"outcome":"rejected","program":"cargo","exit_code":101,"duration_ms":22}"#,
+                "\n"
+            ),
+        )
+        .expect("write observation jsonl");
+        let db = Database::new_init().expect("db");
+        let store = DbEvalStore::new(&db);
+        let import = ObservationJsonlImport {
+            campaign_id: Some(CampaignId::from("campaign")),
+            path: log_path.clone(),
+        };
+
+        let first = store
+            .import_observation_jsonl(import.clone())
+            .expect("import observation jsonl");
+        let second = store
+            .import_observation_jsonl(import)
+            .expect("reimport observation jsonl");
+
+        assert_eq!(second, first);
+        assert_eq!(query_log_refs(&db).rows.len(), 1);
+        let traces = query_trace_events(&db, &first.log_ref_id);
+        assert_eq!(traces.rows.len(), 2);
+        let mut by_index = std::collections::BTreeMap::new();
+        for row in traces.row_refs() {
+            by_index.insert(
+                row.get::<i64>("source_event_index").expect("index"),
+                (
+                    row.get::<String>("event_name").ok(),
+                    row.get::<String>("stage").ok(),
+                    row.get::<String>("transition").ok(),
+                    row.get::<String>("span_name").ok(),
+                    row.get::<String>("program").ok(),
+                    row.get::<i64>("exit_code").ok(),
+                ),
+            );
+        }
+        assert_eq!(
+            by_index.get(&0).expect("first trace").0.as_deref(),
+            Some("typestate_transition")
+        );
+        assert_eq!(
+            by_index.get(&0).expect("first trace").1.as_deref(),
+            Some("typestate_transition")
+        );
+        assert_eq!(
+            by_index.get(&0).expect("first trace").2.as_deref(),
+            Some("R7->R8")
+        );
+        assert_eq!(
+            by_index.get(&1).expect("second trace").3.as_deref(),
+            Some("child-build")
+        );
+        assert_eq!(
+            by_index.get(&1).expect("second trace").4.as_deref(),
+            Some("cargo")
+        );
+        assert_eq!(by_index.get(&1).expect("second trace").5, Some(101));
+    }
+
+    #[test]
+    fn prototype1_eval_store_trace_observation_jsonl_invalid_line_fails_without_rows() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let log_path = tmp.path().join("bad-observation.jsonl");
+        fs::write(
+            &log_path,
+            concat!(
+                r#"{"target":"ploke_exec","level":"INFO","event":"typestate_transition"}"#,
+                "\n",
+                "not json\n"
+            ),
+        )
+        .expect("write bad observation jsonl");
+        let db = Database::new_init().expect("db");
+        let store = DbEvalStore::new(&db);
+        store
+            .install_schema()
+            .expect("schema for empty-row assertions");
+
+        let err = store
+            .import_observation_jsonl(ObservationJsonlImport {
+                campaign_id: Some(CampaignId::from("campaign")),
+                path: log_path,
+            })
+            .expect_err("invalid jsonl fails loudly");
+
+        match err {
+            EvalStoreError::Validation { field, detail } => {
+                assert_eq!(field, "observation_jsonl.line");
+                assert!(detail.contains("invalid JSONL line 2"), "{detail}");
+            }
+            other => panic!("unexpected import error: {other:?}"),
+        }
+        assert!(query_log_refs(&db).rows.is_empty());
+        assert!(query_all_trace_events(&db).rows.is_empty());
     }
 
     #[test]
@@ -1688,6 +2699,55 @@ mod tests {
             params,
         )
         .expect("query record refs")
+    }
+
+    fn query_log_refs(db: &Database) -> QueryResult {
+        db.raw_query_params(
+            r#"
+?[log_ref_id, log_kind, source_ref, content_sha256] :=
+    *eval_log_ref { log_ref_id, log_kind, source_ref, content_sha256 }
+"#,
+            BTreeMap::new(),
+        )
+        .expect("query log refs")
+    }
+
+    fn query_trace_events(db: &Database, log_ref_id: &str) -> QueryResult {
+        let mut params = BTreeMap::new();
+        params.insert(
+            "source_log_ref".to_string(),
+            DataValue::from(log_ref_id.to_string()),
+        );
+        db.raw_query_params(
+            r#"
+?[trace_event_id, source_event_index, event_name, stage, transition, span_name, program, exit_code] :=
+    *eval_trace_event {
+        trace_event_id,
+        source_log_ref,
+        source_event_index,
+        event_name,
+        stage,
+        transition,
+        span_name,
+        program,
+        exit_code
+    },
+    source_log_ref = $source_log_ref
+"#,
+            params,
+        )
+        .expect("query trace events")
+    }
+
+    fn query_all_trace_events(db: &Database) -> QueryResult {
+        db.raw_query_params(
+            r#"
+?[trace_event_id] :=
+    *eval_trace_event { trace_event_id }
+"#,
+            BTreeMap::new(),
+        )
+        .expect("query all trace events")
     }
 
     fn parent_entry(repo_root: PathBuf) -> ParentStartedEntry {

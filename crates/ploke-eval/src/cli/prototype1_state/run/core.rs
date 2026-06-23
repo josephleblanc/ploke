@@ -58,6 +58,7 @@ use crate::cli::prototype1_state::{
         BroadHarnessRequest, EvidenceRootKind, EvidenceRootLocation, HarnessChildBudget,
         ProtectedCoreAnchor, PublishedBroadHarnessRequest,
     },
+    eval_store::prototype1_eval_store_db_path,
     event::{ContentHash, RuntimeId, TransitionId},
     history::{ArtifactSurface, surface_attempt},
     identity::{ParentIdentity, load_parent_identity_optional, parent_identity_relpath},
@@ -66,6 +67,7 @@ use crate::cli::prototype1_state::{
         CompletionEntry, JournalEntry, PrototypeJournal, SpawnEntry, SpawnObservation, SpawnPhase,
         prototype1_transition_journal_path,
     },
+    observe,
     parent::{
         Check, ChildFiles, ChildPlanFile, ChildPlanFiles, Genesis, Parent, Predecessor, Ready,
         Startup, Unchecked,
@@ -2212,6 +2214,7 @@ fn needs_terminal_observe(snapshot: &ChildSnapshot) -> bool {
 }
 
 async fn advance(diagnosis: Diagnosis, mode: ExecuteMode) -> Result<(), PrepareError> {
+    let _trace_guard = scoped_eval_trace_sink_for_context(&diagnosis.context);
     match diagnosis.phase {
         DiagnosedPhase::BaselineEval => advance_baseline_eval(&diagnosis.context).await,
         DiagnosedPhase::BaselineProtocol => advance_baseline_protocol(&diagnosis.context).await,
@@ -2224,6 +2227,19 @@ async fn advance(diagnosis: Diagnosis, mode: ExecuteMode) -> Result<(), PrepareE
         DiagnosedPhase::Handoff => advance_handoff(diagnosis).await,
         DiagnosedPhase::Complete | DiagnosedPhase::Blocked => Ok(()),
     }
+}
+
+fn scoped_eval_trace_sink_for_context(context: &RuntimeContext) -> observe::EvalTraceSinkGuard {
+    let config = match context.admitted_profile.profile.storage.eval.backend {
+        profile::EvalStorageBackend::Fs => None,
+        profile::EvalStorageBackend::Database | profile::EvalStorageBackend::DualStrict => {
+            Some(observe::EvalTraceSinkConfig {
+                campaign_id: context.campaign_id.clone(),
+                db_path: prototype1_eval_store_db_path(&context.manifest_path),
+            })
+        }
+    };
+    observe::scoped_eval_trace_sink(config)
 }
 
 async fn advance_baseline_eval(context: &RuntimeContext) -> Result<(), PrepareError> {
