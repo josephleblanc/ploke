@@ -1200,6 +1200,141 @@ fn ready_parent_for_test(manifest_path: &Path, repo_root: &Path) -> Parent<Ready
     checked.ready(startup).expect("ready parent")
 }
 
+struct R4cFixture {
+    r4c: typestate::R4cReady<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    manifest_path: PathBuf,
+    repo_root: PathBuf,
+    journal_path: PathBuf,
+    parent: ParentIdentity,
+}
+
+fn r4c_fixture(root: &Path, backend: profile::EvalStorageBackend) -> R4cFixture {
+    let manifest_path = root.join("campaign.json");
+    let repo_root = root.join("repo");
+    fs::create_dir_all(&repo_root).expect("repo dir");
+    let parent = test_parent_identity();
+    let ready = ready_parent_for_test(&manifest_path, &repo_root);
+    let mut command = state_command_without_ids();
+    command.campaign = Some(parent.campaign_id().clone());
+    command.repo_root = Some(repo_root.clone());
+    let mut shape = Prototype1StateRunShape::from_command(&command);
+    shape.eval_storage_backend = backend;
+    let config = ResolvedCampaignConfig {
+        campaign_id: parent.campaign_id().clone(),
+        benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+        dataset_sources: Vec::new(),
+        model_id: "test-model".to_string(),
+        provider_slug: None,
+        route_source: ModelRouteSource::DirectGoogle,
+        required_procedures: Vec::new(),
+        instances_root: root.join("instances"),
+        batches_root: root.join("batches"),
+        eval: EvalCampaignPolicy::default(),
+        protocol: ProtocolCampaignPolicy::default(),
+        framework: crate::FrameworkConfig::default(),
+    };
+    let journal_path = prototype1_transition_journal_path(&manifest_path);
+    let journal = PrototypeJournal::new(&journal_path);
+    let collected = typestate::context::Collected::new(
+        command,
+        repo_root.clone(),
+        parent.campaign_id().clone(),
+        manifest_path.clone(),
+        shape,
+        config,
+        journal_path.clone(),
+        journal,
+    );
+    let r4c = typestate::R4cReady::from_collected_parent(collected, ready);
+
+    R4cFixture {
+        r4c,
+        manifest_path,
+        repo_root,
+        journal_path,
+        parent,
+    }
+}
+
+#[test]
+fn prototype1_transition_contract_r4c_to_r5_fs_records_parent_start() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let fixture = r4c_fixture(tmp.path(), profile::EvalStorageBackend::Fs);
+    let parent = fixture.parent.clone();
+    let manifest_path = fixture.manifest_path.clone();
+    let repo_root = fixture.repo_root.clone();
+    let journal_path = fixture.journal_path.clone();
+
+    let r5: typestate::R5<Prototype1StateRunShape, ResolvedCampaignConfig> =
+        crate::cli::prototype1_state::live_edges::r4c_to_r5(fixture.r4c)
+            .expect("R4c -> R5 succeeds in fs mode");
+
+    let parts = r5.into_parts();
+    assert_eq!(parts.parent.identity(), &parent);
+    assert_eq!(parts.collected.into_parts().journal_path, journal_path);
+    let entries = PrototypeJournal::new(&journal_path)
+        .load_entries()
+        .expect("journal loads");
+    assert_eq!(entries.len(), 2);
+    match &entries[0] {
+        JournalEntry::ParentStarted(entry) => {
+            assert_eq!(entry.campaign_id, parent.campaign_id().clone());
+            assert_eq!(entry.parent_identity, parent);
+            assert_eq!(entry.repo_root, repo_root);
+            assert_eq!(entry.handoff_runtime_id, None);
+            assert_eq!(entry.pid, std::process::id());
+            assert!(entry.recorded_at.0 > 0);
+        }
+        other => panic!("unexpected first R4c -> R5 entry: {other:?}"),
+    }
+    match &entries[1] {
+        JournalEntry::Resource(sample) => {
+            assert_eq!(sample.campaign_id, parent.campaign_id().clone());
+            assert_eq!(sample.parent_id, parent.parent_id());
+            assert_eq!(sample.phase, journal::resource::Phase::ParentStart);
+            assert_eq!(sample.status, journal::resource::Status::Missing);
+            assert_eq!(sample.path, repo_root.join("target"));
+        }
+        other => panic!("unexpected second R4c -> R5 entry: {other:?}"),
+    }
+    let campaign_root = prototype1_campaign_root(&manifest_path);
+    assert!(!campaign_root.join("history").exists());
+    assert!(!campaign_root.join("messages").exists());
+    assert!(!repo_root.join("target").exists());
+}
+
+#[test]
+fn prototype1_transition_contract_r4c_to_r5_db_backends_fail_loudly_without_writes() {
+    for backend in [
+        profile::EvalStorageBackend::Database,
+        profile::EvalStorageBackend::DualStrict,
+    ] {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let fixture = r4c_fixture(tmp.path(), backend);
+        let err = match crate::cli::prototype1_state::live_edges::r4c_to_r5(fixture.r4c) {
+            Ok(_) => panic!("R4c -> R5 must not silently fall back for {backend:?}"),
+            Err(err) => err,
+        };
+        match err {
+            PrepareError::DatabaseSetup { phase, detail } => {
+                assert_eq!(phase, "prototype1_eval_store");
+                assert!(detail.contains("is not wired for production parent-start"));
+                let name = match backend {
+                    profile::EvalStorageBackend::Fs => "fs",
+                    profile::EvalStorageBackend::Database => "database",
+                    profile::EvalStorageBackend::DualStrict => "dual-strict",
+                };
+                assert!(detail.contains(name));
+            }
+            other => panic!("unexpected {backend:?} R4c -> R5 error: {other:?}"),
+        }
+        assert!(
+            !fixture.journal_path.exists(),
+            "{backend:?} must fail before writing parent-start journal evidence"
+        );
+    }
+}
+
 fn count_broad_requests(manifest_path: &Path) -> usize {
     let request_dir = prototype1_campaign_root(manifest_path).join("messages/edit-harness-request");
     match fs::read_dir(request_dir) {

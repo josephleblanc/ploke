@@ -177,23 +177,32 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 
 ### Slice 3 — Move `R4c -> R5` behind FsEvalStore
 
-- Status: complete for `fs`; production `database`/`dual-strict` return explicit configuration errors until DB handle wiring.
+- Status: complete for `fs`; production `database`/`dual-strict` return explicit configuration errors until DB handle wiring. Transition-contract tests were added after review clarified that per-edge tests are required, not just store-unit tests.
 - Assumptions:
   - `backend = fs` must preserve the existing parent-start/resource JSONL evidence path.
   - `database` and `dual-strict` must fail loudly rather than use the passive mirror or silently fall back.
+  - Checkpoints accelerate setup and downstream coverage; they do not replace tests that execute the exact typestate transition.
 - Code touched:
   - `crates/ploke-eval/src/cli/prototype1_state/live_edges.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs`
+  - `docs/active/agents/2026-06-22_prototype1-eval-store-data-model/slice-by-slice-implementation-plan.md`
 - Tests added/changed:
-  - production code now uses the Slice 2 `FsEvalStore` path; no new dedicated R4c fixture test was added in this sub-slice.
-  - existing `prototype1_eval_store_parent_start_fs_appends_expected_entries` covers the writer semantics used by `R4c -> R5`.
+  - `prototype1_transition_contract_r4c_to_r5_fs_records_parent_start`
+  - `prototype1_transition_contract_r4c_to_r5_db_backends_fail_loudly_without_writes`
+  - existing `prototype1_eval_store_parent_start_fs_appends_expected_entries` covers the lower-level writer semantics used by `R4c -> R5`.
 - Commands run:
   - `cargo fmt --all`
   - `cargo test -p ploke-eval prototype1_eval_store_parent_start_fs -- --nocapture`
-- Live API used: no
+  - `cargo fmt --all`
+  - `cargo test -p ploke-eval prototype1_transition_contract_r4c_to_r5 -- --nocapture`
+  - `cargo test -p ploke-eval prototype1_transition_contract -- --nocapture`
+  - `cargo test -p ploke-eval prototype1_eval_store_parent_start_fs -- --nocapture`
+  - `cargo check -p ploke-eval`
+- Live API used: no; `R4c -> R5` is parent-owned and provider-free.
 - Checkpoints created/updated: none
 - Artifacts retained: none
-- Result: `R4c -> R5` delegates parent-start evidence to `ConfiguredEvalStore::Fs`; `database`/`dual-strict` produce explicit `DatabaseSetup` errors pending Slice 5.
-- Commit: pending
+- Result: `R4c -> R5` delegates parent-start evidence to `ConfiguredEvalStore::Fs`; the transition-contract test proves the output is `R5`, the journal contains exactly `ParentStarted` plus `Resource(parent_start)`, and no History/message/artifact authority surface is created by this edge. `database`/`dual-strict` produce explicit `DatabaseSetup` errors and write no parent-start journal evidence pending DB handle wiring.
+- Commit: `9b8e3247` for production routing; transition-contract test commit pending.
 
 ### Slice 4 — First DB schema/backend for tests and injected stores
 
