@@ -604,6 +604,47 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: `eval_invocation` schema now records child invocation campaign/node/runtime/role, store/source/evidence axes, invocation path, source ref, content hash, and timestamps. `write_child_invocation` still writes the JSON file first, then optionally mirrors to `prototype1/eval-store.cozo.sqlite` when present. A DB invocation row does not replace the missing executable invocation file gate.
 - Commit: current slice commit, `feat: mirror child invocation rows`.
 
+### Slice 8b — Child Ready/Evaluating channel message eval mirror
+
+- Status: complete for child `Ready` and `Evaluating` channel-message mirrors only; terminal `Result`, `ResultWritten`, failure/exit, successor, receipt/import, and provider-dependent child terminal-result surfaces remain deferred.
+- Assumptions:
+  - The serialized `Envelope<ToParent>` JSONL channel record remains the transport and protocol authority.
+  - `eval_channel_message` rows are query evidence only; they do not synthesize messages, advance cursors, replace channel files, or make a child selectable.
+  - `send_ready` and `send_evaluating` remain filesystem-first. If an owner eval DB already exists, a DB mirror failure after the channel append fails the send loudly.
+  - Channel rows use axes `store_scope=channel`, `producer_role=child`, `visibility_scope=parent_visible`, `source_class=direct_write`, `evidence_class=channel_message`.
+  - The first channel mirror reuses the real persisted `Envelope<ToParent>` as the transport contract and adds only internal DB evidence/row carriers for indexes, hashes, and source coordinates.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/channel.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/evidence.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/cozo_params.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/cozo_store.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/mod.rs`
+- Tests added/changed:
+  - `prototype1_eval_store_channel_ready_writes_owner_db_row`
+  - `prototype1_storage_authority_negative_channel_row_cannot_replace_envelope`
+  - existing `file_transport_reads_only_new_complete_records`
+  - existing `envelope_validation_rejects_wrong_body_hash`
+  - existing `child_spawn_observes_ready`
+  - existing `prototype1_eval_store_parent_start`
+  - existing `prototype1_eval_store_child_invocation_writes_owner_db_row`
+- Commands run:
+  - `gitnexus impact ... send_ready`: LOW risk; direct callers include channel tests and `execute_prototype1_runner_invocation`; affected process `live_google_child_runner_success`.
+  - `gitnexus impact ... send_evaluating`: LOW risk; direct callers include channel tests and `execute_prototype1_runner_invocation`; affected process `live_google_child_runner_success`.
+  - `cargo fmt --all`
+  - `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_channel_ready_writes_owner_db_row -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_storage_authority_negative_channel_row_cannot_replace_envelope -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval file_transport_reads_only_new_complete_records -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval envelope_validation_rejects_wrong_body_hash -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval child_spawn_observes_ready -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_parent_start -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_child_invocation_writes_owner_db_row -- --nocapture`
+- Live API used: no. This sub-slice mirrors local child ready/evaluating channel envelopes and does not touch provider-dependent child treatment execution or terminal result production.
+- Checkpoints created/updated: none
+- Artifacts retained: none
+- Result: `eval_channel_message` schema now records child channel envelope identity, direction, message kind/id, source endpoint/cursor/byte counts, body hash, serialized envelope hash, and timestamps. `send_ready` and `send_evaluating` still append the JSONL envelope first, then optionally mirror to `prototype1/eval-store.cozo.sqlite` when present. A DB channel-message row does not replace or synthesize a missing channel envelope.
+- Commit: current slice commit, `feat: mirror child channel message rows`.
+
 ### Later slices
 
 Create a new subsection per slice before editing.

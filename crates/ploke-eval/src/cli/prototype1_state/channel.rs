@@ -42,6 +42,7 @@ use uuid::Uuid;
 use super::{
     child::{self, Child},
     cli_facing::Prototype1TreatmentEvidence,
+    eval_store,
     event::{RecordedAt, RuntimeId},
     invocation::{SuccessorCompletionRecord, SuccessorReadyRecord},
     parent::{self, Parent},
@@ -575,7 +576,7 @@ where
     pub(crate) fn send_ready(
         self,
     ) -> Result<(Channel<Child<child::Ready>, T>, Receipt), ChannelError<T::Error>> {
-        let receipt = self.write(&self.endpoints.child_to_parent(), ToParent::Ready)?;
+        let receipt = self.write_child_message(ToParent::Ready, "ready")?;
         Ok((self.cast(), receipt))
     }
 }
@@ -589,7 +590,7 @@ where
     pub(crate) fn send_evaluating(
         self,
     ) -> Result<(Channel<Child<child::Evaluating>, T>, Receipt), ChannelError<T::Error>> {
-        let receipt = self.write(&self.endpoints.child_to_parent(), ToParent::Evaluating)?;
+        let receipt = self.write_child_message(ToParent::Evaluating, "evaluating")?;
         Ok((self.cast(), receipt))
     }
 }
@@ -711,6 +712,23 @@ where
             .map_err(ChannelError::Transport)
     }
 
+    fn write_child_message(
+        &self,
+        message: ToParent,
+        message_kind: &'static str,
+    ) -> Result<Receipt, ChannelError<T::Error>> {
+        let endpoint = self.endpoints.child_to_parent();
+        let envelope = Envelope::new(&endpoint, message).map_err(ChannelError::Encode)?;
+        let bytes = serde_json::to_vec(&envelope).map_err(ChannelError::Encode)?;
+        let receipt = self
+            .transport
+            .append(&endpoint, &bytes)
+            .map_err(ChannelError::Transport)?;
+        mirror_channel_message(&endpoint, &envelope, &bytes, &receipt, message_kind)
+            .map_err(ChannelError::EvalStore)?;
+        Ok(receipt)
+    }
+
     fn read<M>(
         &self,
         endpoint: &Endpoint,
@@ -741,6 +759,48 @@ where
     }
 }
 
+fn mirror_channel_message(
+    endpoint: &Endpoint,
+    envelope: &Envelope<ToParent>,
+    bytes: &[u8],
+    receipt: &Receipt,
+    message_kind: &'static str,
+) -> Result<(), eval_store::EvalStoreError> {
+    let db_path = match eval_store::owner_eval_db_file_for_record_path(receipt.endpoint()) {
+        Ok(path) => path,
+        Err(eval_store::EvalStoreError::Validation { .. }) => return Ok(()),
+        Err(source) => return Err(source),
+    };
+    if !db_path.is_file() {
+        return Ok(());
+    }
+    eval_store::write_channel_message_to_owner_db(
+        &db_path,
+        eval_store::ChannelMessageEvidence {
+            campaign_id: endpoint.campaign_id.clone(),
+            node_id: endpoint.node_id.clone(),
+            runtime_id: endpoint.runtime_id.to_string(),
+            direction: direction_label(endpoint.direction).to_string(),
+            message_kind: message_kind.to_string(),
+            message_id: envelope.message_id.to_string(),
+            endpoint_path: receipt.endpoint().to_path_buf(),
+            cursor_offset: receipt.cursor().offset() as i64,
+            bytes_written: receipt.bytes_written() as i64,
+            body_hash: envelope.body_hash.clone(),
+            content_sha256: format!("{:x}", Sha256::digest(bytes)),
+            recorded_at: envelope.recorded_at.0.to_string(),
+        },
+    )?;
+    Ok(())
+}
+
+fn direction_label(direction: Direction) -> &'static str {
+    match direction {
+        Direction::ParentToChild => "parent_to_child",
+        Direction::ChildToParent => "child_to_parent",
+    }
+}
+
 /// Channel-level serialization, validation, or transport failure.
 #[derive(Debug)]
 pub(crate) enum ChannelError<E> {
@@ -752,6 +812,8 @@ pub(crate) enum ChannelError<E> {
     Envelope(EnvelopeError),
     /// Transport failed.
     Transport(E),
+    /// Eval-store mirror failed after the transport accepted an envelope.
+    EvalStore(eval_store::EvalStoreError),
 }
 
 /// Envelope identity mismatch.
@@ -950,6 +1012,15 @@ mod tests {
         Channel::new(endpoints, FileTransport)
     }
 
+    fn seed_owner_db(db_path: &Path) {
+        std::fs::create_dir_all(db_path.parent().expect("eval db parent"))
+            .expect("create eval db parent");
+        ploke_db::Database::new_init()
+            .expect("empty eval db")
+            .write_backup_to_path(db_path)
+            .expect("seed owner eval db");
+    }
+
     #[test]
     fn parent_and_child_have_opposite_directions_from_existing_role_states() {
         let temp = tempfile::tempdir().unwrap();
@@ -975,6 +1046,170 @@ mod tests {
         assert_eq!(parent_messages.len(), 1);
         assert_eq!(parent_messages[0].direction(), Direction::ChildToParent);
         assert!(matches!(parent_messages[0].body(), ToParent::Ready));
+    }
+
+    #[test]
+    fn prototype1_eval_store_channel_ready_writes_owner_db_row() {
+        let temp = tempfile::tempdir().unwrap();
+        let prototype1_root = temp.path().join("prototype1");
+        let db_path = prototype1_root.join("eval-store.cozo.sqlite");
+        seed_owner_db(&db_path);
+        let endpoints = endpoints(prototype1_root.join("nodes/node-1/channels/runtime-1"));
+        let endpoint = endpoints.child_to_parent();
+        let child_role = child();
+        let child = Channel::for_child(&child_role, endpoints, FileTransport);
+
+        let (_child, receipt) = child.send_ready().expect("send ready");
+
+        let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(
+            "campaign_id".to_string(),
+            cozo::DataValue::from(endpoint.campaign_id().to_string()),
+        );
+        params.insert(
+            "node_id".to_string(),
+            cozo::DataValue::from(endpoint.node_id().to_string()),
+        );
+        params.insert(
+            "runtime_id".to_string(),
+            cozo::DataValue::from(endpoint.runtime_id().to_string()),
+        );
+        let rows = db
+            .raw_query_params(
+                r#"
+?[
+    direction,
+    message_kind,
+    store_scope,
+    producer_role,
+    visibility_scope,
+    source_class,
+    evidence_class,
+    validation_status,
+    endpoint_path,
+    cursor_offset,
+    bytes_written,
+    body_hash,
+    content_sha256
+] :=
+    *eval_channel_message {
+        campaign_id,
+        node_id,
+        runtime_id,
+        direction,
+        message_kind,
+        store_scope,
+        producer_role,
+        visibility_scope,
+        source_class,
+        evidence_class,
+        validation_status,
+        endpoint_path,
+        cursor_offset,
+        bytes_written,
+        body_hash,
+        content_sha256
+    },
+    campaign_id = $campaign_id,
+    node_id = $node_id,
+    runtime_id = $runtime_id
+"#,
+                params,
+            )
+            .expect("query channel message rows");
+
+        assert_eq!(rows.rows.len(), 1);
+        let row = rows.row_refs().next().expect("channel row");
+        assert_eq!(
+            row.get::<String>("direction").expect("direction"),
+            "child_to_parent"
+        );
+        assert_eq!(row.get::<String>("message_kind").expect("kind"), "ready");
+        assert_eq!(row.get::<String>("store_scope").expect("scope"), "channel");
+        assert_eq!(
+            row.get::<String>("producer_role").expect("producer"),
+            "child"
+        );
+        assert_eq!(
+            row.get::<String>("visibility_scope").expect("visibility"),
+            "parent_visible"
+        );
+        assert_eq!(
+            row.get::<String>("source_class").expect("source"),
+            "direct_write"
+        );
+        assert_eq!(
+            row.get::<String>("evidence_class").expect("evidence"),
+            "channel_message"
+        );
+        assert_eq!(
+            row.get::<String>("validation_status").expect("status"),
+            "valid"
+        );
+        assert_eq!(
+            row.get::<String>("endpoint_path").expect("path"),
+            receipt.endpoint().display().to_string()
+        );
+        assert_eq!(
+            row.get::<i64>("cursor_offset").expect("cursor"),
+            receipt.cursor().offset() as i64
+        );
+        assert_eq!(
+            row.get::<i64>("bytes_written").expect("bytes"),
+            receipt.bytes_written() as i64
+        );
+        assert!(
+            !row.get::<String>("body_hash")
+                .expect("body hash")
+                .is_empty(),
+            "channel row carries envelope body hash"
+        );
+        assert!(
+            !row.get::<String>("content_sha256")
+                .expect("content hash")
+                .is_empty(),
+            "channel row carries serialized envelope hash"
+        );
+    }
+
+    #[test]
+    fn prototype1_storage_authority_negative_channel_row_cannot_replace_envelope() {
+        let temp = tempfile::tempdir().unwrap();
+        let prototype1_root = temp.path().join("prototype1");
+        let db_path = prototype1_root.join("eval-store.cozo.sqlite");
+        let endpoints = endpoints(prototype1_root.join("nodes/node-1/channels/runtime-1"));
+        let endpoint = endpoints.child_to_parent();
+        eval_store::write_channel_message_to_owner_db(
+            &db_path,
+            eval_store::ChannelMessageEvidence {
+                campaign_id: endpoint.campaign_id().clone(),
+                node_id: endpoint.node_id().to_string(),
+                runtime_id: endpoint.runtime_id().to_string(),
+                direction: direction_label(endpoint.direction()).to_string(),
+                message_kind: "ready".to_string(),
+                message_id: Uuid::new_v4().to_string(),
+                endpoint_path: endpoint.path().to_path_buf(),
+                cursor_offset: 1,
+                bytes_written: 1,
+                body_hash: "missing-envelope-body-hash".to_string(),
+                content_sha256: "missing-envelope-content-hash".to_string(),
+                recorded_at: "0".to_string(),
+            },
+        )
+        .expect("write channel mirror row");
+        let parent = channel::<Parent<parent::Selectable>>(endpoints);
+
+        let (_, messages) = parent
+            .recv_from_child(Cursor::start())
+            .expect("read child channel");
+
+        assert!(
+            messages.is_empty(),
+            "eval_channel_message row must not synthesize a channel envelope"
+        );
+        assert!(!endpoint.path().exists());
+        assert!(db_path.is_file());
     }
 
     #[test]

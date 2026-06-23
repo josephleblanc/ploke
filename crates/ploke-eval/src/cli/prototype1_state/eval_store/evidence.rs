@@ -12,6 +12,7 @@ use super::error::EvalStoreError;
 
 pub(super) const EVENT_REL: &str = "eval_transition_event";
 pub(super) const INVOCATION_REL: &str = "eval_invocation";
+pub(super) const CHANNEL_MESSAGE_REL: &str = "eval_channel_message";
 pub(super) const RECORD_REL: &str = "eval_record_ref";
 pub(super) const TRACE_EVENT_REL: &str = "eval_trace_event";
 pub(super) const LOG_REF_REL: &str = "eval_log_ref";
@@ -19,13 +20,16 @@ pub(super) const PARENT_STARTED_TRANSITION: &str = "r4c_to_r5";
 pub(super) const PARENT_STARTED_PHASE: &str = "parent_started";
 pub(super) const PARENT_STARTED_OUTCOME: &str = "recorded";
 pub(super) const STORE_SCOPE: &str = "parent";
+pub(super) const CHANNEL_SCOPE: &str = "channel";
 pub(super) const PRODUCER_ROLE_PARENT: &str = "parent";
+pub(super) const PRODUCER_ROLE_CHILD: &str = "child";
 pub(super) const VISIBILITY_SCOPE: &str = "parent_visible";
 pub(super) const JOURNAL_SOURCE_CLASS: &str = "direct_write";
 pub(super) const COMPATIBILITY_IMPORT_CLASS: &str = "compatibility_import";
 pub(super) const TYPED_TRANSITION_CLASS: &str = "typed_transition";
 pub(super) const DIAGNOSTIC_CLASS: &str = "diagnostic";
 pub(super) const BOOTSTRAP_CLASS: &str = "bootstrap";
+pub(super) const CHANNEL_CLASS: &str = "channel_message";
 pub(super) const COMPATIBILITY_CLASS: &str = "compatibility";
 pub(super) const VALID_STATUS: &str = "valid";
 pub(super) const JOURNAL_SCHEMA: &str = "prototype1-transition-journal.jsonl";
@@ -128,6 +132,28 @@ pub(crate) struct InvocationEvidence {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct InvocationReceipt {
     pub(crate) invocation_id: String,
+    pub(crate) content_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ChannelMessageEvidence {
+    pub(crate) campaign_id: CampaignId,
+    pub(crate) node_id: String,
+    pub(crate) runtime_id: String,
+    pub(crate) direction: String,
+    pub(crate) message_kind: String,
+    pub(crate) message_id: String,
+    pub(crate) endpoint_path: PathBuf,
+    pub(crate) cursor_offset: i64,
+    pub(crate) bytes_written: i64,
+    pub(crate) body_hash: String,
+    pub(crate) content_sha256: String,
+    pub(crate) recorded_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ChannelMessageReceipt {
+    pub(crate) channel_message_id: String,
     pub(crate) content_sha256: String,
 }
 
@@ -309,6 +335,31 @@ pub(super) struct EvalInvocationRow {
     pub(super) invocation_path: String,
     pub(super) source_ref: String,
     pub(super) content_sha256: String,
+    pub(super) recorded_at: String,
+    pub(super) ingested_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct EvalChannelMessageRow {
+    pub(super) channel_message_id: String,
+    pub(super) campaign_id: String,
+    pub(super) node_id: String,
+    pub(super) runtime_id: String,
+    pub(super) direction: String,
+    pub(super) message_kind: String,
+    pub(super) message_id: String,
+    pub(super) store_scope: String,
+    pub(super) producer_role: String,
+    pub(super) visibility_scope: String,
+    pub(super) source_class: String,
+    pub(super) evidence_class: String,
+    pub(super) validation_status: String,
+    pub(super) endpoint_path: String,
+    pub(super) cursor_offset: i64,
+    pub(super) bytes_written: i64,
+    pub(super) body_hash: String,
+    pub(super) content_sha256: String,
+    pub(super) source_ref: String,
     pub(super) recorded_at: String,
     pub(super) ingested_at: String,
 }
@@ -664,6 +715,57 @@ pub(super) fn invocation_row(
         invocation_path: path,
         source_ref,
         content_sha256: evidence.content_sha256,
+        recorded_at: evidence.recorded_at,
+        ingested_at: chrono::Utc::now().to_rfc3339(),
+    })
+}
+
+pub(super) fn channel_message_row(
+    evidence: ChannelMessageEvidence,
+) -> Result<EvalChannelMessageRow, EvalStoreError> {
+    require_non_empty("channel_message.node_id", &evidence.node_id)?;
+    require_non_empty("channel_message.runtime_id", &evidence.runtime_id)?;
+    require_non_empty("channel_message.direction", &evidence.direction)?;
+    require_non_empty("channel_message.message_kind", &evidence.message_kind)?;
+    require_non_empty("channel_message.message_id", &evidence.message_id)?;
+    require_non_empty("channel_message.body_hash", &evidence.body_hash)?;
+    require_non_empty("channel_message.content_sha256", &evidence.content_sha256)?;
+    require_non_empty("channel_message.recorded_at", &evidence.recorded_at)?;
+    let endpoint_path = evidence.endpoint_path.display().to_string();
+    require_non_empty("channel_message.endpoint_path", &endpoint_path)?;
+    let cursor_offset =
+        validate_non_negative_i64(evidence.cursor_offset, "channel_message.cursor_offset")?;
+    let bytes_written =
+        validate_non_negative_i64(evidence.bytes_written, "channel_message.bytes_written")?;
+    let source_ref = format!("{endpoint_path}:cursor:{cursor_offset}");
+    let channel_message_id = channel_message_id(
+        &evidence.campaign_id,
+        &evidence.node_id,
+        &evidence.runtime_id,
+        &evidence.direction,
+        &evidence.message_id,
+        &evidence.content_sha256,
+    );
+    Ok(EvalChannelMessageRow {
+        channel_message_id,
+        campaign_id: evidence.campaign_id.to_string(),
+        node_id: evidence.node_id,
+        runtime_id: evidence.runtime_id,
+        direction: evidence.direction,
+        message_kind: evidence.message_kind,
+        message_id: evidence.message_id,
+        store_scope: CHANNEL_SCOPE.to_string(),
+        producer_role: PRODUCER_ROLE_CHILD.to_string(),
+        visibility_scope: VISIBILITY_SCOPE.to_string(),
+        source_class: JOURNAL_SOURCE_CLASS.to_string(),
+        evidence_class: CHANNEL_CLASS.to_string(),
+        validation_status: VALID_STATUS.to_string(),
+        endpoint_path,
+        cursor_offset,
+        bytes_written,
+        body_hash: evidence.body_hash,
+        content_sha256: evidence.content_sha256,
+        source_ref,
         recorded_at: evidence.recorded_at,
         ingested_at: chrono::Utc::now().to_rfc3339(),
     })
@@ -1038,6 +1140,25 @@ fn invocation_id(
         runtime_id,
         role,
         source_ref,
+        content_sha256,
+    ])
+}
+
+fn channel_message_id(
+    campaign_id: &CampaignId,
+    node_id: &str,
+    runtime_id: &str,
+    direction: &str,
+    message_id: &str,
+    content_sha256: &str,
+) -> String {
+    hash_parts(&[
+        "p1.eval.channel_message.v1",
+        &campaign_id.to_string(),
+        node_id,
+        runtime_id,
+        direction,
+        message_id,
         content_sha256,
     ])
 }

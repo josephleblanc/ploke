@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use cozo::DataValue;
 
 use super::evidence::{
-    EvalInvocationRow, EvalLogRefRow, EvalRecordRefRow, EvalTraceEventRow, EvalTransitionEventRow,
+    EvalChannelMessageRow, EvalInvocationRow, EvalLogRefRow, EvalRecordRefRow, EvalTraceEventRow,
+    EvalTransitionEventRow,
 };
 
 pub(super) fn transition_event_params(row: &EvalTransitionEventRow) -> BTreeMap<String, DataValue> {
@@ -177,6 +178,53 @@ pub(super) fn invocation_params(row: &EvalInvocationRow) -> BTreeMap<String, Dat
         "content_sha256".to_string(),
         row.content_sha256.clone().into(),
     );
+    params.insert("recorded_at".to_string(), row.recorded_at.clone().into());
+    params.insert("ingested_at".to_string(), row.ingested_at.clone().into());
+    params
+}
+
+pub(super) fn channel_message_params(row: &EvalChannelMessageRow) -> BTreeMap<String, DataValue> {
+    let mut params = BTreeMap::new();
+    params.insert(
+        "channel_message_id".to_string(),
+        row.channel_message_id.clone().into(),
+    );
+    params.insert("campaign_id".to_string(), row.campaign_id.clone().into());
+    params.insert("node_id".to_string(), row.node_id.clone().into());
+    params.insert("runtime_id".to_string(), row.runtime_id.clone().into());
+    params.insert("direction".to_string(), row.direction.clone().into());
+    params.insert("message_kind".to_string(), row.message_kind.clone().into());
+    params.insert("message_id".to_string(), row.message_id.clone().into());
+    params.insert("store_scope".to_string(), row.store_scope.clone().into());
+    params.insert(
+        "producer_role".to_string(),
+        row.producer_role.clone().into(),
+    );
+    params.insert(
+        "visibility_scope".to_string(),
+        row.visibility_scope.clone().into(),
+    );
+    params.insert("source_class".to_string(), row.source_class.clone().into());
+    params.insert(
+        "evidence_class".to_string(),
+        row.evidence_class.clone().into(),
+    );
+    params.insert(
+        "validation_status".to_string(),
+        row.validation_status.clone().into(),
+    );
+    params.insert(
+        "endpoint_path".to_string(),
+        row.endpoint_path.clone().into(),
+    );
+    params.insert("cursor_offset".to_string(), row.cursor_offset.into());
+    params.insert("bytes_written".to_string(), row.bytes_written.into());
+    params.insert("body_hash".to_string(), row.body_hash.clone().into());
+    params.insert(
+        "content_sha256".to_string(),
+        row.content_sha256.clone().into(),
+    );
+    params.insert("source_ref".to_string(), row.source_ref.clone().into());
     params.insert("recorded_at".to_string(), row.recorded_at.clone().into());
     params.insert("ingested_at".to_string(), row.ingested_at.clone().into());
     params

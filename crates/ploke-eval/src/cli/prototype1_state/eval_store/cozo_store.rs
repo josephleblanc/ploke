@@ -9,18 +9,19 @@ use ploke_db::{Database, DbError, QueryResult};
 
 use super::{
     cozo_params::{
-        invocation_params, log_ref_params, record_ref_params, trace_event_params,
-        transition_event_params,
+        channel_message_params, invocation_params, log_ref_params, record_ref_params,
+        trace_event_params, transition_event_params,
     },
     error::EvalStoreError,
     evidence::{
-        EVENT_REL, EvalInvocationRow, EvalLogRefRow, EvalRecordRefRow, EvalTraceEventRow,
-        EvalTransitionEventRow, INVOCATION_REL, LOG_REF_REL, LogRefEvidence, LogRefReceipt,
-        ObservationJsonlImport, ParentStartedDbReceipt, ParentStartedEvidence,
+        CHANNEL_MESSAGE_REL, ChannelMessageEvidence, ChannelMessageReceipt, EVENT_REL,
+        EvalChannelMessageRow, EvalInvocationRow, EvalLogRefRow, EvalRecordRefRow,
+        EvalTraceEventRow, EvalTransitionEventRow, INVOCATION_REL, LOG_REF_REL, LogRefEvidence,
+        LogRefReceipt, ObservationJsonlImport, ParentStartedDbReceipt, ParentStartedEvidence,
         ParentStartedReceipt, ParentStartedRows, RECORD_REL, RecordRefEvidence, RecordRefReceipt,
-        TRACE_EVENT_REL, TraceEventEvidence, TraceEventReceipt, TraceImportReceipt, invocation_row,
-        log_ref_row, parent_started_rows, parse_observation_jsonl, record_ref_row_from_evidence,
-        trace_event_row,
+        TRACE_EVENT_REL, TraceEventEvidence, TraceEventReceipt, TraceImportReceipt,
+        channel_message_row, invocation_row, log_ref_row, parent_started_rows,
+        parse_observation_jsonl, record_ref_row_from_evidence, trace_event_row,
     },
 };
 
@@ -116,6 +117,19 @@ impl<'a, D: EvalDb + ?Sized> DbEvalStore<'a, D> {
         put_invocation_row(self.db, &row)?;
         Ok(super::evidence::InvocationReceipt {
             invocation_id: row.invocation_id,
+            content_sha256: row.content_sha256,
+        })
+    }
+
+    pub(crate) fn put_channel_message(
+        &self,
+        evidence: ChannelMessageEvidence,
+    ) -> Result<ChannelMessageReceipt, EvalStoreError> {
+        self.install_schema()?;
+        let row = channel_message_row(evidence)?;
+        put_channel_message_row(self.db, &row)?;
+        Ok(ChannelMessageReceipt {
+            channel_message_id: row.channel_message_id,
             content_sha256: row.content_sha256,
         })
     }
@@ -230,6 +244,17 @@ pub(crate) fn write_invocation_to_owner_db(
     let db = load_owner_eval_database(db_path)?;
     let store = DbEvalStore::new(&db);
     let receipt = store.put_invocation(evidence)?;
+    persist_owner_eval_database(&db, db_path)?;
+    Ok(receipt)
+}
+
+pub(crate) fn write_channel_message_to_owner_db(
+    db_path: &Path,
+    evidence: ChannelMessageEvidence,
+) -> Result<ChannelMessageReceipt, EvalStoreError> {
+    let db = load_owner_eval_database(db_path)?;
+    let store = DbEvalStore::new(&db);
+    let receipt = store.put_channel_message(evidence)?;
     persist_owner_eval_database(&db, db_path)?;
     Ok(receipt)
 }
@@ -426,6 +451,41 @@ fn ensure_eval_store_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), EvalStoreE
         })?;
     }
 
+    if !eval_relation_exists(db, CHANNEL_MESSAGE_REL)? {
+        db.eval_query_mut_params(
+            r#"
+:create eval_channel_message {
+    channel_message_id: String =>
+    campaign_id: String,
+    node_id: String,
+    runtime_id: String,
+    direction: String,
+    message_kind: String,
+    message_id: String,
+    store_scope: String,
+    producer_role: String,
+    visibility_scope: String,
+    source_class: String,
+    evidence_class: String,
+    validation_status: String,
+    endpoint_path: String,
+    cursor_offset: Int,
+    bytes_written: Int,
+    body_hash: String,
+    content_sha256: String,
+    source_ref: String,
+    recorded_at: String,
+    ingested_at: String
+}
+"#,
+            BTreeMap::new(),
+        )
+        .map_err(|source| EvalStoreError::Db {
+            phase: "schema.eval_channel_message",
+            source,
+        })?;
+    }
+
     if !eval_relation_exists(db, TRACE_EVENT_REL)? {
         db.eval_query_mut_params(
             r#"
@@ -616,6 +676,34 @@ fn existing_invocation_content_hash<D: EvalDb + ?Sized>(
     }))
 }
 
+fn existing_channel_message_content_hash<D: EvalDb + ?Sized>(
+    db: &D,
+    channel_message_id: &str,
+) -> Result<Option<String>, EvalStoreError> {
+    let mut params = BTreeMap::new();
+    params.insert(
+        "channel_message_id".to_string(),
+        DataValue::from(channel_message_id.to_string()),
+    );
+    let result = db
+        .eval_query_params(
+            r#"
+?[content_sha256] :=
+    *eval_channel_message { channel_message_id, content_sha256 },
+    channel_message_id = $channel_message_id
+"#,
+            params,
+        )
+        .map_err(|source| EvalStoreError::Db {
+            phase: "query.eval_channel_message.content_hash",
+            source,
+        })?;
+    Ok(result.rows.first().and_then(|row| match row.first() {
+        Some(DataValue::Str(value)) => Some(value.to_string()),
+        _ => None,
+    }))
+}
+
 fn put_transition_event_row<D: EvalDb + ?Sized>(
     db: &D,
     row: &EvalTransitionEventRow,
@@ -780,6 +868,101 @@ fn put_invocation_row<D: EvalDb + ?Sized>(
     )
     .map_err(|source| EvalStoreError::Db {
         phase: "put.eval_invocation",
+        source,
+    })?;
+    Ok(())
+}
+
+fn put_channel_message_row<D: EvalDb + ?Sized>(
+    db: &D,
+    row: &EvalChannelMessageRow,
+) -> Result<(), EvalStoreError> {
+    if let Some(existing) = existing_channel_message_content_hash(db, &row.channel_message_id)? {
+        if existing == row.content_sha256 {
+            return Ok(());
+        }
+        return Err(EvalStoreError::Validation {
+            field: "eval_channel_message.content_sha256",
+            detail: format!(
+                "channel message '{}' already exists with content hash {}, attempted {}",
+                row.channel_message_id, existing, row.content_sha256
+            ),
+        });
+    }
+    db.eval_query_mut_params(
+        r#"
+?[
+    channel_message_id,
+    campaign_id,
+    node_id,
+    runtime_id,
+    direction,
+    message_kind,
+    message_id,
+    store_scope,
+    producer_role,
+    visibility_scope,
+    source_class,
+    evidence_class,
+    validation_status,
+    endpoint_path,
+    cursor_offset,
+    bytes_written,
+    body_hash,
+    content_sha256,
+    source_ref,
+    recorded_at,
+    ingested_at
+] :=
+    channel_message_id = $channel_message_id,
+    campaign_id = $campaign_id,
+    node_id = $node_id,
+    runtime_id = $runtime_id,
+    direction = $direction,
+    message_kind = $message_kind,
+    message_id = $message_id,
+    store_scope = $store_scope,
+    producer_role = $producer_role,
+    visibility_scope = $visibility_scope,
+    source_class = $source_class,
+    evidence_class = $evidence_class,
+    validation_status = $validation_status,
+    endpoint_path = $endpoint_path,
+    cursor_offset = $cursor_offset,
+    bytes_written = $bytes_written,
+    body_hash = $body_hash,
+    content_sha256 = $content_sha256,
+    source_ref = $source_ref,
+    recorded_at = $recorded_at,
+    ingested_at = $ingested_at
+:put eval_channel_message {
+    channel_message_id =>
+    campaign_id,
+    node_id,
+    runtime_id,
+    direction,
+    message_kind,
+    message_id,
+    store_scope,
+    producer_role,
+    visibility_scope,
+    source_class,
+    evidence_class,
+    validation_status,
+    endpoint_path,
+    cursor_offset,
+    bytes_written,
+    body_hash,
+    content_sha256,
+    source_ref,
+    recorded_at,
+    ingested_at
+}
+"#,
+        channel_message_params(row),
+    )
+    .map_err(|source| EvalStoreError::Db {
+        phase: "put.eval_channel_message",
         source,
     })?;
     Ok(())
