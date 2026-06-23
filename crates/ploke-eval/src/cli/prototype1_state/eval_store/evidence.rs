@@ -11,6 +11,7 @@ use super::super::{
 use super::error::EvalStoreError;
 
 pub(super) const EVENT_REL: &str = "eval_transition_event";
+pub(super) const INVOCATION_REL: &str = "eval_invocation";
 pub(super) const RECORD_REL: &str = "eval_record_ref";
 pub(super) const TRACE_EVENT_REL: &str = "eval_trace_event";
 pub(super) const LOG_REF_REL: &str = "eval_log_ref";
@@ -24,6 +25,7 @@ pub(super) const JOURNAL_SOURCE_CLASS: &str = "direct_write";
 pub(super) const COMPATIBILITY_IMPORT_CLASS: &str = "compatibility_import";
 pub(super) const TYPED_TRANSITION_CLASS: &str = "typed_transition";
 pub(super) const DIAGNOSTIC_CLASS: &str = "diagnostic";
+pub(super) const BOOTSTRAP_CLASS: &str = "bootstrap";
 pub(super) const COMPATIBILITY_CLASS: &str = "compatibility";
 pub(super) const VALID_STATUS: &str = "valid";
 pub(super) const JOURNAL_SCHEMA: &str = "prototype1-transition-journal.jsonl";
@@ -110,6 +112,23 @@ pub(crate) struct LogRefEvidence {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LogRefReceipt {
     pub(crate) log_ref_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct InvocationEvidence {
+    pub(crate) campaign_id: CampaignId,
+    pub(crate) node_id: String,
+    pub(crate) runtime_id: String,
+    pub(crate) role: String,
+    pub(crate) invocation_path: PathBuf,
+    pub(crate) content_sha256: String,
+    pub(crate) recorded_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct InvocationReceipt {
+    pub(crate) invocation_id: String,
+    pub(crate) content_sha256: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -272,6 +291,26 @@ pub(super) struct EvalLogRefRow {
     pub(super) content_sha256: Option<String>,
     pub(super) sensitivity: Option<String>,
     pub(super) recorded_at: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct EvalInvocationRow {
+    pub(super) invocation_id: String,
+    pub(super) campaign_id: String,
+    pub(super) node_id: String,
+    pub(super) runtime_id: String,
+    pub(super) role: String,
+    pub(super) store_scope: String,
+    pub(super) producer_role: String,
+    pub(super) visibility_scope: String,
+    pub(super) source_class: String,
+    pub(super) evidence_class: String,
+    pub(super) validation_status: String,
+    pub(super) invocation_path: String,
+    pub(super) source_ref: String,
+    pub(super) content_sha256: String,
+    pub(super) recorded_at: String,
+    pub(super) ingested_at: String,
 }
 
 #[derive(Debug, Clone)]
@@ -588,6 +627,45 @@ pub(super) fn record_ref_row_from_evidence(
         payload_json: evidence.payload_json,
         recorded_at,
         ingested_at,
+    })
+}
+
+pub(super) fn invocation_row(
+    evidence: InvocationEvidence,
+) -> Result<EvalInvocationRow, EvalStoreError> {
+    require_non_empty("invocation.node_id", &evidence.node_id)?;
+    require_non_empty("invocation.runtime_id", &evidence.runtime_id)?;
+    require_non_empty("invocation.role", &evidence.role)?;
+    require_non_empty("invocation.content_sha256", &evidence.content_sha256)?;
+    require_non_empty("invocation.recorded_at", &evidence.recorded_at)?;
+    let path = evidence.invocation_path.display().to_string();
+    require_non_empty("invocation.path", &path)?;
+    let source_ref = source_ref(&path, 1);
+    let invocation_id = invocation_id(
+        &evidence.campaign_id,
+        &evidence.node_id,
+        &evidence.runtime_id,
+        &evidence.role,
+        &source_ref,
+        &evidence.content_sha256,
+    );
+    Ok(EvalInvocationRow {
+        invocation_id,
+        campaign_id: evidence.campaign_id.to_string(),
+        node_id: evidence.node_id,
+        runtime_id: evidence.runtime_id,
+        role: evidence.role,
+        store_scope: STORE_SCOPE.to_string(),
+        producer_role: PRODUCER_ROLE_PARENT.to_string(),
+        visibility_scope: VISIBILITY_SCOPE.to_string(),
+        source_class: JOURNAL_SOURCE_CLASS.to_string(),
+        evidence_class: BOOTSTRAP_CLASS.to_string(),
+        validation_status: VALID_STATUS.to_string(),
+        invocation_path: path,
+        source_ref,
+        content_sha256: evidence.content_sha256,
+        recorded_at: evidence.recorded_at,
+        ingested_at: chrono::Utc::now().to_rfc3339(),
     })
 }
 
@@ -942,6 +1020,25 @@ fn log_ref_id(
             .unwrap_or_default(),
         &byte_len.map(|value| value.to_string()).unwrap_or_default(),
         content_sha256.unwrap_or(""),
+    ])
+}
+
+fn invocation_id(
+    campaign_id: &CampaignId,
+    node_id: &str,
+    runtime_id: &str,
+    role: &str,
+    source_ref: &str,
+    content_sha256: &str,
+) -> String {
+    hash_parts(&[
+        "p1.eval.invocation.v1",
+        &campaign_id.to_string(),
+        node_id,
+        runtime_id,
+        role,
+        source_ref,
+        content_sha256,
     ])
 }
 

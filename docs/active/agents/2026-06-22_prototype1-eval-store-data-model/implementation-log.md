@@ -568,6 +568,42 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: deterministic TUI-tools child-plan publication still writes and validates the child-plan MessageBox plus child node/request projection files. When `prototype1/eval-store.cozo.sqlite` exists, the parent Running/Failed `node.json` projections are also mirrored as parent-visible `scheduler_node` compatibility `eval_record_ref` rows with source coordinates, payload JSON, and payload hash. The broad-harness rejection test still proves deterministic child plans are not accepted as request-bound broad harness evidence.
 - Commit: current slice commit, `feat: mirror deterministic parent node refs`.
 
-### Slice 7+ — Later evidence slices
+### Slice 8a — Child invocation eval mirror
+
+- Status: complete for child executable invocation mirrors only; successor handoff invocation mirrors and channel message/receipt mirrors remain deferred.
+- Assumptions:
+  - `Invocation` remains the executable bootstrap contract; `eval_invocation` rows are query evidence only.
+  - `write_child_invocation` must remain filesystem-first. A DB failure after file write fails the configured write loudly, but a DB row cannot launch or replace the invocation file.
+  - The first Slice 8 invocation row should reuse the real persisted `Invocation` JSON and add only internal DB evidence/row carriers for axes, path, and content hash.
+  - Successor invocation writes are a separate HIGH-risk handoff surface and are not changed in this sub-slice.
+- Code touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/evidence.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/cozo_params.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/cozo_store.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/mod.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/invocation.rs`
+- Tests added/changed:
+  - `prototype1_eval_store_child_invocation_writes_owner_db_row`
+  - `prototype1_storage_authority_negative_invocation_row_cannot_replace_file`
+  - existing `child_spawn_observes_ready`
+  - existing `child_spawn_observes_failed_result`
+  - existing `prototype1_eval_store_parent_start`
+- Commands run:
+  - `gitnexus impact ... write_child_invocation`: LOW risk; direct callers include child runner tests and `live_google_child_runner_success`.
+  - `gitnexus impact ... write_successor_invocation_for_retired_parent`: HIGH risk through successor handoff and `r12_to_r13`; deferred.
+  - `cargo fmt --all`
+  - `TMPDIR=$PWD/target/tmp cargo check -p ploke-eval`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_child_invocation_writes_owner_db_row -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_storage_authority_negative_invocation_row_cannot_replace_file -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval child_spawn_observes_ready -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval child_spawn_observes_failed_result -- --nocapture`
+  - test-runner sub-agent: `TMPDIR=$PWD/target/tmp cargo test -p ploke-eval prototype1_eval_store_parent_start -- --nocapture`
+- Live API used: no. This sub-slice mirrors child invocation metadata after the executable invocation file is written; it does not change provider-dependent child treatment execution or terminal result production.
+- Checkpoints created/updated: none
+- Artifacts retained: none
+- Result: `eval_invocation` schema now records child invocation campaign/node/runtime/role, store/source/evidence axes, invocation path, source ref, content hash, and timestamps. `write_child_invocation` still writes the JSON file first, then optionally mirrors to `prototype1/eval-store.cozo.sqlite` when present. A DB invocation row does not replace the missing executable invocation file gate.
+- Commit: current slice commit, `feat: mirror child invocation rows`.
+
+### Later slices
 
 Create a new subsection per slice before editing.

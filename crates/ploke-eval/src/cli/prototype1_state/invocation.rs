@@ -27,12 +27,14 @@
 use crate::prelude::*;
 
 use crate::{
+    cli::prototype1_state::eval_store,
     cli::prototype1_state::profile::{self, RunProfileCommitment},
     intervention::{
         PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1NodeRecord, Prototype1RunnerRequest,
         ResolvedTreatmentBranch,
     },
 };
+use sha2::{Digest, Sha256};
 
 pub(crate) use ploke_records::invocation::{
     SUCCESSOR_COMPLETION_SCHEMA_VERSION, SUCCESSOR_READY_SCHEMA_VERSION, SuccessorCompletionRecord,
@@ -559,7 +561,8 @@ pub(crate) fn write_child_invocation(
     path: &Path,
     invocation: &ChildInvocation,
 ) -> Result<(), PrepareError> {
-    write_invocation(path, invocation.as_invocation())
+    write_invocation(path, invocation.as_invocation())?;
+    emit_child_invocation_if_owner_db_exists(path, invocation.as_invocation())
 }
 
 /// Persist one executable branch-successor invocation.
@@ -568,6 +571,44 @@ fn write_successor_invocation(
     invocation: &SuccessorInvocation,
 ) -> Result<(), PrepareError> {
     write_invocation(path, invocation.as_invocation())
+}
+
+fn emit_child_invocation_if_owner_db_exists(
+    path: &Path,
+    invocation: &Invocation,
+) -> Result<(), PrepareError> {
+    let db_path = eval_store::owner_eval_db_file_for_record_path(path).map_err(|source| {
+        PrepareError::DatabaseSetup {
+            phase: "eval_invocation_path",
+            detail: source.to_string(),
+        }
+    })?;
+    if !db_path.is_file() {
+        return Ok(());
+    }
+    let bytes = fs::read(path).map_err(|source| PrepareError::ReadManifest {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let evidence = eval_store::InvocationEvidence {
+        campaign_id: invocation.campaign_id.clone(),
+        node_id: invocation.node_id.clone(),
+        runtime_id: invocation.runtime_id.to_string(),
+        role: "child".to_string(),
+        invocation_path: path.to_path_buf(),
+        content_sha256: format!("{:x}", Sha256::digest(&bytes)),
+        recorded_at: invocation.created_at.clone(),
+    };
+    eval_store::write_invocation_to_owner_db(&db_path, evidence).map_err(|source| {
+        PrepareError::DatabaseSetup {
+            phase: "eval_invocation_put",
+            detail: format!(
+                "failed to persist child invocation eval row for '{}': {source}",
+                path.display()
+            ),
+        }
+    })?;
+    Ok(())
 }
 
 /// Persist a successor launch descriptor after the predecessor retired.
@@ -586,6 +627,156 @@ pub(crate) fn write_successor_invocation_for_retired_parent(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prototype1_eval_store_child_invocation_writes_owner_db_row() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let prototype1_root = tmp.path().join("prototype1");
+        let db_path = prototype1_root.join("eval-store.cozo.sqlite");
+        fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+        ploke_db::Database::new_init()
+            .expect("empty eval db")
+            .write_backup_to_path(&db_path)
+            .expect("seed owner eval db");
+        let runtime_id = RuntimeId::new();
+        let invocation_path =
+            invocation_path(&prototype1_root.join("nodes/node-child"), runtime_id);
+        let invocation = ChildInvocation {
+            inner: Invocation::child(
+                CampaignId::from("campaign-1"),
+                "node-child".to_string(),
+                runtime_id,
+                prototype1_root.join("transition-journal.jsonl"),
+                channel_root(&prototype1_root.join("nodes/node-child"), runtime_id),
+                None,
+                None,
+                None,
+            ),
+        };
+
+        write_child_invocation(&invocation_path, &invocation).expect("write child invocation");
+
+        let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(
+            "campaign_id".to_string(),
+            cozo::DataValue::from("campaign-1".to_string()),
+        );
+        params.insert(
+            "node_id".to_string(),
+            cozo::DataValue::from("node-child".to_string()),
+        );
+        params.insert(
+            "runtime_id".to_string(),
+            cozo::DataValue::from(runtime_id.to_string()),
+        );
+        let rows = db
+            .raw_query_params(
+                r#"
+?[
+    role,
+    store_scope,
+    producer_role,
+    visibility_scope,
+    source_class,
+    evidence_class,
+    validation_status,
+    invocation_path,
+    source_ref,
+    content_sha256
+] :=
+    *eval_invocation {
+        campaign_id,
+        node_id,
+        runtime_id,
+        role,
+        store_scope,
+        producer_role,
+        visibility_scope,
+        source_class,
+        evidence_class,
+        validation_status,
+        invocation_path,
+        source_ref,
+        content_sha256
+    },
+    campaign_id = $campaign_id,
+    node_id = $node_id,
+    runtime_id = $runtime_id
+"#,
+                params,
+            )
+            .expect("query child invocation rows");
+
+        assert_eq!(rows.rows.len(), 1);
+        let row = rows.row_refs().next().expect("invocation row");
+        assert_eq!(row.get::<String>("role").expect("role"), "child");
+        assert_eq!(row.get::<String>("store_scope").expect("scope"), "parent");
+        assert_eq!(row.get::<String>("producer_role").expect("role"), "parent");
+        assert_eq!(
+            row.get::<String>("visibility_scope").expect("visibility"),
+            "parent_visible"
+        );
+        assert_eq!(
+            row.get::<String>("source_class").expect("source"),
+            "direct_write"
+        );
+        assert_eq!(
+            row.get::<String>("evidence_class").expect("evidence"),
+            "bootstrap"
+        );
+        assert_eq!(
+            row.get::<String>("validation_status").expect("status"),
+            "valid"
+        );
+        assert_eq!(
+            row.get::<String>("invocation_path").expect("path"),
+            invocation_path.display().to_string()
+        );
+        assert!(
+            row.get::<String>("source_ref")
+                .expect("source ref")
+                .contains("json:L1")
+        );
+        assert!(
+            !row.get::<String>("content_sha256")
+                .expect("hash")
+                .is_empty(),
+            "invocation row carries file content hash"
+        );
+    }
+
+    #[test]
+    fn prototype1_storage_authority_negative_invocation_row_cannot_replace_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let prototype1_root = tmp.path().join("prototype1");
+        let db_path = prototype1_root.join("eval-store.cozo.sqlite");
+        let runtime_id = RuntimeId::new();
+        let invocation_path =
+            invocation_path(&prototype1_root.join("nodes/node-missing"), runtime_id);
+        eval_store::write_invocation_to_owner_db(
+            &db_path,
+            eval_store::InvocationEvidence {
+                campaign_id: CampaignId::from("campaign-1"),
+                node_id: "node-missing".to_string(),
+                runtime_id: runtime_id.to_string(),
+                role: "child".to_string(),
+                invocation_path: invocation_path.clone(),
+                content_sha256: "missing-file-hash".to_string(),
+                recorded_at: "2026-06-23T00:00:00Z".to_string(),
+            },
+        )
+        .expect("write invocation row");
+
+        let err = load_executable(&invocation_path)
+            .expect_err("DB invocation row must not replace executable invocation file");
+        let PrepareError::ReadManifest { path, source } = err else {
+            panic!("unexpected error variant");
+        };
+        assert_eq!(path, invocation_path);
+        assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+        assert!(db_path.is_file());
+    }
 
     #[test]
     fn successor_launch_args_reenter_typed_parent_command() {
