@@ -304,6 +304,7 @@ for a more fuzzy search."#
             )),
             snippet,
             type_context: None,
+            call_context: Vec::new(),
         };
 
         let node_edge_info = NodeEdgeInfo {

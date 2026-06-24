@@ -16,10 +16,15 @@ mod tests {
     use std::{collections::BTreeMap, default, ops::Deref, sync::Arc};
 
     use crate::{ApproxCharTokenizer, AssemblyPolicy, RetrievalStrategy, TokenBudget};
-    use cozo::DataValue;
+    use cozo::{DataValue, UuidWrapper};
     use itertools::Itertools;
     use lazy_static::lazy_static;
     use ploke_core::rag_types::TypeContextKind;
+    #[cfg(feature = "call_graph")]
+    use ploke_core::rag_types::{
+        CallCalleeInfo, CallReceiverInfo, CallResolutionKind, CallSiteKind, CallStatusKind,
+        CallTargetKind,
+    };
     use ploke_core::{CrateId, EmbeddingData, RetrievalScope};
     use ploke_db::get_by_id::{GetNodeInfo, NodePaths};
     use ploke_db::{
@@ -1574,6 +1579,516 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         .map_err(Error::from)?;
 
         Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
+    async fn call_context_collection_attaches_outgoing_call_payloads() -> Result<(), Error> {
+        init_tracing_once();
+        let db = Arc::new(Database::init_with_schema()?);
+        let owner = Uuid::from_u128(0x101);
+        let site = Uuid::from_u128(0x102);
+        let target = Uuid::from_u128(0x103);
+        let assoc_site = Uuid::from_u128(0x104);
+        let assoc_target = Uuid::from_u128(0x105);
+        let tuple_site = Uuid::from_u128(0x106);
+        let tuple_target = Uuid::from_u128(0x107);
+        let variant_site = Uuid::from_u128(0x108);
+        let variant_target = Uuid::from_u128(0x109);
+        let method_site = Uuid::from_u128(0x10a);
+        let method_target = Uuid::from_u128(0x10b);
+        let init_method_site = Uuid::from_u128(0x10c);
+        let init_method_target = Uuid::from_u128(0x10d);
+        let try_method_site = Uuid::from_u128(0x10e);
+        let try_method_target = Uuid::from_u128(0x10f);
+        let dynamic_site = Uuid::from_u128(0x110);
+        let dynamic_target = Uuid::from_u128(0x111);
+
+        insert_call_site(
+            &db,
+            CallSeed {
+                id: site,
+                owner,
+                kind: "Path",
+                span: (12, 25),
+                path: Some(vec!["crate", "helper"]),
+                method: None,
+                macro_name: None,
+                receiver: None,
+                arg_count: Some(0),
+                generic_arg_count: Some(0),
+            },
+        )?;
+        insert_call_edge(&db, owner, site, "Path")?;
+        insert_call_target(&db, site, target, "Function", "Path", "Function")?;
+        insert_call_status(&db, site, "Path", "Resolved", Some("LocalExact"))?;
+        insert_call_site(
+            &db,
+            CallSeed {
+                id: assoc_site,
+                owner,
+                kind: "Path",
+                span: (40, 58),
+                path: Some(vec!["LocalAssoc", "make"]),
+                method: None,
+                macro_name: None,
+                receiver: None,
+                arg_count: Some(0),
+                generic_arg_count: Some(0),
+            },
+        )?;
+        insert_call_edge(&db, owner, assoc_site, "Path")?;
+        insert_call_target(
+            &db,
+            assoc_site,
+            assoc_target,
+            "AssociatedFunction",
+            "Path",
+            "Method",
+        )?;
+        insert_call_status(&db, assoc_site, "Path", "Resolved", Some("LocalExact"))?;
+        insert_call_site(
+            &db,
+            CallSeed {
+                id: tuple_site,
+                owner,
+                kind: "Path",
+                span: (60, 77),
+                path: Some(vec!["TupleStruct"]),
+                method: None,
+                macro_name: None,
+                receiver: None,
+                arg_count: Some(2),
+                generic_arg_count: Some(0),
+            },
+        )?;
+        insert_call_edge(&db, owner, tuple_site, "Path")?;
+        insert_call_target(
+            &db,
+            tuple_site,
+            tuple_target,
+            "TupleStructConstructor",
+            "Path",
+            "Struct",
+        )?;
+        insert_call_status(&db, tuple_site, "Path", "Resolved", Some("LocalExact"))?;
+        insert_call_site(
+            &db,
+            CallSeed {
+                id: variant_site,
+                owner,
+                kind: "Path",
+                span: (80, 105),
+                path: Some(vec!["EnumWithData", "Variant1"]),
+                method: None,
+                macro_name: None,
+                receiver: None,
+                arg_count: Some(1),
+                generic_arg_count: Some(0),
+            },
+        )?;
+        insert_call_edge(&db, owner, variant_site, "Path")?;
+        insert_call_target(
+            &db,
+            variant_site,
+            variant_target,
+            "EnumVariantConstructor",
+            "Path",
+            "Variant",
+        )?;
+        insert_call_status(&db, variant_site, "Path", "Resolved", Some("LocalExact"))?;
+        insert_call_site(
+            &db,
+            CallSeed {
+                id: method_site,
+                owner,
+                kind: "Method",
+                span: (110, 132),
+                path: None,
+                method: Some("instance_value"),
+                macro_name: None,
+                receiver: Some(("LocalBinding", vec!["value"])),
+                arg_count: Some(0),
+                generic_arg_count: Some(0),
+            },
+        )?;
+        insert_call_edge(&db, owner, method_site, "Method")?;
+        insert_call_target(
+            &db,
+            method_site,
+            method_target,
+            "Method",
+            "Method",
+            "Method",
+        )?;
+        insert_call_status(&db, method_site, "Method", "Resolved", Some("LocalExact"))?;
+        insert_call_site(
+            &db,
+            CallSeed {
+                id: init_method_site,
+                owner,
+                kind: "Method",
+                span: (134, 156),
+                path: None,
+                method: Some("instance_value"),
+                macro_name: None,
+                receiver: Some(("InitializedLocalBinding", vec!["value", "LocalAssoc"])),
+                arg_count: Some(0),
+                generic_arg_count: Some(0),
+            },
+        )?;
+        insert_call_edge(&db, owner, init_method_site, "Method")?;
+        insert_call_target(
+            &db,
+            init_method_site,
+            init_method_target,
+            "Method",
+            "Method",
+            "Method",
+        )?;
+        insert_call_status(
+            &db,
+            init_method_site,
+            "Method",
+            "Resolved",
+            Some("LocalExact"),
+        )?;
+        insert_call_site(
+            &db,
+            CallSeed {
+                id: try_method_site,
+                owner,
+                kind: "Method",
+                span: (158, 184),
+                path: None,
+                method: Some("instance_value"),
+                macro_name: None,
+                receiver: Some(("TryPathCallResult", vec!["try_local_assoc"])),
+                arg_count: Some(0),
+                generic_arg_count: Some(0),
+            },
+        )?;
+        insert_call_edge(&db, owner, try_method_site, "Method")?;
+        insert_call_target(
+            &db,
+            try_method_site,
+            try_method_target,
+            "Method",
+            "Method",
+            "Method",
+        )?;
+        insert_call_status(
+            &db,
+            try_method_site,
+            "Method",
+            "Resolved",
+            Some("LocalExact"),
+        )?;
+        insert_call_site(
+            &db,
+            CallSeed {
+                id: dynamic_site,
+                owner,
+                kind: "Dynamic",
+                span: (186, 202),
+                path: None,
+                method: None,
+                macro_name: None,
+                receiver: None,
+                arg_count: Some(0),
+                generic_arg_count: None,
+            },
+        )?;
+        insert_call_edge(&db, owner, dynamic_site, "Dynamic")?;
+        insert_call_target(
+            &db,
+            dynamic_site,
+            dynamic_target,
+            "DynamicFunction",
+            "Dynamic",
+            "Function",
+        )?;
+        insert_call_status(&db, dynamic_site, "Dynamic", "Resolved", Some("LocalExact"))?;
+
+        let rag = init_test_rag_mock(Arc::clone(&db));
+        assert!(
+            !rag.call_context_degraded(),
+            "fresh call_graph schema should enable call context collection"
+        );
+
+        let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+        let owner_context = call_context
+            .get(&owner)
+            .expect("owner should receive outgoing call context");
+        assert_eq!(owner_context.len(), 8);
+        let call = &owner_context[0];
+        assert_eq!(call.site_id, site);
+        assert_eq!(call.kind, CallSiteKind::Path);
+        assert_eq!(
+            call.callee,
+            CallCalleeInfo::Path {
+                path: vec!["crate".to_string(), "helper".to_string()]
+            }
+        );
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(call.targets.len(), 1);
+        assert_eq!(call.targets[0].target_id, target);
+        assert_eq!(call.targets[0].relation, CallTargetKind::Function);
+        let assoc_call = &owner_context[1];
+        assert_eq!(assoc_call.site_id, assoc_site);
+        assert_eq!(assoc_call.targets.len(), 1);
+        assert_eq!(assoc_call.targets[0].target_id, assoc_target);
+        assert_eq!(
+            assoc_call.targets[0].relation,
+            CallTargetKind::AssociatedFunction
+        );
+        let tuple_call = &owner_context[2];
+        assert_eq!(tuple_call.site_id, tuple_site);
+        assert_eq!(tuple_call.targets.len(), 1);
+        assert_eq!(tuple_call.targets[0].target_id, tuple_target);
+        assert_eq!(
+            tuple_call.targets[0].relation,
+            CallTargetKind::TupleStructConstructor
+        );
+        let variant_call = &owner_context[3];
+        assert_eq!(variant_call.site_id, variant_site);
+        assert_eq!(variant_call.targets.len(), 1);
+        assert_eq!(variant_call.targets[0].target_id, variant_target);
+        assert_eq!(
+            variant_call.targets[0].relation,
+            CallTargetKind::EnumVariantConstructor
+        );
+        let method_call = &owner_context[4];
+        assert_eq!(method_call.site_id, method_site);
+        assert_eq!(
+            method_call.callee,
+            CallCalleeInfo::Method {
+                name: "instance_value".to_string(),
+                receiver: Some(CallReceiverInfo::LocalBinding {
+                    name: "value".to_string()
+                })
+            }
+        );
+        assert_eq!(method_call.targets.len(), 1);
+        assert_eq!(method_call.targets[0].target_id, method_target);
+        assert_eq!(method_call.targets[0].relation, CallTargetKind::Method);
+        let init_method_call = &owner_context[5];
+        assert_eq!(init_method_call.site_id, init_method_site);
+        assert_eq!(
+            init_method_call.callee,
+            CallCalleeInfo::Method {
+                name: "instance_value".to_string(),
+                receiver: Some(CallReceiverInfo::InitializedLocalBinding {
+                    name: "value".to_string(),
+                    init_path: vec!["LocalAssoc".to_string()]
+                })
+            }
+        );
+        assert_eq!(init_method_call.targets.len(), 1);
+        assert_eq!(init_method_call.targets[0].target_id, init_method_target);
+        assert_eq!(init_method_call.targets[0].relation, CallTargetKind::Method);
+        let try_method_call = &owner_context[6];
+        assert_eq!(try_method_call.site_id, try_method_site);
+        assert_eq!(
+            try_method_call.callee,
+            CallCalleeInfo::Method {
+                name: "instance_value".to_string(),
+                receiver: Some(CallReceiverInfo::TryPathCallResult {
+                    path: vec!["try_local_assoc".to_string()]
+                })
+            }
+        );
+        assert_eq!(try_method_call.targets.len(), 1);
+        assert_eq!(try_method_call.targets[0].target_id, try_method_target);
+        assert_eq!(try_method_call.targets[0].relation, CallTargetKind::Method);
+        let dynamic_call = &owner_context[7];
+        assert_eq!(dynamic_call.site_id, dynamic_site);
+        assert_eq!(dynamic_call.kind, CallSiteKind::Dynamic);
+        assert_eq!(dynamic_call.callee, CallCalleeInfo::Dynamic);
+        assert_eq!(dynamic_call.status, CallStatusKind::Resolved);
+        assert_eq!(
+            dynamic_call.resolution,
+            Some(CallResolutionKind::LocalExact)
+        );
+        assert_eq!(dynamic_call.targets.len(), 1);
+        assert_eq!(dynamic_call.targets[0].target_id, dynamic_target);
+        assert_eq!(
+            dynamic_call.targets[0].relation,
+            CallTargetKind::DynamicFunction
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    struct CallSeed<'a> {
+        id: Uuid,
+        owner: Uuid,
+        kind: &'a str,
+        span: (i64, i64),
+        path: Option<Vec<&'a str>>,
+        method: Option<&'a str>,
+        macro_name: Option<&'a str>,
+        receiver: Option<(&'a str, Vec<&'a str>)>,
+        arg_count: Option<i64>,
+        generic_arg_count: Option<i64>,
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn insert_call_site(db: &Database, seed: CallSeed<'_>) -> Result<(), Error> {
+        let mut params = BTreeMap::new();
+        params.insert("id".to_string(), uuid(seed.id));
+        params.insert("owner_id".to_string(), uuid(seed.owner));
+        params.insert("call_kind".to_string(), DataValue::from(seed.kind));
+        params.insert("span".to_string(), span(seed.span));
+        params.insert("cfgs".to_string(), list(&[]));
+        params.insert("path".to_string(), option_list(seed.path));
+        params.insert("method_name".to_string(), option_str(seed.method));
+        params.insert("macro_name".to_string(), option_str(seed.macro_name));
+        let (kind, path) = seed
+            .receiver
+            .map(|(kind, path)| (DataValue::from(kind), list(&path)))
+            .unwrap_or((DataValue::Null, DataValue::Null));
+        params.insert("receiver_kind".to_string(), kind);
+        params.insert("receiver_path".to_string(), path);
+        params.insert("arg_count".to_string(), option_int(seed.arg_count));
+        params.insert(
+            "generic_arg_count".to_string(),
+            option_int(seed.generic_arg_count),
+        );
+
+        db.raw_query_mut_params(
+            r#"?[id, at, owner_id, call_kind, span, cfgs, path, method_name, macro_name, receiver_kind, receiver_path, arg_count, generic_arg_count] :=
+                id = $id,
+                owner_id = $owner_id,
+                call_kind = $call_kind,
+                span = $span,
+                cfgs = $cfgs,
+                path = $path,
+                method_name = $method_name,
+                macro_name = $macro_name,
+                receiver_kind = $receiver_kind,
+                receiver_path = $receiver_path,
+                arg_count = $arg_count,
+                generic_arg_count = $generic_arg_count,
+                at = 'ASSERT'
+            :put call_site { id, at => owner_id, call_kind, span, cfgs, path, method_name, macro_name, receiver_kind, receiver_path, arg_count, generic_arg_count }"#,
+            params,
+        )
+        .map_err(Error::from)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn insert_call_edge(db: &Database, owner: Uuid, site: Uuid, kind: &str) -> Result<(), Error> {
+        let mut params = BTreeMap::new();
+        params.insert("owner_id".to_string(), uuid(owner));
+        params.insert("site_id".to_string(), uuid(site));
+        params.insert("target_kind".to_string(), DataValue::from(kind));
+
+        db.raw_query_mut_params(
+            r#"?[source_id, target_id, at, relation_kind, source_kind, target_kind] :=
+                source_id = $owner_id,
+                target_id = $site_id,
+                relation_kind = "BodyContainsCall",
+                source_kind = "Function",
+                target_kind = $target_kind,
+                at = 'ASSERT'
+            :put call_site_edge { source_id, target_id, at => relation_kind, source_kind, target_kind }"#,
+            params,
+        )
+        .map_err(Error::from)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn insert_call_target(
+        db: &Database,
+        site: Uuid,
+        target: Uuid,
+        relation: &str,
+        source_kind: &str,
+        target_kind: &str,
+    ) -> Result<(), Error> {
+        let mut params = BTreeMap::new();
+        params.insert("site_id".to_string(), uuid(site));
+        params.insert("target_id".to_string(), uuid(target));
+        params.insert("relation_kind".to_string(), DataValue::from(relation));
+        params.insert("source_kind".to_string(), DataValue::from(source_kind));
+        params.insert("target_kind".to_string(), DataValue::from(target_kind));
+
+        db.raw_query_mut_params(
+            r#"?[source_id, target_id, at, relation_kind, source_kind, target_kind] :=
+                source_id = $site_id,
+                target_id = $target_id,
+                relation_kind = $relation_kind,
+                source_kind = $source_kind,
+                target_kind = $target_kind,
+                at = 'ASSERT'
+            :put call_relation { source_id, target_id, at => relation_kind, source_kind, target_kind }"#,
+            params,
+        )
+        .map_err(Error::from)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn insert_call_status(
+        db: &Database,
+        site: Uuid,
+        kind: &str,
+        status: &str,
+        resolution: Option<&str>,
+    ) -> Result<(), Error> {
+        let mut params = BTreeMap::new();
+        params.insert("site_id".to_string(), uuid(site));
+        params.insert("source_kind".to_string(), DataValue::from(kind));
+        params.insert("status_kind".to_string(), DataValue::from(status));
+        params.insert("resolution_kind".to_string(), option_str(resolution));
+
+        db.raw_query_mut_params(
+            r#"?[source_id, at, source_kind, status_kind, resolution_kind] :=
+                source_id = $site_id,
+                source_kind = $source_kind,
+                status_kind = $status_kind,
+                resolution_kind = $resolution_kind,
+                at = 'ASSERT'
+            :put call_resolution_status { source_id, at => source_kind, status_kind, resolution_kind }"#,
+            params,
+        )
+        .map_err(Error::from)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn uuid(value: Uuid) -> DataValue {
+        DataValue::Uuid(UuidWrapper(value))
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn span((start, end): (i64, i64)) -> DataValue {
+        DataValue::List(vec![DataValue::from(start), DataValue::from(end)])
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn list(items: &[&str]) -> DataValue {
+        DataValue::List(items.iter().map(|item| DataValue::from(*item)).collect())
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn option_list(items: Option<Vec<&str>>) -> DataValue {
+        items.map(|items| list(&items)).unwrap_or(DataValue::Null)
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn option_str(value: Option<&str>) -> DataValue {
+        value.map(DataValue::from).unwrap_or(DataValue::Null)
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn option_int(value: Option<i64>) -> DataValue {
+        value.map(DataValue::from).unwrap_or(DataValue::Null)
     }
 
     #[tokio::test]

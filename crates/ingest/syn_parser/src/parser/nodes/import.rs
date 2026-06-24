@@ -15,6 +15,7 @@ use super::*; // Keep for other node types, VisibilityKind etc.
 /// - Regular `use` statements
 /// - `pub use` re-exports
 /// - Extern crate declarations
+/// - Foreign function declarations from `extern` blocks
 /// - Future import-like constructs
 ///
 /// # Key Features
@@ -183,6 +184,11 @@ impl ImportNode {
         matches!(self.kind, ImportKind::ExternCrate)
     }
 
+    /// Checks specifically if this import represents a foreign function declaration.
+    pub fn is_extern_function(&self) -> bool {
+        matches!(self.kind, ImportKind::ExternFunction { .. })
+    }
+
     /// If this import was renamed (`use ... as ...`), returns the path segments
     /// ending with the `visible_name` (the name after `as`).
     ///
@@ -221,6 +227,7 @@ impl GraphNode for ImportNode {
         match &self.kind {
             ImportKind::UseStatement(vis) => vis,
             ImportKind::ExternCrate => &VisibilityKind::Inherited,
+            ImportKind::ExternFunction { .. } => &VisibilityKind::Inherited,
             // ImportKind::ImportNode => VisibilityKind::Inherited, // Placeholder default
         }
     }
@@ -242,5 +249,6 @@ impl GraphNode for ImportNode {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub enum ImportKind {
     ExternCrate, // Represents an `extern crate foo;` or `extern crate foo as Bar;` statement
+    ExternFunction { abi: Option<String> }, // Represents `fn foo(...)` inside an `extern` block
     UseStatement(VisibilityKind), // Represents a `use` statement, capturing its visibility
 }

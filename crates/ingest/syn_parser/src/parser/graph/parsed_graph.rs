@@ -682,6 +682,16 @@ impl ParsedCodeGraph {
             .iter()
             .map(|function| CallBodyOwnerId::Function(function.id))
             .chain(
+                self.consts()
+                    .iter()
+                    .map(|const_node| CallBodyOwnerId::Const(const_node.id)),
+            )
+            .chain(
+                self.statics()
+                    .iter()
+                    .map(|static_node| CallBodyOwnerId::Static(static_node.id)),
+            )
+            .chain(
                 self.impls()
                     .iter()
                     .flat_map(|imp| imp.methods.iter())
@@ -701,7 +711,19 @@ impl ParsedCodeGraph {
             });
         self.call_relations_mut().retain(|relation| match relation {
             CallRelation::Function { source, .. } => live_call_ids.contains(&(*source).into()),
+            CallRelation::DynamicFunction { source, .. } => {
+                live_call_ids.contains(&(*source).into())
+            }
             CallRelation::Method { source, .. } => live_call_ids.contains(&(*source).into()),
+            CallRelation::AssociatedFunction { source, .. } => {
+                live_call_ids.contains(&(*source).into())
+            }
+            CallRelation::TupleStructConstructor { source, .. } => {
+                live_call_ids.contains(&(*source).into())
+            }
+            CallRelation::EnumVariantConstructor { source, .. } => {
+                live_call_ids.contains(&(*source).into())
+            }
         });
         self.call_resolution_statuses_mut()
             .retain(|status| live_call_ids.contains(&status.source()));

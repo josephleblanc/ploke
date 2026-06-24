@@ -1,3 +1,5 @@
+#[cfg(feature = "call_graph")]
+pub mod call_graph_queries;
 pub mod database_tests;
 pub mod debug_cozo;
 pub mod index_test;

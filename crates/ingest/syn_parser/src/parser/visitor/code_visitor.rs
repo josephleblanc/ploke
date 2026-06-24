@@ -9,7 +9,7 @@
 // fn visit_impl_item_const(&mut self, i: &'ast syn::ImplItemConst)
 
 use super::attribute_processing::{extract_attributes, extract_cfg_strings, extract_docstring};
-use super::call_extraction::extract_body_call_sites;
+use super::call_extraction::{extract_body_call_sites, extract_expr_call_sites};
 use super::state::VisitorState;
 use super::type_processing::{
     get_or_create_trait_bound_type, get_or_create_trait_type, get_or_create_type,
@@ -28,8 +28,8 @@ use crate::parser::nodes::{
 // Nodes
 use crate::parser::nodes::{
     ConstNode, EnumNode, FieldNode, FunctionNode, ImplNode, ImportNode, MacroNode, MethodNode,
-    ModuleNode, StaticNode, StructNode, TraitNode, TypeAliasNode, TypeDefNode, UnionNode,
-    VariantNode,
+    ModuleNode, ParamData, StaticNode, StructNode, TraitNode, TypeAliasNode, TypeDefNode,
+    UnionNode, VariantNode,
 };
 // Kinds of nodes
 use crate::parser::nodes::{ImportKind, MacroKind, ModuleKind, ProcMacroKind};
@@ -57,6 +57,14 @@ use syn::{
 };
 use tracing::{error, instrument, trace}; // Import error macro
 
+fn receiver_param_names(parameters: &[ParamData]) -> Vec<String> {
+    parameters
+        .iter()
+        .filter(|param| !param.is_self)
+        .filter_map(|param| param.name.clone())
+        .collect()
+}
+
 pub struct CodeVisitor<'a> {
     state: &'a mut VisitorState,
 }
@@ -67,6 +75,70 @@ const VISITOR_TARGET_STACK_TRACE: &str = "stack_trace";
 impl<'a> CodeVisitor<'a> {
     pub fn new(state: &'a mut VisitorState) -> Self {
         Self { state }
+    }
+
+    fn record_foreign_function_import(
+        &mut self,
+        fn_name: &str,
+        abi: Option<String>,
+        span: (usize, usize),
+        cfgs: Vec<String>,
+        cfg_bytes: Option<&[u8]>,
+    ) {
+        let mut source_path = vec!["extern".to_string()];
+        if let Some(abi_name) = &abi {
+            source_path.push(abi_name.clone());
+        }
+        source_path.push(fn_name.to_string());
+
+        let id_key = source_path.join("::");
+        let Some((import_any_id, parent_mod_id)) =
+            self.register_new_node_id(&id_key, ItemKind::Import, cfg_bytes)
+        else {
+            return;
+        };
+        self.debug_new_id(fn_name, import_any_id);
+
+        let typed_import_id: ImportNodeId = import_any_id
+            .try_into()
+            .expect("foreign function import should use ImportNodeId");
+        let import_node = ImportNode {
+            id: typed_import_id,
+            span,
+            source_path,
+            kind: ImportKind::ExternFunction { abi },
+            visible_name: fn_name.to_string(),
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            cfgs,
+        };
+
+        if let Some(module) = self
+            .state
+            .code_graph
+            .modules
+            .iter_mut()
+            .find(|m| m.id == parent_mod_id)
+        {
+            module.imports.push(import_node.clone());
+        }
+        self.state.code_graph.use_statements.push(import_node);
+
+        self.state
+            .code_graph
+            .relations
+            .push(SyntacticRelation::Contains {
+                source: parent_mod_id,
+                target: PrimaryNodeId::from(typed_import_id),
+            });
+        self.state
+            .code_graph
+            .relations
+            .push(SyntacticRelation::ModuleImports {
+                source: parent_mod_id,
+                target: typed_import_id,
+            });
     }
 
     #[instrument(target = "validate_rels", skip(self))]
@@ -84,8 +156,24 @@ impl<'a> CodeVisitor<'a> {
         owner: CallBodyOwnerId,
         block: &syn::Block,
         cfgs: &[String],
+        receiver_names: &[String],
     ) {
-        let (mut calls, mut relations) = extract_body_call_sites(owner, block, cfgs);
+        let (mut calls, mut relations) =
+            extract_body_call_sites(owner, block, cfgs, receiver_names);
+        self.state.code_graph.call_sites.append(&mut calls);
+        self.state
+            .code_graph
+            .call_site_relations
+            .append(&mut relations);
+    }
+
+    fn record_expr_call_sites(
+        &mut self,
+        owner: CallBodyOwnerId,
+        expr: &syn::Expr,
+        cfgs: &[String],
+    ) {
+        let (mut calls, mut relations) = extract_expr_call_sites(owner, expr, cfgs);
         self.state.code_graph.call_sites.append(&mut calls);
         self.state
             .code_graph
@@ -123,6 +211,10 @@ impl<'a> CodeVisitor<'a> {
         );
         let type_id = get_or_create_type(self.state, &item_const.ty);
         self.pop_assoc_scope(&const_name);
+
+        if let Some((_, expr)) = item_const.default.as_ref() {
+            self.record_expr_call_sites(CallBodyOwnerId::Const(const_id), expr, &effective_cfgs);
+        }
 
         ConstNode {
             id: const_id,
@@ -170,6 +262,12 @@ impl<'a> CodeVisitor<'a> {
         );
         let type_id = get_or_create_type(self.state, &item_const.ty);
         self.pop_assoc_scope(&const_name);
+
+        self.record_expr_call_sites(
+            CallBodyOwnerId::Const(const_id),
+            &item_const.expr,
+            &effective_cfgs,
+        );
 
         ConstNode {
             id: const_id,
@@ -897,6 +995,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                     parameters.push(param);
                 }
             }
+            let receiver_names = receiver_param_names(&parameters);
 
             // Extract return type if it exists
             let return_type = match &func.sig.output {
@@ -951,6 +1050,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 CallBodyOwnerId::Function(fn_typed_id),
                 &func.block,
                 &provisional_effective_cfgs,
+                &receiver_names,
             );
 
             // NOTE: We are already visiting all the items we are processing within this
@@ -1899,6 +1999,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             parameters.push(param);
                         }
                     }
+                    let receiver_names = receiver_param_names(&parameters);
 
                     // Extract return type if it exists
                     let return_type = match &method.sig.output {
@@ -1951,6 +2052,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                         CallBodyOwnerId::Method(method_node_id),
                         &method.block,
                         &method_provisional_effective_cfgs,
+                        &receiver_names,
                     );
                     // ANCHOR_END: method_from_impl_node
                 }
@@ -2125,6 +2227,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             parameters.push(param);
                         }
                     }
+                    let receiver_names = receiver_param_names(&parameters);
 
                     // Extract return type if it exists
                     let return_type = match &method.sig.output {
@@ -2181,6 +2284,7 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                             CallBodyOwnerId::Method(method_node_id),
                             block,
                             &method_provisional_effective_cfgs,
+                            &receiver_names,
                         );
                     }
                     // ANCHOR_END: method_from_trait_node
@@ -2710,6 +2814,63 @@ use statement ident: {:?}
         visit::visit_item_extern_crate(self, extern_crate);
     }
 
+    fn visit_item_foreign_mod(&mut self, foreign_mod: &'ast syn::ItemForeignMod) {
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&foreign_mod.attrs, active_cfg) {
+                return;
+            }
+        }
+
+        let scope_cfgs = self.state.current_scope_cfgs.clone();
+        let foreign_cfgs = super::attribute_processing::extract_cfg_strings(&foreign_mod.attrs);
+        let abi = foreign_mod.abi.name.as_ref().map(|name| name.value());
+
+        for item in &foreign_mod.items {
+            let syn::ForeignItem::Fn(foreign_fn) = item else {
+                continue;
+            };
+
+            #[cfg(feature = "cfg_eval")]
+            {
+                use crate::parser::visitor::attribute_processing::should_include_item;
+                let active_cfg = &self.state.active_cfg;
+
+                if !should_include_item(&foreign_fn.attrs, active_cfg) {
+                    continue;
+                }
+            }
+
+            let fn_cfgs = super::attribute_processing::extract_cfg_strings(&foreign_fn.attrs);
+            let item_cfgs = foreign_cfgs
+                .iter()
+                .cloned()
+                .chain(fn_cfgs.iter().cloned())
+                .collect::<Vec<_>>();
+            let effective_cfgs = scope_cfgs
+                .iter()
+                .cloned()
+                .chain(item_cfgs.iter().cloned())
+                .collect::<Vec<_>>();
+            let cfg_bytes = calculate_cfg_hash_bytes(&effective_cfgs);
+            let fn_name = foreign_fn.sig.ident.to_string();
+            let span = foreign_fn.span().byte_range();
+
+            self.record_foreign_function_import(
+                &fn_name,
+                abi.clone(),
+                (span.start, span.end),
+                item_cfgs,
+                cfg_bytes.as_deref(),
+            );
+        }
+
+        visit::visit_item_foreign_mod(self, foreign_mod);
+    }
+
     // Visit constant items
     fn visit_item_const(&mut self, item_const: &'ast syn::ItemConst) {
         #[cfg(feature = "cfg_eval")]
@@ -2793,6 +2954,11 @@ use statement ident: {:?}
             target: PrimaryNodeId::from(typed_const_id), // Use typed const ID
         };
         self.state.code_graph.relations.push(contains_relation);
+        self.record_expr_call_sites(
+            CallBodyOwnerId::Const(typed_const_id),
+            item_const.expr.as_ref(),
+            &provisional_effective_cfgs,
+        );
 
         // Nested items inside const blocks must hash against the const scope rather than the
         // surrounding module, otherwise identical local items in sibling consts collide.
@@ -2881,6 +3047,11 @@ use statement ident: {:?}
             target: PrimaryNodeId::from(typed_static_id), // Use typed static ID
         };
         self.state.code_graph.relations.push(contains_relation);
+        self.record_expr_call_sites(
+            CallBodyOwnerId::Static(typed_static_id),
+            item_static.expr.as_ref(),
+            &provisional_effective_cfgs,
+        );
 
         // Nested items inside static initializers must hash against the static scope for the same
         // reason as consts.

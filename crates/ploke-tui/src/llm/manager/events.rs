@@ -1,7 +1,7 @@
 use ploke_core::tool_types::ToolName;
 use ploke_core::{
     ArcStr,
-    rag_types::{ContextPartKind, ContextStats, TypeContextInfo},
+    rag_types::{CallContextInfo, ContextPartKind, ContextStats, TypeContextInfo},
 };
 use ploke_llm::{
     LLMMetadata, LlmError, RequestMessage,
@@ -52,6 +52,7 @@ pub struct ContextPlanRagPart {
     pub estimated_tokens: usize,
     pub score: f32,
     pub type_context: Option<TypeContextInfo>,
+    pub call_context: Vec<CallContextInfo>,
 }
 
 #[derive(Clone, Debug)]

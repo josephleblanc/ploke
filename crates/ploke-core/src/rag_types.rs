@@ -13,6 +13,8 @@ pub struct ContextPart {
     pub modality: Modality,
     #[serde(default)]
     pub type_context: Option<TypeContextInfo>,
+    #[serde(default)]
+    pub call_context: Vec<CallContextInfo>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -116,6 +118,184 @@ pub struct TypeContextInfo {
     pub distance: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum CallSiteKind {
+    Path,
+    Method,
+    Dynamic,
+    Macro,
+}
+
+impl CallSiteKind {
+    pub fn to_static_str(&self) -> &'static str {
+        match self {
+            Self::Path => "Path",
+            Self::Method => "Method",
+            Self::Dynamic => "Dynamic",
+            Self::Macro => "Macro",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum CallReceiverInfo {
+    SelfValue,
+    SelfField {
+        path: Vec<String>,
+    },
+    LocalBinding {
+        name: String,
+    },
+    TypedLocalBinding {
+        name: String,
+        type_path: Vec<String>,
+    },
+    InitializedLocalBinding {
+        name: String,
+        init_path: Vec<String>,
+    },
+    BorrowedLocalBinding {
+        name: String,
+    },
+    BorrowedTypedLocalBinding {
+        name: String,
+        type_path: Vec<String>,
+    },
+    DereferencedLocalBinding {
+        name: String,
+    },
+    DereferencedInitializedLocalBinding {
+        name: String,
+        init_path: Vec<String>,
+    },
+    FieldLocalBinding {
+        name: String,
+        field_path: Vec<String>,
+    },
+    FieldTypedLocalBinding {
+        name: String,
+        type_path: Vec<String>,
+        field_path: Vec<String>,
+    },
+    FieldInitializedLocalBinding {
+        name: String,
+        init_path: Vec<String>,
+        field_path: Vec<String>,
+    },
+    PathCallResult {
+        path: Vec<String>,
+    },
+    MethodCallResult {
+        method_name: String,
+    },
+    AwaitResult,
+    AwaitPathCallResult {
+        path: Vec<String>,
+    },
+    TryResult,
+    TryPathCallResult {
+        path: Vec<String>,
+    },
+    Literal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum CallCalleeInfo {
+    Path {
+        path: Vec<String>,
+    },
+    Method {
+        name: String,
+        receiver: Option<CallReceiverInfo>,
+    },
+    Macro {
+        name: String,
+    },
+    Dynamic,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum CallTargetKind {
+    Function,
+    DynamicFunction,
+    Method,
+    AssociatedFunction,
+    TupleStructConstructor,
+    EnumVariantConstructor,
+}
+
+impl CallTargetKind {
+    pub fn to_static_str(&self) -> &'static str {
+        match self {
+            Self::Function => "Function",
+            Self::DynamicFunction => "DynamicFunction",
+            Self::Method => "Method",
+            Self::AssociatedFunction => "AssociatedFunction",
+            Self::TupleStructConstructor => "TupleStructConstructor",
+            Self::EnumVariantConstructor => "EnumVariantConstructor",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallTargetInfo {
+    pub target_id: Uuid,
+    pub relation: CallTargetKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum CallStatusKind {
+    Resolved,
+    Unresolved,
+    Ambiguous,
+    External,
+    Unsupported,
+}
+
+impl CallStatusKind {
+    pub fn to_static_str(&self) -> &'static str {
+        match self {
+            Self::Resolved => "Resolved",
+            Self::Unresolved => "Unresolved",
+            Self::Ambiguous => "Ambiguous",
+            Self::External => "External",
+            Self::Unsupported => "Unsupported",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum CallResolutionKind {
+    LocalExact,
+}
+
+impl CallResolutionKind {
+    pub fn to_static_str(&self) -> &'static str {
+        match self {
+            Self::LocalExact => "LocalExact",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallContextInfo {
+    pub site_id: Uuid,
+    pub kind: CallSiteKind,
+    pub span: (u32, u32),
+    pub callee: CallCalleeInfo,
+    pub status: CallStatusKind,
+    #[serde(default)]
+    pub resolution: Option<CallResolutionKind>,
+    #[serde(default)]
+    pub targets: Vec<CallTargetInfo>,
+}
+
 impl Modality {
     pub fn to_static_str(self) -> &'static str {
         self.into()
@@ -174,6 +354,7 @@ impl From<ContextPart> for ConciseContext {
             canon_path: value.canon_path.clone(),
             snippet: value.text,
             type_context: value.type_context,
+            call_context: value.call_context,
         }
     }
 }
@@ -218,6 +399,8 @@ pub struct ConciseContext {
     pub snippet: String,
     #[serde(default)]
     pub type_context: Option<TypeContextInfo>,
+    #[serde(default)]
+    pub call_context: Vec<CallContextInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

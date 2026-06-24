@@ -39,7 +39,7 @@ Implemented/scaffolded:
   - `MacroCallSiteId`
 - Call endpoint families:
   - `AnyCallSiteId`
-  - `CallBodyOwnerId = FunctionNodeId ∪ MethodNodeId`
+  - `CallBodyOwnerId = FunctionNodeId ∪ MethodNodeId ∪ ConstNodeId ∪ StaticNodeId`
 - Structural graph storage:
   - `CodeGraph.call_sites`
   - `CodeGraph.call_site_relations`
@@ -60,28 +60,235 @@ Implemented/scaffolded:
   - `syn::ExprMacro` and statement-position `syn::StmtMacro`.
   - `CallNode::MacroCall` emission.
   - deterministic parser-internal `MacroCallSiteId` construction from owner + macro path + span + cfgs.
+- Structural const/static initializer extraction:
+  - item initializer expressions in both `syn` and legacy `syn1` visitor paths.
+  - calls owned by `CallBodyOwnerId::{Const, Static}`.
+  - `BodyContainsCall` projection persists source owner kinds as `Const` / `Static`.
+- Structural associated const initializer extraction:
+  - trait default and inherent impl associated const initializer expressions.
+  - calls owned by the associated const's existing `ConstNodeId` via
+    `CallBodyOwnerId::Const`.
+- Explicit closure/async extraction boundary:
+  - parser-native call extraction does not descend into closure or async block
+    bodies until a nested owner model exists, so inner calls are not attributed
+    to the enclosing function owner.
 - Typed call-resolution storage/accessor scaffold:
   - `CodeGraph.call_relations`
   - `CodeGraph.call_resolution_statuses`
-  - `CallRelation::{Function, Method}`
+  - `CallRelation::{Function, DynamicFunction, Method, AssociatedFunction, TupleStructConstructor, EnumVariantConstructor}`
   - `CallResolutionStatus::{Resolved, Unresolved, Ambiguous, External, Unsupported}`
 - First semantic resolver slices:
   - `resolve::call_resolution::resolve_call_relations_after_tree(...)`
   - exact inherent `self.method()` resolution within the same impl block.
   - explicit local `crate`/`self`/`super` path-call resolution to local standalone functions.
-  - direct external-root path-call classification for `std`/`core`/`alloc`/dependency-root calls.
+  - explicit local module-qualified `crate::module::function()` and
+    `self::module::function()` path-call resolution to local standalone
+    functions.
+  - explicit local `super::function()` path-call resolution in both
+    path-resolution and focused call-graph fixtures.
+  - local generic function path-call resolution with explicit turbofish
+    arguments, preserving `generic_arg_count`.
+  - raw identifier local function calls such as `r#match()` preserve the raw
+    spelling and resolve to local function targets.
+  - raw identifier local method calls such as `value.r#type()` preserve the raw
+    spelling and resolve to exact local method targets when receiver proof is
+    exact.
+  - unqualified local function path-call resolution inside the containing module.
+  - import/re-export/glob-aware local function path-call resolution for direct
+    local binding chains and imported module aliases.
+  - conservative inherent associated-function path-call resolution for
+    `Self::method()`, directly visible local `Type::method()`, method-as-
+    associated syntax such as `Type::method(&value)`, and qualified local
+    `<Type>::method()` calls.
+  - import/re-export/glob-aware local type associated-function calls such as
+    `ImportedAssocAlias::make()`, `ImportedAssoc::make()`, and
+    `ReexportedAssoc::make()`.
+  - Rust type-alias associated-function calls such as
+    `type Alias = LocalType; Alias::method()` and simple alias chains when
+    existing type-relation facts prove each alias target exactly, including
+    aliases imported into the caller's scope.
+  - conservative trait associated-function path-call resolution for fully
+    qualified local `<Type as Trait>::method()` calls where the trait item has
+    no `self` receiver.
+  - shorthand local trait associated-function path-call resolution for
+    `Trait::method()` through direct, alias, glob, and local re-export imports
+    where the trait item has no `self` receiver.
+  - same-trait `Self::method()` associated-function path-call resolution inside
+    trait default method bodies when the owner method belongs to a local trait
+    and the callee name has one no-`self` receiver candidate.
+  - local value-binding path-call classification that fails closed for
+    shadowed calls such as `let local_target = ...; local_target()` instead of
+    emitting a fake edge to the module function.
+  - generic `F: FnOnce` value-binding path calls are recorded and fail closed as
+    `Unsupported`, preserving the boundary before future Fn/FnOnce semantic
+    resolution.
+  - boxed `dyn Fn` value-binding path calls are recorded and fail closed as
+    `Unsupported`; exact unshadowed prelude-shaped `Box::new(...)` setup calls
+    are classified as `External`.
+  - explicitly typed local receivers whose type path is proven external or
+    exact unshadowed prelude `String`/`Vec` classify `.len()` as `External`,
+    while local shadowing still resolves to the local method target when proven.
+  - exact local function-item binding calls such as
+    `let f = local_target; f()` and `let f: fn() -> i32 = local_target; f()`
+    when the initializer path resolves to one local function.
+  - exact local function-item binding calls whose initializer path is a local
+    import alias, such as `let f = imported_alias; f()`, when the import
+    backlink resolves to one local function.
+  - exact alias propagation for local function-item bindings such as
+    `let f = local_target; let g = f; g()`, typed function-pointer aliases such
+    as `let f: fn() -> i32 = local_target; let g: fn() -> i32 = f; g()`, and
+    parenthesized `(g)()`, limited to aliases of bindings that already carry
+    initializer-path proof.
+  - tuple struct and tuple enum variant constructor resolution for visible local
+    type bindings with matching tuple-field arity.
+  - conservative non-`self` method-call resolution for named owner parameters
+    plus explicitly typed and path-initialized local bindings whose local type
+    and inherent instance method are proven exactly.
+  - tuple-field local receiver method resolution when the root binding is
+    constructed from a visible local tuple struct and the field type plus
+    inherent method target are proven exactly.
+  - tuple-field dynamic function calls such as `value.0()` resolve only when
+    the root binding was constructed by a direct tuple-constructor call and the
+    selected constructor argument path resolves to one local function.
+  - borrowed explicitly typed local receivers such as `(&value).method()`
+    resolve through the underlying local type when the method target is proven
+    exactly.
+  - dereferenced local receivers whose binding is initialized as a direct
+    reference to a visible local type path, such as `let value = &LocalAssoc;
+    (*value).method()`, resolve through that exact referenced type.
+  - local receivers whose binding is initialized as a direct reference to a
+    visible local type path, such as `let value = &LocalAssoc; value.method()`,
+    resolve through that exact referenced type.
+  - explicitly typed reference local receivers, such as
+    `let value: &LocalAssoc = &LocalAssoc; value.method()`, resolve through one
+    explicit reference layer when the local method target is proven exactly.
+  - explicit dereferences of borrowed owner parameters, such as
+    `value: &LocalAssoc` followed by `(*value).method()`, resolve through the
+    referenced local type when the method target is proven exactly.
+  - implicit method-call autoderef for borrowed owner parameters, such as
+    `value: &LocalAssoc` followed by `value.method()`, resolves through one
+    explicit reference layer when the local method target is proven exactly.
+  - awaited local path-call result receivers such as
+    `make_ready_local_assoc().await.method()` resolve through the local async
+    function's declared return type when the method target is proven exactly.
+  - try local path-call result receivers such as `try_local_assoc()?.method()`
+    resolve through a syntactic `Result<T, E>` success type when the local
+    function return type and method target are proven exactly.
+  - method-call result receivers such as `value.clone_assoc().method()`
+    resolve through the direct inner method call's exact local target return
+    type when the nested call occurrence, inner target, and outer method target
+    are all proven exactly; `Self` returns are interpreted through the inner
+    method's owning impl.
+  - parenthesized method receivers such as `(value).instance_value()` reuse the
+    same exact local binding proof as `value.instance_value()`.
+  - typed local method receivers whose annotation is a Rust type-alias chain
+    resolve through existing exact type-relation alias target proof.
+  - inherent method precedence over same-name local trait methods for exact
+    local receiver types.
+  - conservative local trait-impl instance-method resolution for named owner
+    parameters plus explicitly typed and path-initialized local bindings when
+    the receiver type, local trait target, trait visibility at the call owner,
+    and concrete impl method are all proven exactly.
+  - imported trait method lookup for exact concrete local trait impls through
+    direct `use`, alias `use ... as ...`, glob imports, and local re-exported
+    trait imports; missing trait visibility fails closed without a semantic
+    edge.
+  - ambiguous local trait-impl instance methods fail closed with `Ambiguous`
+    and no semantic edge.
+  - `self.method()` calls inside trait impl method bodies resolve to same-impl
+    method definitions when the target method is present in the exact impl block.
+  - generic receiver method calls resolve to exact local trait method
+    declarations when an inline or `where` generic bound proves one local trait
+    method target.
+  - `impl Trait` parameter method calls resolve to exact local trait method
+    declarations when the bound proves one local trait method target.
+  - trait-object parameter method calls such as `&dyn LocalTrait` resolve to
+    exact local trait method declarations when the trait-object bound proves
+    one local trait method target.
+  - local bindings annotated as one-bound trait objects, such as
+    `let value: &dyn LocalTrait = input; value.method()`, resolve to exact local
+    trait method declarations when the bound proves one local trait method
+    target; concrete runtime dispatch remains future work.
+  - local one-bound trait-object bindings initialized from a direct reference
+    to a concrete local type, such as
+    `let value: &dyn LocalTrait = &LocalType; value.method()`, or from a
+    direct reference to a local binding that already carries exact concrete
+    initializer proof, or from a local reference binding that already proves
+    one concrete local receiver type, including one-step reference aliases,
+    resolve to the exact concrete local trait impl method when the initializer
+    type, visible trait target, and impl method are all proven exactly.
+  - trait default method body calls such as `self.required()` resolve to exact
+    same-trait instance method declarations when the owner method belongs to a
+    local trait and the callee name has one `self` receiver candidate.
+  - blanket impl method calls such as `impl<T> LocalTrait for T`,
+    `impl<T: Bound> LocalTrait for T`, and
+    `impl<T> LocalTrait for T where T: Bound` resolve to the concrete blanket
+    impl method for the exact one-type-parameter shapes after normal local
+    trait visibility proof; constrained forms additionally require exact local
+    impl evidence that the concrete receiver type satisfies every bound, with
+    bounded recursive proof through other exact one-parameter blanket impls.
+  - constrained nominal generic self-type impls such as
+    `impl<T: Bound> LocalTrait for Wrapper<T>` resolve only when receiver
+    generic arguments and every bound are proven exactly, avoiding erased
+    `Wrapper<_>` matches.
+  - direct and directly imported external-root path-call classification for `std`/`core`/`alloc`/dependency-root calls.
+  - parenthesized dynamic callee path resolution for exact local function targets
+    such as `(local_target)()`.
+  - parenthesized block-expression dynamic callees such as
+    `({ local_target })()` resolve when the block contains exactly one
+    unshadowed path expression and that path proves one local function.
+  - if-expression dynamic callees such as
+    `(if flag { local_target } else { local_target })()` resolve when every
+    supported branch path proves the same local function; branches proving
+    different local function targets fail closed as `Ambiguous` with no edge.
+  - match-expression dynamic callees such as
+    `(match flag { true => local_target, false => local_target })()` resolve
+    when every supported arm path proves the same local function; arms proving
+    different local function targets fail closed as `Ambiguous` with no edge.
+  - function-pointer cast dynamic callee path resolution for exact unshadowed
+    local function targets such as `(local_target as fn() -> i32)()`.
+  - function-pointer cast dynamic local binding calls such as
+    `let f: fn() -> i32 = local_target; (f as fn() -> i32)()` resolve when the
+    binding initializer path proves one local function.
+  - dereferenced function-pointer local binding calls such as
+    `let f: fn() -> i32 = local_target; (*f)()` resolve when the binding
+    initializer path proves one local function.
+  - parenthesized initialized function-item binding calls such as
+    `let f = local_target; (f)()` resolve to local `DynamicFunction` edges when
+    the initializer path proves one local function.
 - Database projection in `ploke-transform`:
   - `call_site`
   - `call_site_edge`
   - `call_relation`
   - `call_resolution_status`
-- GREEN fixture tests now use a call-site paranoid harness and cover 19 concrete call expressions:
+  - resolved dynamic function edges preserve `relation_kind = "DynamicFunction"`
+    with `source_kind = "Dynamic"` and `target_kind = "Function"`.
+- Feature-gated typed query helpers in `ploke-db`:
+  - `Database::call_sites_for_owner(...)`
+  - `Database::call_targets_for_site(...)`
+  - `Database::call_resolution_for_site(...)`
+  - `Database::call_context_for_owner(...)`
+- Feature-gated proof-fact projection in `ploke-db`:
+  - `Database::call_proof_facts_for_owner(...)`
+  - `Database::project_call_proof_facts_for_owner(...)`
+  - projects existing proof JSON facts for call sites, resolved call edges, and
+    call-resolution blockers from persisted call graph rows
+- Feature-gated RAG/TUI payload plumbing:
+  - `ContextPart.call_context`
+  - `ConciseContext.call_context`
+  - `RagService` call-context collection from persisted call graph rows
+  - TUI context-plan/system formatting with outgoing-call summaries including
+    callee shape, span, status/resolution, and target relation IDs
+- GREEN fixture tests now use a call-site paranoid harness and cover 203 concrete call expressions:
   - `fixture_nodes_public_method_records_and_resolves_self_private_method_call_site`
-  - `fixture_nodes_get_secret_len_records_self_field_len_method_call_site`
+  - `fixture_nodes_get_secret_len_records_self_field_len_external_method_call_site`
+  - `fixture_nodes_get_str_len_records_self_field_len_method_call_site`
+  - `fixture_nodes_generic_simple_trait_method_records_self_field_into_method_call_site`
   - `fixture_nodes_use_imported_items_records_hashmap_new_path_call_site`
   - `fixture_nodes_use_imported_items_records_fs_read_to_string_path_call_site`
   - `fixture_nodes_use_imported_items_records_pathbuf_new_path_call_site`
   - `fixture_nodes_use_imported_items_records_enum_variant1_path_call_site`
+  - `fixture_nodes_use_imported_items_records_alias_checker_value_binding_path_call_site`
   - `fixture_nodes_use_imported_items_records_duration_from_secs_path_call_site`
   - `fixture_nodes_use_imported_items_records_arc_new_path_call_site`
   - `fixture_nodes_use_imported_items_records_tuple_struct_path_call_site`
@@ -89,22 +296,159 @@ Implemented/scaffolded:
   - `fixture_nodes_use_all_const_static_records_println_macro_call_site`
   - `fixture_path_resolution_call_restricted_resolves_super_restricted_func_path_call_site`
   - `fixture_path_resolution_root_func_records_std_path_new_external_path_call_site`
+  - `fixture_path_resolution_root_func_records_regex_new_external_path_call_site`
+  - `fixture_path_resolution_root_func_records_regex_unwrap_external_method_call_site`
+  - `fixture_path_resolution_root_func_records_typeid_synthetic_external_path_call_site`
+  - `fixture_path_resolution_root_func_records_nodeid_generate_synthetic_external_path_call_site`
+  - `fixture_path_resolution_root_func_records_uuid_nil_external_path_call_site`
+  - `fixture_path_resolution_root_func_records_nodeid_uuid_external_method_call_site`
+  - `fixture_path_resolution_root_func_records_info_macro_call_site`
+  - `fixture_path_resolution_root_func_records_debug_macro_call_site`
   - `fixture_macros_use_local_macro_records_local_macro_call_site`
   - `fixture_macros_use_local_macro_records_println_macro_call_site`
+  - `fixture_impls_main_resolves_func_test_one_initialized_local_method_call_site`
+  - `fixture_impls_main_resolves_func_test_two_initialized_local_method_call_site`
+  - `fixture_impls_main_resolves_func_test_three_initialized_local_method_call_site`
+  - `fixture_impls_main_resolves_func_test_four_associated_function_path_call_site`
+  - `fixture_impls_main_resolves_func_test_five_initialized_local_method_call_site`
+  - `fixture_impls_main_records_println_macro_call_site`
+  - `fixture_edge_cases_use_imports_resolves_direct_imported_helper_method_call_site`
+  - `fixture_edge_cases_use_imports_resolves_reexported_helper_method_call_site`
+  - `fixture_edge_cases_use_imports_records_literal_to_string_external_method_call_site`
+  - `fixture_edge_cases_processor_trait_impl_records_format_macro_call_site`
+  - `fixture_edge_cases_generic_item_new_records_t_default_unsupported_path_call_site`
+  - `fixture_edge_cases_test_visibility_resolves_internal_helper_path_call_site`
+  - `fixture_edge_cases_test_visibility_resolves_super_helper_path_call_site`
+  - `fixture_edge_cases_test_visibility_resolves_restricted_func_path_call_site`
+  - `fixture_generics_generic_function_records_t_default_unsupported_path_call_site`
+  - `fixture_generics_trait_impl_process_records_format_macro_call_site`
+  - `fixture_type_resolution_v2_generic_assoc_const_records_panic_macro_call_site`
   - `fixture_call_graph_dynamic_calls_records_parenthesized_binding_dynamic_call_site`
   - `fixture_call_graph_dynamic_calls_records_closure_literal_dynamic_call_site`
   - `fixture_call_graph_call_crate_local_target_resolves_crate_path_call_site`
   - `fixture_call_graph_call_self_nested_target_resolves_self_path_call_site`
+  - `fixture_call_graph_call_crate_module_nested_target_resolves_crate_module_path_call_site`
+  - `fixture_call_graph_call_self_module_nested_target_resolves_self_module_path_call_site`
+  - `fixture_call_graph_call_super_local_target_resolves_super_path_call_site`
+  - `fixture_call_graph_call_raw_identifier_function_resolves_raw_identifier_path_call_site`
+  - `fixture_call_graph_call_raw_identifier_method_resolves_raw_identifier_method_call_site`
+  - `fixture_call_graph_call_unqualified_local_target_resolves_local_path_call_site`
+  - `fixture_call_graph_call_returned_function_resolves_inner_make_fn_path_call_site`
+  - `fixture_call_graph_call_returned_function_records_outer_dynamic_call_site`
+  - `fixture_call_graph_call_self_make_resolves_self_associated_function_path_call_site`
+  - `fixture_call_graph_call_local_assoc_make_resolves_type_associated_function_path_call_site`
+  - `fixture_call_graph_call_qualified_local_assoc_make_resolves_type_associated_function_path_call_site`
+  - `fixture_call_graph_call_imported_type_assoc_make_resolves_imported_type_associated_function_path_call_site`
+  - `fixture_call_graph_call_glob_imported_type_assoc_make_resolves_imported_type_associated_function_path_call_site`
+  - `fixture_call_graph_call_reexported_type_assoc_make_resolves_imported_type_associated_function_path_call_site`
+  - `fixture_call_graph_call_imported_alias_target_resolves_imported_path_call_site`
+  - `fixture_call_graph_call_glob_imported_target_resolves_glob_path_call_site`
+  - `fixture_call_graph_call_reexported_target_resolves_reexport_path_call_site`
+  - `fixture_call_graph_call_imported_module_target_resolves_module_alias_path_call_site`
+  - `fixture_call_graph_call_param_instance_method_resolves_local_binding_method_call_site`
+  - `fixture_call_graph_call_typed_local_instance_method_resolves_typed_local_binding_method_call_site`
+  - `fixture_call_graph_call_initialized_local_instance_method_resolves_initialized_local_binding_method_call_site`
+  - `fixture_call_graph_call_parenthesized_typed_local_instance_method_resolves_typed_local_binding_method_call_site`
+  - `fixture_nodes_fn_call_const_resolves_const_initializer_path_call_site`
+  - `fixture_call_graph_impl_assoc_const_resolves_initializer_path_call_site`
+  - `fixture_call_graph_trait_assoc_const_resolves_initializer_path_call_site`
+  - `fixture_nodes_static_fn_call_resolves_static_initializer_path_call_site`
+  - `fixture_call_graph_call_param_trait_method_resolves_local_trait_impl_method_call_site`
+  - `fixture_call_graph_call_typed_local_trait_method_resolves_local_trait_impl_method_call_site`
+  - `fixture_call_graph_call_initialized_local_trait_method_resolves_local_trait_impl_method_call_site`
+  - `fixture_call_graph_call_parenthesized_initialized_local_trait_method_resolves_local_trait_impl_method_call_site`
+  - `fixture_call_graph_call_parenthesized_local_target_resolves_dynamic_function_call_site`
+  - `fixture_call_graph_call_trait_associated_function_resolves_trait_assoc_function_path_call_site`
+  - `fixture_call_graph_call_shadowed_local_target_binding_records_value_binding_path_call_site`
+  - `fixture_call_graph_call_local_function_item_binding_resolves_initialized_value_binding_path_call_site`
+  - `fixture_call_graph_call_typed_function_pointer_binding_resolves_initialized_value_binding_path_call_site`
+  - `fixture_call_graph_call_typed_function_pointer_alias_binding_resolves_initialized_value_binding_path_call_site`
+  - `fixture_call_graph_call_parenthesized_typed_function_pointer_alias_binding_resolves_dynamic_function_call_site`
+  - `fixture_call_graph_call_generic_fn_once_value_binding_records_value_binding_path_call_site`
+  - `fixture_call_graph_call_boxed_dyn_fn_value_binding_records_box_new_external_path_call_site`
+  - `fixture_call_graph_call_boxed_dyn_fn_value_binding_records_value_binding_path_call_site`
+  - `fixture_call_graph_call_generic_identity_turbofish_resolves_generic_function_path_call_site`
+  - `fixture_call_graph_call_method_turbofish_resolves_generic_method_call_site`
+  - `fixture_call_graph_call_prelude_drop_value_records_external_path_call_site`
+  - `fixture_call_graph_call_local_drop_shadow_resolves_local_function_path_call_site`
+  - `fixture_call_graph_call_crate_scoped_macro_records_crate_path_macro_call_site`
+  - `fixture_call_graph_call_borrowed_typed_local_instance_method_resolves_borrowed_typed_local_binding_method_call_site`
+  - `fixture_call_graph_call_dereferenced_local_instance_method_resolves_dereferenced_initialized_local_binding_method_call_site`
+  - `fixture_call_graph_call_prelude_string_new_records_external_path_call_site`
+  - `fixture_call_graph_call_prelude_vec_new_records_external_path_call_site`
+  - `fixture_call_graph_call_path_result_instance_method_resolves_returned_type_method_call_site`
+  - `fixture_call_graph_call_method_result_instance_method_resolves_returned_type_method_call_site`
+  - `fixture_call_graph_call_tuple_field_instance_method_resolves_field_type_method_call_site`
+  - `fixture_call_graph_call_tuple_field_function_resolves_constructed_field_dynamic_call_site`
+  - `fixture_call_graph_call_await_path_result_instance_method_resolves_returned_type_method_call_site`
+  - `fixture_call_graph_call_try_path_result_instance_method_resolves_result_ok_type_method_call_site`
+  - `fixture_call_graph_call_literal_str_to_string_records_external_method_call_site`
+  - `fixture_call_graph_call_typed_vec_len_records_external_method_call_site`
+  - `fixture_call_graph_call_shadowed_typed_vec_len_resolves_local_method_call_site`
+  - `fixture_call_graph_call_ambiguous_trait_method_records_ambiguous_method_call_site`
+  - `fixture_call_graph_call_inherent_over_trait_method_resolves_inherent_method_call_site`
+  - `fixture_call_graph_call_inline_generic_bound_method_resolves_trait_method_call_site`
+  - `fixture_call_graph_call_where_generic_bound_method_resolves_trait_method_call_site`
+  - `fixture_call_graph_call_trait_object_method_resolves_trait_method_call_site`
+  - `fixture_call_graph_trait_default_method_body_resolves_local_target_path_call_site`
+  - `fixture_call_graph_call_parenthesized_function_item_binding_resolves_dynamic_function_call_site`
+  - `fixture_call_graph_call_if_same_function_item_resolves_dynamic_function_call_site`
+  - `fixture_call_graph_call_if_ambiguous_function_item_records_ambiguous_dynamic_call_site`
+  - `fixture_call_graph_call_match_same_function_item_resolves_dynamic_function_call_site`
+  - `fixture_call_graph_call_match_ambiguous_function_item_records_ambiguous_dynamic_call_site`
+  - `fixture_call_graph_call_aliased_function_item_binding_resolves_initialized_value_binding_path_call_site`
+  - `fixture_call_graph_call_parenthesized_aliased_function_item_binding_resolves_dynamic_function_call_site`
+  - `fixture_call_graph_call_impl_trait_method_resolves_trait_method_call_site`
+  - `fixture_call_graph_call_direct_imported_trait_associated_function_resolves_trait_assoc_function_path_call_site`
+  - `fixture_call_graph_call_alias_imported_trait_associated_function_resolves_trait_assoc_function_path_call_site`
+  - `fixture_call_graph_call_glob_imported_trait_associated_function_resolves_trait_assoc_function_path_call_site`
+  - `fixture_call_graph_call_method_as_associated_function_resolves_inherent_method_path_call_site`
+  - `fixture_call_graph_call_direct_imported_trait_method_resolves_visible_trait_impl_method_call_site`
+  - `fixture_call_graph_call_alias_imported_trait_method_resolves_visible_trait_impl_method_call_site`
+  - `fixture_call_graph_call_glob_imported_trait_method_resolves_visible_trait_impl_method_call_site`
+  - `fixture_call_graph_call_unimported_trait_method_fails_closed_without_visible_trait_call_site`
+  - plus three negative owner-attribution checks for closure, async block, and
+    async closure bodies.
 
 Not implemented yet:
 
-- Dynamic call resolution.
-- Non-`self` method receiver classification.
-- Trait dispatch.
-- Unqualified/import/re-export path-call resolution.
-- Associated-function path-call resolution.
-- `ploke-db` query helper surface over persisted call graph relations.
-- Proof-fact projection.
+- Dynamic/Fn-call resolution beyond parenthesized exact local function path
+  callees, exact single-path block callees, exact two-branch if-expression
+  path callees, exact path-valued match-arm dynamic callees, exact bare
+  function-pointer casts over unshadowed local function paths,
+  exact initialized-binding
+  function-pointer casts and dereferenced initialized function-pointer
+  bindings, exact local function-item bindings and one-step alias propagation
+  in path-call and parenthesized dynamic-call form, typed function-pointer
+  aliases backed by initializer-path proof, exact indexed calls over untyped,
+  typed, one-step aliased, and constructed named-field local array initializer
+  proof, exact indexed calls over tuple-constructor array-field proof, exact
+  indexed calls over named/tuple field array-alias proof, one-step aliases of
+  constructed holder bindings carrying exact field initializer proof, and
+  value-binding fail-closed classification including generic `F: FnOnce` and
+  boxed `dyn Fn` calls.
+  Async closure literal calls are covered as unsupported structural
+  `DynamicCall` rows; closure/coroutine target modeling remains future work.
+- Non-`self` method receiver classification beyond named owner parameters,
+  explicitly typed local bindings, path-initialized local bindings, explicit
+  dereferences of borrowed owner parameters, and one explicit reference layer
+  of borrowed owner parameters with direct local inherent method proof.
+- Trait dispatch beyond exact local trait-impl methods on typed receiver
+  bindings plus exact local generic-bound, trait-object, same-trait
+  default-method, and bounded one-parameter blanket-impl declarations,
+  including non-direct concrete dispatch through trait objects, broader trait
+  import/scope forms, richer blanket-bound shapes, and trait associated
+  functions beyond direct local fully qualified `<Type as Trait>::method()` and
+  visible local shorthand `Trait::method()` path calls.
+- Import/re-export/glob-aware path-call resolution beyond direct local function
+  bindings, local module-qualified paths, and imported local module aliases.
+- Associated-function path-call resolution beyond conservative inherent
+  `Self::method()`, directly visible local `Type::method()`, method-as-
+  associated `Type::method(&value)`, qualified local `<Type>::method()`, and
+  fully qualified `<Type as Trait>::method()` cases.
+- Closure and async body ownership expansion; current parser-native extraction
+  explicitly skips nested closure/async bodies rather than attributing their
+  calls to the enclosing owner.
 
 ## 2026-06-23 workspace test audit
 
@@ -226,9 +570,34 @@ Post-gate evidence, 2026-06-23:
   `call_site`, `call_site_edge`, `call_relation`, or `call_resolution_status`.
 - Feature-enabled projection tests still assert real call graph rows with strict
   counts and no fabricated unsupported edges.
+- Feature-enabled `ploke-db` helper tests assert typed call-site context rows,
+  semantic target rows, resolved/unsupported status rows, and fail-closed
+  behavior when a structural call site lacks `call_resolution_status`.
+- Feature-enabled `ploke-db` proof projection tests assert resolved call graph
+  rows are stored through the existing proof graph as `call_site`, `call_edge`,
+  and `call_resolution` facts, with source provenance retained. They also assert
+  external and unsupported call statuses project fail-closed blocker reasons
+  without fabricating local call edges.
 - `cargo xtask verify-backup-dbs`, `cargo xtask verify-fixtures`, and
   `cargo test -p ploke-transform --features call_graph transform::tests -- --nocapture`
   passed after the gate.
+- `cargo test -p ploke-db --features call_graph call_graph_queries -- --nocapture`
+  passed for the typed DB helper and proof-projection slices, including a
+  strict rejection test for non-resolved call statuses that still carry local
+  targets.
+- `cargo test -p ploke-rag --features call_graph call_context_collection_attaches_outgoing_call_payloads -- --nocapture`
+  passed for the first RAG call-context collection slice.
+- `cargo test -p ploke-db --features call_graph --no-fail-fast` remains red in
+  backup-backed type-graph tests because the registered typed corpus backups
+  still predate `call_relation`; the only failing target was
+  `ploke-db --test mod`, with 34 failures all reporting
+  `Cannot find requested stored relation 'call_relation'`. In the latest
+  feature-gated run, `src/lib.rs`, `proof_graph_store`, `proof_invariant_checker`,
+  observability tests, and doctests passed. This is classified under
+  `CALL_GRAPH_GATE:fixture-regeneration`, not as a DB helper or proof projection
+  regression.
+- `docs/testing/BACKUP_DB_FIXTURES.md` was last reviewed on 2026-06-12; as of
+  2026-06-23 the fixture review is overdue before any backup-fixture changes.
 - `cargo test --workspace --no-fail-fast` no longer reports `call_relation`
   missing from stale backups. Remaining red targets are non-call-graph or typed
   fixture/context issues: `ploke-eval --lib`, `ploke-rag --lib`,
@@ -329,7 +698,9 @@ Implemented in this slice:
 
 1. Method-call receiver classification now recognizes field projections rooted at `self`, such as `self.secret`.
 2. `self.secret.len()` in `fixture_nodes::impls::PrivateStruct::get_secret_len` is recorded as `CallNode::MethodCall` with `MethodCallReceiver::SelfField { field_path: ["secret"] }`.
-3. The resolver fails closed for this call with `Unsupported` and emits no fake local `CallRelation::Method` edge.
+3. The resolver classifies this call as `External` with no local edge when the
+   owner impl self type resolves to the local struct and the field type is a
+   proven external/prelude concrete type such as `String`.
 
 Primary implementation files:
 
@@ -375,10 +746,10 @@ Primary implementation files:
 
 Implemented in this slice:
 
-1. Path calls whose first segment is `std`, `core`, `alloc`, or a parsed dependency name now receive `CallResolutionStatus::External`.
+1. Path calls whose first segment is `std`, `core`, `alloc`, or a parsed dependency name now receive `CallResolutionStatus::External`; dependency names with `-` also match Rust path segments spelled with `_`.
 2. These external-root calls emit no local `CallRelation` edges.
 3. `std::path::Path::new("")` in `fixture_path_resolution::root_func` is covered by a paranoid call-site test.
-4. Import-alias external calls such as `PathBuf::new()` remain `Unsupported` until import-aware external classification exists.
+4. Directly imported external-root calls such as `PathBuf::new()`, `HashMap::new()`, `fs::read_to_string(...)`, `Duration::from_secs(...)`, and `Arc::new(...)` are classified as `External` with no local edge.
 
 Primary implementation files:
 
@@ -414,13 +785,43 @@ Implemented in this slice:
 1. `CallRelationResolver` now attempts local standalone-function resolution for explicit `crate::`, `self::`, and `super::` path calls.
 2. The resolver traverses from the call owner's containing module, handles local path prefixes, walks intermediate module segments, and proves terminal `FunctionNodeId` targets.
 3. `super::restricted_func()` in `fixture_path_resolution::restricted_vis_mod::inner::call_restricted` resolves to `restricted_func` with `CallRelation::Function` and `Resolved(LocalExact)` status.
-4. Unsupported path-call shapes such as external associated-function-looking calls remain `Unsupported`.
+4. Unsupported path-call shapes remain explicit statuses with no fake local edge.
 
 Primary implementation files:
 
 - `crates/ingest/syn_parser/src/resolve/call_resolution.rs`
 - `crates/ingest/syn_parser/tests/uuid_phase3_resolution/call_sites.rs`
 - `docs/active/agents/call-graph/2026-06-22_local-free-function-path-call-resolution-plan.md`
+
+## Completed implementation slice: unqualified local free-function path-call resolution
+
+Implemented in this slice:
+
+1. `CallRelationResolver` now treats single-segment path calls such as `local_target()` as local function path candidates.
+2. The resolver reuses the existing containing-module terminal lookup and emits a local exact `CallRelation::Function` only when exactly one local `FunctionNodeId` target is proven.
+3. `fixture_call_graph::call_unqualified_local_target` records `local_target()` as a `PathCall` and resolves it to `fixture_call_graph::local_target`.
+4. Ambiguous single-segment local function candidates still fail closed as `Ambiguous`; missing or non-function single-segment targets stay `Unsupported` so constructor/import/binding cases are not treated as supported resolver misses.
+
+Primary implementation files:
+
+- `tests/fixture_crates/fixture_call_graph/src/lib.rs`
+- `crates/ingest/syn_parser/src/resolve/call_resolution.rs`
+- `crates/ingest/syn_parser/tests/uuid_phase3_resolution/call_sites.rs`
+- `docs/active/agents/call-graph/2026-06-22_call-site-coverage-matrix.md`
+
+## Completed implementation slice: chained call-callee structural coverage
+
+Implemented in this slice:
+
+1. Added `fixture_call_graph::call_returned_function` with `make_fn()()` to cover Rust's chained call-callee syntax.
+2. The existing visitor records the inner `make_fn()` as `CallNode::PathCall` and the outer returned-function invocation as `CallNode::DynamicCall`.
+3. The inner `make_fn()` path call resolves to the local `FunctionNodeId`; the outer dynamic call remains `Unsupported` with no fabricated edge.
+
+Primary implementation files:
+
+- `tests/fixture_crates/fixture_call_graph/src/lib.rs`
+- `crates/ingest/syn_parser/tests/uuid_phase3_resolution/call_sites.rs`
+- `docs/active/agents/call-graph/2026-06-22_call-site-coverage-matrix.md`
 
 ## Completed implementation slice: structural macro-call extraction
 
@@ -470,22 +871,28 @@ Before implementing new call-graph work, verify:
 Commands run after structural extraction, resolver slices, path-call extraction, and macro-call extraction landed:
 
 ```bash
-cargo check -p syn_parser
-cargo check -p syn_parser
-cargo test -p syn_parser type_relations_v2 -- --nocapture
-cargo test -p syn_parser call_sites -- --nocapture
-cargo check -p ploke-transform
-cargo check -p ploke-transform
-cargo test -p ploke-transform transform::tests -- --nocapture
+cargo test -p syn_parser --features call_graph call_sites -- --nocapture
+cargo test -p ploke-transform --features call_graph transform::tests -- --nocapture
+cargo test -p ploke-db --features call_graph call_graph_queries -- --nocapture
+cargo test -p ploke-rag --features call_graph call_context_collection_attaches_outgoing_call_payloads -- --nocapture
+cargo check -p ploke-tui --features call_graph
 ```
 
-Result: all passed. The `call_sites` filter ran nineteen paranoid fixture tests and all passed; transform projection tests passed for type relations, resolved call edges, and unsupported call statuses.
+Result: parser, transform, DB helper, and RAG checks passed. The latest
+`call_sites` filter ran 203 paranoid fixture tests; transform projection tests
+passed for resolved function/method/associated-function/constructor call edges
+and unsupported call statuses.
 
 ## Next implementation slice
 
-Use [`2026-06-22_call-site-coverage-matrix.md`](2026-06-22_call-site-coverage-matrix.md) as the test-selection source of truth. Continue broadening structural coverage before broad semantic coverage. Recommended next RED tests:
+Use [`2026-06-22_call-site-coverage-matrix.md`](2026-06-22_call-site-coverage-matrix.md) as the test-selection source of truth. Continue broadening semantic coverage without weakening fail-closed status reporting. Recommended next RED tests:
 
-1. broaden explicit local path-call resolution with `crate::...` / `self::...` fixtures and then imports/re-exports;
-2. dynamic-call extraction for non-path callees such as `(f)()` or `make_fn()()` once a fixture target exists;
-3. decide whether path-to-binding calls such as `alias_checker(...)` remain `PathCall` structurally or need a later binding-aware dynamic reclassification;
-4. associated-function path-call resolution after a dedicated `Self::new()` / local associated-function path-call test.
+1. broader function-pointer and generic `F: FnOnce` target resolution beyond
+   the current exact local/direct-import function-item binding, exact bare
+   cast-path, exact initialized-binding cast/deref, and value-binding
+   fail-closed statuses;
+2. broader trait dispatch for remaining multi-step trait-object concrete proof,
+   richer blanket-bound shapes beyond exact recursive one-parameter local
+   impls, and broader imported trait scope forms;
+3. richer closure/async body ownership expansion beyond the current explicit
+   extraction boundary.

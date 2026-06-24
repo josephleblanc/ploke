@@ -289,6 +289,7 @@ for a more fuzzy search."#
             )),
             snippet,
             type_context: None,
+            call_context: Vec::new(),
         };
 
         let summary = format!("Resolved item in {}", concise_context.file_path.as_ref());

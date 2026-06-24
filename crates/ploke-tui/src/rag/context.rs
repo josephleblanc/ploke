@@ -14,7 +14,10 @@ use std::{ops::ControlFlow, path::PathBuf};
 use once_cell::sync::Lazy;
 use ploke_core::{
     ArcStr, RetrievalScope,
-    rag_types::{AssembledContext, ContextPart},
+    rag_types::{
+        AssembledContext, CallCalleeInfo, CallContextInfo, CallReceiverInfo, CallTargetInfo,
+        ContextPart,
+    },
 };
 use tokio::sync::oneshot;
 
@@ -322,15 +325,152 @@ fn reformat_context_to_system(ctx_part: ContextPart) -> String {
             )
         })
         .unwrap_or_default();
+    let call_context = if ctx_part.call_context.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n{}",
+            format_call_context_block(&ctx_part.call_context, "  ", 8)
+        )
+    };
     format!(
-        "file_path: {}\ncanon_path: {}\nkind: {}\nscore: {:.3}{}\ncode_snippet:\n{}",
+        "file_path: {}\ncanon_path: {}\nkind: {}\nscore: {:.3}{}{}\ncode_snippet:\n{}",
         ctx_part.file_path.as_ref(),
         ctx_part.canon_path.as_ref(),
         ctx_part.kind.to_static_str(),
         ctx_part.score,
         type_context,
+        call_context,
         snippet
     )
+}
+
+pub(crate) fn format_call_context_block(
+    calls: &[CallContextInfo],
+    indent: &str,
+    limit: usize,
+) -> String {
+    if calls.is_empty() {
+        return String::new();
+    }
+
+    let mut out = format!("call_context: {} outgoing call site(s)", calls.len());
+    let limit = limit.max(1);
+    for call in calls.iter().take(limit) {
+        out.push('\n');
+        out.push_str(indent);
+        out.push_str("- ");
+        out.push_str(&format_call_context(call));
+    }
+    let hidden = calls.len().saturating_sub(limit);
+    if hidden > 0 {
+        out.push('\n');
+        out.push_str(indent);
+        out.push_str("- ... ");
+        out.push_str(&hidden.to_string());
+        out.push_str(" more call site(s)");
+    }
+    out
+}
+
+fn format_call_context(call: &CallContextInfo) -> String {
+    format!(
+        "{} @ {}..{}: {} => {}, {}",
+        call.kind.to_static_str(),
+        call.span.0,
+        call.span.1,
+        format_callee(&call.callee),
+        format_status(call),
+        format_targets(&call.targets)
+    )
+}
+
+fn format_status(call: &CallContextInfo) -> String {
+    match &call.resolution {
+        Some(resolution) => format!(
+            "{}({})",
+            call.status.to_static_str(),
+            resolution.to_static_str()
+        ),
+        None => call.status.to_static_str().to_string(),
+    }
+}
+
+fn format_targets(targets: &[CallTargetInfo]) -> String {
+    if targets.is_empty() {
+        return "targets []".to_string();
+    }
+
+    let limit = 3usize;
+    let mut parts = targets
+        .iter()
+        .take(limit)
+        .map(|target| format!("{}:{}", target.relation.to_static_str(), target.target_id))
+        .collect::<Vec<_>>();
+    let hidden = targets.len().saturating_sub(limit);
+    if hidden > 0 {
+        parts.push(format!("... {hidden} more"));
+    }
+    format!("targets [{}]", parts.join(", "))
+}
+
+fn format_callee(callee: &CallCalleeInfo) -> String {
+    match callee {
+        CallCalleeInfo::Path { path } => format!("path {}", path.join("::")),
+        CallCalleeInfo::Method { name, receiver } => {
+            let receiver = receiver
+                .as_ref()
+                .map(|receiver| format!(" on {}", format_receiver(receiver)))
+                .unwrap_or_default();
+            format!("method {name}{receiver}")
+        }
+        CallCalleeInfo::Macro { name } => format!("macro {name}"),
+        CallCalleeInfo::Dynamic => "dynamic".to_string(),
+    }
+}
+
+fn format_receiver(receiver: &CallReceiverInfo) -> String {
+    match receiver {
+        CallReceiverInfo::SelfValue => "self".to_string(),
+        CallReceiverInfo::SelfField { path } => format!("self.{}", path.join(".")),
+        CallReceiverInfo::LocalBinding { name } => name.clone(),
+        CallReceiverInfo::TypedLocalBinding { name, type_path } => {
+            format!("{name}: {}", type_path.join("::"))
+        }
+        CallReceiverInfo::InitializedLocalBinding { name, init_path } => {
+            format!("{name} = {}", init_path.join("::"))
+        }
+        CallReceiverInfo::BorrowedLocalBinding { name } => format!("&{name}"),
+        CallReceiverInfo::BorrowedTypedLocalBinding { name, type_path } => {
+            format!("&{name}: {}", type_path.join("::"))
+        }
+        CallReceiverInfo::DereferencedLocalBinding { name } => format!("*{name}"),
+        CallReceiverInfo::DereferencedInitializedLocalBinding { name, init_path } => {
+            format!("*{name} = {}", init_path.join("::"))
+        }
+        CallReceiverInfo::FieldLocalBinding { name, field_path } => {
+            format!("{name}.{}", field_path.join("."))
+        }
+        CallReceiverInfo::FieldTypedLocalBinding {
+            name,
+            type_path,
+            field_path,
+        } => format!("{name}: {}.{}", type_path.join("::"), field_path.join(".")),
+        CallReceiverInfo::FieldInitializedLocalBinding {
+            name,
+            init_path,
+            field_path,
+        } => format!("{name} = {}.{}", init_path.join("::"), field_path.join(".")),
+        CallReceiverInfo::PathCallResult { path } => format!("{}()", path.join("::")),
+        CallReceiverInfo::MethodCallResult { method_name } => format!("{method_name}()"),
+        CallReceiverInfo::AwaitResult => "await".to_string(),
+        CallReceiverInfo::AwaitPathCallResult { path } => {
+            format!("{}().await", path.join("::"))
+        }
+        CallReceiverInfo::TryResult => "?".to_string(),
+        CallReceiverInfo::TryPathCallResult { path } => format!("{}()?", path.join("::")),
+        CallReceiverInfo::Literal => "literal".to_string(),
+    }
 }
 
 fn truncate_context_text(text: &str, max_lines: usize) -> String {
@@ -383,6 +523,7 @@ fn build_context_plan(
                 estimated_tokens,
                 score: part.score,
                 type_context: part.type_context,
+                call_context: part.call_context.clone(),
             });
         }
     }
@@ -420,8 +561,9 @@ mod tests {
     };
     use crate::tools::{ToolName, ToolUiPayload};
     use ploke_core::rag_types::{
-        CanonPath, ContextPartKind, ContextStats, Modality, NodeFilepath, TypeContextInfo,
-        TypeContextKind,
+        CallCalleeInfo, CallContextInfo, CallResolutionKind, CallSiteKind, CallStatusKind,
+        CallTargetInfo, CallTargetKind, CanonPath, ContextPartKind, ContextStats, Modality,
+        NodeFilepath, TypeContextInfo, TypeContextKind,
     };
     use std::collections::HashMap;
 
@@ -452,6 +594,7 @@ mod tests {
                 score: 0.5,
                 modality: Modality::Dense,
                 type_context: None,
+                call_context: Vec::new(),
             }],
             stats: ContextStats {
                 total_tokens: 10,
@@ -499,6 +642,7 @@ mod tests {
                 relation: TypeContextKind::TypeDefinitionImpact,
                 distance: 1,
             }),
+            call_context: Vec::new(),
         };
 
         let rendered = reformat_context_to_system(part);
@@ -510,6 +654,41 @@ mod tests {
         assert!(rendered.contains(&format!("line {}", DEFAULT_CONTEXT_PART_MAX_LINES - 1)));
         assert!(!rendered.contains(&format!("line {}", DEFAULT_CONTEXT_PART_MAX_LINES)));
         assert!(rendered.contains("... [truncated]"));
+    }
+
+    #[test]
+    fn reformat_context_to_system_includes_call_context_details() {
+        let target = Uuid::from_u128(41);
+        let part = ContextPart {
+            id: Uuid::from_u128(40),
+            file_path: NodeFilepath::new("src/main.rs".to_string()),
+            canon_path: CanonPath::new("crate::main".to_string()),
+            ranges: vec![],
+            kind: ContextPartKind::Code,
+            text: "fn main() { value.0(); }".to_string(),
+            score: 0.42,
+            modality: Modality::Dense,
+            type_context: None,
+            call_context: vec![CallContextInfo {
+                site_id: Uuid::from_u128(42),
+                kind: CallSiteKind::Dynamic,
+                span: (20, 29),
+                callee: CallCalleeInfo::Dynamic,
+                status: CallStatusKind::Resolved,
+                resolution: Some(CallResolutionKind::LocalExact),
+                targets: vec![CallTargetInfo {
+                    target_id: target,
+                    relation: CallTargetKind::DynamicFunction,
+                }],
+            }],
+        };
+
+        let rendered = reformat_context_to_system(part);
+
+        assert!(rendered.contains("call_context: 1 outgoing call site(s)"));
+        assert!(rendered.contains("Dynamic @ 20..29: dynamic"));
+        assert!(rendered.contains("Resolved(LocalExact)"));
+        assert!(rendered.contains(&format!("DynamicFunction:{target}")));
     }
 
     fn label_message_id(
@@ -580,14 +759,20 @@ mod tests {
                     )
                 })
                 .unwrap_or_default();
+            let call_context = if part.call_context.is_empty() {
+                String::new()
+            } else {
+                format!(" call_context:{}", part.call_context.len())
+            };
             out.push_str(&format!(
-                "- id: {} path: {} kind: {:?} tokens: {} score: {:.3}{}\n",
+                "- id: {} path: {} kind: {:?} tokens: {} score: {:.3}{}{}\n",
                 label_part_id(part.part_id, part_labels),
                 part.file_path,
                 part.kind,
                 part.estimated_tokens,
                 part.score,
-                type_context
+                type_context,
+                call_context
             ));
         }
         out.push_str("rag_stats:\n");
@@ -681,6 +866,7 @@ mod tests {
                         relation: TypeContextKind::UsesTypeNested,
                         distance: 2,
                     }),
+                    call_context: Vec::new(),
                 },
                 ContextPart {
                     id: Uuid::from_u128(101),
@@ -692,6 +878,7 @@ mod tests {
                     score: 0.8,
                     modality: Modality::Dense,
                     type_context: None,
+                    call_context: Vec::new(),
                 },
             ],
             stats: ContextStats {

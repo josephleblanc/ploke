@@ -11,6 +11,7 @@
 use super::attribute_processing_syn1::{
     extract_attributes, extract_cfg_strings, extract_docstring,
 };
+use super::call_extraction_syn1::extract_expr_call_sites;
 use super::state::VisitorState;
 use super::type_processing_syn1::{get_or_create_trait_bound_type, get_or_create_type};
 use crate::parser::nodes::{FunctionNodeId, GeneratesAnyNodeId};
@@ -20,7 +21,9 @@ use crate::parser::nodes::{
     StructNodeId, TraitNodeId, TypeAliasNodeId, UnionNodeId, VariantNodeId,
 };
 // Wrapper enums for catogories of individual node id wrapper types.
-use crate::parser::nodes::{AnyNodeId, AssociatedItemNodeId, PrimaryNodeId, SecondaryNodeId};
+use crate::parser::nodes::{
+    AnyNodeId, AssociatedItemNodeId, CallBodyOwnerId, PrimaryNodeId, SecondaryNodeId,
+};
 // Nodes
 use crate::parser::nodes::{
     ConstNode, EnumNode, FieldNode, FunctionNode, ImplNode, ImportNode, MacroNode, MethodNode,
@@ -109,6 +112,84 @@ const VISITOR_TARGET_STACK_TRACE: &str = "stack_trace";
 impl<'a> CodeVisitor<'a> {
     pub fn new(state: &'a mut VisitorState) -> Self {
         Self { state }
+    }
+
+    fn record_foreign_function_import(
+        &mut self,
+        fn_name: &str,
+        abi: Option<String>,
+        span: (usize, usize),
+        cfgs: Vec<String>,
+        cfg_bytes: Option<&[u8]>,
+    ) {
+        let mut source_path = vec!["extern".to_string()];
+        if let Some(abi_name) = &abi {
+            source_path.push(abi_name.clone());
+        }
+        source_path.push(fn_name.to_string());
+
+        let id_key = source_path.join("::");
+        let Some((import_any_id, parent_mod_id)) =
+            self.register_new_node_id(&id_key, ItemKind::Import, cfg_bytes)
+        else {
+            return;
+        };
+        self.debug_new_id(fn_name, import_any_id);
+
+        let typed_import_id: ImportNodeId = import_any_id
+            .try_into()
+            .expect("foreign function import should use ImportNodeId");
+        let import_node = ImportNode {
+            id: typed_import_id,
+            span,
+            source_path,
+            kind: ImportKind::ExternFunction { abi },
+            visible_name: fn_name.to_string(),
+            original_name: None,
+            is_glob: false,
+            is_self_import: false,
+            cfgs,
+        };
+
+        if let Some(module) = self
+            .state
+            .code_graph
+            .modules
+            .iter_mut()
+            .find(|m| m.id == parent_mod_id)
+        {
+            module.imports.push(import_node.clone());
+        }
+        self.state.code_graph.use_statements.push(import_node);
+
+        self.state
+            .code_graph
+            .relations
+            .push(SyntacticRelation::Contains {
+                source: parent_mod_id,
+                target: PrimaryNodeId::from(typed_import_id),
+            });
+        self.state
+            .code_graph
+            .relations
+            .push(SyntacticRelation::ModuleImports {
+                source: parent_mod_id,
+                target: typed_import_id,
+            });
+    }
+
+    fn record_expr_call_sites(
+        &mut self,
+        owner: CallBodyOwnerId,
+        expr: &syn1::Expr,
+        cfgs: &[String],
+    ) {
+        let (mut calls, mut relations) = extract_expr_call_sites(owner, expr, cfgs);
+        self.state.code_graph.call_sites.append(&mut calls);
+        self.state
+            .code_graph
+            .call_site_relations
+            .append(&mut relations);
     }
 
     // Process function arguments for syn1 compatibility
@@ -2584,6 +2665,63 @@ use statement ident: {:?}
         visit::visit_item_extern_crate(self, extern_crate);
     }
 
+    fn visit_item_foreign_mod(&mut self, foreign_mod: &'ast syn1::ItemForeignMod) {
+        #[cfg(feature = "cfg_eval")]
+        {
+            use crate::parser::visitor::attribute_processing_syn1::should_include_item;
+            let active_cfg = &self.state.active_cfg;
+
+            if !should_include_item(&foreign_mod.attrs, active_cfg) {
+                return;
+            }
+        }
+
+        let scope_cfgs = self.state.current_scope_cfgs.clone();
+        let foreign_cfgs =
+            super::attribute_processing_syn1::extract_cfg_strings(&foreign_mod.attrs);
+        let abi = foreign_mod.abi.name.as_ref().map(|name| name.value());
+
+        for item in &foreign_mod.items {
+            let syn1::ForeignItem::Fn(foreign_fn) = item else {
+                continue;
+            };
+
+            #[cfg(feature = "cfg_eval")]
+            {
+                use crate::parser::visitor::attribute_processing_syn1::should_include_item;
+                let active_cfg = &self.state.active_cfg;
+
+                if !should_include_item(&foreign_fn.attrs, active_cfg) {
+                    continue;
+                }
+            }
+
+            let fn_cfgs = super::attribute_processing_syn1::extract_cfg_strings(&foreign_fn.attrs);
+            let item_cfgs = foreign_cfgs
+                .iter()
+                .cloned()
+                .chain(fn_cfgs.iter().cloned())
+                .collect::<Vec<_>>();
+            let effective_cfgs = scope_cfgs
+                .iter()
+                .cloned()
+                .chain(item_cfgs.iter().cloned())
+                .collect::<Vec<_>>();
+            let cfg_bytes = calculate_cfg_hash_bytes(&effective_cfgs);
+            let fn_name = foreign_fn.sig.ident.to_string();
+
+            self.record_foreign_function_import(
+                &fn_name,
+                abi.clone(),
+                foreign_fn.extract_span_bytes(),
+                item_cfgs,
+                cfg_bytes.as_deref(),
+            );
+        }
+
+        visit::visit_item_foreign_mod(self, foreign_mod);
+    }
+
     // Visit constant items
     fn visit_item_const(&mut self, item_const: &'ast syn1::ItemConst) {
         #[cfg(feature = "cfg_eval")]
@@ -2667,6 +2805,12 @@ use statement ident: {:?}
             target: PrimaryNodeId::from(typed_const_id), // Use typed const ID
         };
         self.state.code_graph.relations.push(contains_relation);
+
+        self.record_expr_call_sites(
+            CallBodyOwnerId::Const(typed_const_id),
+            item_const.expr.as_ref(),
+            &provisional_effective_cfgs,
+        );
 
         // Nested items inside const blocks must hash against the const scope rather than the
         // surrounding module, otherwise identical local items in sibling consts collide.
@@ -2755,6 +2899,12 @@ use statement ident: {:?}
             target: PrimaryNodeId::from(typed_static_id), // Use typed static ID
         };
         self.state.code_graph.relations.push(contains_relation);
+
+        self.record_expr_call_sites(
+            CallBodyOwnerId::Static(typed_static_id),
+            item_static.expr.as_ref(),
+            &provisional_effective_cfgs,
+        );
 
         // Nested items inside static initializers must hash against the static scope for the same
         // reason as consts.

@@ -10,6 +10,17 @@
 mod unit_tests;
 use super::*;
 use ploke_core::rag_types::AssembledContext;
+#[cfg(feature = "call_graph")]
+use ploke_core::rag_types::{
+    CallCalleeInfo, CallContextInfo, CallReceiverInfo, CallResolutionKind as RagCallResolutionKind,
+    CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind, CallTargetInfo,
+    CallTargetKind,
+};
+#[cfg(feature = "call_graph")]
+use ploke_db::{
+    CallContextRow, CallReceiver, CallRelationKind, CallResolutionKind, CallSiteKind,
+    CallStatusKind,
+};
 use ploke_embed::indexer::EmbeddingProcessor;
 use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_io::IoManagerHandle;
@@ -69,6 +80,8 @@ pub struct RagConfig {
     pub token_counter: Arc<dyn TokenCounter>,
     pub reranker: Option<Arc<dyn Reranker>>,
     pub type_context: TypeContextConfig,
+    #[cfg(feature = "call_graph")]
+    pub call_context: CallContextConfig,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -95,6 +108,27 @@ impl Default for TypeContextConfig {
     }
 }
 
+#[cfg(feature = "call_graph")]
+#[derive(Debug, Clone, Copy)]
+pub struct CallContextConfig {
+    pub enabled: bool,
+    pub max_owner_hits: usize,
+    pub max_sites_per_owner: usize,
+    pub max_targets_per_site: usize,
+}
+
+#[cfg(feature = "call_graph")]
+impl Default for CallContextConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_owner_hits: 12,
+            max_sites_per_owner: 16,
+            max_targets_per_site: 8,
+        }
+    }
+}
+
 impl Default for RagConfig {
     fn default() -> Self {
         Self {
@@ -109,6 +143,8 @@ impl Default for RagConfig {
             token_counter: Arc::new(crate::context::ApproxCharTokenizer),
             reranker: None,
             type_context: TypeContextConfig::default(),
+            #[cfg(feature = "call_graph")]
+            call_context: CallContextConfig::default(),
         }
     }
 }
@@ -156,6 +192,160 @@ fn type_context_kind(relation: TypeContextRelation) -> TypeContextKind {
     }
 }
 
+#[cfg(feature = "call_graph")]
+fn row_to_call_context(
+    row: CallContextRow,
+    max_targets: usize,
+) -> Result<CallContextInfo, RagError> {
+    let callee = match row.site.kind {
+        CallSiteKind::Path => CallCalleeInfo::Path {
+            path: row.site.path.ok_or_else(|| {
+                DbError::Cozo(format!(
+                    "path call site {} missing path payload",
+                    row.site.id
+                ))
+            })?,
+        },
+        CallSiteKind::Method => CallCalleeInfo::Method {
+            name: row.site.method.ok_or_else(|| {
+                DbError::Cozo(format!(
+                    "method call site {} missing method payload",
+                    row.site.id
+                ))
+            })?,
+            receiver: row.site.receiver.map(receiver_info),
+        },
+        CallSiteKind::Dynamic => CallCalleeInfo::Dynamic,
+        CallSiteKind::Macro => CallCalleeInfo::Macro {
+            name: row.site.macro_name.ok_or_else(|| {
+                DbError::Cozo(format!(
+                    "macro call site {} missing macro payload",
+                    row.site.id
+                ))
+            })?,
+        },
+    };
+
+    Ok(CallContextInfo {
+        site_id: row.site.id,
+        kind: site_kind(row.site.kind),
+        span: row.site.span,
+        callee,
+        status: status_kind(row.status.status),
+        resolution: row.status.resolution.map(resolution_kind),
+        targets: row
+            .targets
+            .into_iter()
+            .take(max_targets)
+            .map(|target| CallTargetInfo {
+                target_id: target.target_id,
+                relation: target_kind(target.relation),
+            })
+            .collect(),
+    })
+}
+
+#[cfg(feature = "call_graph")]
+fn site_kind(kind: CallSiteKind) -> RagCallSiteKind {
+    match kind {
+        CallSiteKind::Path => RagCallSiteKind::Path,
+        CallSiteKind::Method => RagCallSiteKind::Method,
+        CallSiteKind::Dynamic => RagCallSiteKind::Dynamic,
+        CallSiteKind::Macro => RagCallSiteKind::Macro,
+    }
+}
+
+#[cfg(feature = "call_graph")]
+fn receiver_info(receiver: CallReceiver) -> CallReceiverInfo {
+    match receiver {
+        CallReceiver::SelfValue => CallReceiverInfo::SelfValue,
+        CallReceiver::SelfField { path } => CallReceiverInfo::SelfField { path },
+        CallReceiver::LocalBinding { name } => CallReceiverInfo::LocalBinding { name },
+        CallReceiver::TypedLocalBinding { name, type_path } => {
+            CallReceiverInfo::TypedLocalBinding { name, type_path }
+        }
+        CallReceiver::InitializedLocalBinding { name, init_path } => {
+            CallReceiverInfo::InitializedLocalBinding { name, init_path }
+        }
+        CallReceiver::BorrowedLocalBinding { name } => {
+            CallReceiverInfo::BorrowedLocalBinding { name }
+        }
+        CallReceiver::BorrowedTypedLocalBinding { name, type_path } => {
+            CallReceiverInfo::BorrowedTypedLocalBinding { name, type_path }
+        }
+        CallReceiver::DereferencedLocalBinding { name } => {
+            CallReceiverInfo::DereferencedLocalBinding { name }
+        }
+        CallReceiver::DereferencedInitializedLocalBinding { name, init_path } => {
+            CallReceiverInfo::DereferencedInitializedLocalBinding { name, init_path }
+        }
+        CallReceiver::FieldLocalBinding { name, field_path } => {
+            CallReceiverInfo::FieldLocalBinding { name, field_path }
+        }
+        CallReceiver::FieldTypedLocalBinding {
+            name,
+            type_path,
+            field_path,
+        } => CallReceiverInfo::FieldTypedLocalBinding {
+            name,
+            type_path,
+            field_path,
+        },
+        CallReceiver::FieldInitializedLocalBinding {
+            name,
+            init_path,
+            field_path,
+        } => CallReceiverInfo::FieldInitializedLocalBinding {
+            name,
+            init_path,
+            field_path,
+        },
+        CallReceiver::PathCallResult { path } => CallReceiverInfo::PathCallResult { path },
+        CallReceiver::MethodCallResult { method_name } => {
+            CallReceiverInfo::MethodCallResult { method_name }
+        }
+        CallReceiver::AwaitResult => CallReceiverInfo::AwaitResult,
+        CallReceiver::AwaitPathCallResult { path } => {
+            CallReceiverInfo::AwaitPathCallResult { path }
+        }
+        CallReceiver::TryResult => CallReceiverInfo::TryResult,
+        CallReceiver::TryPathCallResult { path } => CallReceiverInfo::TryPathCallResult { path },
+        CallReceiver::Literal => CallReceiverInfo::Literal,
+    }
+}
+
+#[cfg(feature = "call_graph")]
+fn target_kind(kind: CallRelationKind) -> CallTargetKind {
+    match kind {
+        CallRelationKind::Function => CallTargetKind::Function,
+        CallRelationKind::DynamicFunction => CallTargetKind::DynamicFunction,
+        CallRelationKind::Method => CallTargetKind::Method,
+        CallRelationKind::AssociatedFunction => CallTargetKind::AssociatedFunction,
+        CallRelationKind::TupleStructConstructor => CallTargetKind::TupleStructConstructor,
+        CallRelationKind::EnumVariantConstructor => CallTargetKind::EnumVariantConstructor,
+        CallRelationKind::Struct => CallTargetKind::TupleStructConstructor,
+        CallRelationKind::Variant => CallTargetKind::EnumVariantConstructor,
+    }
+}
+
+#[cfg(feature = "call_graph")]
+fn status_kind(kind: CallStatusKind) -> RagCallStatusKind {
+    match kind {
+        CallStatusKind::Resolved => RagCallStatusKind::Resolved,
+        CallStatusKind::Unresolved => RagCallStatusKind::Unresolved,
+        CallStatusKind::Ambiguous => RagCallStatusKind::Ambiguous,
+        CallStatusKind::External => RagCallStatusKind::External,
+        CallStatusKind::Unsupported => RagCallStatusKind::Unsupported,
+    }
+}
+
+#[cfg(feature = "call_graph")]
+fn resolution_kind(kind: CallResolutionKind) -> RagCallResolutionKind {
+    match kind {
+        CallResolutionKind::LocalExact => RagCallResolutionKind::LocalExact,
+    }
+}
+
 /// RAG orchestration service.
 ///
 /// This orchestrates hybrid search by combining:
@@ -176,6 +366,8 @@ pub struct RagService {
     cfg: RagConfig,
     io: Option<Arc<IoManagerHandle>>,
     type_context_degraded: bool,
+    #[cfg(feature = "call_graph")]
+    call_context_degraded: bool,
 }
 
 impl RagService {
@@ -187,6 +379,8 @@ impl RagService {
         io: Option<Arc<IoManagerHandle>>,
     ) -> Result<Self, RagError> {
         let type_context_degraded = Self::apply_type_context_gate(&db, &mut cfg)?;
+        #[cfg(feature = "call_graph")]
+        let call_context_degraded = Self::apply_call_context_gate(&db, &mut cfg)?;
         Ok(Self {
             db,
             dense_embedder,
@@ -194,6 +388,8 @@ impl RagService {
             cfg,
             io,
             type_context_degraded,
+            #[cfg(feature = "call_graph")]
+            call_context_degraded,
         })
     }
 
@@ -208,6 +404,21 @@ impl RagService {
             "typed type-context expansion disabled: active database is missing typed-graph relations (type_contains, type_use, type_relation)"
         );
         cfg.type_context.enabled = false;
+        Ok(true)
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn apply_call_context_gate(db: &Database, cfg: &mut RagConfig) -> Result<bool, RagError> {
+        if !cfg.call_context.enabled {
+            return Ok(false);
+        }
+        if db.has_call_graph_relations()? {
+            return Ok(false);
+        }
+        tracing::warn!(
+            "call-context payloads disabled: active database is missing call graph relations"
+        );
+        cfg.call_context.enabled = false;
         Ok(true)
     }
 
@@ -263,6 +474,11 @@ impl RagService {
     /// because the active database lacks typed-graph relations.
     pub fn type_context_degraded(&self) -> bool {
         self.type_context_degraded
+    }
+
+    #[cfg(feature = "call_graph")]
+    pub fn call_context_degraded(&self) -> bool {
+        self.call_context_degraded
     }
 
     /// Convenience constructor for tests with an in-memory database and mock embedder.
@@ -716,6 +932,34 @@ impl RagService {
         Ok((merged, expanded_context))
     }
 
+    #[cfg(feature = "call_graph")]
+    fn collect_call_context(
+        &self,
+        hits: &[(Uuid, f32)],
+    ) -> Result<HashMap<Uuid, Vec<CallContextInfo>>, RagError> {
+        let cfg = self.cfg.call_context;
+        if !cfg.enabled || cfg.max_owner_hits == 0 || hits.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let mut out = HashMap::new();
+        for &(owner_id, _) in hits.iter().take(cfg.max_owner_hits) {
+            let rows = self.db.call_context_for_owner(owner_id)?;
+            if rows.is_empty() {
+                continue;
+            }
+            let context = rows
+                .into_iter()
+                .take(cfg.max_sites_per_owner)
+                .map(|row| row_to_call_context(row, cfg.max_targets_per_site))
+                .collect::<Result<Vec<_>, _>>()?;
+            if !context.is_empty() {
+                out.insert(owner_id, context);
+            }
+        }
+        Ok(out)
+    }
+
     /// High-level API: retrieve and assemble a context using the chosen strategy and budget.
     /// Uses configured defaults (policy, tokenizer, strict bm25) unless overridden by the strategy.
     #[instrument(skip(self, query, budget, strategy), fields(query_len = %query.len(), top_k = top_k))]
@@ -803,6 +1047,9 @@ impl RagService {
             hits
         };
 
+        #[cfg(feature = "call_graph")]
+        let call_context = self.collect_call_context(&final_hits)?;
+
         // 2) Assemble context
         let io = self
             .io
@@ -810,6 +1057,23 @@ impl RagService {
             .ok_or_else(|| RagError::Search("IoManagerHandle not configured".to_string()))?
             .clone();
 
+        #[cfg(feature = "call_graph")]
+        {
+            return crate::context::assemble_context_with_context_maps(
+                query,
+                &final_hits,
+                budget,
+                &self.cfg.assembly_policy,
+                &*self.cfg.token_counter,
+                &self.db,
+                &io,
+                &type_context,
+                &call_context,
+            )
+            .await;
+        }
+
+        #[cfg(not(feature = "call_graph"))]
         assemble_context_with_type_context(
             query,
             &final_hits,

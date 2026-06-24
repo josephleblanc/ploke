@@ -20,6 +20,7 @@ use crate::app::view::widgets::expanding_list::{ExpandingItem, ExpandingList, Ex
 use crate::chat_history::{ContextTokens, Message, MessageKind, TokenKind};
 use crate::context_plan::{ContextPlanHistory, ContextPlanSnapshot};
 use crate::llm::manager::events::{ContextExclusionReason, ContextPlanMessage, ContextPlanRagPart};
+use crate::rag::context::format_call_context_block;
 use crate::ui_theme::UiTheme;
 use unicode_width::UnicodeWidthChar;
 
@@ -930,13 +931,20 @@ fn build_display_items(
                 let expanded = expanded.contains(key) || snippet_visible.contains(&part.part_id);
                 let show_snippet_gutter = snippet_visible.contains(&part.part_id);
                 let display_path = display_relative_path(&part.file_path, focus_root);
+                let type_suffix = part
+                    .type_context
+                    .map(|ctx| format!(", type {}", ctx.relation.to_static_str()))
+                    .unwrap_or_default();
+                let call_suffix = if part.call_context.is_empty() {
+                    String::new()
+                } else {
+                    format!(", calls {}", part.call_context.len())
+                };
                 let suffix = format!(
                     " ({}, score {:.3}{}) — ~{} tok",
                     part.kind.to_static_str(),
                     part.score,
-                    part.type_context
-                        .map(|ctx| format!(", type {}", ctx.relation.to_static_str()))
-                        .unwrap_or_default(),
+                    format_args!("{type_suffix}{call_suffix}"),
                     part.estimated_tokens
                 );
                 let title_path =
@@ -961,6 +969,14 @@ fn build_display_items(
                             truncate_uuid(type_context.seed_id),
                             type_context.distance
                         )));
+                    }
+                    if !part.call_context.is_empty() {
+                        let call_context = format_call_context_block(&part.call_context, "  ", 8);
+                        details.extend(
+                            call_context
+                                .lines()
+                                .map(|line| Line::from(format!("    {line}"))),
+                        );
                     }
                     details.push(Line::from(format!(
                         "    estimated_tokens: {}",

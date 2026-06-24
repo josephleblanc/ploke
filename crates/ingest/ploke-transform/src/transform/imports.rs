@@ -27,6 +27,7 @@ pub(super) fn transform_imports(
         );
         let cozo_import_kind = match import.kind {
             ImportKind::ExternCrate => "ExternCrate".to_string(),
+            ImportKind::ExternFunction { .. } => "ExternFunction".to_string(),
             ImportKind::UseStatement(_) => "UseStatement".to_string(),
         };
         let cozo_original_name = import
@@ -111,6 +112,7 @@ impl CommonFieldsImport for ImportNode {
     fn process_vis(&self) -> (DataValue, Option<DataValue>) {
         match &self.kind {
             ImportKind::ExternCrate => (DataValue::from("public".to_string()), None),
+            ImportKind::ExternFunction { .. } => ("inherited".into(), None),
             ImportKind::UseStatement(visibility_kind) => {
                 let (vis_kind, vis_path) = match visibility_kind {
                     VisibilityKind::Public => (DataValue::from("public".to_string()), None),

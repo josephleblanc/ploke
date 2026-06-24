@@ -16,8 +16,8 @@ use itertools::Itertools;
 use ploke_core::{
     EmbeddingData,
     rag_types::{
-        AssembledContext, CanonPath, ContextPart, ContextPartKind, ContextStats, Modality,
-        NodeFilepath, TypeContextInfo,
+        AssembledContext, CallContextInfo, CanonPath, ContextPart, ContextPartKind, ContextStats,
+        Modality, NodeFilepath, TypeContextInfo,
     },
 };
 use ploke_db::{Database, NodeType, get_by_id::NodePaths};
@@ -190,6 +190,31 @@ pub async fn assemble_context_with_type_context(
     io: &IoManagerHandle,
     type_context: &HashMap<Uuid, TypeContextInfo>,
 ) -> Result<AssembledContext, RagError> {
+    assemble_context_with_context_maps(
+        query,
+        hits,
+        budget,
+        policy,
+        tokenizer,
+        db,
+        io,
+        type_context,
+        &HashMap::new(),
+    )
+    .await
+}
+
+pub(crate) async fn assemble_context_with_context_maps(
+    query: &str,
+    hits: &[(Uuid, f32)],
+    budget: &TokenBudget,
+    policy: &AssemblyPolicy,
+    tokenizer: &dyn TokenCounter,
+    db: &Database,
+    io: &IoManagerHandle,
+    type_context: &HashMap<Uuid, TypeContextInfo>,
+    call_context: &HashMap<Uuid, Vec<CallContextInfo>>,
+) -> Result<AssembledContext, RagError> {
     // Build score map and preserve incoming order.
     let mut score_map: HashMap<Uuid, f32> = HashMap::with_capacity(hits.len());
     let ordered_ids: Vec<Uuid> = hits.iter().map(|(id, _)| *id).collect();
@@ -246,6 +271,7 @@ pub async fn assemble_context_with_type_context(
                     score: *score_map.get(&id).unwrap_or(&0.0),
                     modality: Modality::HybridFused,
                     type_context: type_context.get(&id).copied(),
+                    call_context: call_context.get(&id).cloned().unwrap_or_default(),
                 };
                 prelim_parts.push(part);
             }
@@ -447,6 +473,7 @@ mod tests {
             score: 1.0,
             modality: Modality::Sparse,
             type_context: None,
+            call_context: Vec::new(),
         }
     }
 }

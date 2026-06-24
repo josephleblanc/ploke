@@ -4,6 +4,8 @@
 extern crate self as ploke_db;
 
 pub mod bm25_index;
+#[cfg(feature = "call_graph")]
+pub mod call_graph;
 mod database;
 mod error;
 pub mod get_by_id;
@@ -20,6 +22,11 @@ pub mod type_graph;
 
 pub mod multi_embedding;
 
+#[cfg(feature = "call_graph")]
+pub use call_graph::{
+    CallContextRow, CallReceiver, CallRelationKind, CallResolutionKind, CallResolutionRow,
+    CallSiteKind, CallSiteRow, CallStatusKind, CallTargetRow,
+};
 pub use database::RestoredEmbeddingSet;
 pub use database::{
     CrateContextRow, Database, NamespaceExportArtifact, NamespaceImportConflictReport,

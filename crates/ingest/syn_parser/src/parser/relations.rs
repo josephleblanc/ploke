@@ -2,11 +2,11 @@
 use super::nodes::{AnyNodeId, PrimaryNodeIdTrait};
 use crate::parser::nodes::{
     AnyCallSiteId, AnyGenericParamId, AssociatedItemNodeId, CallBodyOwnerId,
-    ConstGenericParamNodeId, EnumNodeId, FieldNodeId, FunctionNodeId, GenericParamOwnerId,
-    ImplNodeId, ImportNodeId, MethodCallSiteId, MethodNodeId, ModuleNodeId, OrdinaryTypeSourceId,
-    OrdinaryTypeTargetId, OrdinaryTypeUseId, PathCallSiteId, PrimaryNodeId, StructNodeId,
-    TraitNodeId, TraitTypeSourceId, TraitTypeTargetId, TypeGenericParamNodeId, UnionNodeId,
-    VariantNodeId,
+    ConstGenericParamNodeId, DynamicCallSiteId, EnumNodeId, FieldNodeId, FunctionNodeId,
+    GenericParamOwnerId, ImplNodeId, ImportNodeId, MethodCallSiteId, MethodNodeId, ModuleNodeId,
+    OrdinaryTypeSourceId, OrdinaryTypeTargetId, OrdinaryTypeUseId, PathCallSiteId, PrimaryNodeId,
+    StructNodeId, TraitNodeId, TraitTypeSourceId, TraitTypeTargetId, TypeGenericParamNodeId,
+    UnionNodeId, VariantNodeId,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -173,6 +173,15 @@ pub enum CallRelation {
         source: PathCallSiteId,
         target: FunctionNodeId,
     },
+    /// A dynamically shaped call site resolved to a local standalone function.
+    ///
+    /// ```text
+    /// DynamicFunction ⊆ DynamicCallSiteId × FunctionNodeId
+    /// ```
+    DynamicFunction {
+        source: DynamicCallSiteId,
+        target: FunctionNodeId,
+    },
     /// A method-call site resolved to a local method definition.
     ///
     /// ```text
@@ -182,6 +191,33 @@ pub enum CallRelation {
         source: MethodCallSiteId,
         target: MethodNodeId,
     },
+    /// A path-style call site resolved to a local inherent associated function.
+    ///
+    /// ```text
+    /// AssociatedFunction ⊆ PathCallSiteId × MethodNodeId
+    /// ```
+    AssociatedFunction {
+        source: PathCallSiteId,
+        target: MethodNodeId,
+    },
+    /// A path-style call site resolved to a local tuple struct constructor.
+    ///
+    /// ```text
+    /// TupleStructConstructor ⊆ PathCallSiteId × StructNodeId
+    /// ```
+    TupleStructConstructor {
+        source: PathCallSiteId,
+        target: StructNodeId,
+    },
+    /// A path-style call site resolved to a local enum variant constructor.
+    ///
+    /// ```text
+    /// EnumVariantConstructor ⊆ PathCallSiteId × VariantNodeId
+    /// ```
+    EnumVariantConstructor {
+        source: PathCallSiteId,
+        target: VariantNodeId,
+    },
 }
 
 impl CallRelation {
@@ -190,7 +226,11 @@ impl CallRelation {
     pub fn kind_str(&self) -> &'static str {
         match self {
             Self::Function { .. } => "Function",
+            Self::DynamicFunction { .. } => "DynamicFunction",
             Self::Method { .. } => "Method",
+            Self::AssociatedFunction { .. } => "AssociatedFunction",
+            Self::TupleStructConstructor { .. } => "TupleStructConstructor",
+            Self::EnumVariantConstructor { .. } => "EnumVariantConstructor",
         }
     }
 }

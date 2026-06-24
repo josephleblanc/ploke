@@ -239,7 +239,9 @@ mod tests {
     #[cfg(feature = "call_graph")]
     use syn_parser::parser::graph::GraphAccess;
     #[cfg(feature = "call_graph")]
-    use syn_parser::parser::nodes::{AnyCallSiteId, CallBodyOwnerId, CallNode, ToCozoUuid};
+    use syn_parser::parser::nodes::{
+        AnyCallSiteId, CallBodyOwnerId, CallNode, DynamicCallCallee, ToCozoUuid,
+    };
     #[cfg(feature = "call_graph")]
     use syn_parser::parser::relations::{CallRelation, CallResolutionStatus};
     #[cfg(feature = "call_graph")]
@@ -292,6 +294,126 @@ mod tests {
         Ok(())
     }
 
+    // CALL_GRAPH_GATE:db-projection - const initializer owners must persist with their owner kind.
+    #[cfg(feature = "call_graph")]
+    #[test]
+    fn test_call_graph_projection_for_const_initializer_call()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let db = Db::new(MemStorage::default()).expect("Failed to create database");
+        db.initialize().expect("Failed to initialize database");
+        create_schema_all(&db)?;
+
+        let successful_graphs = test_run_phases_and_collect("fixture_nodes");
+        let mut merged =
+            ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
+        let tree = merged.build_tree_and_prune().unwrap_or_else(|e| {
+            tracing::error!(target: "transform_function", "Error building tree: {}", e);
+            panic!()
+        });
+
+        let call_report = resolve_call_relations_after_tree(&merged, &tree)?;
+        let (call_site_id, target_id) = call_report
+            .relations
+            .iter()
+            .copied()
+            .find_map(|relation| match relation {
+                CallRelation::Function { source, target } => {
+                    let call = merged
+                        .call_sites()
+                        .iter()
+                        .find(|call| call.id() == AnyCallSiteId::Path(source))?;
+                    let CallNode::PathCall(path_call) = call else {
+                        return None;
+                    };
+                    if path_call.path == ["five"]
+                        && matches!(path_call.owner, CallBodyOwnerId::Const(_))
+                    {
+                        Some((source, target))
+                    } else {
+                        None
+                    }
+                }
+                CallRelation::DynamicFunction { .. }
+                | CallRelation::Method { .. }
+                | CallRelation::AssociatedFunction { .. }
+                | CallRelation::TupleStructConstructor { .. }
+                | CallRelation::EnumVariantConstructor { .. } => None,
+            })
+            .expect("fixture_nodes should resolve const FN_CALL_CONST initializer five()");
+        let call_site = merged
+            .call_sites()
+            .iter()
+            .find(|call| call.id() == AnyCallSiteId::Path(call_site_id))
+            .expect("resolved const call source should have a call-site row");
+        let owner_id = match call_site.owner() {
+            CallBodyOwnerId::Const(id) => {
+                let value: DataValue = id.into();
+                value
+            }
+            other => panic!("five() initializer call should be const-owned, got {other:?}"),
+        };
+        let call_site_db_id = call_site_id.to_cozo_uuid();
+        let target_db_id: DataValue = target_id.into();
+
+        transform_parsed_graph(&db, merged, &tree)?;
+
+        let mut params = BTreeMap::new();
+        params.insert("owner_id".to_string(), owner_id);
+        params.insert("call_site_id".to_string(), call_site_db_id.clone());
+        let edge_rows = db.run_script(
+            r#"?[source_id, target_id, relation_kind, source_kind, target_kind] :=
+                source_id = $owner_id,
+                target_id = $call_site_id,
+                *call_site_edge{source_id, target_id, relation_kind, source_kind, target_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(
+            edge_rows.rows.len(),
+            1,
+            "expected one persisted const BodyContainsCall row"
+        );
+        assert_eq!(&edge_rows.rows[0][2], &DataValue::from("BodyContainsCall"));
+        assert_eq!(&edge_rows.rows[0][3], &DataValue::from("Const"));
+        assert_eq!(&edge_rows.rows[0][4], &DataValue::from("Path"));
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), call_site_db_id.clone());
+        params.insert("target_id".to_string(), target_db_id);
+        let relation_rows = db.run_script(
+            r#"?[source_id, target_id, relation_kind, source_kind, target_kind] :=
+                source_id = $call_site_id,
+                target_id = $target_id,
+                *call_relation{source_id, target_id, relation_kind, source_kind, target_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(
+            relation_rows.rows.len(),
+            1,
+            "expected one persisted const initializer call_relation row"
+        );
+        assert_eq!(&relation_rows.rows[0][2], &DataValue::from("Function"));
+        assert_eq!(&relation_rows.rows[0][3], &DataValue::from("Path"));
+        assert_eq!(&relation_rows.rows[0][4], &DataValue::from("Function"));
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), call_site_db_id);
+        let status_rows = db.run_script(
+            r#"?[source_id, source_kind, status_kind, resolution_kind] :=
+                source_id = $call_site_id,
+                *call_resolution_status{source_id, source_kind, status_kind, resolution_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(status_rows.rows.len(), 1);
+        assert_eq!(&status_rows.rows[0][1], &DataValue::from("Path"));
+        assert_eq!(&status_rows.rows[0][2], &DataValue::from("Resolved"));
+        assert_eq!(&status_rows.rows[0][3], &DataValue::from("LocalExact"));
+
+        Ok(())
+    }
+
     // CALL_GRAPH_GATE:db-projection - strict projection assertion for the feature-enabled DB slice.
     #[cfg(feature = "call_graph")]
     #[test]
@@ -315,8 +437,26 @@ mod tests {
             .iter()
             .copied()
             .find_map(|relation| match relation {
-                CallRelation::Function { source, target } => Some((source, target)),
-                CallRelation::Method { .. } => None,
+                CallRelation::Function { source, target } => {
+                    let source_any = AnyCallSiteId::Path(source);
+                    let call = merged
+                        .call_sites()
+                        .iter()
+                        .find(|call| call.id() == source_any)?;
+                    match call {
+                        CallNode::PathCall(path_call)
+                            if path_call.path == ["super", "restricted_func"] =>
+                        {
+                            Some((source, target))
+                        }
+                        _ => None,
+                    }
+                }
+                CallRelation::DynamicFunction { .. }
+                | CallRelation::Method { .. }
+                | CallRelation::AssociatedFunction { .. }
+                | CallRelation::TupleStructConstructor { .. }
+                | CallRelation::EnumVariantConstructor { .. } => None,
             })
             .expect("fixture_path_resolution should have a resolved local function call edge");
         let (call_site_id, target_function_id) = resolved_function_edge;
@@ -336,6 +476,14 @@ mod tests {
                 value
             }
             CallBodyOwnerId::Method(id) => {
+                let value: DataValue = id.into();
+                value
+            }
+            CallBodyOwnerId::Const(id) => {
+                let value: DataValue = id.into();
+                value
+            }
+            CallBodyOwnerId::Static(id) => {
                 let value: DataValue = id.into();
                 value
             }
@@ -437,10 +585,780 @@ mod tests {
         Ok(())
     }
 
+    // CALL_GRAPH_GATE:db-projection - dynamic function edges must not be flattened to path functions.
+    #[cfg(feature = "call_graph")]
+    #[test]
+    fn test_call_graph_projection_for_dynamic_function_call()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let db = Db::new(MemStorage::default()).expect("Failed to create database");
+        db.initialize().expect("Failed to initialize database");
+        create_schema_all(&db)?;
+
+        let successful_graphs = test_run_phases_and_collect("fixture_call_graph");
+        let mut merged =
+            ParsedCodeGraph::merge_new(successful_graphs).expect("Failed to merge graph");
+        let tree = merged.build_tree_and_prune().unwrap_or_else(|e| {
+            tracing::error!(target: "transform_function", "Error building tree: {}", e);
+            panic!()
+        });
+
+        let call_report = resolve_call_relations_after_tree(&merged, &tree)?;
+        let (call_site_id, target_function_id) = call_report
+            .relations
+            .iter()
+            .copied()
+            .find_map(|relation| match relation {
+                CallRelation::DynamicFunction { source, target } => {
+                    let source_any = AnyCallSiteId::Dynamic(source);
+                    let call = merged
+                        .call_sites()
+                        .iter()
+                        .find(|call| call.id() == source_any)?;
+                    match call {
+                        CallNode::DynamicCall(dynamic_call)
+                            if matches!(
+                                &dynamic_call.callee,
+                                DynamicCallCallee::Path { path }
+                                    if path.as_slice() == ["local_target"]
+                            ) =>
+                        {
+                            Some((source, target))
+                        }
+                        _ => None,
+                    }
+                }
+                CallRelation::Function { .. }
+                | CallRelation::Method { .. }
+                | CallRelation::AssociatedFunction { .. }
+                | CallRelation::TupleStructConstructor { .. }
+                | CallRelation::EnumVariantConstructor { .. } => None,
+            })
+            .expect("fixture_call_graph should resolve (local_target)() as DynamicFunction");
+        let call_site_db_id = call_site_id.to_cozo_uuid();
+        let target_db_id: DataValue = target_function_id.into();
+        let (cast_site_id, cast_target_id) = call_report
+            .relations
+            .iter()
+            .copied()
+            .find_map(|relation| match relation {
+                CallRelation::DynamicFunction { source, target } => {
+                    let source_any = AnyCallSiteId::Dynamic(source);
+                    let call = merged
+                        .call_sites()
+                        .iter()
+                        .find(|call| call.id() == source_any)?;
+                    match call {
+                        CallNode::DynamicCall(dynamic_call)
+                            if matches!(
+                                &dynamic_call.callee,
+                                DynamicCallCallee::FnPointerCastPath { path }
+                                    if path.as_slice() == ["local_target"]
+                            ) =>
+                        {
+                            Some((source, target))
+                        }
+                        _ => None,
+                    }
+                }
+                CallRelation::Function { .. }
+                | CallRelation::Method { .. }
+                | CallRelation::AssociatedFunction { .. }
+                | CallRelation::TupleStructConstructor { .. }
+                | CallRelation::EnumVariantConstructor { .. } => None,
+            })
+            .expect(
+                "fixture_call_graph should resolve (local_target as fn() -> i32)() as DynamicFunction",
+            );
+        let cast_site_db = cast_site_id.to_cozo_uuid();
+        let cast_target_db: DataValue = cast_target_id.into();
+        let (binding_cast_site_id, binding_cast_target_id) = call_report
+            .relations
+            .iter()
+            .copied()
+            .find_map(|relation| match relation {
+                CallRelation::DynamicFunction { source, target } => {
+                    let source_any = AnyCallSiteId::Dynamic(source);
+                    let call = merged
+                        .call_sites()
+                        .iter()
+                        .find(|call| call.id() == source_any)?;
+                    match call {
+                        CallNode::DynamicCall(dynamic_call)
+                            if matches!(
+                                &dynamic_call.callee,
+                                DynamicCallCallee::FnPointerCastInitializedLocalBinding {
+                                    path,
+                                    init_path,
+                                } if path.as_slice() == ["f"]
+                                    && init_path.as_slice() == ["local_target"]
+                            ) =>
+                        {
+                            Some((source, target))
+                        }
+                        _ => None,
+                    }
+                }
+                CallRelation::Function { .. }
+                | CallRelation::Method { .. }
+                | CallRelation::AssociatedFunction { .. }
+                | CallRelation::TupleStructConstructor { .. }
+                | CallRelation::EnumVariantConstructor { .. } => None,
+            })
+            .expect("fixture_call_graph should resolve (f as fn() -> i32)() as DynamicFunction");
+        let binding_cast_site_db = binding_cast_site_id.to_cozo_uuid();
+        let binding_cast_target_db: DataValue = binding_cast_target_id.into();
+        let (deref_site_id, deref_target_id) = call_report
+            .relations
+            .iter()
+            .copied()
+            .find_map(|relation| match relation {
+                CallRelation::DynamicFunction { source, target } => {
+                    let source_any = AnyCallSiteId::Dynamic(source);
+                    let call = merged
+                        .call_sites()
+                        .iter()
+                        .find(|call| call.id() == source_any)?;
+                    match call {
+                        CallNode::DynamicCall(dynamic_call)
+                            if matches!(
+                                &dynamic_call.callee,
+                                DynamicCallCallee::DereferencedInitializedLocalBinding {
+                                    path,
+                                    init_path,
+                                } if path.as_slice() == ["f"]
+                                    && init_path.as_slice() == ["local_target"]
+                            ) =>
+                        {
+                            Some((source, target))
+                        }
+                        _ => None,
+                    }
+                }
+                CallRelation::Function { .. }
+                | CallRelation::Method { .. }
+                | CallRelation::AssociatedFunction { .. }
+                | CallRelation::TupleStructConstructor { .. }
+                | CallRelation::EnumVariantConstructor { .. } => None,
+            })
+            .expect("fixture_call_graph should resolve (*f)() as DynamicFunction");
+        let deref_site_db = deref_site_id.to_cozo_uuid();
+        let deref_target_db: DataValue = deref_target_id.into();
+        let (block_site_id, block_target_id) = call_report
+            .relations
+            .iter()
+            .copied()
+            .find_map(|relation| match relation {
+                CallRelation::DynamicFunction { source, target } => {
+                    let source_any = AnyCallSiteId::Dynamic(source);
+                    let call = merged
+                        .call_sites()
+                        .iter()
+                        .find(|call| call.id() == source_any)?;
+                    match call {
+                        CallNode::DynamicCall(dynamic_call)
+                            if dynamic_call.span == (13065, 13085)
+                                && matches!(
+                                    &dynamic_call.callee,
+                                    DynamicCallCallee::Path { path }
+                                        if path.as_slice() == ["local_target"]
+                                ) =>
+                        {
+                            Some((source, target))
+                        }
+                        _ => None,
+                    }
+                }
+                CallRelation::Function { .. }
+                | CallRelation::Method { .. }
+                | CallRelation::AssociatedFunction { .. }
+                | CallRelation::TupleStructConstructor { .. }
+                | CallRelation::EnumVariantConstructor { .. } => None,
+            })
+            .expect("fixture_call_graph should resolve ({ local_target })() as DynamicFunction");
+        let block_site_db = block_site_id.to_cozo_uuid();
+        let block_target_db: DataValue = block_target_id.into();
+        let (branch_site_id, branch_target_id) = call_report
+            .relations
+            .iter()
+            .copied()
+            .find_map(|relation| match relation {
+                CallRelation::DynamicFunction { source, target } => {
+                    let source_any = AnyCallSiteId::Dynamic(source);
+                    let call = merged
+                        .call_sites()
+                        .iter()
+                        .find(|call| call.id() == source_any)?;
+                    match call {
+                        CallNode::DynamicCall(dynamic_call)
+                            if dynamic_call.span == (13188, 13238)
+                                && matches!(
+                                    &dynamic_call.callee,
+                                    DynamicCallCallee::IfBranchPaths { paths }
+                                        if paths.as_slice()
+                                            == [vec!["local_target".to_string()], vec!["local_target".to_string()]]
+                                ) =>
+                        {
+                            Some((source, target))
+                        }
+                        _ => None,
+                    }
+                }
+                CallRelation::Function { .. }
+                | CallRelation::Method { .. }
+                | CallRelation::AssociatedFunction { .. }
+                | CallRelation::TupleStructConstructor { .. }
+                | CallRelation::EnumVariantConstructor { .. } => None,
+            })
+            .expect(
+                "fixture_call_graph should resolve if same-branch dynamic call as DynamicFunction",
+            );
+        let branch_site_db = branch_site_id.to_cozo_uuid();
+        let branch_target_db: DataValue = branch_target_id.into();
+        let branch_ambiguous_site_id = merged
+            .call_sites()
+            .iter()
+            .find_map(|call| match call {
+                CallNode::DynamicCall(dynamic_call)
+                    if dynamic_call.span == (13306, 13356)
+                        && matches!(
+                            &dynamic_call.callee,
+                            DynamicCallCallee::IfBranchPaths { paths }
+                                if paths.as_slice()
+                                    == [vec!["local_target".to_string()], vec!["other_target".to_string()]]
+                        ) =>
+                {
+                    Some(dynamic_call.id)
+                }
+                _ => None,
+            })
+            .expect("fixture_call_graph should record ambiguous if-branch dynamic call site");
+        let branch_ambiguous_site_db = branch_ambiguous_site_id.to_cozo_uuid();
+        let (match_site_id, match_target_id) = call_report
+            .relations
+            .iter()
+            .copied()
+            .find_map(|relation| match relation {
+                CallRelation::DynamicFunction { source, target } => {
+                    let source_any = AnyCallSiteId::Dynamic(source);
+                    let call = merged
+                        .call_sites()
+                        .iter()
+                        .find(|call| call.id() == source_any)?;
+                    match call {
+                        CallNode::DynamicCall(dynamic_call)
+                            if dynamic_call.span == (13422, 13505)
+                                && matches!(
+                                    &dynamic_call.callee,
+                                    DynamicCallCallee::MatchArmPaths { paths }
+                                        if paths.as_slice()
+                                            == [vec!["local_target".to_string()], vec!["local_target".to_string()]]
+                                ) =>
+                        {
+                            Some((source, target))
+                        }
+                        _ => None,
+                    }
+                }
+                CallRelation::Function { .. }
+                | CallRelation::Method { .. }
+                | CallRelation::AssociatedFunction { .. }
+                | CallRelation::TupleStructConstructor { .. }
+                | CallRelation::EnumVariantConstructor { .. } => None,
+            })
+            .expect(
+                "fixture_call_graph should resolve match same-arm dynamic call as DynamicFunction",
+            );
+        let match_site_db = match_site_id.to_cozo_uuid();
+        let match_target_db: DataValue = match_target_id.into();
+        let match_ambiguous_site_id = merged
+            .call_sites()
+            .iter()
+            .find_map(|call| match call {
+                CallNode::DynamicCall(dynamic_call)
+                    if dynamic_call.span == (13576, 13659)
+                        && matches!(
+                            &dynamic_call.callee,
+                            DynamicCallCallee::MatchArmPaths { paths }
+                                if paths.as_slice()
+                                    == [vec!["local_target".to_string()], vec!["other_target".to_string()]]
+                        ) =>
+                {
+                    Some(dynamic_call.id)
+                }
+                _ => None,
+            })
+            .expect("fixture_call_graph should record ambiguous match-arm dynamic call site");
+        let match_ambiguous_site_db = match_ambiguous_site_id.to_cozo_uuid();
+
+        transform_parsed_graph(&db, merged, &tree)?;
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), call_site_db_id.clone());
+        params.insert("target_id".to_string(), target_db_id);
+        let relation_rows = db.run_script(
+            r#"?[source_id, target_id, relation_kind, source_kind, target_kind] :=
+                source_id = $call_site_id,
+                target_id = $target_id,
+                *call_relation{source_id, target_id, relation_kind, source_kind, target_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(
+            relation_rows.rows.len(),
+            1,
+            "expected one persisted dynamic function call_relation row"
+        );
+        assert_eq!(
+            &relation_rows.rows[0][2],
+            &DataValue::from("DynamicFunction")
+        );
+        assert_eq!(&relation_rows.rows[0][3], &DataValue::from("Dynamic"));
+        assert_eq!(&relation_rows.rows[0][4], &DataValue::from("Function"));
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), call_site_db_id);
+        let status_rows = db.run_script(
+            r#"?[source_id, source_kind, status_kind, resolution_kind] :=
+                source_id = $call_site_id,
+                *call_resolution_status{source_id, source_kind, status_kind, resolution_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(status_rows.rows.len(), 1);
+        assert_eq!(&status_rows.rows[0][1], &DataValue::from("Dynamic"));
+        assert_eq!(&status_rows.rows[0][2], &DataValue::from("Resolved"));
+        assert_eq!(&status_rows.rows[0][3], &DataValue::from("LocalExact"));
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), cast_site_db.clone());
+        params.insert("target_id".to_string(), cast_target_db);
+        let cast_rows = db.run_script(
+            r#"?[source_id, target_id, relation_kind, source_kind, target_kind] :=
+                source_id = $call_site_id,
+                target_id = $target_id,
+                *call_relation{source_id, target_id, relation_kind, source_kind, target_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(
+            cast_rows.rows.len(),
+            1,
+            "expected one persisted function-pointer cast dynamic call_relation row"
+        );
+        assert_eq!(&cast_rows.rows[0][2], &DataValue::from("DynamicFunction"));
+        assert_eq!(&cast_rows.rows[0][3], &DataValue::from("Dynamic"));
+        assert_eq!(&cast_rows.rows[0][4], &DataValue::from("Function"));
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), cast_site_db.clone());
+        let site_rows = db.run_script(
+            r#"?[id, call_kind, path] :=
+                id = $call_site_id,
+                *call_site{id, call_kind, path @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(site_rows.rows.len(), 1);
+        assert_eq!(&site_rows.rows[0][1], &DataValue::from("Dynamic"));
+        assert_eq!(
+            &site_rows.rows[0][2],
+            &DataValue::List(vec![DataValue::from("local_target")])
+        );
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), cast_site_db);
+        let cast_status_rows = db.run_script(
+            r#"?[source_id, source_kind, status_kind, resolution_kind] :=
+                source_id = $call_site_id,
+                *call_resolution_status{source_id, source_kind, status_kind, resolution_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(cast_status_rows.rows.len(), 1);
+        assert_eq!(&cast_status_rows.rows[0][1], &DataValue::from("Dynamic"));
+        assert_eq!(&cast_status_rows.rows[0][2], &DataValue::from("Resolved"));
+        assert_eq!(&cast_status_rows.rows[0][3], &DataValue::from("LocalExact"));
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), binding_cast_site_db.clone());
+        params.insert("target_id".to_string(), binding_cast_target_db);
+        let binding_cast_rows = db.run_script(
+            r#"?[source_id, target_id, relation_kind, source_kind, target_kind] :=
+                source_id = $call_site_id,
+                target_id = $target_id,
+                *call_relation{source_id, target_id, relation_kind, source_kind, target_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(
+            binding_cast_rows.rows.len(),
+            1,
+            "expected one persisted initialized function-pointer cast dynamic call_relation row"
+        );
+        assert_eq!(
+            &binding_cast_rows.rows[0][2],
+            &DataValue::from("DynamicFunction")
+        );
+        assert_eq!(&binding_cast_rows.rows[0][3], &DataValue::from("Dynamic"));
+        assert_eq!(&binding_cast_rows.rows[0][4], &DataValue::from("Function"));
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), binding_cast_site_db.clone());
+        let binding_site_rows = db.run_script(
+            r#"?[id, call_kind, path] :=
+                id = $call_site_id,
+                *call_site{id, call_kind, path @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(binding_site_rows.rows.len(), 1);
+        assert_eq!(&binding_site_rows.rows[0][1], &DataValue::from("Dynamic"));
+        assert_eq!(
+            &binding_site_rows.rows[0][2],
+            &DataValue::List(vec![DataValue::from("f")])
+        );
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), binding_cast_site_db);
+        let binding_cast_status_rows = db.run_script(
+            r#"?[source_id, source_kind, status_kind, resolution_kind] :=
+                source_id = $call_site_id,
+                *call_resolution_status{source_id, source_kind, status_kind, resolution_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(binding_cast_status_rows.rows.len(), 1);
+        assert_eq!(
+            &binding_cast_status_rows.rows[0][1],
+            &DataValue::from("Dynamic")
+        );
+        assert_eq!(
+            &binding_cast_status_rows.rows[0][2],
+            &DataValue::from("Resolved")
+        );
+        assert_eq!(
+            &binding_cast_status_rows.rows[0][3],
+            &DataValue::from("LocalExact")
+        );
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), deref_site_db.clone());
+        params.insert("target_id".to_string(), deref_target_db);
+        let deref_rows = db.run_script(
+            r#"?[source_id, target_id, relation_kind, source_kind, target_kind] :=
+                source_id = $call_site_id,
+                target_id = $target_id,
+                *call_relation{source_id, target_id, relation_kind, source_kind, target_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(
+            deref_rows.rows.len(),
+            1,
+            "expected one persisted dereferenced function-pointer dynamic call_relation row"
+        );
+        assert_eq!(&deref_rows.rows[0][2], &DataValue::from("DynamicFunction"));
+        assert_eq!(&deref_rows.rows[0][3], &DataValue::from("Dynamic"));
+        assert_eq!(&deref_rows.rows[0][4], &DataValue::from("Function"));
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), deref_site_db.clone());
+        let deref_site_rows = db.run_script(
+            r#"?[id, call_kind, path] :=
+                id = $call_site_id,
+                *call_site{id, call_kind, path @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(deref_site_rows.rows.len(), 1);
+        assert_eq!(&deref_site_rows.rows[0][1], &DataValue::from("Dynamic"));
+        assert_eq!(
+            &deref_site_rows.rows[0][2],
+            &DataValue::List(vec![DataValue::from("f")])
+        );
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), deref_site_db);
+        let deref_status_rows = db.run_script(
+            r#"?[source_id, source_kind, status_kind, resolution_kind] :=
+                source_id = $call_site_id,
+                *call_resolution_status{source_id, source_kind, status_kind, resolution_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(deref_status_rows.rows.len(), 1);
+        assert_eq!(&deref_status_rows.rows[0][1], &DataValue::from("Dynamic"));
+        assert_eq!(&deref_status_rows.rows[0][2], &DataValue::from("Resolved"));
+        assert_eq!(
+            &deref_status_rows.rows[0][3],
+            &DataValue::from("LocalExact")
+        );
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), block_site_db.clone());
+        params.insert("target_id".to_string(), block_target_db);
+        let block_rows = db.run_script(
+            r#"?[source_id, target_id, relation_kind, source_kind, target_kind] :=
+                source_id = $call_site_id,
+                target_id = $target_id,
+                *call_relation{source_id, target_id, relation_kind, source_kind, target_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(
+            block_rows.rows.len(),
+            1,
+            "expected one persisted block-path dynamic call_relation row"
+        );
+        assert_eq!(&block_rows.rows[0][2], &DataValue::from("DynamicFunction"));
+        assert_eq!(&block_rows.rows[0][3], &DataValue::from("Dynamic"));
+        assert_eq!(&block_rows.rows[0][4], &DataValue::from("Function"));
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), block_site_db.clone());
+        let block_site_rows = db.run_script(
+            r#"?[id, call_kind, path] :=
+                id = $call_site_id,
+                *call_site{id, call_kind, path @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(block_site_rows.rows.len(), 1);
+        assert_eq!(&block_site_rows.rows[0][1], &DataValue::from("Dynamic"));
+        assert_eq!(
+            &block_site_rows.rows[0][2],
+            &DataValue::List(vec![DataValue::from("local_target")])
+        );
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), block_site_db);
+        let block_status_rows = db.run_script(
+            r#"?[source_id, source_kind, status_kind, resolution_kind] :=
+                source_id = $call_site_id,
+                *call_resolution_status{source_id, source_kind, status_kind, resolution_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(block_status_rows.rows.len(), 1);
+        assert_eq!(&block_status_rows.rows[0][1], &DataValue::from("Dynamic"));
+        assert_eq!(&block_status_rows.rows[0][2], &DataValue::from("Resolved"));
+        assert_eq!(
+            &block_status_rows.rows[0][3],
+            &DataValue::from("LocalExact")
+        );
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), branch_site_db.clone());
+        params.insert("target_id".to_string(), branch_target_db);
+        let branch_rows = db.run_script(
+            r#"?[source_id, target_id, relation_kind, source_kind, target_kind] :=
+                source_id = $call_site_id,
+                target_id = $target_id,
+                *call_relation{source_id, target_id, relation_kind, source_kind, target_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(
+            branch_rows.rows.len(),
+            1,
+            "expected one persisted if-branch dynamic call_relation row"
+        );
+        assert_eq!(&branch_rows.rows[0][2], &DataValue::from("DynamicFunction"));
+        assert_eq!(&branch_rows.rows[0][3], &DataValue::from("Dynamic"));
+        assert_eq!(&branch_rows.rows[0][4], &DataValue::from("Function"));
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), branch_site_db.clone());
+        let branch_site_rows = db.run_script(
+            r#"?[id, call_kind, path] :=
+                id = $call_site_id,
+                *call_site{id, call_kind, path @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(branch_site_rows.rows.len(), 1);
+        assert_eq!(&branch_site_rows.rows[0][1], &DataValue::from("Dynamic"));
+        assert_eq!(
+            &branch_site_rows.rows[0][2],
+            &DataValue::List(vec![DataValue::from("local_target")])
+        );
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), branch_site_db);
+        let branch_status_rows = db.run_script(
+            r#"?[source_id, source_kind, status_kind, resolution_kind] :=
+                source_id = $call_site_id,
+                *call_resolution_status{source_id, source_kind, status_kind, resolution_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(branch_status_rows.rows.len(), 1);
+        assert_eq!(&branch_status_rows.rows[0][1], &DataValue::from("Dynamic"));
+        assert_eq!(&branch_status_rows.rows[0][2], &DataValue::from("Resolved"));
+        assert_eq!(
+            &branch_status_rows.rows[0][3],
+            &DataValue::from("LocalExact")
+        );
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), branch_ambiguous_site_db.clone());
+        let ambiguous_site_rows = db.run_script(
+            r#"?[id, call_kind, path] :=
+                id = $call_site_id,
+                *call_site{id, call_kind, path @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(ambiguous_site_rows.rows.len(), 1);
+        assert_eq!(&ambiguous_site_rows.rows[0][1], &DataValue::from("Dynamic"));
+        assert_eq!(&ambiguous_site_rows.rows[0][2], &DataValue::Null);
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), branch_ambiguous_site_db.clone());
+        let ambiguous_status_rows = db.run_script(
+            r#"?[source_id, source_kind, status_kind, resolution_kind] :=
+                source_id = $call_site_id,
+                *call_resolution_status{source_id, source_kind, status_kind, resolution_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(ambiguous_status_rows.rows.len(), 1);
+        assert_eq!(
+            &ambiguous_status_rows.rows[0][1],
+            &DataValue::from("Dynamic")
+        );
+        assert_eq!(
+            &ambiguous_status_rows.rows[0][2],
+            &DataValue::from("Ambiguous")
+        );
+        assert_eq!(&ambiguous_status_rows.rows[0][3], &DataValue::Null);
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), branch_ambiguous_site_db);
+        let ambiguous_relation_rows = db.run_script(
+            r#"?[source_id, target_id, relation_kind] :=
+                source_id = $call_site_id,
+                *call_relation{source_id, target_id, relation_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(
+            ambiguous_relation_rows.rows.len(),
+            0,
+            "ambiguous if-branch dynamic call should not persist a semantic edge"
+        );
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), match_site_db.clone());
+        params.insert("target_id".to_string(), match_target_db);
+        let match_rows = db.run_script(
+            r#"?[source_id, target_id, relation_kind, source_kind, target_kind] :=
+                source_id = $call_site_id,
+                target_id = $target_id,
+                *call_relation{source_id, target_id, relation_kind, source_kind, target_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(
+            match_rows.rows.len(),
+            1,
+            "expected one persisted match-arm dynamic call_relation row"
+        );
+        assert_eq!(&match_rows.rows[0][2], &DataValue::from("DynamicFunction"));
+        assert_eq!(&match_rows.rows[0][3], &DataValue::from("Dynamic"));
+        assert_eq!(&match_rows.rows[0][4], &DataValue::from("Function"));
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), match_site_db.clone());
+        let match_site_rows = db.run_script(
+            r#"?[id, call_kind, path] :=
+                id = $call_site_id,
+                *call_site{id, call_kind, path @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(match_site_rows.rows.len(), 1);
+        assert_eq!(&match_site_rows.rows[0][1], &DataValue::from("Dynamic"));
+        assert_eq!(
+            &match_site_rows.rows[0][2],
+            &DataValue::List(vec![DataValue::from("local_target")])
+        );
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), match_site_db);
+        let match_status_rows = db.run_script(
+            r#"?[source_id, source_kind, status_kind, resolution_kind] :=
+                source_id = $call_site_id,
+                *call_resolution_status{source_id, source_kind, status_kind, resolution_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(match_status_rows.rows.len(), 1);
+        assert_eq!(&match_status_rows.rows[0][1], &DataValue::from("Dynamic"));
+        assert_eq!(&match_status_rows.rows[0][2], &DataValue::from("Resolved"));
+        assert_eq!(
+            &match_status_rows.rows[0][3],
+            &DataValue::from("LocalExact")
+        );
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), match_ambiguous_site_db.clone());
+        let match_ambiguous_site_rows = db.run_script(
+            r#"?[id, call_kind, path] :=
+                id = $call_site_id,
+                *call_site{id, call_kind, path @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(match_ambiguous_site_rows.rows.len(), 1);
+        assert_eq!(
+            &match_ambiguous_site_rows.rows[0][1],
+            &DataValue::from("Dynamic")
+        );
+        assert_eq!(&match_ambiguous_site_rows.rows[0][2], &DataValue::Null);
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), match_ambiguous_site_db.clone());
+        let match_ambiguous_status_rows = db.run_script(
+            r#"?[source_id, source_kind, status_kind, resolution_kind] :=
+                source_id = $call_site_id,
+                *call_resolution_status{source_id, source_kind, status_kind, resolution_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(match_ambiguous_status_rows.rows.len(), 1);
+        assert_eq!(
+            &match_ambiguous_status_rows.rows[0][1],
+            &DataValue::from("Dynamic")
+        );
+        assert_eq!(
+            &match_ambiguous_status_rows.rows[0][2],
+            &DataValue::from("Ambiguous")
+        );
+        assert_eq!(&match_ambiguous_status_rows.rows[0][3], &DataValue::Null);
+
+        let mut params = BTreeMap::new();
+        params.insert("call_site_id".to_string(), match_ambiguous_site_db);
+        let match_ambiguous_relation_rows = db.run_script(
+            r#"?[source_id, target_id, relation_kind] :=
+                source_id = $call_site_id,
+                *call_relation{source_id, target_id, relation_kind @ 'NOW'}"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+        assert_eq!(
+            match_ambiguous_relation_rows.rows.len(),
+            0,
+            "ambiguous match-arm dynamic call should not persist a semantic edge"
+        );
+
+        Ok(())
+    }
+
     // CALL_GRAPH_GATE:db-projection - strict projection assertion for the feature-enabled DB slice.
     #[cfg(feature = "call_graph")]
     #[test]
-    fn test_call_graph_projection_for_method_edge_and_unsupported_path_call()
+    fn test_call_graph_projection_for_method_edge_and_external_path_call()
     -> Result<(), Box<dyn std::error::Error>> {
         let db = Db::new(MemStorage::default()).expect("Failed to create database");
         db.initialize().expect("Failed to initialize database");
@@ -461,7 +1379,11 @@ mod tests {
             .copied()
             .find_map(|relation| match relation {
                 CallRelation::Method { source, target } => Some((source, target)),
-                CallRelation::Function { .. } => None,
+                CallRelation::Function { .. }
+                | CallRelation::DynamicFunction { .. }
+                | CallRelation::AssociatedFunction { .. }
+                | CallRelation::TupleStructConstructor { .. }
+                | CallRelation::EnumVariantConstructor { .. } => None,
             })
             .expect("fixture_nodes should have a resolved self.private_method() call edge");
         let method_call_any = AnyCallSiteId::Method(method_call_site_id);
@@ -489,14 +1411,19 @@ mod tests {
         assert!(
             call_report.statuses.iter().any(|status| matches!(
                 status,
-                CallResolutionStatus::Unsupported { source }
+                CallResolutionStatus::External { source }
                     if *source == AnyCallSiteId::Path(pathbuf_call_id)
             )),
-            "PathBuf::new() should be Unsupported before DB projection"
+            "PathBuf::new() should be External before DB projection"
         );
         assert!(
-            call_report.relations.iter().all(|relation| {
-                !matches!(relation, CallRelation::Function { source, .. } if *source == pathbuf_call_id)
+            call_report.relations.iter().all(|relation| match relation {
+                CallRelation::Function { source, .. }
+                | CallRelation::AssociatedFunction { source, .. } => *source != pathbuf_call_id,
+                CallRelation::DynamicFunction { .. } => true,
+                CallRelation::TupleStructConstructor { source, .. }
+                | CallRelation::EnumVariantConstructor { source, .. } => *source != pathbuf_call_id,
+                CallRelation::Method { .. } => true,
             }),
             "PathBuf::new() should not have a fabricated call_relation before DB projection"
         );
@@ -557,7 +1484,7 @@ mod tests {
         assert_eq!(&pathbuf_status_rows.rows[0][1], &DataValue::from("Path"));
         assert_eq!(
             &pathbuf_status_rows.rows[0][2],
-            &DataValue::from("Unsupported")
+            &DataValue::from("External")
         );
         assert_eq!(&pathbuf_status_rows.rows[0][3], &DataValue::Null);
 
@@ -573,7 +1500,7 @@ mod tests {
         assert_eq!(
             pathbuf_relation_rows.rows.len(),
             0,
-            "unsupported PathBuf::new() should not have a persisted call_relation row"
+            "external PathBuf::new() should not have a persisted call_relation row"
         );
 
         let mut params = BTreeMap::new();

@@ -42,6 +42,7 @@ fn serde_roundtrip_request_code_context() {
             relation: TypeContextKind::TypeDefinitionImpact,
             distance: 1,
         }),
+        call_context: Vec::new(),
     };
     let result = RequestCodeContextResult {
         ok: true,

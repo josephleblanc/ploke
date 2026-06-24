@@ -22,7 +22,10 @@
 //! should receive call-site IDs only through parsed [`CallNode`](crate::parser::nodes::CallNode)
 //! payloads or relation facts, not by minting IDs from owner/name/span data.
 
-use super::{AnyTypedId, CategoricalTypedId, FunctionNodeId, MethodNodeId, ToCozoUuid};
+use super::{
+    AnyTypedId, CategoricalTypedId, ConstNodeId, FunctionNodeId, MethodNodeId, StaticNodeId,
+    ToCozoUuid,
+};
 use cozo::{DataValue, UuidWrapper};
 use ploke_core::{CallId, IdTrait, NodeId, PROJECT_NAMESPACE_UUID};
 use serde::{Deserialize, Serialize};
@@ -184,19 +187,23 @@ define_call_site_id!(
     MacroCallSiteId
 );
 
-/// Function-like item body that can own call-site expressions.
+/// Item body or initializer expression that can own call-site expressions.
 ///
 /// This endpoint family stays in the node universe because owners are real code
 /// graph nodes. It is intentionally narrower than `AnyNodeId`: arbitrary
 /// modules, structs, impls, or fields cannot own body call sites. If future
-/// extraction supports const/static initializers or closure bodies, this family
-/// should be extended deliberately with the corresponding owner proof.
+/// extraction supports closure bodies, this family should be extended
+/// deliberately with the corresponding owner proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub enum CallBodyOwnerId {
     /// A standalone function body, identified by its typed node ID.
     Function(FunctionNodeId),
     /// An associated function or method body, identified by its typed node ID.
     Method(MethodNodeId),
+    /// A const item initializer expression, identified by its typed node ID.
+    Const(ConstNodeId),
+    /// A static item initializer expression, identified by its typed node ID.
+    Static(StaticNodeId),
 }
 
 impl CallBodyOwnerId {
@@ -210,6 +217,8 @@ impl CallBodyOwnerId {
         match self {
             CallBodyOwnerId::Function(id) => id.base_id(),
             CallBodyOwnerId::Method(id) => id.base_id(),
+            CallBodyOwnerId::Const(id) => id.base_id(),
+            CallBodyOwnerId::Static(id) => id.base_id(),
         }
     }
 }
@@ -219,6 +228,8 @@ impl Display for CallBodyOwnerId {
         match *self {
             CallBodyOwnerId::Function(id) => write!(f, "CallBodyOwnerId::Function({})", id),
             CallBodyOwnerId::Method(id) => write!(f, "CallBodyOwnerId::Method({})", id),
+            CallBodyOwnerId::Const(id) => write!(f, "CallBodyOwnerId::Const({})", id),
+            CallBodyOwnerId::Static(id) => write!(f, "CallBodyOwnerId::Static({})", id),
         }
     }
 }
@@ -234,6 +245,20 @@ impl From<MethodNodeId> for CallBodyOwnerId {
     #[inline]
     fn from(id: MethodNodeId) -> Self {
         CallBodyOwnerId::Method(id)
+    }
+}
+
+impl From<ConstNodeId> for CallBodyOwnerId {
+    #[inline]
+    fn from(id: ConstNodeId) -> Self {
+        CallBodyOwnerId::Const(id)
+    }
+}
+
+impl From<StaticNodeId> for CallBodyOwnerId {
+    #[inline]
+    fn from(id: StaticNodeId) -> Self {
+        CallBodyOwnerId::Static(id)
     }
 }
 

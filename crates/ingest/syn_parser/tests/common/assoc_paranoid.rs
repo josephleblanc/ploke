@@ -74,6 +74,33 @@ impl<'a> AssocTestInfo<'a> {
     }
 }
 
+/// Output of [`AssocParanoidArgs::generate_const_pid`].
+#[derive(Debug, Clone)]
+pub struct AssocConstTestInfo<'a> {
+    args: &'a AssocParanoidArgs<'a>,
+    target_data: &'a ParsedCodeGraph,
+    test_const_id: ConstNodeId,
+}
+
+impl<'a> AssocConstTestInfo<'a> {
+    pub fn args(&self) -> &'a AssocParanoidArgs<'a> {
+        self.args
+    }
+
+    pub fn target_data(&self) -> &'a ParsedCodeGraph {
+        self.target_data
+    }
+
+    pub fn test_const_id(&self) -> ConstNodeId {
+        self.test_const_id
+    }
+
+    /// [`AnyNodeId`] for the regenerated const id (for [`GraphAccess::find_node_unique`]).
+    pub fn test_any_id(&self) -> AnyNodeId {
+        self.test_const_id.into()
+    }
+}
+
 fn strs_to_strings(strs: &[&str]) -> Vec<String> {
     strs.iter().copied().map(String::from).collect()
 }
@@ -127,12 +154,18 @@ fn find_trait_in_module_by_name_checked<'a, G: GraphAccess + ?Sized>(
 }
 
 impl<'a> AssocParanoidArgs<'a> {
-    /// Regenerates the synthetic ID for an associated [`MethodNode`] using the owning impl or trait
-    /// scope and the same `relative_path` / cfg inputs as [`super::ParanoidArgs::generate_pid`].
-    pub fn generate_method_pid(
+    fn target_data(
         &'a self,
         parsed_graphs: &'a [ParsedCodeGraph],
-    ) -> Result<AssocTestInfo<'a>, SynParserError> {
+    ) -> Result<
+        (
+            &'a ParsedCodeGraph,
+            Vec<String>,
+            Option<Vec<u8>>,
+            Option<NodeId>,
+        ),
+        SynParserError,
+    > {
         let fixture_root = ploke_common::fixtures_crates_dir().join(self.fixture);
         let target_file_path = fixture_root.join(self.relative_file_path);
 
@@ -158,7 +191,6 @@ impl<'a> AssocParanoidArgs<'a> {
             .expected_cfg
             .filter(|cfgs_slice| !cfgs_slice.is_empty())
             .and_then(|cfgs_slice| calculate_cfg_hash_bytes(&strs_to_strings(cfgs_slice)));
-        let actual_cfg_bytes_for_id_gen = cfgs_bytes_option.as_deref();
 
         let parent_scope_id: Option<NodeId> = match self.owner {
             AssocOwner::Impl { span } => {
@@ -170,6 +202,27 @@ impl<'a> AssocParanoidArgs<'a> {
                 Some(tr.trait_id().base_tid())
             }
         };
+
+        Ok((
+            target_data,
+            exp_path_string,
+            cfgs_bytes_option,
+            parent_scope_id,
+        ))
+    }
+
+    /// Regenerates the synthetic ID for an associated [`MethodNode`] using the owning impl or trait
+    /// scope and the same `relative_path` / cfg inputs as [`super::ParanoidArgs::generate_pid`].
+    pub fn generate_method_pid(
+        &'a self,
+        parsed_graphs: &'a [ParsedCodeGraph],
+    ) -> Result<AssocTestInfo<'a>, SynParserError> {
+        let (target_data, exp_path_string, cfgs_bytes_option, parent_scope_id) =
+            self.target_data(parsed_graphs)?;
+        let actual_cfg_bytes_for_id_gen = cfgs_bytes_option.as_deref();
+        let target_file_path = ploke_common::fixtures_crates_dir()
+            .join(self.fixture)
+            .join(self.relative_file_path);
 
         if log::log_enabled!(target: LOG_TEST_ID_REGEN, log::Level::Debug) {
             log::debug!(target: LOG_TEST_ID_REGEN, "AssocParanoidArgs::generate_method_pid");
@@ -204,6 +257,55 @@ impl<'a> AssocParanoidArgs<'a> {
             args: self,
             target_data,
             test_method_id,
+        })
+    }
+
+    /// Regenerates the synthetic ID for an associated [`ConstNode`] using the owning impl or trait
+    /// scope and the same `relative_path` / cfg inputs as [`super::ParanoidArgs::generate_pid`].
+    pub fn generate_const_pid(
+        &'a self,
+        parsed_graphs: &'a [ParsedCodeGraph],
+    ) -> Result<AssocConstTestInfo<'a>, SynParserError> {
+        let (target_data, exp_path_string, cfgs_bytes_option, parent_scope_id) =
+            self.target_data(parsed_graphs)?;
+        let actual_cfg_bytes_for_id_gen = cfgs_bytes_option.as_deref();
+        let target_file_path = ploke_common::fixtures_crates_dir()
+            .join(self.fixture)
+            .join(self.relative_file_path);
+
+        if log::log_enabled!(target: LOG_TEST_ID_REGEN, log::Level::Debug) {
+            log::debug!(target: LOG_TEST_ID_REGEN, "AssocParanoidArgs::generate_const_pid");
+            log::debug!(target: LOG_TEST_ID_REGEN,
+                "  Inputs for {} ({:?}):\n    crate_namespace: {}\n    file_path: {:?}\n    relative_path: {:?}\n    item_name: {}\n    item_kind: {:?}\n    parent_scope_id: {:?}\n    cfg_bytes: {:?}\n    owner: {:?}",
+                self.ident,
+                ItemKind::Const,
+                target_data.crate_namespace,
+                &target_file_path,
+                &exp_path_string,
+                self.ident,
+                ItemKind::Const,
+                parent_scope_id,
+                actual_cfg_bytes_for_id_gen,
+                self.owner,
+            );
+        }
+
+        let generated_id = NodeId::generate_synthetic(
+            target_data.crate_namespace,
+            &target_file_path,
+            &exp_path_string,
+            self.ident,
+            ItemKind::Const,
+            parent_scope_id,
+            actual_cfg_bytes_for_id_gen,
+        );
+
+        let test_const_id = ConstNodeId::new_test(generated_id);
+
+        Ok(AssocConstTestInfo {
+            args: self,
+            target_data,
+            test_const_id,
         })
     }
 }
