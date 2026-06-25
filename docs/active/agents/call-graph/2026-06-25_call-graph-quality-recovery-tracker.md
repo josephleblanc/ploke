@@ -19,7 +19,7 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `2aa601b0 test: split dynamic fixture helpers`
+  `334b87af test: split target proof helpers`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent TUI/model-visible cleanup:
   - `cc808347 test: cover variant constructor tool context`
@@ -96,6 +96,8 @@ are not acceptable as a continuing implementation style.
   - `3a64af16 test: reuse target proof count helper`
   - `f32af71d test: split targetless fixture helpers`
   - `2aa601b0 test: split dynamic fixture helpers`
+  - `8a3a5a7b test: split call graph row helpers`
+  - `334b87af test: split target proof helpers`
 - Recent DB test-module split:
   - `7e51101d test: split dynamic call proof fixtures`
   - `09f8f967 test: split target proof fixtures`
@@ -212,9 +214,23 @@ are not acceptable as a continuing implementation style.
   helper root with ambiguous candidate helpers, dynamic context matrices, and
   dynamic proof assertions separated by concern while preserving the existing
   `dynamic::*` import surface.
+- `call_graph_fixture_common/rows.rs` is now split into a thin `rows/` helper
+  root with Cozo value decoding, site/status/relation row queries,
+  status-shape validation, and proof-row helpers separated by concern while
+  preserving the existing `rows::*` import surface.
+- `call_graph_fixture_common/proof/targets.rs` is now split into a thin
+  `proof/targets/` helper root with target-proof case construction,
+  caller/count validation, and target proof projection assertions separated by
+  concern while preserving the existing target-proof helper surface.
 
 ## Recent verification
 
+- `334b87af test: split target proof helpers`
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+    passed: 93 passed, 0 failed.
+- `8a3a5a7b test: split call graph row helpers`
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+    passed: 93 passed, 0 failed.
 - `2aa601b0 test: split dynamic fixture helpers`
   - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
     passed: 93 passed, 0 failed.
