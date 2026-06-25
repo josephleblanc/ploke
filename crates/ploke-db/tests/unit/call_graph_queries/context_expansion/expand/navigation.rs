@@ -12,24 +12,18 @@ fn expand_call_context_returns_outgoing_targets_and_incoming_callers() -> Result
     let other_site = Uuid::from_u128(0x196);
     let assoc_site = Uuid::from_u128(0x197);
 
-    insert_call_site(
+    insert_resolved_graph(
         &db,
-        SiteSeed {
-            id: site,
+        ResolvedGraphSeed {
             owner,
-            kind: "Path",
+            module: Uuid::from_u128(0x198),
+            site,
+            target,
+            file: None,
             span: (10, 20),
-            path: Some(vec!["crate", "target"]),
-            method: None,
-            macro_name: None,
-            receiver: None,
-            arg_count: Some(0),
-            generic_arg_count: Some(0),
+            path: &["crate", "target"],
         },
     )?;
-    insert_edge(&db, owner, site, "Path")?;
-    insert_relation(&db, site, target, "Function", "Path", "Function")?;
-    insert_status(&db, site, "Path", "Resolved", Some("LocalExact"))?;
 
     insert_call_site(
         &db,

@@ -10,24 +10,10 @@ fn context_for_owner_returns_sites_statuses_and_targets() -> Result<(), DbError>
     let dyn_site = Uuid::from_u128(4);
     let dyn_target = Uuid::from_u128(5);
 
-    insert_call_site(
+    insert_resolved_graph(
         &db,
-        SiteSeed {
-            id: path_site,
-            owner,
-            kind: "Path",
-            span: (10, 24),
-            path: Some(vec!["crate", "helper"]),
-            method: None,
-            macro_name: None,
-            receiver: None,
-            arg_count: Some(0),
-            generic_arg_count: Some(0),
-        },
+        ResolvedGraphSeed::path_call(owner, Uuid::from_u128(0x1), path_site, target, None),
     )?;
-    insert_edge(&db, owner, path_site, "Path")?;
-    insert_relation(&db, path_site, target, "Function", "Path", "Function")?;
-    insert_status(&db, path_site, "Path", "Resolved", Some("LocalExact"))?;
 
     insert_call_site(
         &db,

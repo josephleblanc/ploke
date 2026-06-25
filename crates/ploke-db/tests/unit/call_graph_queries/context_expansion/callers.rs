@@ -11,24 +11,18 @@ fn callers_for_target_returns_sites_statuses_and_matching_edges() -> Result<(), 
     let method_site = Uuid::from_u128(0x105);
     let excluded_site = Uuid::from_u128(0x106);
 
-    insert_call_site(
+    insert_resolved_graph(
         &db,
-        SiteSeed {
-            id: path_site,
+        ResolvedGraphSeed {
             owner,
-            kind: "Path",
+            module: Uuid::from_u128(0x107),
+            site: path_site,
+            target,
+            file: None,
             span: (10, 20),
-            path: Some(vec!["crate", "target"]),
-            method: None,
-            macro_name: None,
-            receiver: None,
-            arg_count: Some(0),
-            generic_arg_count: Some(0),
+            path: &["crate", "target"],
         },
     )?;
-    insert_edge(&db, owner, path_site, "Path")?;
-    insert_relation(&db, path_site, target, "Function", "Path", "Function")?;
-    insert_status(&db, path_site, "Path", "Resolved", Some("LocalExact"))?;
 
     insert_call_site(
         &db,
