@@ -19,7 +19,7 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `c26aeedd test: share dynamic transform lookup helpers`
+  `03ab767e test: share target proof site helpers`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent TUI/model-visible cleanup:
   - `cc808347 test: cover variant constructor tool context`
@@ -91,6 +91,7 @@ are not acceptable as a continuing implementation style.
   - `b8173ff9 test: reuse resolved graph seed cases`
   - `4fba3095 test: share targetless status seed helper`
   - `9dbb7fbd test: reuse resolved seed in context queries`
+  - `03ab767e test: share target proof site helpers`
 - Recent DB test-module split:
   - `7e51101d test: split dynamic call proof fixtures`
   - `09f8f967 test: split target proof fixtures`
@@ -190,6 +191,18 @@ are not acceptable as a continuing implementation style.
 - `call_graph_tests/dynamic.rs` in `ploke-transform` now shares local
   `DynamicFunction` lookup helpers instead of repeating the full
   `CallRelation::DynamicFunction` scan for every dynamic projection case.
+- `call_graph_fixture_common/proof/targets.rs` now owns shared target-centered
+  proof-site case helpers used by function, dynamic, method, associated
+  function, trait dispatch, and imported trait associated-function proof
+  fixtures.
+
+## Recent verification
+
+- `03ab767e test: share target proof site helpers`
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::target_proof -- --nocapture`
+    passed: 9 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+    passed: 93 passed, 0 failed.
 
 ## Resumption rules
 
