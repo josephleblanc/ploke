@@ -1,7 +1,7 @@
 use ploke_db::{
     CallContextOptions, CallContextRelation, CallContextSeed, CallReceiver, CallRelationKind,
     CallResolutionKind, CallSiteKind, CallStatusKind, CallTargetKind, Database, DbError,
-    ProofGraphStore, to_uuid,
+    ProofGraphStore, to_uuid, valid_call_target_family,
 };
 use uuid::Uuid;
 

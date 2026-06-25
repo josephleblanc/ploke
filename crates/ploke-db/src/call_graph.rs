@@ -446,6 +446,31 @@ impl CallTargetFamily {
     }
 }
 
+pub fn valid_call_target_family(relation_kind: &str, source_kind: &str, target_kind: &str) -> bool {
+    let (Ok(relation), Ok(source), Ok(target)) = (
+        CallRelationKind::from_str(relation_kind),
+        CallSiteKind::from_str(source_kind),
+        CallTargetKind::from_str(target_kind),
+    ) else {
+        return false;
+    };
+
+    VALID_CALL_TARGET_FAMILIES.iter().any(|family| {
+        family.relation == relation && family.source == source && family.target == target
+    })
+}
+
+pub fn call_target_endpoint_relation(target_kind: &str) -> Option<&'static str> {
+    let Ok(target) = CallTargetKind::from_str(target_kind) else {
+        return None;
+    };
+
+    VALID_CALL_TARGET_FAMILIES
+        .iter()
+        .find(|family| family.target == target)
+        .map(|family| family.target_relation)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CallStatusKind {
     Resolved,

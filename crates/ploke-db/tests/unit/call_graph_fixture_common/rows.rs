@@ -155,34 +155,13 @@ pub(in crate::unit) fn owner_kind_for_call_body_owner(
     Ok(data_str(&rows.rows[0][0], "call body owner kind").to_string())
 }
 
-pub(in crate::unit) fn is_valid_call_relation_family(
-    relation: &str,
-    source: &str,
-    target: &str,
-) -> bool {
-    matches!(
-        (relation, source, target),
-        ("Function", "Path", "Function")
-            | ("DynamicFunction", "Dynamic", "Function")
-            | ("Method", "Method", "Method")
-            | ("AssociatedFunction", "Path", "Method")
-            | ("TupleStructConstructor", "Path", "Struct")
-            | ("EnumVariantConstructor", "Path", "Variant")
-    )
-}
-
 pub(in crate::unit) fn call_target_exists(
     db: &Database,
     target: Uuid,
     kind: &str,
 ) -> Result<bool, DbError> {
-    let relation = match kind {
-        "Function" => "function",
-        "Method" => "method",
-        "Struct" => "struct",
-        "Variant" => "variant",
-        other => panic!("unexpected call relation target kind {other}"),
-    };
+    let relation = call_target_endpoint_relation(kind)
+        .unwrap_or_else(|| panic!("unexpected call relation target kind {kind}"));
     let rows = db.raw_query(&format!(
         r#"?[id] :=
             id = to_uuid("{target}"),

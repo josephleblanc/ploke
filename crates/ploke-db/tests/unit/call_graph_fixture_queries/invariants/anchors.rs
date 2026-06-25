@@ -51,7 +51,7 @@ fn fixture_projected_call_relations_and_statuses_anchor_to_call_sites() -> Resul
             "call_relation source_kind should match call_site.call_kind for {site_id}"
         );
         assert!(
-            is_valid_call_relation_family(relation, source, target_kind),
+            valid_call_target_family(relation, source, target_kind),
             "unexpected call_relation endpoint family for {site_id} -> {target}: {relation}/{source}/{target_kind}"
         );
         assert!(

@@ -4,7 +4,8 @@ use cozo::{DataValue, Db, MemStorage, UuidWrapper};
 use ploke_db::{
     CallCallerRow, CallContextCandidate, CallContextRelation, CallContextRow, CallReceiver,
     CallRelationKind, CallResolutionKind, CallSiteKind, CallStatusKind, CallTargetKind, Database,
-    DbError, ProofGraphContextRow, ProofGraphStore, QueryResult, to_uuid,
+    DbError, ProofGraphContextRow, ProofGraphStore, QueryResult, call_target_endpoint_relation,
+    to_uuid,
 };
 use ploke_transform::{schema::create_schema_all, transform::transform_parsed_graph};
 use uuid::Uuid;
