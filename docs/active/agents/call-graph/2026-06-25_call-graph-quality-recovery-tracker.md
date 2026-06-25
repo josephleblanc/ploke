@@ -19,7 +19,7 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `9cb4f5b0 test: share try-result fixture setup`
+  `53081563 test: reuse try-result fixture scenario`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent TUI/model-visible cleanup:
   - `cc808347 test: cover variant constructor tool context`
@@ -105,6 +105,8 @@ are not acceptable as a continuing implementation style.
   - `28a183da test: split fixture selector helpers`
   - `a363b462 test: compact targetless dynamic cases`
   - `9cb4f5b0 test: share try-result fixture setup`
+  - `6d417c1c test: share initializer fixture scenarios`
+  - `53081563 test: reuse try-result fixture scenario`
 - Recent DB test-module split:
   - `7e51101d test: split dynamic call proof fixtures`
   - `09f8f967 test: split target proof fixtures`
@@ -252,10 +254,28 @@ are not acceptable as a continuing implementation style.
   names and only spelling out paths for the exceptional path-bearing rows.
 - `call_graph_fixture_common/scenarios.rs` owns the shared try-result fixture
   owner, context rows, call-site IDs, and target IDs used by context expansion
-  and mixed-proof fixture assertions.
+  and mixed-proof fixture assertions; method result-receiver fixtures now reuse
+  the same scenario for the try-result receiver case.
+- `call_graph_fixture_common/scenarios.rs` also owns const/static and
+  associated-const initializer scenario matrices plus shared initializer
+  context/proof assertions, so owner-context and mixed-proof initializer
+  fixtures no longer duplicate owner lookup, context-row validation, source
+  provenance, and proof-edge setup.
 
 ## Recent verification
 
+- `53081563 test: reuse try-result fixture scenario`
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::method_context -- --nocapture`
+    passed: 8 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+    passed: 93 passed, 0 failed.
+- `6d417c1c test: share initializer fixture scenarios`
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::owner_context -- --nocapture`
+    passed: 3 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::mixed_proof -- --nocapture`
+    passed: 5 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+    passed: 93 passed, 0 failed.
 - `9cb4f5b0 test: share try-result fixture setup`
   - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::context_expansion -- --nocapture`
     passed: 7 passed, 0 failed.
