@@ -5606,7 +5606,7 @@ fn fixture_projection_stores_real_trait_dispatch_call_proof_facts() -> Result<()
         "call_concrete_trait_object_binding_method",
         "call_reference_chain_trait_object_binding_method",
     ];
-    let mut sites = Vec::new();
+    let mut expected_edges = Vec::new();
 
     for owner_name in cases {
         let owner = function_id_by_name(&db, owner_name)?;
@@ -5628,51 +5628,22 @@ fn fixture_projection_stores_real_trait_dispatch_call_proof_facts() -> Result<()
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
         assert_eq!(count, 3);
-        sites.push((owner, row.site.id, row.site.span));
+        expected_edges.push(OwnerProofEdge {
+            owner,
+            site: row.site.id,
+            span: row.site.span,
+            target,
+        });
     }
 
-    let edges = db.proof_checker_edges()?;
-    assert_eq!(
-        edges.len(),
-        sites.len(),
-        "trait dispatch proof edges: {edges:#?}"
-    );
-    assert!(
-        edges.iter().all(
-            |edge| edge.callee_def_id.as_deref() == Some(target.to_string().as_str())
-                && edge.resolution_state == "resolved"
-                && edge.blocker_reason.is_none()
-        ),
-        "trait dispatch proof edges should all resolve to the impl method: {edges:#?}"
-    );
-    for (owner, site, _) in &sites {
-        assert!(
-            edges.iter().any(|edge| {
-                edge.call_site_id == site.to_string() && edge.caller_def_id == owner.to_string()
-            }),
-            "trait dispatch proof edge missing for {site}: {edges:#?}"
-        );
-    }
-
-    assert!(
-        db.proof_graphrag_context("type_resolution_missing")?
-            .is_empty(),
-        "resolved trait dispatch proofs should not produce blockers"
-    );
-
-    for (_, site, span) in sites {
-        let provenance = db
-            .proof_source_provenance(&site.to_string())?
-            .expect("projected trait dispatch call-site source provenance");
-        assert!(
-            provenance
-                .source_file
-                .ends_with("fixture_call_graph/src/lib.rs"),
-            "source provenance: {provenance:#?}"
-        );
-        assert_eq!(provenance.start_byte, span.0);
-        assert_eq!(provenance.end_byte, span.1);
-    }
+    assert_owner_proof_edges(
+        &db,
+        "trait dispatch",
+        &expected_edges,
+        "fixture_call_graph/src/lib.rs",
+        "type_resolution_missing",
+        ProofEdgeCount::Exact,
+    )?;
 
     Ok(())
 }
