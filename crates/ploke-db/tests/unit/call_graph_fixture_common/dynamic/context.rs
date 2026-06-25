@@ -46,6 +46,27 @@ pub(in crate::unit) struct TargetlessDynamicContextCase {
     pub(in crate::unit) status: CallStatusKind,
 }
 
+impl TargetlessDynamicContextCase {
+    pub(in crate::unit) fn unsupported(owner: &'static str) -> Self {
+        Self {
+            owner,
+            path: None,
+            status: CallStatusKind::Unsupported,
+        }
+    }
+
+    pub(in crate::unit) fn unsupported_path(
+        owner: &'static str,
+        path: &'static [&'static str],
+    ) -> Self {
+        Self {
+            owner,
+            path: Some(path),
+            status: CallStatusKind::Unsupported,
+        }
+    }
+}
+
 pub(in crate::unit) fn assert_targetless_dynamic_context_cases(
     db: &Database,
     cases: &[TargetlessDynamicContextCase],

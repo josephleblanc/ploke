@@ -4,91 +4,32 @@ use super::*;
 fn fixture_context_reads_projected_targetless_dynamic_failures() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let cases = [
-        TargetlessDynamicContextCase {
-            owner: "call_match_guarded_function_item",
-            path: None,
-            status: CallStatusKind::Unsupported,
-        },
-        TargetlessDynamicContextCase {
-            owner: "call_if_closure_branch",
-            path: None,
-            status: CallStatusKind::Unsupported,
-        },
-        TargetlessDynamicContextCase {
-            owner: "call_match_closure_arm",
-            path: None,
-            status: CallStatusKind::Unsupported,
-        },
-        TargetlessDynamicContextCase {
-            owner: "call_parenthesized_function_pointer_param",
-            path: Some(&["f"]),
-            status: CallStatusKind::Unsupported,
-        },
-        TargetlessDynamicContextCase {
-            owner: "call_if_function_pointer_param_branch",
-            path: None,
-            status: CallStatusKind::Unsupported,
-        },
-        TargetlessDynamicContextCase {
-            owner: "call_match_function_pointer_param_arm",
-            path: None,
-            status: CallStatusKind::Unsupported,
-        },
-        TargetlessDynamicContextCase {
-            owner: "call_if_nested_branch_expression",
-            path: None,
-            status: CallStatusKind::Unsupported,
-        },
-        TargetlessDynamicContextCase {
-            owner: "call_match_nested_arm_expression",
-            path: None,
-            status: CallStatusKind::Unsupported,
-        },
-        TargetlessDynamicContextCase {
-            owner: "call_closure_binding_cast",
-            path: None,
-            status: CallStatusKind::Unsupported,
-        },
-        TargetlessDynamicContextCase {
-            owner: "call_dereferenced_closure_binding",
-            path: None,
-            status: CallStatusKind::Unsupported,
-        },
-        TargetlessDynamicContextCase {
-            owner: "call_field_function_param",
-            path: Some(&["holder", "callback"]),
-            status: CallStatusKind::Unsupported,
-        },
-        TargetlessDynamicContextCase {
-            owner: "call_indexed_function_pointer",
-            path: None,
-            status: CallStatusKind::Unsupported,
-        },
-        TargetlessDynamicContextCase {
-            owner: "call_indexed_field_function_param",
-            path: None,
-            status: CallStatusKind::Unsupported,
-        },
-        TargetlessDynamicContextCase {
-            owner: "call_indexed_tuple_field_function_param",
-            path: None,
-            status: CallStatusKind::Unsupported,
-        },
-        TargetlessDynamicContextCase {
-            owner: "call_move_closure_literal_with_body_call",
-            path: None,
-            status: CallStatusKind::Unsupported,
-        },
-        TargetlessDynamicContextCase {
-            owner: "call_async_closure_literal_with_body_call",
-            path: None,
-            status: CallStatusKind::Unsupported,
-        },
-        TargetlessDynamicContextCase {
-            owner: "call_parenthesized_generic_fn_once_value_binding",
-            path: Some(&["generic_f"]),
-            status: CallStatusKind::Unsupported,
-        },
+        TargetlessDynamicContextCase::unsupported("call_match_guarded_function_item"),
+        TargetlessDynamicContextCase::unsupported("call_if_closure_branch"),
+        TargetlessDynamicContextCase::unsupported("call_match_closure_arm"),
+        TargetlessDynamicContextCase::unsupported_path(
+            "call_parenthesized_function_pointer_param",
+            &["f"],
+        ),
+        TargetlessDynamicContextCase::unsupported("call_if_function_pointer_param_branch"),
+        TargetlessDynamicContextCase::unsupported("call_match_function_pointer_param_arm"),
+        TargetlessDynamicContextCase::unsupported("call_if_nested_branch_expression"),
+        TargetlessDynamicContextCase::unsupported("call_match_nested_arm_expression"),
+        TargetlessDynamicContextCase::unsupported("call_closure_binding_cast"),
+        TargetlessDynamicContextCase::unsupported("call_dereferenced_closure_binding"),
+        TargetlessDynamicContextCase::unsupported_path(
+            "call_field_function_param",
+            &["holder", "callback"],
+        ),
+        TargetlessDynamicContextCase::unsupported("call_indexed_function_pointer"),
+        TargetlessDynamicContextCase::unsupported("call_indexed_field_function_param"),
+        TargetlessDynamicContextCase::unsupported("call_indexed_tuple_field_function_param"),
+        TargetlessDynamicContextCase::unsupported("call_move_closure_literal_with_body_call"),
+        TargetlessDynamicContextCase::unsupported("call_async_closure_literal_with_body_call"),
+        TargetlessDynamicContextCase::unsupported_path(
+            "call_parenthesized_generic_fn_once_value_binding",
+            &["generic_f"],
+        ),
     ];
 
     assert_targetless_dynamic_context_cases(&db, &cases)?;
