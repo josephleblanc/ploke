@@ -19,7 +19,7 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `67fc3a8a Preserve ambiguous dynamic call candidates`
+  `7b9d872e test: extract dynamic candidate assertions`
 - Current quality focus: DB/proof/query hardening before adding parser breadth.
 - Recent endpoint-family cleanup:
   - `e53a2301 Split call target endpoint kind`
@@ -28,6 +28,8 @@ are not acceptable as a continuing implementation style.
   - `e14aa283 Guard duplicate call status emissions`
 - Recent candidate-provenance cleanup:
   - `67fc3a8a Preserve ambiguous dynamic call candidates`
+- Recent DB test-helper cleanup:
+  - `7b9d872e test: extract dynamic candidate assertions`
 
 ## Resumption rules
 
@@ -54,7 +56,7 @@ are not acceptable as a continuing implementation style.
 | ID | Priority | Status | Issue | Required direction |
 | --- | --- | --- | --- | --- |
 | CGQ-1 | P1 | Open | Implementation focus drifted toward parser breadth while DB/proof quality lagged. | Shift next resumed work to DB/proof/query hardening and shared test structure. |
-| CGQ-2 | P1 | Open | `call_graph_fixture_queries.rs` and `call_graph_queries.rs` are far larger and less modular than the type-graph precedent. | Split by concern and introduce shared `common` helpers/matrices before adding more cases. |
+| CGQ-2 | P1 | Partial 2026-06-25 | `call_graph_fixture_queries.rs` and `call_graph_queries.rs` are far larger and less modular than the type-graph precedent. | First cleanup extracted repeated ambiguous dynamic candidate context/proof assertions into shared helpers. Remaining work is to split by concern and introduce shared `common` helpers/matrices before adding more cases. |
 | CGQ-3 | P1 | Partial 2026-06-25 | Call endpoint-family rules are duplicated across transform insertion, DB Cozo queries, Rust validation, and tests. | DB query helpers and Rust validation now share `VALID_CALL_TARGET_FAMILIES`; remaining work is transform insertion/test helper surfaces. |
 | CGQ-4 | P1 | Done 2026-06-25 | DB `CallRelationKind` mixed relation semantics with target-kind semantics, including `Struct` and `Variant`. | `CallTargetKind` now carries DB endpoint families separately from call relation kinds, while persisted relation strings remain unchanged. |
 | CGQ-5 | P1 | Done 2026-06-25 | External proof projection reported `externally_summarized` while also using blocker reason `external_dependency_summary_missing`. | Current parser-projected external rows now emit blocked/missing-summary proof state until a real external summary fact exists. |
