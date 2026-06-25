@@ -2239,7 +2239,7 @@ fn call_proof_facts_for_owner_preserves_mixed_resolution_shape() -> Result<(), D
         external_status
             .get("resolution_state")
             .and_then(serde_json::Value::as_str),
-        Some("externally_summarized")
+        Some("blocked")
     );
     assert_eq!(
         external_status

@@ -617,7 +617,7 @@ fn resolution_state(status: CallStatusKind) -> &'static str {
         CallStatusKind::Resolved => "resolved",
         CallStatusKind::Unresolved => "unresolved",
         CallStatusKind::Ambiguous => "ambiguous",
-        CallStatusKind::External => "externally_summarized",
+        CallStatusKind::External => "blocked",
         CallStatusKind::Unsupported => "blocked",
     }
 }
