@@ -19,13 +19,15 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `29eb4f8a Centralize call endpoint families`
+  `67fc3a8a Preserve ambiguous dynamic call candidates`
 - Current quality focus: DB/proof/query hardening before adding parser breadth.
 - Recent endpoint-family cleanup:
   - `e53a2301 Split call target endpoint kind`
   - `29eb4f8a Centralize call endpoint families`
 - Recent invariant cleanup:
   - `e14aa283 Guard duplicate call status emissions`
+- Recent candidate-provenance cleanup:
+  - `67fc3a8a Preserve ambiguous dynamic call candidates`
 
 ## Resumption rules
 
@@ -56,7 +58,7 @@ are not acceptable as a continuing implementation style.
 | CGQ-3 | P1 | Partial 2026-06-25 | Call endpoint-family rules are duplicated across transform insertion, DB Cozo queries, Rust validation, and tests. | DB query helpers and Rust validation now share `VALID_CALL_TARGET_FAMILIES`; remaining work is transform insertion/test helper surfaces. |
 | CGQ-4 | P1 | Done 2026-06-25 | DB `CallRelationKind` mixed relation semantics with target-kind semantics, including `Struct` and `Variant`. | `CallTargetKind` now carries DB endpoint families separately from call relation kinds, while persisted relation strings remain unchanged. |
 | CGQ-5 | P1 | Done 2026-06-25 | External proof projection reported `externally_summarized` while also using blocker reason `external_dependency_summary_missing`. | Current parser-projected external rows now emit blocked/missing-summary proof state until a real external summary fact exists. |
-| CGQ-6 | P2 | Open | Dynamic branch/match candidate provenance can collapse to `Null` in persisted `call_site` rows. | Decide whether proof/RAG needs normalized candidate provenance; do not silently drop proof-critical candidates. |
+| CGQ-6 | P2 | Done 2026-06-25 | Dynamic branch/match candidate provenance can collapse to `Null` in persisted `call_site` rows. | Ambiguous branch/match dynamic calls now keep proven local function candidates as `DynamicFunction` relations while preserving `Ambiguous` status; proof projection exposes them as `candidate_def_ids` without promoting them to resolved call edges. |
 | CGQ-7 | P2 | Done 2026-06-25 | The "exactly one status per call site" invariant could be hidden by post-hoc sort/dedup. | `CallRelationResolver` now rejects duplicate status sources before dedup, including identical duplicates. |
 | CGQ-8 | P2 | Open | `call_resolution.rs` and `call_extraction.rs` are monolithic. | Avoid adding breadth there without local extraction; split path/method/dynamic/macro logic when touching the area. |
 | CGQ-9 | P2 | Open | Call-graph docs are serving as a long running diary rather than a stable coverage inventory. | Add or update a stable call-graph coverage document/matrix, mirroring type-resolution coverage practice. |
@@ -69,8 +71,9 @@ are not acceptable as a continuing implementation style.
 - Keep structural call occurrence extraction separate from semantic resolution
   and proof facts.
 - Keep parser endpoint families typed and fail-closed.
-- Keep unresolved, ambiguous, external, and unsupported call sites targetless
-  unless a strict local target proof exists.
+- Keep unresolved, external, and unsupported call sites targetless. Ambiguous
+  call sites may carry proven local candidates, but must remain ambiguous and
+  must not emit resolved proof/navigation edges.
 - Keep backup fixture behavior strict; regenerate/review fixtures rather than
   weakening import semantics.
 
@@ -81,4 +84,16 @@ slices are:
 
 1. Finish CGQ-3 by reducing transform/test-helper endpoint-family duplication.
 2. Continue CGQ-2 by splitting oversized call-graph DB tests by concern.
-3. Address CGQ-6 dynamic candidate provenance if proof/RAG depends on it.
+3. Keep candidate-bearing ambiguous rows covered in DB/proof tests when
+   splitting helpers; do not move them back into targetless failure tables.
+
+## Latest verification
+
+For `67fc3a8a Preserve ambiguous dynamic call candidates`:
+
+- `cargo test -p syn_parser --features call_graph call_sites -- --nocapture`
+  - passed: `tests/mod.rs` 206 passed, 0 failed.
+- `cargo test -p ploke-transform --features call_graph transform::tests -- --nocapture`
+  - passed: 5 passed, 0 failed.
+- `cargo test -p ploke-db --features call_graph fixture_projection -- --nocapture`
+  - passed: `unit::call_graph_fixture_queries` 34 passed, 0 failed.
