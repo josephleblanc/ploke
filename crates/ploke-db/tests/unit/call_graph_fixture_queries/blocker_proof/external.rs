@@ -5,24 +5,9 @@ use super::*;
 #[test]
 fn fixture_projection_marks_real_external_call_without_edges() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let owner = function_id_by_name(&db, "call_prelude_string_new")?;
-    let context = db.call_context_for_owner(owner)?;
-    assert_eq!(context.len(), 1, "context rows: {context:#?}");
-    let site = context[0].site.id;
-    let span = context[0].site.span;
+    let expected = string_new_blockers(&db)?;
 
-    let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
-    assert_eq!(count, 2);
-    assert_targetless_blocker_proofs(
-        &db,
-        "external",
-        &[BlockerProofSite {
-            site,
-            span,
-            blocker_reason: "external_dependency_summary_missing",
-        }],
-        "fixture_call_graph/src/lib.rs",
-    )?;
+    assert_targetless_blocker_proofs(&db, "external", &expected, "fixture_call_graph/src/lib.rs")?;
 
     Ok(())
 }
@@ -30,13 +15,8 @@ fn fixture_projection_marks_real_external_call_without_edges() -> Result<(), DbE
 #[test]
 fn fixture_projected_external_call_blocker_feeds_proof_invariants() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let owner = function_id_by_name(&db, "call_prelude_string_new")?;
-    let context = db.call_context_for_owner(owner)?;
-    assert_eq!(context.len(), 1, "context rows: {context:#?}");
-    let site = context[0].site.id;
-
-    let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
-    assert_eq!(count, 2);
+    let expected = string_new_blockers(&db)?;
+    let site = expected[0].site;
 
     db.upsert_proof_fact_values(&[serde_json::json!({
         "fact_kind": "effect_seed",
@@ -66,4 +46,23 @@ fn fixture_projected_external_call_blocker_feeds_proof_invariants() -> Result<()
     );
 
     Ok(())
+}
+
+fn string_new_blockers(db: &Database) -> Result<Vec<BlockerProofSite>, DbError> {
+    let mut expected = Vec::new();
+    assert_projected_blockers(
+        db,
+        &mut expected,
+        "call_prelude_string_new",
+        &[TargetlessBlockerCase {
+            row: TargetlessRowCase::path(
+                &["String", "new"],
+                0,
+                CallStatusKind::External,
+                "String::new external",
+            ),
+            blocker_reason: "external_dependency_summary_missing",
+        }],
+    )?;
+    Ok(expected)
 }
