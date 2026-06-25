@@ -19,7 +19,7 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `05c2c273 test: split proof projection queries`
+  `fa3b273e test: split call graph query invariants`
 - Current quality focus: DB/proof/query hardening before adding parser breadth.
 - Recent endpoint-family cleanup:
   - `e53a2301 Split call target endpoint kind`
@@ -47,6 +47,7 @@ are not acceptable as a continuing implementation style.
   - `4574718d test: split trait method context fixtures`
   - `e711b2d0 test: split owner context fixtures`
   - `05c2c273 test: split proof projection queries`
+  - `fa3b273e test: split call graph query invariants`
 
 ## Resumption rules
 
@@ -73,7 +74,7 @@ are not acceptable as a continuing implementation style.
 | ID | Priority | Status | Issue | Required direction |
 | --- | --- | --- | --- | --- |
 | CGQ-1 | P1 | Open | Implementation focus drifted toward parser breadth while DB/proof quality lagged. | Shift next resumed work to DB/proof/query hardening and shared test structure. |
-| CGQ-2 | P1 | Partial 2026-06-25 | `call_graph_fixture_queries.rs` and `call_graph_queries.rs` are far larger and less modular than the type-graph precedent. | First cleanup extracted repeated ambiguous dynamic candidate context/proof assertions into shared helpers, moved them to `call_graph_fixture_common.rs`, moved shared proof and constructor fixture helpers to common, and split invariant, dynamic, target-centered, blocker, proof-lookup, constructor proof, call-context, mixed proof, resolved proof, dynamic context, associated context, trait-method context, owner-context, and proof-projection query tests into submodules. Remaining work is to continue splitting by concern and introduce shared matrices before adding more cases. |
+| CGQ-2 | P1 | Partial 2026-06-25 | `call_graph_fixture_queries.rs` and `call_graph_queries.rs` are far larger and less modular than the type-graph precedent. | First cleanup extracted repeated ambiguous dynamic candidate context/proof assertions into shared helpers, moved them to `call_graph_fixture_common.rs`, moved shared proof and constructor fixture helpers to common, and split invariant, dynamic, target-centered, blocker, proof-lookup, constructor proof, call-context, mixed proof, resolved proof, dynamic context, associated context, trait-method context, owner-context, proof-projection, and query-invariant tests into submodules. Remaining work is to continue splitting by concern and introduce shared matrices before adding more cases. |
 | CGQ-2A | P1 | Done 2026-06-25 | Proof validation allowed arbitrary ambiguous rows with local targets while fixture invariants only allow dynamic function candidates. | `validate_call_context` now rejects non-resolved local targets except the established ambiguous dynamic-candidate shape (`Dynamic` site, `DynamicFunction` relation, `Function` target). |
 | CGQ-3 | P1 | Partial 2026-06-25 | Call endpoint-family rules are duplicated across transform insertion, DB Cozo queries, Rust validation, and tests. | DB query helpers and Rust validation now share `VALID_CALL_TARGET_FAMILIES`; remaining work is transform insertion/test helper surfaces. |
 | CGQ-4 | P1 | Done 2026-06-25 | DB `CallRelationKind` mixed relation semantics with target-kind semantics, including `Struct` and `Variant`. | `CallTargetKind` now carries DB endpoint families separately from call relation kinds, while persisted relation strings remain unchanged. |
@@ -224,4 +225,11 @@ For `05c2c273 test: split proof projection queries`:
 - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::invariants -- --nocapture`
   - passed: `tests/mod.rs` 5 passed, 0 failed.
 - `cargo test -p ploke-db --features call_graph fixture_projection -- --nocapture`
+  - passed: `tests/mod.rs` 34 passed, 0 failed.
+
+For `fa3b273e test: split call graph query invariants`:
+
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries::invariants -- --nocapture`
+  - passed: `tests/mod.rs` 11 passed, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries -- --nocapture`
   - passed: `tests/mod.rs` 34 passed, 0 failed.
