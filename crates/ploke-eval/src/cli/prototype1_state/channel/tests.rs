@@ -639,6 +639,214 @@ fn prototype1_eval_store_parent_ready_read_writes_receipt_and_import_rows() {
 }
 
 #[test]
+fn prototype1_eval_store_parent_import_writes_missing_channel_message_rows() {
+    let temp = tempfile::tempdir().unwrap();
+    let prototype1_root = temp.path().join("prototype1");
+    let db_path = prototype1_root.join("eval-store.cozo.sqlite");
+    let endpoints = endpoints(prototype1_root.join("nodes/node-1/channels/runtime-1"));
+    let endpoint = endpoints.child_to_parent();
+    let child_role = child();
+    let child = Channel::for_child(&child_role, endpoints.clone(), FileTransport);
+    let parent = channel::<Parent<parent::Selectable>>(endpoints);
+
+    let (child, ready) = child.send_ready().expect("send ready before DB exists");
+    let (child, evaluating) = child
+        .send_evaluating()
+        .expect("send evaluating before DB exists");
+    let runner_result = Prototype1RunnerResult {
+        schema_version: "prototype1-treatment-node.v1".to_string(),
+        campaign_id: endpoint.campaign_id().clone(),
+        node_id: endpoint.node_id().to_string(),
+        generation: 0,
+        branch_id: "branch-1".to_string(),
+        status: crate::intervention::Prototype1NodeStatus::Failed,
+        disposition: crate::intervention::Prototype1RunnerDisposition::TreatmentFailed,
+        treatment_campaign_id: None,
+        evaluation_artifact_path: None,
+        detail: Some("synthetic failure".to_string()),
+        exit_code: Some(1),
+        stdout_excerpt: None,
+        stderr_excerpt: None,
+        recorded_at: "2026-06-25T00:00:00Z".to_string(),
+    };
+    let (_child, result) = child
+        .send_terminal_result(runner_result, None)
+        .expect("send terminal result before DB exists");
+    assert!(
+        !db_path.exists(),
+        "child-side channel send must not create the owner eval DB"
+    );
+
+    seed_owner_db(&db_path);
+    let (_, messages) = parent
+        .recv_from_child(Cursor::start())
+        .expect("parent imports validated child channel messages");
+
+    assert_eq!(messages.len(), 3);
+    assert!(matches!(messages[0].body(), ToParent::Ready));
+    assert!(matches!(messages[1].body(), ToParent::Evaluating));
+    assert!(matches!(messages[2].body(), ToParent::Result { .. }));
+
+    let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "campaign_id".to_string(),
+        cozo::DataValue::from(endpoint.campaign_id().to_string()),
+    );
+    params.insert(
+        "node_id".to_string(),
+        cozo::DataValue::from(endpoint.node_id().to_string()),
+    );
+    params.insert(
+        "runtime_id".to_string(),
+        cozo::DataValue::from(endpoint.runtime_id().to_string()),
+    );
+    let rows = db
+        .raw_query_params(
+            r#"
+?[
+    message_kind,
+    direction,
+    source_class,
+    evidence_class,
+    validation_status,
+    endpoint_path,
+    cursor_offset,
+    bytes_written,
+    body_hash,
+    content_sha256
+] :=
+    *eval_channel_message {
+        campaign_id,
+        node_id,
+        runtime_id,
+        message_kind,
+        direction,
+        source_class,
+        evidence_class,
+        validation_status,
+        endpoint_path,
+        cursor_offset,
+        bytes_written,
+        body_hash,
+        content_sha256
+    },
+    campaign_id = $campaign_id,
+    node_id = $node_id,
+    runtime_id = $runtime_id
+"#,
+            params.clone(),
+        )
+        .expect("query imported channel message rows");
+
+    assert_eq!(rows.rows.len(), 3);
+    let expected = std::collections::BTreeMap::from([
+        (
+            "ready".to_string(),
+            (ready.cursor().offset() as i64, ready.bytes_written() as i64),
+        ),
+        (
+            "evaluating".to_string(),
+            (
+                evaluating.cursor().offset() as i64,
+                evaluating.bytes_written() as i64,
+            ),
+        ),
+        (
+            "result".to_string(),
+            (
+                result.cursor().offset() as i64,
+                result.bytes_written() as i64,
+            ),
+        ),
+    ]);
+    let mut observed = std::collections::BTreeMap::new();
+    for row in rows.row_refs() {
+        let kind = row.get::<String>("message_kind").expect("kind");
+        assert_eq!(
+            row.get::<String>("direction").expect("direction"),
+            "child_to_parent"
+        );
+        assert_eq!(
+            row.get::<String>("source_class").expect("source"),
+            "direct_write"
+        );
+        assert_eq!(
+            row.get::<String>("evidence_class").expect("evidence"),
+            "channel_message"
+        );
+        assert_eq!(
+            row.get::<String>("validation_status").expect("status"),
+            "valid"
+        );
+        assert_eq!(
+            row.get::<String>("endpoint_path").expect("path"),
+            endpoint.path().display().to_string()
+        );
+        assert!(!row.get::<String>("body_hash").expect("body").is_empty());
+        assert!(
+            !row.get::<String>("content_sha256")
+                .expect("content")
+                .is_empty()
+        );
+        observed.insert(
+            kind,
+            (
+                row.get::<i64>("cursor_offset").expect("cursor"),
+                row.get::<i64>("bytes_written").expect("bytes"),
+            ),
+        );
+    }
+    assert_eq!(observed, expected);
+
+    let receipt_rows = db
+        .raw_query_params(
+            r#"
+?[
+    receipt_id
+] :=
+    *eval_channel_receipt {
+        receipt_id,
+        campaign_id,
+        node_id,
+        runtime_id,
+        observed_by,
+        validation_status
+    },
+    campaign_id = $campaign_id,
+    node_id = $node_id,
+    runtime_id = $runtime_id,
+    observed_by = "parent",
+    validation_status = "valid"
+"#,
+            params.clone(),
+        )
+        .expect("query imported channel receipt rows");
+    assert_eq!(receipt_rows.rows.len(), 3);
+
+    let import_rows = db
+        .raw_query_params(
+            r#"
+?[
+    import_id
+] :=
+    *eval_import_event {
+        import_id,
+        campaign_id,
+        source_runtime_id,
+        validation_status
+    },
+    campaign_id = $campaign_id,
+    source_runtime_id = $runtime_id,
+    validation_status = "valid"
+"#,
+            params,
+        )
+        .expect("query imported channel event rows");
+    assert_eq!(import_rows.rows.len(), 3);
+}
+
+#[test]
 fn prototype1_storage_authority_negative_channel_row_cannot_replace_envelope() {
     let temp = tempfile::tempdir().unwrap();
     let prototype1_root = temp.path().join("prototype1");

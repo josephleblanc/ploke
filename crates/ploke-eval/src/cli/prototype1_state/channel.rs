@@ -554,8 +554,9 @@ where
         cursor: Cursor,
     ) -> Result<(Cursor, Vec<Envelope<ToParent>>), ChannelError<T::Error>> {
         let endpoint = self.endpoints.child_to_parent();
-        let (cursor, envelopes) = self.read(&endpoint, cursor)?;
-        mirror_parent_channel_imports(&endpoint, &envelopes).map_err(ChannelError::EvalStore)?;
+        let (cursor, records) = self.read_records(&endpoint, cursor)?;
+        mirror_parent_channel_imports(&endpoint, &records).map_err(ChannelError::EvalStore)?;
+        let envelopes = records.into_iter().map(|record| record.envelope).collect();
         Ok((cursor, envelopes))
     }
 }
@@ -738,26 +739,57 @@ where
     where
         M: DeserializeOwned + Serialize,
     {
+        let (cursor, records) = self.read_records(endpoint, cursor)?;
+        let envelopes = records.into_iter().map(|record| record.envelope).collect();
+        Ok((cursor, envelopes))
+    }
+
+    fn read_records<M>(
+        &self,
+        endpoint: &Endpoint,
+        cursor: Cursor,
+    ) -> Result<(Cursor, Vec<ChannelReadRecord<M>>), ChannelError<T::Error>>
+    where
+        M: DeserializeOwned + Serialize,
+    {
+        let start = cursor;
         let (cursor, records) = self
             .transport
             .read_since(endpoint, cursor)
             .map_err(ChannelError::Transport)?;
-        let envelopes = records
+        let mut offset = start.offset();
+        let records = records
             .into_iter()
-            .map(|record| {
+            .map(|bytes| {
                 let envelope: Envelope<M> =
-                    serde_json::from_slice(&record).map_err(ChannelError::Decode)?;
+                    serde_json::from_slice(&bytes).map_err(ChannelError::Decode)?;
                 envelope
                     .validate_endpoint(endpoint)
                     .map_err(ChannelError::Envelope)?;
                 envelope
                     .validate_body_hash()
                     .map_err(ChannelError::Envelope)?;
-                Ok(envelope)
+                offset += bytes.len() as u64 + 1;
+                Ok(ChannelReadRecord {
+                    receipt: Receipt {
+                        endpoint: endpoint.path.clone(),
+                        cursor: Cursor { offset },
+                        bytes_written: bytes.len(),
+                    },
+                    bytes,
+                    envelope,
+                })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Ok((cursor, envelopes))
+        Ok((cursor, records))
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ChannelReadRecord<M> {
+    envelope: Envelope<M>,
+    bytes: Vec<u8>,
+    receipt: Receipt,
 }
 
 /// Channel-level serialization, validation, or transport failure.

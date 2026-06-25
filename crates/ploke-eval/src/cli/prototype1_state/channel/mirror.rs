@@ -39,9 +39,9 @@ pub(super) fn mirror_channel_message(
 
 pub(super) fn mirror_parent_channel_imports(
     endpoint: &Endpoint,
-    envelopes: &[Envelope<ToParent>],
+    records: &[ChannelReadRecord<ToParent>],
 ) -> Result<(), eval_store::EvalStoreError> {
-    if envelopes.is_empty() {
+    if records.is_empty() {
         return Ok(());
     }
 
@@ -54,7 +54,25 @@ pub(super) fn mirror_parent_channel_imports(
         return Ok(());
     }
 
-    for envelope in envelopes {
+    for record in records {
+        let envelope = &record.envelope;
+        eval_store::write_channel_message_to_owner_db(
+            &db_path,
+            eval_store::ChannelMessageEvidence {
+                campaign_id: endpoint.campaign_id.clone(),
+                node_id: endpoint.node_id.clone(),
+                runtime_id: endpoint.runtime_id.to_string(),
+                direction: direction_label(endpoint.direction).to_string(),
+                message_kind: to_parent_message_kind(envelope.body()).to_string(),
+                message_id: envelope.message_id.to_string(),
+                endpoint_path: record.receipt.endpoint().to_path_buf(),
+                cursor_offset: record.receipt.cursor().offset() as i64,
+                bytes_written: record.receipt.bytes_written() as i64,
+                body_hash: envelope.body_hash.clone(),
+                content_sha256: format!("{:x}", Sha256::digest(&record.bytes)),
+                recorded_at: envelope.recorded_at.0.to_string(),
+            },
+        )?;
         let imported_at = RecordedAt::now().0.to_string();
         let evidence_ref = channel_message_ref(envelope);
         let receipt_id = eval_store::write_channel_receipt_to_owner_db(
@@ -92,6 +110,19 @@ pub(super) fn mirror_parent_channel_imports(
 
 pub(super) fn channel_message_ref(envelope: &Envelope<ToParent>) -> String {
     format!("channel_message:{}", envelope.message_id)
+}
+
+fn to_parent_message_kind(message: &ToParent) -> &'static str {
+    match message {
+        ToParent::Ready => "ready",
+        ToParent::Evaluating => "evaluating",
+        ToParent::Result { .. } => "result",
+        ToParent::ResultWritten { .. } => "result_written",
+        ToParent::SuccessorReady { .. } => "successor_ready",
+        ToParent::SuccessorCompletion { .. } => "successor_completion",
+        ToParent::Failed { .. } => "failed",
+        ToParent::Exited { .. } => "exited",
+    }
 }
 
 pub(super) fn direction_label(direction: Direction) -> &'static str {
