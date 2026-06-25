@@ -19,7 +19,7 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `54d94008 test: split call graph fixture query parent`
+  `ad9f0c07 test: split resolved proof fixtures by family`
 - Current quality focus: DB/proof/query hardening before adding parser breadth.
 - Recent endpoint-family cleanup:
   - `e53a2301 Split call target endpoint kind`
@@ -50,6 +50,7 @@ are not acceptable as a continuing implementation style.
   - `fa3b273e test: split call graph query invariants`
   - `7eb4399f test: split call graph query concerns`
   - `54d94008 test: split call graph fixture query parent`
+  - `ad9f0c07 test: split resolved proof fixtures by family`
 
 ## Resumption rules
 
@@ -76,7 +77,7 @@ are not acceptable as a continuing implementation style.
 | ID | Priority | Status | Issue | Required direction |
 | --- | --- | --- | --- | --- |
 | CGQ-1 | P1 | Open | Implementation focus drifted toward parser breadth while DB/proof quality lagged. | Shift next resumed work to DB/proof/query hardening and shared test structure. |
-| CGQ-2 | P1 | Partial 2026-06-25 | Call-graph DB query tests and helpers were far larger and less modular than the type-graph precedent. | First cleanup extracted repeated ambiguous dynamic candidate context/proof assertions into shared helpers, moved them to `call_graph_fixture_common.rs`, moved shared proof and constructor fixture helpers to common, and split invariant, dynamic, target-centered, blocker, proof-lookup, constructor proof, call-context, mixed proof, resolved proof, dynamic context, associated context, trait-method context, owner-context, proof-projection, query-invariant, schema, context-expansion, receiver-decode, relation-decode, path-context, method-context, constructor-context, unsupported-context, and low-level-helper tests into submodules. `call_graph_queries.rs` and `call_graph_fixture_queries.rs` are now thin module roots, and receiver decoding is table-driven. Remaining work is to continue splitting large fixture/common/proof files by concern and introduce shared matrices before adding more cases. |
+| CGQ-2 | P1 | Partial 2026-06-25 | Call-graph DB query tests and helpers were far larger and less modular than the type-graph precedent. | First cleanup extracted repeated ambiguous dynamic candidate context/proof assertions into shared helpers, moved them to `call_graph_fixture_common.rs`, moved shared proof and constructor fixture helpers to common, and split invariant, dynamic, target-centered, blocker, proof-lookup, constructor proof, call-context, mixed proof, resolved proof, dynamic context, associated context, trait-method context, owner-context, proof-projection, query-invariant, schema, context-expansion, receiver-decode, relation-decode, path-context, method-context, constructor-context, unsupported-context, low-level-helper, and resolved-proof-family tests into submodules. `call_graph_queries.rs` and `call_graph_fixture_queries.rs` are thin module roots, resolved proof fixtures are grouped by proof family, and receiver decoding is table-driven. Remaining work is to continue splitting large fixture/common/proof files by concern and introduce shared matrices before adding more cases. |
 | CGQ-2A | P1 | Done 2026-06-25 | Proof validation allowed arbitrary ambiguous rows with local targets while fixture invariants only allow dynamic function candidates. | `validate_call_context` now rejects non-resolved local targets except the established ambiguous dynamic-candidate shape (`Dynamic` site, `DynamicFunction` relation, `Function` target). |
 | CGQ-3 | P1 | Partial 2026-06-25 | Call endpoint-family rules are duplicated across transform insertion, DB Cozo queries, Rust validation, and tests. | DB query helpers and Rust validation now share `VALID_CALL_TARGET_FAMILIES`; remaining work is transform insertion/test helper surfaces. |
 | CGQ-4 | P1 | Done 2026-06-25 | DB `CallRelationKind` mixed relation semantics with target-kind semantics, including `Struct` and `Variant`. | `CallTargetKind` now carries DB endpoint families separately from call relation kinds, while persisted relation strings remain unchanged. |
@@ -263,5 +264,22 @@ For `54d94008 test: split call graph fixture query parent`:
   - passed: `tests/mod.rs` 1 passed, 0 failed.
 - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::dynamic_context -- --nocapture`
   - passed: `tests/mod.rs` 9 passed, 0 failed.
+- `cargo test -p ploke-db --features call_graph fixture_projection -- --nocapture`
+  - passed: `tests/mod.rs` 34 passed, 0 failed.
+
+For `ad9f0c07 test: split resolved proof fixtures by family`:
+
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::resolved_proof::path_resolution -- --nocapture`
+  - passed: `tests/mod.rs` 1 passed, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::resolved_proof::associated_function -- --nocapture`
+  - passed: `tests/mod.rs` 1 passed, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::resolved_proof::local_receiver_methods -- --nocapture`
+  - passed: `tests/mod.rs` 1 passed, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::resolved_proof::trait_family_methods -- --nocapture`
+  - passed: `tests/mod.rs` 1 passed, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::resolved_proof::result_field_methods -- --nocapture`
+  - passed: `tests/mod.rs` 1 passed, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::resolved_proof::trait_dispatch -- --nocapture`
+  - passed: `tests/mod.rs` 1 passed, 0 failed.
 - `cargo test -p ploke-db --features call_graph fixture_projection -- --nocapture`
   - passed: `tests/mod.rs` 34 passed, 0 failed.
