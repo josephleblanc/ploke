@@ -5267,36 +5267,19 @@ fn fixture_projection_stores_real_target_centered_call_proof_facts() -> Result<(
     let owner = function_id_by_name(&db, "call_try_result_instance_method")?;
     let context = db.call_context_for_owner(owner)?;
     let site = row_by_path(&context, &["try_local_assoc"]).site.id;
+    let callers = db.callers_for_target(target)?;
+    assert_resolved_target_callers(&callers, target, 1, "target-centered function")?;
 
-    let count = db.project_call_proof_facts_for_target(target, "bd:fixture-call-graph")?;
-    assert_eq!(count, 3);
-
-    let edges = db.proof_checker_edges()?;
-    assert_eq!(edges.len(), 1, "target-centered proof edges: {edges:#?}");
-    assert_eq!(edges[0].call_site_id, site.to_string());
-    assert_eq!(edges[0].caller_def_id, owner.to_string());
-    assert_eq!(
-        edges[0].callee_def_id.as_deref(),
-        Some(target.to_string().as_str())
-    );
-    assert_eq!(edges[0].resolution_state, "resolved");
-    assert!(edges[0].blocker_reason.is_none());
-
-    assert!(
-        db.proof_graphrag_context("type_resolution_missing")?
-            .is_empty(),
-        "target-centered projection should not include unrelated unsupported calls from the owner"
-    );
-
-    let provenance = db
-        .proof_source_provenance(&site.to_string())?
-        .expect("projected target-centered call-site source provenance");
-    assert!(
-        provenance
-            .source_file
-            .ends_with("fixture_call_graph/src/lib.rs"),
-        "source provenance: {provenance:#?}"
-    );
+    assert_target_proof_projection(
+        &db,
+        "target-centered function",
+        "bd:fixture-call-graph",
+        target,
+        &callers,
+        &[TargetProofSite { owner, site }],
+        "fixture_call_graph/src/lib.rs",
+        "type_resolution_missing",
+    )?;
 
     Ok(())
 }
@@ -5342,45 +5325,16 @@ fn fixture_projection_stores_real_target_centered_dynamic_call_proof_facts() -> 
     );
     assert_eq!(dynamic.target.relation, CallRelationKind::DynamicFunction);
 
-    let count = db.project_call_proof_facts_for_target(target, "bd:fixture-call-graph")?;
-    assert_eq!(count, callers.len() * 3);
-
-    let edges = db.proof_checker_edges()?;
-    assert_eq!(
-        edges.len(),
-        callers.len(),
-        "target-centered dynamic proof edges: {edges:#?}"
-    );
-    assert!(
-        edges.iter().all(
-            |edge| edge.callee_def_id.as_deref() == Some(target.to_string().as_str())
-                && edge.resolution_state == "resolved"
-                && edge.blocker_reason.is_none()
-        ),
-        "target-centered dynamic proof edges should all resolve to the seed target: {edges:#?}"
-    );
-    assert!(
-        edges.iter().any(|edge| {
-            edge.call_site_id == site.to_string() && edge.caller_def_id == owner.to_string()
-        }),
-        "dynamic incoming proof edge missing: {edges:#?}"
-    );
-
-    assert!(
-        db.proof_graphrag_context("dynamic_dispatch_unbounded")?
-            .is_empty(),
-        "target-centered dynamic projection should not include unrelated unsupported calls"
-    );
-
-    let provenance = db
-        .proof_source_provenance(&site.to_string())?
-        .expect("projected target-centered dynamic call-site source provenance");
-    assert!(
-        provenance
-            .source_file
-            .ends_with("fixture_call_graph/src/lib.rs"),
-        "source provenance: {provenance:#?}"
-    );
+    assert_target_proof_projection(
+        &db,
+        "target-centered dynamic",
+        "bd:fixture-call-graph",
+        target,
+        &callers,
+        &[TargetProofSite { owner, site }],
+        "fixture_call_graph/src/lib.rs",
+        "dynamic_dispatch_unbounded",
+    )?;
 
     Ok(())
 }
@@ -5404,6 +5358,7 @@ fn fixture_projection_stores_real_target_centered_constructor_call_proof_facts()
                 site: resolved.site,
             }],
             case.source_suffix,
+            "type_resolution_missing",
         )?;
     }
 
@@ -5493,6 +5448,7 @@ fn fixture_projection_stores_real_target_centered_method_call_proof_facts() -> R
             },
         ],
         "fixture_call_graph/src/lib.rs",
+        "type_resolution_missing",
     )?;
 
     Ok(())
@@ -5553,6 +5509,7 @@ fn fixture_projection_stores_real_target_centered_associated_function_call_proof
             },
         ],
         "src/lib.rs",
+        "type_resolution_missing",
     )?;
 
     Ok(())
@@ -5629,6 +5586,7 @@ fn fixture_projection_stores_real_target_centered_imported_trait_assoc_function_
         &callers,
         &expected_sites,
         "src/lib.rs",
+        "type_resolution_missing",
     )?;
 
     Ok(())
@@ -5774,6 +5732,7 @@ fn fixture_projection_stores_real_target_centered_trait_dispatch_call_proof_fact
             },
         ],
         "fixture_call_graph/src/lib.rs",
+        "type_resolution_missing",
     )?;
 
     Ok(())
@@ -5888,6 +5847,7 @@ fn assert_target_proof_projection(
     callers: &[CallCallerRow],
     expected: &[TargetProofSite],
     source_suffix: &str,
+    blocker_reason: &str,
 ) -> Result<(), DbError> {
     let count = db.project_call_proof_facts_for_target(target, domain)?;
     assert_eq!(
@@ -5924,9 +5884,8 @@ fn assert_target_proof_projection(
     }
 
     assert!(
-        db.proof_graphrag_context("type_resolution_missing")?
-            .is_empty(),
-        "{label} projection should not include unrelated blockers"
+        db.proof_graphrag_context(blocker_reason)?.is_empty(),
+        "{label} projection should not include unrelated {blocker_reason} blockers"
     );
 
     for site in expected {
