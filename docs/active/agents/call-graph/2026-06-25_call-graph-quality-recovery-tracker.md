@@ -19,11 +19,13 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `9ba4d247 Split call proof projection module`
+  `3cce5b86 Split call graph DB module`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent coverage inventory cleanup:
   - Added `2026-06-25_call-graph-coverage-inventory.md` as the compact layer inventory.
 - Recent production pattern cleanup:
+  - `3cce5b86 Split call graph DB module`
+  - `e431a2f7 Expose proof context payload fields`
   - `9ba4d247 Split call proof projection module`
   - `30a9cb2e Expose proof context build domains`
   - `3284dd45 Add proof domain context lookup`
@@ -137,12 +139,19 @@ are not acceptable as a continuing implementation style.
   build-domain proof lookups. Real fixture proof lookup assertions are
   table-driven across those query surfaces.
 - `ProofGraphContextRow` now exposes `build_domain_id` for context consumers,
-  and low-level proof store tests cover build-domain lookup across generic
-  proof facts, linked blockers, and effect seeds.
+  along with persisted proof payload fields needed by downstream context
+  consumers: `call_edge_id`, `resolution_state`, source span bounds,
+  `effect_class`, and `status`. Low-level proof store tests cover
+  build-domain lookup across generic proof facts, linked blockers, effect
+  seeds, and source span payloads.
 - `proof_graph.rs` now keeps public/store/query orchestration in the root while
   call-proof projection generation, call-context validation, proof fact JSON
   construction, and owner source-file lookup live in
   `proof_graph/call_projection.rs`.
+- `call_graph.rs` now keeps only the public DB call-graph surface while
+  concern modules own row DTOs, call-site/target/status kind decoding,
+  receiver decoding, target-family rules, row validation, and query methods:
+  `call_graph/{rows,kinds,receiver,families,decode,queries}.rs`.
 
 ## Resumption rules
 
@@ -205,6 +214,27 @@ next likely slices are:
    that batch before adding cases.
 
 ## Latest verification
+
+For `3cce5b86 Split call graph DB module` and `e431a2f7 Expose proof context payload fields`:
+
+- Red check before exposing proof context payload fields:
+  `cargo test -p ploke-db --test proof_graph_store -- --nocapture`
+  failed because `ProofGraphContextRow` did not yet expose `start_byte`,
+  `end_byte`, `line_end`, `call_edge_id`, `resolution_state`,
+  `effect_class`, or `status`.
+- `cargo test -p ploke-db --test proof_graph_store -- --nocapture`
+  - passed: proof graph store test binary ran 11 tests, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection -- --nocapture`
+  - passed: proof projection filter ran 14 tests, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries -- --nocapture`
+  - passed after the DB module split: synthetic call-graph query filter ran
+    33 tests, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+  - passed after the DB module split: fixture-backed call-graph query filter
+    ran 93 tests, 0 failed.
+- `cargo test -p ploke-rag --features call_graph call_context -- --nocapture`
+  - passed after the DB module split: RAG call-context filter ran 25 tests,
+    0 failed.
 
 For `9ba4d247 Split call proof projection module`, `30a9cb2e Expose proof context build domains`, and `97e64623 test: cover proof domain store lookups`:
 
