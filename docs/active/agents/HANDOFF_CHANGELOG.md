@@ -1028,3 +1028,11 @@ Previous archives:
 - Invariant: owner-scoped proof projection must continue proving exact call-site provenance and resolved callee identity for every expected edge; helper reuse must not weaken per-row `CallRelationKind` / `CallSiteKind` checks.
 - Verified: exact DB batch passed one test at a time: `fixture_projection_stores_real_associated_function_call_proof_facts`, `fixture_projection_stores_real_local_receiver_method_call_proof_facts`, `fixture_projection_stores_real_trait_family_method_call_proof_facts`, and `fixture_projection_stores_real_result_and_field_receiver_method_call_proof_facts`.
 - Next implementation: continue DB/proof helper consolidation where duplication is mechanical, or move to the next downstream public RAG/TUI gap backed by these DB contracts. Backup fixture regeneration remains approval-gated.
+
+## 2026-06-25 10:02 UTC - Extended owner proof helper to dynamic cases
+
+- Branch/HEAD: `f4f02ca2 Refactor owner scoped call proof tests`; active autonomous call-graph goal remains open.
+- Changed: generalized the owner-scoped proof helper to accept the expected blocker family and an explicit proof-edge count mode. Callable dynamic and field dynamic proof tests now reuse the helper for resolved edge identity, source provenance, and absence of `dynamic_dispatch_unbounded` blockers.
+- Invariant: callable dynamic owners still require exact checker-edge count, while field dynamic owners intentionally use at-least count because those owners can project additional setup/constructor edges; the asserted resolved `DynamicFunction` edges must still be present with exact provenance.
+- Verified: exact DB batch passed one test at a time: the four owner-scoped method-family proof tests plus `fixture_projection_stores_real_callable_expression_dynamic_call_proof_facts` and `fixture_projection_stores_real_field_dynamic_call_proof_facts`.
+- Next implementation: continue mechanical DB/proof helper cleanup only where it preserves exact prior invariants; otherwise move back to downstream RAG/TUI contracts or fixture-regeneration planning when approved.

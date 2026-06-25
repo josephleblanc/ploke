@@ -3430,6 +3430,8 @@ fn fixture_projection_stores_real_associated_function_call_proof_facts() -> Resu
         "associated-function",
         &expected_edges,
         "fixture_call_graph/src/lib.rs",
+        "type_resolution_missing",
+        ProofEdgeCount::Exact,
     )?;
 
     Ok(())
@@ -3547,6 +3549,8 @@ fn fixture_projection_stores_real_local_receiver_method_call_proof_facts() -> Re
         "local receiver method",
         &expected_edges,
         "fixture_call_graph/src/lib.rs",
+        "type_resolution_missing",
+        ProofEdgeCount::Exact,
     )?;
 
     Ok(())
@@ -3705,6 +3709,8 @@ fn fixture_projection_stores_real_trait_family_method_call_proof_facts() -> Resu
         "trait family method",
         &expected_edges,
         "fixture_call_graph/src/lib.rs",
+        "type_resolution_missing",
+        ProofEdgeCount::Exact,
     )?;
 
     Ok(())
@@ -3892,6 +3898,8 @@ fn fixture_projection_stores_real_result_and_field_receiver_method_call_proof_fa
         "result/field receiver method",
         &expected_edges,
         "fixture_call_graph/src/lib.rs",
+        "type_resolution_missing",
+        ProofEdgeCount::Exact,
     )?;
 
     Ok(())
@@ -4415,46 +4423,22 @@ fn fixture_projection_stores_real_callable_expression_dynamic_call_proof_facts()
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
         assert_eq!(count, 3);
-        expected_edges.push((owner, site, span));
+        expected_edges.push(OwnerProofEdge {
+            owner,
+            site,
+            span,
+            target,
+        });
     }
 
-    let edges = db.proof_checker_edges()?;
-    assert_eq!(
-        edges.len(),
-        expected_edges.len(),
-        "callable dynamic proof checker edges: {edges:#?}"
-    );
-
-    for (owner, site, span) in expected_edges {
-        assert!(
-            edges.iter().any(|edge| {
-                edge.call_site_id == site.to_string()
-                    && edge.caller_def_id == owner.to_string()
-                    && edge.callee_def_id.as_deref() == Some(target.to_string().as_str())
-                    && edge.resolution_state == "resolved"
-                    && edge.blocker_reason.is_none()
-            }),
-            "callable dynamic proof edge missing for {site}: {edges:#?}"
-        );
-
-        let provenance = db
-            .proof_source_provenance(&site.to_string())?
-            .expect("projected fixture callable dynamic call-site source provenance");
-        assert!(
-            provenance
-                .source_file
-                .ends_with("fixture_call_graph/src/lib.rs"),
-            "source provenance for {site}: {provenance:#?}"
-        );
-        assert_eq!(provenance.start_byte, span.0);
-        assert_eq!(provenance.end_byte, span.1);
-    }
-
-    assert!(
-        db.proof_graphrag_context("dynamic_dispatch_unbounded")?
-            .is_empty(),
-        "resolved callable dynamic proofs should not produce dynamic-dispatch blockers"
-    );
+    assert_owner_proof_edges(
+        &db,
+        "callable dynamic",
+        &expected_edges,
+        "fixture_call_graph/src/lib.rs",
+        "dynamic_dispatch_unbounded",
+        ProofEdgeCount::Exact,
+    )?;
 
     Ok(())
 }
@@ -4516,40 +4500,22 @@ fn fixture_projection_stores_real_field_dynamic_call_proof_facts() -> Result<(),
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
         assert_eq!(count, expected_count, "{owner_name} proof fact count");
-        expected_edges.push((owner, site, span));
+        expected_edges.push(OwnerProofEdge {
+            owner,
+            site,
+            span,
+            target,
+        });
     }
 
-    let edges = db.proof_checker_edges()?;
-    for (owner, site, span) in expected_edges {
-        assert!(
-            edges.iter().any(|edge| {
-                edge.call_site_id == site.to_string()
-                    && edge.caller_def_id == owner.to_string()
-                    && edge.callee_def_id.as_deref() == Some(target.to_string().as_str())
-                    && edge.resolution_state == "resolved"
-                    && edge.blocker_reason.is_none()
-            }),
-            "field dynamic proof edge missing for {site}: {edges:#?}"
-        );
-
-        let provenance = db
-            .proof_source_provenance(&site.to_string())?
-            .expect("projected fixture field dynamic call-site source provenance");
-        assert!(
-            provenance
-                .source_file
-                .ends_with("fixture_call_graph/src/lib.rs"),
-            "source provenance for {site}: {provenance:#?}"
-        );
-        assert_eq!(provenance.start_byte, span.0);
-        assert_eq!(provenance.end_byte, span.1);
-    }
-
-    assert!(
-        db.proof_graphrag_context("dynamic_dispatch_unbounded")?
-            .is_empty(),
-        "resolved field dynamic proofs should not produce dynamic-dispatch blockers"
-    );
+    assert_owner_proof_edges(
+        &db,
+        "field dynamic",
+        &expected_edges,
+        "fixture_call_graph/src/lib.rs",
+        "dynamic_dispatch_unbounded",
+        ProofEdgeCount::AtLeast,
+    )?;
 
     Ok(())
 }
@@ -5944,6 +5910,12 @@ struct OwnerProofEdge {
 }
 
 #[derive(Clone, Copy)]
+enum ProofEdgeCount {
+    Exact,
+    AtLeast,
+}
+
+#[derive(Clone, Copy)]
 struct TargetProofSite {
     owner: Uuid,
     site: Uuid,
@@ -5954,13 +5926,21 @@ fn assert_owner_proof_edges(
     label: &str,
     expected: &[OwnerProofEdge],
     source_suffix: &str,
+    blocker_reason: &str,
+    count: ProofEdgeCount,
 ) -> Result<(), DbError> {
     let edges = db.proof_checker_edges()?;
-    assert_eq!(
-        edges.len(),
-        expected.len(),
-        "{label} proof checker edges: {edges:#?}"
-    );
+    match count {
+        ProofEdgeCount::Exact => assert_eq!(
+            edges.len(),
+            expected.len(),
+            "{label} proof checker edges: {edges:#?}"
+        ),
+        ProofEdgeCount::AtLeast => assert!(
+            edges.len() >= expected.len(),
+            "{label} proof checker edges should include at least the expected edges: {edges:#?}"
+        ),
+    }
 
     for expected in expected {
         let owner = expected.owner.to_string();
@@ -5989,9 +5969,8 @@ fn assert_owner_proof_edges(
     }
 
     assert!(
-        db.proof_graphrag_context("type_resolution_missing")?
-            .is_empty(),
-        "resolved {label} proofs should not produce type-resolution blockers"
+        db.proof_graphrag_context(blocker_reason)?.is_empty(),
+        "resolved {label} proofs should not produce {blocker_reason} blockers"
     );
 
     Ok(())

@@ -760,7 +760,9 @@ Post-gate evidence, 2026-06-23:
   real `ImportedAssocFunctionTrait::imported_trait_make` target and verifies
   direct, alias, glob, re-export, and grouped-import callers. Owner-scoped
   method-family proof tests now share checker-edge, provenance, and blocker
-  assertions while retaining per-family call-context target checks. Dynamic
+  assertions while retaining per-family call-context target checks; the same
+  helper also covers resolved callable and field dynamic proof rows with an
+  explicit edge-count mode for field owners that project additional setup edges. Dynamic
   proof coverage now projects real resolved `DynamicFunction` calls including
   parenthesized path/binding callees, function-pointer cast/deref callees,
   block callees, indexed array callees, named-field/tuple-field callees, and
