@@ -19,7 +19,7 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `9dbb7fbd test: reuse resolved seed in context queries`
+  `c26aeedd test: share dynamic transform lookup helpers`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent TUI/model-visible cleanup:
   - `cc808347 test: cover variant constructor tool context`
@@ -40,6 +40,7 @@ are not acceptable as a continuing implementation style.
 - Recent transform test cleanup:
   - `b25fa650 test: table drive dynamic transform projection`
   - `8d3dc030 test: split transform call graph projection tests`
+  - `c26aeedd test: share dynamic transform lookup helpers`
 - Recent availability cleanup:
   - `2d6320d1 Require populated call graph availability`
 - Recent endpoint-family cleanup:
@@ -186,6 +187,9 @@ are not acceptable as a continuing implementation style.
   concern modules own row DTOs, call-site/target/status kind decoding,
   receiver decoding, target-family rules, row validation, and query methods:
   `call_graph/{rows,kinds,receiver,families,decode,queries}.rs`.
+- `call_graph_tests/dynamic.rs` in `ploke-transform` now shares local
+  `DynamicFunction` lookup helpers instead of repeating the full
+  `CallRelation::DynamicFunction` scan for every dynamic projection case.
 
 ## Resumption rules
 
@@ -251,6 +255,15 @@ next likely slices are:
    that batch before adding cases.
 
 ## Latest verification
+
+For `c26aeedd test: share dynamic transform lookup helpers`:
+
+- `cargo test -p ploke-transform --features call_graph transform::call_graph_tests::dynamic -- --nocapture`
+  - passed: dynamic transform call-graph filter ran 1 test, 0 failed.
+- `cargo test -p ploke-transform --features call_graph transform::call_graph_tests -- --nocapture`
+  - passed: transform call-graph filter ran 4 tests, 0 failed.
+- `cargo test -p ploke-transform --features call_graph transform::tests -- --nocapture`
+  - passed: remaining transform test filter ran 1 test, 0 failed.
 
 For `9dbb7fbd test: reuse resolved seed in context queries`:
 
