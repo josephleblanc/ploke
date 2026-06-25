@@ -19,11 +19,12 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `5fad4c98 Remove dormant call graph semantic storage`
+  `38640a2c Centralize call relation endpoint kinds`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent production pattern cleanup:
   - `5fad4c98 Remove dormant call graph semantic storage`
 - Recent endpoint-family cleanup:
+  - `38640a2c Centralize call relation endpoint kinds`
   - `e53a2301 Split call target endpoint kind`
   - `29eb4f8a Centralize call endpoint families`
 - Recent invariant cleanup:
@@ -145,7 +146,7 @@ are not acceptable as a continuing implementation style.
 | CGQ-1 | P1 | Open | Implementation focus drifted toward parser breadth while DB/proof quality lagged. | Shift next resumed work to DB/proof/query hardening and shared test structure. |
 | CGQ-2 | P1 | Partial 2026-06-25 | Call-graph DB query tests and helpers were far larger and less modular than the type-graph precedent. | First cleanup extracted repeated ambiguous dynamic candidate context/proof assertions into shared helpers, moved them to `call_graph_fixture_common.rs`, moved shared proof and constructor fixture helpers to common, split the constructor helper case matrix into `call_graph_fixture_common/constructor.rs`, split ambiguous dynamic helper assertions into `call_graph_fixture_common/dynamic.rs`, table-drove resolved/targetless dynamic context assertions and resolved dynamic proof-edge assertions with shared dynamic helpers, split proof fixture assertions into `call_graph_fixture_common/proof.rs`, split row/candidate selectors into `call_graph_fixture_common/selectors.rs`, split lookup helpers into `call_graph_fixture_common/lookup.rs`, split row/shape helpers into `call_graph_fixture_common/rows.rs`, split synthetic call-site/proof-fact/value helpers into `call_graph_common/{site,facts,values}.rs`, split proof owner-source setup into `call_graph_common/source.rs`, split synthetic endpoint setup into `call_graph_common/targets.rs`, split unsupported/external targetless row assertions into `call_graph_fixture_common/targetless.rs`, reused those helpers across matching dynamic context/proof/method-context cases including dynamic proof, macro targetless rows, unsupported-context rows, and path-context targetless rows, and split invariant, dynamic, target-centered, blocker, proof-lookup, constructor proof, call-context, mixed proof, resolved proof, dynamic context, method context, associated context, trait-method context, owner-context, proof-projection, query-invariant, schema, context-expansion, receiver-decode, relation-decode, path-context, constructor-context, unsupported-context, low-level-helper, resolved-proof-family, target-proof, proof-projection query, invariant query, dynamic-context tests, context-expansion query tests, fixture context-expansion tests, proof-prevalidation query tests, trait-method context fixtures, mixed-proof fixtures, path-context fixtures, dynamic-proof fixtures, fixture invariant tests, blocker-proof fixtures, and proof-blocker query tests into submodules. `call_graph_queries.rs`, `call_graph_queries/context_expansion.rs`, `call_graph_queries/proof_projection.rs`, `call_graph_queries/proof_projection/prevalidation.rs`, `call_graph_queries/proof_projection/blockers.rs`, `call_graph_queries/invariants.rs`, `call_graph_fixture_queries/dynamic_context.rs`, `call_graph_fixture_queries/method_context.rs`, `call_graph_fixture_queries/target_proof.rs`, `call_graph_fixture_queries/context_expansion.rs`, `call_graph_fixture_queries/trait_method_context.rs`, `call_graph_fixture_queries/mixed_proof.rs`, `call_graph_fixture_queries/path_context.rs`, `call_graph_fixture_queries/dynamic_proof.rs`, `call_graph_fixture_queries/blocker_proof.rs`, `call_graph_fixture_queries/invariants.rs`, and `call_graph_fixture_queries.rs` are thin module roots, context-expansion query tests are grouped by owner/callers/expand surfaces, fixture context-expansion tests are grouped by callers/constructors/expand surfaces, proof prevalidation tests are grouped by domain/source/local-target concerns, proof blocker queries are grouped by graph-context/unresolved/mixed-shape/invariant concerns, trait-method fixtures are grouped by dispatch/generics/imports/blanket/receiver concerns, mixed proof fixtures are grouped by returned-function/initializer/multi-row concerns, path context fixtures are grouped by basic/resolution/special-form/raw-identifier/prelude concerns, dynamic proof fixtures are grouped by resolved/candidate/blocker concerns, blocker proof fixtures are grouped by external/macro/ambiguous/callable concerns, fixture invariant tests are grouped by body-edge/anchor/cardinality/id-universe concerns, dynamic context fixtures are grouped by bindings/resolved/targetless/ownership/candidates concerns, method context fixtures are grouped by local/external/precedence/result-receiver/field-receiver concerns, resolved proof fixtures are grouped by proof family, target proof fixtures are grouped by linkage/basic/method concerns, proof projection tests are grouped by resolved/prevalidation/blocker concerns, invariant tests are grouped by endpoint/status/cardinality/body-edge/site-shape concerns, and receiver decoding is table-driven. Remaining work is to continue splitting large fixture/common/proof files by concern and introduce shared matrices before adding more cases. |
 | CGQ-2A | P1 | Done 2026-06-25 | Proof validation allowed arbitrary ambiguous rows with local targets while fixture invariants only allow dynamic function candidates. | `validate_call_context` now rejects non-resolved local targets except the established ambiguous dynamic-candidate shape (`Dynamic` site, `DynamicFunction` relation, `Function` target). |
-| CGQ-3 | P1 | Partial 2026-06-25 | Call endpoint-family rules are duplicated across transform insertion, DB Cozo queries, Rust validation, and tests. | DB query helpers and Rust validation now share `VALID_CALL_TARGET_FAMILIES`; remaining work is transform insertion/test helper surfaces. |
+| CGQ-3 | P1 | Partial 2026-06-25 | Call endpoint-family rules are duplicated across transform insertion, DB Cozo queries, Rust validation, and tests. | DB query helpers and Rust validation now share `VALID_CALL_TARGET_FAMILIES`; transform insertion now uses typed `CallRelation` endpoint-kind helpers; remaining work is test helper surfaces and any DB/test boundary duplication found by inventory. |
 | CGQ-4 | P1 | Done 2026-06-25 | DB `CallRelationKind` mixed relation semantics with target-kind semantics, including `Struct` and `Variant`. | `CallTargetKind` now carries DB endpoint families separately from call relation kinds, while persisted relation strings remain unchanged. |
 | CGQ-5 | P1 | Done 2026-06-25 | External proof projection reported `externally_summarized` while also using blocker reason `external_dependency_summary_missing`. | Current parser-projected external rows now emit blocked/missing-summary proof state until a real external summary fact exists. |
 | CGQ-6 | P2 | Done 2026-06-25 | Dynamic branch/match candidate provenance can collapse to `Null` in persisted `call_site` rows. | Ambiguous branch/match dynamic calls now keep proven local function candidates as `DynamicFunction` relations while preserving `Ambiguous` status; proof projection exposes them as `candidate_def_ids` without promoting them to resolved call edges. |
@@ -173,13 +174,20 @@ are not acceptable as a continuing implementation style.
 Continue production-side pattern cleanup before parser/resolver breadth. The
 next likely slices are:
 
-1. Finish CGQ-3 by reducing transform/test-helper endpoint-family duplication.
+1. Finish CGQ-3 by reducing remaining test-helper endpoint-family duplication.
 2. Tighten call-graph availability semantics to distinguish schema presence
    from populated projection data.
 3. Move/table-drive transform call-graph projection tests out of the broad
    transform module.
 
 ## Latest verification
+
+For `38640a2c Centralize call relation endpoint kinds`:
+
+- `cargo test -p syn_parser --features call_graph call_sites`
+  - passed: `syn_parser` unit tests 206 passed; `tests/mod.rs` 206 passed, 0 failed.
+- `cargo test -p ploke-transform --features call_graph transform::tests`
+  - passed: transform-focused filter ran 5 tests, 0 failed.
 
 For `382d83c7 test: split constructor fixture helpers`:
 
