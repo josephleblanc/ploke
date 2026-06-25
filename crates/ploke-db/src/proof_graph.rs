@@ -8,7 +8,10 @@ use uuid::Uuid;
 use crate::{Database, DbError};
 #[cfg(feature = "call_graph")]
 use crate::{
-    call_graph::{CallCallerRow, CallContextRow, CallSiteKind, CallStatusKind, CallTargetRow},
+    call_graph::{
+        CallCallerRow, CallContextRow, CallRelationKind, CallSiteKind, CallStatusKind,
+        CallTargetKind, CallTargetRow,
+    },
     multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE},
 };
 
@@ -516,8 +519,26 @@ fn validate_call_context(row: &CallContextRow) -> Result<(), DbError> {
                 row.site.id, row.targets
             )))
         }
+        CallStatusKind::Ambiguous
+            if !row.targets.is_empty() && !is_ambiguous_dynamic_candidate_row(row) =>
+        {
+            Err(DbError::Cozo(format!(
+                "non-resolved call site {} has local call_relation targets: {:?}",
+                row.site.id, row.targets
+            )))
+        }
         _ => Ok(()),
     }
+}
+
+#[cfg(feature = "call_graph")]
+fn is_ambiguous_dynamic_candidate_row(row: &CallContextRow) -> bool {
+    row.site.kind == CallSiteKind::Dynamic
+        && row.targets.iter().all(|target| {
+            target.relation == CallRelationKind::DynamicFunction
+                && target.source_kind == CallSiteKind::Dynamic
+                && target.target_kind == CallTargetKind::Function
+        })
 }
 
 #[cfg(feature = "call_graph")]
