@@ -4611,27 +4611,16 @@ fn fixture_projection_stores_real_returned_function_call_proof_facts() -> Result
         ProofEdgeCount::Exact,
     )?;
 
-    let blocked = db.proof_graphrag_context("dynamic_dispatch_unbounded")?;
-    assert!(
-        blocked.iter().any(|row| {
-            row.kind == "call_resolution"
-                && row.call_site_id.as_deref() == Some(dynamic_site.to_string().as_str())
-                && row.blocker_reason.as_deref() == Some("dynamic_dispatch_unbounded")
-        }),
-        "returned-function dynamic blocker rows: {blocked:#?}"
-    );
-
-    let provenance = db
-        .proof_source_provenance(&dynamic_site.to_string())?
-        .expect("projected returned-function dynamic call-site source provenance");
-    assert!(
-        provenance
-            .source_file
-            .ends_with("fixture_call_graph/src/lib.rs"),
-        "source provenance: {provenance:#?}"
-    );
-    assert_eq!(provenance.start_byte, dynamic_span.0);
-    assert_eq!(provenance.end_byte, dynamic_span.1);
+    assert_blocker_proofs(
+        &db,
+        "returned-function dynamic blocker",
+        &[BlockerProofSite {
+            site: dynamic_site,
+            span: dynamic_span,
+            blocker_reason: "dynamic_dispatch_unbounded",
+        }],
+        "fixture_call_graph/src/lib.rs",
+    )?;
 
     Ok(())
 }
@@ -4640,8 +4629,7 @@ fn fixture_projection_stores_real_returned_function_call_proof_facts() -> Result
 fn fixture_projection_marks_real_callable_path_and_vec_external_rows_without_edges()
 -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let mut type_missing = Vec::new();
-    let mut external_missing = Vec::new();
+    let mut expected = Vec::new();
 
     for (owner_name, expected_path) in [
         ("call_function_pointer_param", &["f"][..]),
@@ -4665,7 +4653,11 @@ fn fixture_projection_marks_real_callable_path_and_vec_external_rows_without_edg
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
         assert_eq!(count, 2);
-        type_missing.push((row.site.id, row.site.span));
+        expected.push(BlockerProofSite {
+            site: row.site.id,
+            span: row.site.span,
+            blocker_reason: "type_resolution_missing",
+        });
     }
 
     let owner = function_id_by_name(&db, "call_boxed_dyn_fn_value_binding")?;
@@ -4690,8 +4682,16 @@ fn fixture_projection_marks_real_callable_path_and_vec_external_rows_without_edg
 
     let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
     assert_eq!(count, 4);
-    external_missing.push((box_new.site.id, box_new.site.span));
-    type_missing.push((boxed_fn.site.id, boxed_fn.site.span));
+    expected.push(BlockerProofSite {
+        site: box_new.site.id,
+        span: box_new.site.span,
+        blocker_reason: "external_dependency_summary_missing",
+    });
+    expected.push(BlockerProofSite {
+        site: boxed_fn.site.id,
+        span: boxed_fn.site.span,
+        blocker_reason: "type_resolution_missing",
+    });
 
     let owner = function_id_by_name(&db, "call_prelude_vec_new")?;
     let context = db.call_context_for_owner(owner)?;
@@ -4709,47 +4709,18 @@ fn fixture_projection_marks_real_callable_path_and_vec_external_rows_without_edg
 
     let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
     assert_eq!(count, 2);
-    external_missing.push((vec_new.site.id, vec_new.site.span));
+    expected.push(BlockerProofSite {
+        site: vec_new.site.id,
+        span: vec_new.site.span,
+        blocker_reason: "external_dependency_summary_missing",
+    });
 
-    assert!(db.proof_checker_edges()?.is_empty());
-
-    let rows = db.proof_graphrag_context("type_resolution_missing")?;
-    for (site, _) in &type_missing {
-        assert!(
-            rows.iter().any(|row| {
-                row.kind == "call_resolution"
-                    && row.call_site_id.as_deref() == Some(site.to_string().as_str())
-                    && row.blocker_reason.as_deref() == Some("type_resolution_missing")
-            }),
-            "callable path proof rows missing {site}: {rows:#?}"
-        );
-    }
-
-    let rows = db.proof_graphrag_context("external_dependency_summary_missing")?;
-    for (site, _) in &external_missing {
-        assert!(
-            rows.iter().any(|row| {
-                row.kind == "call_resolution"
-                    && row.call_site_id.as_deref() == Some(site.to_string().as_str())
-                    && row.blocker_reason.as_deref() == Some("external_dependency_summary_missing")
-            }),
-            "external callable proof rows missing {site}: {rows:#?}"
-        );
-    }
-
-    for (site, span) in type_missing.into_iter().chain(external_missing) {
-        let provenance = db
-            .proof_source_provenance(&site.to_string())?
-            .expect("projected callable path source provenance");
-        assert!(
-            provenance
-                .source_file
-                .ends_with("fixture_call_graph/src/lib.rs"),
-            "source provenance: {provenance:#?}"
-        );
-        assert_eq!(provenance.start_byte, span.0);
-        assert_eq!(provenance.end_byte, span.1);
-    }
+    assert_targetless_blocker_proofs(
+        &db,
+        "callable path and external rows",
+        &expected,
+        "fixture_call_graph/src/lib.rs",
+    )?;
 
     Ok(())
 }
@@ -4758,8 +4729,7 @@ fn fixture_projection_marks_real_callable_path_and_vec_external_rows_without_edg
 fn fixture_projection_marks_real_parenthesized_callable_dynamic_rows_without_edges()
 -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let mut dynamic_missing = Vec::new();
-    let mut external_missing = Vec::new();
+    let mut expected = Vec::new();
 
     let owner = function_id_by_name(&db, "call_parenthesized_generic_fn_once_value_binding")?;
     let context = db.call_context_for_owner(owner)?;
@@ -4778,7 +4748,11 @@ fn fixture_projection_marks_real_parenthesized_callable_dynamic_rows_without_edg
 
     let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
     assert_eq!(count, 2);
-    dynamic_missing.push((generic_f.site.id, generic_f.site.span));
+    expected.push(BlockerProofSite {
+        site: generic_f.site.id,
+        span: generic_f.site.span,
+        blocker_reason: "dynamic_dispatch_unbounded",
+    });
 
     let owner = function_id_by_name(&db, "call_parenthesized_boxed_dyn_fn_value_binding")?;
     let context = db.call_context_for_owner(owner)?;
@@ -4804,48 +4778,23 @@ fn fixture_projection_marks_real_parenthesized_callable_dynamic_rows_without_edg
 
     let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
     assert_eq!(count, 4);
-    external_missing.push((box_new.site.id, box_new.site.span));
-    dynamic_missing.push((boxed_fn.site.id, boxed_fn.site.span));
+    expected.push(BlockerProofSite {
+        site: box_new.site.id,
+        span: box_new.site.span,
+        blocker_reason: "external_dependency_summary_missing",
+    });
+    expected.push(BlockerProofSite {
+        site: boxed_fn.site.id,
+        span: boxed_fn.site.span,
+        blocker_reason: "dynamic_dispatch_unbounded",
+    });
 
-    assert!(db.proof_checker_edges()?.is_empty());
-
-    let rows = db.proof_graphrag_context("dynamic_dispatch_unbounded")?;
-    for (site, _) in &dynamic_missing {
-        assert!(
-            rows.iter().any(|row| {
-                row.kind == "call_resolution"
-                    && row.call_site_id.as_deref() == Some(site.to_string().as_str())
-                    && row.blocker_reason.as_deref() == Some("dynamic_dispatch_unbounded")
-            }),
-            "parenthesized callable dynamic proof rows missing {site}: {rows:#?}"
-        );
-    }
-
-    let rows = db.proof_graphrag_context("external_dependency_summary_missing")?;
-    for (site, _) in &external_missing {
-        assert!(
-            rows.iter().any(|row| {
-                row.kind == "call_resolution"
-                    && row.call_site_id.as_deref() == Some(site.to_string().as_str())
-                    && row.blocker_reason.as_deref() == Some("external_dependency_summary_missing")
-            }),
-            "parenthesized callable external proof rows missing {site}: {rows:#?}"
-        );
-    }
-
-    for (site, span) in dynamic_missing.into_iter().chain(external_missing) {
-        let provenance = db
-            .proof_source_provenance(&site.to_string())?
-            .expect("projected parenthesized callable source provenance");
-        assert!(
-            provenance
-                .source_file
-                .ends_with("fixture_call_graph/src/lib.rs"),
-            "source provenance: {provenance:#?}"
-        );
-        assert_eq!(provenance.start_byte, span.0);
-        assert_eq!(provenance.end_byte, span.1);
-    }
+    assert_targetless_blocker_proofs(
+        &db,
+        "parenthesized callable dynamic rows",
+        &expected,
+        "fixture_call_graph/src/lib.rs",
+    )?;
 
     Ok(())
 }
@@ -5746,6 +5695,15 @@ fn assert_targetless_blocker_proofs(
         "{label} targetless blockers must not fabricate proof edges"
     );
 
+    assert_blocker_proofs(db, label, expected, source_suffix)
+}
+
+fn assert_blocker_proofs(
+    db: &Database,
+    label: &str,
+    expected: &[BlockerProofSite],
+    source_suffix: &str,
+) -> Result<(), DbError> {
     for expected in expected {
         let site = expected.site.to_string();
         let rows = db.proof_graphrag_context(expected.blocker_reason)?;
