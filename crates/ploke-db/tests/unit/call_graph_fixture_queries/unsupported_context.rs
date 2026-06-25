@@ -8,12 +8,16 @@ fn fixture_context_reads_projected_external_path_status_without_targets() -> Res
     let context = db.call_context_for_owner(owner)?;
     assert_eq!(context.len(), 1, "context rows: {context:#?}");
 
-    let row = &context[0];
-    assert_eq!(row.site.kind, CallSiteKind::Path);
-    assert_eq!(row.site.path.as_ref(), Some(&path(&["String", "new"])));
-    assert_eq!(row.status.status, CallStatusKind::External);
-    assert_eq!(row.status.resolution, None);
-    assert!(row.targets.is_empty(), "external row targets: {row:#?}");
+    assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::path(
+            &["String", "new"],
+            0,
+            CallStatusKind::External,
+            "String::new external",
+        ),
+    );
 
     Ok(())
 }
@@ -27,18 +31,19 @@ fn fixture_context_reads_projected_ambiguous_method_status_without_targets() -> 
     let context = db.call_context_for_owner(owner)?;
     assert_eq!(context.len(), 1, "context rows: {context:#?}");
 
-    let row = &context[0];
-    assert_eq!(row.site.kind, CallSiteKind::Method);
-    assert_eq!(row.site.method.as_deref(), Some("overlap"));
-    assert_eq!(
-        row.site.receiver,
-        Some(CallReceiver::LocalBinding {
-            name: "value".to_string(),
-        })
+    let receiver = CallReceiver::LocalBinding {
+        name: "value".to_string(),
+    };
+    assert_targetless_method_row(
+        &context,
+        owner,
+        TargetlessMethodCase::method(
+            "overlap",
+            &receiver,
+            CallStatusKind::Ambiguous,
+            "ambiguous overlap",
+        ),
     );
-    assert_eq!(row.status.status, CallStatusKind::Ambiguous);
-    assert_eq!(row.status.resolution, None);
-    assert!(row.targets.is_empty(), "ambiguous row targets: {row:#?}");
 
     Ok(())
 }
@@ -52,18 +57,19 @@ fn fixture_context_reads_projected_unsupported_method_status_without_targets() -
     let context = db.call_context_for_owner(owner)?;
     assert_eq!(context.len(), 1, "context rows: {context:#?}");
 
-    let row = &context[0];
-    assert_eq!(row.site.kind, CallSiteKind::Method);
-    assert_eq!(row.site.method.as_deref(), Some("scoped_value"));
-    assert_eq!(
-        row.site.receiver,
-        Some(CallReceiver::LocalBinding {
-            name: "value".to_string(),
-        })
+    let receiver = CallReceiver::LocalBinding {
+        name: "value".to_string(),
+    };
+    assert_targetless_method_row(
+        &context,
+        owner,
+        TargetlessMethodCase::method(
+            "scoped_value",
+            &receiver,
+            CallStatusKind::Unsupported,
+            "unimported scoped_value",
+        ),
     );
-    assert_eq!(row.status.status, CallStatusKind::Unsupported);
-    assert_eq!(row.status.resolution, None);
-    assert!(row.targets.is_empty(), "unsupported row targets: {row:#?}");
 
     Ok(())
 }
@@ -79,14 +85,14 @@ fn fixture_context_reads_function_pointer_param_cast_path_without_target() -> Re
         "function-pointer param cast context rows: {context:#?}"
     );
 
-    let row = row_by_kind_path(&context, CallSiteKind::Dynamic, &["f"]);
-    assert_eq!(row.site.owner_id, owner);
-    assert_eq!(row.site.receiver, None);
-    assert_eq!(row.status.status, CallStatusKind::Unsupported);
-    assert_eq!(row.status.resolution, None);
-    assert!(
-        row.targets.is_empty(),
-        "opaque function-pointer param cast must not fabricate targets: {row:#?}"
+    assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::dynamic(
+            Some(&["f"]),
+            CallStatusKind::Unsupported,
+            "opaque function-pointer param cast",
+        ),
     );
 
     Ok(())
