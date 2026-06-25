@@ -130,16 +130,7 @@ fn fixture_projection_stores_real_associated_function_call_proof_facts() -> Resu
         ));
     }
 
-    let expected_edges = resolved_proof_edges(&db, "bd:fixture-call-graph", &cases)?;
-
-    assert_owner_proof_edges(
-        &db,
-        "associated-function",
-        &expected_edges,
-        "fixture_call_graph/src/lib.rs",
-        "type_resolution_missing",
-        ProofEdgeCount::Exact,
-    )?;
+    assert_fixture_resolved_proofs(&db, "associated-function", &cases)?;
 
     Ok(())
 }

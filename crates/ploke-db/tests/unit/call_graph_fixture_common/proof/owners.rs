@@ -122,6 +122,22 @@ pub(in crate::unit) fn resolved_proof_edges(
     Ok(edges)
 }
 
+pub(in crate::unit) fn assert_fixture_resolved_proofs(
+    db: &Database,
+    label: &str,
+    cases: &[ResolvedProofCase<'_>],
+) -> Result<(), DbError> {
+    let expected = resolved_proof_edges(db, "bd:fixture-call-graph", cases)?;
+    assert_owner_proof_edges(
+        db,
+        label,
+        &expected,
+        "fixture_call_graph/src/lib.rs",
+        "type_resolution_missing",
+        ProofEdgeCount::Exact,
+    )
+}
+
 pub(in crate::unit) fn assert_owner_proof_edges(
     db: &Database,
     label: &str,
