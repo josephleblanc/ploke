@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::{ProofFactRow, ProofInvariantFinding, ProofInvariantStatus};
+use super::{ProofInvariantFinding, ProofInvariantStatus, rows::ProofFactRow};
 
 pub(super) fn evaluate_proof_invariants(rows: &[ProofFactRow]) -> Vec<ProofInvariantFinding> {
     let mut findings = evaluate_detached_process_invariants(rows);
