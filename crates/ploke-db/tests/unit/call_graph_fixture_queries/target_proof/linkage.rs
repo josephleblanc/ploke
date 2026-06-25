@@ -25,16 +25,7 @@ fn fixture_projection_links_target_centered_proof_rows_to_callers() -> Result<()
     );
 
     let count = db.project_call_proof_facts_for_target(target, "bd:fixture-call-graph")?;
-    let expected_count = callers
-        .iter()
-        .map(|caller| {
-            if caller.status.status == CallStatusKind::Resolved {
-                3
-            } else {
-                2
-            }
-        })
-        .sum::<usize>();
+    let expected_count = expected_target_proof_count(&callers);
     assert_eq!(
         count, expected_count,
         "target-centered proof projection should emit call_site and call_resolution for each caller, plus call_edge for resolved callers"
