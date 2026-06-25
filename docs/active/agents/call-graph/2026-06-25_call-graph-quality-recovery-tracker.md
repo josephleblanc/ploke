@@ -19,7 +19,7 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `a4159987 test: split target proof method fixtures`
+  `72c56f6f test: split call graph proof helpers`
 - Current quality focus: DB/proof/query hardening before adding parser breadth.
 - Recent endpoint-family cleanup:
   - `e53a2301 Split call target endpoint kind`
@@ -55,6 +55,8 @@ are not acceptable as a continuing implementation style.
   - `9c527985 test: split dynamic context fixtures`
   - `2ba35649 test: split method context fixtures`
   - `cfa3392d test: split call graph context expansion queries`
+  - `06daefb6 test: split call graph lookup helpers`
+  - `72c56f6f test: split call graph proof helpers`
 - Recent DB test-module split:
   - `7e51101d test: split dynamic call proof fixtures`
   - `09f8f967 test: split target proof fixtures`
@@ -99,6 +101,12 @@ are not acceptable as a continuing implementation style.
 - `call_graph_fixture_queries/target_proof/methods.rs` is now a thin module
   root with method, associated-function, trait-associated-function, and trait
   dispatch proof concerns split into child files.
+- `call_graph_fixture_common/lookup.rs` is now a thin helper root with
+  function, method, type, and const/static lookup concerns split into child
+  files; the shared Cozo row extraction helpers remain in the root.
+- `call_graph_fixture_common/proof.rs` is now a thin helper root with owner
+  proof-edge, blocker-proof, and target-centered proof helpers split into
+  child files.
 
 ## Resumption rules
 
@@ -533,3 +541,13 @@ For `a4159987 test: split target proof method fixtures`:
 
 - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::target_proof -- --nocapture`
   - passed: `tests/mod.rs` 9 passed, 0 failed.
+
+For `06daefb6 test: split call graph lookup helpers`:
+
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+  - passed: `tests/mod.rs` 94 passed, 0 failed.
+
+For `72c56f6f test: split call graph proof helpers`:
+
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+  - passed: `tests/mod.rs` 94 passed, 0 failed.
