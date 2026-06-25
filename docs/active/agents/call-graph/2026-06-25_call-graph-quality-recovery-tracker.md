@@ -21,6 +21,8 @@ are not acceptable as a continuing implementation style.
 - Latest committed call-graph quality checkpoint:
   `8d3dc030 test: split transform call graph projection tests`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
+- Recent coverage inventory cleanup:
+  - Added `2026-06-25_call-graph-coverage-inventory.md` as the compact layer inventory.
 - Recent production pattern cleanup:
   - `5fad4c98 Remove dormant call graph semantic storage`
 - Recent transform test cleanup:
@@ -157,7 +159,7 @@ are not acceptable as a continuing implementation style.
 | CGQ-6 | P2 | Done 2026-06-25 | Dynamic branch/match candidate provenance can collapse to `Null` in persisted `call_site` rows. | Ambiguous branch/match dynamic calls now keep proven local function candidates as `DynamicFunction` relations while preserving `Ambiguous` status; proof projection exposes them as `candidate_def_ids` without promoting them to resolved call edges. |
 | CGQ-7 | P2 | Done 2026-06-25 | The "exactly one status per call site" invariant could be hidden by post-hoc sort/dedup. | `CallRelationResolver` now rejects duplicate status sources before dedup, including identical duplicates. |
 | CGQ-8 | P2 | Open | `call_resolution.rs` and `call_extraction.rs` are monolithic. | Avoid adding breadth there without local extraction; split path/method/dynamic/macro logic when touching the area. |
-| CGQ-9 | P2 | Open | Call-graph docs are serving as a long running diary rather than a stable coverage inventory. | Add or update a stable call-graph coverage document/matrix, mirroring type-resolution coverage practice. |
+| CGQ-9 | P2 | Done 2026-06-25 | Call-graph docs were serving as a long running diary rather than a stable coverage inventory. | Added `2026-06-25_call-graph-coverage-inventory.md` as the compact layer-by-layer restart inventory and linked it from the call-graph restart spine. |
 | CGQ-10 | P3 | Open | `call_graph` feature name is broader than the actual gate: parser facts exist baseline, DB projection is gated. | Make docs explicit that this is currently a DB projection rollout gate. |
 | CGQ-11 | P1 | Done 2026-06-25 | `CodeGraph` carried dormant semantic call-target/status storage even though transform consumes `CallResolutionReport` directly. | `CodeGraph`/`ParsedCodeGraph` now keep only structural call occurrence facts; semantic call relations/statuses are report-owned at the resolver/transform boundary. |
 
@@ -179,10 +181,10 @@ are not acceptable as a continuing implementation style.
 Continue production-side pattern cleanup before parser/resolver breadth. The
 next likely slices are:
 
-1. Add/update a stable call-graph coverage matrix instead of extending the
-   diary-style notes.
-2. Continue table-driving the dedicated transform dynamic projection tests
+1. Continue table-driving the dedicated transform dynamic projection tests
    before adding any new transform projection cases.
+2. Use the stable coverage inventory plus detailed call-site matrix to choose
+   the next DB/proof/RAG/TUI batch before parser breadth.
 
 ## Latest verification
 
