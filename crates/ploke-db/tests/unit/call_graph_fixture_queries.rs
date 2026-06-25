@@ -4249,34 +4249,19 @@ fn fixture_projection_stores_real_dynamic_call_proof_facts() -> Result<(), DbErr
     let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
     assert_eq!(count, 3);
 
-    let edges = db.proof_checker_edges()?;
-    assert_eq!(edges.len(), 1, "dynamic proof checker edges: {edges:#?}");
-    assert_eq!(edges[0].call_site_id, site.to_string());
-    assert_eq!(edges[0].caller_def_id, owner.to_string());
-    assert_eq!(
-        edges[0].callee_def_id.as_deref(),
-        Some(target.to_string().as_str())
-    );
-    assert_eq!(edges[0].resolution_state, "resolved");
-    assert!(edges[0].blocker_reason.is_none());
-
-    assert!(
-        db.proof_graphrag_context("dynamic_dispatch_unbounded")?
-            .is_empty(),
-        "resolved dynamic call proof should not produce dynamic-dispatch blockers"
-    );
-
-    let provenance = db
-        .proof_source_provenance(&site.to_string())?
-        .expect("projected fixture dynamic call-site source provenance");
-    assert!(
-        provenance
-            .source_file
-            .ends_with("fixture_call_graph/src/lib.rs"),
-        "source provenance: {provenance:#?}"
-    );
-    assert_eq!(provenance.start_byte, span.0);
-    assert_eq!(provenance.end_byte, span.1);
+    assert_owner_proof_edges(
+        &db,
+        "dynamic",
+        &[OwnerProofEdge {
+            owner,
+            site,
+            span,
+            target,
+        }],
+        "fixture_call_graph/src/lib.rs",
+        "dynamic_dispatch_unbounded",
+        ProofEdgeCount::Exact,
+    )?;
 
     Ok(())
 }
@@ -4284,13 +4269,15 @@ fn fixture_projection_stores_real_dynamic_call_proof_facts() -> Result<(), DbErr
 #[test]
 fn fixture_projection_stores_real_branch_and_match_dynamic_call_proof_facts() -> Result<(), DbError>
 {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let target = function_id_by_name(&db, "local_target")?;
+    let mut expected_edges = Vec::new();
+
     for owner_name in [
         "call_if_same_function_item",
         "call_match_same_function_item",
     ] {
-        let db = setup_call_graph_fixture_db("fixture_call_graph")?;
         let owner = function_id_by_name(&db, owner_name)?;
-        let target = function_id_by_name(&db, "local_target")?;
         let context = db.call_context_for_owner(owner)?;
         assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
         let row = row_by_kind_path(&context, CallSiteKind::Dynamic, &["local_target"]);
@@ -4306,40 +4293,22 @@ fn fixture_projection_stores_real_branch_and_match_dynamic_call_proof_facts() ->
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
         assert_eq!(count, 3);
-
-        let edges = db.proof_checker_edges()?;
-        assert_eq!(
-            edges.len(),
-            1,
-            "{owner_name} dynamic proof checker edges: {edges:#?}"
-        );
-        assert_eq!(edges[0].call_site_id, site.to_string());
-        assert_eq!(edges[0].caller_def_id, owner.to_string());
-        assert_eq!(
-            edges[0].callee_def_id.as_deref(),
-            Some(target.to_string().as_str())
-        );
-        assert_eq!(edges[0].resolution_state, "resolved");
-        assert!(edges[0].blocker_reason.is_none());
-
-        assert!(
-            db.proof_graphrag_context("dynamic_dispatch_unbounded")?
-                .is_empty(),
-            "{owner_name} resolved branch/match dynamic proof should not produce dynamic-dispatch blockers"
-        );
-
-        let provenance = db
-            .proof_source_provenance(&site.to_string())?
-            .expect("projected fixture branch/match dynamic call-site source provenance");
-        assert!(
-            provenance
-                .source_file
-                .ends_with("fixture_call_graph/src/lib.rs"),
-            "{owner_name} source provenance: {provenance:#?}"
-        );
-        assert_eq!(provenance.start_byte, span.0);
-        assert_eq!(provenance.end_byte, span.1);
+        expected_edges.push(OwnerProofEdge {
+            owner,
+            site,
+            span,
+            target,
+        });
     }
+
+    assert_owner_proof_edges(
+        &db,
+        "branch/match dynamic",
+        &expected_edges,
+        "fixture_call_graph/src/lib.rs",
+        "dynamic_dispatch_unbounded",
+        ProofEdgeCount::Exact,
+    )?;
 
     Ok(())
 }
