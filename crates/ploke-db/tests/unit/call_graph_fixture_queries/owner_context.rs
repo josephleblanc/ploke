@@ -96,36 +96,8 @@ fn fixture_context_reads_projected_method_body_owner_calls() -> Result<(), DbErr
 #[test]
 fn fixture_context_reads_projected_const_and_static_initializer_calls() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_nodes")?;
-    let target = function_id_by_name_in_module(&db, &["crate", "const_static"], "five")?;
-
-    let cases = [
-        (
-            const_id_by_name(&db, "FN_CALL_CONST")?,
-            "const initializer context rows",
-        ),
-        (
-            static_id_by_name(&db, "STATIC_FN_CALL")?,
-            "static initializer context rows",
-        ),
-    ];
-
-    for (owner, label) in cases {
-        let context = db.call_context_for_owner(owner)?;
-        assert_eq!(context.len(), 1, "{label}: {context:#?}");
-
-        let row = row_by_path(&context, &["five"]);
-        assert_eq!(row.site.owner_id, owner);
-        assert_eq!(row.site.kind, CallSiteKind::Path);
-        assert_eq!(row.site.arg_count, Some(0));
-        assert_eq!(row.site.generic_arg_count, Some(0));
-        assert_resolved_target(
-            row,
-            target,
-            CallRelationKind::Function,
-            CallSiteKind::Path,
-            CallTargetKind::Function,
-        );
-    }
+    let cases = const_static_cases(&db)?;
+    assert_initializer_contexts(&db, &cases)?;
 
     Ok(())
 }
@@ -133,33 +105,8 @@ fn fixture_context_reads_projected_const_and_static_initializer_calls() -> Resul
 #[test]
 fn fixture_context_reads_projected_associated_const_initializer_calls() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let target = function_id_by_name(&db, "assoc_const_value")?;
-    let cases = [
-        const_id_by_name(&db, "IMPL_ASSOC_VALUE")?,
-        const_id_by_name(&db, "TRAIT_ASSOC_VALUE")?,
-    ];
-
-    for owner in cases {
-        let context = db.call_context_for_owner(owner)?;
-        assert_eq!(
-            context.len(),
-            1,
-            "associated const initializer context rows: {context:#?}"
-        );
-
-        let row = row_by_path(&context, &["assoc_const_value"]);
-        assert_eq!(row.site.owner_id, owner);
-        assert_eq!(row.site.kind, CallSiteKind::Path);
-        assert_eq!(row.site.arg_count, Some(0));
-        assert_eq!(row.site.generic_arg_count, Some(0));
-        assert_resolved_target(
-            row,
-            target,
-            CallRelationKind::Function,
-            CallSiteKind::Path,
-            CallTargetKind::Function,
-        );
-    }
+    let cases = assoc_const_cases(&db)?;
+    assert_initializer_contexts(&db, &cases)?;
 
     Ok(())
 }
