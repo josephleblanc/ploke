@@ -104,6 +104,14 @@ fn proof_domain_context_links_generated_call_facts_by_build_domain() -> Result<(
         );
     }
     assert!(
+        rows.iter().any(|row| {
+            row.kind == "call_site"
+                && row.call_site_id.as_deref() == Some(primary.site.to_string().as_str())
+                && row.build_domain_id.as_deref() == Some("bd:test")
+        }),
+        "matched call_site row should expose its build domain: {rows:#?}"
+    );
+    assert!(
         rows.iter()
             .all(|row| row.call_site_id.as_deref() != Some(other.site.to_string().as_str())),
         "unrelated build-domain rows leaked into proof domain context: {rows:#?}"

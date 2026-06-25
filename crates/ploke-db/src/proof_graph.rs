@@ -30,6 +30,7 @@ const PROOF_FACT_SCHEMA_VERSION: &str = "ploke-proof-facts.v1";
 pub struct ProofGraphContextRow {
     pub fact_id: String,
     pub kind: String,
+    pub build_domain_id: Option<String>,
     pub call_site_id: Option<String>,
     pub caller_def_id: Option<String>,
     pub callee_def_id: Option<String>,

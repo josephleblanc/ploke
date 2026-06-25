@@ -163,6 +163,14 @@ fn proof_domain_context_keeps_linked_blockers_for_build_domain() {
     assert_process_context("build-domain context", &rows);
     assert!(
         rows.iter().any(|hit| {
+            hit.kind == "call_site"
+                && hit.call_site_id.as_deref() == Some("call:spawn")
+                && hit.build_domain_id.as_deref() == Some("bd:main")
+        }),
+        "build-domain context should expose the matched call-site build domain: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|hit| {
             hit.kind == "effect_seed" && hit.call_site_id.as_deref() == Some("call:spawn")
         }),
         "build-domain context should include linked effect seed rows: {rows:#?}"

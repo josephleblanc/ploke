@@ -80,6 +80,7 @@ impl From<ProofFactRow> for ProofGraphContextRow {
         Self {
             fact_id: row.fact_id,
             kind: row.kind,
+            build_domain_id: row.build_domain_id,
             call_site_id: row.call_site_id,
             caller_def_id: row.caller_def_id,
             callee_def_id: row.callee_def_id,
