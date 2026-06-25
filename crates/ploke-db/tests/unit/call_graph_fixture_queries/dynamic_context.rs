@@ -421,15 +421,10 @@ fn fixture_context_reads_projected_callable_value_path_failures_and_vec_external
         let context = db.call_context_for_owner(owner)?;
         assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
 
-        let row = row_by_path(&context, expected_path);
-        assert_eq!(row.site.owner_id, owner);
-        assert_eq!(row.site.arg_count, Some(0));
-        assert_eq!(row.site.generic_arg_count, Some(0));
-        assert_eq!(row.status.status, CallStatusKind::Unsupported);
-        assert_eq!(row.status.resolution, None);
-        assert!(
-            row.targets.is_empty(),
-            "callable value path row must not fabricate local targets: {row:#?}"
+        assert_targetless_row(
+            &context,
+            owner,
+            TargetlessRowCase::path(expected_path, 0, CallStatusKind::Unsupported, owner_name),
         );
     }
 
@@ -441,40 +436,40 @@ fn fixture_context_reads_projected_callable_value_path_failures_and_vec_external
         "boxed dyn Fn path context rows: {context:#?}"
     );
 
-    let row = row_by_path(&context, &["Box", "new"]);
-    assert_eq!(row.site.owner_id, owner);
-    assert_eq!(row.site.arg_count, Some(1));
-    assert_eq!(row.site.generic_arg_count, Some(0));
-    assert_eq!(row.status.status, CallStatusKind::External);
-    assert_eq!(row.status.resolution, None);
-    assert!(
-        row.targets.is_empty(),
-        "Box::new setup call must not fabricate local targets: {row:#?}"
+    assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::path(
+            &["Box", "new"],
+            1,
+            CallStatusKind::External,
+            "Box::new setup call",
+        ),
     );
 
-    let row = row_by_path(&context, &["boxed_fn"]);
-    assert_eq!(row.site.owner_id, owner);
-    assert_eq!(row.site.arg_count, Some(0));
-    assert_eq!(row.site.generic_arg_count, Some(0));
-    assert_eq!(row.status.status, CallStatusKind::Unsupported);
-    assert_eq!(row.status.resolution, None);
-    assert!(
-        row.targets.is_empty(),
-        "boxed dyn Fn path call must not fabricate local targets: {row:#?}"
+    assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::path(
+            &["boxed_fn"],
+            0,
+            CallStatusKind::Unsupported,
+            "boxed dyn Fn path call",
+        ),
     );
 
     let owner = function_id_by_name(&db, "call_prelude_vec_new")?;
     let context = db.call_context_for_owner(owner)?;
     assert_eq!(context.len(), 1, "Vec::new context rows: {context:#?}");
-    let row = row_by_path(&context, &["Vec", "new"]);
-    assert_eq!(row.site.owner_id, owner);
-    assert_eq!(row.site.arg_count, Some(0));
-    assert_eq!(row.site.generic_arg_count, Some(0));
-    assert_eq!(row.status.status, CallStatusKind::External);
-    assert_eq!(row.status.resolution, None);
-    assert!(
-        row.targets.is_empty(),
-        "Vec::new external row must not fabricate local targets: {row:#?}"
+    assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::path(
+            &["Vec", "new"],
+            0,
+            CallStatusKind::External,
+            "Vec::new external row",
+        ),
     );
 
     Ok(())

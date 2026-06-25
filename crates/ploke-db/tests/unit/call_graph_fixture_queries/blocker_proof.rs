@@ -161,12 +161,10 @@ fn fixture_projection_marks_real_callable_path_and_vec_external_rows_without_edg
             "{owner_name} proof context rows: {context:#?}"
         );
 
-        let row = row_by_path(&context, expected_path);
-        assert_eq!(row.status.status, CallStatusKind::Unsupported);
-        assert_eq!(row.status.resolution, None);
-        assert!(
-            row.targets.is_empty(),
-            "{owner_name} callable path proof setup must be targetless: {row:#?}"
+        let row = assert_targetless_row(
+            &context,
+            owner,
+            TargetlessRowCase::path(expected_path, 0, CallStatusKind::Unsupported, owner_name),
         );
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
@@ -185,17 +183,25 @@ fn fixture_projection_marks_real_callable_path_and_vec_external_rows_without_edg
         2,
         "boxed dyn Fn proof context rows: {context:#?}"
     );
-    let box_new = row_by_path(&context, &["Box", "new"]);
-    assert_eq!(box_new.status.status, CallStatusKind::External);
-    assert!(
-        box_new.targets.is_empty(),
-        "Box::new proof setup must be targetless: {box_new:#?}"
+    let box_new = assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::path(
+            &["Box", "new"],
+            1,
+            CallStatusKind::External,
+            "Box::new proof setup",
+        ),
     );
-    let boxed_fn = row_by_path(&context, &["boxed_fn"]);
-    assert_eq!(boxed_fn.status.status, CallStatusKind::Unsupported);
-    assert!(
-        boxed_fn.targets.is_empty(),
-        "boxed dyn Fn proof setup must be targetless: {boxed_fn:#?}"
+    let boxed_fn = assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::path(
+            &["boxed_fn"],
+            0,
+            CallStatusKind::Unsupported,
+            "boxed dyn Fn proof setup",
+        ),
     );
 
     let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
@@ -218,11 +224,15 @@ fn fixture_projection_marks_real_callable_path_and_vec_external_rows_without_edg
         1,
         "Vec::new proof context rows: {context:#?}"
     );
-    let vec_new = row_by_path(&context, &["Vec", "new"]);
-    assert_eq!(vec_new.status.status, CallStatusKind::External);
-    assert!(
-        vec_new.targets.is_empty(),
-        "Vec::new proof setup must be targetless: {vec_new:#?}"
+    let vec_new = assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::path(
+            &["Vec", "new"],
+            0,
+            CallStatusKind::External,
+            "Vec::new proof setup",
+        ),
     );
 
     let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;

@@ -119,18 +119,10 @@ pub(in crate::unit) fn assert_targetless_dynamic_context_cases(
             case.owner
         );
 
-        let row = &context[0];
-        assert_eq!(row.site.owner_id, owner);
-        assert_eq!(row.site.kind, CallSiteKind::Dynamic);
-        assert_eq!(row.site.path, case.path.map(path));
-        assert_eq!(row.site.arg_count, Some(0));
-        assert_eq!(row.site.generic_arg_count, None);
-        assert_eq!(row.status.status, case.status);
-        assert_eq!(row.status.resolution, None);
-        assert!(
-            row.targets.is_empty(),
-            "{} dynamic failure must not fabricate targets: {row:#?}",
-            case.owner
+        assert_targetless_row(
+            &context,
+            owner,
+            TargetlessRowCase::dynamic(case.path, case.status, case.owner),
         );
     }
 
