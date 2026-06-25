@@ -161,7 +161,7 @@ are not acceptable as a continuing implementation style.
 | CGQ-7 | P2 | Done 2026-06-25 | The "exactly one status per call site" invariant could be hidden by post-hoc sort/dedup. | `CallRelationResolver` now rejects duplicate status sources before dedup, including identical duplicates. |
 | CGQ-8 | P2 | Open | `call_resolution.rs` and `call_extraction.rs` are monolithic. | Avoid adding breadth there without local extraction; split path/method/dynamic/macro logic when touching the area. |
 | CGQ-9 | P2 | Done 2026-06-25 | Call-graph docs were serving as a long running diary rather than a stable coverage inventory. | Added `2026-06-25_call-graph-coverage-inventory.md` as the compact layer-by-layer restart inventory and linked it from the call-graph restart spine. |
-| CGQ-10 | P3 | Open | `call_graph` feature name is broader than the actual gate: parser facts exist baseline, DB projection is gated. | Make docs explicit that this is currently a DB projection rollout gate. |
+| CGQ-10 | P3 | Done 2026-06-25 | `call_graph` feature name is broader than the actual gate: parser facts exist baseline, DB projection is gated. | Cargo feature comments and active gate docs now state that `call_graph` is a historical feature name whose active rollout gate is DB projection plus downstream consumers while backup fixtures are reviewed/regenerated. |
 | CGQ-11 | P1 | Done 2026-06-25 | `CodeGraph` carried dormant semantic call-target/status storage even though transform consumes `CallResolutionReport` directly. | `CodeGraph`/`ParsedCodeGraph` now keep only structural call occurrence facts; semantic call relations/statuses are report-owned at the resolver/transform boundary. |
 
 ## Pattern matches to preserve

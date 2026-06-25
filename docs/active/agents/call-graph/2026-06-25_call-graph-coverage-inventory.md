@@ -36,7 +36,7 @@ future work can choose the next batch without rereading the diary-style notes.
 | RAG call context | Partial | Call-context collection and expansion are feature-gated and tested for populated DBs, degraded DBs, owner seeds, target seeds, dynamic callers, constructors, method targets, associated functions, trait dispatch, and public context payloads. | Broader live/provider/tool-matrix coverage and final prompt payload policy remain open. |
 | TUI call context | Partial | Formatter/overlay/tool-carrier coverage exists for call summaries, target payloads, status/resolution, and selected targetless/proof shapes. | Final interactive call-context UX and proof-facing presentation are not complete. |
 | Proof facts | Partial | Proof graph projection covers resolved call edges, blockers, source provenance, candidate preservation, and invariant checks for the current DB surfaces. | External dependency summaries, macro/build-domain summaries, admission semantics, and proof-authoritative artifacts remain open. |
-| Rollout gate | Gated | `CALL_GRAPH_GATE:db-projection` remains active; default fixture imports are not loosened. | Review/regenerate registered backup fixtures before making DB projection baseline. |
+| Rollout gate | Gated | `CALL_GRAPH_GATE:db-projection` remains active; the Cargo feature is still named `call_graph`, but the active rollout gate is DB projection plus downstream consumers, not parser-side structural modeling. Default fixture imports are not loosened. | Review/regenerate registered backup fixtures before making DB projection baseline. |
 
 ## Next implementation batches
 

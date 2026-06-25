@@ -36,6 +36,7 @@ once_cell = "1.19"
 [features]
 default = ["test_setup"]
 test_setup = []
-# CALL_GRAPH_GATE:db-projection - propagated rollout feature for fixture generation/import helpers.
+# CALL_GRAPH_GATE:db-projection - historical feature name; currently gates DB projection
+# fixture generation/import helpers while backup fixtures are reviewed/regenerated.
 call_graph = ["syn_parser/call_graph", "ploke-transform/call_graph", "ploke-db/call_graph"]
 # Feature flag for the UUID refactor in test-utils (REMOVED)

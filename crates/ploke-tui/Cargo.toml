@@ -129,7 +129,8 @@ ploke-llm-refactor = []
 llm_refactor = []
 live_api_tests = []
 test_harness = []
-# CALL_GRAPH_GATE:db-projection - propagated rollout feature for call graph DB projection consumers.
+# CALL_GRAPH_GATE:db-projection - historical feature name; currently gates DB projection
+# consumers while backup fixtures are reviewed/regenerated.
 call_graph = [
     "syn_parser/call_graph",
     "ploke-transform/call_graph",
