@@ -19,7 +19,7 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `cc808347 test: cover variant constructor tool context`
+  `000a3e58 test: share resolved proof case helper`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent TUI/model-visible cleanup:
   - `cc808347 test: cover variant constructor tool context`
@@ -80,6 +80,8 @@ are not acceptable as a continuing implementation style.
   - `cfa3392d test: split call graph context expansion queries`
   - `06daefb6 test: split call graph lookup helpers`
   - `72c56f6f test: split call graph proof helpers`
+  - `7710313b test: share callable proof blocker helper`
+  - `000a3e58 test: share resolved proof case helper`
 - Recent DB test-module split:
   - `7e51101d test: split dynamic call proof fixtures`
   - `09f8f967 test: split target proof fixtures`
@@ -138,6 +140,11 @@ are not acceptable as a continuing implementation style.
 - `call_graph_fixture_common/proof.rs` is now a thin helper root with owner
   proof-edge, blocker-proof, and target-centered proof helpers split into
   child files.
+- `call_graph_fixture_common/proof/owners.rs` owns the shared
+  `ResolvedProofCase`/`ResolvedProofCall` matrix helper used by resolved
+  proof fixture families, so owner-context lookup, resolved-target assertions,
+  proof projection counts, and `OwnerProofEdge` collection are not copied
+  across each fixture file.
 - `ProofGraphStore` now exposes a build-domain scoped proof context query and
   shares linked-call-site row selection across symbol, GraphRAG text, and
   build-domain proof lookups. Real fixture proof lookup assertions are
@@ -218,6 +225,20 @@ next likely slices are:
    that batch before adding cases.
 
 ## Latest verification
+
+For `000a3e58 test: share resolved proof case helper`:
+
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::resolved_proof -- --nocapture`
+  - passed: resolved proof fixture filter ran 7 tests, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+  - passed: fixture-backed call-graph query filter ran 93 tests, 0 failed.
+
+For `7710313b test: share callable proof blocker helper`:
+
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::blocker_proof::callable -- --nocapture`
+  - passed: callable blocker proof fixture filter ran 2 tests, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::blocker_proof -- --nocapture`
+  - passed: blocker proof fixture filter ran 6 tests, 0 failed.
 
 For `cc808347 test: cover variant constructor tool context`:
 
