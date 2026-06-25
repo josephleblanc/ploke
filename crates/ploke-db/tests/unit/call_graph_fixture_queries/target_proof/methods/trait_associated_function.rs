@@ -36,9 +36,12 @@ fn fixture_projection_stores_real_target_centered_imported_trait_assoc_function_
     let mut expected = Vec::new();
     for (module_path, owner_name, expected_path) in cases {
         let owner = function_id_by_name_in_module(&db, module_path, owner_name)?;
-        let context = db.call_context_for_owner(owner)?;
-        let site = row_by_path(&context, expected_path).site.id;
-        expected.push((owner, site, expected_path));
+        expected.push(ProofSiteCase::path(
+            owner,
+            expected_path,
+            CallRelationKind::AssociatedFunction,
+            CallTargetKind::Method,
+        ));
     }
 
     let callers = db.callers_for_target(target)?;
@@ -48,21 +51,7 @@ fn fixture_projection_stores_real_target_centered_imported_trait_assoc_function_
         expected.len(),
         "target-centered imported trait associated-function",
     )?;
-
-    for (owner, _, expected_path) in &expected {
-        let caller = caller_by_owner_kind_path(&callers, *owner, CallSiteKind::Path, expected_path);
-        assert_eq!(caller.target.relation, CallRelationKind::AssociatedFunction);
-        assert_eq!(caller.target.source_kind, CallSiteKind::Path);
-        assert_eq!(caller.target.target_kind, CallTargetKind::Method);
-    }
-
-    let expected_sites = expected
-        .iter()
-        .map(|(owner, site, _)| TargetProofSite {
-            owner: *owner,
-            site: *site,
-        })
-        .collect::<Vec<_>>();
+    let expected_sites = assert_proof_site_cases(&db, &callers, &expected)?;
     assert_target_proof_projection(
         &db,
         "target-centered imported trait associated-function",

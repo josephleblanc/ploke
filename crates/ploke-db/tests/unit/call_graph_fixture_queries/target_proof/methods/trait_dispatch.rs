@@ -17,26 +17,16 @@ fn fixture_projection_stores_real_target_centered_trait_dispatch_call_proof_fact
         name: "value".to_string(),
         init_path: path(&["TraitDispatchTarget"]),
     };
-
-    let initialized_context = db.call_context_for_owner(initialized_owner)?;
-    let initialized_site = row_by_method_receiver(&initialized_context, "trait_value", &receiver)
-        .site
-        .id;
-
-    let chained_context = db.call_context_for_owner(chained_owner)?;
-    let chained_site = row_by_method_receiver(&chained_context, "trait_value", &receiver)
-        .site
-        .id;
-
     let callers = db.callers_for_target(target)?;
     assert_resolved_target_callers(&callers, target, 3, "target-centered trait dispatch")?;
-
-    let initialized =
-        caller_by_owner_method_receiver(&callers, initialized_owner, "trait_value", &receiver);
-    assert_eq!(initialized.target.relation, CallRelationKind::Method);
-    let chained =
-        caller_by_owner_method_receiver(&callers, chained_owner, "trait_value", &receiver);
-    assert_eq!(chained.target.relation, CallRelationKind::Method);
+    let expected = assert_proof_method_cases(
+        &db,
+        &callers,
+        &[
+            ProofMethodCase::method(initialized_owner, "trait_value", &receiver),
+            ProofMethodCase::method(chained_owner, "trait_value", &receiver),
+        ],
+    )?;
 
     assert_target_proof_projection(
         &db,
@@ -44,16 +34,7 @@ fn fixture_projection_stores_real_target_centered_trait_dispatch_call_proof_fact
         "bd:fixture-call-graph",
         target,
         &callers,
-        &[
-            TargetProofSite {
-                owner: initialized_owner,
-                site: initialized_site,
-            },
-            TargetProofSite {
-                owner: chained_owner,
-                site: chained_site,
-            },
-        ],
+        &expected,
         "fixture_call_graph/src/lib.rs",
         "type_resolution_missing",
     )?;
