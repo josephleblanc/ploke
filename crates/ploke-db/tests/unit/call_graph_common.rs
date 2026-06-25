@@ -1,103 +1,18 @@
 use std::collections::BTreeMap;
 
-use cozo::{DataValue, UuidWrapper};
+use cozo::DataValue;
 use ploke_db::{Database, DbError};
 use uuid::Uuid;
 
-pub(super) struct SiteSeed<'a> {
-    pub id: Uuid,
-    pub owner: Uuid,
-    pub kind: &'a str,
-    pub span: (i64, i64),
-    pub path: Option<Vec<&'a str>>,
-    pub method: Option<&'a str>,
-    pub macro_name: Option<&'a str>,
-    pub receiver: Option<(&'a str, Vec<&'a str>)>,
-    pub arg_count: Option<i64>,
-    pub generic_arg_count: Option<i64>,
-}
+mod facts;
+mod site;
+mod values;
 
-pub(super) fn fact_count(facts: &[serde_json::Value], kind: &str) -> usize {
-    facts
-        .iter()
-        .filter(|fact| fact.get("fact_kind").and_then(serde_json::Value::as_str) == Some(kind))
-        .count()
-}
+pub(super) use facts::{fact_count, fact_for_call_site};
+pub(super) use site::{SiteSeed, insert_call_site, insert_call_site_raw_receiver};
+pub(super) use values::list;
 
-pub(super) fn fact_for_call_site<'a>(
-    facts: &'a [serde_json::Value],
-    kind: &str,
-    site: Uuid,
-) -> &'a serde_json::Value {
-    let site = site.to_string();
-    let matches = facts
-        .iter()
-        .filter(|fact| {
-            fact.get("fact_kind").and_then(serde_json::Value::as_str) == Some(kind)
-                && fact.get("call_site_id").and_then(serde_json::Value::as_str)
-                    == Some(site.as_str())
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        matches.len(),
-        1,
-        "expected exactly one {kind} fact for call site {site}; facts: {facts:#?}"
-    );
-    matches[0]
-}
-
-pub(super) fn insert_call_site(db: &Database, seed: SiteSeed<'_>) -> Result<(), DbError> {
-    let (kind, path) = seed
-        .receiver
-        .as_ref()
-        .map(|(kind, path)| (DataValue::from(*kind), list(path.as_slice())))
-        .unwrap_or((DataValue::Null, DataValue::Null));
-    insert_call_site_raw_receiver(db, seed, kind, path)
-}
-
-pub(super) fn insert_call_site_raw_receiver(
-    db: &Database,
-    seed: SiteSeed<'_>,
-    receiver_kind: DataValue,
-    receiver_path: DataValue,
-) -> Result<(), DbError> {
-    let mut params = BTreeMap::new();
-    params.insert("id".to_string(), uuid(seed.id));
-    params.insert("owner_id".to_string(), uuid(seed.owner));
-    params.insert("call_kind".to_string(), DataValue::from(seed.kind));
-    params.insert("span".to_string(), span(seed.span));
-    params.insert("cfgs".to_string(), list(&[]));
-    params.insert("path".to_string(), option_list(seed.path));
-    params.insert("method_name".to_string(), option_str(seed.method));
-    params.insert("macro_name".to_string(), option_str(seed.macro_name));
-    params.insert("receiver_kind".to_string(), receiver_kind);
-    params.insert("receiver_path".to_string(), receiver_path);
-    params.insert("arg_count".to_string(), option_int(seed.arg_count));
-    params.insert(
-        "generic_arg_count".to_string(),
-        option_int(seed.generic_arg_count),
-    );
-
-    db.raw_query_mut_params(
-        r#"?[id, at, owner_id, call_kind, span, cfgs, path, method_name, macro_name, receiver_kind, receiver_path, arg_count, generic_arg_count] :=
-            id = $id,
-            owner_id = $owner_id,
-            call_kind = $call_kind,
-            span = $span,
-            cfgs = $cfgs,
-            path = $path,
-            method_name = $method_name,
-            macro_name = $macro_name,
-            receiver_kind = $receiver_kind,
-            receiver_path = $receiver_path,
-            arg_count = $arg_count,
-            generic_arg_count = $generic_arg_count,
-            at = 'ASSERT'
-        :put call_site { id, at => owner_id, call_kind, span, cfgs, path, method_name, macro_name, receiver_kind, receiver_path, arg_count, generic_arg_count }"#,
-        params,
-    )?;
-    Ok(())
-}
+use values::{option_str, span, uuid};
 
 pub(super) fn insert_edge(
     db: &Database,
@@ -478,28 +393,4 @@ fn insert_contains(db: &Database, module: Uuid, owner: Uuid) -> Result<(), DbErr
         params,
     )?;
     Ok(())
-}
-
-fn uuid(value: Uuid) -> DataValue {
-    DataValue::Uuid(UuidWrapper(value))
-}
-
-fn span((start, end): (i64, i64)) -> DataValue {
-    DataValue::List(vec![DataValue::from(start), DataValue::from(end)])
-}
-
-pub(super) fn list(items: &[&str]) -> DataValue {
-    DataValue::List(items.iter().map(|item| DataValue::from(*item)).collect())
-}
-
-fn option_list(items: Option<Vec<&str>>) -> DataValue {
-    items.map(|items| list(&items)).unwrap_or(DataValue::Null)
-}
-
-fn option_str(value: Option<&str>) -> DataValue {
-    value.map(DataValue::from).unwrap_or(DataValue::Null)
-}
-
-fn option_int(value: Option<i64>) -> DataValue {
-    value.map(DataValue::from).unwrap_or(DataValue::Null)
 }
