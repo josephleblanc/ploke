@@ -4653,16 +4653,19 @@ fn fixture_projection_stores_real_returned_function_call_proof_facts() -> Result
     let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
     assert_eq!(count, 5);
 
-    let edges = db.proof_checker_edges()?;
-    assert_eq!(edges.len(), 1, "returned-function proof edges: {edges:#?}");
-    assert_eq!(edges[0].call_site_id, path_site.to_string());
-    assert_eq!(edges[0].caller_def_id, owner.to_string());
-    assert_eq!(
-        edges[0].callee_def_id.as_deref(),
-        Some(target.to_string().as_str())
-    );
-    assert_eq!(edges[0].resolution_state, "resolved");
-    assert!(edges[0].blocker_reason.is_none());
+    assert_owner_proof_edges(
+        &db,
+        "returned-function resolved path",
+        &[OwnerProofEdge {
+            owner,
+            site: path_site,
+            span: path_span,
+            target,
+        }],
+        "fixture_call_graph/src/lib.rs",
+        "type_resolution_missing",
+        ProofEdgeCount::Exact,
+    )?;
 
     let blocked = db.proof_graphrag_context("dynamic_dispatch_unbounded")?;
     assert!(
@@ -4674,19 +4677,17 @@ fn fixture_projection_stores_real_returned_function_call_proof_facts() -> Result
         "returned-function dynamic blocker rows: {blocked:#?}"
     );
 
-    for (site, span) in [(path_site, path_span), (dynamic_site, dynamic_span)] {
-        let provenance = db
-            .proof_source_provenance(&site.to_string())?
-            .expect("projected returned-function call-site source provenance");
-        assert!(
-            provenance
-                .source_file
-                .ends_with("fixture_call_graph/src/lib.rs"),
-            "source provenance: {provenance:#?}"
-        );
-        assert_eq!(provenance.start_byte, span.0);
-        assert_eq!(provenance.end_byte, span.1);
-    }
+    let provenance = db
+        .proof_source_provenance(&dynamic_site.to_string())?
+        .expect("projected returned-function dynamic call-site source provenance");
+    assert!(
+        provenance
+            .source_file
+            .ends_with("fixture_call_graph/src/lib.rs"),
+        "source provenance: {provenance:#?}"
+    );
+    assert_eq!(provenance.start_byte, dynamic_span.0);
+    assert_eq!(provenance.end_byte, dynamic_span.1);
 
     Ok(())
 }
