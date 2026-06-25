@@ -24,6 +24,8 @@ are not acceptable as a continuing implementation style.
 - Recent endpoint-family cleanup:
   - `e53a2301 Split call target endpoint kind`
   - `29eb4f8a Centralize call endpoint families`
+- Recent invariant cleanup:
+  - `e14aa283 Guard duplicate call status emissions`
 
 ## Resumption rules
 
@@ -55,7 +57,7 @@ are not acceptable as a continuing implementation style.
 | CGQ-4 | P1 | Done 2026-06-25 | DB `CallRelationKind` mixed relation semantics with target-kind semantics, including `Struct` and `Variant`. | `CallTargetKind` now carries DB endpoint families separately from call relation kinds, while persisted relation strings remain unchanged. |
 | CGQ-5 | P1 | Done 2026-06-25 | External proof projection reported `externally_summarized` while also using blocker reason `external_dependency_summary_missing`. | Current parser-projected external rows now emit blocked/missing-summary proof state until a real external summary fact exists. |
 | CGQ-6 | P2 | Open | Dynamic branch/match candidate provenance can collapse to `Null` in persisted `call_site` rows. | Decide whether proof/RAG needs normalized candidate provenance; do not silently drop proof-critical candidates. |
-| CGQ-7 | P2 | Open | The "exactly one status per call site" invariant can be hidden by post-hoc sort/dedup. | Add a pre-dedup invariant check so duplicate identical emissions cannot disappear. |
+| CGQ-7 | P2 | Done 2026-06-25 | The "exactly one status per call site" invariant could be hidden by post-hoc sort/dedup. | `CallRelationResolver` now rejects duplicate status sources before dedup, including identical duplicates. |
 | CGQ-8 | P2 | Open | `call_resolution.rs` and `call_extraction.rs` are monolithic. | Avoid adding breadth there without local extraction; split path/method/dynamic/macro logic when touching the area. |
 | CGQ-9 | P2 | Open | Call-graph docs are serving as a long running diary rather than a stable coverage inventory. | Add or update a stable call-graph coverage document/matrix, mirroring type-resolution coverage practice. |
 | CGQ-10 | P3 | Open | `call_graph` feature name is broader than the actual gate: parser facts exist baseline, DB projection is gated. | Make docs explicit that this is currently a DB projection rollout gate. |
@@ -79,4 +81,4 @@ slices are:
 
 1. Finish CGQ-3 by reducing transform/test-helper endpoint-family duplication.
 2. Continue CGQ-2 by splitting oversized call-graph DB tests by concern.
-3. Address CGQ-7 with a pre-dedup exactly-one-status invariant check.
+3. Address CGQ-6 dynamic candidate provenance if proof/RAG depends on it.
