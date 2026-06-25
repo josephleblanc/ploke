@@ -4940,45 +4940,22 @@ fn fixture_projection_stores_real_const_and_static_initializer_call_proof_facts(
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-nodes")?;
         assert_eq!(count, 3);
-        expected.push((owner, site, span));
+        expected.push(OwnerProofEdge {
+            owner,
+            site,
+            span,
+            target,
+        });
     }
 
-    let edges = db.proof_checker_edges()?;
-    assert_eq!(
-        edges.len(),
-        expected.len(),
-        "initializer proof edges: {edges:#?}"
-    );
-    for (owner, site, span) in expected {
-        assert!(
-            edges.iter().any(|edge| {
-                edge.call_site_id == site.to_string()
-                    && edge.caller_def_id == owner.to_string()
-                    && edge.callee_def_id.as_deref() == Some(target.to_string().as_str())
-                    && edge.resolution_state == "resolved"
-                    && edge.blocker_reason.is_none()
-            }),
-            "initializer proof edge missing for {site}: {edges:#?}"
-        );
-
-        let provenance = db
-            .proof_source_provenance(&site.to_string())?
-            .expect("projected const/static initializer call-site source provenance");
-        assert!(
-            provenance
-                .source_file
-                .ends_with("fixture_nodes/src/const_static.rs"),
-            "source provenance: {provenance:#?}"
-        );
-        assert_eq!(provenance.start_byte, span.0);
-        assert_eq!(provenance.end_byte, span.1);
-    }
-
-    assert!(
-        db.proof_graphrag_context("type_resolution_missing")?
-            .is_empty(),
-        "resolved const/static initializer proofs should not produce blockers"
-    );
+    assert_owner_proof_edges(
+        &db,
+        "const/static initializer",
+        &expected,
+        "fixture_nodes/src/const_static.rs",
+        "type_resolution_missing",
+        ProofEdgeCount::Exact,
+    )?;
 
     Ok(())
 }
@@ -5016,45 +4993,22 @@ fn fixture_projection_stores_real_associated_const_initializer_call_proof_facts(
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
         assert_eq!(count, 3);
-        expected.push((owner, site, span));
+        expected.push(OwnerProofEdge {
+            owner,
+            site,
+            span,
+            target,
+        });
     }
 
-    let edges = db.proof_checker_edges()?;
-    assert_eq!(
-        edges.len(),
-        expected.len(),
-        "associated const initializer proof edges: {edges:#?}"
-    );
-    for (owner, site, span) in expected {
-        assert!(
-            edges.iter().any(|edge| {
-                edge.call_site_id == site.to_string()
-                    && edge.caller_def_id == owner.to_string()
-                    && edge.callee_def_id.as_deref() == Some(target.to_string().as_str())
-                    && edge.resolution_state == "resolved"
-                    && edge.blocker_reason.is_none()
-            }),
-            "associated const initializer proof edge missing for {site}: {edges:#?}"
-        );
-
-        let provenance = db
-            .proof_source_provenance(&site.to_string())?
-            .expect("projected associated const initializer call-site source provenance");
-        assert!(
-            provenance
-                .source_file
-                .ends_with("fixture_call_graph/src/lib.rs"),
-            "source provenance: {provenance:#?}"
-        );
-        assert_eq!(provenance.start_byte, span.0);
-        assert_eq!(provenance.end_byte, span.1);
-    }
-
-    assert!(
-        db.proof_graphrag_context("type_resolution_missing")?
-            .is_empty(),
-        "resolved associated const initializer proofs should not produce blockers"
-    );
+    assert_owner_proof_edges(
+        &db,
+        "associated const initializer",
+        &expected,
+        "fixture_call_graph/src/lib.rs",
+        "type_resolution_missing",
+        ProofEdgeCount::Exact,
+    )?;
 
     Ok(())
 }
