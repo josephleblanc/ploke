@@ -19,7 +19,7 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `03c343ec test: split call graph invariant queries`
+  `53bc6e52 test: split dynamic fixture helpers`
 - Current quality focus: DB/proof/query hardening before adding parser breadth.
 - Recent endpoint-family cleanup:
   - `e53a2301 Split call target endpoint kind`
@@ -34,6 +34,7 @@ are not acceptable as a continuing implementation style.
   - `74ec3d06 test: move proof fixture helpers to common`
   - `4f9c87d5 test: split proof lookup fixtures`
   - `382d83c7 test: split constructor fixture helpers`
+  - `53bc6e52 test: split dynamic fixture helpers`
 - Recent DB test-module split:
   - `7e51101d test: split dynamic call proof fixtures`
   - `09f8f967 test: split target proof fixtures`
@@ -80,7 +81,7 @@ are not acceptable as a continuing implementation style.
 | ID | Priority | Status | Issue | Required direction |
 | --- | --- | --- | --- | --- |
 | CGQ-1 | P1 | Open | Implementation focus drifted toward parser breadth while DB/proof quality lagged. | Shift next resumed work to DB/proof/query hardening and shared test structure. |
-| CGQ-2 | P1 | Partial 2026-06-25 | Call-graph DB query tests and helpers were far larger and less modular than the type-graph precedent. | First cleanup extracted repeated ambiguous dynamic candidate context/proof assertions into shared helpers, moved them to `call_graph_fixture_common.rs`, moved shared proof and constructor fixture helpers to common, split the constructor helper case matrix into `call_graph_fixture_common/constructor.rs`, and split invariant, dynamic, target-centered, blocker, proof-lookup, constructor proof, call-context, mixed proof, resolved proof, dynamic context, associated context, trait-method context, owner-context, proof-projection, query-invariant, schema, context-expansion, receiver-decode, relation-decode, path-context, method-context, constructor-context, unsupported-context, low-level-helper, resolved-proof-family, proof-projection query, and invariant query tests into submodules. `call_graph_queries.rs`, `call_graph_queries/proof_projection.rs`, `call_graph_queries/invariants.rs`, and `call_graph_fixture_queries.rs` are thin module roots, resolved proof fixtures are grouped by proof family, proof projection tests are grouped by resolved/prevalidation/blocker concerns, invariant tests are grouped by endpoint/status/cardinality/body-edge/site-shape concerns, and receiver decoding is table-driven. Remaining work is to continue splitting large fixture/common/proof files by concern and introduce shared matrices before adding more cases. |
+| CGQ-2 | P1 | Partial 2026-06-25 | Call-graph DB query tests and helpers were far larger and less modular than the type-graph precedent. | First cleanup extracted repeated ambiguous dynamic candidate context/proof assertions into shared helpers, moved them to `call_graph_fixture_common.rs`, moved shared proof and constructor fixture helpers to common, split the constructor helper case matrix into `call_graph_fixture_common/constructor.rs`, split ambiguous dynamic helper assertions into `call_graph_fixture_common/dynamic.rs`, and split invariant, dynamic, target-centered, blocker, proof-lookup, constructor proof, call-context, mixed proof, resolved proof, dynamic context, associated context, trait-method context, owner-context, proof-projection, query-invariant, schema, context-expansion, receiver-decode, relation-decode, path-context, method-context, constructor-context, unsupported-context, low-level-helper, resolved-proof-family, proof-projection query, and invariant query tests into submodules. `call_graph_queries.rs`, `call_graph_queries/proof_projection.rs`, `call_graph_queries/invariants.rs`, and `call_graph_fixture_queries.rs` are thin module roots, resolved proof fixtures are grouped by proof family, proof projection tests are grouped by resolved/prevalidation/blocker concerns, invariant tests are grouped by endpoint/status/cardinality/body-edge/site-shape concerns, and receiver decoding is table-driven. Remaining work is to continue splitting large fixture/common/proof files by concern and introduce shared matrices before adding more cases. |
 | CGQ-2A | P1 | Done 2026-06-25 | Proof validation allowed arbitrary ambiguous rows with local targets while fixture invariants only allow dynamic function candidates. | `validate_call_context` now rejects non-resolved local targets except the established ambiguous dynamic-candidate shape (`Dynamic` site, `DynamicFunction` relation, `Function` target). |
 | CGQ-3 | P1 | Partial 2026-06-25 | Call endpoint-family rules are duplicated across transform insertion, DB Cozo queries, Rust validation, and tests. | DB query helpers and Rust validation now share `VALID_CALL_TARGET_FAMILIES`; remaining work is transform insertion/test helper surfaces. |
 | CGQ-4 | P1 | Done 2026-06-25 | DB `CallRelationKind` mixed relation semantics with target-kind semantics, including `Struct` and `Variant`. | `CallTargetKind` now carries DB endpoint families separately from call relation kinds, while persisted relation strings remain unchanged. |
@@ -136,6 +137,13 @@ For `03c343ec test: split call graph invariant queries`:
   - passed: `tests/mod.rs` 11 passed, 0 failed.
 - `cargo test -p ploke-db --features call_graph unit::call_graph_queries -- --nocapture`
   - passed: `tests/mod.rs` 32 passed, 0 failed.
+
+For `53bc6e52 test: split dynamic fixture helpers`:
+
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::dynamic -- --nocapture`
+  - passed: `tests/mod.rs` 16 passed, 0 failed.
+- `cargo test -p ploke-db --features call_graph fixture_projection -- --nocapture`
+  - passed: `tests/mod.rs` 34 passed, 0 failed.
 
 For `67fc3a8a Preserve ambiguous dynamic call candidates`:
 
