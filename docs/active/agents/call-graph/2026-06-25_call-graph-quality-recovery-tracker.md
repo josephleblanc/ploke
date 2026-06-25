@@ -19,7 +19,7 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `83adea45 test: split proof blocker queries`
+  `a4159987 test: split target proof method fixtures`
 - Current quality focus: DB/proof/query hardening before adding parser breadth.
 - Recent endpoint-family cleanup:
   - `e53a2301 Split call target endpoint kind`
@@ -84,6 +84,21 @@ are not acceptable as a continuing implementation style.
   - `46c5a763 test: split fixture invariant tests`
   - `f3876a74 test: split blocker proof fixtures`
   - `83adea45 test: split proof blocker queries`
+  - `011a4264 test: split associated context fixtures`
+  - `7398c064 test: split context expansion query tests`
+  - `a4159987 test: split target proof method fixtures`
+
+## Recent consolidated DB split detail
+
+- `call_graph_fixture_queries/associated_context.rs` is now a thin module root
+  with alias, import, inherent, and trait-associated-function concerns split
+  into child files.
+- `call_graph_queries/context_expansion/expand.rs` is now a thin module root
+  with navigation and non-resolved-promotion query behavior split into child
+  files.
+- `call_graph_fixture_queries/target_proof/methods.rs` is now a thin module
+  root with method, associated-function, trait-associated-function, and trait
+  dispatch proof concerns split into child files.
 
 ## Resumption rules
 
@@ -503,3 +518,18 @@ For `83adea45 test: split proof blocker queries`:
 
 - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection::blockers -- --nocapture`
   - passed: `tests/mod.rs` 4 passed, 0 failed.
+
+For `011a4264 test: split associated context fixtures`:
+
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::associated_context -- --nocapture`
+  - passed: `tests/mod.rs` 5 passed, 0 failed.
+
+For `7398c064 test: split context expansion query tests`:
+
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries::context_expansion -- --nocapture`
+  - passed: `tests/mod.rs` 4 passed, 0 failed.
+
+For `a4159987 test: split target proof method fixtures`:
+
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::target_proof -- --nocapture`
+  - passed: `tests/mod.rs` 9 passed, 0 failed.
