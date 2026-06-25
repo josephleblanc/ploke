@@ -929,122 +929,48 @@ impl CallRelationSchema {
         relation: &CallRelation,
     ) -> Result<(), TransformError> {
         let schema = &CallRelationSchema::SCHEMA;
-        let params = match relation {
+        let (source_id, target_id) = match relation {
             CallRelation::Function { source, target } => {
                 let target_id: cozo::DataValue = (*target).into();
-                BTreeMap::from([
-                    (schema.source_id().to_string(), source.to_cozo_uuid()),
-                    (schema.target_id().to_string(), target_id),
-                    (
-                        schema.relation_kind().to_string(),
-                        cozo::DataValue::from(relation.kind_str()),
-                    ),
-                    (
-                        schema.source_kind().to_string(),
-                        cozo::DataValue::from("Path"),
-                    ),
-                    (
-                        schema.target_kind().to_string(),
-                        cozo::DataValue::from("Function"),
-                    ),
-                ])
+                (source.to_cozo_uuid(), target_id)
             }
             CallRelation::DynamicFunction { source, target } => {
                 let target_id: cozo::DataValue = (*target).into();
-                BTreeMap::from([
-                    (schema.source_id().to_string(), source.to_cozo_uuid()),
-                    (schema.target_id().to_string(), target_id),
-                    (
-                        schema.relation_kind().to_string(),
-                        cozo::DataValue::from(relation.kind_str()),
-                    ),
-                    (
-                        schema.source_kind().to_string(),
-                        cozo::DataValue::from("Dynamic"),
-                    ),
-                    (
-                        schema.target_kind().to_string(),
-                        cozo::DataValue::from("Function"),
-                    ),
-                ])
+                (source.to_cozo_uuid(), target_id)
             }
             CallRelation::Method { source, target } => {
                 let target_id: cozo::DataValue = (*target).into();
-                BTreeMap::from([
-                    (schema.source_id().to_string(), source.to_cozo_uuid()),
-                    (schema.target_id().to_string(), target_id),
-                    (
-                        schema.relation_kind().to_string(),
-                        cozo::DataValue::from(relation.kind_str()),
-                    ),
-                    (
-                        schema.source_kind().to_string(),
-                        cozo::DataValue::from("Method"),
-                    ),
-                    (
-                        schema.target_kind().to_string(),
-                        cozo::DataValue::from("Method"),
-                    ),
-                ])
+                (source.to_cozo_uuid(), target_id)
             }
             CallRelation::AssociatedFunction { source, target } => {
                 let target_id: cozo::DataValue = (*target).into();
-                BTreeMap::from([
-                    (schema.source_id().to_string(), source.to_cozo_uuid()),
-                    (schema.target_id().to_string(), target_id),
-                    (
-                        schema.relation_kind().to_string(),
-                        cozo::DataValue::from(relation.kind_str()),
-                    ),
-                    (
-                        schema.source_kind().to_string(),
-                        cozo::DataValue::from("Path"),
-                    ),
-                    (
-                        schema.target_kind().to_string(),
-                        cozo::DataValue::from("Method"),
-                    ),
-                ])
+                (source.to_cozo_uuid(), target_id)
             }
             CallRelation::TupleStructConstructor { source, target } => {
                 let target_id: cozo::DataValue = (*target).into();
-                BTreeMap::from([
-                    (schema.source_id().to_string(), source.to_cozo_uuid()),
-                    (schema.target_id().to_string(), target_id),
-                    (
-                        schema.relation_kind().to_string(),
-                        cozo::DataValue::from(relation.kind_str()),
-                    ),
-                    (
-                        schema.source_kind().to_string(),
-                        cozo::DataValue::from("Path"),
-                    ),
-                    (
-                        schema.target_kind().to_string(),
-                        cozo::DataValue::from("Struct"),
-                    ),
-                ])
+                (source.to_cozo_uuid(), target_id)
             }
             CallRelation::EnumVariantConstructor { source, target } => {
                 let target_id: cozo::DataValue = (*target).into();
-                BTreeMap::from([
-                    (schema.source_id().to_string(), source.to_cozo_uuid()),
-                    (schema.target_id().to_string(), target_id),
-                    (
-                        schema.relation_kind().to_string(),
-                        cozo::DataValue::from(relation.kind_str()),
-                    ),
-                    (
-                        schema.source_kind().to_string(),
-                        cozo::DataValue::from("Path"),
-                    ),
-                    (
-                        schema.target_kind().to_string(),
-                        cozo::DataValue::from("Variant"),
-                    ),
-                ])
+                (source.to_cozo_uuid(), target_id)
             }
         };
+        let params = BTreeMap::from([
+            (schema.source_id().to_string(), source_id),
+            (schema.target_id().to_string(), target_id),
+            (
+                schema.relation_kind().to_string(),
+                cozo::DataValue::from(relation.kind_str()),
+            ),
+            (
+                schema.source_kind().to_string(),
+                cozo::DataValue::from(relation.source_kind_str()),
+            ),
+            (
+                schema.target_kind().to_string(),
+                cozo::DataValue::from(relation.target_kind_str()),
+            ),
+        ]);
 
         let script = schema.script_put(&params);
         db.run_script(&script, params, cozo::ScriptMutability::Mutable)?;

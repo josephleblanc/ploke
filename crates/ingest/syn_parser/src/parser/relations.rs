@@ -234,6 +234,28 @@ impl CallRelation {
             Self::EnumVariantConstructor { .. } => "EnumVariantConstructor",
         }
     }
+
+    /// Returns the structural call-site endpoint kind for database projection.
+    pub fn source_kind_str(&self) -> &'static str {
+        match self {
+            Self::Function { .. }
+            | Self::AssociatedFunction { .. }
+            | Self::TupleStructConstructor { .. }
+            | Self::EnumVariantConstructor { .. } => "Path",
+            Self::DynamicFunction { .. } => "Dynamic",
+            Self::Method { .. } => "Method",
+        }
+    }
+
+    /// Returns the callable target endpoint kind for database projection.
+    pub fn target_kind_str(&self) -> &'static str {
+        match self {
+            Self::Function { .. } | Self::DynamicFunction { .. } => "Function",
+            Self::Method { .. } | Self::AssociatedFunction { .. } => "Method",
+            Self::TupleStructConstructor { .. } => "Struct",
+            Self::EnumVariantConstructor { .. } => "Variant",
+        }
+    }
 }
 
 /// Successful call-resolution proof class.
