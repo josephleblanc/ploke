@@ -647,111 +647,193 @@ mod gat_tests {
         use tokio::time::{Duration, sleep};
         use uuid::Uuid;
 
-        let db = Arc::new(Database::new(setup_db_full_multi_embedding(
-            "fixture_call_graph",
-        )?));
-        let target = one_uuid(&db, &struct_in_module_query(&["crate"], "NewType"))?;
-        let owner = one_uuid(
-            &db,
-            &function_in_module_query(&["crate"], "call_new_type_constructor"),
-        )?;
-
-        let rt = TestRuntime::new_with_embedding_processor(&db, EmbeddingProcessor::new_mock());
-        rt.setup_loaded_standalone_crate(ploke_test_utils::workspace_root())
-            .await;
-        let state = rt.state_arc();
-        {
-            let mut cfg = state.config.write().await;
-            cfg.rag.strategy = RetrievalStrategyUser::Sparse { strict: true };
-            cfg.rag.top_k = 1;
-            cfg.rag.per_part_max_tokens = 4096;
-            cfg.token_limit = 65_536;
+        struct Case<'a> {
+            label: &'a str,
+            fixture: &'a str,
+            search_term: &'a str,
+            top_k: usize,
+            target: ConstructorTarget<'a>,
+            owner_module: &'a [&'a str],
+            owner: &'a str,
+            path: &'a [&'a str],
+            relation: CallTargetKind,
         }
-        let rag = state
-            .rag
-            .as_ref()
-            .expect("test runtime should provide RagService")
-            .clone();
-        assert!(
-            !rag.call_context_degraded(),
-            "fresh fixture_call_graph projection should enable call-context expansion"
-        );
-        rag.bm25_rebuild().await?;
-        let mut ready = false;
-        for _ in 0..50 {
-            match rag.bm25_status().await? {
-                Bm25Status::Ready { docs } if docs > 0 => {
-                    ready = true;
-                    break;
-                }
-                Bm25Status::Error(err) => panic!("BM25 rebuild failed: {err}"),
-                _ => sleep(Duration::from_millis(50)).await,
-            }
-        }
-        assert!(
-            ready,
-            "BM25 index must become ready before request_code_context"
-        );
 
-        let ctx = super::super::Ctx {
-            state,
-            event_bus: Arc::new(crate::EventBus::new(crate::EventBusCaps::default())),
-            request_id: Uuid::new_v4(),
-            parent_id: Uuid::new_v4(),
-            call_id: ArcStr::from("constructor_call_context"),
-        };
-        let tool_result = RequestCodeContextGat::execute(
-            RequestCodeContextParams {
-                token_budget_per_result: Some(4096),
-                token_budget_total: Some(65_536),
-                search_term: Some(Cow::Borrowed("pub struct NewType")),
+        enum ConstructorTarget<'a> {
+            Struct {
+                module: &'a [&'a str],
+                name: &'a str,
             },
-            ctx,
-        )
-        .await?;
+            Variant {
+                enum_name: &'a str,
+                name: &'a str,
+            },
+        }
 
-        let result: RequestCodeContextResult = serde_json::from_str(&tool_result.content)?;
-        assert!(
-            result.ok,
-            "request_code_context returned error: {result:#?}"
-        );
-        assert_eq!(result.search_term, "pub struct NewType");
-        assert_eq!(result.top_k, 1);
-        assert!(
-            result
-                .note
-                .as_deref()
-                .is_none_or(|note| !note.contains("Call-context expansion is unavailable")),
-            "call-context degradation should not be surfaced for fixture_call_graph: {result:#?}"
-        );
+        let cases = [
+            Case {
+                label: "tuple constructor",
+                fixture: "fixture_call_graph",
+                search_term: "pub struct NewType",
+                top_k: 1,
+                target: ConstructorTarget::Struct {
+                    module: &["crate"],
+                    name: "NewType",
+                },
+                owner_module: &["crate"],
+                owner: "call_new_type_constructor",
+                path: &["NewType"],
+                relation: CallTargetKind::TupleStructConstructor,
+            },
+            Case {
+                label: "enum variant constructor",
+                fixture: "fixture_nodes",
+                search_term: "Variant1",
+                top_k: 10,
+                target: ConstructorTarget::Variant {
+                    enum_name: "EnumWithData",
+                    name: "Variant1",
+                },
+                owner_module: &["crate", "imports"],
+                owner: "use_imported_items",
+                path: &["EnumWithData", "Variant1"],
+                relation: CallTargetKind::EnumVariantConstructor,
+            },
+        ];
 
-        let caller_part =
-            result.context.iter().find(|part| part.id == owner).expect(
-                "request_code_context should materialize the tuple-constructor caller owner",
+        for case in cases {
+            let db = Arc::new(Database::new(setup_db_full_multi_embedding(case.fixture)?));
+            let target = match case.target {
+                ConstructorTarget::Struct { module, name } => {
+                    one_uuid(&db, &struct_in_module_query(module, name))?
+                }
+                ConstructorTarget::Variant { enum_name, name } => {
+                    one_uuid(&db, &variant_by_enum_query(enum_name, name))?
+                }
+            };
+            let owner = one_uuid(
+                &db,
+                &function_in_module_query(case.owner_module, case.owner),
+            )?;
+
+            let rt = TestRuntime::new_with_embedding_processor(&db, EmbeddingProcessor::new_mock());
+            rt.setup_loaded_standalone_crate(ploke_test_utils::workspace_root())
+                .await;
+            let state = rt.state_arc();
+            {
+                let mut cfg = state.config.write().await;
+                cfg.rag.strategy = RetrievalStrategyUser::Sparse { strict: true };
+                cfg.rag.top_k = case.top_k;
+                cfg.rag.per_part_max_tokens = 4096;
+                cfg.token_limit = 65_536;
+            }
+            let rag = state
+                .rag
+                .as_ref()
+                .expect("test runtime should provide RagService")
+                .clone();
+            assert!(
+                !rag.call_context_degraded(),
+                "fresh {} projection should enable call-context expansion",
+                case.fixture
             );
-        let call = caller_part
-            .call_context
-            .iter()
-            .find(|call| {
-                call.kind == CallSiteKind::Path
-                    && call.callee
-                        == CallCalleeInfo::Path {
-                            path: vec!["NewType".to_string()],
-                        }
-                    && call
-                        .targets
-                        .iter()
-                        .any(|target_info| target_info.target_id == target)
-            })
-            .expect("constructor caller should retain outgoing call context to the seed target");
-        assert_eq!(call.status, CallStatusKind::Resolved);
-        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
-        assert_eq!(call.targets.len(), 1);
-        assert_eq!(call.targets[0].target_id, target);
-        assert_eq!(
-            call.targets[0].relation,
-            CallTargetKind::TupleStructConstructor
-        );
+            rag.bm25_rebuild().await?;
+            let mut ready = false;
+            for _ in 0..50 {
+                match rag.bm25_status().await? {
+                    Bm25Status::Ready { docs } if docs > 0 => {
+                        ready = true;
+                        break;
+                    }
+                    Bm25Status::Error(err) => panic!("BM25 rebuild failed: {err}"),
+                    _ => sleep(Duration::from_millis(50)).await,
+                }
+            }
+            assert!(
+                ready,
+                "BM25 index must become ready before request_code_context"
+            );
+
+            let ctx = super::super::Ctx {
+                state,
+                event_bus: Arc::new(crate::EventBus::new(crate::EventBusCaps::default())),
+                request_id: Uuid::new_v4(),
+                parent_id: Uuid::new_v4(),
+                call_id: ArcStr::from("constructor_call_context"),
+            };
+            let tool_result = RequestCodeContextGat::execute(
+                RequestCodeContextParams {
+                    token_budget_per_result: Some(4096),
+                    token_budget_total: Some(65_536),
+                    search_term: Some(Cow::Borrowed(case.search_term)),
+                },
+                ctx,
+            )
+            .await?;
+
+            let result: RequestCodeContextResult = serde_json::from_str(&tool_result.content)?;
+            assert!(
+                result.ok,
+                "request_code_context returned error for {}: {result:#?}",
+                case.label
+            );
+            assert_eq!(result.search_term, case.search_term);
+            assert_eq!(result.top_k, case.top_k);
+            assert!(
+                result
+                    .note
+                    .as_deref()
+                    .is_none_or(|note| !note.contains("Call-context expansion is unavailable")),
+                "call-context degradation should not be surfaced for {}: {result:#?}",
+                case.fixture
+            );
+            assert!(
+                result.context.iter().any(|part| part.id == target),
+                "request_code_context should materialize the {} target seed",
+                case.label
+            );
+
+            let caller_part = result
+                .context
+                .iter()
+                .find(|part| part.id == owner)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "request_code_context should materialize the {} caller owner",
+                        case.label
+                    )
+                });
+            let expected_path = case
+                .path
+                .iter()
+                .map(|segment| (*segment).to_string())
+                .collect::<Vec<_>>();
+            let call = caller_part
+                .call_context
+                .iter()
+                .find(|call| {
+                    call.kind == CallSiteKind::Path
+                        && call.callee
+                            == CallCalleeInfo::Path {
+                                path: expected_path.clone(),
+                            }
+                        && call
+                            .targets
+                            .iter()
+                            .any(|target_info| target_info.target_id == target)
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{} caller should retain outgoing call context to the seed target",
+                        case.label
+                    )
+                });
+            assert_eq!(call.status, CallStatusKind::Resolved);
+            assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+            assert_eq!(call.targets.len(), 1);
+            assert_eq!(call.targets[0].target_id, target);
+            assert_eq!(call.targets[0].relation, case.relation);
+        }
 
         Ok(())
     }
@@ -1508,6 +1590,20 @@ mod gat_tests {
                     relation_kind: "Contains" @ 'NOW'
                 }},
                 *struct {{ id, name: "{name}" @ 'NOW' }}"#
+        )
+    }
+
+    #[cfg(feature = "test_harness")]
+    fn variant_by_enum_query(enum_name: &str, variant_name: &str) -> String {
+        format!(
+            r#"?[id] :=
+                *enum {{ id: enum_id, name: "{enum_name}" @ 'NOW' }},
+                *syntax_edge {{
+                    source_id: enum_id,
+                    target_id: id,
+                    relation_kind: "EnumVariant" @ 'NOW'
+                }},
+                *variant {{ id, name: "{variant_name}" @ 'NOW' }}"#
         )
     }
 
