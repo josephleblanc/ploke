@@ -5393,31 +5393,18 @@ fn fixture_projection_stores_real_target_centered_constructor_call_proof_facts()
         let resolved = assert_constructor_context(&db, case)?;
         let callers = assert_constructor_callers(&db, case, &resolved)?;
 
-        let count = db.project_call_proof_facts_for_target(resolved.target, case.domain)?;
-        assert_eq!(
-            count,
-            callers.len() * 3,
-            "{} target-centered proof count",
-            case.label
-        );
-
-        let edges = db.proof_checker_edges()?;
-        assert_eq!(
-            edges.len(),
-            callers.len(),
-            "{} target-centered proof edges: {edges:#?}",
-            case.label
-        );
-        assert!(
-            edges.iter().all(|edge| edge.callee_def_id.as_deref()
-                == Some(resolved.target_str.as_str())
-                && edge.resolution_state == "resolved"
-                && edge.blocker_reason.is_none()),
-            "{} target-centered proof edges should all resolve to the seed target: {edges:#?}",
-            case.label
-        );
-        assert_proof_edge(&edges, case, &resolved);
-        assert_provenance(&db, case, &resolved)?;
+        assert_target_proof_projection(
+            &db,
+            case.label,
+            case.domain,
+            resolved.target,
+            &callers,
+            &[TargetProofSite {
+                owner: resolved.owner,
+                site: resolved.site,
+            }],
+            case.source_suffix,
+        )?;
     }
 
     Ok(())
