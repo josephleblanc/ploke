@@ -19,7 +19,7 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `000a3e58 test: share resolved proof case helper`
+  `7140e189 test: share targetless owner case helper`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent TUI/model-visible cleanup:
   - `cc808347 test: cover variant constructor tool context`
@@ -82,6 +82,8 @@ are not acceptable as a continuing implementation style.
   - `72c56f6f test: split call graph proof helpers`
   - `7710313b test: share callable proof blocker helper`
   - `000a3e58 test: share resolved proof case helper`
+  - `e23d501a test: table-drive local target prevalidation`
+  - `7140e189 test: share targetless owner case helper`
 - Recent DB test-module split:
   - `7e51101d test: split dynamic call proof fixtures`
   - `09f8f967 test: split target proof fixtures`
@@ -145,6 +147,9 @@ are not acceptable as a continuing implementation style.
   proof fixture families, so owner-context lookup, resolved-target assertions,
   proof projection counts, and `OwnerProofEdge` collection are not copied
   across each fixture file.
+- `call_graph_fixture_common/targetless.rs` owns the shared
+  `TargetlessOwnerCase` helper for owner lookup, context row-count checks, and
+  targetless row assertions across mixed targetless fixture cases.
 - `ProofGraphStore` now exposes a build-domain scoped proof context query and
   shares linked-call-site row selection across symbol, GraphRAG text, and
   build-domain proof lookups. Real fixture proof lookup assertions are
@@ -225,6 +230,24 @@ next likely slices are:
    that batch before adding cases.
 
 ## Latest verification
+
+For `7140e189 test: share targetless owner case helper`:
+
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::dynamic_context::targetless -- --nocapture`
+  - passed: dynamic targetless fixture filter ran 2 tests, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::dynamic_context -- --nocapture`
+  - passed: dynamic context fixture filter ran 9 tests, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+  - passed: fixture-backed call-graph query filter ran 93 tests, 0 failed.
+
+For `e23d501a test: table-drive local target prevalidation`:
+
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection::prevalidation::local_targets -- --nocapture`
+  - passed: local target prevalidation filter ran 4 tests, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection::prevalidation -- --nocapture`
+  - passed: proof prevalidation filter ran 7 tests, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection -- --nocapture`
+  - passed: proof projection query filter ran 14 tests, 0 failed.
 
 For `000a3e58 test: share resolved proof case helper`:
 
