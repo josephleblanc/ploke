@@ -78,26 +78,16 @@ fn fixture_context_reads_projected_function_item_binding_calls() -> Result<(), D
 #[test]
 fn fixture_context_reads_projected_dynamic_function_call() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let owner = function_id_by_name(&db, "call_parenthesized_local_target")?;
     let target = function_id_by_name(&db, "local_target")?;
-
-    let context = db.call_context_for_owner(owner)?;
-    assert_eq!(context.len(), 1, "context rows: {context:#?}");
-
-    let row = &context[0];
-    assert_eq!(row.site.kind, CallSiteKind::Dynamic);
-    assert_eq!(row.site.path.as_ref(), Some(&path(&["local_target"])));
-    assert_eq!(row.site.arg_count, Some(0));
-    assert_eq!(row.site.generic_arg_count, None);
-    assert_eq!(row.status.status, CallStatusKind::Resolved);
-    assert_eq!(row.status.resolution, Some(CallResolutionKind::LocalExact));
-    assert_eq!(row.targets.len(), 1);
-    assert_eq!(row.targets[0].target_id, target);
-    assert_eq!(row.targets[0].relation, CallRelationKind::DynamicFunction);
-    assert_eq!(row.targets[0].source_kind, CallSiteKind::Dynamic);
-    assert_eq!(row.targets[0].target_kind, CallTargetKind::Function);
-
-    Ok(())
+    assert_resolved_dynamic_context_cases(
+        &db,
+        target,
+        &[ResolvedDynamicContextCase {
+            owner: "call_parenthesized_local_target",
+            path: &["local_target"],
+            expected_rows: 1,
+        }],
+    )
 }
 
 #[test]
@@ -105,37 +95,24 @@ fn fixture_context_reads_projected_parenthesized_binding_dynamic_calls() -> Resu
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let target = function_id_by_name(&db, "local_target")?;
     let cases = [
-        ("call_parenthesized_function_item_binding", &["f"][..]),
-        (
-            "call_parenthesized_aliased_function_item_binding",
-            &["g"][..],
-        ),
-        (
-            "call_parenthesized_typed_function_pointer_alias_binding",
-            &["g"][..],
-        ),
+        ResolvedDynamicContextCase {
+            owner: "call_parenthesized_function_item_binding",
+            path: &["f"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_parenthesized_aliased_function_item_binding",
+            path: &["g"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_parenthesized_typed_function_pointer_alias_binding",
+            path: &["g"],
+            expected_rows: 1,
+        },
     ];
 
-    for (owner_name, expected_path) in cases {
-        let owner = function_id_by_name(&db, owner_name)?;
-        let context = db.call_context_for_owner(owner)?;
-        assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
-
-        let row = row_by_kind_path(&context, CallSiteKind::Dynamic, expected_path);
-        assert_eq!(row.site.owner_id, owner);
-        assert_eq!(row.site.arg_count, Some(0));
-        assert_eq!(row.site.generic_arg_count, None);
-        assert_eq!(row.site.receiver, None);
-        assert_resolved_target(
-            row,
-            target,
-            CallRelationKind::DynamicFunction,
-            CallSiteKind::Dynamic,
-            CallTargetKind::Function,
-        );
-    }
-
-    Ok(())
+    assert_resolved_dynamic_context_cases(&db, target, &cases)
 }
 
 #[test]
@@ -191,205 +168,188 @@ fn fixture_context_reads_projected_resolved_dynamic_function_shapes() -> Result<
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let target = function_id_by_name(&db, "local_target")?;
     let cases = [
-        (
-            "call_function_pointer_cast_path",
-            path(&["local_target"]),
-            1,
-        ),
-        ("call_function_pointer_cast_binding", path(&["f"]), 1),
-        (
-            "call_dereferenced_function_pointer_binding",
-            path(&["f"]),
-            1,
-        ),
-        ("call_block_function_item", path(&["local_target"]), 1),
-        ("call_if_same_function_item", path(&["local_target"]), 1),
-        ("call_match_same_function_item", path(&["local_target"]), 1),
-        (
-            "call_named_field_function_binding",
-            path(&["holder", "callback"]),
-            1,
-        ),
-        (
-            "call_aliased_named_field_function_binding",
-            path(&["alias", "callback"]),
-            1,
-        ),
-        (
-            "call_indexed_named_field_function_binding",
-            path(&["holder", "callbacks", "0"]),
-            1,
-        ),
-        (
-            "call_indexed_named_field_array_alias_binding",
-            path(&["holder", "callbacks", "0"]),
-            1,
-        ),
-        (
-            "call_aliased_indexed_named_field_function_binding",
-            path(&["alias", "callbacks", "0"]),
-            1,
-        ),
-        (
-            "call_indexed_tuple_field_function_binding",
-            path(&["holder", "0", "0"]),
-            2,
-        ),
-        (
-            "call_indexed_tuple_field_array_alias_binding",
-            path(&["holder", "0", "0"]),
-            2,
-        ),
-        (
-            "call_aliased_indexed_tuple_field_function_binding",
-            path(&["alias", "0", "0"]),
-            2,
-        ),
-        (
-            "call_indexed_initialized_function_array",
-            path(&["funcs", "0"]),
-            1,
-        ),
-        (
-            "call_typed_indexed_initialized_function_array",
-            path(&["funcs", "0"]),
-            1,
-        ),
-        (
-            "call_aliased_indexed_initialized_function_array",
-            path(&["alias", "0"]),
-            1,
-        ),
+        ResolvedDynamicContextCase {
+            owner: "call_function_pointer_cast_path",
+            path: &["local_target"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_function_pointer_cast_binding",
+            path: &["f"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_dereferenced_function_pointer_binding",
+            path: &["f"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_block_function_item",
+            path: &["local_target"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_if_same_function_item",
+            path: &["local_target"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_match_same_function_item",
+            path: &["local_target"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_named_field_function_binding",
+            path: &["holder", "callback"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_aliased_named_field_function_binding",
+            path: &["alias", "callback"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_indexed_named_field_function_binding",
+            path: &["holder", "callbacks", "0"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_indexed_named_field_array_alias_binding",
+            path: &["holder", "callbacks", "0"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_aliased_indexed_named_field_function_binding",
+            path: &["alias", "callbacks", "0"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_indexed_tuple_field_function_binding",
+            path: &["holder", "0", "0"],
+            expected_rows: 2,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_indexed_tuple_field_array_alias_binding",
+            path: &["holder", "0", "0"],
+            expected_rows: 2,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_aliased_indexed_tuple_field_function_binding",
+            path: &["alias", "0", "0"],
+            expected_rows: 2,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_indexed_initialized_function_array",
+            path: &["funcs", "0"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_typed_indexed_initialized_function_array",
+            path: &["funcs", "0"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_aliased_indexed_initialized_function_array",
+            path: &["alias", "0"],
+            expected_rows: 1,
+        },
     ];
 
-    for (owner_name, expected_path, expected_rows) in cases {
-        let owner = function_id_by_name(&db, owner_name)?;
-        let refs = expected_path.iter().map(String::as_str).collect::<Vec<_>>();
-        let context = db.call_context_for_owner(owner)?;
-        assert_eq!(
-            context.len(),
-            expected_rows,
-            "{owner_name} context rows: {context:#?}"
-        );
-
-        let row = row_by_kind_path(&context, CallSiteKind::Dynamic, &refs);
-        assert_eq!(row.site.owner_id, owner);
-        assert_eq!(row.site.arg_count, Some(0));
-        assert_eq!(row.site.generic_arg_count, None);
-        assert_eq!(row.site.receiver, None);
-        assert_resolved_target(
-            row,
-            target,
-            CallRelationKind::DynamicFunction,
-            CallSiteKind::Dynamic,
-            CallTargetKind::Function,
-        );
-    }
-
-    Ok(())
+    assert_resolved_dynamic_context_cases(&db, target, &cases)
 }
 
 #[test]
 fn fixture_context_reads_projected_targetless_dynamic_failures() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let cases = [
-        (
-            "call_match_guarded_function_item",
-            None,
-            CallStatusKind::Unsupported,
-        ),
-        ("call_if_closure_branch", None, CallStatusKind::Unsupported),
-        ("call_match_closure_arm", None, CallStatusKind::Unsupported),
-        (
-            "call_parenthesized_function_pointer_param",
-            Some(path(&["f"])),
-            CallStatusKind::Unsupported,
-        ),
-        (
-            "call_if_function_pointer_param_branch",
-            None,
-            CallStatusKind::Unsupported,
-        ),
-        (
-            "call_match_function_pointer_param_arm",
-            None,
-            CallStatusKind::Unsupported,
-        ),
-        (
-            "call_if_nested_branch_expression",
-            None,
-            CallStatusKind::Unsupported,
-        ),
-        (
-            "call_match_nested_arm_expression",
-            None,
-            CallStatusKind::Unsupported,
-        ),
-        (
-            "call_closure_binding_cast",
-            None,
-            CallStatusKind::Unsupported,
-        ),
-        (
-            "call_dereferenced_closure_binding",
-            None,
-            CallStatusKind::Unsupported,
-        ),
-        (
-            "call_field_function_param",
-            Some(path(&["holder", "callback"])),
-            CallStatusKind::Unsupported,
-        ),
-        (
-            "call_indexed_function_pointer",
-            None,
-            CallStatusKind::Unsupported,
-        ),
-        (
-            "call_indexed_field_function_param",
-            None,
-            CallStatusKind::Unsupported,
-        ),
-        (
-            "call_indexed_tuple_field_function_param",
-            None,
-            CallStatusKind::Unsupported,
-        ),
-        (
-            "call_move_closure_literal_with_body_call",
-            None,
-            CallStatusKind::Unsupported,
-        ),
-        (
-            "call_async_closure_literal_with_body_call",
-            None,
-            CallStatusKind::Unsupported,
-        ),
-        (
-            "call_parenthesized_generic_fn_once_value_binding",
-            Some(path(&["generic_f"])),
-            CallStatusKind::Unsupported,
-        ),
+        TargetlessDynamicContextCase {
+            owner: "call_match_guarded_function_item",
+            path: None,
+            status: CallStatusKind::Unsupported,
+        },
+        TargetlessDynamicContextCase {
+            owner: "call_if_closure_branch",
+            path: None,
+            status: CallStatusKind::Unsupported,
+        },
+        TargetlessDynamicContextCase {
+            owner: "call_match_closure_arm",
+            path: None,
+            status: CallStatusKind::Unsupported,
+        },
+        TargetlessDynamicContextCase {
+            owner: "call_parenthesized_function_pointer_param",
+            path: Some(&["f"]),
+            status: CallStatusKind::Unsupported,
+        },
+        TargetlessDynamicContextCase {
+            owner: "call_if_function_pointer_param_branch",
+            path: None,
+            status: CallStatusKind::Unsupported,
+        },
+        TargetlessDynamicContextCase {
+            owner: "call_match_function_pointer_param_arm",
+            path: None,
+            status: CallStatusKind::Unsupported,
+        },
+        TargetlessDynamicContextCase {
+            owner: "call_if_nested_branch_expression",
+            path: None,
+            status: CallStatusKind::Unsupported,
+        },
+        TargetlessDynamicContextCase {
+            owner: "call_match_nested_arm_expression",
+            path: None,
+            status: CallStatusKind::Unsupported,
+        },
+        TargetlessDynamicContextCase {
+            owner: "call_closure_binding_cast",
+            path: None,
+            status: CallStatusKind::Unsupported,
+        },
+        TargetlessDynamicContextCase {
+            owner: "call_dereferenced_closure_binding",
+            path: None,
+            status: CallStatusKind::Unsupported,
+        },
+        TargetlessDynamicContextCase {
+            owner: "call_field_function_param",
+            path: Some(&["holder", "callback"]),
+            status: CallStatusKind::Unsupported,
+        },
+        TargetlessDynamicContextCase {
+            owner: "call_indexed_function_pointer",
+            path: None,
+            status: CallStatusKind::Unsupported,
+        },
+        TargetlessDynamicContextCase {
+            owner: "call_indexed_field_function_param",
+            path: None,
+            status: CallStatusKind::Unsupported,
+        },
+        TargetlessDynamicContextCase {
+            owner: "call_indexed_tuple_field_function_param",
+            path: None,
+            status: CallStatusKind::Unsupported,
+        },
+        TargetlessDynamicContextCase {
+            owner: "call_move_closure_literal_with_body_call",
+            path: None,
+            status: CallStatusKind::Unsupported,
+        },
+        TargetlessDynamicContextCase {
+            owner: "call_async_closure_literal_with_body_call",
+            path: None,
+            status: CallStatusKind::Unsupported,
+        },
+        TargetlessDynamicContextCase {
+            owner: "call_parenthesized_generic_fn_once_value_binding",
+            path: Some(&["generic_f"]),
+            status: CallStatusKind::Unsupported,
+        },
     ];
 
-    for (owner_name, expected_path, expected_status) in cases {
-        let owner = function_id_by_name(&db, owner_name)?;
-        let context = db.call_context_for_owner(owner)?;
-        assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
-
-        let row = &context[0];
-        assert_eq!(row.site.owner_id, owner);
-        assert_eq!(row.site.kind, CallSiteKind::Dynamic);
-        assert_eq!(row.site.path, expected_path);
-        assert_eq!(row.site.arg_count, Some(0));
-        assert_eq!(row.site.generic_arg_count, None);
-        assert_eq!(row.status.status, expected_status);
-        assert_eq!(row.status.resolution, None);
-        assert!(
-            row.targets.is_empty(),
-            "{owner_name} dynamic failure must not fabricate targets: {row:#?}"
-        );
-    }
+    assert_targetless_dynamic_context_cases(&db, &cases)?;
 
     let owner = function_id_by_name(&db, "call_parenthesized_boxed_dyn_fn_value_binding")?;
     let context = db.call_context_for_owner(owner)?;
