@@ -758,7 +758,9 @@ Post-gate evidence, 2026-06-23:
   stored as resolved proof edges with source provenance. Imported
   trait-associated function target-centered proof coverage now projects the
   real `ImportedAssocFunctionTrait::imported_trait_make` target and verifies
-  direct, alias, glob, re-export, and grouped-import callers. Dynamic
+  direct, alias, glob, re-export, and grouped-import callers. Owner-scoped
+  method-family proof tests now share checker-edge, provenance, and blocker
+  assertions while retaining per-family call-context target checks. Dynamic
   proof coverage now projects real resolved `DynamicFunction` calls including
   parenthesized path/binding callees, function-pointer cast/deref callees,
   block callees, indexed array callees, named-field/tuple-field callees, and

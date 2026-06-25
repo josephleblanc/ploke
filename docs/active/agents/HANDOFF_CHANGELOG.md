@@ -1020,3 +1020,11 @@ Previous archives:
 - Invariant: target-centered proof projection must keep rejecting unrelated blockers and must keep every emitted checker edge resolved to the seed target; helper consolidation must not weaken endpoint-family assertions for method or associated-function caller rows.
 - Verified: exact DB batch passed one test at a time: `fixture_projection_stores_real_target_centered_method_call_proof_facts`, `fixture_projection_stores_real_target_centered_associated_function_call_proof_facts`, `fixture_projection_stores_real_target_centered_imported_trait_assoc_function_call_proof_facts`, and `fixture_projection_stores_real_target_centered_trait_dispatch_call_proof_facts`.
 - Next implementation: continue inventory-driven batching; likely next DB/proof cleanup is owner-scoped method-family proof helper reuse or a deliberate backup-fixture review/regeneration slice if explicitly approved.
+
+## 2026-06-25 09:56 UTC - Consolidated owner-scoped method-family proof helpers
+
+- Branch/HEAD: `20d76bd4 Extend call graph context coverage`; active autonomous call-graph goal remains open.
+- Changed: extracted shared owner-scoped proof assertions for checker-edge count, resolved edge identity, source provenance span matching, and absence of `type_resolution_missing` blockers. Associated-function, local receiver method, trait-family method, and result/field receiver method proof tests now reuse the same helper while preserving their existing family-specific context row and target relation assertions.
+- Invariant: owner-scoped proof projection must continue proving exact call-site provenance and resolved callee identity for every expected edge; helper reuse must not weaken per-row `CallRelationKind` / `CallSiteKind` checks.
+- Verified: exact DB batch passed one test at a time: `fixture_projection_stores_real_associated_function_call_proof_facts`, `fixture_projection_stores_real_local_receiver_method_call_proof_facts`, `fixture_projection_stores_real_trait_family_method_call_proof_facts`, and `fixture_projection_stores_real_result_and_field_receiver_method_call_proof_facts`.
+- Next implementation: continue DB/proof helper consolidation where duplication is mechanical, or move to the next downstream public RAG/TUI gap backed by these DB contracts. Backup fixture regeneration remains approval-gated.

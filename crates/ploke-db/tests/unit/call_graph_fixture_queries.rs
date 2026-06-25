@@ -3417,46 +3417,20 @@ fn fixture_projection_stores_real_associated_function_call_proof_facts() -> Resu
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
         assert_eq!(count, 3, "{owner_name} proof fact count");
-        expected_edges.push((owner, site, span, target));
+        expected_edges.push(OwnerProofEdge {
+            owner,
+            site,
+            span,
+            target,
+        });
     }
 
-    let edges = db.proof_checker_edges()?;
-    assert_eq!(
-        edges.len(),
-        expected_edges.len(),
-        "associated-function proof checker edges: {edges:#?}"
-    );
-
-    for (owner, site, span, target) in expected_edges {
-        assert!(
-            edges.iter().any(|edge| {
-                edge.call_site_id == site.to_string()
-                    && edge.caller_def_id == owner.to_string()
-                    && edge.callee_def_id.as_deref() == Some(target.to_string().as_str())
-                    && edge.resolution_state == "resolved"
-                    && edge.blocker_reason.is_none()
-            }),
-            "associated-function proof edge missing for {site}: {edges:#?}"
-        );
-
-        let provenance = db
-            .proof_source_provenance(&site.to_string())?
-            .expect("projected fixture associated-function call-site source provenance");
-        assert!(
-            provenance
-                .source_file
-                .ends_with("fixture_call_graph/src/lib.rs"),
-            "source provenance for {site}: {provenance:#?}"
-        );
-        assert_eq!(provenance.start_byte, span.0);
-        assert_eq!(provenance.end_byte, span.1);
-    }
-
-    assert!(
-        db.proof_graphrag_context("type_resolution_missing")?
-            .is_empty(),
-        "resolved associated-function proofs should not produce type-resolution blockers"
-    );
+    assert_owner_proof_edges(
+        &db,
+        "associated-function",
+        &expected_edges,
+        "fixture_call_graph/src/lib.rs",
+    )?;
 
     Ok(())
 }
@@ -3560,46 +3534,20 @@ fn fixture_projection_stores_real_local_receiver_method_call_proof_facts() -> Re
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
         assert_eq!(count, 3, "{owner_name} proof fact count");
-        expected_edges.push((owner, site, span));
+        expected_edges.push(OwnerProofEdge {
+            owner,
+            site,
+            span,
+            target,
+        });
     }
 
-    let edges = db.proof_checker_edges()?;
-    assert_eq!(
-        edges.len(),
-        expected_edges.len(),
-        "local receiver method proof checker edges: {edges:#?}"
-    );
-
-    for (owner, site, span) in expected_edges {
-        assert!(
-            edges.iter().any(|edge| {
-                edge.call_site_id == site.to_string()
-                    && edge.caller_def_id == owner.to_string()
-                    && edge.callee_def_id.as_deref() == Some(target.to_string().as_str())
-                    && edge.resolution_state == "resolved"
-                    && edge.blocker_reason.is_none()
-            }),
-            "local receiver method proof edge missing for {site}: {edges:#?}"
-        );
-
-        let provenance = db
-            .proof_source_provenance(&site.to_string())?
-            .expect("projected fixture local receiver method call-site source provenance");
-        assert!(
-            provenance
-                .source_file
-                .ends_with("fixture_call_graph/src/lib.rs"),
-            "source provenance for {site}: {provenance:#?}"
-        );
-        assert_eq!(provenance.start_byte, span.0);
-        assert_eq!(provenance.end_byte, span.1);
-    }
-
-    assert!(
-        db.proof_graphrag_context("type_resolution_missing")?
-            .is_empty(),
-        "resolved local receiver method proofs should not produce type-resolution blockers"
-    );
+    assert_owner_proof_edges(
+        &db,
+        "local receiver method",
+        &expected_edges,
+        "fixture_call_graph/src/lib.rs",
+    )?;
 
     Ok(())
 }
@@ -3744,46 +3692,20 @@ fn fixture_projection_stores_real_trait_family_method_call_proof_facts() -> Resu
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
         assert_eq!(count, 3, "{owner_name} proof fact count");
-        expected_edges.push((owner, site, span, target));
+        expected_edges.push(OwnerProofEdge {
+            owner,
+            site,
+            span,
+            target,
+        });
     }
 
-    let edges = db.proof_checker_edges()?;
-    assert_eq!(
-        edges.len(),
-        expected_edges.len(),
-        "trait family method proof checker edges: {edges:#?}"
-    );
-
-    for (owner, site, span, target) in expected_edges {
-        assert!(
-            edges.iter().any(|edge| {
-                edge.call_site_id == site.to_string()
-                    && edge.caller_def_id == owner.to_string()
-                    && edge.callee_def_id.as_deref() == Some(target.to_string().as_str())
-                    && edge.resolution_state == "resolved"
-                    && edge.blocker_reason.is_none()
-            }),
-            "trait family method proof edge missing for {site}: {edges:#?}"
-        );
-
-        let provenance = db
-            .proof_source_provenance(&site.to_string())?
-            .expect("projected fixture trait family method call-site source provenance");
-        assert!(
-            provenance
-                .source_file
-                .ends_with("fixture_call_graph/src/lib.rs"),
-            "source provenance for {site}: {provenance:#?}"
-        );
-        assert_eq!(provenance.start_byte, span.0);
-        assert_eq!(provenance.end_byte, span.1);
-    }
-
-    assert!(
-        db.proof_graphrag_context("type_resolution_missing")?
-            .is_empty(),
-        "resolved trait family method proofs should not produce type-resolution blockers"
-    );
+    assert_owner_proof_edges(
+        &db,
+        "trait family method",
+        &expected_edges,
+        "fixture_call_graph/src/lib.rs",
+    )?;
 
     Ok(())
 }
@@ -3810,7 +3732,12 @@ fn fixture_projection_stores_real_result_and_field_receiver_method_call_proof_fa
         CallSiteKind::Path,
         CallRelationKind::Function,
     );
-    expected_edges.push((owner, row.site.id, row.site.span, make_target));
+    expected_edges.push(OwnerProofEdge {
+        owner,
+        site: row.site.id,
+        span: row.site.span,
+        target: make_target,
+    });
 
     let receiver = CallReceiver::PathCallResult {
         path: path(&["make_local_assoc"]),
@@ -3823,7 +3750,12 @@ fn fixture_projection_stores_real_result_and_field_receiver_method_call_proof_fa
         CallSiteKind::Method,
         CallRelationKind::Method,
     );
-    expected_edges.push((owner, row.site.id, row.site.span, method_target));
+    expected_edges.push(OwnerProofEdge {
+        owner,
+        site: row.site.id,
+        span: row.site.span,
+        target: method_target,
+    });
     assert_eq!(
         db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?,
         6
@@ -3844,7 +3776,12 @@ fn fixture_projection_stores_real_result_and_field_receiver_method_call_proof_fa
         CallSiteKind::Method,
         CallRelationKind::Method,
     );
-    expected_edges.push((owner, row.site.id, row.site.span, clone_target));
+    expected_edges.push(OwnerProofEdge {
+        owner,
+        site: row.site.id,
+        span: row.site.span,
+        target: clone_target,
+    });
 
     let receiver = CallReceiver::MethodCallResult {
         method_name: "clone_assoc".to_string(),
@@ -3857,7 +3794,12 @@ fn fixture_projection_stores_real_result_and_field_receiver_method_call_proof_fa
         CallSiteKind::Method,
         CallRelationKind::Method,
     );
-    expected_edges.push((owner, row.site.id, row.site.span, method_target));
+    expected_edges.push(OwnerProofEdge {
+        owner,
+        site: row.site.id,
+        span: row.site.span,
+        target: method_target,
+    });
     assert_eq!(
         db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?,
         6
@@ -3874,7 +3816,12 @@ fn fixture_projection_stores_real_result_and_field_receiver_method_call_proof_fa
         CallSiteKind::Path,
         CallRelationKind::Function,
     );
-    expected_edges.push((owner, row.site.id, row.site.span, ready_target));
+    expected_edges.push(OwnerProofEdge {
+        owner,
+        site: row.site.id,
+        span: row.site.span,
+        target: ready_target,
+    });
 
     let receiver = CallReceiver::AwaitPathCallResult {
         path: path(&["make_ready_local_assoc"]),
@@ -3887,7 +3834,12 @@ fn fixture_projection_stores_real_result_and_field_receiver_method_call_proof_fa
         CallSiteKind::Method,
         CallRelationKind::Method,
     );
-    expected_edges.push((owner, row.site.id, row.site.span, method_target));
+    expected_edges.push(OwnerProofEdge {
+        owner,
+        site: row.site.id,
+        span: row.site.span,
+        target: method_target,
+    });
     assert_eq!(
         db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?,
         6
@@ -3904,7 +3856,12 @@ fn fixture_projection_stores_real_result_and_field_receiver_method_call_proof_fa
         CallSiteKind::Path,
         CallRelationKind::Struct,
     );
-    expected_edges.push((owner, row.site.id, row.site.span, tuple_target));
+    expected_edges.push(OwnerProofEdge {
+        owner,
+        site: row.site.id,
+        span: row.site.span,
+        target: tuple_target,
+    });
 
     let receiver = CallReceiver::FieldInitializedLocalBinding {
         name: "value".to_string(),
@@ -3919,49 +3876,23 @@ fn fixture_projection_stores_real_result_and_field_receiver_method_call_proof_fa
         CallSiteKind::Method,
         CallRelationKind::Method,
     );
-    expected_edges.push((owner, row.site.id, row.site.span, method_target));
+    expected_edges.push(OwnerProofEdge {
+        owner,
+        site: row.site.id,
+        span: row.site.span,
+        target: method_target,
+    });
     assert_eq!(
         db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?,
         6
     );
 
-    let edges = db.proof_checker_edges()?;
-    assert_eq!(
-        edges.len(),
-        expected_edges.len(),
-        "result/field receiver proof checker edges: {edges:#?}"
-    );
-
-    for (owner, site, span, target) in expected_edges {
-        assert!(
-            edges.iter().any(|edge| {
-                edge.call_site_id == site.to_string()
-                    && edge.caller_def_id == owner.to_string()
-                    && edge.callee_def_id.as_deref() == Some(target.to_string().as_str())
-                    && edge.resolution_state == "resolved"
-                    && edge.blocker_reason.is_none()
-            }),
-            "result/field receiver proof edge missing for {site}: {edges:#?}"
-        );
-
-        let provenance = db
-            .proof_source_provenance(&site.to_string())?
-            .expect("projected fixture result/field receiver call-site source provenance");
-        assert!(
-            provenance
-                .source_file
-                .ends_with("fixture_call_graph/src/lib.rs"),
-            "source provenance for {site}: {provenance:#?}"
-        );
-        assert_eq!(provenance.start_byte, span.0);
-        assert_eq!(provenance.end_byte, span.1);
-    }
-
-    assert!(
-        db.proof_graphrag_context("type_resolution_missing")?
-            .is_empty(),
-        "resolved result/field receiver method proofs should not produce type-resolution blockers"
-    );
+    assert_owner_proof_edges(
+        &db,
+        "result/field receiver method",
+        &expected_edges,
+        "fixture_call_graph/src/lib.rs",
+    )?;
 
     Ok(())
 }
@@ -6005,9 +5936,65 @@ fn fixture_projection_stores_real_target_centered_trait_dispatch_call_proof_fact
 }
 
 #[derive(Clone, Copy)]
+struct OwnerProofEdge {
+    owner: Uuid,
+    site: Uuid,
+    span: (u32, u32),
+    target: Uuid,
+}
+
+#[derive(Clone, Copy)]
 struct TargetProofSite {
     owner: Uuid,
     site: Uuid,
+}
+
+fn assert_owner_proof_edges(
+    db: &Database,
+    label: &str,
+    expected: &[OwnerProofEdge],
+    source_suffix: &str,
+) -> Result<(), DbError> {
+    let edges = db.proof_checker_edges()?;
+    assert_eq!(
+        edges.len(),
+        expected.len(),
+        "{label} proof checker edges: {edges:#?}"
+    );
+
+    for expected in expected {
+        let owner = expected.owner.to_string();
+        let site = expected.site.to_string();
+        let target = expected.target.to_string();
+        assert!(
+            edges.iter().any(|edge| {
+                edge.call_site_id == site
+                    && edge.caller_def_id == owner
+                    && edge.callee_def_id.as_deref() == Some(target.as_str())
+                    && edge.resolution_state == "resolved"
+                    && edge.blocker_reason.is_none()
+            }),
+            "{label} proof edge missing for {site}: {edges:#?}"
+        );
+
+        let provenance = db
+            .proof_source_provenance(&site)?
+            .unwrap_or_else(|| panic!("projected fixture {label} call-site source provenance"));
+        assert!(
+            provenance.source_file.ends_with(source_suffix),
+            "source provenance for {site}: {provenance:#?}"
+        );
+        assert_eq!(provenance.start_byte, expected.span.0);
+        assert_eq!(provenance.end_byte, expected.span.1);
+    }
+
+    assert!(
+        db.proof_graphrag_context("type_resolution_missing")?
+            .is_empty(),
+        "resolved {label} proofs should not produce type-resolution blockers"
+    );
+
+    Ok(())
 }
 
 fn assert_resolved_target_callers(
