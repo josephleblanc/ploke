@@ -4037,20 +4037,20 @@ fn fixture_projection_marks_real_external_call_without_edges() -> Result<(), DbE
     let context = db.call_context_for_owner(owner)?;
     assert_eq!(context.len(), 1, "context rows: {context:#?}");
     let site = context[0].site.id;
+    let span = context[0].site.span;
 
     let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
     assert_eq!(count, 2);
-    assert!(db.proof_checker_edges()?.is_empty());
-
-    let rows = db.proof_graphrag_context("external_dependency_summary_missing")?;
-    assert!(
-        rows.iter().any(|row| {
-            row.kind == "call_resolution"
-                && row.call_site_id.as_deref() == Some(site.to_string().as_str())
-                && row.blocker_reason.as_deref() == Some("external_dependency_summary_missing")
-        }),
-        "external proof rows: {rows:#?}"
-    );
+    assert_targetless_blocker_proofs(
+        &db,
+        "external",
+        &[BlockerProofSite {
+            site,
+            span,
+            blocker_reason: "external_dependency_summary_missing",
+        }],
+        "fixture_call_graph/src/lib.rs",
+    )?;
 
     Ok(())
 }
@@ -4125,33 +4125,14 @@ fn fixture_projection_marks_real_macro_call_without_edges() -> Result<(), DbErro
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
         assert_eq!(count, 2);
-        expected.push((site, span));
+        expected.push(BlockerProofSite {
+            site,
+            span,
+            blocker_reason: "macro_expansion_not_available",
+        });
     }
 
-    assert!(db.proof_checker_edges()?.is_empty());
-    let rows = db.proof_graphrag_context("macro_expansion_not_available")?;
-    for (site, span) in expected {
-        assert!(
-            rows.iter().any(|row| {
-                row.kind == "call_resolution"
-                    && row.call_site_id.as_deref() == Some(site.to_string().as_str())
-                    && row.blocker_reason.as_deref() == Some("macro_expansion_not_available")
-            }),
-            "macro proof rows missing {site}: {rows:#?}"
-        );
-
-        let provenance = db
-            .proof_source_provenance(&site.to_string())?
-            .expect("projected fixture macro call-site source provenance");
-        assert!(
-            provenance
-                .source_file
-                .ends_with("fixture_call_graph/src/lib.rs"),
-            "source provenance: {provenance:#?}"
-        );
-        assert_eq!(provenance.start_byte, span.0);
-        assert_eq!(provenance.end_byte, span.1);
-    }
+    assert_targetless_blocker_proofs(&db, "macro", &expected, "fixture_call_graph/src/lib.rs")?;
 
     Ok(())
 }
@@ -4176,29 +4157,16 @@ fn fixture_projection_marks_real_ambiguous_call_without_edges() -> Result<(), Db
 
     let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
     assert_eq!(count, 2);
-    assert!(db.proof_checker_edges()?.is_empty());
-
-    let rows = db.proof_graphrag_context("type_resolution_missing")?;
-    assert!(
-        rows.iter().any(|row| {
-            row.kind == "call_resolution"
-                && row.call_site_id.as_deref() == Some(site.to_string().as_str())
-                && row.blocker_reason.as_deref() == Some("type_resolution_missing")
-        }),
-        "ambiguous proof rows: {rows:#?}"
-    );
-
-    let provenance = db
-        .proof_source_provenance(&site.to_string())?
-        .expect("projected fixture ambiguous call-site source provenance");
-    assert!(
-        provenance
-            .source_file
-            .ends_with("fixture_call_graph/src/lib.rs"),
-        "source provenance: {provenance:#?}"
-    );
-    assert_eq!(provenance.start_byte, span.0);
-    assert_eq!(provenance.end_byte, span.1);
+    assert_targetless_blocker_proofs(
+        &db,
+        "ambiguous",
+        &[BlockerProofSite {
+            site,
+            span,
+            blocker_reason: "type_resolution_missing",
+        }],
+        "fixture_call_graph/src/lib.rs",
+    )?;
 
     Ok(())
 }
@@ -4458,11 +4426,13 @@ fn fixture_projection_stores_real_field_dynamic_call_proof_facts() -> Result<(),
 
 #[test]
 fn fixture_projection_marks_real_unsupported_dynamic_call_without_edges() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let mut expected = Vec::new();
+
     for owner_name in [
         "call_closure_binding_cast",
         "call_dereferenced_closure_binding",
     ] {
-        let db = setup_call_graph_fixture_db("fixture_call_graph")?;
         let owner = function_id_by_name(&db, owner_name)?;
         let context = db.call_context_for_owner(owner)?;
         assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
@@ -4479,30 +4449,19 @@ fn fixture_projection_marks_real_unsupported_dynamic_call_without_edges() -> Res
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
         assert_eq!(count, 2);
-        assert!(db.proof_checker_edges()?.is_empty());
-
-        let rows = db.proof_graphrag_context("dynamic_dispatch_unbounded")?;
-        assert!(
-            rows.iter().any(|row| {
-                row.kind == "call_resolution"
-                    && row.call_site_id.as_deref() == Some(site.to_string().as_str())
-                    && row.blocker_reason.as_deref() == Some("dynamic_dispatch_unbounded")
-            }),
-            "{owner_name} unsupported dynamic proof rows: {rows:#?}"
-        );
-
-        let provenance = db
-            .proof_source_provenance(&site.to_string())?
-            .expect("projected fixture unsupported dynamic call-site source provenance");
-        assert!(
-            provenance
-                .source_file
-                .ends_with("fixture_call_graph/src/lib.rs"),
-            "{owner_name} source provenance: {provenance:#?}"
-        );
-        assert_eq!(provenance.start_byte, span.0);
-        assert_eq!(provenance.end_byte, span.1);
+        expected.push(BlockerProofSite {
+            site,
+            span,
+            blocker_reason: "dynamic_dispatch_unbounded",
+        });
     }
+
+    assert_targetless_blocker_proofs(
+        &db,
+        "unsupported dynamic",
+        &expected,
+        "fixture_call_graph/src/lib.rs",
+    )?;
 
     Ok(())
 }
@@ -4558,8 +4517,10 @@ fn fixture_projection_marks_real_branch_and_match_dynamic_failures_without_edges
         ),
     ];
 
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let mut expected = Vec::new();
+
     for (owner_name, expected_status, blocker_reason) in cases {
-        let db = setup_call_graph_fixture_db("fixture_call_graph")?;
         let owner = function_id_by_name(&db, owner_name)?;
         let context = db.call_context_for_owner(owner)?;
         assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
@@ -4577,33 +4538,19 @@ fn fixture_projection_marks_real_branch_and_match_dynamic_failures_without_edges
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
         assert_eq!(count, 2);
-        assert!(
-            db.proof_checker_edges()?.is_empty(),
-            "{owner_name} dynamic failure must not fabricate proof edges"
-        );
-
-        let rows = db.proof_graphrag_context(blocker_reason)?;
-        assert!(
-            rows.iter().any(|row| {
-                row.kind == "call_resolution"
-                    && row.call_site_id.as_deref() == Some(site.to_string().as_str())
-                    && row.blocker_reason.as_deref() == Some(blocker_reason)
-            }),
-            "{owner_name} dynamic failure proof rows: {rows:#?}"
-        );
-
-        let provenance = db
-            .proof_source_provenance(&site.to_string())?
-            .expect("projected fixture branch/match dynamic call-site source provenance");
-        assert!(
-            provenance
-                .source_file
-                .ends_with("fixture_call_graph/src/lib.rs"),
-            "{owner_name} source provenance: {provenance:#?}"
-        );
-        assert_eq!(provenance.start_byte, span.0);
-        assert_eq!(provenance.end_byte, span.1);
+        expected.push(BlockerProofSite {
+            site,
+            span,
+            blocker_reason,
+        });
     }
+
+    assert_targetless_blocker_proofs(
+        &db,
+        "branch/match dynamic failure",
+        &expected,
+        "fixture_call_graph/src/lib.rs",
+    )?;
 
     Ok(())
 }
@@ -5729,6 +5676,13 @@ struct TargetProofSite {
     site: Uuid,
 }
 
+#[derive(Clone, Copy)]
+struct BlockerProofSite {
+    site: Uuid,
+    span: (u32, u32),
+    blocker_reason: &'static str,
+}
+
 fn assert_owner_proof_edges(
     db: &Database,
     label: &str,
@@ -5780,6 +5734,43 @@ fn assert_owner_proof_edges(
         db.proof_graphrag_context(blocker_reason)?.is_empty(),
         "resolved {label} proofs should not produce {blocker_reason} blockers"
     );
+
+    Ok(())
+}
+
+fn assert_targetless_blocker_proofs(
+    db: &Database,
+    label: &str,
+    expected: &[BlockerProofSite],
+    source_suffix: &str,
+) -> Result<(), DbError> {
+    assert!(
+        db.proof_checker_edges()?.is_empty(),
+        "{label} targetless blockers must not fabricate proof edges"
+    );
+
+    for expected in expected {
+        let site = expected.site.to_string();
+        let rows = db.proof_graphrag_context(expected.blocker_reason)?;
+        assert!(
+            rows.iter().any(|row| {
+                row.kind == "call_resolution"
+                    && row.call_site_id.as_deref() == Some(site.as_str())
+                    && row.blocker_reason.as_deref() == Some(expected.blocker_reason)
+            }),
+            "{label} proof rows missing {site}: {rows:#?}"
+        );
+
+        let provenance = db
+            .proof_source_provenance(&site)?
+            .unwrap_or_else(|| panic!("projected fixture {label} call-site source provenance"));
+        assert!(
+            provenance.source_file.ends_with(source_suffix),
+            "source provenance for {site}: {provenance:#?}"
+        );
+        assert_eq!(provenance.start_byte, expected.span.0);
+        assert_eq!(provenance.end_byte, expected.span.1);
+    }
 
     Ok(())
 }
