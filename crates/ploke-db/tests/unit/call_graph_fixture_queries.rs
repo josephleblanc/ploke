@@ -1,7 +1,8 @@
 use ploke_db::{
-    CallCallerRow, CallContextOptions, CallContextRelation, CallContextSeed, CallReceiver,
-    CallRelationKind, CallResolutionKind, CallSiteKind, CallStatusKind, CallTargetKind, Database,
-    DbError, ProofCheckerEdgeRow, ProofGraphStore, ProofInvariantStatus, to_uuid,
+    CallCallerRow, CallContextOptions, CallContextRelation, CallContextRow, CallContextSeed,
+    CallReceiver, CallRelationKind, CallResolutionKind, CallSiteKind, CallStatusKind,
+    CallTargetKind, Database, DbError, ProofCheckerEdgeRow, ProofGraphStore, ProofInvariantStatus,
+    to_uuid,
 };
 use uuid::Uuid;
 
@@ -1116,44 +1117,14 @@ fn fixture_context_reads_projected_resolved_dynamic_function_shapes() -> Result<
 #[test]
 fn fixture_context_reads_projected_ambiguous_dynamic_candidates() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let first = function_id_by_name(&db, "local_target")?;
-    let second = function_id_by_name(&db, "other_target")?;
-    let mut expected = vec![first, second];
-    expected.sort_unstable();
+    let expected = dynamic_candidates(&db)?;
 
-    for owner_name in [
-        "call_if_ambiguous_function_item",
-        "call_match_ambiguous_function_item",
-    ] {
+    for owner_name in AMBIGUOUS_DYNAMIC_OWNERS {
         let owner = function_id_by_name(&db, owner_name)?;
         let context = db.call_context_for_owner(owner)?;
         assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
 
-        let row = &context[0];
-        assert_eq!(row.site.owner_id, owner);
-        assert_eq!(row.site.kind, CallSiteKind::Dynamic);
-        assert_eq!(row.site.path, None);
-        assert_eq!(row.site.arg_count, Some(0));
-        assert_eq!(row.site.generic_arg_count, None);
-        assert_eq!(row.status.status, CallStatusKind::Ambiguous);
-        assert_eq!(row.status.resolution, None);
-        assert_eq!(row.targets.len(), 2, "{owner_name} targets: {row:#?}");
-        assert!(row.targets.iter().all(|target| {
-            target.relation == CallRelationKind::DynamicFunction
-                && target.source_kind == CallSiteKind::Dynamic
-                && target.target_kind == CallTargetKind::Function
-        }));
-
-        let mut actual = row
-            .targets
-            .iter()
-            .map(|target| target.target_id)
-            .collect::<Vec<_>>();
-        actual.sort_unstable();
-        assert_eq!(
-            actual, expected,
-            "{owner_name} should expose proven ambiguous dynamic candidates"
-        );
+        assert_dynamic_candidates(&context[0], owner, &expected, owner_name);
     }
 
     Ok(())
@@ -4503,73 +4474,23 @@ fn fixture_projection_marks_real_unsupported_dynamic_call_without_edges() -> Res
 fn fixture_projection_marks_real_branch_and_match_dynamic_ambiguity_with_candidates()
 -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let mut expected_targets = vec![
-        function_id_by_name(&db, "local_target")?.to_string(),
-        function_id_by_name(&db, "other_target")?.to_string(),
-    ];
-    expected_targets.sort();
+    let expected = dynamic_candidates(&db)?;
+    let expected_names = candidate_strings(&expected);
 
-    for owner_name in [
-        "call_if_ambiguous_function_item",
-        "call_match_ambiguous_function_item",
-    ] {
+    for owner_name in AMBIGUOUS_DYNAMIC_OWNERS {
         let owner = function_id_by_name(&db, owner_name)?;
         let context = db.call_context_for_owner(owner)?;
         assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
         let row = &context[0];
-        assert_eq!(row.site.kind, CallSiteKind::Dynamic);
-        assert_eq!(row.site.owner_id, owner);
-        assert_eq!(row.status.status, CallStatusKind::Ambiguous);
-        assert_eq!(row.status.resolution, None);
-        assert_eq!(row.targets.len(), 2, "{owner_name} targets: {row:#?}");
+        assert_dynamic_candidates(row, owner, &expected, owner_name);
 
         let site = row.site.id.to_string();
         let facts = db.call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
-        assert_eq!(facts.len(), 2, "{owner_name} proof facts: {facts:#?}");
-
-        let resolution = facts
-            .iter()
-            .find(|fact| {
-                fact.get("fact_kind").and_then(serde_json::Value::as_str) == Some("call_resolution")
-                    && fact.get("call_site_id").and_then(serde_json::Value::as_str)
-                        == Some(site.as_str())
-            })
-            .unwrap_or_else(|| panic!("{owner_name} should project call_resolution proof fact"));
-        assert_eq!(
-            resolution
-                .get("blocking_reason")
-                .and_then(serde_json::Value::as_str),
-            Some("type_resolution_missing")
-        );
-        let mut actual_targets = resolution
-            .get("candidate_def_ids")
-            .and_then(serde_json::Value::as_array)
-            .expect("ambiguous dynamic resolution should carry candidate_def_ids")
-            .iter()
-            .map(|value| {
-                value
-                    .as_str()
-                    .expect("candidate_def_ids should contain string IDs")
-                    .to_string()
-            })
-            .collect::<Vec<_>>();
-        actual_targets.sort();
-        assert_eq!(
-            actual_targets, expected_targets,
-            "{owner_name} candidate_def_ids"
-        );
+        assert_candidate_proof(&facts, &site, &expected_names, owner_name);
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
         assert_eq!(count, 2, "{owner_name} projected proof fact count");
-        let rows = db.proof_graphrag_context("type_resolution_missing")?;
-        assert!(
-            rows.iter().any(|proof| {
-                proof.kind == "call_resolution"
-                    && proof.call_site_id.as_deref() == Some(site.as_str())
-                    && proof.blocker_reason.as_deref() == Some("type_resolution_missing")
-            }),
-            "{owner_name} projected ambiguous blocker proof rows: {rows:#?}"
-        );
+        assert_candidate_blocker(&db, &site, owner_name)?;
     }
 
     Ok(())
@@ -5812,6 +5733,110 @@ fn assert_targetless_blocker_proofs(
     );
 
     assert_blocker_proofs(db, label, expected, source_suffix)
+}
+
+const AMBIGUOUS_DYNAMIC_OWNERS: [&str; 2] = [
+    "call_if_ambiguous_function_item",
+    "call_match_ambiguous_function_item",
+];
+
+fn dynamic_candidates(db: &Database) -> Result<Vec<Uuid>, DbError> {
+    let mut expected = vec![
+        function_id_by_name(db, "local_target")?,
+        function_id_by_name(db, "other_target")?,
+    ];
+    expected.sort_unstable();
+    Ok(expected)
+}
+
+fn candidate_strings(candidates: &[Uuid]) -> Vec<String> {
+    let mut expected = candidates
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    expected.sort();
+    expected
+}
+
+fn assert_dynamic_candidates(row: &CallContextRow, owner: Uuid, expected: &[Uuid], label: &str) {
+    assert_eq!(row.site.owner_id, owner);
+    assert_eq!(row.site.kind, CallSiteKind::Dynamic);
+    assert_eq!(row.site.path, None);
+    assert_eq!(row.site.arg_count, Some(0));
+    assert_eq!(row.site.generic_arg_count, None);
+    assert_eq!(row.status.status, CallStatusKind::Ambiguous);
+    assert_eq!(row.status.resolution, None);
+    assert_eq!(
+        row.targets.len(),
+        expected.len(),
+        "{label} targets: {row:#?}"
+    );
+    assert!(row.targets.iter().all(|target| {
+        target.relation == CallRelationKind::DynamicFunction
+            && target.source_kind == CallSiteKind::Dynamic
+            && target.target_kind == CallTargetKind::Function
+    }));
+
+    let mut actual = row
+        .targets
+        .iter()
+        .map(|target| target.target_id)
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    assert_eq!(
+        actual, expected,
+        "{label} should expose proven ambiguous dynamic candidates"
+    );
+}
+
+fn assert_candidate_proof(
+    facts: &[serde_json::Value],
+    site: &str,
+    expected: &[String],
+    label: &str,
+) {
+    assert_eq!(facts.len(), 2, "{label} proof facts: {facts:#?}");
+
+    let resolution = facts
+        .iter()
+        .find(|fact| {
+            fact.get("fact_kind").and_then(serde_json::Value::as_str) == Some("call_resolution")
+                && fact.get("call_site_id").and_then(serde_json::Value::as_str) == Some(site)
+        })
+        .unwrap_or_else(|| panic!("{label} should project call_resolution proof fact"));
+    assert_eq!(
+        resolution
+            .get("blocking_reason")
+            .and_then(serde_json::Value::as_str),
+        Some("type_resolution_missing")
+    );
+    let mut actual = resolution
+        .get("candidate_def_ids")
+        .and_then(serde_json::Value::as_array)
+        .expect("ambiguous dynamic resolution should carry candidate_def_ids")
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .expect("candidate_def_ids should contain string IDs")
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    actual.sort();
+    assert_eq!(actual, expected, "{label} candidate_def_ids");
+}
+
+fn assert_candidate_blocker(db: &Database, site: &str, label: &str) -> Result<(), DbError> {
+    let rows = db.proof_graphrag_context("type_resolution_missing")?;
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site)
+                && proof.blocker_reason.as_deref() == Some("type_resolution_missing")
+        }),
+        "{label} projected ambiguous blocker proof rows: {rows:#?}"
+    );
+    Ok(())
 }
 
 fn assert_blocker_proofs(
