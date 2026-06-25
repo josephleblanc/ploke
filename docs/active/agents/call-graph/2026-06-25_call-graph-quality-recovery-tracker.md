@@ -19,7 +19,7 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `334b87af test: split target proof helpers`
+  `83111953 test: batch resolved dynamic proof assertions`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent TUI/model-visible cleanup:
   - `cc808347 test: cover variant constructor tool context`
@@ -98,6 +98,8 @@ are not acceptable as a continuing implementation style.
   - `2aa601b0 test: split dynamic fixture helpers`
   - `8a3a5a7b test: split call graph row helpers`
   - `334b87af test: split target proof helpers`
+  - `b8af3b29 test: share call expansion candidate assertions`
+  - `83111953 test: batch resolved dynamic proof assertions`
 - Recent DB test-module split:
   - `7e51101d test: split dynamic call proof fixtures`
   - `09f8f967 test: split target proof fixtures`
@@ -222,9 +224,26 @@ are not acceptable as a continuing implementation style.
   `proof/targets/` helper root with target-proof case construction,
   caller/count validation, and target proof projection assertions separated by
   concern while preserving the existing target-proof helper surface.
+- Context-expansion fixture tests now share incoming/outgoing candidate
+  assertions through `call_graph_fixture_common/selectors.rs`, so relation,
+  target, call-site, and distance checks are centralized instead of copied in
+  each expansion test.
+- Resolved dynamic proof fixture tests now share a dynamic proof batch helper
+  that preserves fresh-DB isolation per proof group while moving repeated
+  target lookup, proof projection, and owner-edge assertions out of each test.
 
 ## Recent verification
 
+- `83111953 test: batch resolved dynamic proof assertions`
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::dynamic_proof -- --nocapture`
+    passed: 7 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+    passed: 93 passed, 0 failed.
+- `b8af3b29 test: share call expansion candidate assertions`
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::context_expansion -- --nocapture`
+    passed: 7 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+    passed: 93 passed, 0 failed.
 - `334b87af test: split target proof helpers`
   - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
     passed: 93 passed, 0 failed.
