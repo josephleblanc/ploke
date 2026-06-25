@@ -166,6 +166,8 @@ pub enum Prototype1StateWalkSubcommand {
     Files(Prototype1StateWalkControlCommand),
     /// Show current in-memory walk state or the last step delta.
     Show(Prototype1StateWalkShowCommand),
+    /// Audit file/database persistence surfaces for a walk transition.
+    Audit(Prototype1StateWalkAuditCommand),
     /// Inspect nested LLM/tool-loop debugger checkpoints.
     Llm(Prototype1StateWalkLlmCommand),
     /// Summarize durable campaign progress without contacting the walk server.
@@ -237,6 +239,73 @@ pub struct Prototype1StateWalkControlCommand {
     /// Include protocol and transition-graph versions in table output.
     #[arg(long)]
     pub with_version: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum Prototype1StateWalkAuditScope {
+    /// Audit R0 preconditions plus expected file/DB persistence for R0 -> R1.
+    R0ToR1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum Prototype1StateWalkAuditTransition {
+    R0ToR1,
+    R1ToR2a,
+    R1ToR3,
+    R3ToR4a,
+    R4aToR4b,
+    R4aToR4c,
+    R4bToR4c,
+    R4cToR5,
+    R5ToR6,
+    R6ToR7,
+    R7ToR8,
+    R8ToR9,
+    R9ToR10,
+    R10ToR11a,
+    R10ToR11,
+    R11aToR12,
+    R11ToR12,
+    R12ToR13a,
+    R12ToR13b,
+    R13aToR14a,
+    R13bToR14b,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Audit file/database persistence surfaces for a walk transition",
+    after_help = "Examples:\n  ploke-eval loop walk audit --repo-root .\n  ploke-eval loop walk audit --repo-root . --transition r10-to-r11\n  ploke-eval loop walk audit --repo-root . --format json\n  ploke-eval loop walk audit --repo-root . --verbose\n  ploke-eval loop walk audit --repo-root . --with-note\n  ploke-eval loop walk audit --repo-root . --verify\n\nThe first audit scope is r0-to-r1: it checks R0 preconditions, the documents r0_to_r1 expects, and whether that transition is expected to write files or DB rows. By default this command skips durable reconstruction and surface re-hashing; use --verify to reconstruct and verify the latest typestate first. Use --transition to show only one transition's checklist items. Use --verbose for per-item paths, DB relations, counts, and legacy document/DB details. Use --with-note to include the checklist note column. This command is read-only and uses the local walk server like show/replay."
+)]
+pub struct Prototype1StateWalkAuditCommand {
+    #[command(flatten)]
+    pub control: Prototype1StateWalkControlCommand,
+
+    /// Campaign id. Defaults to parent identity in the repo root.
+    #[arg(long)]
+    pub campaign: Option<CampaignId>,
+
+    /// Audit scope to run.
+    #[arg(long, value_enum, default_value_t = Prototype1StateWalkAuditScope::R0ToR1)]
+    pub scope: Prototype1StateWalkAuditScope,
+
+    /// Show only one transition's persistence checklist items.
+    #[arg(long, value_enum)]
+    pub transition: Option<Prototype1StateWalkAuditTransition>,
+
+    /// Reconstruct and verify durable walk state before auditing. This may hash large checkout surfaces.
+    #[arg(long)]
+    pub verify: bool,
+
+    /// Show paths, relations, counts, and per-item details in table output.
+    #[arg(long)]
+    pub verbose: bool,
+
+    /// Include the note column in the checklist table.
+    #[arg(long)]
+    pub with_note: bool,
 }
 
 #[derive(Debug, Clone, Parser)]

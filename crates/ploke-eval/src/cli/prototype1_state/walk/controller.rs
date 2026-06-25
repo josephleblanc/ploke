@@ -61,6 +61,7 @@ use crate::{
         },
     },
     cli::{
+        Prototype1StateWalkAuditScope, Prototype1StateWalkAuditTransition,
         Prototype1StateWalkLlmStepSource,
         provider::{headless_model_selection, load_parent_patcher_model_selection},
     },
@@ -75,7 +76,12 @@ use crate::{
     spec::PrepareError,
 };
 
-use super::{paths, phase::WalkPhase, protocol::WalkStartConfig};
+use super::{
+    audit::{self, WalkAuditReport},
+    paths,
+    phase::WalkPhase,
+    protocol::WalkStartConfig,
+};
 
 const MAX_HISTORY: usize = 80;
 const MAX_FILE_BYTES: usize = 128 * 1024;
@@ -306,6 +312,20 @@ impl WalkController {
     /// Render tracked output files for the current walk.
     pub(crate) fn files_report(&self) -> String {
         self.files.render()
+    }
+
+    /// Build a read-only file/database persistence audit for a walk transition.
+    pub(crate) fn audit(
+        &self,
+        scope: Prototype1StateWalkAuditScope,
+        campaign: Option<CampaignId>,
+        transition: Option<Prototype1StateWalkAuditTransition>,
+    ) -> WalkAuditReport {
+        match scope {
+            Prototype1StateWalkAuditScope::R0ToR1 => {
+                audit::audit_r0_to_r1(self.repo_root.clone(), self.phase(), campaign, transition)
+            }
+        }
     }
 
     /// Render known nested LLM/tool-loop fanout lanes without mutating the walk.

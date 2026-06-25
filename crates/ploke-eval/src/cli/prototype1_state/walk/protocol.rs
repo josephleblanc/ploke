@@ -12,11 +12,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::cli::{
     InspectOutputFormat, Prototype1CandidateGenerator, Prototype1StateCommand,
-    Prototype1StateStopAfter, Prototype1StateWalkLlmStepSource, Prototype1SuccessorSelection,
-    Prototype1TraversalMetrics,
+    Prototype1StateStopAfter, Prototype1StateWalkAuditScope, Prototype1StateWalkAuditTransition,
+    Prototype1StateWalkLlmStepSource, Prototype1SuccessorSelection, Prototype1TraversalMetrics,
 };
 
-use super::{epoch::ServerEpoch, phase::WalkPhase};
+use super::{audit::WalkAuditReport, epoch::ServerEpoch, phase::WalkPhase};
 
 /// Serializable form of the arguments needed to create `typestate::R0`.
 ///
@@ -107,6 +107,24 @@ pub(crate) enum WalkRequestBody {
         verbose: bool,
         /// Use ANSI colors in the human-readable message.
         color: bool,
+    },
+    /// Audit file/database persistence surfaces for a transition.
+    Audit {
+        /// Optional campaign id used like R0 command input; defaults to parent identity.
+        campaign: Option<CampaignId>,
+        /// Audit scope to run.
+        scope: Prototype1StateWalkAuditScope,
+        /// Optional transition checklist filter.
+        transition: Option<Prototype1StateWalkAuditTransition>,
+        /// Reconstruct and verify durable typestate before auditing.
+        #[serde(default)]
+        verify: bool,
+        /// Include verbose table rendering details.
+        #[serde(default)]
+        verbose: bool,
+        /// Include checklist note column in table output.
+        #[serde(default)]
+        with_note: bool,
     },
     /// List nested LLM/tool-loop fanout lanes without mutating state.
     LlmLanes {
@@ -292,6 +310,15 @@ pub(crate) enum WalkResponse {
         /// Server freshness identity.
         epoch: ServerEpoch,
     },
+    /// Structured audit result.
+    Audit {
+        /// Current phase after the request.
+        phase: WalkPhase,
+        /// Read-only audit payload.
+        report: WalkAuditReport,
+        /// Server freshness identity.
+        epoch: ServerEpoch,
+    },
     /// Failed request result.
     Error {
         /// Stable-ish error class for clients.
@@ -315,6 +342,15 @@ impl WalkResponse {
         }
     }
 
+    /// Build a structured audit response at `phase`.
+    pub(crate) fn audit(phase: WalkPhase, report: WalkAuditReport, epoch: ServerEpoch) -> Self {
+        Self::Audit {
+            phase,
+            report,
+            epoch,
+        }
+    }
+
     /// Build an error response with optional current phase.
     pub(crate) fn error(
         code: impl Into<String>,
@@ -333,13 +369,13 @@ impl WalkResponse {
     /// Return the response phase, if one was available.
     pub(crate) fn phase(&self) -> Option<WalkPhase> {
         match self {
-            WalkResponse::Ok { phase, .. } => Some(*phase),
+            WalkResponse::Ok { phase, .. } | WalkResponse::Audit { phase, .. } => Some(*phase),
             WalkResponse::Error { phase, .. } => *phase,
         }
     }
 
     /// Return whether this response is `Ok`.
     pub(crate) fn is_ok(&self) -> bool {
-        matches!(self, WalkResponse::Ok { .. })
+        matches!(self, WalkResponse::Ok { .. } | WalkResponse::Audit { .. })
     }
 }

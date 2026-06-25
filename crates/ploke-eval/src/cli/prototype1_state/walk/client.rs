@@ -125,6 +125,31 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             print_response(&response, format, with_version)?;
             response_result(response)
         }
+        Prototype1StateWalkSubcommand::Audit(command) => {
+            let format = command.control.format;
+            let with_version = command.control.with_version;
+            let socket_override = command.control.socket.clone();
+            let (repo_root, socket) =
+                args::resolve_socket(command.repo_root_ref(), socket_override.as_deref())?;
+            ensure_server(&repo_root, &socket, default_idle_ttl()).await?;
+            let response = send_request(
+                &socket,
+                WalkRequest {
+                    client_epoch: None,
+                    body: WalkRequestBody::Audit {
+                        campaign: command.campaign,
+                        scope: command.scope,
+                        transition: command.transition,
+                        verify: command.verify,
+                        verbose: command.verbose,
+                        with_note: command.with_note,
+                    },
+                },
+            )
+            .await?;
+            print_response(&response, format, with_version)?;
+            response_result(response)
+        }
         Prototype1StateWalkSubcommand::Llm(command) => {
             let raw_json_message = matches!(
                 &command.command,
@@ -594,6 +619,16 @@ fn print_response(
                 println!("status: ok");
                 println!("phase: {phase} - {}", phase.detail());
                 print_multiline("message", message);
+                if with_version {
+                    println!("protocol_version: {}", epoch.protocol_version);
+                    println!(
+                        "transition_graph_version: {}",
+                        epoch.transition_graph_version
+                    );
+                }
+            }
+            WalkResponse::Audit { report, epoch, .. } => {
+                println!("{}", report.render_table());
                 if with_version {
                     println!("protocol_version: {}", epoch.protocol_version);
                     println!(

@@ -133,6 +133,30 @@ impl WalkServer {
                     .delta_report(DeltaRenderStyle { verbose, color }),
                 self.epoch.clone(),
             )),
+            WalkRequestBody::Audit {
+                campaign,
+                scope,
+                transition,
+                verify,
+                verbose,
+                with_note,
+            } => {
+                if verify {
+                    self.controller.refresh_from_disk().map(|_| {
+                        let phase = self.controller.phase();
+                        let mut report = self.controller.audit(scope, campaign, transition);
+                        report.verbose = verbose;
+                        report.with_note = with_note;
+                        WalkResponse::audit(phase, report, self.epoch.clone())
+                    })
+                } else {
+                    let phase = self.controller.phase();
+                    let mut report = self.controller.audit(scope, campaign, transition);
+                    report.verbose = verbose;
+                    report.with_note = with_note;
+                    Ok(WalkResponse::audit(phase, report, self.epoch.clone()))
+                }
+            }
             WalkRequestBody::LlmLanes { verbose } => self
                 .controller
                 .llm_lanes_report(verbose)

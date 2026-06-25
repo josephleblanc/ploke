@@ -7,11 +7,11 @@ use std::{path::Path, time::Duration};
 
 use crate::{
     cli::{
-        Prototype1StateWalkBranchLiveCommand, Prototype1StateWalkControlCommand,
-        Prototype1StateWalkLlmFinishCommand, Prototype1StateWalkLlmStepCommand,
-        Prototype1StateWalkReplayCommand, Prototype1StateWalkReplayMoveCommand,
-        Prototype1StateWalkServeCommand, Prototype1StateWalkStartCommand,
-        Prototype1StateWalkStepCommand,
+        Prototype1StateWalkAuditCommand, Prototype1StateWalkBranchLiveCommand,
+        Prototype1StateWalkControlCommand, Prototype1StateWalkLlmFinishCommand,
+        Prototype1StateWalkLlmStepCommand, Prototype1StateWalkReplayCommand,
+        Prototype1StateWalkReplayMoveCommand, Prototype1StateWalkServeCommand,
+        Prototype1StateWalkStartCommand, Prototype1StateWalkStepCommand,
     },
     spec::PrepareError,
 };
@@ -98,6 +98,13 @@ impl Prototype1StateWalkLlmFinishCommand {
 }
 
 impl Prototype1StateWalkReplayCommand {
+    /// Borrow the optional repo root used for socket discovery.
+    pub(crate) fn repo_root_ref(&self) -> Option<&Path> {
+        self.control.repo_root_ref()
+    }
+}
+
+impl Prototype1StateWalkAuditCommand {
     /// Borrow the optional repo root used for socket discovery.
     pub(crate) fn repo_root_ref(&self) -> Option<&Path> {
         self.control.repo_root_ref()
