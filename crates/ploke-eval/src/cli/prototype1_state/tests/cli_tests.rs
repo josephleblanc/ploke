@@ -1710,9 +1710,14 @@ async fn rag_unavailable_headless_tui_setup_writes_typed_diagnostics() {
         timeout_secs: Some(60),
     };
 
-    let err = run_broad_headless_tui_attempt_with_options(&slot, &options)
-        .await
-        .expect_err("RAG/BM25 setup failure must stop child planning");
+    let err = run_broad_headless_tui_attempt_with_options(
+        &slot,
+        &options,
+        None,
+        profile::EvalStorageBackend::Fs,
+    )
+    .await
+    .expect_err("RAG/BM25 setup failure must stop child planning");
 
     let tui_adapter::BroadAttemptError::Setup { phase, detail } = err else {
         panic!("expected typed setup blocker, got {err:?}");
@@ -1771,9 +1776,14 @@ async fn broad_tui_prep_failure_is_setup_blocker() {
         timeout_secs: Some(60),
     };
 
-    let err = run_broad_headless_tui_attempt_with_options(&slot, &options)
-        .await
-        .expect_err("workspace preparation failures must stop child planning");
+    let err = run_broad_headless_tui_attempt_with_options(
+        &slot,
+        &options,
+        None,
+        profile::EvalStorageBackend::Fs,
+    )
+    .await
+    .expect_err("workspace preparation failures must stop child planning");
 
     let tui_adapter::BroadAttemptError::Setup { phase, detail } = err else {
         panic!("expected setup blocker, got {err:?}");
@@ -1845,6 +1855,7 @@ async fn zero_admission_batch_is_persisted() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -2209,6 +2220,7 @@ fn tui_edit_surface_parent_selection_publishes_child_plan() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         parent,
@@ -2498,6 +2510,7 @@ async fn pre_child_planning_review_writes_prompt_and_artifact_before_admission()
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         &batch,
@@ -2619,8 +2632,15 @@ fn turn_live_bundle() {
         }),
     );
 
-    write_broad_headless_tui_turn_live_bundle(&slot, &run, "diagnose the run", "test/model")
-        .expect("write turn-live bundle");
+    write_broad_headless_tui_turn_live_bundle(
+        &slot,
+        &run,
+        "diagnose the run",
+        "test/model",
+        Some(&CLI_TEST_CAMPAIGN),
+        profile::EvalStorageBackend::DualStrict,
+    )
+    .expect("write turn-live bundle");
 
     let dir = broad_headless_tui_turn_live_dir(slot.published.submitted_result_path());
     let trace_path = dir.join("agent-turn-trace.json");
@@ -2640,6 +2660,36 @@ fn turn_live_bundle() {
     assert_eq!(trace.0.task_id, slot.published.request_id());
     assert_eq!(trace.0.selected_model, "test/model");
     assert_eq!(trace.0.issue_prompt, "diagnose the run");
+
+    let db_path = eval_store::owner_eval_db_file_for_record_path(&trace_path)
+        .expect("turn-live owner db path");
+    assert!(db_path.is_file(), "missing {}", db_path.display());
+    let db = eval_store::load_owner_eval_database(&db_path).expect("reload turn-live owner db");
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "task_id".to_string(),
+        cozo::DataValue::from(slot.published.request_id().to_string()),
+    );
+    let rows = db
+        .raw_query_params(
+            r#"
+?[turn_id, campaign_id, task_id, selected_model] :=
+    *eval_agent_turn { turn_id, campaign_id, task_id, selected_model },
+    task_id = $task_id
+"#,
+            params,
+        )
+        .expect("query turn-live agent turn row");
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("turn-live row");
+    assert_eq!(
+        row.get::<String>("campaign_id").expect("campaign"),
+        "campaign"
+    );
+    assert_eq!(
+        row.get::<String>("selected_model").expect("model"),
+        "test/model"
+    );
 }
 
 #[test]
@@ -2771,14 +2821,19 @@ async fn live_broad_headless_tui_attempt_from_published_request_env() {
         )
     });
 
-    let executor = run_broad_headless_tui_attempt_with_options(&slot, &options)
-        .await
-        .unwrap_or_else(|err| {
-            panic!(
-                "published broad headless-TUI attempt failed for '{}': {err}",
-                request_path.display()
-            )
-        });
+    let executor = run_broad_headless_tui_attempt_with_options(
+        &slot,
+        &options,
+        None,
+        profile::EvalStorageBackend::Fs,
+    )
+    .await
+    .unwrap_or_else(|err| {
+        panic!(
+            "published broad headless-TUI attempt failed for '{}': {err}",
+            request_path.display()
+        )
+    });
 
     let outcome = GitWorktreeBackend
         .validate_tui_attempt(
@@ -2831,6 +2886,7 @@ fn broad_harness_rejects_unbound_existing_child_plan() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         parent,
@@ -2940,6 +2996,7 @@ fn broad_harness_multi_file_admission_mints_one_artifact_child() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         receipt,
@@ -3384,6 +3441,7 @@ fn broad_harness_eval_store_rows_do_not_replace_missing_candidate_workspace() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         receipt,
@@ -3591,6 +3649,7 @@ fn broad_harness_child_plan_skips_missing_source_admitted_result_when_min_remain
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -3675,6 +3734,7 @@ fn broad_harness_materialization_accepts_relative_parent_repo_root() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         receipt,
@@ -3755,6 +3815,7 @@ async fn broad_harness_batch_admits_three_transactions_into_three_children() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -3861,6 +3922,7 @@ async fn broad_slots_run_in_parallel() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -3969,6 +4031,7 @@ async fn provider_unavailable_after_partial_admissions_persists_failed_child_pla
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -4021,6 +4084,7 @@ async fn provider_unavailable_after_partial_admissions_persists_failed_child_pla
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         resumed_parent,
@@ -4094,6 +4158,7 @@ async fn provider_unavailable_after_min_admitted_returns_published_plan() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::OpenRouter,
         },
         batch,
@@ -4170,6 +4235,7 @@ async fn database_setup_fatal_after_min_admitted_returns_published_plan() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::OpenRouter,
         },
         batch,
@@ -4253,6 +4319,7 @@ async fn provider_unavailable_with_parallel_slots_aborts_without_corrupting_plan
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -4347,6 +4414,7 @@ async fn provider_unavailable_with_google_direct_permanently_fails_parent() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -4383,6 +4451,7 @@ async fn provider_unavailable_with_google_direct_permanently_fails_parent() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         resumed_parent,
@@ -4456,6 +4525,7 @@ async fn provider_unavailable_without_google_direct_keeps_parent_resumable() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::OpenRouter,
         },
         batch,
@@ -4554,6 +4624,7 @@ async fn child_fanout_is_parallel() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -4711,6 +4782,7 @@ async fn child_build_promotes_binary_and_cleans_scratch() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -4875,6 +4947,7 @@ async fn binary_ref_rows_do_not_replace_missing_promoted_binary() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -5259,6 +5332,7 @@ async fn terminal_child_blocks_reentry() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -5370,6 +5444,7 @@ async fn succeeded_child_without_evaluation_blocks_direct_reentry() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -5479,6 +5554,7 @@ async fn succeeded_child_without_evaluation_recovers_from_terminal_channel() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -5714,6 +5790,7 @@ exit 0
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -5909,6 +5986,7 @@ async fn child_spawn_observes_failed_result() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -6083,6 +6161,7 @@ fn broad_harness_batch_rejects_below_minimum_admitted_transactions() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -6164,6 +6243,7 @@ fn broad_harness_materialization_rejects_post_admission_drift() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         receipt,
@@ -6218,6 +6298,7 @@ fn below_min_rejected_attempts_are_persisted_and_recoverable_from_existing_child
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         resumed_parent,
@@ -6294,6 +6375,7 @@ fn prototype1_storage_authority_negative_projection_cannot_replace_child_plan_bo
                 manifest_path: &manifest_path,
                 repo_root: &repo_root,
                 broad_tui: profile::BroadTui::default(),
+                eval_storage_backend: profile::EvalStorageBackend::Fs,
                 route_source: ModelRouteSource::DirectGoogle,
             },
             parent,
@@ -6379,6 +6461,7 @@ fn prototype1_storage_authority_negative_record_ref_cannot_replace_child_plan_bo
                 manifest_path: &manifest_path,
                 repo_root: &repo_root,
                 broad_tui: profile::BroadTui::default(),
+                eval_storage_backend: profile::EvalStorageBackend::Fs,
                 route_source: ModelRouteSource::DirectGoogle,
             },
             parent,
@@ -6444,6 +6527,7 @@ fn child_plan_replay_rejects_wrong_parent() {
                 manifest_path: &manifest_path,
                 repo_root: &repo_root,
                 broad_tui: profile::BroadTui::default(),
+                eval_storage_backend: profile::EvalStorageBackend::Fs,
                 route_source: ModelRouteSource::DirectGoogle,
             },
             parent,
@@ -6508,6 +6592,7 @@ fn child_plan_replay_rejects_malformed_file() {
                 manifest_path: &manifest_path,
                 repo_root: &repo_root,
                 broad_tui: profile::BroadTui::default(),
+                eval_storage_backend: profile::EvalStorageBackend::Fs,
                 route_source: ModelRouteSource::DirectGoogle,
             },
             parent,

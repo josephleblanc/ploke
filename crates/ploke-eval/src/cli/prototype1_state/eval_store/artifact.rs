@@ -5,7 +5,7 @@ use ploke_records::ids::CampaignId;
 
 use super::{
     cozo_schema::eval_relation_exists,
-    cozo_store::{EvalDb, load_owner_eval_database, persist_owner_eval_database},
+    cozo_store::{EvalDb, mutate_owner_db},
     error::EvalStoreError,
     evidence::{hash_parts, sha256_bytes},
 };
@@ -179,25 +179,25 @@ pub(crate) fn write_artifact_provenance_to_owner_db(
     db_path: &Path,
     evidence: ArtifactProvenanceEvidence,
 ) -> Result<ArtifactProvenanceReceipt, EvalStoreError> {
-    let db = load_owner_eval_database(db_path)?;
-    ensure_artifact_schema(&db)?;
-    let rows = artifact_rows(evidence)?;
-    put_artifact_row(&db, &rows.artifact)?;
-    if let Some(surface) = &rows.surface {
-        put_artifact_surface_row(&db, surface)?;
-    }
-    for artifact_ref in &rows.refs {
-        put_artifact_ref_row(&db, artifact_ref)?;
-    }
-    persist_owner_eval_database(&db, db_path)?;
-    Ok(ArtifactProvenanceReceipt {
-        artifact_id: rows.artifact.artifact_id,
-        surface_id: rows.surface.map(|surface| surface.surface_id),
-        artifact_ref_ids: rows
-            .refs
-            .into_iter()
-            .map(|artifact_ref| artifact_ref.artifact_ref_id)
-            .collect(),
+    mutate_owner_db(db_path, |db| {
+        ensure_artifact_schema(db)?;
+        let rows = artifact_rows(evidence)?;
+        put_artifact_row(db, &rows.artifact)?;
+        if let Some(surface) = &rows.surface {
+            put_artifact_surface_row(db, surface)?;
+        }
+        for artifact_ref in &rows.refs {
+            put_artifact_ref_row(db, artifact_ref)?;
+        }
+        Ok(ArtifactProvenanceReceipt {
+            artifact_id: rows.artifact.artifact_id,
+            surface_id: rows.surface.map(|surface| surface.surface_id),
+            artifact_ref_ids: rows
+                .refs
+                .into_iter()
+                .map(|artifact_ref| artifact_ref.artifact_ref_id)
+                .collect(),
+        })
     })
 }
 

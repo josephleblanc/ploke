@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use cozo::DataValue;
 
 use super::{
+    agent_turn::ensure_agent_turn_schema,
     artifact::ensure_artifact_schema,
     build::ensure_build_schema,
     continuation::ensure_continuation_schema,
@@ -304,6 +305,7 @@ pub(super) fn ensure_eval_store_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(),
     ensure_artifact_schema(db)?;
     ensure_build_schema(db)?;
     ensure_operation_schema(db)?;
+    ensure_agent_turn_schema(db)?;
 
     Ok(())
 }

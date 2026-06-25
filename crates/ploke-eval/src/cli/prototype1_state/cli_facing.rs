@@ -695,6 +695,7 @@ struct ChildPlanEnv<'a> {
     manifest_path: &'a Path,
     repo_root: &'a Path,
     broad_tui: profile::BroadTui,
+    eval_storage_backend: profile::EvalStorageBackend,
     /// Active run-level model route for this campaign. A broad-batch
     /// provider-unavailable abort only permanently fails the parent when this
     /// is `DirectGoogle`; other routers keep the parent resumable. This is the
@@ -1852,6 +1853,8 @@ fn try_admit_request_result(
 async fn run_broad_headless_tui_attempt(
     slot: &HarnessRequestSlot,
     broad_tui: profile::BroadTui,
+    campaign_id: &CampaignId,
+    eval_storage_backend: profile::EvalStorageBackend,
 ) -> Result<Option<transaction::Executor>, tui_adapter::BroadAttemptError> {
     #[cfg(test)]
     if let Some(result) = broad_headless_tui_database_setup_fixture() {
@@ -1865,7 +1868,13 @@ async fn run_broad_headless_tui_attempt(
             max_attempts: Some(1),
             timeout_secs: Some(60),
         };
-        return run_broad_headless_tui_attempt_with_options(slot, &options).await;
+        return run_broad_headless_tui_attempt_with_options(
+            slot,
+            &options,
+            Some(campaign_id),
+            eval_storage_backend,
+        )
+        .await;
     }
 
     let max_attempts = broad_tui.max_attempts.or(broad_headless_tui_env_u32(
@@ -1875,7 +1884,13 @@ async fn run_broad_headless_tui_attempt(
         "PLOKE_EVAL_BROAD_TUI_TIMEOUT_SECS",
     )?);
     let options = BroadTuiAttemptOptions::for_parent_patcher_defaults(max_attempts, timeout_secs)?;
-    run_broad_headless_tui_attempt_with_options(slot, &options).await
+    run_broad_headless_tui_attempt_with_options(
+        slot,
+        &options,
+        Some(campaign_id),
+        eval_storage_backend,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -1979,6 +1994,8 @@ fn effective_broad_tui_timeout_secs(
 async fn run_broad_headless_tui_attempt_with_options(
     slot: &HarnessRequestSlot,
     options: &BroadTuiAttemptOptions,
+    campaign_id: Option<&CampaignId>,
+    eval_storage_backend: profile::EvalStorageBackend,
 ) -> Result<Option<transaction::Executor>, tui_adapter::BroadAttemptError> {
     #[cfg(test)]
     if let Some(result) = tui_adapter::harness::fixture::broad_attempt_from_summary_fixture(slot) {
@@ -2074,8 +2091,15 @@ async fn run_broad_headless_tui_attempt_with_options(
 
     write_broad_headless_tui_diagnostics(slot, &run)
         .map_err(tui_adapter::BroadAttemptError::from)?;
-    write_broad_headless_tui_turn_live_bundle(slot, &run, &prompt, &selected_model)
-        .map_err(tui_adapter::BroadAttemptError::from)?;
+    write_broad_headless_tui_turn_live_bundle(
+        slot,
+        &run,
+        &prompt,
+        &selected_model,
+        campaign_id,
+        eval_storage_backend,
+    )
+    .map_err(tui_adapter::BroadAttemptError::from)?;
     finish_broad_headless_tui_attempt(
         &backend,
         slot,
@@ -2346,9 +2370,14 @@ async fn run_broad_harness_attempt_slot(
     let max_attempts = effective_broad_tui_max_attempts(contract, options);
     let timeout_secs = effective_broad_tui_timeout_secs(contract, options);
     let started = Instant::now();
-    let executor = run_broad_headless_tui_attempt_with_options(slot, options)
-        .await
-        .map_err(PrepareError::from)?;
+    let executor = run_broad_headless_tui_attempt_with_options(
+        slot,
+        options,
+        None,
+        profile::EvalStorageBackend::Fs,
+    )
+    .await
+    .map_err(PrepareError::from)?;
     let elapsed_ms = started.elapsed().as_millis();
     let outcome = GitWorktreeBackend
         .validate_tui_attempt(
@@ -2515,30 +2544,42 @@ fn write_broad_headless_tui_turn_live_bundle(
     run: &tui_adapter::HeadlessRun,
     prompt: &str,
     selected_model: &str,
+    campaign_id: Option<&CampaignId>,
+    eval_storage_backend: profile::EvalStorageBackend,
 ) -> Result<(), PrepareError> {
     let dir = broad_headless_tui_turn_live_dir(slot.published.submitted_result_path());
-    fs::create_dir_all(&dir).map_err(|source| PrepareError::CreateOutputDir {
-        path: dir.clone(),
-        source,
-    })?;
     let artifact =
         run.agent_turn_artifact_record(slot.published.request_id(), selected_model, prompt);
-    write_json_file_pretty(
-        &dir.join("agent-turn-trace.json"),
-        &AgentTurnTraceRecord(artifact.clone()),
-    )?;
-    write_json_file_pretty(
-        &dir.join("agent-turn-summary.json"),
-        &AgentTurnSummaryRecord(artifact),
-    )?;
+    let trace_path = dir.join("agent-turn-trace.json");
+    let summary_path = dir.join("agent-turn-summary.json");
+    let full_response_path = dir.join(FULL_RESPONSE_TRACE_FILE);
+    let evidence = eval_store::AgentTurnBundleEvidence {
+        campaign_id: campaign_id.cloned(),
+        trace_path: trace_path.clone(),
+        summary_path,
+        full_response_path,
+        trace_record: AgentTurnTraceRecord(artifact.clone()),
+        summary_record: AgentTurnSummaryRecord(artifact),
+        full_responses: run.full_response_records().to_vec(),
+        recorded_at: Utc::now().to_rfc3339(),
+    };
+    let mut store =
+        eval_store::ConfiguredEvalStore::for_record_backend(eval_storage_backend, &trace_path)
+            .map_err(|source| PrepareError::DatabaseSetup {
+                phase: "eval_agent_turn_store",
+                detail: source.to_string(),
+            })?;
+    eval_store::EvalStore::put_agent_turn_bundle(&mut store, evidence).map_err(|source| {
+        PrepareError::DatabaseSetup {
+            phase: "eval_agent_turn_put",
+            detail: format!(
+                "failed to persist agent-turn bundle for '{}': {source}",
+                trace_path.display()
+            ),
+        }
+    })?;
 
-    let mut jsonl = String::new();
-    for record in run.full_response_records() {
-        jsonl.push_str(&serde_json::to_string(record).map_err(PrepareError::Serialize)?);
-        jsonl.push('\n');
-    }
-    let path = dir.join(FULL_RESPONSE_TRACE_FILE);
-    fs::write(&path, jsonl).map_err(|source| PrepareError::WriteManifest { path, source })
+    Ok(())
 }
 
 fn broad_headless_tui_turn_live_dir(submitted_result_path: &Path) -> PathBuf {
@@ -4929,6 +4970,7 @@ async fn resolve_child_plan(
     selected_node_id: Option<&str>,
     child_budget: Prototype1ChildBudget,
     broad_tui: profile::BroadTui,
+    eval_storage_backend: profile::EvalStorageBackend,
     route_source: ModelRouteSource,
 ) -> Result<PlannedChildren, PrepareError> {
     let parent_identity = parent.identity().clone();
@@ -4937,6 +4979,7 @@ async fn resolve_child_plan(
         manifest_path,
         repo_root,
         broad_tui,
+        eval_storage_backend,
         route_source,
     };
     info!(
@@ -5040,6 +5083,7 @@ pub(crate) async fn resolve_child_plan_for_id(
     selected_node_id: Option<&str>,
     child_budget: Prototype1ChildBudget,
     broad_tui: profile::BroadTui,
+    eval_storage_backend: profile::EvalStorageBackend,
     route_source: ModelRouteSource,
 ) -> Result<PlannedChildren, PrepareError> {
     resolve_child_plan(
@@ -5051,6 +5095,7 @@ pub(crate) async fn resolve_child_plan_for_id(
         selected_node_id,
         child_budget,
         broad_tui,
+        eval_storage_backend,
         route_source,
     )
     .await
@@ -5090,6 +5135,8 @@ async fn admit_broad_harness_batch(
                 slot_index,
                 slot,
                 batch.broad_tui,
+                env.campaign_id.clone(),
+                env.eval_storage_backend,
             ));
         }
 
@@ -5270,6 +5317,8 @@ async fn run_broad_slot_for_admission(
     slot_index: usize,
     slot: HarnessRequestSlot,
     broad_tui: profile::BroadTui,
+    campaign_id: CampaignId,
+    eval_storage_backend: profile::EvalStorageBackend,
 ) -> BroadSlotAttempt {
     let result = if slot.published.submitted_result_path().exists() {
         Ok(None)
@@ -5282,7 +5331,7 @@ async fn run_broad_slot_for_admission(
                 result: Err(source),
             };
         }
-        run_broad_headless_tui_attempt(&slot, broad_tui)
+        run_broad_headless_tui_attempt(&slot, broad_tui, &campaign_id, eval_storage_backend)
             .await
             .map_err(PrepareError::from)
     };
@@ -5509,6 +5558,7 @@ pub(crate) async fn resolve_profile_child_plan(
         None,
         child_budget,
         run_profile.execution.broad_tui,
+        run_profile.storage.eval.backend,
         route_source,
     )
     .await

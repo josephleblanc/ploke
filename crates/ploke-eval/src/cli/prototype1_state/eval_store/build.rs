@@ -5,7 +5,7 @@ use ploke_records::ids::CampaignId;
 
 use super::{
     cozo_schema::eval_relation_exists,
-    cozo_store::{EvalDb, load_owner_eval_database, persist_owner_eval_database},
+    cozo_store::{EvalDb, mutate_owner_db},
     error::EvalStoreError,
     evidence::{hash_parts, sha256_bytes},
 };
@@ -127,19 +127,19 @@ pub(crate) fn write_build_provenance_to_owner_db(
     db_path: &Path,
     evidence: BuildProvenanceEvidence,
 ) -> Result<BuildProvenanceReceipt, EvalStoreError> {
-    let db = load_owner_eval_database(db_path)?;
-    ensure_build_schema(&db)?;
-    let binary = binary_ref_row(evidence.binary_ref)?;
-    let mut build = build_event_row(evidence.build_event)?;
-    if build.binary_ref.is_none() {
-        build.binary_ref = Some(binary.binary_ref_id.clone());
-    }
-    put_binary_ref_row(&db, &binary)?;
-    put_build_event_row(&db, &build)?;
-    persist_owner_eval_database(&db, db_path)?;
-    Ok(BuildProvenanceReceipt {
-        binary_ref_id: binary.binary_ref_id,
-        build_id: build.build_id,
+    mutate_owner_db(db_path, |db| {
+        ensure_build_schema(db)?;
+        let binary = binary_ref_row(evidence.binary_ref)?;
+        let mut build = build_event_row(evidence.build_event)?;
+        if build.binary_ref.is_none() {
+            build.binary_ref = Some(binary.binary_ref_id.clone());
+        }
+        put_binary_ref_row(db, &binary)?;
+        put_build_event_row(db, &build)?;
+        Ok(BuildProvenanceReceipt {
+            binary_ref_id: binary.binary_ref_id,
+            build_id: build.build_id,
+        })
     })
 }
 

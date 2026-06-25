@@ -8,7 +8,8 @@ Short description: planning packet for replacing Prototype 1 shared-filesystem a
 
 Read these first when implementing:
 
-- [`2026-06-25_cleanup-before-db-parity-decision.md`](2026-06-25_cleanup-before-db-parity-decision.md) — current restart guardrail: pause new schema expansion, prefer explicit `db-mirror` for current filesystem-authority DB-copy behavior, treat legacy `database` behavior as mirror-mode rather than DB-only, and clean up parity gaps/ports before more slices.
+- [`2026-06-25_cleanup-before-db-parity-decision.md`](2026-06-25_cleanup-before-db-parity-decision.md) — current restart guardrail: pause new schema expansion, prefer explicit `db-mirror` for current filesystem-authority DB-copy behavior, treat compatibility `database` behavior as mirror-mode rather than DB-only, and clean up parity gaps/ports before more slices.
+- [`2026-06-25_remote-safe-db-persistence-implementation-plan.md`](2026-06-25_remote-safe-db-persistence-implementation-plan.md) — corrected implementation contract for remote-safe DB persistence, domain ports, strict dual-write semantics, agent-turn normalization, and the two-generation `dual-strict` live canary acceptance target.
 - [`implementation-plan.md`](implementation-plan.md) — canonical phased implementation plan, first-slice decision, and migration gates.
 - [`slice-by-slice-implementation-plan.md`](slice-by-slice-implementation-plan.md) — consolidated code-checked slice plan with concrete files/functions to change per slice.
 - [`implementation-log.md`](implementation-log.md) — implementation/run log template for autonomous slice execution, test evidence, live API usage, checkpoints, and commits.
@@ -34,6 +35,7 @@ Supporting references:
 ## Current decisions
 
 - **2026-06-25 cleanup gate:** current DB work is an owner-scoped eval DB mirror, not DB-only parity. Pause unconstrained schema expansion and clean up backend semantics, terminal channel-result mirroring, closure/log refs, and agent-turn message modeling before claiming DB-backed play-through. See [`2026-06-25_cleanup-before-db-parity-decision.md`](2026-06-25_cleanup-before-db-parity-decision.md).
+- **2026-06-25 remote-safe implementation target:** use [`2026-06-25_remote-safe-db-persistence-implementation-plan.md`](2026-06-25_remote-safe-db-persistence-implementation-plan.md) as the corrected implementation contract. The immediate acceptance target is a two-generation live loop canary in `dual-strict` that completes across parent/successor handoff without weakening History, Channel, MessageBox, bootstrap, or artifact gates.
 - Do not treat “the database” as one ambient shared object. Stores are owner-scoped: parent, child runtime, successor runtime, treatment run, imported evidence, passive mirror, etc.
 - Use separate common axes instead of one overloaded owner field: `store_scope`, `producer_role`, `visibility_scope`, `source_class`, `evidence_class`, and `validation_status`.
 - `History` / sealed `Block` remains a dedicated authority path.

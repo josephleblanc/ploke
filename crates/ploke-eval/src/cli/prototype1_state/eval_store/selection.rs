@@ -11,7 +11,7 @@ use crate::successor_selection::traversal::{Formula, ScoreChildPropFormulaRow};
 
 use super::{
     cozo_schema::eval_relation_exists,
-    cozo_store::{EvalDb, load_owner_eval_database, persist_owner_eval_database},
+    cozo_store::{EvalDb, mutate_owner_db},
     error::EvalStoreError,
 };
 
@@ -188,25 +188,25 @@ pub(crate) fn write_selection_decision_to_owner_db(
     db_path: &Path,
     evidence: SelectionDecisionEvidence,
 ) -> Result<SelectionDecisionReceipt, EvalStoreError> {
-    let db = load_owner_eval_database(db_path)?;
-    ensure_selection_schema(&db)?;
-    let rows = selection_rows(evidence)?;
-    put_selection_decision_row(&db, &rows.decision)?;
-    for candidate in &rows.candidates {
-        put_selection_candidate_row(&db, candidate)?;
-    }
-    for finding in &rows.findings {
-        put_selection_finding_row(&db, finding)?;
-    }
-    for score in &rows.scores {
-        put_selection_score_row(&db, score)?;
-    }
-    persist_owner_eval_database(&db, db_path)?;
-    Ok(SelectionDecisionReceipt {
-        decision_id: rows.decision.decision_id,
-        candidate_count: rows.candidates.len(),
-        finding_count: rows.findings.len(),
-        score_count: rows.scores.len(),
+    mutate_owner_db(db_path, |db| {
+        ensure_selection_schema(db)?;
+        let rows = selection_rows(evidence)?;
+        put_selection_decision_row(db, &rows.decision)?;
+        for candidate in &rows.candidates {
+            put_selection_candidate_row(db, candidate)?;
+        }
+        for finding in &rows.findings {
+            put_selection_finding_row(db, finding)?;
+        }
+        for score in &rows.scores {
+            put_selection_score_row(db, score)?;
+        }
+        Ok(SelectionDecisionReceipt {
+            decision_id: rows.decision.decision_id,
+            candidate_count: rows.candidates.len(),
+            finding_count: rows.findings.len(),
+            score_count: rows.scores.len(),
+        })
     })
 }
 

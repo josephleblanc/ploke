@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 
 use super::{
     cozo_schema::eval_relation_exists,
-    cozo_store::{EvalDb, load_owner_eval_database, persist_owner_eval_database},
+    cozo_store::{EvalDb, mutate_owner_db},
     error::EvalStoreError,
 };
 
@@ -72,13 +72,13 @@ pub(crate) fn write_continuation_decision_to_owner_db(
     db_path: &Path,
     evidence: ContinuationDecisionEvidence,
 ) -> Result<ContinuationDecisionReceipt, EvalStoreError> {
-    let db = load_owner_eval_database(db_path)?;
-    ensure_continuation_schema(&db)?;
-    let row = continuation_decision_row(evidence)?;
-    put_continuation_decision_row(&db, &row)?;
-    persist_owner_eval_database(&db, db_path)?;
-    Ok(ContinuationDecisionReceipt {
-        decision_id: row.decision_id,
+    mutate_owner_db(db_path, |db| {
+        ensure_continuation_schema(db)?;
+        let row = continuation_decision_row(evidence)?;
+        put_continuation_decision_row(db, &row)?;
+        Ok(ContinuationDecisionReceipt {
+            decision_id: row.decision_id,
+        })
     })
 }
 

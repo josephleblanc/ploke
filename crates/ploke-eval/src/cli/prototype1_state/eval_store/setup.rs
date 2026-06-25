@@ -265,7 +265,7 @@ pub(super) fn put_campaign_manifest<D: EvalDb + ?Sized>(
     );
     params.insert(
         "storage_backend".to_string(),
-        storage_backend_label(storage_backend).to_string().into(),
+        storage_backend.label().to_string().into(),
     );
     params.insert(
         "ingested_at".to_string(),
@@ -546,15 +546,6 @@ fn baseline_id(parent: &ParentIdentity, baseline: &CompleteBaseline, source_kind
         baseline.eval_set_id(),
         source_kind,
     ])
-}
-
-fn storage_backend_label(backend: EvalStorageBackend) -> &'static str {
-    match backend {
-        EvalStorageBackend::Fs => "fs",
-        EvalStorageBackend::DbMirror => "db-mirror",
-        EvalStorageBackend::Database => "database",
-        EvalStorageBackend::DualStrict => "dual-strict",
-    }
 }
 
 fn file_sha256(path: &Path, field: &'static str) -> Result<String, EvalStoreError> {

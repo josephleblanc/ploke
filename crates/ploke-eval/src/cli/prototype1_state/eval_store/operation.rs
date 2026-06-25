@@ -5,7 +5,7 @@ use ploke_records::ids::CampaignId;
 
 use super::{
     cozo_schema::eval_relation_exists,
-    cozo_store::{EvalDb, load_owner_eval_database, persist_owner_eval_database},
+    cozo_store::{EvalDb, mutate_owner_db},
     error::EvalStoreError,
     evidence::{hash_parts, sha256_bytes},
 };
@@ -176,19 +176,19 @@ pub(crate) fn write_operation_provenance_to_owner_db(
     db_path: &Path,
     evidence: OperationProvenanceEvidence,
 ) -> Result<OperationProvenanceReceipt, EvalStoreError> {
-    let db = load_owner_eval_database(db_path)?;
-    ensure_operation_schema(&db)?;
-    let operation = operation_row(evidence.operation)?;
-    let patch = patch_row(evidence.patch)?;
-    let apply_event = apply_event_row(evidence.apply_event)?;
-    put_operation_row(&db, &operation)?;
-    put_patch_row(&db, &patch)?;
-    put_apply_event_row(&db, &apply_event)?;
-    persist_owner_eval_database(&db, db_path)?;
-    Ok(OperationProvenanceReceipt {
-        operation_id: operation.operation_id,
-        patch_id: patch.patch_id,
-        apply_id: apply_event.apply_id,
+    mutate_owner_db(db_path, |db| {
+        ensure_operation_schema(db)?;
+        let operation = operation_row(evidence.operation)?;
+        let patch = patch_row(evidence.patch)?;
+        let apply_event = apply_event_row(evidence.apply_event)?;
+        put_operation_row(db, &operation)?;
+        put_patch_row(db, &patch)?;
+        put_apply_event_row(db, &apply_event)?;
+        Ok(OperationProvenanceReceipt {
+            operation_id: operation.operation_id,
+            patch_id: patch.patch_id,
+            apply_id: apply_event.apply_id,
+        })
     })
 }
 

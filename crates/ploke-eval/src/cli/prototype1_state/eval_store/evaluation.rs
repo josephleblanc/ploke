@@ -6,7 +6,7 @@ use sha2::{Digest, Sha256};
 
 use super::{
     cozo_schema::eval_relation_exists,
-    cozo_store::{EvalDb, load_owner_eval_database, persist_owner_eval_database},
+    cozo_store::{EvalDb, mutate_owner_db},
     error::EvalStoreError,
 };
 
@@ -140,17 +140,17 @@ pub(crate) fn write_evaluation_to_owner_db(
     db_path: &Path,
     evidence: EvaluationEvidence,
 ) -> Result<EvaluationReceipt, EvalStoreError> {
-    let db = load_owner_eval_database(db_path)?;
-    ensure_evaluation_schema(&db)?;
-    let rows = evaluation_rows(evidence)?;
-    put_evaluation_row(&db, &rows.evaluation)?;
-    for instance in &rows.instances {
-        put_evaluation_instance_row(&db, instance)?;
-    }
-    persist_owner_eval_database(&db, db_path)?;
-    Ok(EvaluationReceipt {
-        evaluation_id: rows.evaluation.evaluation_id,
-        instance_count: rows.instances.len(),
+    mutate_owner_db(db_path, |db| {
+        ensure_evaluation_schema(db)?;
+        let rows = evaluation_rows(evidence)?;
+        put_evaluation_row(db, &rows.evaluation)?;
+        for instance in &rows.instances {
+            put_evaluation_instance_row(db, instance)?;
+        }
+        Ok(EvaluationReceipt {
+            evaluation_id: rows.evaluation.evaluation_id,
+            instance_count: rows.instances.len(),
+        })
     })
 }
 

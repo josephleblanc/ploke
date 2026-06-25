@@ -3,15 +3,28 @@ use std::{collections::BTreeMap, fs, path::PathBuf};
 use cozo::DataValue;
 use ploke_db::{Database, QueryResult};
 
-use ploke_records::{identity::ParentIdentityRecord, ids::CampaignId};
+use ploke_records::{
+    agent_turn::{
+        AgentTurnArtifactRecord, AgentTurnSummaryRecord, AgentTurnTraceRecord,
+        MessageSnapshotRecord, ModelRouteRecord, ObservedTurnEventRecord, PatchArtifactRecord,
+        RequestMessageRecord, RequestRoleRecord, ToolCompletedRecord, ToolRequestRecord,
+        TurnFinishedRecord,
+    },
+    identity::ParentIdentityRecord,
+    ids::CampaignId,
+    llm_response::{FULL_RESPONSE_TRACE_FILE, RawFullResponseRecord},
+    tool_contracts::ToolArgumentsJson,
+};
 use sha2::{Digest, Sha256};
 
 use super::*;
 use super::{
-    APPLY_EVENT_REL, ARTIFACT_REF_REL, ARTIFACT_REL, ARTIFACT_SURFACE_REL, BASELINE_REL,
-    BINARY_REF_REL, BUILD_EVENT_REL, CAMPAIGN_REL, CLOSURE_REF_REL, CONTINUATION_DECISION_REL,
-    EVALUATION_INSTANCE_REL, EVALUATION_REL, OPERATION_REL, PATCH_REL, PROFILE_COMMITMENT_REL,
+    AGENT_TURN_EVENT_REL, AGENT_TURN_REL, APPLY_EVENT_REL, ARTIFACT_REF_REL, ARTIFACT_REL,
+    ARTIFACT_SURFACE_REL, BASELINE_REL, BINARY_REF_REL, BUILD_EVENT_REL, CAMPAIGN_REL,
+    CLOSURE_REF_REL, CONTINUATION_DECISION_REL, EVALUATION_INSTANCE_REL, EVALUATION_REL,
+    MESSAGE_EVENT_REL, MODEL_EXCHANGE_REL, OPERATION_REL, PATCH_REL, PROFILE_COMMITMENT_REL,
     SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL, SELECTION_FINDING_REL, SELECTION_SCORE_REL,
+    TOOL_EVENT_REL,
     api::EvalStorageMode,
     cozo_schema::eval_relation_exists,
     error::EvalStoreError,
@@ -145,6 +158,164 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
     assert!(eval_relation_exists(&db, RECORD_REL).expect("record rel exists"));
     assert!(eval_relation_exists(&db, LOG_REF_REL).expect("log rel exists"));
     assert!(eval_relation_exists(&db, TRACE_EVENT_REL).expect("trace rel exists"));
+    assert!(eval_relation_exists(&db, AGENT_TURN_REL).expect("agent turn rel exists"));
+    assert!(eval_relation_exists(&db, AGENT_TURN_EVENT_REL).expect("agent turn event rel exists"));
+    assert!(eval_relation_exists(&db, MODEL_EXCHANGE_REL).expect("model exchange rel exists"));
+    assert!(eval_relation_exists(&db, MESSAGE_EVENT_REL).expect("message event rel exists"));
+    assert!(eval_relation_exists(&db, TOOL_EVENT_REL).expect("tool event rel exists"));
+}
+
+#[test]
+fn prototype1_eval_store_agent_turn_rows_are_queryable() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let dir = tmp.path().join("prototype1/broad/request-1.turn-live");
+    fs::create_dir_all(&dir).expect("turn live dir");
+    let db_path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+    let trace_path = dir.join("agent-turn-trace.json");
+    let summary_path = dir.join("agent-turn-summary.json");
+    let response_path = dir.join("llm-full-responses.jsonl");
+    let artifact = sample_agent_turn_artifact();
+    let response = sample_raw_full_response();
+
+    let receipt = write_agent_turn_to_owner_db(
+        &db_path,
+        AgentTurnEvidence {
+            campaign_id: Some(CampaignId::from("campaign")),
+            trace_path: trace_path.display().to_string(),
+            summary_path: summary_path.display().to_string(),
+            full_response_path: Some(response_path.display().to_string()),
+            trace_record: AgentTurnTraceRecord(artifact.clone()),
+            summary_record: AgentTurnSummaryRecord(artifact),
+            full_responses: vec![response],
+            recorded_at: "2026-06-25T00:00:00Z".to_string(),
+        },
+    )
+    .expect("agent turn rows write");
+
+    assert_eq!(receipt.event_ids.len(), 4);
+    assert_eq!(receipt.exchange_ids.len(), 1);
+    assert_eq!(receipt.tool_ids.len(), 2);
+
+    let db = load_owner_eval_database(&db_path).expect("reload owner db");
+    let turn = query_agent_turn(&db, &receipt.turn_id);
+    assert_eq!(turn.rows.len(), 1);
+    let row = turn.row_refs().next().expect("agent turn row");
+    assert_eq!(
+        row.get::<String>("campaign_id").expect("campaign"),
+        "campaign"
+    );
+    assert_eq!(
+        row.get::<String>("request_id").expect("request"),
+        "request-1"
+    );
+    assert_eq!(row.get::<i64>("event_count").expect("event count"), 4);
+    assert_eq!(row.get::<i64>("response_count").expect("response count"), 1);
+    assert_eq!(
+        row.get::<String>("terminal_outcome").expect("outcome"),
+        "applied"
+    );
+
+    assert_eq!(query_agent_turn_events(&db, &receipt.turn_id).rows.len(), 4);
+    assert_eq!(query_model_exchanges(&db, &receipt.turn_id).rows.len(), 1);
+    assert_eq!(query_message_events(&db, &receipt.turn_id).rows.len(), 3);
+    assert_eq!(query_tool_events(&db, &receipt.turn_id).rows.len(), 2);
+}
+
+#[test]
+fn prototype1_eval_store_agent_turn_bundle_dual_strict_writes_files_and_rows() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let dir = tmp.path().join("prototype1/broad/request-1.turn-live");
+    let trace_path = dir.join("agent-turn-trace.json");
+    let summary_path = dir.join("agent-turn-summary.json");
+    let response_path = dir.join(FULL_RESPONSE_TRACE_FILE);
+    let artifact = sample_agent_turn_artifact();
+    let response = sample_raw_full_response();
+    let mut store = ConfiguredEvalStore::for_record_backend(
+        profile::EvalStorageBackend::DualStrict,
+        &trace_path,
+    )
+    .expect("configured eval store");
+
+    let receipt = store
+        .put_agent_turn_bundle(AgentTurnBundleEvidence {
+            campaign_id: Some(CampaignId::from("campaign")),
+            trace_path: trace_path.clone(),
+            summary_path: summary_path.clone(),
+            full_response_path: response_path.clone(),
+            trace_record: AgentTurnTraceRecord(artifact.clone()),
+            summary_record: AgentTurnSummaryRecord(artifact),
+            full_responses: vec![response],
+            recorded_at: "2026-06-25T00:00:00Z".to_string(),
+        })
+        .expect("agent turn bundle writes");
+
+    assert!(trace_path.is_file());
+    assert!(summary_path.is_file());
+    assert!(response_path.is_file());
+    let db_receipt = receipt.db_receipt.expect("dual-strict db receipt");
+    assert_eq!(db_receipt.event_ids.len(), 4);
+    assert_eq!(db_receipt.exchange_ids.len(), 1);
+
+    let db_path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+    let db = load_owner_eval_database(&db_path).expect("reload owner db");
+    assert_eq!(query_agent_turn(&db, &db_receipt.turn_id).rows.len(), 1);
+    assert_eq!(
+        query_model_exchanges(&db, &db_receipt.turn_id).rows.len(),
+        1
+    );
+}
+
+#[test]
+fn prototype1_eval_store_owner_db_serializes_parallel_agent_turn_writes() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let db_path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+    let count = 8;
+
+    std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for index in 0..count {
+            let db_path = db_path.clone();
+            handles.push(scope.spawn(move || {
+                let mut artifact = sample_agent_turn_artifact();
+                artifact.task_id = format!("request-{index}");
+                artifact.user_message_id = format!("user-{index}");
+                let trace_path = format!("/tmp/prototype1/request-{index}/agent-turn-trace.json");
+                let summary_path =
+                    format!("/tmp/prototype1/request-{index}/agent-turn-summary.json");
+                let response_path =
+                    format!("/tmp/prototype1/request-{index}/{FULL_RESPONSE_TRACE_FILE}");
+                write_agent_turn_to_owner_db(
+                    &db_path,
+                    AgentTurnEvidence {
+                        campaign_id: Some(CampaignId::from("campaign")),
+                        trace_path,
+                        summary_path,
+                        full_response_path: Some(response_path),
+                        trace_record: AgentTurnTraceRecord(artifact.clone()),
+                        summary_record: AgentTurnSummaryRecord(artifact),
+                        full_responses: vec![sample_raw_full_response()],
+                        recorded_at: "2026-06-25T00:00:00Z".to_string(),
+                    },
+                )
+                .expect("parallel agent turn row writes");
+            }));
+        }
+        for handle in handles {
+            handle.join().expect("parallel writer thread");
+        }
+    });
+
+    let db = load_owner_eval_database(&db_path).expect("reload owner db");
+    let result = db
+        .raw_query_params(
+            r#"
+?[turn_id] :=
+    *eval_agent_turn { turn_id }
+"#,
+            BTreeMap::new(),
+        )
+        .expect("query agent turn rows");
+    assert_eq!(result.rows.len(), count);
 }
 
 #[test]
@@ -1176,6 +1347,190 @@ fn query_all_trace_events(db: &Database) -> QueryResult {
         BTreeMap::new(),
     )
     .expect("query all trace events")
+}
+
+fn query_agent_turn(db: &Database, turn_id: &str) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("turn_id".to_string(), DataValue::from(turn_id.to_string()));
+    db.raw_query_params(
+        r#"
+?[campaign_id, request_id, event_count, response_count, terminal_outcome] :=
+    *eval_agent_turn { turn_id, campaign_id, request_id, event_count, response_count, terminal_outcome },
+    turn_id = $turn_id
+"#,
+        params,
+    )
+    .expect("query agent turn")
+}
+
+fn query_agent_turn_events(db: &Database, turn_id: &str) -> QueryResult {
+    query_turn_ids(
+        db,
+        turn_id,
+        "eval_agent_turn_event",
+        "event_id",
+        "query agent turn events",
+    )
+}
+
+fn query_model_exchanges(db: &Database, turn_id: &str) -> QueryResult {
+    query_turn_ids(
+        db,
+        turn_id,
+        "eval_model_exchange",
+        "exchange_id",
+        "query model exchanges",
+    )
+}
+
+fn query_message_events(db: &Database, turn_id: &str) -> QueryResult {
+    query_turn_ids(
+        db,
+        turn_id,
+        "eval_message_event",
+        "message_event_id",
+        "query message events",
+    )
+}
+
+fn query_tool_events(db: &Database, turn_id: &str) -> QueryResult {
+    query_turn_ids(
+        db,
+        turn_id,
+        "eval_tool_event",
+        "tool_event_id",
+        "query tool events",
+    )
+}
+
+fn query_turn_ids(db: &Database, turn_id: &str, rel: &str, id: &str, label: &str) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("turn_id".to_string(), DataValue::from(turn_id.to_string()));
+    db.raw_query_params(
+        &format!(
+            r#"
+?[id] :=
+    *{rel} {{ {id}: id, turn_id }},
+    turn_id = $turn_id
+"#
+        ),
+        params,
+    )
+    .expect(label)
+}
+
+fn sample_agent_turn_artifact() -> AgentTurnArtifactRecord {
+    AgentTurnArtifactRecord {
+        task_id: "request-1".to_string(),
+        selected_model: "test/model".to_string(),
+        model_route: Some(ModelRouteRecord {
+            route_source: "direct-google".to_string(),
+            router: "test-router".to_string(),
+            provider_slug: Some("google".to_string()),
+            endpoint_host: Some("example.invalid".to_string()),
+        }),
+        issue_prompt: "fix the test".to_string(),
+        user_message_id: "user-1".to_string(),
+        events: vec![
+            ObservedTurnEventRecord::ToolRequested(ToolRequestRecord {
+                request_id: "request-1".to_string(),
+                parent_id: "parent-1".to_string(),
+                call_id: "call-1".to_string(),
+                tool: "apply_code_edit".to_string(),
+                arguments: ToolArgumentsJson::from(r#"{"path":"src/lib.rs"}"#.to_string()),
+            }),
+            ObservedTurnEventRecord::ToolCompleted(ToolCompletedRecord {
+                request_id: "request-1".to_string(),
+                parent_id: "parent-1".to_string(),
+                call_id: "call-1".to_string(),
+                tool: "apply_code_edit".to_string(),
+                content: "applied".to_string(),
+                ui_payload: None,
+                latency_ms: 7,
+            }),
+            ObservedTurnEventRecord::MessageUpdated(MessageSnapshotRecord {
+                id: "assistant-1".to_string(),
+                kind: "assistant".to_string(),
+                status: "complete".to_string(),
+                tool_call_id: None,
+                content_len: 4,
+                content_preview: "done".to_string(),
+            }),
+            ObservedTurnEventRecord::TurnFinished(TurnFinishedRecord {
+                session_id: "session-1".to_string(),
+                request_id: "request-1".to_string(),
+                parent_id: "parent-1".to_string(),
+                assistant_message_id: "assistant-1".to_string(),
+                outcome: "applied".to_string(),
+                error_id: None,
+                summary: "done".to_string(),
+                attempts: 1,
+            }),
+        ],
+        prompt_debug: None,
+        terminal_record: Some(TurnFinishedRecord {
+            session_id: "session-1".to_string(),
+            request_id: "request-1".to_string(),
+            parent_id: "parent-1".to_string(),
+            assistant_message_id: "assistant-1".to_string(),
+            outcome: "applied".to_string(),
+            error_id: None,
+            summary: "done".to_string(),
+            attempts: 1,
+        }),
+        final_assistant_message: Some(MessageSnapshotRecord {
+            id: "assistant-1".to_string(),
+            kind: "assistant".to_string(),
+            status: "complete".to_string(),
+            tool_call_id: None,
+            content_len: 4,
+            content_preview: "done".to_string(),
+        }),
+        patch_artifact: PatchArtifactRecord {
+            edit_proposals: Vec::new(),
+            create_proposals: Vec::new(),
+            applied: true,
+            all_proposals_applied: true,
+            expected_file_changes: Vec::new(),
+            any_expected_file_changed: true,
+            all_expected_files_changed: true,
+        },
+        llm_prompt: vec![RequestMessageRecord {
+            role: RequestRoleRecord::User,
+            content: "fix the test".to_string(),
+            tool_call_id: None,
+            tool_calls: None,
+        }],
+        llm_response: Some("done".to_string()),
+    }
+}
+
+fn sample_raw_full_response() -> RawFullResponseRecord {
+    let response = serde_json::from_value(serde_json::json!({
+        "id": "provider-response-1",
+        "choices": [{
+            "index": 0,
+            "finish_reason": "stop",
+            "message": {
+                "role": "assistant",
+                "content": "done"
+            }
+        }],
+        "created": 0,
+        "model": "test/model",
+        "object": "chat.completion",
+        "usage": {
+            "prompt_tokens": 5,
+            "completion_tokens": 1,
+            "total_tokens": 6
+        }
+    }))
+    .expect("sample response");
+    RawFullResponseRecord {
+        assistant_message_id: uuid::Uuid::parse_str("8e32b33b-6de5-4e1c-9fa1-14bc2059913f")
+            .expect("assistant uuid"),
+        recorded_response: ploke_llm::manager::RecordedResponse::new(0, response),
+    }
 }
 
 fn parent_entry(repo_root: PathBuf) -> ParentStartedEntry {

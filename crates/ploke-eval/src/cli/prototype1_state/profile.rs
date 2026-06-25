@@ -183,6 +183,21 @@ pub(crate) enum EvalStorageBackend {
     DualStrict,
 }
 
+impl EvalStorageBackend {
+    pub(crate) const fn mirrors_owner_db(self) -> bool {
+        !matches!(self, Self::Fs)
+    }
+
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::Fs => "fs",
+            Self::DbMirror => "db-mirror",
+            Self::Database => "database",
+            Self::DualStrict => "dual-strict",
+        }
+    }
+}
+
 impl Default for EvalStorageBackend {
     fn default() -> Self {
         Self::Fs

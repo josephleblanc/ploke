@@ -2,6 +2,7 @@ use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
 };
 
 use cozo::DataValue;
@@ -303,93 +304,111 @@ pub(crate) fn load_owner_eval_database(path: &Path) -> Result<Database, EvalStor
     }
 }
 
+static OWNER_DB_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn mutation_lock() -> &'static Mutex<()> {
+    OWNER_DB_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+pub(super) fn mutate_owner_db<T>(
+    db_path: &Path,
+    mutate: impl FnOnce(&Database) -> Result<T, EvalStoreError>,
+) -> Result<T, EvalStoreError> {
+    let _guard = mutation_lock()
+        .lock()
+        .map_err(|_| EvalStoreError::DbSetup {
+            phase: "owner_eval_db.lock",
+            detail: "owner eval DB mutation lock is poisoned".to_string(),
+        })?;
+    let db = load_owner_eval_database(db_path)?;
+    let result = mutate(&db)?;
+    persist_owner_eval_database(&db, db_path)?;
+    Ok(result)
+}
+
 pub(super) fn write_parent_started_to_owner_db(
     db_path: &Path,
     evidence: &ParentStartedEvidence,
     receipt: &ParentStartedReceipt,
 ) -> Result<ParentStartedDbReceipt, EvalStoreError> {
-    let db = load_owner_eval_database(db_path)?;
-    let store = DbEvalStore::new(&db);
-    let db_receipt = store.put_parent_started_from_receipt(evidence, receipt)?;
-    persist_owner_eval_database(&db, db_path)?;
-    Ok(db_receipt)
+    mutate_owner_db(db_path, |db| {
+        let store = DbEvalStore::new(db);
+        store.put_parent_started_from_receipt(evidence, receipt)
+    })
 }
 
 pub(crate) fn write_trace_event_to_owner_db(
     db_path: &Path,
     evidence: TraceEventEvidence,
 ) -> Result<TraceEventReceipt, EvalStoreError> {
-    let db = load_owner_eval_database(db_path)?;
-    let store = DbEvalStore::new(&db);
-    let receipt = store.put_trace_event(evidence)?;
-    persist_owner_eval_database(&db, db_path)?;
-    Ok(receipt)
+    mutate_owner_db(db_path, |db| {
+        let store = DbEvalStore::new(db);
+        store.put_trace_event(evidence)
+    })
 }
 
 pub(crate) fn write_invocation_to_owner_db(
     db_path: &Path,
     evidence: super::evidence::InvocationEvidence,
 ) -> Result<super::evidence::InvocationReceipt, EvalStoreError> {
-    let db = load_owner_eval_database(db_path)?;
-    let store = DbEvalStore::new(&db);
-    let receipt = store.put_invocation(evidence)?;
-    persist_owner_eval_database(&db, db_path)?;
-    Ok(receipt)
+    mutate_owner_db(db_path, |db| {
+        let store = DbEvalStore::new(db);
+        store.put_invocation(evidence)
+    })
 }
 
 pub(crate) fn write_channel_message_to_owner_db(
     db_path: &Path,
     evidence: ChannelMessageEvidence,
 ) -> Result<ChannelMessageReceipt, EvalStoreError> {
-    let db = load_owner_eval_database(db_path)?;
-    let store = DbEvalStore::new(&db);
-    let receipt = store.put_channel_message(evidence)?;
-    persist_owner_eval_database(&db, db_path)?;
-    Ok(receipt)
+    mutate_owner_db(db_path, |db| {
+        let store = DbEvalStore::new(db);
+        store.put_channel_message(evidence)
+    })
 }
 
 pub(crate) fn write_channel_receipt_to_owner_db(
     db_path: &Path,
     evidence: ChannelReceiptEvidence,
 ) -> Result<String, EvalStoreError> {
-    let db = load_owner_eval_database(db_path)?;
-    let store = DbEvalStore::new(&db);
-    let receipt = store.put_channel_receipt(evidence)?;
-    persist_owner_eval_database(&db, db_path)?;
-    Ok(receipt.receipt_id)
+    mutate_owner_db(db_path, |db| {
+        let store = DbEvalStore::new(db);
+        store
+            .put_channel_receipt(evidence)
+            .map(|receipt| receipt.receipt_id)
+    })
 }
 
 pub(crate) fn write_import_event_to_owner_db(
     db_path: &Path,
     evidence: ImportEventEvidence,
 ) -> Result<String, EvalStoreError> {
-    let db = load_owner_eval_database(db_path)?;
-    let store = DbEvalStore::new(&db);
-    let receipt = store.put_import_event(evidence)?;
-    persist_owner_eval_database(&db, db_path)?;
-    Ok(receipt.import_id)
+    mutate_owner_db(db_path, |db| {
+        let store = DbEvalStore::new(db);
+        store
+            .put_import_event(evidence)
+            .map(|receipt| receipt.import_id)
+    })
 }
 
 pub(crate) fn write_record_ref_to_owner_db(
     db_path: &Path,
     evidence: RecordRefEvidence,
 ) -> Result<RecordRefReceipt, EvalStoreError> {
-    let db = load_owner_eval_database(db_path)?;
-    let store = DbEvalStore::new(&db);
-    let receipt = store.put_record_ref(evidence)?;
-    persist_owner_eval_database(&db, db_path)?;
-    Ok(receipt)
+    mutate_owner_db(db_path, |db| {
+        let store = DbEvalStore::new(db);
+        store.put_record_ref(evidence)
+    })
 }
 
 pub(crate) fn write_log_ref_to_owner_db(
     db_path: &Path,
     evidence: LogRefEvidence,
 ) -> Result<LogRefReceipt, EvalStoreError> {
-    let db = load_owner_eval_database(db_path)?;
-    let store = DbEvalStore::new(&db);
-    let receipt = store.put_log_ref(evidence)?;
-    persist_owner_eval_database(&db, db_path)?;
-    Ok(receipt)
+    mutate_owner_db(db_path, |db| {
+        let store = DbEvalStore::new(db);
+        store.put_log_ref(evidence)
+    })
 }
 
 pub(crate) fn write_r0_context_to_owner_db(
@@ -401,18 +420,17 @@ pub(crate) fn write_r0_context_to_owner_db(
     closure_path: &Path,
     closure_state: &ClosureState,
 ) -> Result<(), EvalStoreError> {
-    let db = load_owner_eval_database(db_path)?;
-    let store = DbEvalStore::new(&db);
-    store.put_r0_context(
-        manifest_path,
-        manifest,
-        storage_backend,
-        admitted_profile,
-        closure_path,
-        closure_state,
-    )?;
-    persist_owner_eval_database(&db, db_path)?;
-    Ok(())
+    mutate_owner_db(db_path, |db| {
+        let store = DbEvalStore::new(db);
+        store.put_r0_context(
+            manifest_path,
+            manifest,
+            storage_backend,
+            admitted_profile,
+            closure_path,
+            closure_state,
+        )
+    })
 }
 
 pub(crate) fn write_baseline_to_owner_db(
@@ -424,18 +442,17 @@ pub(crate) fn write_baseline_to_owner_db(
     record_ref: Option<&str>,
     recorded_at: String,
 ) -> Result<String, EvalStoreError> {
-    let db = load_owner_eval_database(db_path)?;
-    let store = DbEvalStore::new(&db);
-    let baseline_id = store.put_baseline(
-        parent,
-        baseline,
-        closure,
-        evaluation_id,
-        record_ref,
-        recorded_at,
-    )?;
-    persist_owner_eval_database(&db, db_path)?;
-    Ok(baseline_id)
+    mutate_owner_db(db_path, |db| {
+        let store = DbEvalStore::new(db);
+        store.put_baseline(
+            parent,
+            baseline,
+            closure,
+            evaluation_id,
+            record_ref,
+            recorded_at,
+        )
+    })
 }
 
 pub(super) fn persist_owner_eval_database(
