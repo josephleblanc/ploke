@@ -3316,32 +3316,66 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
             label: &'a str,
             fixture: &'a str,
             query: &'a str,
-            target_module: &'a [&'a str],
-            target_name: &'a str,
+            top_k: usize,
+            target: ConstructorTarget<'a>,
             owner_module: &'a [&'a str],
             owner: &'a str,
             path: &'a [&'a str],
             relation: CallTargetKind,
         }
 
-        let cases = [Case {
-            label: "tuple-struct constructor",
-            fixture: "fixture_call_graph",
-            query: "pub struct NewType",
-            target_module: &["crate"],
-            target_name: "NewType",
-            owner_module: &["crate"],
-            owner: "call_new_type_constructor",
-            path: &["NewType"],
-            relation: CallTargetKind::TupleStructConstructor,
-        }];
+        enum ConstructorTarget<'a> {
+            Struct {
+                module: &'a [&'a str],
+                name: &'a str,
+            },
+            Variant {
+                enum_name: &'a str,
+                name: &'a str,
+            },
+        }
+
+        let cases = [
+            Case {
+                label: "tuple-struct constructor",
+                fixture: "fixture_call_graph",
+                query: "pub struct NewType",
+                top_k: 1,
+                target: ConstructorTarget::Struct {
+                    module: &["crate"],
+                    name: "NewType",
+                },
+                owner_module: &["crate"],
+                owner: "call_new_type_constructor",
+                path: &["NewType"],
+                relation: CallTargetKind::TupleStructConstructor,
+            },
+            Case {
+                label: "enum-variant constructor",
+                fixture: "fixture_nodes",
+                query: "Variant1",
+                top_k: 10,
+                target: ConstructorTarget::Variant {
+                    enum_name: "EnumWithData",
+                    name: "Variant1",
+                },
+                owner_module: &["crate", "imports"],
+                owner: "use_imported_items",
+                path: &["EnumWithData", "Variant1"],
+                relation: CallTargetKind::EnumVariantConstructor,
+            },
+        ];
 
         for case in cases {
             let db = Arc::new(Database::new(setup_db_full_multi_embedding(case.fixture)?));
-            let target = one_uuid(
-                &db,
-                &struct_in_module_query(case.target_module, case.target_name),
-            )?;
+            let target = match case.target {
+                ConstructorTarget::Struct { module, name } => {
+                    one_uuid(&db, &struct_in_module_query(module, name))?
+                }
+                ConstructorTarget::Variant { enum_name, name } => {
+                    one_uuid(&db, &variant_by_enum_query(enum_name, name))?
+                }
+            };
             let owner = one_uuid(
                 &db,
                 &function_in_module_query(case.owner_module, case.owner),
@@ -3366,24 +3400,18 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
 
             rag.bm25_rebuild().await?;
             let sparse_hits = rag
-                .search_bm25_strict(case.query, 1, LOADED_WORKSPACE_SCOPE)
+                .search_bm25_strict(case.query, case.top_k, LOADED_WORKSPACE_SCOPE)
                 .await?;
-            assert_eq!(
-                sparse_hits.len(),
-                1,
-                "{} query should seed get_context with one target hit",
-                case.label
-            );
-            assert_eq!(
-                sparse_hits[0].0, target,
-                "{} query should seed get_context with the constructor target only; hits: {sparse_hits:#?}",
+            assert!(
+                sparse_hits.iter().any(|(hit, _)| *hit == target),
+                "{} query should seed get_context with the constructor target; hits: {sparse_hits:#?}",
                 case.label
             );
 
             let assembled = rag
                 .get_context(
                     case.query,
-                    1,
+                    case.top_k,
                     &TokenBudget {
                         max_total: 20_000,
                         per_file_max: 20_000,
@@ -3393,6 +3421,12 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
                     LOADED_WORKSPACE_SCOPE,
                 )
                 .await?;
+
+            assert!(
+                assembled.parts.iter().any(|part| part.id == target),
+                "public get_context should materialize the {} target seed",
+                case.label
+            );
 
             let caller_part = assembled
                 .parts

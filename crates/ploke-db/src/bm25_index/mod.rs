@@ -733,7 +733,9 @@ impl Bm25Indexer {
 pub(crate) fn collect_rebuild_sources(
     db: &Database,
 ) -> Result<Vec<(Uuid, String, TrackingHash, Uuid)>, DbError> {
-    use crate::multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE};
+    use crate::multi_embedding::db_ext::{
+        ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE, VARIANT_ANCESTOR_RULE,
+    };
 
     let mut out: Vec<(Uuid, String, TrackingHash, Uuid)> = Vec::new();
     for node in NodeType::primary_and_assoc_nodes().iter() {
@@ -762,30 +764,53 @@ is_root_module[id] := *module{{id @ 'NOW'}}, *file_mod{{owner_id: id @ 'NOW'}}
             rel = rel,
         );
         let res = db.raw_query(&script)?;
-        for row in res.rows.iter() {
-            if row.len() < 4 {
-                continue;
-            }
-            let id = match &row[0] {
-                DataValue::Uuid(UuidWrapper(u)) => *u,
-                _ => continue,
-            };
-            let name = match &row[1] {
-                DataValue::Str(s) if !s.is_empty() => s.clone(),
-                _ => continue,
-            };
-            let th = match &row[2] {
-                DataValue::Uuid(UuidWrapper(u)) => TrackingHash(*u),
-                _ => continue,
-            };
-            let namespace = match &row[3] {
-                DataValue::Uuid(UuidWrapper(u)) => *u,
-                _ => continue,
-            };
-            out.push((id, name.to_string(), th, namespace));
-        }
+        extend_sources(&mut out, &res.rows);
     }
+
+    let variant_rules = format!("{}\n{}", ANCESTOR_RULES_NOW, VARIANT_ANCESTOR_RULE);
+    let script = format!(
+        r#"
+{variant_rules}
+is_root_module[id] := *module{{id @ 'NOW'}}, *file_mod{{owner_id: id @ 'NOW'}}
+
+?[id, name, tracking_hash, namespace] :=
+    *variant{{ id, name, owner_id @ 'NOW' }},
+    *enum{{ id: owner_id, tracking_hash @ 'NOW' }},
+    ancestor[id, mod_id],
+    is_root_module[mod_id],
+    *file_mod{{ owner_id: mod_id, namespace @ 'NOW' }}
+"#,
+        variant_rules = variant_rules,
+    );
+    let res = db.raw_query(&script)?;
+    extend_sources(&mut out, &res.rows);
+
     Ok(out)
+}
+
+fn extend_sources(out: &mut Vec<(Uuid, String, TrackingHash, Uuid)>, rows: &[Vec<DataValue>]) {
+    for row in rows {
+        if row.len() < 4 {
+            continue;
+        }
+        let id = match &row[0] {
+            DataValue::Uuid(UuidWrapper(u)) => *u,
+            _ => continue,
+        };
+        let name = match &row[1] {
+            DataValue::Str(s) if !s.is_empty() => s.clone(),
+            _ => continue,
+        };
+        let th = match &row[2] {
+            DataValue::Uuid(UuidWrapper(u)) => TrackingHash(*u),
+            _ => continue,
+        };
+        let namespace = match &row[3] {
+            DataValue::Uuid(UuidWrapper(u)) => *u,
+            _ => continue,
+        };
+        out.push((id, name.to_string(), th, namespace));
+    }
 }
 
 // ------------------------- Tests -------------------------
@@ -1203,69 +1228,60 @@ fn hello() { println!(\"hi\"); }",
         assert!(!got.is_empty(), "expected results after rebuild");
     }
 
-    /// TDD test: Verify that `collect_rebuild_sources` includes Method nodes.
-    ///
-    /// This test will initially FAIL because `collect_rebuild_sources` only iterates
-    /// over `NodeType::primary_nodes()`, which does not include Method.
-    ///
-    /// **Implementation needed:**
-    /// 1. Change `primary_nodes()` to `primary_and_assoc_nodes()` in `collect_rebuild_sources`
-    /// 2. Add METHOD_NODE_ANCESTOR_RULE to the CozoScript for Method nodes (Option B)
     #[test]
-    fn collect_rebuild_sources_includes_method_nodes() {
+    fn collect_rebuild_sources_includes_secondary_search_nodes() {
         let db = TEST_DB_NODES.as_ref().expect("test db init").clone();
         let triples = collect_rebuild_sources(db.as_ref()).expect("collect names");
-
-        // First, verify we have some triples
         assert!(!triples.is_empty(), "expected some nodes to rebuild from");
 
-        // Get the total count of methods in the database for context
-        let method_count_script = r#"?[count(id)] := *method { id, name @ 'NOW' }"#;
-        let method_count_result = db
-            .raw_query(method_count_script)
-            .expect("query method count");
-        let total_methods = match &method_count_result.rows[0][0] {
-            DataValue::Num(cozo::Num::Int(n)) => *n as usize,
-            _ => 0,
-        };
-        eprintln!("Total methods in database: {}", total_methods);
+        struct Case {
+            label: &'static str,
+            relation: &'static str,
+            name: &'static str,
+        }
 
-        // THE FAILING ASSERTION: Method nodes should be included in rebuild sources
-        // This will FAIL initially because collect_rebuild_sources doesn't process methods
-        let method_triples: Vec<_> = triples
-            .iter()
-            .filter(|(id, name, _th, _ns)| {
-                // Check if this ID exists in the method relation
-                let check_script = format!(
-                    r#"?[id] := *method {{ id, name @ 'NOW' }}, id == {}"#,
-                    cozo_datavalue_uuid(*id)
-                );
-                db.raw_query(&check_script)
-                    .map(|r| !r.rows.is_empty())
-                    .unwrap_or(false)
-            })
-            .collect();
+        let cases = [
+            Case {
+                label: "method",
+                relation: "method",
+                name: "public_method",
+            },
+            Case {
+                label: "enum variant",
+                relation: "variant",
+                name: "Variant1",
+            },
+        ];
 
-        eprintln!(
-            "Method triples found in rebuild sources: {}",
-            method_triples.len()
-        );
+        for case in cases {
+            let matching_ids = db
+                .raw_query(&format!(
+                    r#"?[id] := *{} {{ id, name @ 'NOW' }}, name = "{}""#,
+                    case.relation, case.name
+                ))
+                .unwrap_or_else(|err| panic!("query {} IDs: {err}", case.label))
+                .rows
+                .iter()
+                .filter_map(|row| match row.first() {
+                    Some(DataValue::Uuid(UuidWrapper(id))) => Some(*id),
+                    _ => None,
+                })
+                .collect::<std::collections::HashSet<_>>();
+            assert!(
+                !matching_ids.is_empty(),
+                "fixture should contain at least one {} named {}",
+                case.label,
+                case.name
+            );
 
-        assert!(
-            !method_triples.is_empty(),
-            "Expected Method nodes to be included in collect_rebuild_sources, but found none. \
-             This indicates that collect_rebuild_sources is not iterating over NodeType::Method. \
-             To fix: Change primary_nodes() to primary_and_assoc_nodes() and add METHOD_NODE_ANCESTOR_RULE for Method nodes."
-        );
-
-        eprintln!(
-            "SUCCESS: collect_rebuild_sources includes {} Method nodes",
-            method_triples.len()
-        );
+            assert!(
+                triples
+                    .iter()
+                    .any(|(id, name, _th, _ns)| name == case.name && matching_ids.contains(id)),
+                "collect_rebuild_sources should include {} node {}",
+                case.label,
+                case.name
+            );
+        }
     }
-}
-
-/// Helper to format a UUID for CozoScript
-fn cozo_datavalue_uuid(id: Uuid) -> String {
-    format!("to_uuid(\"{}\")", id)
 }

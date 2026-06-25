@@ -7,7 +7,9 @@ use crate::QueryResult;
 use crate::bm25_index::{DocMeta, TOKENIZER_VERSION};
 use crate::error::DbError;
 use crate::get_by_id::NodePaths;
-use crate::multi_embedding::db_ext::{EmbeddingExt, METHOD_NODE_ANCESTOR_RULE};
+use crate::multi_embedding::db_ext::{
+    EmbeddingExt, METHOD_NODE_ANCESTOR_RULE, VARIANT_ANCESTOR_RULE,
+};
 use crate::multi_embedding::hnsw_ext::HnswExt;
 use crate::multi_embedding::schema::{EmbeddingSetExt as _, EmbeddingVector};
 use crate::result::{get_byte_offsets, get_pos};
@@ -3242,6 +3244,11 @@ snippet_node[id, name, hash, span] :=
                 )
             })
             .join("\n");
+        let variant_node_rule = r#"
+snippet_node[id, name, hash, span] :=
+    *variant{id, name, owner_id @ 'NOW'},
+    *enum{id: owner_id, tracking_hash: hash, span @ 'NOW'}
+"#;
 
         let script = format!(
             r#"
@@ -3250,11 +3257,13 @@ target_ids[id, ordering] <- $data
 parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}}
 
 {method_ancestor_rule}
+{variant_ancestor_rule}
 
 ancestor[desc, asc] := parent_of[desc, asc]
 ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc]
 
 {has_node_rule}
+{variant_node_rule}
 
 batch[id, name, file_path, file_hash, hash, span, namespace, canon_path, ordering] :=
     snippet_node[id, name, hash, span],
@@ -3268,6 +3277,8 @@ batch[id, name, file_path, file_hash, hash, span, namespace, canon_path, orderin
 :sort ordering
 "#,
             method_ancestor_rule = METHOD_NODE_ANCESTOR_RULE,
+            variant_ancestor_rule = VARIANT_ANCESTOR_RULE,
+            variant_node_rule = variant_node_rule,
             has_node_rule = has_node_rule
         );
 

@@ -47,6 +47,14 @@ parent_of[item_id, impl_id] := *syntax_edge{source_id: impl_id, target_id: item_
 parent_of[item_id, trait_id] := *syntax_edge{source_id: trait_id, target_id: item_id, relation_kind: "TraitAssociatedItem" @ 'NOW'}
 "#;
 
+/// Extends `parent_of` / `ancestor` for enum variants.
+///
+/// Variants are secondary nodes and do not carry their own snippet span or tracking hash.
+/// This rule lets variant IDs reach their owning enum, then the normal module/file roots.
+pub const VARIANT_ANCESTOR_RULE: &str = r#"
+parent_of[variant_id, enum_id] := *syntax_edge{source_id: enum_id, target_id: variant_id, relation_kind: "EnumVariant" @ 'NOW'}
+"#;
+
 const ROOT_MODULE_RULE: &str = r#"
 is_root_module[id] := *module{id}, *file_mod {owner_id: id}
 "#;
