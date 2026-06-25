@@ -18,9 +18,12 @@ are not acceptable as a continuing implementation style.
 ## Current state
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
-- Latest committed call-graph quality checkpoint before endpoint-family work:
-  `65ca8758 Fix external call proof state`
+- Latest committed call-graph quality checkpoint:
+  `29eb4f8a Centralize call endpoint families`
 - Current quality focus: DB/proof/query hardening before adding parser breadth.
+- Recent endpoint-family cleanup:
+  - `e53a2301 Split call target endpoint kind`
+  - `29eb4f8a Centralize call endpoint families`
 
 ## Resumption rules
 
@@ -48,7 +51,7 @@ are not acceptable as a continuing implementation style.
 | --- | --- | --- | --- | --- |
 | CGQ-1 | P1 | Open | Implementation focus drifted toward parser breadth while DB/proof quality lagged. | Shift next resumed work to DB/proof/query hardening and shared test structure. |
 | CGQ-2 | P1 | Open | `call_graph_fixture_queries.rs` and `call_graph_queries.rs` are far larger and less modular than the type-graph precedent. | Split by concern and introduce shared `common` helpers/matrices before adding more cases. |
-| CGQ-3 | P1 | Open | Call endpoint-family rules are duplicated across transform insertion, DB Cozo queries, Rust validation, and tests. | Centralize the valid call relation/target family matrix; keep one source of truth or one generated matrix. |
+| CGQ-3 | P1 | Partial 2026-06-25 | Call endpoint-family rules are duplicated across transform insertion, DB Cozo queries, Rust validation, and tests. | DB query helpers and Rust validation now share `VALID_CALL_TARGET_FAMILIES`; remaining work is transform insertion/test helper surfaces. |
 | CGQ-4 | P1 | Done 2026-06-25 | DB `CallRelationKind` mixed relation semantics with target-kind semantics, including `Struct` and `Variant`. | `CallTargetKind` now carries DB endpoint families separately from call relation kinds, while persisted relation strings remain unchanged. |
 | CGQ-5 | P1 | Done 2026-06-25 | External proof projection reported `externally_summarized` while also using blocker reason `external_dependency_summary_missing`. | Current parser-projected external rows now emit blocked/missing-summary proof state until a real external summary fact exists. |
 | CGQ-6 | P2 | Open | Dynamic branch/match candidate provenance can collapse to `Null` in persisted `call_site` rows. | Decide whether proof/RAG needs normalized candidate provenance; do not silently drop proof-critical candidates. |
@@ -71,13 +74,9 @@ are not acceptable as a continuing implementation style.
 
 ## Immediate next checkpoint
 
-When the goal is resumed, start by deciding what to do with the current dirty
-`call_graph_fixture_queries.rs` helper extraction:
+Continue DB-side hardening before parser/resolver breadth. The next likely
+slices are:
 
-1. Keep and commit it after `npx gitnexus detect-changes`, or
-2. Extend it only as part of a consolidated table-driven DB/proof helper chunk,
-   or
-3. Revert it only if the user explicitly asks.
-
-Do not add new parser/resolver breadth before addressing the DB/proof structure
-and semantics above.
+1. Finish CGQ-3 by reducing transform/test-helper endpoint-family duplication.
+2. Continue CGQ-2 by splitting oversized call-graph DB tests by concern.
+3. Address CGQ-7 with a pre-dedup exactly-one-status invariant check.
