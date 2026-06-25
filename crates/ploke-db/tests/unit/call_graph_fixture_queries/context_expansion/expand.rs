@@ -90,23 +90,10 @@ fn fixture_expand_call_context_reads_real_outgoing_and_incoming_candidates() -> 
 #[test]
 fn fixture_expand_call_context_owner_seed_filters_mixed_status_rows() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let owner = function_id_by_name(&db, "call_try_result_instance_method")?;
-    let try_target = function_id_by_name(&db, "try_local_assoc")?;
-    let method_target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "instance_value")?;
-    let context = db.call_context_for_owner(owner)?;
-    assert_eq!(context.len(), 3, "try-result context rows: {context:#?}");
-
-    let ok_site = row_by_path(&context, &["Ok"]).site.id;
-    let try_site = row_by_path(&context, &["try_local_assoc"]).site.id;
-    let receiver = CallReceiver::TryPathCallResult {
-        path: path(&["try_local_assoc"]),
-    };
-    let method_site = row_by_method_receiver(&context, "instance_value", &receiver)
-        .site
-        .id;
+    let case = try_result_context(&db)?;
 
     let candidates = db.expand_call_context(
-        CallContextSeed::Owner(owner),
+        CallContextSeed::Owner(case.owner),
         CallContextOptions {
             include_incoming_callers: false,
             ..CallContextOptions::default()
@@ -119,20 +106,20 @@ fn fixture_expand_call_context_owner_seed_filters_mixed_status_rows() -> Result<
     );
     assert_outgoing_candidate(
         &candidates,
-        try_target,
-        try_site,
+        case.targets.try_fn,
+        case.sites.try_call,
         "try_local_assoc outgoing target candidate missing",
     );
     assert_outgoing_candidate(
         &candidates,
-        method_target,
-        method_site,
+        case.targets.method,
+        case.sites.method,
         "try-result method outgoing target candidate missing",
     );
     assert!(
         candidates
             .iter()
-            .all(|candidate| candidate.call_site_id != ok_site),
+            .all(|candidate| candidate.call_site_id != case.sites.ok),
         "unsupported Ok path call must not be promoted: {candidates:#?}"
     );
 

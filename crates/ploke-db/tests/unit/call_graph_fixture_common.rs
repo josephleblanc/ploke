@@ -15,6 +15,7 @@ mod dynamic;
 mod lookup;
 mod proof;
 mod rows;
+mod scenarios;
 mod selectors;
 mod targetless;
 
@@ -23,6 +24,7 @@ pub(super) use dynamic::*;
 pub(super) use lookup::*;
 pub(super) use proof::*;
 pub(super) use rows::*;
+pub(super) use scenarios::*;
 pub(super) use selectors::*;
 pub(super) use targetless::*;
 

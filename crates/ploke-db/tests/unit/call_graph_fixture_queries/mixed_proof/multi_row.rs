@@ -3,21 +3,9 @@ use super::*;
 #[test]
 fn fixture_projection_stores_real_multi_row_call_proof_facts() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let owner = function_id_by_name(&db, "call_try_result_instance_method")?;
-    let try_target = function_id_by_name(&db, "try_local_assoc")?;
-    let method_target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "instance_value")?;
-    let context = db.call_context_for_owner(owner)?;
-    assert_eq!(context.len(), 3, "context rows: {context:#?}");
-    let ok_site = row_by_path(&context, &["Ok"]).site.id;
-    let try_site = row_by_path(&context, &["try_local_assoc"]).site.id;
-    let receiver = CallReceiver::TryPathCallResult {
-        path: path(&["try_local_assoc"]),
-    };
-    let method_site = row_by_method_receiver(&context, "instance_value", &receiver)
-        .site
-        .id;
+    let case = try_result_context(&db)?;
 
-    let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
+    let count = db.project_call_proof_facts_for_owner(case.owner, "bd:fixture-call-graph")?;
     assert_eq!(count, 8);
 
     let mut edges = db.proof_checker_edges()?;
@@ -26,21 +14,21 @@ fn fixture_projection_stores_real_multi_row_call_proof_facts() -> Result<(), DbE
     assert!(
         edges
             .iter()
-            .all(|edge| edge.caller_def_id == owner.to_string())
+            .all(|edge| edge.caller_def_id == case.owner.to_string())
     );
     assert!(edges.iter().all(|edge| edge.resolution_state == "resolved"));
     assert!(edges.iter().all(|edge| edge.blocker_reason.is_none()));
     assert!(
         edges.iter().any(|edge| {
-            edge.call_site_id == try_site.to_string()
-                && edge.callee_def_id.as_deref() == Some(try_target.to_string().as_str())
+            edge.call_site_id == case.sites.try_call.to_string()
+                && edge.callee_def_id.as_deref() == Some(case.targets.try_fn.to_string().as_str())
         }),
         "try path proof edges: {edges:#?}"
     );
     assert!(
         edges.iter().any(|edge| {
-            edge.call_site_id == method_site.to_string()
-                && edge.callee_def_id.as_deref() == Some(method_target.to_string().as_str())
+            edge.call_site_id == case.sites.method.to_string()
+                && edge.callee_def_id.as_deref() == Some(case.targets.method.to_string().as_str())
         }),
         "method proof edges: {edges:#?}"
     );
@@ -49,13 +37,13 @@ fn fixture_projection_stores_real_multi_row_call_proof_facts() -> Result<(), DbE
     assert!(
         blocked.iter().any(|row| {
             row.kind == "call_resolution"
-                && row.call_site_id.as_deref() == Some(ok_site.to_string().as_str())
+                && row.call_site_id.as_deref() == Some(case.sites.ok.to_string().as_str())
                 && row.blocker_reason.as_deref() == Some("type_resolution_missing")
         }),
         "blocked proof rows: {blocked:#?}"
     );
 
-    for site in [ok_site, try_site, method_site] {
+    for site in [case.sites.ok, case.sites.try_call, case.sites.method] {
         let provenance = db
             .proof_source_provenance(&site.to_string())?
             .expect("projected fixture call-site source provenance");
@@ -73,22 +61,22 @@ fn fixture_projection_stores_real_multi_row_call_proof_facts() -> Result<(), DbE
 #[test]
 fn fixture_projection_links_mixed_owner_proof_rows_to_call_context() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let owner = function_id_by_name(&db, "call_try_result_instance_method")?;
-    let context = db.call_context_for_owner(owner)?;
-    assert_eq!(context.len(), 3, "context rows: {context:#?}");
+    let case = try_result_context(&db)?;
 
-    let expected_fact_count = context
+    let expected_fact_count = case
+        .context
         .iter()
         .map(|row| 2 + row.targets.len())
         .sum::<usize>();
-    let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
+    let count = db.project_call_proof_facts_for_owner(case.owner, "bd:fixture-call-graph")?;
     assert_eq!(
         count, expected_fact_count,
         "proof projection should emit one call_site and one call_resolution per site plus resolved edges"
     );
 
     let proof_rows = db.proof_graphrag_context("")?;
-    let resolved_context = context
+    let resolved_context = case
+        .context
         .iter()
         .filter(|row| row.status.status == CallStatusKind::Resolved)
         .count();
@@ -99,7 +87,7 @@ fn fixture_projection_links_mixed_owner_proof_rows_to_call_context() -> Result<(
         "proof checker edges should match resolved call-context rows: {checker_edges:#?}"
     );
 
-    for row in &context {
+    for row in &case.context {
         let site = row.site.id.to_string();
         let site_rows = proof_rows
             .iter()
@@ -127,7 +115,7 @@ fn fixture_projection_links_mixed_owner_proof_rows_to_call_context() -> Result<(
                     1,
                     "resolved call site {site} should project one call_edge fact: {site_rows:#?}"
                 );
-                let owner_id = owner.to_string();
+                let owner_id = case.owner.to_string();
                 let target_id = row.targets[0].target_id.to_string();
                 assert_eq!(
                     edge_rows[0].caller_def_id.as_deref(),
