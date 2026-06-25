@@ -6,6 +6,7 @@
 //! statuses and do not produce fake target edges.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 use crate::{
     error::SynParserError,
@@ -194,6 +195,7 @@ impl<'a> CallRelationResolver<'a> {
 
         relations.sort_unstable();
         relations.dedup();
+        assert_unique_status_sources(&statuses)?;
         statuses.sort_unstable();
         statuses.dedup();
         let summary = CallResolutionSummary::from_statuses(&statuses);
@@ -3465,6 +3467,21 @@ impl<'a> CallRelationResolver<'a> {
     }
 }
 
+fn assert_unique_status_sources(statuses: &[CallResolutionStatus]) -> Result<(), SynParserError> {
+    let mut by_source = BTreeMap::new();
+    for status in statuses {
+        if let Some(existing) = by_source.insert(status.source(), status) {
+            return Err(SynParserError::InternalState(format!(
+                "duplicate call_resolution_status for {}: first={:?}, second={:?}",
+                status.source(),
+                existing,
+                status
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn trait_declares_instance_method(trait_node: &TraitNode, method_name: &str) -> bool {
     trait_node.methods.iter().any(|method| {
         method.name == method_name && method.parameters.iter().any(|param| param.is_self)
@@ -3478,4 +3495,45 @@ pub fn resolve_call_relations_after_tree(
     tree: &ModuleTree,
 ) -> Result<CallResolutionReport, SynParserError> {
     CallRelationResolver::new(graph, tree).resolve_call_relations()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::nodes::{
+        CallSiteKind, FunctionNodeId, PathCallSiteId,
+        test_ids::{TestCallIds, TestIds, generate_test_call_id},
+    };
+    use ploke_core::NodeId;
+    use uuid::Uuid;
+
+    #[test]
+    fn duplicate_status_sources_are_rejected_before_dedup() {
+        let owner = CallBodyOwnerId::Function(FunctionNodeId::new_test(NodeId::Synthetic(
+            Uuid::from_u128(1),
+        )));
+        let source = AnyCallSiteId::Path(PathCallSiteId::new_call_test(generate_test_call_id(
+            owner,
+            CallSiteKind::Path,
+            "duplicated",
+            (10, 20),
+            &[],
+        )));
+        let statuses = [
+            CallResolutionStatus::Unresolved { source },
+            CallResolutionStatus::Unresolved { source },
+        ];
+
+        let err = assert_unique_status_sources(&statuses)
+            .expect_err("duplicate call-site status should be rejected before dedup");
+        assert!(
+            matches!(
+                err,
+                SynParserError::InternalState(ref message)
+                    if message.contains("duplicate call_resolution_status")
+                        && message.contains(&source.to_string())
+            ),
+            "unexpected invariant error: {err:?}"
+        );
+    }
 }
