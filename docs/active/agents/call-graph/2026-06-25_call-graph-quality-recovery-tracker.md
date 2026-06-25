@@ -19,8 +19,10 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `31d19d3c Add variant sparse call-context seeds`
+  `cc808347 test: cover variant constructor tool context`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
+- Recent TUI/model-visible cleanup:
+  - `cc808347 test: cover variant constructor tool context`
 - Recent RAG/DB context cleanup:
   - `31d19d3c Add variant sparse call-context seeds`
 - Recent coverage inventory cleanup:
@@ -216,6 +218,14 @@ next likely slices are:
    that batch before adding cases.
 
 ## Latest verification
+
+For `cc808347 test: cover variant constructor tool context`:
+
+- `cargo test -p ploke-tui --features call_graph,test_harness request_code_context_returns_constructor_target_callers_with_call_context -- --nocapture`
+  - passed: focused request-code-context constructor filter ran 1 test, 0
+    failed.
+- `cargo test -p ploke-tui --features call_graph,test_harness call_context -- --nocapture`
+  - passed: TUI call-context filter ran 12 tests, 0 failed.
 
 For `31d19d3c Add variant sparse call-context seeds`:
 

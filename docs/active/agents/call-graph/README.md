@@ -415,10 +415,11 @@ Implemented/scaffolded:
     `fixture_call_graph` database returns an incoming method caller part with
     both `call_expansion` provenance and the matching outgoing method
     call-context row in the model-visible JSON payload.
-    It also asserts the production-style payload returns the tuple-constructor
-    caller with the matching outgoing `TupleStructConstructor` row when sparse
-    retrieval is seeded by `NewType`; production type-context expansion may
-    materialize that caller before call-context expansion adds provenance.
+    It also asserts the production-style payload returns tuple-struct and enum
+    variant constructor callers with matching outgoing constructor rows when
+    sparse retrieval is seeded by those constructor targets; production
+    type-context expansion may materialize tuple callers before call-context
+    expansion adds provenance.
 - GREEN fixture tests now use a call-site paranoid harness and cover 206 concrete call expressions:
   - `fixture_nodes_public_method_records_and_resolves_self_private_method_call_site`
   - `fixture_nodes_get_secret_len_records_self_field_len_external_method_call_site`
