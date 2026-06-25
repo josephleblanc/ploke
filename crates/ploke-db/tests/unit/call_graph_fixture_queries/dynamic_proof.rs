@@ -209,16 +209,13 @@ fn fixture_projection_marks_real_unsupported_dynamic_call_without_edges() -> Res
         let owner = function_id_by_name(&db, owner_name)?;
         let context = db.call_context_for_owner(owner)?;
         assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
-        let row = &context[0];
+        let row = assert_targetless_row(
+            &context,
+            owner,
+            TargetlessRowCase::dynamic(None, CallStatusKind::Unsupported, owner_name),
+        );
         let site = row.site.id;
         let span = row.site.span;
-        assert_eq!(row.site.kind, CallSiteKind::Dynamic);
-        assert_eq!(row.status.status, CallStatusKind::Unsupported);
-        assert_eq!(row.status.resolution, None);
-        assert!(
-            row.targets.is_empty(),
-            "{owner_name} unsupported dynamic proof setup must be targetless: {row:#?}"
-        );
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
         assert_eq!(count, 2);
@@ -313,17 +310,13 @@ fn fixture_projection_marks_real_branch_and_match_dynamic_failures_without_edges
         let owner = function_id_by_name(&db, owner_name)?;
         let context = db.call_context_for_owner(owner)?;
         assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
-        let row = &context[0];
+        let row = assert_targetless_row(
+            &context,
+            owner,
+            TargetlessRowCase::dynamic(None, expected_status, owner_name),
+        );
         let site = row.site.id;
         let span = row.site.span;
-        assert_eq!(row.site.kind, CallSiteKind::Dynamic);
-        assert_eq!(row.site.owner_id, owner);
-        assert_eq!(row.status.status, expected_status);
-        assert_eq!(row.status.resolution, None);
-        assert!(
-            row.targets.is_empty(),
-            "{owner_name} dynamic failure proof setup must be targetless: {row:#?}"
-        );
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
         assert_eq!(count, 2);
