@@ -266,12 +266,14 @@ fn fixture_projection_marks_real_parenthesized_callable_dynamic_rows_without_edg
         1,
         "parenthesized generic FnOnce proof context rows: {context:#?}"
     );
-    let generic_f = row_by_kind_path(&context, CallSiteKind::Dynamic, &["generic_f"]);
-    assert_eq!(generic_f.status.status, CallStatusKind::Unsupported);
-    assert_eq!(generic_f.status.resolution, None);
-    assert!(
-        generic_f.targets.is_empty(),
-        "parenthesized generic FnOnce dynamic proof setup must be targetless: {generic_f:#?}"
+    let generic_f = assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::dynamic(
+            Some(&["generic_f"]),
+            CallStatusKind::Unsupported,
+            "parenthesized generic FnOnce dynamic proof setup",
+        ),
     );
 
     let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
@@ -289,19 +291,24 @@ fn fixture_projection_marks_real_parenthesized_callable_dynamic_rows_without_edg
         2,
         "parenthesized boxed dyn Fn proof context rows: {context:#?}"
     );
-    let box_new = row_by_path(&context, &["Box", "new"]);
-    assert_eq!(box_new.status.status, CallStatusKind::External);
-    assert_eq!(box_new.status.resolution, None);
-    assert!(
-        box_new.targets.is_empty(),
-        "parenthesized boxed dyn Fn Box::new proof setup must be targetless: {box_new:#?}"
+    let box_new = assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::path(
+            &["Box", "new"],
+            1,
+            CallStatusKind::External,
+            "parenthesized boxed dyn Fn Box::new proof setup",
+        ),
     );
-    let boxed_fn = row_by_kind_path(&context, CallSiteKind::Dynamic, &["boxed_fn"]);
-    assert_eq!(boxed_fn.status.status, CallStatusKind::Unsupported);
-    assert_eq!(boxed_fn.status.resolution, None);
-    assert!(
-        boxed_fn.targets.is_empty(),
-        "parenthesized boxed dyn Fn dynamic proof setup must be targetless: {boxed_fn:#?}"
+    let boxed_fn = assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::dynamic(
+            Some(&["boxed_fn"]),
+            CallStatusKind::Unsupported,
+            "parenthesized boxed dyn Fn dynamic proof setup",
+        ),
     );
 
     let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;

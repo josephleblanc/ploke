@@ -61,15 +61,15 @@ fn fixture_context_reads_projected_function_item_binding_calls() -> Result<(), D
         "shadowed binding context rows: {context:#?}"
     );
 
-    let row = &context[0];
-    assert_eq!(row.site.owner_id, owner);
-    assert_eq!(row.site.kind, CallSiteKind::Path);
-    assert_eq!(row.site.path.as_ref(), Some(&path(&["local_target"])));
-    assert_eq!(row.status.status, CallStatusKind::Unsupported);
-    assert_eq!(row.status.resolution, None);
-    assert!(
-        row.targets.is_empty(),
-        "shadowed closure binding must not fabricate local function edges: {row:#?}"
+    assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::path(
+            &["local_target"],
+            0,
+            CallStatusKind::Unsupported,
+            "shadowed closure binding",
+        ),
     );
 
     Ok(())
@@ -140,24 +140,14 @@ fn fixture_context_reads_projected_returned_function_nested_calls() -> Result<()
         CallTargetKind::Function,
     );
 
-    let dynamic_rows = context
-        .iter()
-        .filter(|row| row.site.kind == CallSiteKind::Dynamic)
-        .collect::<Vec<_>>();
-    assert_eq!(
-        dynamic_rows.len(),
-        1,
-        "expected one outer returned-function dynamic call row: {context:#?}"
-    );
-    let row = dynamic_rows[0];
-    assert_eq!(row.site.owner_id, owner);
-    assert_eq!(row.site.arg_count, Some(0));
-    assert_eq!(row.site.generic_arg_count, None);
-    assert_eq!(row.status.status, CallStatusKind::Unsupported);
-    assert_eq!(row.status.resolution, None);
-    assert!(
-        row.targets.is_empty(),
-        "returned-function dynamic call must remain unsupported without fake targets: {row:#?}"
+    assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::dynamic(
+            None,
+            CallStatusKind::Unsupported,
+            "returned-function dynamic call",
+        ),
     );
 
     Ok(())
@@ -355,20 +345,25 @@ fn fixture_context_reads_projected_targetless_dynamic_failures() -> Result<(), D
     let context = db.call_context_for_owner(owner)?;
     assert_eq!(context.len(), 2, "boxed dyn Fn context rows: {context:#?}");
 
-    let row = row_by_path(&context, &["Box", "new"]);
-    assert_eq!(row.status.status, CallStatusKind::External);
-    assert_eq!(row.status.resolution, None);
-    assert!(
-        row.targets.is_empty(),
-        "Box::new must not fabricate local target edges: {row:#?}"
+    assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::path(
+            &["Box", "new"],
+            1,
+            CallStatusKind::External,
+            "parenthesized Box::new setup call",
+        ),
     );
 
-    let row = row_by_kind_path(&context, CallSiteKind::Dynamic, &["boxed_fn"]);
-    assert_eq!(row.status.status, CallStatusKind::Unsupported);
-    assert_eq!(row.status.resolution, None);
-    assert!(
-        row.targets.is_empty(),
-        "boxed dyn Fn dynamic call must remain unsupported without fake targets: {row:#?}"
+    assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::dynamic(
+            Some(&["boxed_fn"]),
+            CallStatusKind::Unsupported,
+            "parenthesized boxed dyn Fn dynamic call",
+        ),
     );
 
     Ok(())
