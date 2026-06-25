@@ -14,6 +14,114 @@ pub(in crate::unit) enum ProofEdgeCount {
     AtLeast,
 }
 
+pub(in crate::unit) enum ResolvedProofCall<'a> {
+    Path {
+        path: &'a [&'a str],
+        target: Uuid,
+        relation: CallRelationKind,
+        target_kind: CallTargetKind,
+    },
+    Method {
+        method: &'a str,
+        receiver: CallReceiver,
+        target: Uuid,
+    },
+}
+
+impl<'a> ResolvedProofCall<'a> {
+    pub(in crate::unit) fn path(
+        path: &'a [&'a str],
+        target: Uuid,
+        relation: CallRelationKind,
+        target_kind: CallTargetKind,
+    ) -> Self {
+        Self::Path {
+            path,
+            target,
+            relation,
+            target_kind,
+        }
+    }
+
+    pub(in crate::unit) fn method(method: &'a str, receiver: CallReceiver, target: Uuid) -> Self {
+        Self::Method {
+            method,
+            receiver,
+            target,
+        }
+    }
+}
+
+pub(in crate::unit) struct ResolvedProofCase<'a> {
+    pub(in crate::unit) label: &'a str,
+    pub(in crate::unit) owner: Uuid,
+    pub(in crate::unit) rows: usize,
+    pub(in crate::unit) calls: Vec<ResolvedProofCall<'a>>,
+}
+
+pub(in crate::unit) fn resolved_proof_edges(
+    db: &Database,
+    domain: &str,
+    cases: &[ResolvedProofCase<'_>],
+) -> Result<Vec<OwnerProofEdge>, DbError> {
+    let mut edges = Vec::new();
+
+    for case in cases {
+        let context = db.call_context_for_owner(case.owner)?;
+        assert_eq!(
+            context.len(),
+            case.rows,
+            "{} context rows: {context:#?}",
+            case.label
+        );
+
+        for call in &case.calls {
+            let (row, target, relation, kind, target_kind) = match call {
+                ResolvedProofCall::Path {
+                    path,
+                    target,
+                    relation,
+                    target_kind,
+                } => (
+                    row_by_path(&context, path),
+                    *target,
+                    *relation,
+                    CallSiteKind::Path,
+                    *target_kind,
+                ),
+                ResolvedProofCall::Method {
+                    method,
+                    receiver,
+                    target,
+                } => (
+                    row_by_method_receiver(&context, method, receiver),
+                    *target,
+                    CallRelationKind::Method,
+                    CallSiteKind::Method,
+                    CallTargetKind::Method,
+                ),
+            };
+
+            assert_resolved_target(row, target, relation, kind, target_kind);
+            edges.push(OwnerProofEdge {
+                owner: case.owner,
+                site: row.site.id,
+                span: row.site.span,
+                target,
+            });
+        }
+
+        let expected = context
+            .iter()
+            .map(|row| 2 + row.targets.len())
+            .sum::<usize>();
+        let count = db.project_call_proof_facts_for_owner(case.owner, domain)?;
+        assert_eq!(count, expected, "{} proof fact count", case.label);
+    }
+
+    Ok(edges)
+}
+
 pub(in crate::unit) fn assert_owner_proof_edges(
     db: &Database,
     label: &str,
