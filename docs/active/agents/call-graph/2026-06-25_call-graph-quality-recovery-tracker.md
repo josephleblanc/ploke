@@ -26,6 +26,10 @@ are not acceptable as a continuing implementation style.
 - Recent RAG/DB context cleanup:
   - `31d19d3c Add variant sparse call-context seeds`
   - `15f0ce68 test: share RAG call expansion assertions`
+- Recent RAG test-module cleanup:
+  - Public sparse `get_context` call-context tests were moved out of the
+    monolithic `ploke-rag/src/core/unit_tests.rs` file into
+    `ploke-rag/src/core/unit_tests/tests/call_context.rs`.
 - Recent coverage inventory cleanup:
   - Added `2026-06-25_call-graph-coverage-inventory.md` as the compact layer inventory.
 - Recent production pattern cleanup:
@@ -242,6 +246,10 @@ are not acceptable as a continuing implementation style.
   assertions through `call_graph_fixture_common/selectors.rs`, so relation,
   target, call-site, and distance checks are centralized instead of copied in
   each expansion test.
+- RAG public sparse `get_context` call-context tests now live in a dedicated
+  `unit_tests/tests/call_context.rs` concern module while retaining the shared
+  call-expansion assertion helpers in the parent test module for the next
+  collection/expansion split.
 - Resolved dynamic proof fixture tests now share a dynamic proof batch helper
   that preserves fresh-DB isolation per proof group while moving repeated
   target lookup, proof projection, and owner-edge assertions out of each test.
@@ -286,6 +294,9 @@ are not acceptable as a continuing implementation style.
     passed: 4 passed, 0 failed.
   - `cargo test -p ploke-transform --features call_graph transform::tests -- --nocapture`
     passed: 1 passed, 0 failed.
+- RAG public sparse `get_context` call-context module split
+  - `cargo test -p ploke-rag --features call_graph call_context_sparse_get_context -- --nocapture`
+    passed: 8 passed, 0 failed.
 - `056705b8 test: split local target prevalidation cases`
   - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection::prevalidation::local_targets -- --nocapture`
     passed: 4 passed, 0 failed.
