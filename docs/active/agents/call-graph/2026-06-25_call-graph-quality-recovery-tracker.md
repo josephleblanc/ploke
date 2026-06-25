@@ -19,8 +19,10 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `72c56f6f test: split call graph proof helpers`
-- Current quality focus: DB/proof/query hardening before adding parser breadth.
+  `5fad4c98 Remove dormant call graph semantic storage`
+- Current quality focus: production-side pattern gaps before adding parser breadth.
+- Recent production pattern cleanup:
+  - `5fad4c98 Remove dormant call graph semantic storage`
 - Recent endpoint-family cleanup:
   - `e53a2301 Split call target endpoint kind`
   - `29eb4f8a Centralize call endpoint families`
@@ -90,6 +92,14 @@ are not acceptable as a continuing implementation style.
   - `7398c064 test: split context expansion query tests`
   - `a4159987 test: split target proof method fixtures`
 
+## Recent production cleanup detail
+
+- `CodeGraph` and `ParsedCodeGraph` now own structural call occurrence facts
+  only: `call_sites` and `call_site_relations`.
+- Semantic call target/status facts are no longer dormant parser graph fields.
+  They are produced by `CallResolutionReport` at the resolver/transform
+  boundary, matching the current type-graph-style ownership pattern.
+
 ## Recent consolidated DB split detail
 
 - `call_graph_fixture_queries/associated_context.rs` is now a thin module root
@@ -143,6 +153,7 @@ are not acceptable as a continuing implementation style.
 | CGQ-8 | P2 | Open | `call_resolution.rs` and `call_extraction.rs` are monolithic. | Avoid adding breadth there without local extraction; split path/method/dynamic/macro logic when touching the area. |
 | CGQ-9 | P2 | Open | Call-graph docs are serving as a long running diary rather than a stable coverage inventory. | Add or update a stable call-graph coverage document/matrix, mirroring type-resolution coverage practice. |
 | CGQ-10 | P3 | Open | `call_graph` feature name is broader than the actual gate: parser facts exist baseline, DB projection is gated. | Make docs explicit that this is currently a DB projection rollout gate. |
+| CGQ-11 | P1 | Done 2026-06-25 | `CodeGraph` carried dormant semantic call-target/status storage even though transform consumes `CallResolutionReport` directly. | `CodeGraph`/`ParsedCodeGraph` now keep only structural call occurrence facts; semantic call relations/statuses are report-owned at the resolver/transform boundary. |
 
 ## Pattern matches to preserve
 
@@ -159,13 +170,14 @@ are not acceptable as a continuing implementation style.
 
 ## Immediate next checkpoint
 
-Continue DB-side hardening before parser/resolver breadth. The next likely
-slices are:
+Continue production-side pattern cleanup before parser/resolver breadth. The
+next likely slices are:
 
 1. Finish CGQ-3 by reducing transform/test-helper endpoint-family duplication.
-2. Continue CGQ-2 by splitting oversized call-graph DB tests by concern.
-3. Keep candidate-bearing ambiguous rows covered in DB/proof tests when
-   splitting helpers; do not move them back into targetless failure tables.
+2. Tighten call-graph availability semantics to distinguish schema presence
+   from populated projection data.
+3. Move/table-drive transform call-graph projection tests out of the broad
+   transform module.
 
 ## Latest verification
 
@@ -551,3 +563,10 @@ For `72c56f6f test: split call graph proof helpers`:
 
 - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
   - passed: `tests/mod.rs` 94 passed, 0 failed.
+
+For `5fad4c98 Remove dormant call graph semantic storage`:
+
+- `cargo test -p syn_parser --features call_graph call_sites`
+  - passed: `tests/mod.rs` 206 passed, 0 failed.
+- `cargo test -p ploke-transform --features call_graph transform::tests`
+  - passed: 5 passed, 0 failed.
