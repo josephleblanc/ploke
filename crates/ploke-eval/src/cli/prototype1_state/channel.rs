@@ -613,12 +613,12 @@ where
         runner_result: Prototype1RunnerResult,
         treatment: Option<Prototype1TreatmentEvidence>,
     ) -> Result<(Channel<Child<child::ResultWritten>, T>, Receipt), ChannelError<T::Error>> {
-        let receipt = self.write(
-            &self.endpoints.child_to_parent(),
+        let receipt = self.write_child_message(
             ToParent::Result {
                 runner_result,
                 treatment,
             },
+            "result",
         )?;
         Ok((self.cast(), receipt))
     }

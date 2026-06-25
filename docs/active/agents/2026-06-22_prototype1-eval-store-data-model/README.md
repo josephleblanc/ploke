@@ -8,6 +8,7 @@ Short description: planning packet for replacing Prototype 1 shared-filesystem a
 
 Read these first when implementing:
 
+- [`2026-06-25_cleanup-before-db-parity-decision.md`](2026-06-25_cleanup-before-db-parity-decision.md) — current restart guardrail: pause new schema expansion, treat current `database` behavior as DB-mirror rather than DB-only, and clean up parity gaps/ports before more slices.
 - [`implementation-plan.md`](implementation-plan.md) — canonical phased implementation plan, first-slice decision, and migration gates.
 - [`slice-by-slice-implementation-plan.md`](slice-by-slice-implementation-plan.md) — consolidated code-checked slice plan with concrete files/functions to change per slice.
 - [`implementation-log.md`](implementation-log.md) — implementation/run log template for autonomous slice execution, test evidence, live API usage, checkpoints, and commits.
@@ -32,6 +33,7 @@ Supporting references:
 
 ## Current decisions
 
+- **2026-06-25 cleanup gate:** current DB work is an owner-scoped eval DB mirror, not DB-only parity. Pause unconstrained schema expansion and clean up backend semantics, terminal channel-result mirroring, closure/log refs, and agent-turn message modeling before claiming DB-backed play-through. See [`2026-06-25_cleanup-before-db-parity-decision.md`](2026-06-25_cleanup-before-db-parity-decision.md).
 - Do not treat “the database” as one ambient shared object. Stores are owner-scoped: parent, child runtime, successor runtime, treatment run, imported evidence, passive mirror, etc.
 - Use separate common axes instead of one overloaded owner field: `store_scope`, `producer_role`, `visibility_scope`, `source_class`, `evidence_class`, and `validation_status`.
 - `History` / sealed `Block` remains a dedicated authority path.
