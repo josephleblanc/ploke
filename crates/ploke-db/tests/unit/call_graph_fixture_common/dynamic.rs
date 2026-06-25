@@ -137,6 +137,48 @@ pub(in crate::unit) fn assert_targetless_dynamic_context_cases(
     Ok(())
 }
 
+pub(in crate::unit) fn resolved_dynamic_proof_edges(
+    db: &Database,
+    target: Uuid,
+    cases: &[ResolvedDynamicContextCase],
+) -> Result<Vec<OwnerProofEdge>, DbError> {
+    let mut expected = Vec::new();
+
+    for case in cases {
+        let owner = function_id_by_name(db, case.owner)?;
+        let context = db.call_context_for_owner(owner)?;
+        assert_eq!(
+            context.len(),
+            case.expected_rows,
+            "{} context rows: {context:#?}",
+            case.owner
+        );
+        let row = row_by_kind_path(&context, CallSiteKind::Dynamic, case.path);
+        assert_resolved_target(
+            row,
+            target,
+            CallRelationKind::DynamicFunction,
+            CallSiteKind::Dynamic,
+            CallTargetKind::Function,
+        );
+
+        let expected_count = context
+            .iter()
+            .map(|row| 2 + row.targets.len())
+            .sum::<usize>();
+        let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
+        assert_eq!(count, expected_count, "{} proof fact count", case.owner);
+        expected.push(OwnerProofEdge {
+            owner,
+            site: row.site.id,
+            span: row.site.span,
+            target,
+        });
+    }
+
+    Ok(expected)
+}
+
 pub(in crate::unit) fn assert_candidate_proof(
     facts: &[serde_json::Value],
     site: &str,
