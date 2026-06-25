@@ -426,7 +426,7 @@ impl RagService {
             return Ok(false);
         }
         tracing::warn!(
-            "call-context payloads disabled: active database is missing call graph relations"
+            "call-context payloads disabled: active database is missing populated call graph projection"
         );
         cfg.call_context.enabled = false;
         Ok(true)
