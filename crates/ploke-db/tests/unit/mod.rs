@@ -1,6 +1,8 @@
 #[cfg(feature = "call_graph")]
 pub mod call_graph_common;
 #[cfg(feature = "call_graph")]
+pub mod call_graph_fixture_common;
+#[cfg(feature = "call_graph")]
 pub mod call_graph_fixture_queries;
 #[cfg(feature = "call_graph")]
 pub mod call_graph_queries;
