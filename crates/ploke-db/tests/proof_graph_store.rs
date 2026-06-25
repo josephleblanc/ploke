@@ -166,14 +166,36 @@ fn proof_domain_context_keeps_linked_blockers_for_build_domain() {
             hit.kind == "call_site"
                 && hit.call_site_id.as_deref() == Some("call:spawn")
                 && hit.build_domain_id.as_deref() == Some("bd:main")
+                && hit.start_byte == Some(10)
+                && hit.end_byte == Some(20)
+                && hit.line_end == Some(4)
         }),
-        "build-domain context should expose the matched call-site build domain: {rows:#?}"
+        "build-domain context should expose matched call-site domain and span: {rows:#?}"
     );
     assert!(
         rows.iter().any(|hit| {
-            hit.kind == "effect_seed" && hit.call_site_id.as_deref() == Some("call:spawn")
+            hit.kind == "call_edge"
+                && hit.call_site_id.as_deref() == Some("call:spawn")
+                && hit.call_edge_id.as_deref() == Some("edge:spawn")
+                && hit.resolution_state.as_deref() == Some("candidate_set")
         }),
-        "build-domain context should include linked effect seed rows: {rows:#?}"
+        "build-domain context should expose linked call-edge identity and resolution state: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|hit| {
+            hit.kind == "effect_seed"
+                && hit.call_site_id.as_deref() == Some("call:spawn")
+                && hit.effect_class.as_deref() == Some("operating_system_process_create")
+        }),
+        "build-domain context should expose linked effect seed classification: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|hit| {
+            hit.kind == "proof_blocker"
+                && hit.call_site_id.as_deref() == Some("call:spawn")
+                && hit.status.as_deref() == Some("blocked")
+        }),
+        "build-domain context should expose linked blocker status: {rows:#?}"
     );
     assert!(
         db.proof_domain_context("bd:missing")
