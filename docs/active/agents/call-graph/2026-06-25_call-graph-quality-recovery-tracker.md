@@ -19,7 +19,7 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `bb27b696 test: share resolved proof fixture assertion`
+  `28a183da test: split fixture selector helpers`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent TUI/model-visible cleanup:
   - `cc808347 test: cover variant constructor tool context`
@@ -102,6 +102,7 @@ are not acceptable as a continuing implementation style.
   - `83111953 test: batch resolved dynamic proof assertions`
   - `02313e8e test: share target caller assertions`
   - `bb27b696 test: share resolved proof fixture assertion`
+  - `28a183da test: split fixture selector helpers`
 - Recent DB test-module split:
   - `7e51101d test: split dynamic call proof fixtures`
   - `09f8f967 test: split target proof fixtures`
@@ -240,9 +241,16 @@ are not acceptable as a continuing implementation style.
   `resolved_proof_edges` plus `assert_owner_proof_edges` boilerplate across
   associated-function, trait-family, local-receiver, and result/field method
   proof tests.
+- `call_graph_fixture_common/selectors.rs` is now split into a thin
+  `selectors/` helper root with row selectors, caller selectors/assertions,
+  expansion candidate assertions, and path construction separated by concern
+  while preserving the existing `selectors::*` import surface.
 
 ## Recent verification
 
+- `28a183da test: split fixture selector helpers`
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+    passed: 93 passed, 0 failed.
 - `bb27b696 test: share resolved proof fixture assertion`
   - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::resolved_proof -- --nocapture`
     passed: 7 passed, 0 failed.
