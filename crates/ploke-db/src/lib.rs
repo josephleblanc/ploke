@@ -26,7 +26,7 @@ pub mod multi_embedding;
 pub use call_graph::{
     CallCallerRow, CallContextCandidate, CallContextOptions, CallContextRelation, CallContextRow,
     CallContextSeed, CallReceiver, CallRelationKind, CallResolutionKind, CallResolutionRow,
-    CallSiteKind, CallSiteRow, CallStatusKind, CallTargetRow,
+    CallSiteKind, CallSiteRow, CallStatusKind, CallTargetKind, CallTargetRow,
 };
 pub use database::RestoredEmbeddingSet;
 pub use database::{

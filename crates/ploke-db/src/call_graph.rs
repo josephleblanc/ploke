@@ -324,8 +324,6 @@ pub enum CallRelationKind {
     AssociatedFunction,
     TupleStructConstructor,
     EnumVariantConstructor,
-    Struct,
-    Variant,
 }
 
 impl CallRelationKind {
@@ -337,11 +335,29 @@ impl CallRelationKind {
             "AssociatedFunction" => Ok(Self::AssociatedFunction),
             "TupleStructConstructor" => Ok(Self::TupleStructConstructor),
             "EnumVariantConstructor" => Ok(Self::EnumVariantConstructor),
-            "Struct" => Ok(Self::Struct),
-            "Variant" => Ok(Self::Variant),
             other => Err(DbError::Cozo(format!(
                 "unknown call relation kind {other:?}"
             ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CallTargetKind {
+    Function,
+    Method,
+    Struct,
+    Variant,
+}
+
+impl CallTargetKind {
+    fn from_str(value: &str) -> Result<Self, DbError> {
+        match value {
+            "Function" => Ok(Self::Function),
+            "Method" => Ok(Self::Method),
+            "Struct" => Ok(Self::Struct),
+            "Variant" => Ok(Self::Variant),
+            other => Err(DbError::Cozo(format!("unknown call target kind {other:?}"))),
         }
     }
 }
@@ -405,7 +421,7 @@ pub struct CallTargetRow {
     pub target_id: Uuid,
     pub relation: CallRelationKind,
     pub source_kind: CallSiteKind,
-    pub target_kind: CallRelationKind,
+    pub target_kind: CallTargetKind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -995,7 +1011,7 @@ fn decode_target(row: &[DataValue]) -> Result<CallTargetRow, DbError> {
         target_id: to_uuid(&row[1])?,
         relation: CallRelationKind::from_str(&to_string(&row[2])?)?,
         source_kind: CallSiteKind::from_str(&to_string(&row[3])?)?,
-        target_kind: CallRelationKind::from_str(&to_string(&row[4])?)?,
+        target_kind: CallTargetKind::from_str(&to_string(&row[4])?)?,
     })
 }
 
@@ -1005,27 +1021,27 @@ fn valid_call_target(target: &CallTargetRow) -> bool {
         (
             CallRelationKind::Function,
             CallSiteKind::Path,
-            CallRelationKind::Function,
+            CallTargetKind::Function,
         ) | (
             CallRelationKind::DynamicFunction,
             CallSiteKind::Dynamic,
-            CallRelationKind::Function,
+            CallTargetKind::Function,
         ) | (
             CallRelationKind::Method,
             CallSiteKind::Method,
-            CallRelationKind::Method,
+            CallTargetKind::Method,
         ) | (
             CallRelationKind::AssociatedFunction,
             CallSiteKind::Path,
-            CallRelationKind::Method,
+            CallTargetKind::Method,
         ) | (
             CallRelationKind::TupleStructConstructor,
             CallSiteKind::Path,
-            CallRelationKind::Struct,
+            CallTargetKind::Struct,
         ) | (
             CallRelationKind::EnumVariantConstructor,
             CallSiteKind::Path,
-            CallRelationKind::Variant,
+            CallTargetKind::Variant,
         )
     )
 }

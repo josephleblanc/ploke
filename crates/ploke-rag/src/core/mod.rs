@@ -335,8 +335,6 @@ fn target_kind(kind: CallRelationKind) -> CallTargetKind {
         CallRelationKind::AssociatedFunction => CallTargetKind::AssociatedFunction,
         CallRelationKind::TupleStructConstructor => CallTargetKind::TupleStructConstructor,
         CallRelationKind::EnumVariantConstructor => CallTargetKind::EnumVariantConstructor,
-        CallRelationKind::Struct => CallTargetKind::TupleStructConstructor,
-        CallRelationKind::Variant => CallTargetKind::EnumVariantConstructor,
     }
 }
 

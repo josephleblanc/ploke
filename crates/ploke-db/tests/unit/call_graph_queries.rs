@@ -1,8 +1,8 @@
 use cozo::{DataValue, Db, MemStorage};
 use ploke_db::{
     CallContextOptions, CallContextRelation, CallContextSeed, CallReceiver, CallRelationKind,
-    CallResolutionKind, CallSiteKind, CallStatusKind, Database, DbError, ProofGraphStore,
-    ProofInvariantStatus,
+    CallResolutionKind, CallSiteKind, CallStatusKind, CallTargetKind, Database, DbError,
+    ProofGraphStore, ProofInvariantStatus,
 };
 use uuid::Uuid;
 
@@ -116,7 +116,7 @@ fn context_for_owner_returns_sites_statuses_and_targets() -> Result<(), DbError>
         dyn_row.targets[0].relation,
         CallRelationKind::DynamicFunction
     );
-    assert_eq!(dyn_row.targets[0].target_kind, CallRelationKind::Function);
+    assert_eq!(dyn_row.targets[0].target_kind, CallTargetKind::Function);
 
     Ok(())
 }
@@ -223,7 +223,7 @@ fn callers_for_target_returns_sites_statuses_and_matching_edges() -> Result<(), 
     );
     assert_eq!(path.target.relation, CallRelationKind::Function);
     assert_eq!(path.target.source_kind, CallSiteKind::Path);
-    assert_eq!(path.target.target_kind, CallRelationKind::Function);
+    assert_eq!(path.target.target_kind, CallTargetKind::Function);
 
     let method = callers
         .iter()
@@ -240,7 +240,7 @@ fn callers_for_target_returns_sites_statuses_and_matching_edges() -> Result<(), 
     );
     assert_eq!(method.target.relation, CallRelationKind::Method);
     assert_eq!(method.target.source_kind, CallSiteKind::Method);
-    assert_eq!(method.target.target_kind, CallRelationKind::Method);
+    assert_eq!(method.target.target_kind, CallTargetKind::Method);
 
     Ok(())
 }
@@ -535,7 +535,7 @@ fn call_graph_queries_exclude_invalid_endpoint_family_rows() -> Result<(), DbErr
     assert_eq!(targets[0].target_id, valid_target);
     assert_eq!(targets[0].relation, CallRelationKind::Function);
     assert_eq!(targets[0].source_kind, CallSiteKind::Path);
-    assert_eq!(targets[0].target_kind, CallRelationKind::Function);
+    assert_eq!(targets[0].target_kind, CallTargetKind::Function);
 
     let context = db.call_context_for_owner(owner)?;
     assert_eq!(context.len(), 1, "owner context: {context:#?}");
@@ -1524,7 +1524,7 @@ fn context_for_owner_decodes_associated_function_relation() -> Result<(), DbErro
         context[0].targets[0].relation,
         CallRelationKind::AssociatedFunction
     );
-    assert_eq!(context[0].targets[0].target_kind, CallRelationKind::Method);
+    assert_eq!(context[0].targets[0].target_kind, CallTargetKind::Method);
 
     Ok(())
 }
@@ -1597,12 +1597,12 @@ fn context_for_owner_decodes_constructor_relations() -> Result<(), DbError> {
         context[0].targets[0].relation,
         CallRelationKind::TupleStructConstructor
     );
-    assert_eq!(context[0].targets[0].target_kind, CallRelationKind::Struct);
+    assert_eq!(context[0].targets[0].target_kind, CallTargetKind::Struct);
     assert_eq!(
         context[1].targets[0].relation,
         CallRelationKind::EnumVariantConstructor
     );
-    assert_eq!(context[1].targets[0].target_kind, CallRelationKind::Variant);
+    assert_eq!(context[1].targets[0].target_kind, CallTargetKind::Variant);
 
     Ok(())
 }

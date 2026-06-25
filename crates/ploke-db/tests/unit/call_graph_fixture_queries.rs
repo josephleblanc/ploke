@@ -1,7 +1,7 @@
 use ploke_db::{
     CallCallerRow, CallContextOptions, CallContextRelation, CallContextSeed, CallReceiver,
-    CallRelationKind, CallResolutionKind, CallSiteKind, CallStatusKind, Database, DbError,
-    ProofCheckerEdgeRow, ProofGraphStore, ProofInvariantStatus, to_uuid,
+    CallRelationKind, CallResolutionKind, CallSiteKind, CallStatusKind, CallTargetKind, Database,
+    DbError, ProofCheckerEdgeRow, ProofGraphStore, ProofInvariantStatus, to_uuid,
 };
 use uuid::Uuid;
 
@@ -31,7 +31,7 @@ fn fixture_context_reads_projected_path_call() -> Result<(), DbError> {
     assert_eq!(row.targets[0].target_id, target);
     assert_eq!(row.targets[0].relation, CallRelationKind::Function);
     assert_eq!(row.targets[0].source_kind, CallSiteKind::Path);
-    assert_eq!(row.targets[0].target_kind, CallRelationKind::Function);
+    assert_eq!(row.targets[0].target_kind, CallTargetKind::Function);
 
     Ok(())
 }
@@ -441,7 +441,7 @@ fn fixture_context_reads_projected_path_resolution_forms() -> Result<(), DbError
             target,
             CallRelationKind::Function,
             CallSiteKind::Path,
-            CallRelationKind::Function,
+            CallTargetKind::Function,
         );
     }
 
@@ -471,7 +471,7 @@ fn fixture_context_reads_projected_typed_local_method_call() -> Result<(), DbErr
     assert_eq!(row.targets.len(), 1);
     assert_eq!(row.targets[0].relation, CallRelationKind::Method);
     assert_eq!(row.targets[0].source_kind, CallSiteKind::Method);
-    assert_eq!(row.targets[0].target_kind, CallRelationKind::Method);
+    assert_eq!(row.targets[0].target_kind, CallTargetKind::Method);
 
     Ok(())
 }
@@ -531,7 +531,7 @@ fn fixture_context_reads_projected_local_and_alias_instance_method_receivers() -
             target,
             CallRelationKind::Method,
             CallSiteKind::Method,
-            CallRelationKind::Method,
+            CallTargetKind::Method,
         );
     }
 
@@ -560,7 +560,7 @@ fn fixture_context_reads_projected_associated_function_call() -> Result<(), DbEr
         CallRelationKind::AssociatedFunction
     );
     assert_eq!(row.targets[0].source_kind, CallSiteKind::Path);
-    assert_eq!(row.targets[0].target_kind, CallRelationKind::Method);
+    assert_eq!(row.targets[0].target_kind, CallTargetKind::Method);
 
     Ok(())
 }
@@ -596,7 +596,7 @@ fn fixture_context_reads_projected_self_and_qualified_associated_function_calls(
             target,
             CallRelationKind::AssociatedFunction,
             CallSiteKind::Path,
-            CallRelationKind::Method,
+            CallTargetKind::Method,
         );
     }
 
@@ -641,7 +641,7 @@ fn fixture_context_reads_projected_imported_associated_function_calls() -> Resul
             CallRelationKind::AssociatedFunction
         );
         assert_eq!(row.targets[0].source_kind, CallSiteKind::Path);
-        assert_eq!(row.targets[0].target_kind, CallRelationKind::Method);
+        assert_eq!(row.targets[0].target_kind, CallTargetKind::Method);
     }
 
     Ok(())
@@ -681,7 +681,7 @@ fn fixture_context_reads_projected_type_alias_associated_function_calls() -> Res
             make_target,
             CallRelationKind::AssociatedFunction,
             CallSiteKind::Path,
-            CallRelationKind::Method,
+            CallTargetKind::Method,
         );
     }
 
@@ -707,7 +707,7 @@ fn fixture_context_reads_projected_type_alias_associated_function_calls() -> Res
         method_target,
         CallRelationKind::AssociatedFunction,
         CallSiteKind::Path,
-        CallRelationKind::Method,
+        CallTargetKind::Method,
     );
 
     Ok(())
@@ -740,7 +740,7 @@ fn fixture_context_reads_projected_imported_trait_associated_function_calls() ->
         target,
         CallRelationKind::AssociatedFunction,
         CallSiteKind::Path,
-        CallRelationKind::Method,
+        CallTargetKind::Method,
     );
 
     let target = method_id_by_trait_name(&db, "ImportedAssocFunctionTrait", "imported_trait_make")?;
@@ -791,7 +791,7 @@ fn fixture_context_reads_projected_imported_trait_associated_function_calls() ->
             CallRelationKind::AssociatedFunction
         );
         assert_eq!(row.targets[0].source_kind, CallSiteKind::Path);
-        assert_eq!(row.targets[0].target_kind, CallRelationKind::Method);
+        assert_eq!(row.targets[0].target_kind, CallTargetKind::Method);
     }
 
     Ok(())
@@ -846,7 +846,7 @@ fn fixture_context_reads_projected_function_item_binding_calls() -> Result<(), D
             target,
             CallRelationKind::Function,
             CallSiteKind::Path,
-            CallRelationKind::Function,
+            CallTargetKind::Function,
         );
     }
 
@@ -894,7 +894,7 @@ fn fixture_context_reads_projected_tuple_struct_constructor_call() -> Result<(),
         CallRelationKind::TupleStructConstructor
     );
     assert_eq!(row.targets[0].source_kind, CallSiteKind::Path);
-    assert_eq!(row.targets[0].target_kind, CallRelationKind::Struct);
+    assert_eq!(row.targets[0].target_kind, CallTargetKind::Struct);
 
     Ok(())
 }
@@ -919,7 +919,7 @@ fn fixture_context_reads_projected_dynamic_function_call() -> Result<(), DbError
     assert_eq!(row.targets[0].target_id, target);
     assert_eq!(row.targets[0].relation, CallRelationKind::DynamicFunction);
     assert_eq!(row.targets[0].source_kind, CallSiteKind::Dynamic);
-    assert_eq!(row.targets[0].target_kind, CallRelationKind::Function);
+    assert_eq!(row.targets[0].target_kind, CallTargetKind::Function);
 
     Ok(())
 }
@@ -955,7 +955,7 @@ fn fixture_context_reads_projected_parenthesized_binding_dynamic_calls() -> Resu
             target,
             CallRelationKind::DynamicFunction,
             CallSiteKind::Dynamic,
-            CallRelationKind::Function,
+            CallTargetKind::Function,
         );
     }
 
@@ -984,7 +984,7 @@ fn fixture_context_reads_projected_returned_function_nested_calls() -> Result<()
         target,
         CallRelationKind::Function,
         CallSiteKind::Path,
-        CallRelationKind::Function,
+        CallTargetKind::Function,
     );
 
     let dynamic_rows = context
@@ -1106,7 +1106,7 @@ fn fixture_context_reads_projected_resolved_dynamic_function_shapes() -> Result<
             target,
             CallRelationKind::DynamicFunction,
             CallSiteKind::Dynamic,
-            CallRelationKind::Function,
+            CallTargetKind::Function,
         );
     }
 
@@ -1378,7 +1378,7 @@ fn fixture_context_reads_projected_generic_unsafe_extern_and_chained_calls() -> 
         target,
         CallRelationKind::Function,
         CallSiteKind::Path,
-        CallRelationKind::Function,
+        CallTargetKind::Function,
     );
 
     let owner = function_id_by_name(&db, "call_method_turbofish")?;
@@ -1407,7 +1407,7 @@ fn fixture_context_reads_projected_generic_unsafe_extern_and_chained_calls() -> 
         target,
         CallRelationKind::Method,
         CallSiteKind::Method,
-        CallRelationKind::Method,
+        CallTargetKind::Method,
     );
 
     let owner = function_id_by_name(&db, "call_unsafe_function")?;
@@ -1429,7 +1429,7 @@ fn fixture_context_reads_projected_generic_unsafe_extern_and_chained_calls() -> 
         target,
         CallRelationKind::Function,
         CallSiteKind::Path,
-        CallRelationKind::Function,
+        CallTargetKind::Function,
     );
 
     let owner = function_id_by_name(&db, "call_extern_c_function")?;
@@ -1461,7 +1461,7 @@ fn fixture_context_reads_projected_generic_unsafe_extern_and_chained_calls() -> 
         target,
         CallRelationKind::Function,
         CallSiteKind::Path,
-        CallRelationKind::Function,
+        CallTargetKind::Function,
     );
 
     let dynamic_rows = context
@@ -1506,7 +1506,7 @@ fn fixture_context_reads_projected_raw_identifier_calls() -> Result<(), DbError>
         target,
         CallRelationKind::Function,
         CallSiteKind::Path,
-        CallRelationKind::Function,
+        CallTargetKind::Function,
     );
 
     let owner = function_id_by_name(&db, "call_raw_identifier_method")?;
@@ -1530,7 +1530,7 @@ fn fixture_context_reads_projected_raw_identifier_calls() -> Result<(), DbError>
         target,
         CallRelationKind::Method,
         CallSiteKind::Method,
-        CallRelationKind::Method,
+        CallTargetKind::Method,
     );
 
     Ok(())
@@ -1580,7 +1580,7 @@ fn fixture_context_reads_projected_prelude_drop_shadowing() -> Result<(), DbErro
         target,
         CallRelationKind::Function,
         CallSiteKind::Path,
-        CallRelationKind::Function,
+        CallTargetKind::Function,
     );
 
     Ok(())
@@ -1666,7 +1666,7 @@ fn fixture_context_reads_projected_external_and_shadowed_method_calls() -> Resul
         target,
         CallRelationKind::Method,
         CallSiteKind::Method,
-        CallRelationKind::Method,
+        CallTargetKind::Method,
     );
 
     Ok(())
@@ -1697,7 +1697,7 @@ fn fixture_context_reads_projected_explicit_drop_method_call() -> Result<(), DbE
         target,
         CallRelationKind::Method,
         CallSiteKind::Method,
-        CallRelationKind::Method,
+        CallTargetKind::Method,
     );
 
     Ok(())
@@ -1737,7 +1737,7 @@ fn fixture_callers_for_target_reads_real_incoming_callers() -> Result<(), DbErro
     );
     assert_eq!(path.target.relation, CallRelationKind::Function);
     assert_eq!(path.target.source_kind, CallSiteKind::Path);
-    assert_eq!(path.target.target_kind, CallRelationKind::Function);
+    assert_eq!(path.target.target_kind, CallTargetKind::Function);
 
     let dynamic = caller_by_owner_kind_path(
         &callers,
@@ -1747,7 +1747,7 @@ fn fixture_callers_for_target_reads_real_incoming_callers() -> Result<(), DbErro
     );
     assert_eq!(dynamic.target.relation, CallRelationKind::DynamicFunction);
     assert_eq!(dynamic.target.source_kind, CallSiteKind::Dynamic);
-    assert_eq!(dynamic.target.target_kind, CallRelationKind::Function);
+    assert_eq!(dynamic.target.target_kind, CallTargetKind::Function);
 
     Ok(())
 }
@@ -2061,7 +2061,7 @@ fn fixture_callers_for_target_reads_method_and_associated_callers() -> Result<()
     );
     assert_eq!(caller.target.relation, CallRelationKind::Method);
     assert_eq!(caller.target.source_kind, CallSiteKind::Method);
-    assert_eq!(caller.target.target_kind, CallRelationKind::Method);
+    assert_eq!(caller.target.target_kind, CallTargetKind::Method);
 
     let owner = function_id_by_name(&db, "call_method_as_associated_function")?;
     let caller = caller_by_owner_kind_path(
@@ -2073,7 +2073,7 @@ fn fixture_callers_for_target_reads_method_and_associated_callers() -> Result<()
     assert_eq!(caller.site.arg_count, Some(1));
     assert_eq!(caller.target.relation, CallRelationKind::AssociatedFunction);
     assert_eq!(caller.target.source_kind, CallSiteKind::Path);
-    assert_eq!(caller.target.target_kind, CallRelationKind::Method);
+    assert_eq!(caller.target.target_kind, CallTargetKind::Method);
 
     let target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "make")?;
     let callers = db.callers_for_target(target)?;
@@ -2093,13 +2093,13 @@ fn fixture_callers_for_target_reads_method_and_associated_callers() -> Result<()
         caller_by_owner_kind_path(&callers, owner, CallSiteKind::Path, &["LocalAssoc", "make"]);
     assert_eq!(caller.target.relation, CallRelationKind::AssociatedFunction);
     assert_eq!(caller.target.source_kind, CallSiteKind::Path);
-    assert_eq!(caller.target.target_kind, CallRelationKind::Method);
+    assert_eq!(caller.target.target_kind, CallTargetKind::Method);
 
     let owner = method_id_by_impl_self_type_name(&db, "LocalAssoc", "call_self_make")?;
     let caller = caller_by_owner_kind_path(&callers, owner, CallSiteKind::Path, &["Self", "make"]);
     assert_eq!(caller.target.relation, CallRelationKind::AssociatedFunction);
     assert_eq!(caller.target.source_kind, CallSiteKind::Path);
-    assert_eq!(caller.target.target_kind, CallRelationKind::Method);
+    assert_eq!(caller.target.target_kind, CallTargetKind::Method);
 
     Ok(())
 }
@@ -2187,7 +2187,7 @@ fn fixture_context_reads_projected_trait_dispatch_method_calls() -> Result<(), D
         assert_eq!(row.targets[0].target_id, target);
         assert_eq!(row.targets[0].relation, CallRelationKind::Method);
         assert_eq!(row.targets[0].source_kind, CallSiteKind::Method);
-        assert_eq!(row.targets[0].target_kind, CallRelationKind::Method);
+        assert_eq!(row.targets[0].target_kind, CallTargetKind::Method);
     }
 
     Ok(())
@@ -2229,7 +2229,7 @@ fn fixture_context_reads_projected_constrained_generic_self_trait_method() -> Re
         target,
         CallRelationKind::Method,
         CallSiteKind::Method,
-        CallRelationKind::Method,
+        CallTargetKind::Method,
     );
 
     Ok(())
@@ -2288,7 +2288,7 @@ fn fixture_context_reads_projected_generic_bound_and_trait_object_methods() -> R
             target,
             CallRelationKind::Method,
             CallSiteKind::Method,
-            CallRelationKind::Method,
+            CallTargetKind::Method,
         );
     }
 
@@ -2347,7 +2347,7 @@ fn fixture_context_reads_projected_imported_trait_method_calls() -> Result<(), D
             target,
             CallRelationKind::Method,
             CallSiteKind::Method,
-            CallRelationKind::Method,
+            CallTargetKind::Method,
         );
     }
 
@@ -2401,7 +2401,7 @@ fn fixture_context_reads_projected_blanket_trait_method_calls() -> Result<(), Db
             target,
             CallRelationKind::Method,
             CallSiteKind::Method,
-            CallRelationKind::Method,
+            CallTargetKind::Method,
         );
     }
 
@@ -2472,7 +2472,7 @@ fn fixture_context_reads_projected_borrowed_and_dereferenced_method_receivers()
         assert_eq!(row.targets[0].target_id, target);
         assert_eq!(row.targets[0].relation, CallRelationKind::Method);
         assert_eq!(row.targets[0].source_kind, CallSiteKind::Method);
-        assert_eq!(row.targets[0].target_kind, CallRelationKind::Method);
+        assert_eq!(row.targets[0].target_kind, CallTargetKind::Method);
     }
 
     Ok(())
@@ -2498,7 +2498,7 @@ fn fixture_context_reads_projected_method_body_owner_calls() -> Result<(), DbErr
         target,
         CallRelationKind::Function,
         CallSiteKind::Path,
-        CallRelationKind::Function,
+        CallTargetKind::Function,
     );
 
     let owner = method_id_by_impl_trait_and_self_type_names(
@@ -2527,7 +2527,7 @@ fn fixture_context_reads_projected_method_body_owner_calls() -> Result<(), DbErr
         target,
         CallRelationKind::Method,
         CallSiteKind::Method,
-        CallRelationKind::Method,
+        CallTargetKind::Method,
     );
 
     let owner = method_id_by_trait_name(&db, "DefaultRequiredCall", "default_calls_required")?;
@@ -2546,7 +2546,7 @@ fn fixture_context_reads_projected_method_body_owner_calls() -> Result<(), DbErr
         target,
         CallRelationKind::Method,
         CallSiteKind::Method,
-        CallRelationKind::Method,
+        CallTargetKind::Method,
     );
 
     let owner = method_id_by_trait_name(&db, "TraitDefaultAssocCall", "default_calls_assoc")?;
@@ -2565,7 +2565,7 @@ fn fixture_context_reads_projected_method_body_owner_calls() -> Result<(), DbErr
         target,
         CallRelationKind::AssociatedFunction,
         CallSiteKind::Path,
-        CallRelationKind::Method,
+        CallTargetKind::Method,
     );
 
     Ok(())
@@ -2601,7 +2601,7 @@ fn fixture_context_reads_projected_const_and_static_initializer_calls() -> Resul
             target,
             CallRelationKind::Function,
             CallSiteKind::Path,
-            CallRelationKind::Function,
+            CallTargetKind::Function,
         );
     }
 
@@ -2635,7 +2635,7 @@ fn fixture_context_reads_projected_associated_const_initializer_calls() -> Resul
             target,
             CallRelationKind::Function,
             CallSiteKind::Path,
-            CallRelationKind::Function,
+            CallTargetKind::Function,
         );
     }
 
@@ -2705,7 +2705,7 @@ fn fixture_context_reads_projected_inherent_method_precedence() -> Result<(), Db
     assert_eq!(row.targets.len(), 1);
     assert_eq!(row.targets[0].relation, CallRelationKind::Method);
     assert_eq!(row.targets[0].source_kind, CallSiteKind::Method);
-    assert_eq!(row.targets[0].target_kind, CallRelationKind::Method);
+    assert_eq!(row.targets[0].target_kind, CallTargetKind::Method);
     assert!(
         method_owner_is_inherent_impl(&db, row.targets[0].target_id, "InherentPrecedenceTarget")?,
         "inherent method call must project a target owned by the inherent impl: {row:#?}"
@@ -2832,7 +2832,7 @@ fn fixture_low_level_helpers_read_projected_sites_targets_and_statuses() -> Resu
     assert_eq!(try_targets[0].target_id, try_target);
     assert_eq!(try_targets[0].relation, CallRelationKind::Function);
     assert_eq!(try_targets[0].source_kind, CallSiteKind::Path);
-    assert_eq!(try_targets[0].target_kind, CallRelationKind::Function);
+    assert_eq!(try_targets[0].target_kind, CallTargetKind::Function);
 
     let receiver = CallReceiver::TryPathCallResult {
         path: path(&["try_local_assoc"]),
@@ -2865,7 +2865,7 @@ fn fixture_low_level_helpers_read_projected_sites_targets_and_statuses() -> Resu
     assert_eq!(method_targets[0].target_id, method_target);
     assert_eq!(method_targets[0].relation, CallRelationKind::Method);
     assert_eq!(method_targets[0].source_kind, CallSiteKind::Method);
-    assert_eq!(method_targets[0].target_kind, CallRelationKind::Method);
+    assert_eq!(method_targets[0].target_kind, CallTargetKind::Method);
 
     Ok(())
 }
@@ -2890,7 +2890,7 @@ fn fixture_context_reads_projected_result_receiver_method_chains() -> Result<(),
         clone_target,
         CallRelationKind::Method,
         CallSiteKind::Method,
-        CallRelationKind::Method,
+        CallTargetKind::Method,
     );
 
     let result_receiver = CallReceiver::MethodCallResult {
@@ -2902,7 +2902,7 @@ fn fixture_context_reads_projected_result_receiver_method_chains() -> Result<(),
         method_target,
         CallRelationKind::Method,
         CallSiteKind::Method,
-        CallRelationKind::Method,
+        CallTargetKind::Method,
     );
 
     let owner = function_id_by_name(&db, "call_await_result_instance_method")?;
@@ -2916,7 +2916,7 @@ fn fixture_context_reads_projected_result_receiver_method_chains() -> Result<(),
         ready_target,
         CallRelationKind::Function,
         CallSiteKind::Path,
-        CallRelationKind::Function,
+        CallTargetKind::Function,
     );
 
     let await_receiver = CallReceiver::AwaitPathCallResult {
@@ -2928,7 +2928,7 @@ fn fixture_context_reads_projected_result_receiver_method_chains() -> Result<(),
         method_target,
         CallRelationKind::Method,
         CallSiteKind::Method,
-        CallRelationKind::Method,
+        CallTargetKind::Method,
     );
 
     let owner = function_id_by_name(&db, "call_try_result_instance_method")?;
@@ -2947,7 +2947,7 @@ fn fixture_context_reads_projected_result_receiver_method_chains() -> Result<(),
         try_target,
         CallRelationKind::Function,
         CallSiteKind::Path,
-        CallRelationKind::Function,
+        CallTargetKind::Function,
     );
 
     let try_receiver = CallReceiver::TryPathCallResult {
@@ -2959,7 +2959,7 @@ fn fixture_context_reads_projected_result_receiver_method_chains() -> Result<(),
         method_target,
         CallRelationKind::Method,
         CallSiteKind::Method,
-        CallRelationKind::Method,
+        CallTargetKind::Method,
     );
 
     Ok(())
@@ -2981,7 +2981,7 @@ fn fixture_context_reads_projected_field_receiver_and_dynamic_field_calls() -> R
         struct_target,
         CallRelationKind::TupleStructConstructor,
         CallSiteKind::Path,
-        CallRelationKind::Struct,
+        CallTargetKind::Struct,
     );
 
     let receiver = CallReceiver::FieldInitializedLocalBinding {
@@ -2995,7 +2995,7 @@ fn fixture_context_reads_projected_field_receiver_and_dynamic_field_calls() -> R
         method_target,
         CallRelationKind::Method,
         CallSiteKind::Method,
-        CallRelationKind::Method,
+        CallTargetKind::Method,
     );
 
     let owner = function_id_by_name(&db, "call_tuple_field_function")?;
@@ -3010,7 +3010,7 @@ fn fixture_context_reads_projected_field_receiver_and_dynamic_field_calls() -> R
         struct_target,
         CallRelationKind::TupleStructConstructor,
         CallSiteKind::Path,
-        CallRelationKind::Struct,
+        CallTargetKind::Struct,
     );
 
     let row = row_by_kind_path(&context, CallSiteKind::Dynamic, &["value", "0"]);
@@ -3020,7 +3020,7 @@ fn fixture_context_reads_projected_field_receiver_and_dynamic_field_calls() -> R
         function_target,
         CallRelationKind::DynamicFunction,
         CallSiteKind::Dynamic,
-        CallRelationKind::Function,
+        CallTargetKind::Function,
     );
 
     Ok(())
@@ -3098,7 +3098,7 @@ fn fixture_context_reads_projected_enum_variant_constructor_call() -> Result<(),
         CallRelationKind::EnumVariantConstructor
     );
     assert_eq!(row.targets[0].source_kind, CallSiteKind::Path);
-    assert_eq!(row.targets[0].target_kind, CallRelationKind::Variant);
+    assert_eq!(row.targets[0].target_kind, CallTargetKind::Variant);
 
     Ok(())
 }
@@ -3225,7 +3225,7 @@ fn fixture_projection_stores_real_path_resolution_call_proof_facts() -> Result<(
             target,
             CallRelationKind::Function,
             CallSiteKind::Path,
-            CallRelationKind::Function,
+            CallTargetKind::Function,
         );
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
@@ -3376,7 +3376,7 @@ fn fixture_projection_stores_real_associated_function_call_proof_facts() -> Resu
             target,
             CallRelationKind::AssociatedFunction,
             CallSiteKind::Path,
-            CallRelationKind::Method,
+            CallTargetKind::Method,
         );
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
@@ -3495,7 +3495,7 @@ fn fixture_projection_stores_real_local_receiver_method_call_proof_facts() -> Re
             target,
             CallRelationKind::Method,
             CallSiteKind::Method,
-            CallRelationKind::Method,
+            CallTargetKind::Method,
         );
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
@@ -3655,7 +3655,7 @@ fn fixture_projection_stores_real_trait_family_method_call_proof_facts() -> Resu
             target,
             CallRelationKind::Method,
             CallSiteKind::Method,
-            CallRelationKind::Method,
+            CallTargetKind::Method,
         );
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
@@ -3700,7 +3700,7 @@ fn fixture_projection_stores_real_result_and_field_receiver_method_call_proof_fa
         make_target,
         CallRelationKind::Function,
         CallSiteKind::Path,
-        CallRelationKind::Function,
+        CallTargetKind::Function,
     );
     expected_edges.push(OwnerProofEdge {
         owner,
@@ -3718,7 +3718,7 @@ fn fixture_projection_stores_real_result_and_field_receiver_method_call_proof_fa
         method_target,
         CallRelationKind::Method,
         CallSiteKind::Method,
-        CallRelationKind::Method,
+        CallTargetKind::Method,
     );
     expected_edges.push(OwnerProofEdge {
         owner,
@@ -3744,7 +3744,7 @@ fn fixture_projection_stores_real_result_and_field_receiver_method_call_proof_fa
         clone_target,
         CallRelationKind::Method,
         CallSiteKind::Method,
-        CallRelationKind::Method,
+        CallTargetKind::Method,
     );
     expected_edges.push(OwnerProofEdge {
         owner,
@@ -3762,7 +3762,7 @@ fn fixture_projection_stores_real_result_and_field_receiver_method_call_proof_fa
         method_target,
         CallRelationKind::Method,
         CallSiteKind::Method,
-        CallRelationKind::Method,
+        CallTargetKind::Method,
     );
     expected_edges.push(OwnerProofEdge {
         owner,
@@ -3784,7 +3784,7 @@ fn fixture_projection_stores_real_result_and_field_receiver_method_call_proof_fa
         ready_target,
         CallRelationKind::Function,
         CallSiteKind::Path,
-        CallRelationKind::Function,
+        CallTargetKind::Function,
     );
     expected_edges.push(OwnerProofEdge {
         owner,
@@ -3802,7 +3802,7 @@ fn fixture_projection_stores_real_result_and_field_receiver_method_call_proof_fa
         method_target,
         CallRelationKind::Method,
         CallSiteKind::Method,
-        CallRelationKind::Method,
+        CallTargetKind::Method,
     );
     expected_edges.push(OwnerProofEdge {
         owner,
@@ -3824,7 +3824,7 @@ fn fixture_projection_stores_real_result_and_field_receiver_method_call_proof_fa
         tuple_target,
         CallRelationKind::TupleStructConstructor,
         CallSiteKind::Path,
-        CallRelationKind::Struct,
+        CallTargetKind::Struct,
     );
     expected_edges.push(OwnerProofEdge {
         owner,
@@ -3844,7 +3844,7 @@ fn fixture_projection_stores_real_result_and_field_receiver_method_call_proof_fa
         method_target,
         CallRelationKind::Method,
         CallSiteKind::Method,
-        CallRelationKind::Method,
+        CallTargetKind::Method,
     );
     expected_edges.push(OwnerProofEdge {
         owner,
@@ -4208,7 +4208,7 @@ fn fixture_projection_stores_real_dynamic_call_proof_facts() -> Result<(), DbErr
         target,
         CallRelationKind::DynamicFunction,
         CallSiteKind::Dynamic,
-        CallRelationKind::Function,
+        CallTargetKind::Function,
     );
 
     let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
@@ -4253,7 +4253,7 @@ fn fixture_projection_stores_real_branch_and_match_dynamic_call_proof_facts() ->
             target,
             CallRelationKind::DynamicFunction,
             CallSiteKind::Dynamic,
-            CallRelationKind::Function,
+            CallTargetKind::Function,
         );
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
@@ -4319,7 +4319,7 @@ fn fixture_projection_stores_real_callable_expression_dynamic_call_proof_facts()
             target,
             CallRelationKind::DynamicFunction,
             CallSiteKind::Dynamic,
-            CallRelationKind::Function,
+            CallTargetKind::Function,
         );
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
@@ -4396,7 +4396,7 @@ fn fixture_projection_stores_real_field_dynamic_call_proof_facts() -> Result<(),
             target,
             CallRelationKind::DynamicFunction,
             CallSiteKind::Dynamic,
-            CallRelationKind::Function,
+            CallTargetKind::Function,
         );
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
@@ -4572,7 +4572,7 @@ fn fixture_projection_stores_real_returned_function_call_proof_facts() -> Result
         target,
         CallRelationKind::Function,
         CallSiteKind::Path,
-        CallRelationKind::Function,
+        CallTargetKind::Function,
     );
 
     let dynamic_rows = context
@@ -4829,7 +4829,7 @@ fn fixture_projection_stores_real_const_and_static_initializer_call_proof_facts(
             target,
             CallRelationKind::Function,
             CallSiteKind::Path,
-            CallRelationKind::Function,
+            CallTargetKind::Function,
         );
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-nodes")?;
@@ -4882,7 +4882,7 @@ fn fixture_projection_stores_real_associated_const_initializer_call_proof_facts(
             target,
             CallRelationKind::Function,
             CallSiteKind::Path,
-            CallRelationKind::Function,
+            CallTargetKind::Function,
         );
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
@@ -5378,7 +5378,7 @@ fn fixture_projection_stores_real_target_centered_associated_function_call_proof
         let caller = caller_by_owner_kind_path(&callers, owner, CallSiteKind::Path, expected_path);
         assert_eq!(caller.target.relation, CallRelationKind::AssociatedFunction);
         assert_eq!(caller.target.source_kind, CallSiteKind::Path);
-        assert_eq!(caller.target.target_kind, CallRelationKind::Method);
+        assert_eq!(caller.target.target_kind, CallTargetKind::Method);
     }
 
     assert_target_proof_projection(
@@ -5461,7 +5461,7 @@ fn fixture_projection_stores_real_target_centered_imported_trait_assoc_function_
         let caller = caller_by_owner_kind_path(&callers, *owner, CallSiteKind::Path, expected_path);
         assert_eq!(caller.target.relation, CallRelationKind::AssociatedFunction);
         assert_eq!(caller.target.source_kind, CallSiteKind::Path);
-        assert_eq!(caller.target.target_kind, CallRelationKind::Method);
+        assert_eq!(caller.target.target_kind, CallTargetKind::Method);
     }
 
     let expected_sites = expected
@@ -5516,7 +5516,7 @@ fn fixture_projection_stores_real_trait_dispatch_call_proof_facts() -> Result<()
             target,
             CallRelationKind::Method,
             CallSiteKind::Method,
-            CallRelationKind::Method,
+            CallTargetKind::Method,
         );
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
@@ -5829,7 +5829,7 @@ struct ConstructorCase {
     path: &'static [&'static str],
     target: ConstructorTarget,
     relation: CallRelationKind,
-    endpoint: CallRelationKind,
+    endpoint: CallTargetKind,
     source_suffix: &'static str,
 }
 
@@ -5865,7 +5865,7 @@ const CONSTRUCTOR_CASES: &[ConstructorCase] = &[
         path: &["NewType"],
         target: ConstructorTarget::Struct { name: "NewType" },
         relation: CallRelationKind::TupleStructConstructor,
-        endpoint: CallRelationKind::Struct,
+        endpoint: CallTargetKind::Struct,
         source_suffix: "fixture_call_graph/src/lib.rs",
     },
     ConstructorCase {
@@ -5880,7 +5880,7 @@ const CONSTRUCTOR_CASES: &[ConstructorCase] = &[
             variant_name: "Variant1",
         },
         relation: CallRelationKind::EnumVariantConstructor,
-        endpoint: CallRelationKind::Variant,
+        endpoint: CallTargetKind::Variant,
         source_suffix: "fixture_nodes/src/imports.rs",
     },
 ];

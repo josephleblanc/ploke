@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use cozo::{DataValue, Db, MemStorage, UuidWrapper};
 use ploke_db::{
     CallCallerRow, CallContextCandidate, CallContextRelation, CallContextRow, CallReceiver,
-    CallRelationKind, CallResolutionKind, CallSiteKind, CallStatusKind, Database, DbError,
-    ProofGraphContextRow, QueryResult, to_uuid,
+    CallRelationKind, CallResolutionKind, CallSiteKind, CallStatusKind, CallTargetKind, Database,
+    DbError, ProofGraphContextRow, QueryResult, to_uuid,
 };
 use ploke_transform::{schema::create_schema_all, transform::transform_parsed_graph};
 use uuid::Uuid;
@@ -645,7 +645,7 @@ pub(super) fn assert_resolved_target(
     target: Uuid,
     relation: CallRelationKind,
     source: CallSiteKind,
-    target_kind: CallRelationKind,
+    target_kind: CallTargetKind,
 ) {
     assert_eq!(row.status.status, CallStatusKind::Resolved);
     assert_eq!(row.status.resolution, Some(CallResolutionKind::LocalExact));

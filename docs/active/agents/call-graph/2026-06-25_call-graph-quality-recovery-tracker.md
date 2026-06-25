@@ -18,15 +18,9 @@ are not acceptable as a continuing implementation style.
 ## Current state
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
-- Latest committed call-graph refactor before this note: `4fbca311 Refactor trait dispatch proof test`
-- Dirty worktree at the time of this note:
-  - `crates/ploke-db/tests/unit/call_graph_fixture_queries.rs`
-- Dirty change summary: uncommitted extraction of
-  `assert_targetless_blocker_proofs` plus conversions for several targetless
-  blocker proof tests.
-- Last focused check for that dirty change:
-  - `cargo test -p ploke-db --features call_graph fixture_projection -- --nocapture`
-  - Result: 33 passed, 0 failed.
+- Latest committed call-graph quality checkpoint before endpoint-family work:
+  `65ca8758 Fix external call proof state`
+- Current quality focus: DB/proof/query hardening before adding parser breadth.
 
 ## Resumption rules
 
@@ -55,7 +49,7 @@ are not acceptable as a continuing implementation style.
 | CGQ-1 | P1 | Open | Implementation focus drifted toward parser breadth while DB/proof quality lagged. | Shift next resumed work to DB/proof/query hardening and shared test structure. |
 | CGQ-2 | P1 | Open | `call_graph_fixture_queries.rs` and `call_graph_queries.rs` are far larger and less modular than the type-graph precedent. | Split by concern and introduce shared `common` helpers/matrices before adding more cases. |
 | CGQ-3 | P1 | Open | Call endpoint-family rules are duplicated across transform insertion, DB Cozo queries, Rust validation, and tests. | Centralize the valid call relation/target family matrix; keep one source of truth or one generated matrix. |
-| CGQ-4 | P1 | Open | DB `CallRelationKind` appears to mix relation semantics with target-kind semantics, including `Struct` and `Variant`. | Split relation kind from target kind or otherwise align with the parser/type-graph model. |
+| CGQ-4 | P1 | Done 2026-06-25 | DB `CallRelationKind` mixed relation semantics with target-kind semantics, including `Struct` and `Variant`. | `CallTargetKind` now carries DB endpoint families separately from call relation kinds, while persisted relation strings remain unchanged. |
 | CGQ-5 | P1 | Done 2026-06-25 | External proof projection reported `externally_summarized` while also using blocker reason `external_dependency_summary_missing`. | Current parser-projected external rows now emit blocked/missing-summary proof state until a real external summary fact exists. |
 | CGQ-6 | P2 | Open | Dynamic branch/match candidate provenance can collapse to `Null` in persisted `call_site` rows. | Decide whether proof/RAG needs normalized candidate provenance; do not silently drop proof-critical candidates. |
 | CGQ-7 | P2 | Open | The "exactly one status per call site" invariant can be hidden by post-hoc sort/dedup. | Add a pre-dedup invariant check so duplicate identical emissions cannot disappear. |
