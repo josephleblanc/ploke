@@ -90,6 +90,33 @@ pub(in crate::unit) fn assert_targetless_row<'a>(
     row
 }
 
+pub(in crate::unit) struct TargetlessOwnerCase<'a> {
+    pub(in crate::unit) owner: &'a str,
+    pub(in crate::unit) rows: &'a [TargetlessRowCase<'a>],
+}
+
+pub(in crate::unit) fn assert_targetless_owner_cases(
+    db: &Database,
+    cases: &[TargetlessOwnerCase<'_>],
+) -> Result<(), DbError> {
+    for case in cases {
+        let owner = function_id_by_name(db, case.owner)?;
+        let context = db.call_context_for_owner(owner)?;
+        assert_eq!(
+            context.len(),
+            case.rows.len(),
+            "{} context rows: {context:#?}",
+            case.owner
+        );
+
+        for row in case.rows {
+            assert_targetless_row(&context, owner, *row);
+        }
+    }
+
+    Ok(())
+}
+
 #[derive(Clone, Copy)]
 pub(in crate::unit) struct TargetlessMethodCase<'a> {
     pub(in crate::unit) method: &'a str,
