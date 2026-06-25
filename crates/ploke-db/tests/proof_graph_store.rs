@@ -1,4 +1,4 @@
-use ploke_db::{Database, ProofGraphStore};
+use ploke_db::{Database, ProofGraphContextRow, ProofGraphStore};
 use serde_json::json;
 
 const PROOF_FACT_SCHEMA_VERSION: &str = "ploke-proof-facts.v1";
@@ -78,6 +78,25 @@ fn proof_records() -> Vec<serde_json::Value> {
     ]
 }
 
+fn assert_process_context(label: &str, hits: &[ProofGraphContextRow]) {
+    assert!(
+        hits.iter()
+            .any(|hit| hit.call_site_id.as_deref() == Some("call:spawn")),
+        "{label} should include the process-spawn call site: {hits:#?}"
+    );
+    assert!(
+        hits.iter().any(|hit| {
+            hit.blocker_reason.as_deref() == Some("process_lifetime_evidence_missing")
+        }),
+        "{label} should include the linked process-lifetime blocker: {hits:#?}"
+    );
+    assert!(
+        hits.iter()
+            .any(|hit| hit.evidence_use.as_deref() == Some("navigation_only")),
+        "{label} should include linked navigation-only helper rows: {hits:#?}"
+    );
+}
+
 #[test]
 fn proof_graph_store_retains_blockers_for_graphrag_and_checker_queries() {
     let db = Database::new_init().expect("create db");
@@ -88,21 +107,7 @@ fn proof_graph_store_retains_blockers_for_graphrag_and_checker_queries() {
     let graph_hits = db
         .proof_graphrag_context("launch")
         .expect("graphrag proof context");
-    assert!(
-        graph_hits
-            .iter()
-            .any(|hit| hit.call_site_id.as_deref() == Some("call:spawn"))
-    );
-    assert!(
-        graph_hits
-            .iter()
-            .any(|hit| hit.blocker_reason.as_deref() == Some("process_lifetime_evidence_missing"))
-    );
-    assert!(
-        graph_hits
-            .iter()
-            .any(|hit| hit.evidence_use.as_deref() == Some("navigation_only"))
-    );
+    assert_process_context("graphrag context", &graph_hits);
 
     let checker_edges = db.proof_checker_edges().expect("checker edges");
     assert!(
@@ -137,15 +142,46 @@ fn proof_symbol_lookup_keeps_linked_blockers_with_matching_symbol() {
         .expect("import proof facts");
 
     let lookup = db.proof_symbol_lookup("def:launch").expect("symbol lookup");
+    assert_process_context("symbol lookup", &lookup);
+}
+
+#[test]
+fn proof_domain_context_keeps_linked_blockers_for_build_domain() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    db.upsert_proof_fact_values(&proof_records())
+        .expect("import proof facts");
+
+    let rows = db
+        .proof_domain_context("bd:main")
+        .expect("build-domain proof context");
+    assert_eq!(
+        rows.len(),
+        proof_records().len(),
+        "build-domain context should include direct facts and linked rows without repeating build_domain_id on every fact: {rows:#?}"
+    );
+    assert_process_context("build-domain context", &rows);
     assert!(
-        lookup
-            .iter()
-            .any(|hit| hit.call_site_id.as_deref() == Some("call:spawn"))
+        rows.iter().any(|hit| {
+            hit.kind == "effect_seed" && hit.call_site_id.as_deref() == Some("call:spawn")
+        }),
+        "build-domain context should include linked effect seed rows: {rows:#?}"
     );
     assert!(
-        lookup
-            .iter()
-            .any(|hit| hit.blocker_reason.as_deref() == Some("process_lifetime_evidence_missing"))
+        db.proof_domain_context("bd:missing")
+            .expect("missing build-domain context")
+            .is_empty(),
+        "unknown build domain should not match proof rows"
+    );
+
+    let error = db
+        .proof_domain_context("")
+        .expect_err("empty build-domain lookup should fail closed");
+    assert!(
+        error
+            .to_string()
+            .contains("requires non-empty build_domain_id"),
+        "unexpected empty-domain error: {error}"
     );
 }
 
