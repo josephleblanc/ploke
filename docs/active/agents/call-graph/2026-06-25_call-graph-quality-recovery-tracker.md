@@ -19,7 +19,7 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `7140e189 test: share targetless owner case helper`
+  `0fee7f60 test: share resolved graph seed helper`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent TUI/model-visible cleanup:
   - `cc808347 test: cover variant constructor tool context`
@@ -84,6 +84,9 @@ are not acceptable as a continuing implementation style.
   - `000a3e58 test: share resolved proof case helper`
   - `e23d501a test: table-drive local target prevalidation`
   - `7140e189 test: share targetless owner case helper`
+  - `8f371fa5 test: share projected blocker helper`
+  - `162322ec test: reuse external blocker proof helper`
+  - `0fee7f60 test: share resolved graph seed helper`
 - Recent DB test-module split:
   - `7e51101d test: split dynamic call proof fixtures`
   - `09f8f967 test: split target proof fixtures`
@@ -150,6 +153,14 @@ are not acceptable as a continuing implementation style.
 - `call_graph_fixture_common/targetless.rs` owns the shared
   `TargetlessOwnerCase` helper for owner lookup, context row-count checks, and
   targetless row assertions across mixed targetless fixture cases.
+- `call_graph_fixture_common/proof/blockers.rs` owns the shared
+  `TargetlessBlockerCase` projection helper for targetless blocker proof rows,
+  now reused by callable, dynamic, and external blocker proof fixtures instead
+  of copying owner lookup, call-context lookup, projection-count checks, and
+  `BlockerProofSite` collection.
+- `call_graph_common/resolved.rs` owns the synthetic `ResolvedGraphSeed`
+  helper used by proof-projection query tests, so resolved path graph setup is
+  shared across graph-context and prevalidation tests.
 - `ProofGraphStore` now exposes a build-domain scoped proof context query and
   shares linked-call-site row selection across symbol, GraphRAG text, and
   build-domain proof lookups. Real fixture proof lookup assertions are
@@ -224,12 +235,48 @@ are not acceptable as a continuing implementation style.
 Continue production-side pattern cleanup before parser/resolver breadth. The
 next likely slices are:
 
-1. Use the stable coverage inventory plus detailed call-site matrix to choose
+1. Continue DB/proof cleanup before parser breadth. Prefer existing common
+   helpers and only extract new macro/method blocker helpers if another file
+   shares the same shape.
+2. Use the stable coverage inventory plus detailed call-site matrix to choose
    the next DB/proof/RAG/TUI batch before parser breadth.
-2. Keep splitting/table-driving any large helper or projection test touched by
+3. Keep splitting/table-driving any large helper or projection test touched by
    that batch before adding cases.
 
 ## Latest verification
+
+For `0fee7f60 test: share resolved graph seed helper`:
+
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection::prevalidation -- --nocapture`
+  - passed: proof prevalidation filter ran 7 tests, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection::blockers::graph_context -- --nocapture`
+  - passed: graph-context blocker projection filter ran 2 tests, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection::blockers -- --nocapture`
+  - passed: proof blocker projection filter ran 5 tests, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection -- --nocapture`
+  - passed: proof projection query filter ran 14 tests, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries -- --nocapture`
+  - passed: synthetic call-graph query filter ran 33 tests, 0 failed.
+
+For `162322ec test: reuse external blocker proof helper`:
+
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::blocker_proof::external -- --nocapture`
+  - passed: external blocker proof fixture filter ran 2 tests, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::blocker_proof -- --nocapture`
+  - passed: blocker proof fixture filter ran 6 tests, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+  - passed: fixture-backed call-graph query filter ran 93 tests, 0 failed.
+
+For `8f371fa5 test: share projected blocker helper`:
+
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::blocker_proof::callable -- --nocapture`
+  - passed: callable blocker proof fixture filter ran 2 tests, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::dynamic_proof::blockers -- --nocapture`
+  - passed: dynamic blocker proof fixture filter ran 2 tests, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::dynamic_proof -- --nocapture`
+  - passed: dynamic proof fixture filter ran 7 tests, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+  - passed: fixture-backed call-graph query filter ran 93 tests, 0 failed.
 
 For `7140e189 test: share targetless owner case helper`:
 
