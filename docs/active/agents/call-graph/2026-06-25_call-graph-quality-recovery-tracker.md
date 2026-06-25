@@ -19,7 +19,7 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `28a183da test: split fixture selector helpers`
+  `9cb4f5b0 test: share try-result fixture setup`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent TUI/model-visible cleanup:
   - `cc808347 test: cover variant constructor tool context`
@@ -103,6 +103,8 @@ are not acceptable as a continuing implementation style.
   - `02313e8e test: share target caller assertions`
   - `bb27b696 test: share resolved proof fixture assertion`
   - `28a183da test: split fixture selector helpers`
+  - `a363b462 test: compact targetless dynamic cases`
+  - `9cb4f5b0 test: share try-result fixture setup`
 - Recent DB test-module split:
   - `7e51101d test: split dynamic call proof fixtures`
   - `09f8f967 test: split target proof fixtures`
@@ -245,9 +247,27 @@ are not acceptable as a continuing implementation style.
   `selectors/` helper root with row selectors, caller selectors/assertions,
   expansion candidate assertions, and path construction separated by concern
   while preserving the existing `selectors::*` import surface.
+- `TargetlessDynamicContextCase` now has unsupported-case constructors used by
+  the dynamic targetless fixture matrix, keeping the table focused on owner
+  names and only spelling out paths for the exceptional path-bearing rows.
+- `call_graph_fixture_common/scenarios.rs` owns the shared try-result fixture
+  owner, context rows, call-site IDs, and target IDs used by context expansion
+  and mixed-proof fixture assertions.
 
 ## Recent verification
 
+- `9cb4f5b0 test: share try-result fixture setup`
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::context_expansion -- --nocapture`
+    passed: 7 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::mixed_proof -- --nocapture`
+    passed: 5 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+    passed: 93 passed, 0 failed.
+- `a363b462 test: compact targetless dynamic cases`
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::dynamic_context -- --nocapture`
+    passed: 9 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+    passed: 93 passed, 0 failed.
 - `28a183da test: split fixture selector helpers`
   - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
     passed: 93 passed, 0 failed.
