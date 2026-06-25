@@ -45,11 +45,12 @@ fn fixture_expand_call_context_reads_real_outgoing_and_incoming_candidates() -> 
         1,
         "path owner should expose one outgoing call-context candidate: {outgoing:#?}"
     );
-    assert_eq!(outgoing[0].node_id, target);
-    assert_eq!(outgoing[0].target_id, target);
-    assert_eq!(outgoing[0].relation, CallContextRelation::OutgoingTarget);
-    assert_eq!(outgoing[0].call_site_id, path_site);
-    assert_eq!(outgoing[0].distance, 1);
+    assert_outgoing_candidate(
+        &outgoing,
+        target,
+        path_site,
+        "path outgoing target candidate missing",
+    );
 
     let incoming = db.expand_call_context(
         CallContextSeed::Target(target),
@@ -63,26 +64,21 @@ fn fixture_expand_call_context_reads_real_outgoing_and_incoming_candidates() -> 
         incoming.len() >= 2,
         "local_target should expose multiple incoming caller candidates: {incoming:#?}"
     );
-    assert!(
-        incoming.iter().all(|candidate| {
-            candidate.target_id == target
-                && candidate.relation == CallContextRelation::IncomingCaller
-                && candidate.distance == 1
-        }),
-        "incoming expansion should only include caller candidates for the target: {incoming:#?}"
+    assert_incoming_candidates_for_target(
+        &incoming,
+        target,
+        "incoming expansion should only include caller candidates for the target",
     );
-    assert_call_candidate(
+    assert_incoming_candidate(
         &incoming,
         path_owner,
-        CallContextRelation::IncomingCaller,
         path_site,
         target,
         "path caller candidate missing",
     );
-    assert_call_candidate(
+    assert_incoming_candidate(
         &incoming,
         dynamic_owner,
-        CallContextRelation::IncomingCaller,
         dynamic_site,
         target,
         "dynamic caller candidate missing",
@@ -121,20 +117,16 @@ fn fixture_expand_call_context_owner_seed_filters_mixed_status_rows() -> Result<
         2,
         "owner expansion should promote only resolved rows: {candidates:#?}"
     );
-    assert_call_candidate(
+    assert_outgoing_candidate(
         &candidates,
         try_target,
-        CallContextRelation::OutgoingTarget,
         try_site,
-        try_target,
         "try_local_assoc outgoing target candidate missing",
     );
-    assert_call_candidate(
+    assert_outgoing_candidate(
         &candidates,
         method_target,
-        CallContextRelation::OutgoingTarget,
         method_site,
-        method_target,
         "try-result method outgoing target candidate missing",
     );
     assert!(
@@ -181,26 +173,21 @@ fn fixture_expand_call_context_target_seed_preserves_method_family_callers() -> 
         candidates.len() >= 2,
         "method target should expose multiple incoming expansion candidates: {candidates:#?}"
     );
-    assert!(
-        candidates.iter().all(|candidate| {
-            candidate.target_id == target
-                && candidate.relation == CallContextRelation::IncomingCaller
-                && candidate.distance == 1
-        }),
-        "incoming method expansion should preserve the seed target and relation: {candidates:#?}"
+    assert_incoming_candidates_for_target(
+        &candidates,
+        target,
+        "incoming method expansion should preserve the seed target and relation",
     );
-    assert_call_candidate(
+    assert_incoming_candidate(
         &candidates,
         method_owner,
-        CallContextRelation::IncomingCaller,
         method_site,
         target,
         "method-call incoming candidate missing",
     );
-    assert_call_candidate(
+    assert_incoming_candidate(
         &candidates,
         assoc_owner,
-        CallContextRelation::IncomingCaller,
         assoc_site,
         target,
         "associated-function incoming candidate missing",

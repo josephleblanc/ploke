@@ -15,10 +15,9 @@ fn fixture_expand_call_context_target_seed_preserves_constructor_callers() -> Re
                 ..CallContextOptions::default()
             },
         )?;
-        assert_call_candidate(
+        assert_incoming_candidate(
             &candidates,
             resolved.owner,
-            CallContextRelation::IncomingCaller,
             resolved.site,
             resolved.target,
             &format!("{} incoming candidate missing", case.label),
