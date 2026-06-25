@@ -19,12 +19,13 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `03ab767e test: share target proof site helpers`
+  `15f0ce68 test: share RAG call expansion assertions`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent TUI/model-visible cleanup:
   - `cc808347 test: cover variant constructor tool context`
 - Recent RAG/DB context cleanup:
   - `31d19d3c Add variant sparse call-context seeds`
+  - `15f0ce68 test: share RAG call expansion assertions`
 - Recent coverage inventory cleanup:
   - Added `2026-06-25_call-graph-coverage-inventory.md` as the compact layer inventory.
 - Recent production pattern cleanup:
@@ -92,6 +93,7 @@ are not acceptable as a continuing implementation style.
   - `4fba3095 test: share targetless status seed helper`
   - `9dbb7fbd test: reuse resolved seed in context queries`
   - `03ab767e test: share target proof site helpers`
+  - `3a64af16 test: reuse target proof count helper`
 - Recent DB test-module split:
   - `7e51101d test: split dynamic call proof fixtures`
   - `09f8f967 test: split target proof fixtures`
@@ -195,9 +197,24 @@ are not acceptable as a continuing implementation style.
   proof-site case helpers used by function, dynamic, method, associated
   function, trait dispatch, and imported trait associated-function proof
   fixtures.
+- Target-centered proof fixture linkage now reuses the shared
+  `expected_target_proof_count` helper instead of copying the resolved/blocker
+  proof fact count formula.
+- RAG call-context public sparse `get_context` tests now share call-expansion
+  provenance assertions for incoming and outgoing call-context expansion rows.
 
 ## Recent verification
 
+- `15f0ce68 test: share RAG call expansion assertions`
+  - `cargo test -p ploke-rag --features call_graph call_context_sparse_get_context -- --nocapture`
+    passed: 8 passed, 0 failed.
+  - `cargo test -p ploke-rag --features call_graph call_context -- --nocapture`
+    passed: 25 passed, 0 failed.
+- `3a64af16 test: reuse target proof count helper`
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::target_proof -- --nocapture`
+    passed: 9 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+    passed: 93 passed, 0 failed.
 - `03ab767e test: share target proof site helpers`
   - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::target_proof -- --nocapture`
     passed: 9 passed, 0 failed.
