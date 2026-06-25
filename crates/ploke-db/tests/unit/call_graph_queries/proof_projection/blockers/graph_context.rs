@@ -1,23 +1,16 @@
 use super::*;
 
-#[derive(Clone, Copy)]
-struct GraphSeed {
-    owner: Uuid,
-    module: Uuid,
-    site: Uuid,
-    target: Uuid,
-}
-
 #[test]
 fn proof_graphrag_context_links_generated_call_facts_by_call_site() -> Result<(), DbError> {
     let db =
         Database::init_with_schema().map_err(|err| DbError::QueryExecution(err.to_string()))?;
-    let seed = GraphSeed {
-        owner: Uuid::from_u128(0x181),
-        module: Uuid::from_u128(0x182),
-        site: Uuid::from_u128(0x183),
-        target: Uuid::from_u128(0x184),
-    };
+    let seed = ResolvedGraphSeed::path_call(
+        Uuid::from_u128(0x181),
+        Uuid::from_u128(0x182),
+        Uuid::from_u128(0x183),
+        Uuid::from_u128(0x184),
+        Some("src/lib.rs"),
+    );
 
     insert_resolved_graph(&db, seed)?;
     assert_eq!(
@@ -64,18 +57,20 @@ fn proof_graphrag_context_links_generated_call_facts_by_call_site() -> Result<()
 fn proof_domain_context_links_generated_call_facts_by_build_domain() -> Result<(), DbError> {
     let db =
         Database::init_with_schema().map_err(|err| DbError::QueryExecution(err.to_string()))?;
-    let primary = GraphSeed {
-        owner: Uuid::from_u128(0x191),
-        module: Uuid::from_u128(0x192),
-        site: Uuid::from_u128(0x193),
-        target: Uuid::from_u128(0x194),
-    };
-    let other = GraphSeed {
-        owner: Uuid::from_u128(0x195),
-        module: Uuid::from_u128(0x196),
-        site: Uuid::from_u128(0x197),
-        target: Uuid::from_u128(0x198),
-    };
+    let primary = ResolvedGraphSeed::path_call(
+        Uuid::from_u128(0x191),
+        Uuid::from_u128(0x192),
+        Uuid::from_u128(0x193),
+        Uuid::from_u128(0x194),
+        Some("src/lib.rs"),
+    );
+    let other = ResolvedGraphSeed::path_call(
+        Uuid::from_u128(0x195),
+        Uuid::from_u128(0x196),
+        Uuid::from_u128(0x197),
+        Uuid::from_u128(0x198),
+        Some("src/lib.rs"),
+    );
 
     insert_resolved_graph(&db, primary)?;
     insert_resolved_graph(&db, other)?;
@@ -127,28 +122,5 @@ fn proof_domain_context_links_generated_call_facts_by_build_domain() -> Result<(
         "unexpected empty-domain error: {error}"
     );
 
-    Ok(())
-}
-
-fn insert_resolved_graph(db: &Database, seed: GraphSeed) -> Result<(), DbError> {
-    insert_owner_source(db, seed.owner, seed.module, "src/lib.rs")?;
-    insert_call_site(
-        db,
-        SiteSeed {
-            id: seed.site,
-            owner: seed.owner,
-            kind: "Path",
-            span: (10, 24),
-            path: Some(vec!["crate", "helper"]),
-            method: None,
-            macro_name: None,
-            receiver: None,
-            arg_count: Some(0),
-            generic_arg_count: Some(0),
-        },
-    )?;
-    insert_edge(db, seed.owner, seed.site, "Path")?;
-    insert_relation(db, seed.site, seed.target, "Function", "Path", "Function")?;
-    insert_status(db, seed.site, "Path", "Resolved", Some("LocalExact"))?;
     Ok(())
 }

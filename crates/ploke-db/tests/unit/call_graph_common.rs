@@ -5,12 +5,14 @@ use ploke_db::{Database, DbError};
 use uuid::Uuid;
 
 mod facts;
+mod resolved;
 mod site;
 mod source;
 mod targets;
 mod values;
 
 pub(super) use facts::{fact_count, fact_for_call_site};
+pub(super) use resolved::{ResolvedGraphSeed, insert_resolved_graph};
 pub(super) use site::{SiteSeed, insert_call_site, insert_call_site_raw_receiver};
 pub(super) use source::insert_owner_source;
 pub(super) use values::list;

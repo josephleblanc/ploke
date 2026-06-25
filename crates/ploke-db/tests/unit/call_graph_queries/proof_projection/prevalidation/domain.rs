@@ -9,25 +9,10 @@ fn proof_projection_requires_non_empty_build_domain_id() -> Result<(), DbError> 
     let site = Uuid::from_u128(0x1b3);
     let target = Uuid::from_u128(0x1b4);
 
-    insert_owner_source(&db, owner, module, "src/lib.rs")?;
-    insert_call_site(
+    insert_resolved_graph(
         &db,
-        SiteSeed {
-            id: site,
-            owner,
-            kind: "Path",
-            span: (10, 24),
-            path: Some(vec!["crate", "helper"]),
-            method: None,
-            macro_name: None,
-            receiver: None,
-            arg_count: Some(0),
-            generic_arg_count: Some(0),
-        },
+        ResolvedGraphSeed::path_call(owner, module, site, target, Some("src/lib.rs")),
     )?;
-    insert_edge(&db, owner, site, "Path")?;
-    insert_relation(&db, site, target, "Function", "Path", "Function")?;
-    insert_status(&db, site, "Path", "Resolved", Some("LocalExact"))?;
 
     for error in [
         db.call_proof_facts_for_owner(owner, "")

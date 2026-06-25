@@ -1,5 +1,7 @@
 use super::*;
 
+const TARGET_PATH: &[&str] = &["crate", "target"];
+
 #[test]
 fn proof_projection_requires_source_provenance_before_storage() -> Result<(), DbError> {
     let db =
@@ -7,25 +9,12 @@ fn proof_projection_requires_source_provenance_before_storage() -> Result<(), Db
     let owner = Uuid::from_u128(0x1c1);
     let site = Uuid::from_u128(0x1c2);
     let target = Uuid::from_u128(0x1c3);
+    let module = Uuid::from_u128(0x1c4);
 
-    insert_call_site(
+    insert_resolved_graph(
         &db,
-        SiteSeed {
-            id: site,
-            owner,
-            kind: "Path",
-            span: (10, 24),
-            path: Some(vec!["crate", "helper"]),
-            method: None,
-            macro_name: None,
-            receiver: None,
-            arg_count: Some(0),
-            generic_arg_count: Some(0),
-        },
+        ResolvedGraphSeed::path_call(owner, module, site, target, None),
     )?;
-    insert_edge(&db, owner, site, "Path")?;
-    insert_relation(&db, site, target, "Function", "Path", "Function")?;
-    insert_status(&db, site, "Path", "Resolved", Some("LocalExact"))?;
 
     let owner_error = db
         .project_call_proof_facts_for_owner(owner, "bd:test")
@@ -63,44 +52,30 @@ fn target_centered_proof_projection_prevalidates_caller_sources_before_storage()
     let bad_site = Uuid::from_u128(0x1d5);
     let target = Uuid::from_u128(0x1d6);
 
-    insert_owner_source(&db, good_owner, good_module, "src/good.rs")?;
-    insert_call_site(
+    insert_resolved_graph(
         &db,
-        SiteSeed {
-            id: good_site,
+        ResolvedGraphSeed {
             owner: good_owner,
-            kind: "Path",
+            module: good_module,
+            site: good_site,
+            target,
+            file: Some("src/good.rs"),
             span: (10, 24),
-            path: Some(vec!["crate", "target"]),
-            method: None,
-            macro_name: None,
-            receiver: None,
-            arg_count: Some(0),
-            generic_arg_count: Some(0),
+            path: TARGET_PATH,
         },
     )?;
-    insert_edge(&db, good_owner, good_site, "Path")?;
-    insert_relation(&db, good_site, target, "Function", "Path", "Function")?;
-    insert_status(&db, good_site, "Path", "Resolved", Some("LocalExact"))?;
-
-    insert_call_site(
+    insert_resolved_graph(
         &db,
-        SiteSeed {
-            id: bad_site,
+        ResolvedGraphSeed {
             owner: bad_owner,
-            kind: "Path",
+            module: Uuid::from_u128(0x1d7),
+            site: bad_site,
+            target,
+            file: None,
             span: (30, 44),
-            path: Some(vec!["crate", "target"]),
-            method: None,
-            macro_name: None,
-            receiver: None,
-            arg_count: Some(0),
-            generic_arg_count: Some(0),
+            path: TARGET_PATH,
         },
     )?;
-    insert_edge(&db, bad_owner, bad_site, "Path")?;
-    insert_relation(&db, bad_site, target, "Function", "Path", "Function")?;
-    insert_status(&db, bad_site, "Path", "Resolved", Some("LocalExact"))?;
 
     let callers = db.callers_for_target(target)?;
     assert_eq!(callers.len(), 2, "target callers: {callers:#?}");
