@@ -551,6 +551,7 @@ fn baseline_id(parent: &ParentIdentity, baseline: &CompleteBaseline, source_kind
 fn storage_backend_label(backend: EvalStorageBackend) -> &'static str {
     match backend {
         EvalStorageBackend::Fs => "fs",
+        EvalStorageBackend::DbMirror => "db-mirror",
         EvalStorageBackend::Database => "database",
         EvalStorageBackend::DualStrict => "dual-strict",
     }

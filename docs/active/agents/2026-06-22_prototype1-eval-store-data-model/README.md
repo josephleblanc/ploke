@@ -8,7 +8,7 @@ Short description: planning packet for replacing Prototype 1 shared-filesystem a
 
 Read these first when implementing:
 
-- [`2026-06-25_cleanup-before-db-parity-decision.md`](2026-06-25_cleanup-before-db-parity-decision.md) — current restart guardrail: pause new schema expansion, treat current `database` behavior as DB-mirror rather than DB-only, and clean up parity gaps/ports before more slices.
+- [`2026-06-25_cleanup-before-db-parity-decision.md`](2026-06-25_cleanup-before-db-parity-decision.md) — current restart guardrail: pause new schema expansion, prefer explicit `db-mirror` for current filesystem-authority DB-copy behavior, treat legacy `database` behavior as mirror-mode rather than DB-only, and clean up parity gaps/ports before more slices.
 - [`implementation-plan.md`](implementation-plan.md) — canonical phased implementation plan, first-slice decision, and migration gates.
 - [`slice-by-slice-implementation-plan.md`](slice-by-slice-implementation-plan.md) — consolidated code-checked slice plan with concrete files/functions to change per slice.
 - [`implementation-log.md`](implementation-log.md) — implementation/run log template for autonomous slice execution, test evidence, live API usage, checkpoints, and commits.

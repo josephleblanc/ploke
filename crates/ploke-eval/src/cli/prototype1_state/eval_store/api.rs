@@ -19,7 +19,7 @@ pub(crate) trait EvalStore {
 
 pub(crate) enum ConfiguredEvalStore<'a> {
     Fs(FsEvalStore<'a>),
-    Db(FileDbEvalStore<'a>),
+    DbMirror(FileDbEvalStore<'a>),
     DualStrict(FileDbEvalStore<'a>),
 }
 
@@ -28,11 +28,11 @@ impl<'a> ConfiguredEvalStore<'a> {
         Self::Fs(FsEvalStore::new(journal))
     }
 
-    pub(crate) fn database(journal: &'a mut PrototypeJournal, db_path: PathBuf) -> Self {
-        Self::Db(FileDbEvalStore::new(
+    pub(crate) fn db_mirror(journal: &'a mut PrototypeJournal, db_path: PathBuf) -> Self {
+        Self::DbMirror(FileDbEvalStore::new(
             journal,
             db_path,
-            EvalStorageMode::Database,
+            EvalStorageMode::DbMirror,
         ))
     }
 
@@ -52,7 +52,7 @@ impl EvalStore for ConfiguredEvalStore<'_> {
     ) -> Result<ParentStartedReceipt, EvalStoreError> {
         match self {
             Self::Fs(store) => store.put_parent_started(evidence),
-            Self::Db(store) | Self::DualStrict(store) => store.put_parent_started(evidence),
+            Self::DbMirror(store) | Self::DualStrict(store) => store.put_parent_started(evidence),
         }
     }
 }
@@ -78,14 +78,14 @@ impl EvalStore for FsEvalStore<'_> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum EvalStorageMode {
-    Database,
+    DbMirror,
     DualStrict,
 }
 
 impl EvalStorageMode {
     pub(super) const fn as_str(self) -> &'static str {
         match self {
-            Self::Database => "database",
+            Self::DbMirror => "db-mirror",
             Self::DualStrict => "dual-strict",
         }
     }

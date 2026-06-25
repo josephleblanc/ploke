@@ -165,6 +165,7 @@ impl EvalStorage {
     fn validate(&self) -> Result<(), PrepareError> {
         match self.backend {
             EvalStorageBackend::Fs
+            | EvalStorageBackend::DbMirror
             | EvalStorageBackend::Database
             | EvalStorageBackend::DualStrict => Ok(()),
         }
@@ -175,6 +176,9 @@ impl EvalStorage {
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum EvalStorageBackend {
     Fs,
+    /// Files remain authority; owner eval DB rows are a mirror/query surface.
+    DbMirror,
+    /// Compatibility spelling for the current mirror mode until DB-backed reads exist.
     Database,
     DualStrict,
 }
@@ -1242,18 +1246,35 @@ graph_nearest = 13
 
     #[test]
     fn run_profile_storage_eval_backend_roundtrips_kebab_case() {
+        for (backend, expected) in [
+            ("db-mirror", EvalStorageBackend::DbMirror),
+            ("dual-strict", EvalStorageBackend::DualStrict),
+        ] {
+            let text = PROFILE.replace(
+                "[target]",
+                &format!("[storage.eval]\nbackend = \"{backend}\"\n\n[target]"),
+            );
+            let profile = parse_profile(Path::new("profile.toml"), &text).expect("profile parses");
+            let encoded = toml::to_string(&profile).expect("serialize profile");
+            let decoded =
+                parse_profile(Path::new("profile.toml"), &encoded).expect("roundtrip parses");
+
+            assert_eq!(profile.storage.eval.backend, expected);
+            assert_eq!(decoded.storage.eval.backend, expected);
+            assert!(encoded.contains("[storage.eval]"));
+            assert!(encoded.contains(&format!("backend = \"{backend}\"")));
+        }
+    }
+
+    #[test]
+    fn run_profile_storage_eval_backend_accepts_legacy_database_alias() {
         let text = PROFILE.replace(
             "[target]",
-            "[storage.eval]\nbackend = \"dual-strict\"\n\n[target]",
+            "[storage.eval]\nbackend = \"database\"\n\n[target]",
         );
         let profile = parse_profile(Path::new("profile.toml"), &text).expect("profile parses");
-        let encoded = toml::to_string(&profile).expect("serialize profile");
-        let decoded = parse_profile(Path::new("profile.toml"), &encoded).expect("roundtrip parses");
 
-        assert_eq!(profile.storage.eval.backend, EvalStorageBackend::DualStrict);
-        assert_eq!(decoded.storage.eval.backend, EvalStorageBackend::DualStrict);
-        assert!(encoded.contains("[storage.eval]"));
-        assert!(encoded.contains("backend = \"dual-strict\""));
+        assert_eq!(profile.storage.eval.backend, EvalStorageBackend::Database);
     }
 
     #[test]

@@ -1126,6 +1126,44 @@ Commit only after the slice's required tests pass or, for expected-failing tests
 - Result: no DB-only production runtime mode was enabled. The next implementation work should be consumer migration/checkpoint parity for selected compatibility surfaces, not a permissive DB-only flag.
 - Commit: `docs: record db-only readiness audit`.
 
+### 2026-06-25 cleanup — Explicit db-mirror backend spelling
+
+- Status: in progress for backend naming/contract cleanup; no DB-backed read mode is enabled.
+- Assumptions:
+  - Current `database` behavior is compatibility mirror behavior: filesystem writes/read surfaces remain authority, with owner eval DB rows used for query/audit evidence.
+  - Add `db-mirror` as the canonical profile spelling for that behavior while keeping legacy `database` profiles accepted and routed to the same current mirror implementation.
+  - Do not weaken `dual-strict`: it remains filesystem authority plus required DB parity for migrated surfaces.
+- Code/docs touched:
+  - `crates/ploke-eval/src/cli/prototype1_state/profile.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/api.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/live_edges.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/run/core.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/eval_store/setup.rs`
+  - `crates/ploke-eval/src/cli/prototype1_state/tests/cli_tests.rs`
+  - `crates/ploke-records/src/run_profile.rs`
+  - `docs/active/agents/2026-06-22_prototype1-eval-store-data-model/2026-06-25_cleanup-before-db-parity-decision.md`
+  - `docs/active/agents/2026-06-22_prototype1-eval-store-data-model/README.md`
+  - `docs/active/agents/2026-06-22_prototype1-eval-store-data-model/storage-plan.md`
+  - `docs/active/agents/2026-06-22_prototype1-eval-store-data-model/implementation-log.md`
+- Tests added/changed:
+  - profile and passive run-profile DTO round-trip coverage for `backend = "db-mirror"`.
+  - legacy `backend = "database"` parse coverage remains.
+  - `R4c -> R5` DB-row contract now covers `EvalStorageBackend::DbMirror` in addition to legacy `Database` and `DualStrict`.
+- Commands run:
+  - `gitnexus impact ...` for `EvalStorageBackend` in `ploke-eval` and `ploke-records`: LOW risk.
+  - `gitnexus impact ...` for `EvalStorageMode`, `ConfiguredEvalStore`, `r4c_to_r5`, and `scoped_eval_trace_sink_for_context`: LOW risk.
+  - `cargo fmt --all`
+  - `cargo fmt --all -- --check`
+  - `cargo check -p ploke-eval` passed with existing warning noise.
+  - `cargo test -p ploke-eval run_profile_storage_eval_backend -- --nocapture` passed, 4 tests.
+  - `cargo test -p ploke-records run_profile_toml_roundtrips_eval_storage_backend -- --nocapture` passed, 1 test.
+  - `cargo test -p ploke-records run_profile_toml_accepts_legacy_database_backend -- --nocapture` passed, 1 test.
+  - `cargo test -p ploke-eval prototype1_transition_contract_r4c_to_r5_db_backends_record_parent_start_rows -- --nocapture` passed, 1 test.
+  - `cargo test -p ploke-eval prototype1_eval_store_` passed, 28 tests.
+- Live API used: no. This is local config/contract naming cleanup only.
+- Result: `backend = "db-mirror"` is now the canonical current mirror-mode spelling in profile DTOs and live edge routing. Legacy `backend = "database"` remains accepted and routes through the same filesystem-authority mirror implementation. No DB-backed read/runtime mode was enabled.
+- Commit: current cleanup commit, `chore: add db-mirror eval storage spelling`.
+
 ### Later slices
 
 Create a new subsection per slice before editing.

@@ -1411,6 +1411,7 @@ fn prototype1_transition_contract_r4c_to_r5_fs_records_parent_start() {
 #[test]
 fn prototype1_transition_contract_r4c_to_r5_db_backends_record_parent_start_rows() {
     for backend in [
+        profile::EvalStorageBackend::DbMirror,
         profile::EvalStorageBackend::Database,
         profile::EvalStorageBackend::DualStrict,
     ] {

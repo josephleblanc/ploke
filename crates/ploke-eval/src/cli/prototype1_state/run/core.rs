@@ -2232,12 +2232,12 @@ async fn advance(diagnosis: Diagnosis, mode: ExecuteMode) -> Result<(), PrepareE
 fn scoped_eval_trace_sink_for_context(context: &RuntimeContext) -> observe::EvalTraceSinkGuard {
     let config = match context.admitted_profile.profile.storage.eval.backend {
         profile::EvalStorageBackend::Fs => None,
-        profile::EvalStorageBackend::Database | profile::EvalStorageBackend::DualStrict => {
-            Some(observe::EvalTraceSinkConfig {
-                campaign_id: context.campaign_id.clone(),
-                db_path: prototype1_eval_store_db_path(&context.manifest_path),
-            })
-        }
+        profile::EvalStorageBackend::DbMirror
+        | profile::EvalStorageBackend::Database
+        | profile::EvalStorageBackend::DualStrict => Some(observe::EvalTraceSinkConfig {
+            campaign_id: context.campaign_id.clone(),
+            db_path: prototype1_eval_store_db_path(&context.manifest_path),
+        }),
     };
     observe::scoped_eval_trace_sink(config)
 }

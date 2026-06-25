@@ -64,7 +64,8 @@ Do these before adding new schema families:
    - Populate `eval_log_ref` for runtime streams and turn-live/LLM sidecars when DB mirroring is enabled.
 
 2. **Clarify backend naming/semantics.**
-   - Keep existing TOML compatibility for `backend = "database"`, but document/code-comment that current behavior is mirror mode until read migration is complete.
+   - Prefer the explicit TOML spelling `backend = "db-mirror"` for the current filesystem-authority plus owner-DB-copy behavior.
+   - Keep existing TOML compatibility for `backend = "database"`, but treat it as a legacy mirror-mode spelling until read migration is complete.
    - Do not advertise true DB-only operation.
 
 3. **Separate ports by domain.**

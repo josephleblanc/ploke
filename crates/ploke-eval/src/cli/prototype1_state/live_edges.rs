@@ -77,7 +77,9 @@ pub(crate) fn r0_to_r1(
     let closure_state_path = ensure_prototype1_baseline_closure_state(&resolved_campaign)?;
     match run_shape.eval_storage_backend {
         EvalStorageBackend::Fs => {}
-        EvalStorageBackend::Database | EvalStorageBackend::DualStrict => {
+        EvalStorageBackend::DbMirror
+        | EvalStorageBackend::Database
+        | EvalStorageBackend::DualStrict => {
             let manifest = load_campaign_manifest(&campaign_id)?;
             let admitted_profile = profile::load_admitted_run_profile(&manifest_path)?;
             let closure_state = load_closure_state(&campaign_id)?;
@@ -436,9 +438,9 @@ pub(crate) fn r4c_to_r5(
                 prototype1_state_transition_error("prototype1_parent_start", err.to_string())
             })?;
         }
-        EvalStorageBackend::Database => {
+        EvalStorageBackend::DbMirror | EvalStorageBackend::Database => {
             let db_path = prototype1_eval_store_db_path(&parts.manifest_path);
-            let mut store = ConfiguredEvalStore::database(&mut parts.journal, db_path);
+            let mut store = ConfiguredEvalStore::db_mirror(&mut parts.journal, db_path);
             store.put_parent_started(evidence).map_err(|err| {
                 prototype1_state_transition_error("prototype1_parent_start", err.to_string())
             })?;
@@ -485,7 +487,9 @@ pub(crate) async fn r5_to_r6(
     .await?;
     match parts.run_shape.eval_storage_backend {
         EvalStorageBackend::Fs => {}
-        EvalStorageBackend::Database | EvalStorageBackend::DualStrict => {
+        EvalStorageBackend::DbMirror
+        | EvalStorageBackend::Database
+        | EvalStorageBackend::DualStrict => {
             let closure = if parent_identity.generation() == 0 {
                 let path = campaign_closure_state_path(&parts.campaign_id)?;
                 let state = load_closure_state(&parts.campaign_id)?;
