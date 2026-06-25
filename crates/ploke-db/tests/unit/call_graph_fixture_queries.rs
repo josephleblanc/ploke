@@ -1114,19 +1114,55 @@ fn fixture_context_reads_projected_resolved_dynamic_function_shapes() -> Result<
 }
 
 #[test]
+fn fixture_context_reads_projected_ambiguous_dynamic_candidates() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let first = function_id_by_name(&db, "local_target")?;
+    let second = function_id_by_name(&db, "other_target")?;
+    let mut expected = vec![first, second];
+    expected.sort_unstable();
+
+    for owner_name in [
+        "call_if_ambiguous_function_item",
+        "call_match_ambiguous_function_item",
+    ] {
+        let owner = function_id_by_name(&db, owner_name)?;
+        let context = db.call_context_for_owner(owner)?;
+        assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
+
+        let row = &context[0];
+        assert_eq!(row.site.owner_id, owner);
+        assert_eq!(row.site.kind, CallSiteKind::Dynamic);
+        assert_eq!(row.site.path, None);
+        assert_eq!(row.site.arg_count, Some(0));
+        assert_eq!(row.site.generic_arg_count, None);
+        assert_eq!(row.status.status, CallStatusKind::Ambiguous);
+        assert_eq!(row.status.resolution, None);
+        assert_eq!(row.targets.len(), 2, "{owner_name} targets: {row:#?}");
+        assert!(row.targets.iter().all(|target| {
+            target.relation == CallRelationKind::DynamicFunction
+                && target.source_kind == CallSiteKind::Dynamic
+                && target.target_kind == CallTargetKind::Function
+        }));
+
+        let mut actual = row
+            .targets
+            .iter()
+            .map(|target| target.target_id)
+            .collect::<Vec<_>>();
+        actual.sort_unstable();
+        assert_eq!(
+            actual, expected,
+            "{owner_name} should expose proven ambiguous dynamic candidates"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn fixture_context_reads_projected_targetless_dynamic_failures() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let cases = [
-        (
-            "call_if_ambiguous_function_item",
-            None,
-            CallStatusKind::Ambiguous,
-        ),
-        (
-            "call_match_ambiguous_function_item",
-            None,
-            CallStatusKind::Ambiguous,
-        ),
         (
             "call_match_guarded_function_item",
             None,
@@ -4464,19 +4500,85 @@ fn fixture_projection_marks_real_unsupported_dynamic_call_without_edges() -> Res
 }
 
 #[test]
+fn fixture_projection_marks_real_branch_and_match_dynamic_ambiguity_with_candidates()
+-> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let mut expected_targets = vec![
+        function_id_by_name(&db, "local_target")?.to_string(),
+        function_id_by_name(&db, "other_target")?.to_string(),
+    ];
+    expected_targets.sort();
+
+    for owner_name in [
+        "call_if_ambiguous_function_item",
+        "call_match_ambiguous_function_item",
+    ] {
+        let owner = function_id_by_name(&db, owner_name)?;
+        let context = db.call_context_for_owner(owner)?;
+        assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
+        let row = &context[0];
+        assert_eq!(row.site.kind, CallSiteKind::Dynamic);
+        assert_eq!(row.site.owner_id, owner);
+        assert_eq!(row.status.status, CallStatusKind::Ambiguous);
+        assert_eq!(row.status.resolution, None);
+        assert_eq!(row.targets.len(), 2, "{owner_name} targets: {row:#?}");
+
+        let site = row.site.id.to_string();
+        let facts = db.call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
+        assert_eq!(facts.len(), 2, "{owner_name} proof facts: {facts:#?}");
+
+        let resolution = facts
+            .iter()
+            .find(|fact| {
+                fact.get("fact_kind").and_then(serde_json::Value::as_str) == Some("call_resolution")
+                    && fact.get("call_site_id").and_then(serde_json::Value::as_str)
+                        == Some(site.as_str())
+            })
+            .unwrap_or_else(|| panic!("{owner_name} should project call_resolution proof fact"));
+        assert_eq!(
+            resolution
+                .get("blocking_reason")
+                .and_then(serde_json::Value::as_str),
+            Some("type_resolution_missing")
+        );
+        let mut actual_targets = resolution
+            .get("candidate_def_ids")
+            .and_then(serde_json::Value::as_array)
+            .expect("ambiguous dynamic resolution should carry candidate_def_ids")
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .expect("candidate_def_ids should contain string IDs")
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        actual_targets.sort();
+        assert_eq!(
+            actual_targets, expected_targets,
+            "{owner_name} candidate_def_ids"
+        );
+
+        let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
+        assert_eq!(count, 2, "{owner_name} projected proof fact count");
+        let rows = db.proof_graphrag_context("type_resolution_missing")?;
+        assert!(
+            rows.iter().any(|proof| {
+                proof.kind == "call_resolution"
+                    && proof.call_site_id.as_deref() == Some(site.as_str())
+                    && proof.blocker_reason.as_deref() == Some("type_resolution_missing")
+            }),
+            "{owner_name} projected ambiguous blocker proof rows: {rows:#?}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn fixture_projection_marks_real_branch_and_match_dynamic_failures_without_edges()
 -> Result<(), DbError> {
     let cases = [
-        (
-            "call_if_ambiguous_function_item",
-            CallStatusKind::Ambiguous,
-            "type_resolution_missing",
-        ),
-        (
-            "call_match_ambiguous_function_item",
-            CallStatusKind::Ambiguous,
-            "type_resolution_missing",
-        ),
         (
             "call_match_guarded_function_item",
             CallStatusKind::Unsupported,
@@ -5075,20 +5177,35 @@ fn fixture_projection_links_target_centered_proof_rows_to_callers() -> Result<()
         callers.len() >= 2,
         "local_target should expose multiple incoming callers: {callers:#?}"
     );
+    let resolved_callers = callers
+        .iter()
+        .filter(|caller| caller.status.status == CallStatusKind::Resolved)
+        .collect::<Vec<_>>();
     assert!(
-        callers.iter().all(|caller| {
-            caller.target.target_id == target
-                && caller.status.status == CallStatusKind::Resolved
-                && caller.status.resolution == Some(CallResolutionKind::LocalExact)
-        }),
-        "target-centered proof linkage setup should use resolved callers for the seed target: {callers:#?}"
+        resolved_callers.len() >= 2,
+        "target-centered proof linkage setup should include resolved callers for the seed target: {callers:#?}"
+    );
+    assert!(
+        callers
+            .iter()
+            .all(|caller| caller.target.target_id == target),
+        "target-centered proof linkage setup returned mismatched target rows: {callers:#?}"
     );
 
     let count = db.project_call_proof_facts_for_target(target, "bd:fixture-call-graph")?;
+    let expected_count = callers
+        .iter()
+        .map(|caller| {
+            if caller.status.status == CallStatusKind::Resolved {
+                3
+            } else {
+                2
+            }
+        })
+        .sum::<usize>();
     assert_eq!(
-        count,
-        callers.len() * 3,
-        "target-centered proof projection should emit call_site, call_edge, and call_resolution facts per incoming caller"
+        count, expected_count,
+        "target-centered proof projection should emit call_site and call_resolution for each caller, plus call_edge for resolved callers"
     );
 
     let proof_rows = db.proof_graphrag_context("")?;
@@ -5100,7 +5217,7 @@ fn fixture_projection_links_target_centered_proof_rows_to_callers() -> Result<()
     let checker_edges = db.proof_checker_edges()?;
     assert_eq!(
         checker_edges.len(),
-        callers.len(),
+        resolved_callers.len(),
         "proof checker edges should match target-centered caller rows: {checker_edges:#?}"
     );
 
@@ -5122,19 +5239,25 @@ fn fixture_projection_links_target_centered_proof_rows_to_callers() -> Result<()
         );
         assert_eq!(
             proof_kind_count(&site_rows, "call_edge"),
-            1,
-            "target-centered proof rows should include one call_edge fact for {site}: {site_rows:#?}"
+            usize::from(caller.status.status == CallStatusKind::Resolved),
+            "target-centered proof rows should include call_edge facts only for resolved callers for {site}: {site_rows:#?}"
         );
 
-        let edge = proof_fact_for_kind(&site_rows, "call_edge");
-        let owner_id = caller.site.owner_id.to_string();
-        let target_id = target.to_string();
-        assert_eq!(edge.caller_def_id.as_deref(), Some(owner_id.as_str()));
-        assert_eq!(edge.callee_def_id.as_deref(), Some(target_id.as_str()));
-        assert_eq!(edge.blocker_reason, None);
-
         let resolution = proof_fact_for_kind(&site_rows, "call_resolution");
-        assert_eq!(resolution.blocker_reason, None);
+        if caller.status.status == CallStatusKind::Resolved {
+            let edge = proof_fact_for_kind(&site_rows, "call_edge");
+            let owner_id = caller.site.owner_id.to_string();
+            let target_id = target.to_string();
+            assert_eq!(edge.caller_def_id.as_deref(), Some(owner_id.as_str()));
+            assert_eq!(edge.callee_def_id.as_deref(), Some(target_id.as_str()));
+            assert_eq!(edge.blocker_reason, None);
+            assert_eq!(resolution.blocker_reason, None);
+        } else {
+            assert_eq!(
+                resolution.blocker_reason.as_deref(),
+                Some("type_resolution_missing")
+            );
+        }
 
         let provenance = db
             .proof_source_provenance(&site)?
@@ -5202,13 +5325,6 @@ fn fixture_projection_stores_real_target_centered_dynamic_call_proof_facts() -> 
             .iter()
             .all(|caller| caller.target.target_id == target),
         "target-centered dynamic proof setup returned mismatched target rows: {callers:#?}"
-    );
-    assert!(
-        callers
-            .iter()
-            .all(|caller| caller.status.status == CallStatusKind::Resolved
-                && caller.status.resolution == Some(CallResolutionKind::LocalExact)),
-        "target-centered dynamic proof setup should only include resolved local callers: {callers:#?}"
     );
     let dynamic = caller_by_owner_kind_path(
         &callers,
@@ -5767,17 +5883,27 @@ fn assert_target_proof_projection(
     blocker_reason: &str,
 ) -> Result<(), DbError> {
     let count = db.project_call_proof_facts_for_target(target, domain)?;
-    assert_eq!(
-        count,
-        callers.len() * 3,
-        "{label} target-centered proof count"
-    );
+    let resolved_count = callers
+        .iter()
+        .filter(|caller| caller.status.status == CallStatusKind::Resolved)
+        .count();
+    let expected_count = callers
+        .iter()
+        .map(|caller| {
+            if caller.status.status == CallStatusKind::Resolved {
+                3
+            } else {
+                2
+            }
+        })
+        .sum::<usize>();
+    assert_eq!(count, expected_count, "{label} target-centered proof count");
 
     let target_str = target.to_string();
     let edges = db.proof_checker_edges()?;
     assert_eq!(
         edges.len(),
-        callers.len(),
+        resolved_count,
         "{label} target-centered proof edges: {edges:#?}"
     );
     assert!(

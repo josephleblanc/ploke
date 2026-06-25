@@ -484,6 +484,12 @@ impl<'a> CallRelationResolver<'a> {
                 statuses.push(CallResolutionStatus::Unresolved { source });
             }
             _ => {
+                relations.extend(targets.iter().copied().map(|target| {
+                    CallRelation::DynamicFunction {
+                        source: call.id,
+                        target,
+                    }
+                }));
                 statuses.push(CallResolutionStatus::Ambiguous { source });
             }
         }

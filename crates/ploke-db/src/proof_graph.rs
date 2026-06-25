@@ -508,10 +508,7 @@ fn validate_call_context(row: &CallContextRow) -> Result<(), DbError> {
             row.site.id,
             row.targets.len()
         ))),
-        CallStatusKind::Unresolved
-        | CallStatusKind::Ambiguous
-        | CallStatusKind::External
-        | CallStatusKind::Unsupported
+        CallStatusKind::Unresolved | CallStatusKind::External | CallStatusKind::Unsupported
             if !row.targets.is_empty() =>
         {
             Err(DbError::Cozo(format!(
@@ -551,6 +548,10 @@ fn call_site_fact(row: &CallContextRow, build_domain_id: &str, source_file: &str
 
 #[cfg(feature = "call_graph")]
 fn call_edge_facts(row: &CallContextRow) -> Vec<Value> {
+    if row.status.status != CallStatusKind::Resolved {
+        return Vec::new();
+    }
+
     row.targets
         .iter()
         .map(|target| call_edge_fact(row, target))

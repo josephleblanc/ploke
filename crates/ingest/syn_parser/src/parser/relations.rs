@@ -155,13 +155,14 @@ impl CallSiteRelation {
     }
 }
 
-/// Type-safe semantic call-target edges emitted by call resolution.
+/// Type-safe local call-target edges emitted by call resolution.
 ///
 /// These relations are deliberately separate from [`CallSiteRelation`]. A
 /// `BodyContainsCall` edge says that a function-like body contains an
 /// expression occurrence; a `CallRelation` says the resolver has proven a typed
-/// callable target for that occurrence. Unsupported or ambiguous cases belong
-/// in [`CallResolutionStatus`], not in fake broad target edges.
+/// local callable target for that occurrence. Ambiguous candidates may still be
+/// represented by multiple exact edges, but the ambiguity remains in
+/// [`CallResolutionStatus`]; unsupported cases stay targetless.
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CallRelation {
     /// A path-style call site resolved to a local standalone function.

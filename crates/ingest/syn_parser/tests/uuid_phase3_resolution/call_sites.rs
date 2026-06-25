@@ -3410,12 +3410,21 @@ paranoid_call_site_test!(
         name: "call_if_ambiguous_function_item"
     },
     expected: {
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let local_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let other_args = fixture_call_graph_function_args(&["crate"], "other_target");
+        let local_info = local_args.generate_pid(&parsed_graphs)?;
+        let other_info = other_args.generate_pid(&parsed_graphs)?;
+        let first = FunctionNodeId::try_from(local_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        let second = FunctionNodeId::try_from(other_info.test_pid())
+            .expect("other_target should regenerate a FunctionNodeId");
         ExpectedCallSite::dynamic_if_branch_paths(
             &[&["local_target"], &["other_target"]],
             IF_AMBIGUOUS_FUNCTION_ITEM_DYNAMIC_CALL_SPAN,
             0,
             &[],
-            ExpectedCallOutcome::Ambiguous,
+            ExpectedCallOutcome::AmbiguousDynamicFunctionCandidates { first, second },
         )
     },
 );
@@ -3451,12 +3460,21 @@ paranoid_call_site_test!(
         name: "call_match_ambiguous_function_item"
     },
     expected: {
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let local_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let other_args = fixture_call_graph_function_args(&["crate"], "other_target");
+        let local_info = local_args.generate_pid(&parsed_graphs)?;
+        let other_info = other_args.generate_pid(&parsed_graphs)?;
+        let first = FunctionNodeId::try_from(local_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        let second = FunctionNodeId::try_from(other_info.test_pid())
+            .expect("other_target should regenerate a FunctionNodeId");
         ExpectedCallSite::dynamic_match_arm_paths(
             &[&["local_target"], &["other_target"]],
             MATCH_AMBIGUOUS_FUNCTION_ITEM_DYNAMIC_CALL_SPAN,
             0,
             &[],
-            ExpectedCallOutcome::Ambiguous,
+            ExpectedCallOutcome::AmbiguousDynamicFunctionCandidates { first, second },
         )
     },
 );

@@ -603,6 +603,19 @@ mod tests {
         });
 
         let call_report = resolve_call_relations_after_tree(&merged, &tree)?;
+        let dynamic_relation_targets = |site_id| {
+            call_report
+                .relations
+                .iter()
+                .copied()
+                .filter_map(|relation| match relation {
+                    CallRelation::DynamicFunction { source, target } if source == site_id => {
+                        Some(target.into())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
         let (call_site_id, target_function_id) = call_report
             .relations
             .iter()
@@ -832,6 +845,7 @@ mod tests {
                 _ => None,
             })
             .expect("fixture_call_graph should record ambiguous if-branch dynamic call site");
+        let branch_ambiguous_targets = dynamic_relation_targets(branch_ambiguous_site_id);
         let branch_ambiguous_site_db = branch_ambiguous_site_id.to_cozo_uuid();
         let (match_site_id, match_target_id) = call_report
             .relations
@@ -888,6 +902,7 @@ mod tests {
                 _ => None,
             })
             .expect("fixture_call_graph should record ambiguous match-arm dynamic call site");
+        let match_ambiguous_targets = dynamic_relation_targets(match_ambiguous_site_id);
         let match_ambiguous_site_db = match_ambiguous_site_id.to_cozo_uuid();
 
         transform_parsed_graph(&db, merged, &tree)?;
@@ -1236,17 +1251,30 @@ mod tests {
         let mut params = BTreeMap::new();
         params.insert("call_site_id".to_string(), branch_ambiguous_site_db);
         let ambiguous_relation_rows = db.run_script(
-            r#"?[source_id, target_id, relation_kind] :=
+            r#"?[source_id, target_id, relation_kind, source_kind, target_kind] :=
                 source_id = $call_site_id,
-                *call_relation{source_id, target_id, relation_kind @ 'NOW'}"#,
+                *call_relation{source_id, target_id, relation_kind, source_kind, target_kind @ 'NOW'}"#,
             params,
             ScriptMutability::Immutable,
         )?;
+        let mut actual_branch_targets = ambiguous_relation_rows
+            .rows
+            .iter()
+            .map(|row| row[1].clone())
+            .collect::<Vec<_>>();
+        let mut expected_branch_targets = branch_ambiguous_targets;
+        actual_branch_targets.sort();
+        expected_branch_targets.sort();
         assert_eq!(
-            ambiguous_relation_rows.rows.len(),
-            0,
-            "ambiguous if-branch dynamic call should not persist a semantic edge"
+            actual_branch_targets, expected_branch_targets,
+            "ambiguous if-branch dynamic call should persist proven candidates"
         );
+        assert_eq!(ambiguous_relation_rows.rows.len(), 2);
+        for row in &ambiguous_relation_rows.rows {
+            assert_eq!(&row[2], &DataValue::from("DynamicFunction"));
+            assert_eq!(&row[3], &DataValue::from("Dynamic"));
+            assert_eq!(&row[4], &DataValue::from("Function"));
+        }
 
         let mut params = BTreeMap::new();
         params.insert("call_site_id".to_string(), match_site_db.clone());
@@ -1340,17 +1368,30 @@ mod tests {
         let mut params = BTreeMap::new();
         params.insert("call_site_id".to_string(), match_ambiguous_site_db);
         let match_ambiguous_relation_rows = db.run_script(
-            r#"?[source_id, target_id, relation_kind] :=
+            r#"?[source_id, target_id, relation_kind, source_kind, target_kind] :=
                 source_id = $call_site_id,
-                *call_relation{source_id, target_id, relation_kind @ 'NOW'}"#,
+                *call_relation{source_id, target_id, relation_kind, source_kind, target_kind @ 'NOW'}"#,
             params,
             ScriptMutability::Immutable,
         )?;
+        let mut actual_match_targets = match_ambiguous_relation_rows
+            .rows
+            .iter()
+            .map(|row| row[1].clone())
+            .collect::<Vec<_>>();
+        let mut expected_match_targets = match_ambiguous_targets;
+        actual_match_targets.sort();
+        expected_match_targets.sort();
         assert_eq!(
-            match_ambiguous_relation_rows.rows.len(),
-            0,
-            "ambiguous match-arm dynamic call should not persist a semantic edge"
+            actual_match_targets, expected_match_targets,
+            "ambiguous match-arm dynamic call should persist proven candidates"
         );
+        assert_eq!(match_ambiguous_relation_rows.rows.len(), 2);
+        for row in &match_ambiguous_relation_rows.rows {
+            assert_eq!(&row[2], &DataValue::from("DynamicFunction"));
+            assert_eq!(&row[3], &DataValue::from("Dynamic"));
+            assert_eq!(&row[4], &DataValue::from("Function"));
+        }
 
         Ok(())
     }

@@ -364,6 +364,12 @@ pub enum ExpectedCallOutcome {
     Unresolved,
     /// Resolver should fail closed with `Ambiguous` and no semantic edge.
     Ambiguous,
+    /// Resolver should report `Ambiguous` while preserving proven dynamic
+    /// function candidates.
+    AmbiguousDynamicFunctionCandidates {
+        first: FunctionNodeId,
+        second: FunctionNodeId,
+    },
     /// Resolver should classify the target as external and emit no local edge.
     External,
     /// Resolver should produce a local exact method edge.
@@ -1227,6 +1233,10 @@ fn assert_resolution_outcome(
             matches!(status, CallResolutionStatus::Ambiguous { source } if source == expected_id),
             "expected Ambiguous status for {expected_id:?}, got {status:?}"
         ),
+        ExpectedCallOutcome::AmbiguousDynamicFunctionCandidates { .. } => assert!(
+            matches!(status, CallResolutionStatus::Ambiguous { source } if source == expected_id),
+            "expected Ambiguous status for {expected_id:?}, got {status:?}"
+        ),
         ExpectedCallOutcome::External => assert!(
             matches!(status, CallResolutionStatus::External { source } if source == expected_id),
             "expected External status for {expected_id:?}, got {status:?}"
@@ -1264,6 +1274,35 @@ fn assert_resolution_outcome(
             0,
             "non-resolved call site {expected_id:?} should not emit semantic call edges; got {relations:#?}"
         ),
+        ExpectedCallOutcome::AmbiguousDynamicFunctionCandidates { first, second } => {
+            let source = match expected_id {
+                AnyCallSiteId::Dynamic(source) => source,
+                other => {
+                    panic!(
+                        "ambiguous dynamic-function candidates expected a dynamic call-site ID, got {other:?}"
+                    )
+                }
+            };
+            let mut actual = relations
+                .iter()
+                .map(|relation| match relation {
+                    CallRelation::DynamicFunction {
+                        source: actual_source,
+                        target,
+                    } if *actual_source == source => *target,
+                    other => panic!(
+                        "expected only DynamicFunction candidate edges from {source:?}, got {other:?}"
+                    ),
+                })
+                .collect::<Vec<_>>();
+            let mut expected = vec![first, second];
+            actual.sort_unstable();
+            expected.sort_unstable();
+            assert_eq!(
+                actual, expected,
+                "ambiguous dynamic call site {expected_id:?} should preserve proven function candidates"
+            );
+        }
         ExpectedCallOutcome::ResolvedMethodLocalExact { target } => {
             let source = match expected_id {
                 AnyCallSiteId::Method(source) => source,
