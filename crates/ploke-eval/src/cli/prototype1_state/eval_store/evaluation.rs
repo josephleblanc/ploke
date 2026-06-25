@@ -5,13 +5,43 @@ use ploke_records::ids::CampaignId;
 use sha2::{Digest, Sha256};
 
 use super::{
-    cozo_schema::eval_relation_exists,
     cozo_store::{EvalDb, mutate_owner_db},
     error::EvalStoreError,
+    schema::{EvalRelationSchema, define_eval_schema, put_eval_params},
 };
 
-pub(crate) const EVALUATION_REL: &str = "eval_evaluation";
-pub(crate) const EVALUATION_INSTANCE_REL: &str = "eval_evaluation_instance";
+define_eval_schema!(EvaluationSchema {
+    "eval_evaluation",
+    evaluation_id: "String" =>
+    campaign_id: "String",
+    parent_id: "String?",
+    branch_id: "String",
+    baseline_id: "String?",
+    treatment_id: "String?",
+    procedure_id: "String?",
+    evaluator_id: "String?",
+    eval_set_id: "String?",
+    policy_ref: "String?",
+    disposition: "String",
+    record_ref: "String?",
+    recorded_at: "String?",
+});
+
+define_eval_schema!(EvaluationInstanceSchema {
+    "eval_evaluation_instance",
+    evaluation_id: "String",
+    instance_id: "String" =>
+    baseline_run_id: "String?",
+    treatment_run_id: "String?",
+    baseline_ref: "String?",
+    treatment_ref: "String?",
+    status: "String",
+    outcome: "String?",
+    oracle_ref: "String?",
+});
+
+pub(crate) const EVALUATION_REL: &str = EvaluationSchema::RELATION;
+pub(crate) const EVALUATION_INSTANCE_REL: &str = EvaluationInstanceSchema::RELATION;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct EvaluationEvidence {
@@ -83,56 +113,8 @@ struct EvalEvaluationInstanceRow {
 }
 
 pub(super) fn ensure_evaluation_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), EvalStoreError> {
-    if !eval_relation_exists(db, EVALUATION_REL)? {
-        db.eval_query_mut_params(
-            r#"
-:create eval_evaluation {
-    evaluation_id: String =>
-    campaign_id: String,
-    parent_id: String?,
-    branch_id: String,
-    baseline_id: String?,
-    treatment_id: String?,
-    procedure_id: String?,
-    evaluator_id: String?,
-    eval_set_id: String?,
-    policy_ref: String?,
-    disposition: String,
-    record_ref: String?,
-    recorded_at: String?
-}
-"#,
-            BTreeMap::new(),
-        )
-        .map_err(|source| EvalStoreError::Db {
-            phase: "schema.eval_evaluation",
-            source,
-        })?;
-    }
-
-    if !eval_relation_exists(db, EVALUATION_INSTANCE_REL)? {
-        db.eval_query_mut_params(
-            r#"
-:create eval_evaluation_instance {
-    evaluation_id: String,
-    instance_id: String =>
-    baseline_run_id: String?,
-    treatment_run_id: String?,
-    baseline_ref: String?,
-    treatment_ref: String?,
-    status: String,
-    outcome: String?,
-    oracle_ref: String?
-}
-"#,
-            BTreeMap::new(),
-        )
-        .map_err(|source| EvalStoreError::Db {
-            phase: "schema.eval_evaluation_instance",
-            source,
-        })?;
-    }
-
+    EvaluationSchema::SCHEMA.ensure_installed(db, "schema.eval_evaluation")?;
+    EvaluationInstanceSchema::SCHEMA.ensure_installed(db, "schema.eval_evaluation_instance")?;
     Ok(())
 }
 
@@ -219,58 +201,12 @@ fn put_evaluation_row<D: EvalDb + ?Sized>(
     db: &D,
     row: &EvalEvaluationRow,
 ) -> Result<(), EvalStoreError> {
-    db.eval_query_mut_params(
-        r#"
-?[
-    evaluation_id,
-    campaign_id,
-    parent_id,
-    branch_id,
-    baseline_id,
-    treatment_id,
-    procedure_id,
-    evaluator_id,
-    eval_set_id,
-    policy_ref,
-    disposition,
-    record_ref,
-    recorded_at
-] :=
-    evaluation_id = $evaluation_id,
-    campaign_id = $campaign_id,
-    parent_id = $parent_id,
-    branch_id = $branch_id,
-    baseline_id = $baseline_id,
-    treatment_id = $treatment_id,
-    procedure_id = $procedure_id,
-    evaluator_id = $evaluator_id,
-    eval_set_id = $eval_set_id,
-    policy_ref = $policy_ref,
-    disposition = $disposition,
-    record_ref = $record_ref,
-    recorded_at = $recorded_at
-:put eval_evaluation {
-    evaluation_id =>
-    campaign_id,
-    parent_id,
-    branch_id,
-    baseline_id,
-    treatment_id,
-    procedure_id,
-    evaluator_id,
-    eval_set_id,
-    policy_ref,
-    disposition,
-    record_ref,
-    recorded_at
-}
-"#,
+    put_eval_params(
+        db,
+        &EvaluationSchema::SCHEMA,
         evaluation_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_evaluation",
-        source,
-    })?;
+        "put.eval_evaluation",
+    )?;
     Ok(())
 }
 
@@ -278,46 +214,12 @@ fn put_evaluation_instance_row<D: EvalDb + ?Sized>(
     db: &D,
     row: &EvalEvaluationInstanceRow,
 ) -> Result<(), EvalStoreError> {
-    db.eval_query_mut_params(
-        r#"
-?[
-    evaluation_id,
-    instance_id,
-    baseline_run_id,
-    treatment_run_id,
-    baseline_ref,
-    treatment_ref,
-    status,
-    outcome,
-    oracle_ref
-] :=
-    evaluation_id = $evaluation_id,
-    instance_id = $instance_id,
-    baseline_run_id = $baseline_run_id,
-    treatment_run_id = $treatment_run_id,
-    baseline_ref = $baseline_ref,
-    treatment_ref = $treatment_ref,
-    status = $status,
-    outcome = $outcome,
-    oracle_ref = $oracle_ref
-:put eval_evaluation_instance {
-    evaluation_id,
-    instance_id =>
-    baseline_run_id,
-    treatment_run_id,
-    baseline_ref,
-    treatment_ref,
-    status,
-    outcome,
-    oracle_ref
-}
-"#,
+    put_eval_params(
+        db,
+        &EvaluationInstanceSchema::SCHEMA,
         evaluation_instance_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_evaluation_instance",
-        source,
-    })?;
+        "put.eval_evaluation_instance",
+    )?;
     Ok(())
 }
 

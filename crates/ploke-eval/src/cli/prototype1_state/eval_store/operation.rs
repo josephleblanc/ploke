@@ -4,15 +4,53 @@ use cozo::DataValue;
 use ploke_records::ids::CampaignId;
 
 use super::{
-    cozo_schema::eval_relation_exists,
     cozo_store::{EvalDb, mutate_owner_db},
     error::EvalStoreError,
     evidence::{hash_parts, sha256_bytes},
+    schema::{EvalRelationSchema, define_eval_schema, put_eval_params},
 };
 
-pub(crate) const OPERATION_REL: &str = "eval_operation";
-pub(crate) const PATCH_REL: &str = "eval_patch";
-pub(crate) const APPLY_EVENT_REL: &str = "eval_apply_event";
+define_eval_schema!(OperationSchema {
+    "eval_operation",
+    operation_id: "String" =>
+    campaign_id: "String",
+    generator_id: "String",
+    target_kind: "String",
+    target_ref: "String",
+    procedure_id: "String?",
+    output_artifact_id: "String?",
+    output_patch_id: "String?",
+    recorded_at: "String?",
+});
+
+define_eval_schema!(PatchSchema {
+    "eval_patch",
+    patch_id: "String" =>
+    campaign_id: "String",
+    base_artifact_id: "String?",
+    creator_id: "String?",
+    tool_call_id: "String?",
+    target_relpath: "String?",
+    patch_ref: "String?",
+    content_sha256: "String?",
+    status: "String?",
+});
+
+define_eval_schema!(ApplyEventSchema {
+    "eval_apply_event",
+    apply_id: "String" =>
+    campaign_id: "String",
+    patch_id: "String",
+    runtime_id: "String?",
+    artifact_id: "String?",
+    outcome: "String",
+    output_artifact_id: "String?",
+    recorded_at: "String",
+});
+
+pub(crate) const OPERATION_REL: &str = OperationSchema::RELATION;
+pub(crate) const PATCH_REL: &str = PatchSchema::RELATION;
+pub(crate) const APPLY_EVENT_REL: &str = ApplyEventSchema::RELATION;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OperationEvidence {
@@ -101,74 +139,9 @@ struct EvalApplyEventRow {
 }
 
 pub(super) fn ensure_operation_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), EvalStoreError> {
-    if !eval_relation_exists(db, OPERATION_REL)? {
-        db.eval_query_mut_params(
-            r#"
-:create eval_operation {
-    operation_id: String =>
-    campaign_id: String,
-    generator_id: String,
-    target_kind: String,
-    target_ref: String,
-    procedure_id: String?,
-    output_artifact_id: String?,
-    output_patch_id: String?,
-    recorded_at: String?
-}
-"#,
-            BTreeMap::new(),
-        )
-        .map_err(|source| EvalStoreError::Db {
-            phase: "schema.eval_operation",
-            source,
-        })?;
-    }
-
-    if !eval_relation_exists(db, PATCH_REL)? {
-        db.eval_query_mut_params(
-            r#"
-:create eval_patch {
-    patch_id: String =>
-    campaign_id: String,
-    base_artifact_id: String?,
-    creator_id: String?,
-    tool_call_id: String?,
-    target_relpath: String?,
-    patch_ref: String?,
-    content_sha256: String?,
-    status: String?
-}
-"#,
-            BTreeMap::new(),
-        )
-        .map_err(|source| EvalStoreError::Db {
-            phase: "schema.eval_patch",
-            source,
-        })?;
-    }
-
-    if !eval_relation_exists(db, APPLY_EVENT_REL)? {
-        db.eval_query_mut_params(
-            r#"
-:create eval_apply_event {
-    apply_id: String =>
-    campaign_id: String,
-    patch_id: String,
-    runtime_id: String?,
-    artifact_id: String?,
-    outcome: String,
-    output_artifact_id: String?,
-    recorded_at: String
-}
-"#,
-            BTreeMap::new(),
-        )
-        .map_err(|source| EvalStoreError::Db {
-            phase: "schema.eval_apply_event",
-            source,
-        })?;
-    }
-
+    OperationSchema::SCHEMA.ensure_installed(db, "schema.eval_operation")?;
+    PatchSchema::SCHEMA.ensure_installed(db, "schema.eval_patch")?;
+    ApplyEventSchema::SCHEMA.ensure_installed(db, "schema.eval_apply_event")?;
     Ok(())
 }
 
@@ -268,90 +241,22 @@ fn put_operation_row<D: EvalDb + ?Sized>(
     db: &D,
     row: &EvalOperationRow,
 ) -> Result<(), EvalStoreError> {
-    db.eval_query_mut_params(
-        r#"
-?[
-    operation_id,
-    campaign_id,
-    generator_id,
-    target_kind,
-    target_ref,
-    procedure_id,
-    output_artifact_id,
-    output_patch_id,
-    recorded_at
-] :=
-    operation_id = $operation_id,
-    campaign_id = $campaign_id,
-    generator_id = $generator_id,
-    target_kind = $target_kind,
-    target_ref = $target_ref,
-    procedure_id = $procedure_id,
-    output_artifact_id = $output_artifact_id,
-    output_patch_id = $output_patch_id,
-    recorded_at = $recorded_at
-:put eval_operation {
-    operation_id =>
-    campaign_id,
-    generator_id,
-    target_kind,
-    target_ref,
-    procedure_id,
-    output_artifact_id,
-    output_patch_id,
-    recorded_at
-}
-"#,
+    put_eval_params(
+        db,
+        &OperationSchema::SCHEMA,
         operation_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_operation",
-        source,
-    })?;
+        "put.eval_operation",
+    )?;
     Ok(())
 }
 
 fn put_patch_row<D: EvalDb + ?Sized>(db: &D, row: &EvalPatchRow) -> Result<(), EvalStoreError> {
-    db.eval_query_mut_params(
-        r#"
-?[
-    patch_id,
-    campaign_id,
-    base_artifact_id,
-    creator_id,
-    tool_call_id,
-    target_relpath,
-    patch_ref,
-    content_sha256,
-    status
-] :=
-    patch_id = $patch_id,
-    campaign_id = $campaign_id,
-    base_artifact_id = $base_artifact_id,
-    creator_id = $creator_id,
-    tool_call_id = $tool_call_id,
-    target_relpath = $target_relpath,
-    patch_ref = $patch_ref,
-    content_sha256 = $content_sha256,
-    status = $status
-:put eval_patch {
-    patch_id =>
-    campaign_id,
-    base_artifact_id,
-    creator_id,
-    tool_call_id,
-    target_relpath,
-    patch_ref,
-    content_sha256,
-    status
-}
-"#,
+    put_eval_params(
+        db,
+        &PatchSchema::SCHEMA,
         patch_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_patch",
-        source,
-    })?;
+        "put.eval_patch",
+    )?;
     Ok(())
 }
 
@@ -359,43 +264,12 @@ fn put_apply_event_row<D: EvalDb + ?Sized>(
     db: &D,
     row: &EvalApplyEventRow,
 ) -> Result<(), EvalStoreError> {
-    db.eval_query_mut_params(
-        r#"
-?[
-    apply_id,
-    campaign_id,
-    patch_id,
-    runtime_id,
-    artifact_id,
-    outcome,
-    output_artifact_id,
-    recorded_at
-] :=
-    apply_id = $apply_id,
-    campaign_id = $campaign_id,
-    patch_id = $patch_id,
-    runtime_id = $runtime_id,
-    artifact_id = $artifact_id,
-    outcome = $outcome,
-    output_artifact_id = $output_artifact_id,
-    recorded_at = $recorded_at
-:put eval_apply_event {
-    apply_id =>
-    campaign_id,
-    patch_id,
-    runtime_id,
-    artifact_id,
-    outcome,
-    output_artifact_id,
-    recorded_at
-}
-"#,
+    put_eval_params(
+        db,
+        &ApplyEventSchema::SCHEMA,
         apply_event_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_apply_event",
-        source,
-    })?;
+        "put.eval_apply_event",
+    )?;
     Ok(())
 }
 

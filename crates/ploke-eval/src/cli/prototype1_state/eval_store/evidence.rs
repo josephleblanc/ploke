@@ -8,17 +8,23 @@ use super::super::{
     identity::ParentIdentity,
     journal::JournalAppendReceipt,
 };
-use super::error::EvalStoreError;
+use super::{
+    cozo_schema::{
+        AttemptSchema, ChannelMessageSchema, ChannelReceiptSchema, ImportEventSchema,
+        InvocationSchema, LogRefSchema, RecordRefSchema, TraceEventSchema, TransitionEventSchema,
+    },
+    error::EvalStoreError,
+};
 
-pub(super) const EVENT_REL: &str = "eval_transition_event";
-pub(super) const ATTEMPT_REL: &str = "eval_attempt";
-pub(super) const INVOCATION_REL: &str = "eval_invocation";
-pub(super) const CHANNEL_MESSAGE_REL: &str = "eval_channel_message";
-pub(super) const CHANNEL_RECEIPT_REL: &str = "eval_channel_receipt";
-pub(super) const IMPORT_EVENT_REL: &str = "eval_import_event";
-pub(super) const RECORD_REL: &str = "eval_record_ref";
-pub(super) const TRACE_EVENT_REL: &str = "eval_trace_event";
-pub(super) const LOG_REF_REL: &str = "eval_log_ref";
+pub(super) const EVENT_REL: &str = TransitionEventSchema::RELATION;
+pub(super) const ATTEMPT_REL: &str = AttemptSchema::RELATION;
+pub(super) const INVOCATION_REL: &str = InvocationSchema::RELATION;
+pub(super) const CHANNEL_MESSAGE_REL: &str = ChannelMessageSchema::RELATION;
+pub(super) const CHANNEL_RECEIPT_REL: &str = ChannelReceiptSchema::RELATION;
+pub(super) const IMPORT_EVENT_REL: &str = ImportEventSchema::RELATION;
+pub(super) const RECORD_REL: &str = RecordRefSchema::RELATION;
+pub(super) const TRACE_EVENT_REL: &str = TraceEventSchema::RELATION;
+pub(super) const LOG_REF_REL: &str = LogRefSchema::RELATION;
 pub(super) const PARENT_STARTED_TRANSITION: &str = "r4c_to_r5";
 pub(super) const PARENT_STARTED_PHASE: &str = "parent_started";
 pub(super) const PARENT_STARTED_OUTCOME: &str = "recorded";

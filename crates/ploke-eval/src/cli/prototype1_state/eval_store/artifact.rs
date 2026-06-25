@@ -4,16 +4,53 @@ use cozo::DataValue;
 use ploke_records::ids::CampaignId;
 
 use super::{
-    cozo_schema::eval_relation_exists,
     cozo_store::{EvalDb, mutate_owner_db},
     error::EvalStoreError,
     evidence::{hash_parts, sha256_bytes},
+    schema::{EvalRelationSchema, define_eval_schema, put_eval_params},
 };
 use crate::cli::prototype1_state::history::ArtifactSurface;
 
-pub(crate) const ARTIFACT_REL: &str = "eval_artifact";
-pub(crate) const ARTIFACT_SURFACE_REL: &str = "eval_artifact_surface";
-pub(crate) const ARTIFACT_REF_REL: &str = "eval_artifact_ref";
+define_eval_schema!(ArtifactSchema {
+    "eval_artifact",
+    artifact_id: "String" =>
+    campaign_id: "String",
+    tree_hash: "String?",
+    git_branch: "String?",
+    git_commit: "String?",
+    source: "String",
+    store_scope: "String",
+    created_by: "String?",
+    parent_artifact_id: "String?",
+});
+
+define_eval_schema!(ArtifactSurfaceSchema {
+    "eval_artifact_surface",
+    surface_id: "String" =>
+    campaign_id: "String",
+    artifact_id: "String",
+    immutable_root: "String?",
+    mutated_root: "String?",
+    ambient_root: "String?",
+    surface_hash: "String?",
+    source_ref: "String?",
+    recorded_at: "String?",
+});
+
+define_eval_schema!(ArtifactRefSchema {
+    "eval_artifact_ref",
+    artifact_ref_id: "String" =>
+    campaign_id: "String",
+    artifact_id: "String?",
+    kind: "String",
+    source_ref: "String",
+    content_sha256: "String?",
+    recorded_at: "String?",
+});
+
+pub(crate) const ARTIFACT_REL: &str = ArtifactSchema::RELATION;
+pub(crate) const ARTIFACT_SURFACE_REL: &str = ArtifactSurfaceSchema::RELATION;
+pub(crate) const ARTIFACT_REF_REL: &str = ArtifactRefSchema::RELATION;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ArtifactEvidence {
@@ -105,73 +142,9 @@ struct EvalArtifactRefRow {
 }
 
 pub(super) fn ensure_artifact_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), EvalStoreError> {
-    if !eval_relation_exists(db, ARTIFACT_REL)? {
-        db.eval_query_mut_params(
-            r#"
-:create eval_artifact {
-    artifact_id: String =>
-    campaign_id: String,
-    tree_hash: String?,
-    git_branch: String?,
-    git_commit: String?,
-    source: String,
-    store_scope: String,
-    created_by: String?,
-    parent_artifact_id: String?
-}
-"#,
-            BTreeMap::new(),
-        )
-        .map_err(|source| EvalStoreError::Db {
-            phase: "schema.eval_artifact",
-            source,
-        })?;
-    }
-
-    if !eval_relation_exists(db, ARTIFACT_SURFACE_REL)? {
-        db.eval_query_mut_params(
-            r#"
-:create eval_artifact_surface {
-    surface_id: String =>
-    campaign_id: String,
-    artifact_id: String,
-    immutable_root: String?,
-    mutated_root: String?,
-    ambient_root: String?,
-    surface_hash: String?,
-    source_ref: String?,
-    recorded_at: String?
-}
-"#,
-            BTreeMap::new(),
-        )
-        .map_err(|source| EvalStoreError::Db {
-            phase: "schema.eval_artifact_surface",
-            source,
-        })?;
-    }
-
-    if !eval_relation_exists(db, ARTIFACT_REF_REL)? {
-        db.eval_query_mut_params(
-            r#"
-:create eval_artifact_ref {
-    artifact_ref_id: String =>
-    campaign_id: String,
-    artifact_id: String?,
-    kind: String,
-    source_ref: String,
-    content_sha256: String?,
-    recorded_at: String?
-}
-"#,
-            BTreeMap::new(),
-        )
-        .map_err(|source| EvalStoreError::Db {
-            phase: "schema.eval_artifact_ref",
-            source,
-        })?;
-    }
-
+    ArtifactSchema::SCHEMA.ensure_installed(db, "schema.eval_artifact")?;
+    ArtifactSurfaceSchema::SCHEMA.ensure_installed(db, "schema.eval_artifact_surface")?;
+    ArtifactRefSchema::SCHEMA.ensure_installed(db, "schema.eval_artifact_ref")?;
     Ok(())
 }
 
@@ -297,46 +270,12 @@ fn put_artifact_row<D: EvalDb + ?Sized>(
     db: &D,
     row: &EvalArtifactRow,
 ) -> Result<(), EvalStoreError> {
-    db.eval_query_mut_params(
-        r#"
-?[
-    artifact_id,
-    campaign_id,
-    tree_hash,
-    git_branch,
-    git_commit,
-    source,
-    store_scope,
-    created_by,
-    parent_artifact_id
-] :=
-    artifact_id = $artifact_id,
-    campaign_id = $campaign_id,
-    tree_hash = $tree_hash,
-    git_branch = $git_branch,
-    git_commit = $git_commit,
-    source = $source,
-    store_scope = $store_scope,
-    created_by = $created_by,
-    parent_artifact_id = $parent_artifact_id
-:put eval_artifact {
-    artifact_id =>
-    campaign_id,
-    tree_hash,
-    git_branch,
-    git_commit,
-    source,
-    store_scope,
-    created_by,
-    parent_artifact_id
-}
-"#,
+    put_eval_params(
+        db,
+        &ArtifactSchema::SCHEMA,
         artifact_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_artifact",
-        source,
-    })?;
+        "put.eval_artifact",
+    )?;
     Ok(())
 }
 
@@ -344,46 +283,12 @@ fn put_artifact_surface_row<D: EvalDb + ?Sized>(
     db: &D,
     row: &EvalArtifactSurfaceRow,
 ) -> Result<(), EvalStoreError> {
-    db.eval_query_mut_params(
-        r#"
-?[
-    surface_id,
-    campaign_id,
-    artifact_id,
-    immutable_root,
-    mutated_root,
-    ambient_root,
-    surface_hash,
-    source_ref,
-    recorded_at
-] :=
-    surface_id = $surface_id,
-    campaign_id = $campaign_id,
-    artifact_id = $artifact_id,
-    immutable_root = $immutable_root,
-    mutated_root = $mutated_root,
-    ambient_root = $ambient_root,
-    surface_hash = $surface_hash,
-    source_ref = $source_ref,
-    recorded_at = $recorded_at
-:put eval_artifact_surface {
-    surface_id =>
-    campaign_id,
-    artifact_id,
-    immutable_root,
-    mutated_root,
-    ambient_root,
-    surface_hash,
-    source_ref,
-    recorded_at
-}
-"#,
+    put_eval_params(
+        db,
+        &ArtifactSurfaceSchema::SCHEMA,
         artifact_surface_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_artifact_surface",
-        source,
-    })?;
+        "put.eval_artifact_surface",
+    )?;
     Ok(())
 }
 
@@ -391,40 +296,12 @@ fn put_artifact_ref_row<D: EvalDb + ?Sized>(
     db: &D,
     row: &EvalArtifactRefRow,
 ) -> Result<(), EvalStoreError> {
-    db.eval_query_mut_params(
-        r#"
-?[
-    artifact_ref_id,
-    campaign_id,
-    artifact_id,
-    kind,
-    source_ref,
-    content_sha256,
-    recorded_at
-] :=
-    artifact_ref_id = $artifact_ref_id,
-    campaign_id = $campaign_id,
-    artifact_id = $artifact_id,
-    kind = $kind,
-    source_ref = $source_ref,
-    content_sha256 = $content_sha256,
-    recorded_at = $recorded_at
-:put eval_artifact_ref {
-    artifact_ref_id =>
-    campaign_id,
-    artifact_id,
-    kind,
-    source_ref,
-    content_sha256,
-    recorded_at
-}
-"#,
+    put_eval_params(
+        db,
+        &ArtifactRefSchema::SCHEMA,
         artifact_ref_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_artifact_ref",
-        source,
-    })?;
+        "put.eval_artifact_ref",
+    )?;
     Ok(())
 }
 

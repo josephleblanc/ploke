@@ -29,7 +29,8 @@ use super::{
     cozo_schema::eval_relation_exists,
     error::EvalStoreError,
     evidence::{
-        ATTEMPT_REL, EVENT_REL, LOG_REF_REL, PARENT_STARTED_OUTCOME, PARENT_STARTED_PHASE,
+        ATTEMPT_REL, CHANNEL_MESSAGE_REL, CHANNEL_RECEIPT_REL, EVENT_REL, IMPORT_EVENT_REL,
+        INVOCATION_REL, LOG_REF_REL, PARENT_STARTED_OUTCOME, PARENT_STARTED_PHASE,
         PARENT_STARTED_TRANSITION, RECORD_REL, STORE_SCOPE, TRACE_EVENT_REL,
         parent_started_db_receipt,
     },
@@ -45,6 +46,42 @@ use crate::{
     BenchmarkFamily, CampaignManifest, ClosureClass, EvalCampaignPolicy, OperationalRunMetrics,
     PatchApplyState, ProtocolCampaignPolicy, record::SubmissionArtifactState,
 };
+
+#[test]
+fn eval_store_production_code_uses_schema_generated_cozo_scripts() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/cli/prototype1_state/eval_store");
+    let mut offenders = Vec::new();
+
+    for entry in fs::read_dir(&dir).expect("eval_store dir reads") {
+        let path = entry.expect("eval_store entry").path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+            continue;
+        }
+        let file = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("utf-8 file name");
+        if matches!(file, "schema.rs" | "tests.rs") {
+            continue;
+        }
+
+        let mut text = fs::read_to_string(&path).expect("eval_store source reads");
+        if let Some(test_start) = text.find("#[cfg(test)]") {
+            text.truncate(test_start);
+        }
+        for (index, line) in text.lines().enumerate() {
+            if line.contains(":create eval_") || line.contains(":put eval_") {
+                offenders.push(format!("{}:{}: {}", file, index + 1, line.trim()));
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "production eval-store Cozo scripts must be schema-generated:\n{}",
+        offenders.join("\n")
+    );
+}
 
 #[test]
 fn prototype1_eval_store_parent_start_fs_appends_expected_entries() {
@@ -129,6 +166,10 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
     assert!(eval_relation_exists(&db, BASELINE_REL).expect("baseline rel exists"));
     assert!(eval_relation_exists(&db, EVENT_REL).expect("event rel exists"));
     assert!(eval_relation_exists(&db, ATTEMPT_REL).expect("attempt rel exists"));
+    assert!(eval_relation_exists(&db, INVOCATION_REL).expect("invocation rel exists"));
+    assert!(eval_relation_exists(&db, CHANNEL_MESSAGE_REL).expect("channel message rel exists"));
+    assert!(eval_relation_exists(&db, CHANNEL_RECEIPT_REL).expect("channel receipt rel exists"));
+    assert!(eval_relation_exists(&db, IMPORT_EVENT_REL).expect("import event rel exists"));
     assert!(eval_relation_exists(&db, EVALUATION_REL).expect("evaluation rel exists"));
     assert!(
         eval_relation_exists(&db, EVALUATION_INSTANCE_REL).expect("evaluation instance rel exists")

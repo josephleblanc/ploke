@@ -4,14 +4,40 @@ use cozo::DataValue;
 use ploke_records::ids::CampaignId;
 
 use super::{
-    cozo_schema::eval_relation_exists,
     cozo_store::{EvalDb, mutate_owner_db},
     error::EvalStoreError,
     evidence::{hash_parts, sha256_bytes},
+    schema::{EvalRelationSchema, define_eval_schema, put_eval_params},
 };
 
-pub(crate) const BUILD_EVENT_REL: &str = "eval_build_event";
-pub(crate) const BINARY_REF_REL: &str = "eval_binary_ref";
+define_eval_schema!(BinaryRefSchema {
+    "eval_binary_ref",
+    binary_ref_id: "String" =>
+    campaign_id: "String",
+    artifact_id: "String?",
+    built_by: "String?",
+    source_ref: "String",
+    content_sha256: "String?",
+    protocol_digest: "String?",
+    recorded_at: "String?",
+});
+
+define_eval_schema!(BuildEventSchema {
+    "eval_build_event",
+    build_id: "String" =>
+    campaign_id: "String",
+    node_id: "String",
+    runtime_id: "String?",
+    artifact_id: "String?",
+    phase: "String",
+    outcome: "String",
+    binary_ref: "String?",
+    log_ref: "String?",
+    recorded_at: "String",
+});
+
+pub(crate) const BUILD_EVENT_REL: &str = BuildEventSchema::RELATION;
+pub(crate) const BINARY_REF_REL: &str = BinaryRefSchema::RELATION;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BinaryRefEvidence {
@@ -74,52 +100,8 @@ struct EvalBuildEventRow {
 }
 
 pub(super) fn ensure_build_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), EvalStoreError> {
-    if !eval_relation_exists(db, BINARY_REF_REL)? {
-        db.eval_query_mut_params(
-            r#"
-:create eval_binary_ref {
-    binary_ref_id: String =>
-    campaign_id: String,
-    artifact_id: String?,
-    built_by: String?,
-    source_ref: String,
-    content_sha256: String?,
-    protocol_digest: String?,
-    recorded_at: String?
-}
-"#,
-            BTreeMap::new(),
-        )
-        .map_err(|source| EvalStoreError::Db {
-            phase: "schema.eval_binary_ref",
-            source,
-        })?;
-    }
-
-    if !eval_relation_exists(db, BUILD_EVENT_REL)? {
-        db.eval_query_mut_params(
-            r#"
-:create eval_build_event {
-    build_id: String =>
-    campaign_id: String,
-    node_id: String,
-    runtime_id: String?,
-    artifact_id: String?,
-    phase: String,
-    outcome: String,
-    binary_ref: String?,
-    log_ref: String?,
-    recorded_at: String
-}
-"#,
-            BTreeMap::new(),
-        )
-        .map_err(|source| EvalStoreError::Db {
-            phase: "schema.eval_build_event",
-            source,
-        })?;
-    }
-
+    BinaryRefSchema::SCHEMA.ensure_installed(db, "schema.eval_binary_ref")?;
+    BuildEventSchema::SCHEMA.ensure_installed(db, "schema.eval_build_event")?;
     Ok(())
 }
 
@@ -207,43 +189,12 @@ fn put_binary_ref_row<D: EvalDb + ?Sized>(
     db: &D,
     row: &EvalBinaryRefRow,
 ) -> Result<(), EvalStoreError> {
-    db.eval_query_mut_params(
-        r#"
-?[
-    binary_ref_id,
-    campaign_id,
-    artifact_id,
-    built_by,
-    source_ref,
-    content_sha256,
-    protocol_digest,
-    recorded_at
-] :=
-    binary_ref_id = $binary_ref_id,
-    campaign_id = $campaign_id,
-    artifact_id = $artifact_id,
-    built_by = $built_by,
-    source_ref = $source_ref,
-    content_sha256 = $content_sha256,
-    protocol_digest = $protocol_digest,
-    recorded_at = $recorded_at
-:put eval_binary_ref {
-    binary_ref_id =>
-    campaign_id,
-    artifact_id,
-    built_by,
-    source_ref,
-    content_sha256,
-    protocol_digest,
-    recorded_at
-}
-"#,
+    put_eval_params(
+        db,
+        &BinaryRefSchema::SCHEMA,
         binary_ref_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_binary_ref",
-        source,
-    })?;
+        "put.eval_binary_ref",
+    )?;
     Ok(())
 }
 
@@ -251,49 +202,12 @@ fn put_build_event_row<D: EvalDb + ?Sized>(
     db: &D,
     row: &EvalBuildEventRow,
 ) -> Result<(), EvalStoreError> {
-    db.eval_query_mut_params(
-        r#"
-?[
-    build_id,
-    campaign_id,
-    node_id,
-    runtime_id,
-    artifact_id,
-    phase,
-    outcome,
-    binary_ref,
-    log_ref,
-    recorded_at
-] :=
-    build_id = $build_id,
-    campaign_id = $campaign_id,
-    node_id = $node_id,
-    runtime_id = $runtime_id,
-    artifact_id = $artifact_id,
-    phase = $phase,
-    outcome = $outcome,
-    binary_ref = $binary_ref,
-    log_ref = $log_ref,
-    recorded_at = $recorded_at
-:put eval_build_event {
-    build_id =>
-    campaign_id,
-    node_id,
-    runtime_id,
-    artifact_id,
-    phase,
-    outcome,
-    binary_ref,
-    log_ref,
-    recorded_at
-}
-"#,
+    put_eval_params(
+        db,
+        &BuildEventSchema::SCHEMA,
         build_event_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_build_event",
-        source,
-    })?;
+        "put.eval_build_event",
+    )?;
     Ok(())
 }
 

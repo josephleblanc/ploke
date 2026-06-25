@@ -5,12 +5,25 @@ use ploke_records::ids::CampaignId;
 use sha2::{Digest, Sha256};
 
 use super::{
-    cozo_schema::eval_relation_exists,
     cozo_store::{EvalDb, mutate_owner_db},
     error::EvalStoreError,
+    schema::{EvalRelationSchema, define_eval_schema, put_eval_params},
 };
 
-pub(crate) const CONTINUATION_DECISION_REL: &str = "eval_continuation_decision";
+define_eval_schema!(ContinuationDecisionSchema {
+    "eval_continuation_decision",
+    decision_id: "String" =>
+    campaign_id: "String",
+    parent_id: "String",
+    disposition: "String",
+    selected_branch_id: "String?",
+    next_generation: "Int",
+    total_nodes: "Int",
+    policy_ref: "String?",
+    recorded_at: "String?",
+});
+
+pub(crate) const CONTINUATION_DECISION_REL: &str = ContinuationDecisionSchema::RELATION;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ContinuationDecisionEvidence {
@@ -42,29 +55,7 @@ struct EvalContinuationDecisionRow {
 }
 
 pub(super) fn ensure_continuation_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), EvalStoreError> {
-    if !eval_relation_exists(db, CONTINUATION_DECISION_REL)? {
-        db.eval_query_mut_params(
-            r#"
-:create eval_continuation_decision {
-    decision_id: String =>
-    campaign_id: String,
-    parent_id: String,
-    disposition: String,
-    selected_branch_id: String?,
-    next_generation: Int,
-    total_nodes: Int,
-    policy_ref: String?,
-    recorded_at: String?
-}
-"#,
-            BTreeMap::new(),
-        )
-        .map_err(|source| EvalStoreError::Db {
-            phase: "schema.eval_continuation_decision",
-            source,
-        })?;
-    }
-
+    ContinuationDecisionSchema::SCHEMA.ensure_installed(db, "schema.eval_continuation_decision")?;
     Ok(())
 }
 
@@ -108,46 +99,12 @@ fn put_continuation_decision_row<D: EvalDb + ?Sized>(
     db: &D,
     row: &EvalContinuationDecisionRow,
 ) -> Result<(), EvalStoreError> {
-    db.eval_query_mut_params(
-        r#"
-?[
-    decision_id,
-    campaign_id,
-    parent_id,
-    disposition,
-    selected_branch_id,
-    next_generation,
-    total_nodes,
-    policy_ref,
-    recorded_at
-] :=
-    decision_id = $decision_id,
-    campaign_id = $campaign_id,
-    parent_id = $parent_id,
-    disposition = $disposition,
-    selected_branch_id = $selected_branch_id,
-    next_generation = $next_generation,
-    total_nodes = $total_nodes,
-    policy_ref = $policy_ref,
-    recorded_at = $recorded_at
-:put eval_continuation_decision {
-    decision_id =>
-    campaign_id,
-    parent_id,
-    disposition,
-    selected_branch_id,
-    next_generation,
-    total_nodes,
-    policy_ref,
-    recorded_at
-}
-"#,
+    put_eval_params(
+        db,
+        &ContinuationDecisionSchema::SCHEMA,
         continuation_decision_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_continuation_decision",
-        source,
-    })?;
+        "put.eval_continuation_decision",
+    )?;
     Ok(())
 }
 

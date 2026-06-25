@@ -10,15 +10,65 @@ use crate::cli::prototype1_state::history::{
 use crate::successor_selection::traversal::{Formula, ScoreChildPropFormulaRow};
 
 use super::{
-    cozo_schema::eval_relation_exists,
     cozo_store::{EvalDb, mutate_owner_db},
     error::EvalStoreError,
+    schema::{EvalRelationSchema, define_eval_schema, put_eval_params},
 };
 
-pub(crate) const SELECTION_DECISION_REL: &str = "eval_selection_decision";
-pub(crate) const SELECTION_CANDIDATE_REL: &str = "eval_selection_candidate";
-pub(crate) const SELECTION_FINDING_REL: &str = "eval_selection_finding";
-pub(crate) const SELECTION_SCORE_REL: &str = "eval_selection_score";
+define_eval_schema!(SelectionDecisionSchema {
+    "eval_selection_decision",
+    decision_id: "String" =>
+    campaign_id: "String",
+    parent_id: "String",
+    set_id: "String",
+    procedure_id: "String",
+    selected_node_id: "String?",
+    selected_artifact_id: "String?",
+    outcome: "String",
+    disposition: "String?",
+    decision_ref: "String?",
+    decision_hash: "String?",
+    recorded_at: "String?",
+});
+
+define_eval_schema!(SelectionCandidateSchema {
+    "eval_selection_candidate",
+    decision_id: "String",
+    member_id: "String" =>
+    node_id: "String",
+    branch_id: "String",
+    selectable: "Bool",
+    selected: "Bool",
+    exclusion_ref: "String?",
+});
+
+define_eval_schema!(SelectionFindingSchema {
+    "eval_selection_finding",
+    finding_id: "String" =>
+    decision_id: "String",
+    member_id: "String?",
+    domain: "String",
+    verdict: "String",
+    confidence: "String",
+    evidence_ref: "String?",
+    rationale_ref: "String?",
+});
+
+define_eval_schema!(SelectionScoreSchema {
+    "eval_selection_score",
+    decision_id: "String",
+    member_id: "String" =>
+    formula_id: "String",
+    score_json: "String",
+    weight: "Float?",
+    rank: "Int?",
+    selected: "Bool",
+});
+
+pub(crate) const SELECTION_DECISION_REL: &str = SelectionDecisionSchema::RELATION;
+pub(crate) const SELECTION_CANDIDATE_REL: &str = SelectionCandidateSchema::RELATION;
+pub(crate) const SELECTION_FINDING_REL: &str = SelectionFindingSchema::RELATION;
+pub(crate) const SELECTION_SCORE_REL: &str = SelectionScoreSchema::RELATION;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SelectionDecisionEvidence {
@@ -91,96 +141,10 @@ struct EvalSelectionScoreRow {
 }
 
 pub(super) fn ensure_selection_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), EvalStoreError> {
-    if !eval_relation_exists(db, SELECTION_DECISION_REL)? {
-        db.eval_query_mut_params(
-            r#"
-:create eval_selection_decision {
-    decision_id: String =>
-    campaign_id: String,
-    parent_id: String,
-    set_id: String,
-    procedure_id: String,
-    selected_node_id: String?,
-    selected_artifact_id: String?,
-    outcome: String,
-    disposition: String?,
-    decision_ref: String?,
-    decision_hash: String?,
-    recorded_at: String?
-}
-"#,
-            BTreeMap::new(),
-        )
-        .map_err(|source| EvalStoreError::Db {
-            phase: "schema.eval_selection_decision",
-            source,
-        })?;
-    }
-
-    if !eval_relation_exists(db, SELECTION_CANDIDATE_REL)? {
-        db.eval_query_mut_params(
-            r#"
-:create eval_selection_candidate {
-    decision_id: String,
-    member_id: String =>
-    node_id: String,
-    branch_id: String,
-    selectable: Bool,
-    selected: Bool,
-    exclusion_ref: String?
-}
-"#,
-            BTreeMap::new(),
-        )
-        .map_err(|source| EvalStoreError::Db {
-            phase: "schema.eval_selection_candidate",
-            source,
-        })?;
-    }
-
-    if !eval_relation_exists(db, SELECTION_FINDING_REL)? {
-        db.eval_query_mut_params(
-            r#"
-:create eval_selection_finding {
-    finding_id: String =>
-    decision_id: String,
-    member_id: String?,
-    domain: String,
-    verdict: String,
-    confidence: String,
-    evidence_ref: String?,
-    rationale_ref: String?
-}
-"#,
-            BTreeMap::new(),
-        )
-        .map_err(|source| EvalStoreError::Db {
-            phase: "schema.eval_selection_finding",
-            source,
-        })?;
-    }
-
-    if !eval_relation_exists(db, SELECTION_SCORE_REL)? {
-        db.eval_query_mut_params(
-            r#"
-:create eval_selection_score {
-    decision_id: String,
-    member_id: String =>
-    formula_id: String,
-    score_json: String,
-    weight: Float?,
-    rank: Int?,
-    selected: Bool
-}
-"#,
-            BTreeMap::new(),
-        )
-        .map_err(|source| EvalStoreError::Db {
-            phase: "schema.eval_selection_score",
-            source,
-        })?;
-    }
-
+    SelectionDecisionSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_decision")?;
+    SelectionCandidateSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_candidate")?;
+    SelectionFindingSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_finding")?;
+    SelectionScoreSchema::SCHEMA.ensure_installed(db, "schema.eval_selection_score")?;
     Ok(())
 }
 
@@ -520,55 +484,12 @@ fn put_selection_decision_row<D: EvalDb + ?Sized>(
     db: &D,
     row: &EvalSelectionDecisionRow,
 ) -> Result<(), EvalStoreError> {
-    db.eval_query_mut_params(
-        r#"
-?[
-    decision_id,
-    campaign_id,
-    parent_id,
-    set_id,
-    procedure_id,
-    selected_node_id,
-    selected_artifact_id,
-    outcome,
-    disposition,
-    decision_ref,
-    decision_hash,
-    recorded_at
-] :=
-    decision_id = $decision_id,
-    campaign_id = $campaign_id,
-    parent_id = $parent_id,
-    set_id = $set_id,
-    procedure_id = $procedure_id,
-    selected_node_id = $selected_node_id,
-    selected_artifact_id = $selected_artifact_id,
-    outcome = $outcome,
-    disposition = $disposition,
-    decision_ref = $decision_ref,
-    decision_hash = $decision_hash,
-    recorded_at = $recorded_at
-:put eval_selection_decision {
-    decision_id =>
-    campaign_id,
-    parent_id,
-    set_id,
-    procedure_id,
-    selected_node_id,
-    selected_artifact_id,
-    outcome,
-    disposition,
-    decision_ref,
-    decision_hash,
-    recorded_at
-}
-"#,
+    put_eval_params(
+        db,
+        &SelectionDecisionSchema::SCHEMA,
         selection_decision_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_selection_decision",
-        source,
-    })?;
+        "put.eval_selection_decision",
+    )?;
     Ok(())
 }
 
@@ -576,40 +497,12 @@ fn put_selection_candidate_row<D: EvalDb + ?Sized>(
     db: &D,
     row: &EvalSelectionCandidateRow,
 ) -> Result<(), EvalStoreError> {
-    db.eval_query_mut_params(
-        r#"
-?[
-    decision_id,
-    member_id,
-    node_id,
-    branch_id,
-    selectable,
-    selected,
-    exclusion_ref
-] :=
-    decision_id = $decision_id,
-    member_id = $member_id,
-    node_id = $node_id,
-    branch_id = $branch_id,
-    selectable = $selectable,
-    selected = $selected,
-    exclusion_ref = $exclusion_ref
-:put eval_selection_candidate {
-    decision_id,
-    member_id =>
-    node_id,
-    branch_id,
-    selectable,
-    selected,
-    exclusion_ref
-}
-"#,
+    put_eval_params(
+        db,
+        &SelectionCandidateSchema::SCHEMA,
         selection_candidate_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_selection_candidate",
-        source,
-    })?;
+        "put.eval_selection_candidate",
+    )?;
     Ok(())
 }
 
@@ -617,43 +510,12 @@ fn put_selection_finding_row<D: EvalDb + ?Sized>(
     db: &D,
     row: &EvalSelectionFindingRow,
 ) -> Result<(), EvalStoreError> {
-    db.eval_query_mut_params(
-        r#"
-?[
-    finding_id,
-    decision_id,
-    member_id,
-    domain,
-    verdict,
-    confidence,
-    evidence_ref,
-    rationale_ref
-] :=
-    finding_id = $finding_id,
-    decision_id = $decision_id,
-    member_id = $member_id,
-    domain = $domain,
-    verdict = $verdict,
-    confidence = $confidence,
-    evidence_ref = $evidence_ref,
-    rationale_ref = $rationale_ref
-:put eval_selection_finding {
-    finding_id =>
-    decision_id,
-    member_id,
-    domain,
-    verdict,
-    confidence,
-    evidence_ref,
-    rationale_ref
-}
-"#,
+    put_eval_params(
+        db,
+        &SelectionFindingSchema::SCHEMA,
         selection_finding_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_selection_finding",
-        source,
-    })?;
+        "put.eval_selection_finding",
+    )?;
     Ok(())
 }
 
@@ -661,40 +523,12 @@ fn put_selection_score_row<D: EvalDb + ?Sized>(
     db: &D,
     row: &EvalSelectionScoreRow,
 ) -> Result<(), EvalStoreError> {
-    db.eval_query_mut_params(
-        r#"
-?[
-    decision_id,
-    member_id,
-    formula_id,
-    score_json,
-    weight,
-    rank,
-    selected
-] :=
-    decision_id = $decision_id,
-    member_id = $member_id,
-    formula_id = $formula_id,
-    score_json = $score_json,
-    weight = $weight,
-    rank = $rank,
-    selected = $selected
-:put eval_selection_score {
-    decision_id,
-    member_id =>
-    formula_id,
-    score_json,
-    weight,
-    rank,
-    selected
-}
-"#,
+    put_eval_params(
+        db,
+        &SelectionScoreSchema::SCHEMA,
         selection_score_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_selection_score",
-        source,
-    })?;
+        "put.eval_selection_score",
+    )?;
     Ok(())
 }
 

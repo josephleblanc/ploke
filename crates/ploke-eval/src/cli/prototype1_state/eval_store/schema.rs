@@ -116,15 +116,23 @@ where
     D: EvalDb + ?Sized,
     R: EvalRow,
 {
-    let schema = R::schema();
-    let params = row.params();
+    put_eval_params(db, R::schema(), row.params(), R::PHASE)
+}
+
+pub(crate) fn put_eval_params<D, S>(
+    db: &D,
+    schema: &S,
+    params: BTreeMap<String, DataValue>,
+    phase: &'static str,
+) -> Result<(), EvalStoreError>
+where
+    D: EvalDb + ?Sized,
+    S: EvalRelationSchema,
+{
     let script = schema.script_put(&params);
     schema.log_put_script(&script);
     db.eval_query_mut_params(&script, params)
-        .map_err(|source| EvalStoreError::Db {
-            phase: R::PHASE,
-            source,
-        })?;
+        .map_err(|source| EvalStoreError::Db { phase, source })?;
     Ok(())
 }
 
@@ -158,6 +166,7 @@ macro_rules! define_eval_schema {
         $($key_name:ident: $key_ty:literal),+ $(,)? =>
         $($value_name:ident: $value_ty:literal),+ $(,)?
     }) => {
+        #[allow(dead_code)]
         #[derive(Debug, Clone, Copy)]
         pub(super) struct $schema_name {
             relation: &'static str,
@@ -165,6 +174,7 @@ macro_rules! define_eval_schema {
             $($value_name: $crate::cli::prototype1_state::eval_store::schema::EvalSchemaField,)+
         }
 
+        #[allow(dead_code)]
         impl $schema_name {
             pub(super) const RELATION: &'static str = $relation;
             pub(super) const KEY_FIELDS: &'static [$crate::cli::prototype1_state::eval_store::schema::EvalSchemaField] = &[

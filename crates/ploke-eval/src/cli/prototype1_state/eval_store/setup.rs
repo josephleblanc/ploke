@@ -14,113 +14,81 @@ use crate::{
     intervention::CompleteBaseline,
 };
 
-use super::{cozo_schema::eval_relation_exists, cozo_store::EvalDb, error::EvalStoreError};
+use super::{
+    cozo_store::EvalDb,
+    error::EvalStoreError,
+    schema::{EvalRelationSchema, define_eval_schema, put_eval_params},
+};
 
-pub(crate) const CAMPAIGN_REL: &str = "eval_campaign";
-pub(crate) const PROFILE_COMMITMENT_REL: &str = "eval_profile_commitment";
-pub(crate) const CLOSURE_REF_REL: &str = "eval_closure_ref";
-pub(crate) const BASELINE_REL: &str = "eval_baseline";
+define_eval_schema!(CampaignSchema {
+    "eval_campaign",
+    campaign_id: "String" =>
+    schema_version: "String",
+    manifest_ref: "String",
+    prototype_root: "String",
+    manifest_sha256: "String",
+    profile_ref_id: "String?",
+    storage_backend: "String?",
+    ingested_at: "String",
+});
+
+define_eval_schema!(ProfileCommitmentSchema {
+    "eval_profile_commitment",
+    profile_ref_id: "String" =>
+    campaign_id: "String",
+    schema_version: "String",
+    profile_name: "String",
+    source_ref: "String",
+    profile_path: "String",
+    content_sha256: "String",
+    source_path: "String?",
+    admitted_at: "String",
+    storage_ref: "String",
+    ingested_at: "String",
+});
+
+define_eval_schema!(ClosureRefSchema {
+    "eval_closure_ref",
+    closure_ref_id: "String" =>
+    campaign_id: "String",
+    run_id: "String?",
+    store_scope: "String",
+    source_ref: "String",
+    content_sha256: "String",
+    summary_json: "String",
+    recorded_at: "String",
+    ingested_at: "String",
+});
+
+define_eval_schema!(BaselineSchema {
+    "eval_baseline",
+    baseline_id: "String" =>
+    campaign_id: "String",
+    parent_id: "String",
+    parent_node_id: "String",
+    parent_branch_id: "String",
+    source_kind: "String",
+    closure_ref_id: "String?",
+    evaluation_id: "String?",
+    record_ref: "String?",
+    eval_set_id: "String",
+    status: "String",
+    instance_count: "Int",
+    summary_json: "String",
+    recorded_at: "String",
+    ingested_at: "String",
+});
+
+pub(crate) const CAMPAIGN_REL: &str = CampaignSchema::RELATION;
+pub(crate) const PROFILE_COMMITMENT_REL: &str = ProfileCommitmentSchema::RELATION;
+pub(crate) const CLOSURE_REF_REL: &str = ClosureRefSchema::RELATION;
+pub(crate) const BASELINE_REL: &str = BaselineSchema::RELATION;
 
 pub(super) fn ensure_setup_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), EvalStoreError> {
-    if !eval_relation_exists(db, CAMPAIGN_REL)? {
-        db.eval_query_mut_params(
-            r#"
-:create eval_campaign {
-    campaign_id: String =>
-    schema_version: String,
-    manifest_ref: String,
-    prototype_root: String,
-    manifest_sha256: String,
-    profile_ref_id: String?,
-    storage_backend: String?,
-    ingested_at: String
-}
-"#,
-            BTreeMap::new(),
-        )
-        .map_err(|source| EvalStoreError::Db {
-            phase: "schema.eval_campaign",
-            source,
-        })?;
-    }
-
-    if !eval_relation_exists(db, PROFILE_COMMITMENT_REL)? {
-        db.eval_query_mut_params(
-            r#"
-:create eval_profile_commitment {
-    profile_ref_id: String =>
-    campaign_id: String,
-    schema_version: String,
-    profile_name: String,
-    source_ref: String,
-    profile_path: String,
-    content_sha256: String,
-    source_path: String?,
-    admitted_at: String,
-    storage_ref: String,
-    ingested_at: String
-}
-"#,
-            BTreeMap::new(),
-        )
-        .map_err(|source| EvalStoreError::Db {
-            phase: "schema.eval_profile_commitment",
-            source,
-        })?;
-    }
-
-    if !eval_relation_exists(db, CLOSURE_REF_REL)? {
-        db.eval_query_mut_params(
-            r#"
-:create eval_closure_ref {
-    closure_ref_id: String =>
-    campaign_id: String,
-    run_id: String?,
-    store_scope: String,
-    source_ref: String,
-    content_sha256: String,
-    summary_json: String,
-    recorded_at: String,
-    ingested_at: String
-}
-"#,
-            BTreeMap::new(),
-        )
-        .map_err(|source| EvalStoreError::Db {
-            phase: "schema.eval_closure_ref",
-            source,
-        })?;
-    }
-
-    if !eval_relation_exists(db, BASELINE_REL)? {
-        db.eval_query_mut_params(
-            r#"
-:create eval_baseline {
-    baseline_id: String =>
-    campaign_id: String,
-    parent_id: String,
-    parent_node_id: String,
-    parent_branch_id: String,
-    source_kind: String,
-    closure_ref_id: String?,
-    evaluation_id: String?,
-    record_ref: String?,
-    eval_set_id: String,
-    status: String,
-    instance_count: Int,
-    summary_json: String,
-    recorded_at: String,
-    ingested_at: String
-}
-"#,
-            BTreeMap::new(),
-        )
-        .map_err(|source| EvalStoreError::Db {
-            phase: "schema.eval_baseline",
-            source,
-        })?;
-    }
-
+    CampaignSchema::SCHEMA.ensure_installed(db, "schema.eval_campaign")?;
+    ProfileCommitmentSchema::SCHEMA.ensure_installed(db, "schema.eval_profile_commitment")?;
+    ClosureRefSchema::SCHEMA.ensure_installed(db, "schema.eval_closure_ref")?;
+    BaselineSchema::SCHEMA.ensure_installed(db, "schema.eval_baseline")?;
     Ok(())
 }
 
@@ -179,52 +147,12 @@ pub(super) fn put_profile_commitment<D: EvalDb + ?Sized>(
         chrono::Utc::now().to_rfc3339().into(),
     );
 
-    db.eval_query_mut_params(
-        r#"
-?[
-    profile_ref_id,
-    campaign_id,
-    schema_version,
-    profile_name,
-    source_ref,
-    profile_path,
-    content_sha256,
-    source_path,
-    admitted_at,
-    storage_ref,
-    ingested_at
-] :=
-    profile_ref_id = $profile_ref_id,
-    campaign_id = $campaign_id,
-    schema_version = $schema_version,
-    profile_name = $profile_name,
-    source_ref = $source_ref,
-    profile_path = $profile_path,
-    content_sha256 = $content_sha256,
-    source_path = $source_path,
-    admitted_at = $admitted_at,
-    storage_ref = $storage_ref,
-    ingested_at = $ingested_at
-:put eval_profile_commitment {
-    profile_ref_id =>
-    campaign_id,
-    schema_version,
-    profile_name,
-    source_ref,
-    profile_path,
-    content_sha256,
-    source_path,
-    admitted_at,
-    storage_ref,
-    ingested_at
-}
-"#,
+    put_eval_params(
+        db,
+        &ProfileCommitmentSchema::SCHEMA,
         params,
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_profile_commitment",
-        source,
-    })?;
+        "put.eval_profile_commitment",
+    )?;
 
     Ok(profile_ref_id)
 }
@@ -272,43 +200,7 @@ pub(super) fn put_campaign_manifest<D: EvalDb + ?Sized>(
         chrono::Utc::now().to_rfc3339().into(),
     );
 
-    db.eval_query_mut_params(
-        r#"
-?[
-    campaign_id,
-    schema_version,
-    manifest_ref,
-    prototype_root,
-    manifest_sha256,
-    profile_ref_id,
-    storage_backend,
-    ingested_at
-] :=
-    campaign_id = $campaign_id,
-    schema_version = $schema_version,
-    manifest_ref = $manifest_ref,
-    prototype_root = $prototype_root,
-    manifest_sha256 = $manifest_sha256,
-    profile_ref_id = $profile_ref_id,
-    storage_backend = $storage_backend,
-    ingested_at = $ingested_at
-:put eval_campaign {
-    campaign_id =>
-    schema_version,
-    manifest_ref,
-    prototype_root,
-    manifest_sha256,
-    profile_ref_id,
-    storage_backend,
-    ingested_at
-}
-"#,
-        params,
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_campaign",
-        source,
-    })?;
+    put_eval_params(db, &CampaignSchema::SCHEMA, params, "put.eval_campaign")?;
 
     Ok(())
 }
@@ -342,46 +234,12 @@ pub(super) fn put_closure_ref<D: EvalDb + ?Sized>(
         chrono::Utc::now().to_rfc3339().into(),
     );
 
-    db.eval_query_mut_params(
-        r#"
-?[
-    closure_ref_id,
-    campaign_id,
-    run_id,
-    store_scope,
-    source_ref,
-    content_sha256,
-    summary_json,
-    recorded_at,
-    ingested_at
-] :=
-    closure_ref_id = $closure_ref_id,
-    campaign_id = $campaign_id,
-    run_id = $run_id,
-    store_scope = $store_scope,
-    source_ref = $source_ref,
-    content_sha256 = $content_sha256,
-    summary_json = $summary_json,
-    recorded_at = $recorded_at,
-    ingested_at = $ingested_at
-:put eval_closure_ref {
-    closure_ref_id =>
-    campaign_id,
-    run_id,
-    store_scope,
-    source_ref,
-    content_sha256,
-    summary_json,
-    recorded_at,
-    ingested_at
-}
-"#,
+    put_eval_params(
+        db,
+        &ClosureRefSchema::SCHEMA,
         params,
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_closure_ref",
-        source,
-    })?;
+        "put.eval_closure_ref",
+    )?;
 
     Ok(closure_ref_id)
 }
@@ -449,64 +307,7 @@ pub(super) fn put_baseline<D: EvalDb + ?Sized>(
         chrono::Utc::now().to_rfc3339().into(),
     );
 
-    db.eval_query_mut_params(
-        r#"
-?[
-    baseline_id,
-    campaign_id,
-    parent_id,
-    parent_node_id,
-    parent_branch_id,
-    source_kind,
-    closure_ref_id,
-    evaluation_id,
-    record_ref,
-    eval_set_id,
-    status,
-    instance_count,
-    summary_json,
-    recorded_at,
-    ingested_at
-] :=
-    baseline_id = $baseline_id,
-    campaign_id = $campaign_id,
-    parent_id = $parent_id,
-    parent_node_id = $parent_node_id,
-    parent_branch_id = $parent_branch_id,
-    source_kind = $source_kind,
-    closure_ref_id = $closure_ref_id,
-    evaluation_id = $evaluation_id,
-    record_ref = $record_ref,
-    eval_set_id = $eval_set_id,
-    status = $status,
-    instance_count = $instance_count,
-    summary_json = $summary_json,
-    recorded_at = $recorded_at,
-    ingested_at = $ingested_at
-:put eval_baseline {
-    baseline_id =>
-    campaign_id,
-    parent_id,
-    parent_node_id,
-    parent_branch_id,
-    source_kind,
-    closure_ref_id,
-    evaluation_id,
-    record_ref,
-    eval_set_id,
-    status,
-    instance_count,
-    summary_json,
-    recorded_at,
-    ingested_at
-}
-"#,
-        params,
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_baseline",
-        source,
-    })?;
+    put_eval_params(db, &BaselineSchema::SCHEMA, params, "put.eval_baseline")?;
 
     Ok(baseline_id)
 }

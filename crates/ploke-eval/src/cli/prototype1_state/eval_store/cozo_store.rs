@@ -24,7 +24,11 @@ use super::{
         invocation_params, log_ref_params, record_ref_params, trace_event_params,
         transition_event_params,
     },
-    cozo_schema::ensure_eval_store_schema,
+    cozo_schema::{
+        AttemptSchema, ChannelMessageSchema, ChannelReceiptSchema, ImportEventSchema,
+        InvocationSchema, LogRefSchema, RecordRefSchema, TraceEventSchema, TransitionEventSchema,
+        ensure_eval_store_schema,
+    },
     error::EvalStoreError,
     evidence::{
         ChannelMessageEvidence, ChannelMessageReceipt, ChannelReceiptEvidence,
@@ -38,6 +42,7 @@ use super::{
         record_ref_row_from_evidence, trace_event_row,
     },
     observation::{ObservationJsonlImport, parse_observation_jsonl},
+    schema::put_eval_params,
     setup,
 };
 
@@ -699,88 +704,12 @@ fn put_transition_event_row<D: EvalDb + ?Sized>(
     db: &D,
     row: &EvalTransitionEventRow,
 ) -> Result<(), EvalStoreError> {
-    db.eval_query_mut_params(
-        r#"
-?[
-    event_id,
-    campaign_id,
-    parent_id,
-    runtime_id,
-    node_id,
-    generation,
-    transition,
-    phase,
-    outcome,
-    store_scope,
-    producer_role,
-    visibility_scope,
-    source_class,
-    evidence_class,
-    validation_status,
-    source_stream_id,
-    source_event_index,
-    source_line,
-    source_ref,
-    content_sha256,
-    semantic_hash,
-    recorded_at,
-    ingested_at
-] :=
-    event_id = $event_id,
-    campaign_id = $campaign_id,
-    parent_id = $parent_id,
-    runtime_id = $runtime_id,
-    node_id = $node_id,
-    generation = $generation,
-    transition = $transition,
-    phase = $phase,
-    outcome = $outcome,
-    store_scope = $store_scope,
-    producer_role = $producer_role,
-    visibility_scope = $visibility_scope,
-    source_class = $source_class,
-    evidence_class = $evidence_class,
-    validation_status = $validation_status,
-    source_stream_id = $source_stream_id,
-    source_event_index = $source_event_index,
-    source_line = $source_line,
-    source_ref = $source_ref,
-    content_sha256 = $content_sha256,
-    semantic_hash = $semantic_hash,
-    recorded_at = $recorded_at,
-    ingested_at = $ingested_at
-:put eval_transition_event {
-    event_id =>
-    campaign_id,
-    parent_id,
-    runtime_id,
-    node_id,
-    generation,
-    transition,
-    phase,
-    outcome,
-    store_scope,
-    producer_role,
-    visibility_scope,
-    source_class,
-    evidence_class,
-    validation_status,
-    source_stream_id,
-    source_event_index,
-    source_line,
-    source_ref,
-    content_sha256,
-    semantic_hash,
-    recorded_at,
-    ingested_at
-}
-"#,
+    put_eval_params(
+        db,
+        &TransitionEventSchema::SCHEMA,
         transition_event_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_transition_event",
-        source,
-    })?;
+        "put.eval_transition_event",
+    )?;
     Ok(())
 }
 
@@ -800,67 +729,12 @@ fn put_invocation_row<D: EvalDb + ?Sized>(
             ),
         });
     }
-    db.eval_query_mut_params(
-        r#"
-?[
-    invocation_id,
-    campaign_id,
-    node_id,
-    runtime_id,
-    role,
-    store_scope,
-    producer_role,
-    visibility_scope,
-    source_class,
-    evidence_class,
-    validation_status,
-    invocation_path,
-    source_ref,
-    content_sha256,
-    recorded_at,
-    ingested_at
-] :=
-    invocation_id = $invocation_id,
-    campaign_id = $campaign_id,
-    node_id = $node_id,
-    runtime_id = $runtime_id,
-    role = $role,
-    store_scope = $store_scope,
-    producer_role = $producer_role,
-    visibility_scope = $visibility_scope,
-    source_class = $source_class,
-    evidence_class = $evidence_class,
-    validation_status = $validation_status,
-    invocation_path = $invocation_path,
-    source_ref = $source_ref,
-    content_sha256 = $content_sha256,
-    recorded_at = $recorded_at,
-    ingested_at = $ingested_at
-:put eval_invocation {
-    invocation_id =>
-    campaign_id,
-    node_id,
-    runtime_id,
-    role,
-    store_scope,
-    producer_role,
-    visibility_scope,
-    source_class,
-    evidence_class,
-    validation_status,
-    invocation_path,
-    source_ref,
-    content_sha256,
-    recorded_at,
-    ingested_at
-}
-"#,
+    put_eval_params(
+        db,
+        &InvocationSchema::SCHEMA,
         invocation_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_invocation",
-        source,
-    })?;
+        "put.eval_invocation",
+    )?;
     Ok(())
 }
 
@@ -879,55 +753,12 @@ fn put_attempt_row<D: EvalDb + ?Sized>(db: &D, row: &EvalAttemptRow) -> Result<(
             ),
         });
     }
-    db.eval_query_mut_params(
-        r#"
-?[
-    attempt_id,
-    campaign_id,
-    runtime_id,
-    role,
-    parent_id,
-    node_id,
-    invocation_id,
-    channel_id,
-    artifact_id,
-    binary_ref,
-    started_at,
-    status
-] :=
-    attempt_id = $attempt_id,
-    campaign_id = $campaign_id,
-    runtime_id = $runtime_id,
-    role = $role,
-    parent_id = $parent_id,
-    node_id = $node_id,
-    invocation_id = $invocation_id,
-    channel_id = $channel_id,
-    artifact_id = $artifact_id,
-    binary_ref = $binary_ref,
-    started_at = $started_at,
-    status = $status
-:put eval_attempt {
-    attempt_id =>
-    campaign_id,
-    runtime_id,
-    role,
-    parent_id,
-    node_id,
-    invocation_id,
-    channel_id,
-    artifact_id,
-    binary_ref,
-    started_at,
-    status
-}
-"#,
+    put_eval_params(
+        db,
+        &AttemptSchema::SCHEMA,
         attempt_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_attempt",
-        source,
-    })?;
+        "put.eval_attempt",
+    )?;
     Ok(())
 }
 
@@ -947,82 +778,12 @@ fn put_channel_message_row<D: EvalDb + ?Sized>(
             ),
         });
     }
-    db.eval_query_mut_params(
-        r#"
-?[
-    channel_message_id,
-    campaign_id,
-    node_id,
-    runtime_id,
-    direction,
-    message_kind,
-    message_id,
-    store_scope,
-    producer_role,
-    visibility_scope,
-    source_class,
-    evidence_class,
-    validation_status,
-    endpoint_path,
-    cursor_offset,
-    bytes_written,
-    body_hash,
-    content_sha256,
-    source_ref,
-    recorded_at,
-    ingested_at
-] :=
-    channel_message_id = $channel_message_id,
-    campaign_id = $campaign_id,
-    node_id = $node_id,
-    runtime_id = $runtime_id,
-    direction = $direction,
-    message_kind = $message_kind,
-    message_id = $message_id,
-    store_scope = $store_scope,
-    producer_role = $producer_role,
-    visibility_scope = $visibility_scope,
-    source_class = $source_class,
-    evidence_class = $evidence_class,
-    validation_status = $validation_status,
-    endpoint_path = $endpoint_path,
-    cursor_offset = $cursor_offset,
-    bytes_written = $bytes_written,
-    body_hash = $body_hash,
-    content_sha256 = $content_sha256,
-    source_ref = $source_ref,
-    recorded_at = $recorded_at,
-    ingested_at = $ingested_at
-:put eval_channel_message {
-    channel_message_id =>
-    campaign_id,
-    node_id,
-    runtime_id,
-    direction,
-    message_kind,
-    message_id,
-    store_scope,
-    producer_role,
-    visibility_scope,
-    source_class,
-    evidence_class,
-    validation_status,
-    endpoint_path,
-    cursor_offset,
-    bytes_written,
-    body_hash,
-    content_sha256,
-    source_ref,
-    recorded_at,
-    ingested_at
-}
-"#,
+    put_eval_params(
+        db,
+        &ChannelMessageSchema::SCHEMA,
         channel_message_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_channel_message",
-        source,
-    })?;
+        "put.eval_channel_message",
+    )?;
     Ok(())
 }
 
@@ -1030,52 +791,12 @@ fn put_channel_receipt_row<D: EvalDb + ?Sized>(
     db: &D,
     row: &EvalChannelReceiptRow,
 ) -> Result<(), EvalStoreError> {
-    db.eval_query_mut_params(
-        r#"
-?[
-    receipt_id,
-    channel_id,
-    message_id,
-    campaign_id,
-    node_id,
-    runtime_id,
-    observed_by,
-    direction,
-    validation_status,
-    imported_ref,
-    observed_at
-] :=
-    receipt_id = $receipt_id,
-    channel_id = $channel_id,
-    message_id = $message_id,
-    campaign_id = $campaign_id,
-    node_id = $node_id,
-    runtime_id = $runtime_id,
-    observed_by = $observed_by,
-    direction = $direction,
-    validation_status = $validation_status,
-    imported_ref = $imported_ref,
-    observed_at = $observed_at
-:put eval_channel_receipt {
-    receipt_id =>
-    channel_id,
-    message_id,
-    campaign_id,
-    node_id,
-    runtime_id,
-    observed_by,
-    direction,
-    validation_status,
-    imported_ref,
-    observed_at
-}
-"#,
+    put_eval_params(
+        db,
+        &ChannelReceiptSchema::SCHEMA,
         channel_receipt_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_channel_receipt",
-        source,
-    })?;
+        "put.eval_channel_receipt",
+    )?;
     Ok(())
 }
 
@@ -1083,49 +804,12 @@ fn put_import_event_row<D: EvalDb + ?Sized>(
     db: &D,
     row: &EvalImportEventRow,
 ) -> Result<(), EvalStoreError> {
-    db.eval_query_mut_params(
-        r#"
-?[
-    import_id,
-    campaign_id,
-    importer_id,
-    source_runtime_id,
-    source_scope,
-    target_scope,
-    evidence_ref,
-    receipt_id,
-    validation_status,
-    imported_at
-] :=
-    import_id = $import_id,
-    campaign_id = $campaign_id,
-    importer_id = $importer_id,
-    source_runtime_id = $source_runtime_id,
-    source_scope = $source_scope,
-    target_scope = $target_scope,
-    evidence_ref = $evidence_ref,
-    receipt_id = $receipt_id,
-    validation_status = $validation_status,
-    imported_at = $imported_at
-:put eval_import_event {
-    import_id =>
-    campaign_id,
-    importer_id,
-    source_runtime_id,
-    source_scope,
-    target_scope,
-    evidence_ref,
-    receipt_id,
-    validation_status,
-    imported_at
-}
-"#,
+    put_eval_params(
+        db,
+        &ImportEventSchema::SCHEMA,
         import_event_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_import_event",
-        source,
-    })?;
+        "put.eval_import_event",
+    )?;
     Ok(())
 }
 
@@ -1145,126 +829,22 @@ fn put_record_ref_row<D: EvalDb + ?Sized>(
             ),
         });
     }
-    db.eval_query_mut_params(
-        r#"
-?[
-    record_ref_id,
-    campaign_id,
-    family,
-    schema_version,
-    store_scope,
-    producer_role,
-    producer_id,
-    source_class,
-    evidence_class,
-    visibility_scope,
-    validation_status,
-    source_stream_id,
-    source_event_index,
-    source_line,
-    source_ref,
-    content_sha256,
-    payload_json,
-    recorded_at,
-    ingested_at
-] :=
-    record_ref_id = $record_ref_id,
-    campaign_id = $campaign_id,
-    family = $family,
-    schema_version = $schema_version,
-    store_scope = $store_scope,
-    producer_role = $producer_role,
-    producer_id = $producer_id,
-    source_class = $source_class,
-    evidence_class = $evidence_class,
-    visibility_scope = $visibility_scope,
-    validation_status = $validation_status,
-    source_stream_id = $source_stream_id,
-    source_event_index = $source_event_index,
-    source_line = $source_line,
-    source_ref = $source_ref,
-    content_sha256 = $content_sha256,
-    payload_json = $payload_json,
-    recorded_at = $recorded_at,
-    ingested_at = $ingested_at
-:put eval_record_ref {
-    record_ref_id =>
-    campaign_id,
-    family,
-    schema_version,
-    store_scope,
-    producer_role,
-    producer_id,
-    source_class,
-    evidence_class,
-    visibility_scope,
-    validation_status,
-    source_stream_id,
-    source_event_index,
-    source_line,
-    source_ref,
-    content_sha256,
-    payload_json,
-    recorded_at,
-    ingested_at
-}
-"#,
+    put_eval_params(
+        db,
+        &RecordRefSchema::SCHEMA,
         record_ref_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_record_ref",
-        source,
-    })?;
+        "put.eval_record_ref",
+    )?;
     Ok(())
 }
 
 fn put_log_ref_row<D: EvalDb + ?Sized>(db: &D, row: &EvalLogRefRow) -> Result<(), EvalStoreError> {
-    db.eval_query_mut_params(
-        r#"
-?[
-    log_ref_id,
-    campaign_id,
-    runtime_id,
-    store_scope,
-    log_kind,
-    source_ref,
-    byte_start,
-    byte_len,
-    content_sha256,
-    sensitivity,
-    recorded_at
-] :=
-    log_ref_id = $log_ref_id,
-    campaign_id = $campaign_id,
-    runtime_id = $runtime_id,
-    store_scope = $store_scope,
-    log_kind = $log_kind,
-    source_ref = $source_ref,
-    byte_start = $byte_start,
-    byte_len = $byte_len,
-    content_sha256 = $content_sha256,
-    sensitivity = $sensitivity,
-    recorded_at = $recorded_at
-:put eval_log_ref {
-    log_ref_id =>
-    campaign_id,
-    runtime_id,
-    store_scope,
-    log_kind,
-    source_ref,
-    byte_start,
-    byte_len,
-    content_sha256,
-    sensitivity,
-    recorded_at
-}
-"#,
+    put_eval_params(
+        db,
+        &LogRefSchema::SCHEMA,
         log_ref_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_log_ref",
-        source,
-    })?;
+        "put.eval_log_ref",
+    )?;
     Ok(())
 }
 
@@ -1272,105 +852,11 @@ fn put_trace_event_row<D: EvalDb + ?Sized>(
     db: &D,
     row: &EvalTraceEventRow,
 ) -> Result<(), EvalStoreError> {
-    db.eval_query_mut_params(
-        r#"
-?[
-    trace_event_id,
-    campaign_id,
-    parent_id,
-    runtime_id,
-    node_id,
-    generation,
-    branch_id,
-    role,
-    pipeline,
-    stage,
-    authority,
-    transition,
-    event_name,
-    span_name,
-    target,
-    level,
-    outcome,
-    duration_ms,
-    record_access,
-    record_kind,
-    record_path,
-    record_index,
-    record_count,
-    program,
-    exit_code,
-    error,
-    source_log_ref,
-    source_event_index,
-    recorded_at
-] :=
-    trace_event_id = $trace_event_id,
-    campaign_id = $campaign_id,
-    parent_id = $parent_id,
-    runtime_id = $runtime_id,
-    node_id = $node_id,
-    generation = $generation,
-    branch_id = $branch_id,
-    role = $role,
-    pipeline = $pipeline,
-    stage = $stage,
-    authority = $authority,
-    transition = $transition,
-    event_name = $event_name,
-    span_name = $span_name,
-    target = $target,
-    level = $level,
-    outcome = $outcome,
-    duration_ms = $duration_ms,
-    record_access = $record_access,
-    record_kind = $record_kind,
-    record_path = $record_path,
-    record_index = $record_index,
-    record_count = $record_count,
-    program = $program,
-    exit_code = $exit_code,
-    error = $error,
-    source_log_ref = $source_log_ref,
-    source_event_index = $source_event_index,
-    recorded_at = $recorded_at
-:put eval_trace_event {
-    trace_event_id =>
-    campaign_id,
-    parent_id,
-    runtime_id,
-    node_id,
-    generation,
-    branch_id,
-    role,
-    pipeline,
-    stage,
-    authority,
-    transition,
-    event_name,
-    span_name,
-    target,
-    level,
-    outcome,
-    duration_ms,
-    record_access,
-    record_kind,
-    record_path,
-    record_index,
-    record_count,
-    program,
-    exit_code,
-    error,
-    source_log_ref,
-    source_event_index,
-    recorded_at
-}
-"#,
+    put_eval_params(
+        db,
+        &TraceEventSchema::SCHEMA,
         trace_event_params(row),
-    )
-    .map_err(|source| EvalStoreError::Db {
-        phase: "put.eval_trace_event",
-        source,
-    })?;
+        "put.eval_trace_event",
+    )?;
     Ok(())
 }
