@@ -693,7 +693,7 @@ fn classify_dynamic_callee(
                 };
             }
             if param_names.iter().any(|candidate| candidate == name) {
-                return DynamicCallCallee::Other;
+                return DynamicCallCallee::FnPointerCastLocalBinding { path };
             }
         }
         return DynamicCallCallee::FnPointerCastPath { path };

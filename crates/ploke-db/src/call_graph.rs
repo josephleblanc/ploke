@@ -423,6 +423,55 @@ pub struct CallContextRow {
     pub targets: Vec<CallTargetRow>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CallCallerRow {
+    pub site: CallSiteRow,
+    pub status: CallResolutionRow,
+    pub target: CallTargetRow,
+}
+
+/// Starting point for call-context expansion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CallContextSeed {
+    Owner(Uuid),
+    Target(Uuid),
+}
+
+/// Why a candidate was returned by [`Database::expand_call_context`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum CallContextRelation {
+    OutgoingTarget,
+    IncomingCaller,
+}
+
+/// Code graph node reachable from a call-context seed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CallContextCandidate {
+    pub node_id: Uuid,
+    pub relation: CallContextRelation,
+    pub call_site_id: Uuid,
+    pub target_id: Uuid,
+    pub distance: u32,
+}
+
+/// Controls for call-context expansion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CallContextOptions {
+    pub include_outgoing_targets: bool,
+    pub include_incoming_callers: bool,
+    pub max_candidates: usize,
+}
+
+impl Default for CallContextOptions {
+    fn default() -> Self {
+        Self {
+            include_outgoing_targets: true,
+            include_incoming_callers: true,
+            max_candidates: 64,
+        }
+    }
+}
+
 impl Database {
     pub fn has_call_graph_relations(&self) -> Result<bool, DbError> {
         const REQUIRED: [&str; 4] = [
@@ -463,10 +512,25 @@ impl Database {
                 generic_arg_count
             ] :=
                 owner_id = $owner_id,
+                (
+                    *function { id: owner_id @ 'NOW' },
+                    owner_kind = "Function"
+                ) or (
+                    *method { id: owner_id @ 'NOW' },
+                    owner_kind = "Method"
+                ) or (
+                    *const { id: owner_id @ 'NOW' },
+                    owner_kind = "Const"
+                ) or (
+                    *static { id: owner_id @ 'NOW' },
+                    owner_kind = "Static"
+                ),
                 *call_site_edge {
                     source_id: owner_id,
                     target_id: id,
-                    relation_kind: "BodyContainsCall" @ 'NOW'
+                    relation_kind: "BodyContainsCall",
+                    source_kind: owner_kind,
+                    target_kind: call_kind @ 'NOW'
                 },
                 *call_site {
                     id,
@@ -495,21 +559,70 @@ impl Database {
         params.insert("site_id".to_string(), DataValue::Uuid(UuidWrapper(site_id)));
 
         let rows = self.run_script(
-            r#"?[site_id, target_id, relation_kind, source_kind, target_kind] :=
+            r#"
+            valid_target[target_id, relation_kind, source_kind, target_kind] :=
+                relation_kind = "Function",
+                source_kind = "Path",
+                target_kind = "Function",
+                *function { id: target_id @ 'NOW' }
+
+            valid_target[target_id, relation_kind, source_kind, target_kind] :=
+                relation_kind = "DynamicFunction",
+                source_kind = "Dynamic",
+                target_kind = "Function",
+                *function { id: target_id @ 'NOW' }
+
+            valid_target[target_id, relation_kind, source_kind, target_kind] :=
+                relation_kind = "Method",
+                source_kind = "Method",
+                target_kind = "Method",
+                *method { id: target_id @ 'NOW' }
+
+            valid_target[target_id, relation_kind, source_kind, target_kind] :=
+                relation_kind = "AssociatedFunction",
+                source_kind = "Path",
+                target_kind = "Method",
+                *method { id: target_id @ 'NOW' }
+
+            valid_target[target_id, relation_kind, source_kind, target_kind] :=
+                relation_kind = "TupleStructConstructor",
+                source_kind = "Path",
+                target_kind = "Struct",
+                *struct { id: target_id @ 'NOW' }
+
+            valid_target[target_id, relation_kind, source_kind, target_kind] :=
+                relation_kind = "EnumVariantConstructor",
+                source_kind = "Path",
+                target_kind = "Variant",
+                *variant { id: target_id @ 'NOW' }
+
+            ?[site_id, target_id, relation_kind, source_kind, target_kind] :=
                 site_id = $site_id,
+                *call_site {
+                    id: site_id,
+                    call_kind: source_kind @ 'NOW'
+                },
                 *call_relation {
                     source_id: site_id,
                     target_id,
                     relation_kind,
                     source_kind,
                     target_kind @ 'NOW'
-                }
+                },
+                valid_target[target_id, relation_kind, source_kind, target_kind]
             :sort target_id"#,
             params,
             ScriptMutability::Immutable,
         )?;
 
-        rows.rows.iter().map(|row| decode_target(row)).collect()
+        Ok(rows
+            .rows
+            .iter()
+            .map(|row| decode_target(row))
+            .collect::<Result<Vec<CallTargetRow>, DbError>>()?
+            .into_iter()
+            .filter(valid_call_target)
+            .collect())
     }
 
     pub fn call_resolution_for_site(
@@ -520,13 +633,17 @@ impl Database {
         params.insert("site_id".to_string(), DataValue::Uuid(UuidWrapper(site_id)));
 
         let rows = self.run_script(
-            r#"?[site_id, source_kind, status_kind, resolution_kind] :=
+            r#"?[site_id, source_kind, status_kind, resolution_kind, call_kind] :=
                 site_id = $site_id,
                 *call_resolution_status {
                     source_id: site_id,
                     source_kind,
                     status_kind,
                     resolution_kind @ 'NOW'
+                },
+                *call_site {
+                    id: site_id,
+                    call_kind @ 'NOW'
                 }"#,
             params,
             ScriptMutability::Immutable,
@@ -534,7 +651,17 @@ impl Database {
 
         match rows.rows.as_slice() {
             [] => Ok(None),
-            [row] => Ok(Some(decode_resolution(row)?)),
+            [row] => {
+                let status = decode_resolution(&row[..4])?;
+                let site_kind = CallSiteKind::from_str(&to_string(&row[4])?)?;
+                if status.site_kind != site_kind {
+                    return Err(DbError::Cozo(format!(
+                        "call_resolution_status source_kind {:?} does not match call site {} kind {:?}",
+                        status.site_kind, site_id, site_kind
+                    )));
+                }
+                Ok(Some(status))
+            }
             rows => Err(DbError::Cozo(format!(
                 "expected at most one call_resolution_status for call site {site_id}, found {}",
                 rows.len()
@@ -553,18 +680,241 @@ impl Database {
                     ))
                 })?;
                 let targets = self.call_targets_for_site(site.id)?;
-                Ok(CallContextRow {
+                let row = CallContextRow {
                     site,
                     status,
                     targets,
-                })
+                };
+                validate_owner_context_targets(&row)?;
+                Ok(row)
             })
             .collect()
+    }
+
+    pub fn callers_for_target(&self, target_id: Uuid) -> Result<Vec<CallCallerRow>, DbError> {
+        let mut params = BTreeMap::new();
+        params.insert(
+            "target_id".to_string(),
+            DataValue::Uuid(UuidWrapper(target_id)),
+        );
+
+        let rows = self.run_script(
+            r#"
+            valid_target[target_id, relation_kind, source_kind, target_kind] :=
+                relation_kind = "Function",
+                source_kind = "Path",
+                target_kind = "Function",
+                *function { id: target_id @ 'NOW' }
+
+            valid_target[target_id, relation_kind, source_kind, target_kind] :=
+                relation_kind = "DynamicFunction",
+                source_kind = "Dynamic",
+                target_kind = "Function",
+                *function { id: target_id @ 'NOW' }
+
+            valid_target[target_id, relation_kind, source_kind, target_kind] :=
+                relation_kind = "Method",
+                source_kind = "Method",
+                target_kind = "Method",
+                *method { id: target_id @ 'NOW' }
+
+            valid_target[target_id, relation_kind, source_kind, target_kind] :=
+                relation_kind = "AssociatedFunction",
+                source_kind = "Path",
+                target_kind = "Method",
+                *method { id: target_id @ 'NOW' }
+
+            valid_target[target_id, relation_kind, source_kind, target_kind] :=
+                relation_kind = "TupleStructConstructor",
+                source_kind = "Path",
+                target_kind = "Struct",
+                *struct { id: target_id @ 'NOW' }
+
+            valid_target[target_id, relation_kind, source_kind, target_kind] :=
+                relation_kind = "EnumVariantConstructor",
+                source_kind = "Path",
+                target_kind = "Variant",
+                *variant { id: target_id @ 'NOW' }
+
+            ?[
+                id,
+                owner_id,
+                call_kind,
+                span,
+                cfgs,
+                path,
+                method_name,
+                macro_name,
+                receiver_kind,
+                receiver_path,
+                arg_count,
+                generic_arg_count,
+                relation_site_id,
+                relation_target_id,
+                relation_kind,
+                source_kind,
+                target_kind
+            ] :=
+                relation_target_id = $target_id,
+                *call_relation {
+                    source_id: relation_site_id,
+                    target_id: relation_target_id,
+                    relation_kind,
+                    source_kind,
+                    target_kind @ 'NOW'
+                },
+                valid_target[relation_target_id, relation_kind, source_kind, target_kind],
+                *call_site_edge {
+                    source_id: owner_id,
+                    target_id: relation_site_id,
+                    relation_kind: "BodyContainsCall",
+                    source_kind: owner_kind,
+                    target_kind: call_kind @ 'NOW'
+                },
+                *call_site {
+                    id: relation_site_id,
+                    owner_id,
+                    call_kind,
+                    span,
+                    cfgs,
+                    path,
+                    method_name,
+                    macro_name,
+                    receiver_kind,
+                    receiver_path,
+                    arg_count,
+                    generic_arg_count @ 'NOW'
+                },
+                (
+                    *function { id: owner_id @ 'NOW' },
+                    owner_kind = "Function"
+                ) or (
+                    *method { id: owner_id @ 'NOW' },
+                    owner_kind = "Method"
+                ) or (
+                    *const { id: owner_id @ 'NOW' },
+                    owner_kind = "Const"
+                ) or (
+                    *static { id: owner_id @ 'NOW' },
+                    owner_kind = "Static"
+                ),
+                id = relation_site_id,
+                call_kind = source_kind
+            :sort owner_id, span, relation_kind"#,
+            params,
+            ScriptMutability::Immutable,
+        )?;
+
+        let callers = rows
+            .rows
+            .iter()
+            .map(|row| {
+                let site = decode_site(&row[..12])?;
+                let target = decode_target(&row[12..])?;
+                let status = self.call_resolution_for_site(site.id)?.ok_or_else(|| {
+                    DbError::Cozo(format!(
+                        "missing call_resolution_status for call site {} targeting {}",
+                        site.id, target_id
+                    ))
+                })?;
+                Ok(CallCallerRow {
+                    site,
+                    status,
+                    target,
+                })
+            })
+            .collect::<Result<Vec<CallCallerRow>, DbError>>()?;
+
+        let mut valid_callers = Vec::new();
+        for caller in callers {
+            if !valid_call_target(&caller.target) {
+                continue;
+            }
+            self.validate_target_centered_caller_targets(&caller)?;
+            valid_callers.push(caller);
+        }
+
+        Ok(valid_callers)
+    }
+
+    fn validate_target_centered_caller_targets(
+        &self,
+        caller: &CallCallerRow,
+    ) -> Result<(), DbError> {
+        let targets = self.call_targets_for_site(caller.site.id)?;
+        let row = CallContextRow {
+            site: caller.site.clone(),
+            status: caller.status,
+            targets,
+        };
+        validate_owner_context_targets(&row)
+    }
+
+    /// Expands an owner or target seed into graphRAG call-context candidates.
+    ///
+    /// This is the application-facing layer over the lower-level call-site and
+    /// target-centered helpers. It only promotes resolved call edges as context
+    /// candidates; unsupported, external, unresolved, or ambiguous rows remain
+    /// visible through [`Self::call_context_for_owner`] but do not become
+    /// traversal targets.
+    pub fn expand_call_context(
+        &self,
+        seed: CallContextSeed,
+        options: CallContextOptions,
+    ) -> Result<Vec<CallContextCandidate>, DbError> {
+        if options.max_candidates == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut candidates = Vec::new();
+
+        match seed {
+            CallContextSeed::Owner(owner_id) if options.include_outgoing_targets => {
+                for row in self.call_context_for_owner(owner_id)? {
+                    if row.status.status != CallStatusKind::Resolved {
+                        continue;
+                    }
+                    candidates.extend(row.targets.into_iter().map(|target| CallContextCandidate {
+                        node_id: target.target_id,
+                        relation: CallContextRelation::OutgoingTarget,
+                        call_site_id: row.site.id,
+                        target_id: target.target_id,
+                        distance: 1,
+                    }));
+                }
+            }
+            CallContextSeed::Target(target_id) if options.include_incoming_callers => {
+                for caller in self.callers_for_target(target_id)? {
+                    if caller.status.status != CallStatusKind::Resolved {
+                        continue;
+                    }
+                    candidates.push(CallContextCandidate {
+                        node_id: caller.site.owner_id,
+                        relation: CallContextRelation::IncomingCaller,
+                        call_site_id: caller.site.id,
+                        target_id: caller.target.target_id,
+                        distance: 1,
+                    });
+                }
+            }
+            CallContextSeed::Owner(_) | CallContextSeed::Target(_) => {}
+        }
+
+        candidates.sort_by_key(|candidate| {
+            (
+                candidate.distance,
+                candidate.relation,
+                candidate.node_id.as_u128(),
+                candidate.call_site_id.as_u128(),
+            )
+        });
+        candidates.truncate(options.max_candidates);
+        Ok(candidates)
     }
 }
 
 fn decode_site(row: &[DataValue]) -> Result<CallSiteRow, DbError> {
-    Ok(CallSiteRow {
+    let site = CallSiteRow {
         id: to_uuid(&row[0])?,
         owner_id: to_uuid(&row[1])?,
         kind: CallSiteKind::from_str(&to_string(&row[2])?)?,
@@ -576,7 +926,67 @@ fn decode_site(row: &[DataValue]) -> Result<CallSiteRow, DbError> {
         receiver: CallReceiver::from_parts(&row[8], &row[9])?,
         arg_count: optional_index(&row[10])?,
         generic_arg_count: optional_index(&row[11])?,
-    })
+    };
+    validate_call_site_shape(&site)?;
+    Ok(site)
+}
+
+fn validate_call_site_shape(site: &CallSiteRow) -> Result<(), DbError> {
+    let valid = match site.kind {
+        CallSiteKind::Path => {
+            non_empty_path(site.path.as_deref())
+                && site.method.is_none()
+                && site.macro_name.is_none()
+                && site.receiver.is_none()
+                && site.arg_count.is_some()
+                && site.generic_arg_count.is_some()
+        }
+        CallSiteKind::Method => {
+            site.path.is_none()
+                && non_empty_string(site.method.as_deref())
+                && site.macro_name.is_none()
+                && site.receiver.is_some()
+                && site.arg_count.is_some()
+                && site.generic_arg_count.is_some()
+        }
+        CallSiteKind::Dynamic => {
+            optional_non_empty_path(site.path.as_deref())
+                && site.method.is_none()
+                && site.macro_name.is_none()
+                && site.receiver.is_none()
+                && site.arg_count.is_some()
+                && site.generic_arg_count.is_none()
+        }
+        CallSiteKind::Macro => {
+            site.path.is_none()
+                && site.method.is_none()
+                && non_empty_string(site.macro_name.as_deref())
+                && site.receiver.is_none()
+                && site.arg_count.is_none()
+                && site.generic_arg_count.is_none()
+        }
+    };
+
+    if valid {
+        Ok(())
+    } else {
+        Err(DbError::Cozo(format!(
+            "malformed {:?} call_site {}",
+            site.kind, site.id
+        )))
+    }
+}
+
+fn non_empty_path(path: Option<&[String]>) -> bool {
+    path.is_some_and(|path| !path.is_empty() && path.iter().all(|segment| !segment.is_empty()))
+}
+
+fn optional_non_empty_path(path: Option<&[String]>) -> bool {
+    path.is_none_or(|path| !path.is_empty() && path.iter().all(|segment| !segment.is_empty()))
+}
+
+fn non_empty_string(value: Option<&str>) -> bool {
+    value.is_some_and(|value| !value.is_empty())
 }
 
 fn decode_target(row: &[DataValue]) -> Result<CallTargetRow, DbError> {
@@ -589,13 +999,76 @@ fn decode_target(row: &[DataValue]) -> Result<CallTargetRow, DbError> {
     })
 }
 
+fn valid_call_target(target: &CallTargetRow) -> bool {
+    matches!(
+        (target.relation, target.source_kind, target.target_kind,),
+        (
+            CallRelationKind::Function,
+            CallSiteKind::Path,
+            CallRelationKind::Function,
+        ) | (
+            CallRelationKind::DynamicFunction,
+            CallSiteKind::Dynamic,
+            CallRelationKind::Function,
+        ) | (
+            CallRelationKind::Method,
+            CallSiteKind::Method,
+            CallRelationKind::Method,
+        ) | (
+            CallRelationKind::AssociatedFunction,
+            CallSiteKind::Path,
+            CallRelationKind::Method,
+        ) | (
+            CallRelationKind::TupleStructConstructor,
+            CallSiteKind::Path,
+            CallRelationKind::Struct,
+        ) | (
+            CallRelationKind::EnumVariantConstructor,
+            CallSiteKind::Path,
+            CallRelationKind::Variant,
+        )
+    )
+}
+
 fn decode_resolution(row: &[DataValue]) -> Result<CallResolutionRow, DbError> {
-    Ok(CallResolutionRow {
+    let status = CallResolutionRow {
         site_id: to_uuid(&row[0])?,
         site_kind: CallSiteKind::from_str(&to_string(&row[1])?)?,
         status: CallStatusKind::from_str(&to_string(&row[2])?)?,
         resolution: optional_resolution(&row[3])?,
-    })
+    };
+    validate_resolution_shape(&status)?;
+    Ok(status)
+}
+
+fn validate_resolution_shape(status: &CallResolutionRow) -> Result<(), DbError> {
+    let valid = match status.status {
+        CallStatusKind::Resolved => status.resolution == Some(CallResolutionKind::LocalExact),
+        CallStatusKind::Unresolved
+        | CallStatusKind::Ambiguous
+        | CallStatusKind::External
+        | CallStatusKind::Unsupported => status.resolution.is_none(),
+    };
+
+    if valid {
+        Ok(())
+    } else {
+        Err(DbError::Cozo(format!(
+            "call_resolution_status resolution_kind {:?} is invalid for {:?} call site {}",
+            status.resolution, status.status, status.site_id
+        )))
+    }
+}
+
+fn validate_owner_context_targets(row: &CallContextRow) -> Result<(), DbError> {
+    if row.status.status == CallStatusKind::Resolved && row.targets.len() != 1 {
+        return Err(DbError::Cozo(format!(
+            "resolved call site {} expected exactly one target, found {}",
+            row.site.id,
+            row.targets.len()
+        )));
+    }
+    Ok(())
 }
 
 fn optional_string(value: &DataValue) -> Result<Option<String>, DbError> {

@@ -15,8 +15,8 @@ use once_cell::sync::Lazy;
 use ploke_core::{
     ArcStr, RetrievalScope,
     rag_types::{
-        AssembledContext, CallCalleeInfo, CallContextInfo, CallReceiverInfo, CallTargetInfo,
-        ContextPart,
+        AssembledContext, CallCalleeInfo, CallContextInfo, CallExpansionInfo, CallReceiverInfo,
+        CallTargetInfo, ContextPart,
     },
 };
 use tokio::sync::oneshot;
@@ -325,6 +325,10 @@ fn reformat_context_to_system(ctx_part: ContextPart) -> String {
             )
         })
         .unwrap_or_default();
+    let call_expansion = ctx_part
+        .call_expansion
+        .map(|ctx| format!("\n{}", format_call_expansion(&ctx)))
+        .unwrap_or_default();
     let call_context = if ctx_part.call_context.is_empty() {
         String::new()
     } else {
@@ -334,14 +338,26 @@ fn reformat_context_to_system(ctx_part: ContextPart) -> String {
         )
     };
     format!(
-        "file_path: {}\ncanon_path: {}\nkind: {}\nscore: {:.3}{}{}\ncode_snippet:\n{}",
+        "file_path: {}\ncanon_path: {}\nkind: {}\nscore: {:.3}{}{}{}\ncode_snippet:\n{}",
         ctx_part.file_path.as_ref(),
         ctx_part.canon_path.as_ref(),
         ctx_part.kind.to_static_str(),
         ctx_part.score,
         type_context,
+        call_expansion,
         call_context,
         snippet
+    )
+}
+
+pub(crate) fn format_call_expansion(ctx: &CallExpansionInfo) -> String {
+    format!(
+        "call_expansion: {} from {} via {} to {} at distance {}",
+        ctx.relation.to_static_str(),
+        ctx.seed_id,
+        ctx.call_site_id,
+        ctx.target_id,
+        ctx.distance
     )
 }
 
@@ -523,6 +539,7 @@ fn build_context_plan(
                 estimated_tokens,
                 score: part.score,
                 type_context: part.type_context,
+                call_expansion: part.call_expansion,
                 call_context: part.call_context.clone(),
             });
         }
@@ -561,9 +578,10 @@ mod tests {
     };
     use crate::tools::{ToolName, ToolUiPayload};
     use ploke_core::rag_types::{
-        CallCalleeInfo, CallContextInfo, CallResolutionKind, CallSiteKind, CallStatusKind,
-        CallTargetInfo, CallTargetKind, CanonPath, ContextPartKind, ContextStats, Modality,
-        NodeFilepath, TypeContextInfo, TypeContextKind,
+        CallCalleeInfo, CallContextInfo, CallExpansionInfo, CallExpansionKind, CallReceiverInfo,
+        CallResolutionKind, CallSiteKind, CallStatusKind, CallTargetInfo, CallTargetKind,
+        CanonPath, ContextPartKind, ContextStats, Modality, NodeFilepath, TypeContextInfo,
+        TypeContextKind,
     };
     use std::collections::HashMap;
 
@@ -594,6 +612,7 @@ mod tests {
                 score: 0.5,
                 modality: Modality::Dense,
                 type_context: None,
+                call_expansion: None,
                 call_context: Vec::new(),
             }],
             stats: ContextStats {
@@ -642,6 +661,7 @@ mod tests {
                 relation: TypeContextKind::TypeDefinitionImpact,
                 distance: 1,
             }),
+            call_expansion: None,
             call_context: Vec::new(),
         };
 
@@ -669,6 +689,13 @@ mod tests {
             score: 0.42,
             modality: Modality::Dense,
             type_context: None,
+            call_expansion: Some(CallExpansionInfo {
+                seed_id: Uuid::from_u128(43),
+                relation: CallExpansionKind::OutgoingTarget,
+                call_site_id: Uuid::from_u128(42),
+                target_id: target,
+                distance: 1,
+            }),
             call_context: vec![CallContextInfo {
                 site_id: Uuid::from_u128(42),
                 kind: CallSiteKind::Dynamic,
@@ -685,10 +712,350 @@ mod tests {
 
         let rendered = reformat_context_to_system(part);
 
+        assert!(rendered.contains("call_expansion: OutgoingTarget"));
         assert!(rendered.contains("call_context: 1 outgoing call site(s)"));
         assert!(rendered.contains("Dynamic @ 20..29: dynamic"));
         assert!(rendered.contains("Resolved(LocalExact)"));
         assert!(rendered.contains(&format!("DynamicFunction:{target}")));
+    }
+
+    #[test]
+    fn format_call_context_block_renders_fixture_derived_rows() {
+        let target = Uuid::from_u128(0x501);
+        let method_target = Uuid::from_u128(0x502);
+        let assoc_target = Uuid::from_u128(0x503);
+        let dynamic_target = Uuid::from_u128(0x504);
+        let tuple_target = Uuid::from_u128(0x505);
+        let variant_target = Uuid::from_u128(0x506);
+        let calls = vec![
+            CallContextInfo {
+                site_id: Uuid::from_u128(0x601),
+                kind: CallSiteKind::Path,
+                span: (10, 12),
+                callee: CallCalleeInfo::Path {
+                    path: vec!["Ok".to_string()],
+                },
+                status: CallStatusKind::Unsupported,
+                resolution: None,
+                targets: Vec::new(),
+            },
+            CallContextInfo {
+                site_id: Uuid::from_u128(0x602),
+                kind: CallSiteKind::Path,
+                span: (13, 28),
+                callee: CallCalleeInfo::Path {
+                    path: vec!["try_local_assoc".to_string()],
+                },
+                status: CallStatusKind::Resolved,
+                resolution: Some(CallResolutionKind::LocalExact),
+                targets: vec![CallTargetInfo {
+                    target_id: target,
+                    relation: CallTargetKind::Function,
+                }],
+            },
+            CallContextInfo {
+                site_id: Uuid::from_u128(0x603),
+                kind: CallSiteKind::Method,
+                span: (13, 46),
+                callee: CallCalleeInfo::Method {
+                    name: "instance_value".to_string(),
+                    receiver: Some(CallReceiverInfo::TryPathCallResult {
+                        path: vec!["try_local_assoc".to_string()],
+                    }),
+                },
+                status: CallStatusKind::Resolved,
+                resolution: Some(CallResolutionKind::LocalExact),
+                targets: vec![CallTargetInfo {
+                    target_id: method_target,
+                    relation: CallTargetKind::Method,
+                }],
+            },
+            CallContextInfo {
+                site_id: Uuid::from_u128(0x604),
+                kind: CallSiteKind::Path,
+                span: (50, 62),
+                callee: CallCalleeInfo::Path {
+                    path: vec!["Self".to_string(), "make".to_string()],
+                },
+                status: CallStatusKind::Resolved,
+                resolution: Some(CallResolutionKind::LocalExact),
+                targets: vec![CallTargetInfo {
+                    target_id: assoc_target,
+                    relation: CallTargetKind::AssociatedFunction,
+                }],
+            },
+            CallContextInfo {
+                site_id: Uuid::from_u128(0x606),
+                kind: CallSiteKind::Path,
+                span: (64, 74),
+                callee: CallCalleeInfo::Path {
+                    path: vec!["NewType".to_string()],
+                },
+                status: CallStatusKind::Resolved,
+                resolution: Some(CallResolutionKind::LocalExact),
+                targets: vec![CallTargetInfo {
+                    target_id: tuple_target,
+                    relation: CallTargetKind::TupleStructConstructor,
+                }],
+            },
+            CallContextInfo {
+                site_id: Uuid::from_u128(0x607),
+                kind: CallSiteKind::Path,
+                span: (75, 99),
+                callee: CallCalleeInfo::Path {
+                    path: vec!["EnumWithData".to_string(), "Variant1".to_string()],
+                },
+                status: CallStatusKind::Resolved,
+                resolution: Some(CallResolutionKind::LocalExact),
+                targets: vec![CallTargetInfo {
+                    target_id: variant_target,
+                    relation: CallTargetKind::EnumVariantConstructor,
+                }],
+            },
+            CallContextInfo {
+                site_id: Uuid::from_u128(0x608),
+                kind: CallSiteKind::Macro,
+                span: (120, 144),
+                callee: CallCalleeInfo::Macro {
+                    name: "crate::crate_scoped_macro".to_string(),
+                },
+                status: CallStatusKind::Unsupported,
+                resolution: None,
+                targets: Vec::new(),
+            },
+            CallContextInfo {
+                site_id: Uuid::from_u128(0x609),
+                kind: CallSiteKind::Method,
+                span: (145, 160),
+                callee: CallCalleeInfo::Method {
+                    name: "overlap".to_string(),
+                    receiver: Some(CallReceiverInfo::LocalBinding {
+                        name: "value".to_string(),
+                    }),
+                },
+                status: CallStatusKind::Ambiguous,
+                resolution: None,
+                targets: Vec::new(),
+            },
+            CallContextInfo {
+                site_id: Uuid::from_u128(0x605),
+                kind: CallSiteKind::Dynamic,
+                span: (100, 119),
+                callee: CallCalleeInfo::Dynamic,
+                status: CallStatusKind::Resolved,
+                resolution: Some(CallResolutionKind::LocalExact),
+                targets: vec![CallTargetInfo {
+                    target_id: dynamic_target,
+                    relation: CallTargetKind::DynamicFunction,
+                }],
+            },
+        ];
+
+        let rendered = format_call_context_block(&calls, "  ", 8);
+        let expected = format!(
+            "\
+call_context: 9 outgoing call site(s)
+  - Path @ 10..12: path Ok => Unsupported, targets []
+  - Path @ 13..28: path try_local_assoc => Resolved(LocalExact), targets [Function:{target}]
+  - Method @ 13..46: method instance_value on try_local_assoc()? => Resolved(LocalExact), targets [Method:{method_target}]
+  - Path @ 50..62: path Self::make => Resolved(LocalExact), targets [AssociatedFunction:{assoc_target}]
+  - Path @ 64..74: path NewType => Resolved(LocalExact), targets [TupleStructConstructor:{tuple_target}]
+  - Path @ 75..99: path EnumWithData::Variant1 => Resolved(LocalExact), targets [EnumVariantConstructor:{variant_target}]
+  - Macro @ 120..144: macro crate::crate_scoped_macro => Unsupported, targets []
+  - Method @ 145..160: method overlap on value => Ambiguous, targets []
+  - ... 1 more call site(s)"
+        );
+
+        assert_eq!(rendered, expected);
+        assert!(
+            !rendered.contains(&format!("DynamicFunction:{dynamic_target}")),
+            "formatter should respect the call-context row limit"
+        );
+    }
+
+    #[test]
+    fn format_call_context_block_renders_external_rows() {
+        let calls = vec![
+            CallContextInfo {
+                site_id: Uuid::from_u128(0x701),
+                kind: CallSiteKind::Path,
+                span: (10, 23),
+                callee: CallCalleeInfo::Path {
+                    path: vec!["String".to_string(), "new".to_string()],
+                },
+                status: CallStatusKind::External,
+                resolution: None,
+                targets: Vec::new(),
+            },
+            CallContextInfo {
+                site_id: Uuid::from_u128(0x702),
+                kind: CallSiteKind::Method,
+                span: (24, 45),
+                callee: CallCalleeInfo::Method {
+                    name: "to_string".to_string(),
+                    receiver: Some(CallReceiverInfo::Literal),
+                },
+                status: CallStatusKind::External,
+                resolution: None,
+                targets: Vec::new(),
+            },
+            CallContextInfo {
+                site_id: Uuid::from_u128(0x703),
+                kind: CallSiteKind::Method,
+                span: (46, 57),
+                callee: CallCalleeInfo::Method {
+                    name: "len".to_string(),
+                    receiver: Some(CallReceiverInfo::TypedLocalBinding {
+                        name: "value".to_string(),
+                        type_path: vec!["Vec".to_string()],
+                    }),
+                },
+                status: CallStatusKind::External,
+                resolution: None,
+                targets: Vec::new(),
+            },
+        ];
+
+        let rendered = format_call_context_block(&calls, "  ", 8);
+        let expected = "\
+call_context: 3 outgoing call site(s)
+  - Path @ 10..23: path String::new => External, targets []
+  - Method @ 24..45: method to_string on literal => External, targets []
+  - Method @ 46..57: method len on value: Vec => External, targets []";
+
+        assert_eq!(rendered, expected);
+    }
+
+    #[test]
+    fn format_call_context_block_renders_callable_path_rows() {
+        let target = Uuid::from_u128(0x901);
+        let calls = vec![
+            CallContextInfo {
+                site_id: Uuid::from_u128(0x801),
+                kind: CallSiteKind::Path,
+                span: (10, 19),
+                callee: CallCalleeInfo::Path {
+                    path: vec!["make_fn".to_string()],
+                },
+                status: CallStatusKind::Resolved,
+                resolution: Some(CallResolutionKind::LocalExact),
+                targets: vec![CallTargetInfo {
+                    target_id: target,
+                    relation: CallTargetKind::Function,
+                }],
+            },
+            CallContextInfo {
+                site_id: Uuid::from_u128(0x802),
+                kind: CallSiteKind::Dynamic,
+                span: (10, 21),
+                callee: CallCalleeInfo::Dynamic,
+                status: CallStatusKind::Unsupported,
+                resolution: None,
+                targets: Vec::new(),
+            },
+            CallContextInfo {
+                site_id: Uuid::from_u128(0x803),
+                kind: CallSiteKind::Path,
+                span: (30, 33),
+                callee: CallCalleeInfo::Path {
+                    path: vec!["f".to_string()],
+                },
+                status: CallStatusKind::Unsupported,
+                resolution: None,
+                targets: Vec::new(),
+            },
+            CallContextInfo {
+                site_id: Uuid::from_u128(0x804),
+                kind: CallSiteKind::Path,
+                span: (40, 51),
+                callee: CallCalleeInfo::Path {
+                    path: vec!["generic_f".to_string()],
+                },
+                status: CallStatusKind::Unsupported,
+                resolution: None,
+                targets: Vec::new(),
+            },
+            CallContextInfo {
+                site_id: Uuid::from_u128(0x805),
+                kind: CallSiteKind::Path,
+                span: (60, 68),
+                callee: CallCalleeInfo::Path {
+                    path: vec!["boxed_fn".to_string()],
+                },
+                status: CallStatusKind::Unsupported,
+                resolution: None,
+                targets: Vec::new(),
+            },
+            CallContextInfo {
+                site_id: Uuid::from_u128(0x806),
+                kind: CallSiteKind::Path,
+                span: (70, 85),
+                callee: CallCalleeInfo::Path {
+                    path: vec!["Box".to_string(), "new".to_string()],
+                },
+                status: CallStatusKind::External,
+                resolution: None,
+                targets: Vec::new(),
+            },
+            CallContextInfo {
+                site_id: Uuid::from_u128(0x807),
+                kind: CallSiteKind::Path,
+                span: (90, 100),
+                callee: CallCalleeInfo::Path {
+                    path: vec!["Vec".to_string(), "new".to_string()],
+                },
+                status: CallStatusKind::External,
+                resolution: None,
+                targets: Vec::new(),
+            },
+        ];
+
+        let rendered = format_call_context_block(&calls, "  ", 8);
+        let expected = format!(
+            "\
+call_context: 7 outgoing call site(s)
+  - Path @ 10..19: path make_fn => Resolved(LocalExact), targets [Function:{target}]
+  - Dynamic @ 10..21: dynamic => Unsupported, targets []
+  - Path @ 30..33: path f => Unsupported, targets []
+  - Path @ 40..51: path generic_f => Unsupported, targets []
+  - Path @ 60..68: path boxed_fn => Unsupported, targets []
+  - Path @ 70..85: path Box::new => External, targets []
+  - Path @ 90..100: path Vec::new => External, targets []"
+        );
+
+        assert_eq!(rendered, expected);
+    }
+
+    #[test]
+    fn format_call_context_block_renders_trait_dispatch_initialized_local_receiver() {
+        let target = Uuid::from_u128(0xa01);
+        let calls = vec![CallContextInfo {
+            site_id: Uuid::from_u128(0xa02),
+            kind: CallSiteKind::Method,
+            span: (20, 39),
+            callee: CallCalleeInfo::Method {
+                name: "trait_value".to_string(),
+                receiver: Some(CallReceiverInfo::InitializedLocalBinding {
+                    name: "value".to_string(),
+                    init_path: vec!["TraitDispatchTarget".to_string()],
+                }),
+            },
+            status: CallStatusKind::Resolved,
+            resolution: Some(CallResolutionKind::LocalExact),
+            targets: vec![CallTargetInfo {
+                target_id: target,
+                relation: CallTargetKind::Method,
+            }],
+        }];
+
+        let rendered = format_call_context_block(&calls, "  ", 8);
+        let expected = format!(
+            "\
+call_context: 1 outgoing call site(s)
+  - Method @ 20..39: method trait_value on value = TraitDispatchTarget => Resolved(LocalExact), targets [Method:{target}]"
+        );
+
+        assert_eq!(rendered, expected);
     }
 
     fn label_message_id(
@@ -764,14 +1131,27 @@ mod tests {
             } else {
                 format!(" call_context:{}", part.call_context.len())
             };
+            let call_expansion = part
+                .call_expansion
+                .map(|ctx| {
+                    format!(
+                        " call_expansion: {}:{}:{}:{}",
+                        ctx.relation.to_static_str(),
+                        label_part_id(ctx.seed_id, part_labels),
+                        label_part_id(ctx.target_id, part_labels),
+                        ctx.distance
+                    )
+                })
+                .unwrap_or_default();
             out.push_str(&format!(
-                "- id: {} path: {} kind: {:?} tokens: {} score: {:.3}{}{}\n",
+                "- id: {} path: {} kind: {:?} tokens: {} score: {:.3}{}{}{}\n",
                 label_part_id(part.part_id, part_labels),
                 part.file_path,
                 part.kind,
                 part.estimated_tokens,
                 part.score,
                 type_context,
+                call_expansion,
                 call_context
             ));
         }
@@ -866,6 +1246,7 @@ mod tests {
                         relation: TypeContextKind::UsesTypeNested,
                         distance: 2,
                     }),
+                    call_expansion: None,
                     call_context: Vec::new(),
                 },
                 ContextPart {
@@ -878,6 +1259,13 @@ mod tests {
                     score: 0.8,
                     modality: Modality::Dense,
                     type_context: None,
+                    call_expansion: Some(CallExpansionInfo {
+                        seed_id: Uuid::from_u128(100),
+                        relation: CallExpansionKind::OutgoingTarget,
+                        call_site_id: Uuid::from_u128(102),
+                        target_id: Uuid::from_u128(101),
+                        distance: 1,
+                    }),
                     call_context: Vec::new(),
                 },
             ],
@@ -922,7 +1310,7 @@ excluded_messages:
 - id: tool kind: Tool tokens: 7 reason: Budget
 included_rag_parts:
 - id: part_a path: src/lib.rs kind: Code tokens: 3 score: 0.200 type_context: UsesTypeNested:part_b:2
-- id: part_b path: src/main.rs kind: Doc tokens: 3 score: 0.800
+- id: part_b path: src/main.rs kind: Doc tokens: 3 score: 0.800 call_expansion: OutgoingTarget:part_a:part_b:1
 rag_stats:
 - tokens: 12 files: 2 parts: 2 truncated: 0 dedup: 0
 ";

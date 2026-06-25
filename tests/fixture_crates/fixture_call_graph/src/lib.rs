@@ -1172,3 +1172,27 @@ impl<T: GenericWrapperBound> ConstrainedGenericSelfTrait for GenericWrapper<T> {
 pub fn call_constrained_generic_self_trait_method(value: GenericWrapper<GenericBoundValue>) -> i32 {
     value.constrained_generic_self_value()
 }
+
+pub mod grouped_function_import_scope {
+    use super::import_targets::{
+        globbed_target as grouped_globbed_alias, imported_target as grouped_alias,
+    };
+
+    pub fn call_grouped_imported_alias_target() -> i32 {
+        grouped_alias()
+    }
+
+    pub fn call_grouped_imported_globbed_target() -> i32 {
+        grouped_globbed_alias()
+    }
+}
+
+pub mod grouped_trait_assoc_function_scope {
+    use super::trait_assoc_import_targets::{
+        ImportedAssocFunctionTrait as GroupedAssocFunctionTrait,
+    };
+
+    pub fn call_grouped_imported_trait_associated_function() -> i32 {
+        GroupedAssocFunctionTrait::imported_trait_make()
+    }
+}

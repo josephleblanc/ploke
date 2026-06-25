@@ -16,8 +16,8 @@ use itertools::Itertools;
 use ploke_core::{
     EmbeddingData,
     rag_types::{
-        AssembledContext, CallContextInfo, CanonPath, ContextPart, ContextPartKind, ContextStats,
-        Modality, NodeFilepath, TypeContextInfo,
+        AssembledContext, CallContextInfo, CallExpansionInfo, CanonPath, ContextPart,
+        ContextPartKind, ContextStats, Modality, NodeFilepath, TypeContextInfo,
     },
 };
 use ploke_db::{Database, NodeType, get_by_id::NodePaths};
@@ -200,6 +200,7 @@ pub async fn assemble_context_with_type_context(
         io,
         type_context,
         &HashMap::new(),
+        &HashMap::new(),
     )
     .await
 }
@@ -214,6 +215,7 @@ pub(crate) async fn assemble_context_with_context_maps(
     io: &IoManagerHandle,
     type_context: &HashMap<Uuid, TypeContextInfo>,
     call_context: &HashMap<Uuid, Vec<CallContextInfo>>,
+    call_expansion: &HashMap<Uuid, CallExpansionInfo>,
 ) -> Result<AssembledContext, RagError> {
     // Build score map and preserve incoming order.
     let mut score_map: HashMap<Uuid, f32> = HashMap::with_capacity(hits.len());
@@ -271,6 +273,7 @@ pub(crate) async fn assemble_context_with_context_maps(
                     score: *score_map.get(&id).unwrap_or(&0.0),
                     modality: Modality::HybridFused,
                     type_context: type_context.get(&id).copied(),
+                    call_expansion: call_expansion.get(&id).copied(),
                     call_context: call_context.get(&id).cloned().unwrap_or_default(),
                 };
                 prelim_parts.push(part);
@@ -473,6 +476,7 @@ mod tests {
             score: 1.0,
             modality: Modality::Sparse,
             type_context: None,
+            call_expansion: None,
             call_context: Vec::new(),
         }
     }

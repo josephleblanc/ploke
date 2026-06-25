@@ -95,7 +95,7 @@ Implemented/scaffolded:
     exact.
   - unqualified local function path-call resolution inside the containing module.
   - import/re-export/glob-aware local function path-call resolution for direct
-    local binding chains and imported module aliases.
+    local binding chains, grouped imports, and imported module aliases.
   - conservative inherent associated-function path-call resolution for
     `Self::method()`, directly visible local `Type::method()`, method-as-
     associated syntax such as `Type::method(&value)`, and qualified local
@@ -111,8 +111,8 @@ Implemented/scaffolded:
     qualified local `<Type as Trait>::method()` calls where the trait item has
     no `self` receiver.
   - shorthand local trait associated-function path-call resolution for
-    `Trait::method()` through direct, alias, glob, and local re-export imports
-    where the trait item has no `self` receiver.
+    `Trait::method()` through direct, alias, glob, grouped, and local re-export
+    imports where the trait item has no `self` receiver.
   - same-trait `Self::method()` associated-function path-call resolution inside
     trait default method bodies when the owner method belongs to a local trait
     and the callee name has one no-`self` receiver candidate.
@@ -250,6 +250,9 @@ Implemented/scaffolded:
   - function-pointer cast dynamic local binding calls such as
     `let f: fn() -> i32 = local_target; (f as fn() -> i32)()` resolve when the
     binding initializer path proves one local function.
+  - function-pointer casts over opaque function-pointer parameters such as
+    `(f as fn() -> i32)()` preserve the local binding path for downstream
+    context, but still fail closed with `Unsupported` and no semantic edge.
   - dereferenced function-pointer local binding calls such as
     `let f: fn() -> i32 = local_target; (*f)()` resolve when the binding
     initializer path proves one local function.
@@ -268,18 +271,144 @@ Implemented/scaffolded:
   - `Database::call_targets_for_site(...)`
   - `Database::call_resolution_for_site(...)`
   - `Database::call_context_for_owner(...)`
+  - `Database::callers_for_target(...)`
+  - fresh fixture-backed DB tests now parse and transform
+    `fixture_call_graph` and `fixture_nodes` before asserting persisted context
+    rows for resolved path calls, local/initialized/typed-local method
+    receivers including parenthesized receivers and Rust type-alias receiver
+    annotations, associated functions, imported/re-exported type and trait
+    associated functions, tuple and enum constructors, nested returned-function
+    calls, dynamic function calls including cast/deref/block, branch, field,
+    indexed, exact member/index alias callee shapes, and parenthesized
+    function-item / typed function-pointer alias bindings,
+    fail-closed guarded/nested branch and opaque closure/index dynamic callees,
+    trait-dispatch method calls,
+    Rust type-alias associated-function and instance-method calls,
+    method-as-associated-function calls, function-item and typed function
+    pointer binding calls, imported function-item binding calls,
+    generic-bound, trait-object, aliased/reference concrete trait-object,
+    constrained generic self-type, imported-trait, and blanket-trait method
+    calls, method-body owner contexts for trait defaults and impl methods,
+    const/static and associated-const initializer owner contexts,
+    borrowed/dereferenced method receivers, path/method/await/try result
+    receivers, tuple-field method/dynamic calls, raw identifier path/method
+    calls, prelude `drop(...)` vs local shadowed `drop` resolution, explicit
+    inherent `drop(self)` calls, inherent-over-trait method precedence,
+    literal/prelude method classification, `String::new` / `Vec::new`
+    targetless external rows, local shadowed `Vec::len` resolution, macro
+    statuses, boxed/generic Fn-style dynamic failures, and bare callable-value
+    path failures with no fabricated targets. They also assert
+    external/ambiguous/unsupported statuses with no local target edges,
+    target-centered incoming caller rows for real local function, method, and
+    associated-function targets, and project resolved, external, and mixed
+    multi-row call contexts into proof facts from the same real transformed
+    fixture owners.
 - Feature-gated proof-fact projection in `ploke-db`:
   - `Database::call_proof_facts_for_owner(...)`
   - `Database::project_call_proof_facts_for_owner(...)`
+  - `Database::call_proof_facts_for_target(...)`
+  - `Database::project_call_proof_facts_for_target(...)`
   - projects existing proof JSON facts for call sites, resolved call edges, and
-    call-resolution blockers from persisted call graph rows
+    call-resolution blockers from persisted owner-scoped and target-centered
+    call graph rows
 - Feature-gated RAG/TUI payload plumbing:
   - `ContextPart.call_context`
   - `ConciseContext.call_context`
   - `RagService` call-context collection from persisted call graph rows
+  - `RagService` target-centered caller expansion through
+    `Database::callers_for_target(...)` before reranking/context assembly
+  - fresh RAG fixture test now parses/transforms `fixture_call_graph` and
+    asserts `RagService::collect_call_context` preserves the real
+    `call_try_result_instance_method` rows for the unsupported `Ok(...)`
+    wrapper, resolved `try_local_assoc()` path call, and resolved
+    try-result method receiver.
+  - fresh RAG fixture coverage also asserts real dynamic outgoing rows preserve
+    resolved `DynamicFunction` targets and targetless unsupported dynamic calls.
+  - fresh RAG fixture coverage also asserts real external targetless rows
+    preserve path, literal receiver, and typed-local receiver payloads without
+    fabricating targets.
+  - fresh RAG fixture coverage also asserts returned-function mixed rows,
+    callable-value path blockers, boxed `dyn Fn` setup/failure rows, and
+    prelude `Vec::new()` preserve their RAG call-context payloads without
+    fabricating targets.
+  - fresh RAG fixture coverage also asserts real targetless blocker rows
+    preserve macro callees as `Unsupported` and ambiguous method calls as
+    `Ambiguous` with no fabricated targets.
+  - fresh RAG expansion coverage seeds retrieval with `try_local_assoc` and
+    asserts the caller owner is materialized with outgoing call context that
+    still points back to the seed target.
+  - fresh RAG expansion coverage seeds retrieval with `local_target` and asserts
+    dynamic-function caller owners are materialized with outgoing call context
+    that still points back to the seed target.
+  - fresh RAG expansion coverage also seeds retrieval with the
+    `LocalAssoc::instance_value` method target and asserts both method-call and
+    associated-function caller owners are materialized with outgoing call
+    context pointing back to the seed target.
+  - fresh RAG expansion coverage also seeds retrieval with the
+    `LocalAssoc::make` associated-function target and asserts both
+    method-owner `Self::make` and qualified function-owner `LocalAssoc::make`
+    callers are materialized with outgoing `AssociatedFunction` call context.
+  - fresh RAG expansion coverage also seeds retrieval with tuple-struct and
+    enum-variant constructor targets and asserts real caller owners are
+    materialized with outgoing constructor-family call context.
+  - public `get_context` coverage proves sparse retrieval seeded by
+    `try_local_assoc` materializes the incoming caller owner and preserves that
+    outgoing call-context edge through final context assembly, with
+    `ContextPart.call_expansion` explaining the incoming-caller provenance.
+  - public `get_context` coverage also proves sparse retrieval seeded by the
+    `LocalAssoc::instance_value` method target materializes both method-call
+    and associated-function caller owners while preserving the outgoing
+    call-context edges and incoming-caller expansion provenance through final
+    context assembly.
+  - public `get_context` coverage also proves sparse retrieval seeded by the
+    `LocalAssocFunctionTrait::trait_make` associated-function target
+    materializes the trait associated-function caller owner while preserving
+    the outgoing `AssociatedFunction` edge and incoming-caller expansion
+    provenance through final context assembly.
+  - public `get_context` coverage also proves sparse retrieval seeded by the
+    `ImportedAssocFunctionTrait::imported_trait_make` associated-function
+    target materializes direct, alias, glob, re-export, and grouped-import
+    caller owners while preserving the outgoing `AssociatedFunction` edges and
+    incoming-caller expansion provenance through final context assembly.
+  - public `get_context` coverage also proves sparse retrieval seeded by
+    `call_crate_local_target` materializes its outgoing callee target with an
+    `OutgoingTarget` expansion reason, including the DB call-site ID used to
+    derive the candidate.
+  - `RagService` now collects outgoing call-context rows for call-expanded
+    owners that survive into the final assembled hit set even when ordinary
+    retrieval/type-context hits fill the default owner collection window first.
   - TUI context-plan/system formatting with outgoing-call summaries including
     callee shape, span, status/resolution, and target relation IDs
-- GREEN fixture tests now use a call-site paranoid harness and cover 203 concrete call expressions:
+  - TUI context-plan/system/tool carriers now preserve and render
+    `call_expansion` metadata with expansion relation, seed ID, call-site ID,
+    target ID, and distance.
+  - TUI formatter coverage now asserts the fixture-derived
+    `call_try_result_instance_method` payload shape: unsupported `Ok(...)`,
+    resolved `try_local_assoc()`, and resolved `try_local_assoc()?.instance_value()`
+    in both model-facing context text and expanded context-plan overlay details.
+    The same formatter/overlay coverage now also asserts associated-function
+    targets render as `AssociatedFunction:<id>` for `Self::make`-style payloads
+    and dynamic targets render as `DynamicFunction:<id>`.
+    Separate formatter/overlay coverage asserts concrete trait-dispatch method
+    rows render initialized-local receiver proof such as
+    `value = TraitDispatchTarget` while preserving the `Method:<id>` target.
+    Separate compact formatter/overlay coverage asserts external targetless rows
+    render with path, literal receiver, and typed-local receiver details.
+    Separate formatter/overlay coverage asserts callable-path blocker rows,
+    returned-function mixed rows, boxed `dyn Fn` setup/failure rows, and
+    `Vec::new()` external rows render without fabricated targets.
+    It also asserts macro blocker rows and ambiguous method blocker rows render
+    under the existing call-context row cap without inventing targets.
+  - Tool-carrier coverage asserts `request_code_context` JSON roundtrips
+    preserve `ConciseContext.call_context` through the real
+    `ContextPart -> ConciseContext` conversion, including local and imported
+    trait associated-function, dynamic-function, constructor, external
+    targetless, macro blocker, and ambiguous blocker rows.
+  - Direct production-tool coverage asserts `request_code_context` over a fresh
+    `fixture_call_graph` database returns an incoming method caller part with
+    both `call_expansion` provenance and the matching outgoing method
+    call-context row in the model-visible JSON payload.
+- GREEN fixture tests now use a call-site paranoid harness and cover 206 concrete call expressions:
   - `fixture_nodes_public_method_records_and_resolves_self_private_method_call_site`
   - `fixture_nodes_get_secret_len_records_self_field_len_external_method_call_site`
   - `fixture_nodes_get_str_len_records_self_field_len_method_call_site`
@@ -345,6 +474,8 @@ Implemented/scaffolded:
   - `fixture_call_graph_call_glob_imported_target_resolves_glob_path_call_site`
   - `fixture_call_graph_call_reexported_target_resolves_reexport_path_call_site`
   - `fixture_call_graph_call_imported_module_target_resolves_module_alias_path_call_site`
+  - `fixture_call_graph_call_grouped_imported_alias_target_resolves_imported_path_call_site`
+  - `fixture_call_graph_call_grouped_imported_globbed_alias_target_resolves_imported_path_call_site`
   - `fixture_call_graph_call_param_instance_method_resolves_local_binding_method_call_site`
   - `fixture_call_graph_call_typed_local_instance_method_resolves_typed_local_binding_method_call_site`
   - `fixture_call_graph_call_initialized_local_instance_method_resolves_initialized_local_binding_method_call_site`
@@ -402,6 +533,7 @@ Implemented/scaffolded:
   - `fixture_call_graph_call_direct_imported_trait_associated_function_resolves_trait_assoc_function_path_call_site`
   - `fixture_call_graph_call_alias_imported_trait_associated_function_resolves_trait_assoc_function_path_call_site`
   - `fixture_call_graph_call_glob_imported_trait_associated_function_resolves_trait_assoc_function_path_call_site`
+  - `fixture_call_graph_call_grouped_imported_trait_associated_function_resolves_trait_assoc_function_path_call_site`
   - `fixture_call_graph_call_method_as_associated_function_resolves_inherent_method_path_call_site`
   - `fixture_call_graph_call_direct_imported_trait_method_resolves_visible_trait_impl_method_call_site`
   - `fixture_call_graph_call_alias_imported_trait_method_resolves_visible_trait_impl_method_call_site`
@@ -425,8 +557,8 @@ Not implemented yet:
   proof, exact indexed calls over tuple-constructor array-field proof, exact
   indexed calls over named/tuple field array-alias proof, one-step aliases of
   constructed holder bindings carrying exact field initializer proof, and
-  value-binding fail-closed classification including generic `F: FnOnce` and
-  boxed `dyn Fn` calls.
+  value-binding fail-closed classification including function-pointer parameter
+  casts, generic `F: FnOnce`, and boxed `dyn Fn` calls.
   Async closure literal calls are covered as unsupported structural
   `DynamicCall` rows; closure/coroutine target modeling remains future work.
 - Non-`self` method receiver classification beyond named owner parameters,
@@ -572,30 +704,307 @@ Post-gate evidence, 2026-06-23:
   counts and no fabricated unsupported edges.
 - Feature-enabled `ploke-db` helper tests assert typed call-site context rows,
   semantic target rows, resolved/unsupported status rows, and fail-closed
-  behavior when a structural call site lacks `call_resolution_status`.
+  behavior when a structural call site lacks `call_resolution_status`. They now
+  also assert target-centered incoming caller rows preserve the originating
+  call-site payload, status row, and matching semantic target edge.
+- Feature-enabled `ploke-db` fixture tests assert parser -> transform -> DB
+  contracts over real `fixture_call_graph` and `fixture_nodes` rows for path
+  calls including unqualified local, self/super, import alias, glob import,
+  grouped import, re-export, and module-alias resolution forms, method calls, associated
+  functions including inherent `Self::make()` and qualified
+  `<LocalAssoc>::make()` owner contexts plus fully qualified local trait
+  associated-function calls, imported/re-exported type and trait associated
+  functions, tuple and enum constructors, dynamic function calls,
+  trait-dispatch method calls, borrowed/dereferenced receivers,
+  path/method/await/try result receivers, tuple-field method/dynamic calls,
+  raw identifier path/method calls, prelude `drop(...)` vs local shadowed
+  `drop` resolution, explicit inherent `drop(self)` calls, literal/prelude
+  method classification, local shadowed `Vec::len` resolution, macro statuses,
+  external/ambiguous/unsupported statuses, target edges, incoming caller rows
+  for real local function, method, associated-function, tuple-struct
+  constructor, and enum-variant constructor targets, closure/async body call
+  non-projection onto enclosing owners, and proof-fact projection from real
+  fixture owners.
 - Feature-enabled `ploke-db` proof projection tests assert resolved call graph
   rows are stored through the existing proof graph as `call_site`, `call_edge`,
   and `call_resolution` facts, with source provenance retained. They also assert
-  external and unsupported call statuses project fail-closed blocker reasons
-  without fabricating local call edges.
+  external, unsupported, and ambiguous call statuses project fail-closed blocker
+  reasons without fabricating local call edges. Fixture-backed proof-store
+  lookup coverage now verifies `proof_symbol_lookup` links both owner-scoped
+  and target-centered real resolved callee hits back to companion `call_site`
+  and `call_resolution` facts by call-site identity, including the
+  target-centered `local_target` dynamic caller. Fixture-backed proof tests now
+  include local, self/super/crate/module-qualified, import-alias, glob,
+  re-export, imported-module, and grouped-import function path resolution forms,
+  inherent/type-import/type-alias/trait associated-function path forms,
+  local/initialized/typed/type-alias/borrowed/dereferenced method receiver
+  forms, generic-bound, imported-trait, constrained-generic-self, and blanket
+  trait method receiver forms, path/method/await result receiver chains, and
+  tuple-field receiver method forms,
+  a mixed owner with unsupported `Ok(...)`, resolved `try_local_assoc()`, and a
+  resolved try-result method receiver, plus target-centered projection for the
+  incoming `try_local_assoc` caller edge without including unrelated owner
+  blockers. Target-centered method proof coverage now projects the real
+  `LocalAssoc::instance_value` target and verifies both method-call and
+  associated-function incoming edges are stored as resolved proof edges. The
+  target-centered method-family proof tests now share common resolved-caller,
+  checker-edge, blocker-absence, and provenance assertions while keeping
+  family-specific relation checks.
+  Fixture-derived external call-resolution blockers now also feed
+  `proof_invariant_findings` when proof-only effect evidence references the same
+  call site.
+  Target-centered associated-function proof coverage now projects the real
+  `LocalAssoc::make` target and verifies multiple incoming path callers are
+  stored as resolved proof edges with source provenance. Imported
+  trait-associated function target-centered proof coverage now projects the
+  real `ImportedAssocFunctionTrait::imported_trait_make` target and verifies
+  direct, alias, glob, re-export, and grouped-import callers. Dynamic
+  proof coverage now projects real resolved `DynamicFunction` calls including
+  parenthesized path/binding callees, function-pointer cast/deref callees,
+  block callees, indexed array callees, named-field/tuple-field callees, and
+  same-target branch/match dynamic callees, real unsupported closure-binding
+  cast and dereferenced closure-binding dynamic calls as
+  `dynamic_dispatch_unbounded` blockers with no edge, real ambiguous
+  branch/match dynamic calls as `type_resolution_missing` blockers, real
+  guarded/opaque/nested branch/match dynamic calls as
+  `dynamic_dispatch_unbounded` blockers, and target-centered `local_target`
+  proof facts that include a dynamic
+  incoming caller without pulling unrelated unsupported dynamic blockers or
+  closure/async body outer owners.
+  Returned-function proof coverage now projects a mixed owner with a resolved
+  inner `make_fn()` edge and an unsupported outer dynamic blocker. Callable-path
+  proof coverage now projects function-pointer parameter, generic `FnOnce`,
+  boxed `dyn Fn`, and prelude `Vec::new()` targetless rows with the expected
+  `type_resolution_missing` or `external_dependency_summary_missing` reasons.
+  Initializer-owner proof coverage now projects top-level const/static and
+  associated-const owners as resolved proof edges to their local initializer
+  functions with source provenance preserved. Constructor proof coverage now
+  uses shared fixture cases to project real tuple struct and enum variant
+  constructor targets as resolved proof edges to `StructNodeId` and
+  `VariantNodeId` callees, both owner-scoped and target-centered. Macro proof coverage
+  now projects real targetless macro calls as `macro_expansion_not_available`
+  blockers, and ambiguous proof coverage projects a real targetless ambiguous
+  method call as a `type_resolution_missing` blocker.
+  Synthetic proof coverage now rejects owner-scoped and target-centered local
+  target edges whose call status is not resolved, including ambiguous rows, and
+  verifies no partial proof facts are stored after that rejection. It also
+  asserts owner-scoped and target-centered call-proof generation/projection
+  reject empty `build_domain_id` values and missing source provenance before
+  storing any proof facts, including mixed target-centered caller sets where an
+  earlier caller has valid source provenance but a later caller does not.
 - `cargo xtask verify-backup-dbs`, `cargo xtask verify-fixtures`, and
   `cargo test -p ploke-transform --features call_graph transform::tests -- --nocapture`
   passed after the gate.
 - `cargo test -p ploke-db --features call_graph call_graph_queries -- --nocapture`
   passed for the typed DB helper and proof-projection slices, including a
   strict rejection test for non-resolved call statuses that still carry local
-  targets.
-- `cargo test -p ploke-rag --features call_graph call_context_collection_attaches_outgoing_call_payloads -- --nocapture`
-  passed for the first RAG call-context collection slice.
-- `cargo test -p ploke-db --features call_graph --no-fail-fast` remains red in
+  targets and a stable proof-fact identity contract across owner-scoped and
+  target-centered projection. Generated call proof facts are also covered for
+  GraphRAG query linkage by `call_site_id`; synthetic DB helper coverage now
+  includes `expand_call_context` owner and target seeds plus the rule that
+  non-resolved target rows remain queryable through low-level helpers but are
+  not promoted as expansion candidates, plus endpoint-family and
+  endpoint-existence validation for malformed persisted `call_relation` rows
+  and source-kind validation for persisted `call_resolution_status` rows and
+  target-kind validation for persisted `BodyContainsCall` rows. It also
+  validates `BodyContainsCall`
+  source-owner kind against the stored owner node family and rejects malformed
+  `call_site` row shapes and malformed `call_resolution_status`
+  status/resolution pairs. Owner context also rejects `Resolved(LocalExact)`
+  rows unless they have exactly one target, and target-centered callers plus
+  target-seeded expansion reject relation rows whose target endpoint is missing,
+  whose call-site status is missing, or whose resolved call site has multiple
+  valid semantic targets instead of silently promoting incomplete or
+  contradictory rows. Synthetic DB
+  helper coverage now also explicitly decodes the remaining method receiver
+  payload families: `SelfValue`, borrowed/dereferenced locals, field
+  receivers, path/method result receivers, await/try result receivers, and
+  literal receivers.
+- `cargo test -p ploke-db --features call_graph callers_for_target -- --nocapture`
+  passed with `2 passed` for the target-centered incoming caller helper over
+  both synthetic DB rows and fresh fixture-backed rows. Fresh fixture coverage
+  now also pins target-seeded expansion for tuple-struct and enum-variant
+  constructor caller rows through their typed `Struct` and `Variant` endpoint
+  families.
+- `cargo test -p ploke-db --features call_graph call_graph_fixture_queries -- --nocapture`
+  passed for fresh parser -> transform -> DB fixture-backed call graph
+  contracts, including real outgoing and incoming `expand_call_context`
+  candidates over the transformed `fixture_call_graph`, with exact persisted
+  call-site identity preserved for ordinary path callers and resolved dynamic
+  callers. Coverage now also proves owner-seeded expansion over mixed
+  resolved/unsupported rows promotes only resolved callees with call-site
+  provenance, and target-seeded method expansion preserves both method-call and
+  associated-function caller sites.
+  Target-centered `local_target` coverage now also proves closure/async body
+  calls are excluded from `callers_for_target` and target-seeded expansion for
+  the enclosing owners.
+  Additional owner-context coverage now proves local/initialized/parenthesized
+  alias receiver rows, parenthesized function-item / typed function-pointer
+  alias dynamic rows, inherent-over-trait precedence, nested returned-function
+  rows, targetless callable-value path failures, and prelude `Vec::new`.
+  Proof coverage now also asserts parenthesized path/binding, cast/deref,
+  block, indexed-array, field/tuple-field, and same-target branch/match dynamic
+  calls project as resolved proof edges, and opaque closure-binding cast/deref,
+  ambiguous branch/match, guarded/opaque/nested branch/match, parenthesized
+  generic `FnOnce`, and boxed `dyn Fn` dynamic call rows project as the
+  expected fail-closed blockers, while external setup calls remain
+  `external_dependency_summary_missing` blockers and no proof edges are
+  fabricated. It also asserts real
+  trait-dispatch method rows project as proof edges both owner-scoped and
+  target-centered, including concrete trait-object alias/chained-reference
+  callers. Target-centered proof coverage now also asserts closure/async body
+  outer owners do not appear in `local_target` proof edges or proof facts.
+  Raw persisted-relation invariant coverage now proves every transformed
+  `call_site` has exactly one matching `BodyContainsCall` edge, every call site
+  has exactly one matching `call_resolution_status`, and every persisted
+  `call_relation` is anchored to an existing call site and endpoint node.
+  It also proves persisted `call_site.id` values stay disjoint from stored
+  code-node and type-use/type IDs, preserving the `CallId` universe through DB
+  projection.
+  Inverse raw-row coverage also proves every persisted `BodyContainsCall` and
+  `call_resolution_status` row points back to an existing matching owner and
+  call site, with no orphaned rows. Status-to-relation cardinality coverage
+  now proves every raw `Resolved(LocalExact)` site has exactly one semantic
+  `call_relation`, and every non-resolved site has none. Proof projection
+  linkage coverage now checks a mixed real owner so each projected call site
+  has one `call_site` fact, one `call_resolution` fact, resolved rows have one
+  `call_edge` fact, and non-resolved rows have no edge plus a blocker reason.
+  Target-centered proof projection linkage coverage now checks the real
+  `local_target` incoming caller set so each caller projects one `call_site`,
+  one `call_resolution`, and one matching `call_edge` fact, with no unrelated
+  proof rows and with source provenance matching the originating call-site
+  span.
+  Persisted DB owner-context coverage now also proves closure,
+  move-closure, async-block, and async-closure body calls do not leak
+  `local_target()` rows or target edges into the enclosing owner, currently
+  `93 passed`.
+- `cargo test -p ploke-db --features call_graph path_resolution_call_proof -- --nocapture`
+  passed with `1 passed` for real resolved local, self/super/crate/module,
+  import-alias, glob, re-export, imported-module, and grouped-import function
+  path proof edge projection.
+- `cargo test -p ploke-db --features call_graph fixture_projection_stores_real_associated_function_call_proof_facts -- --nocapture`
+  passed with `1 passed` for real resolved inherent, imported type,
+  type-alias, method-as-associated, and trait associated-function proof edge
+  projection.
+- `cargo test -p ploke-db --features call_graph local_receiver_method_call_proof -- --nocapture`
+  passed with `1 passed` for real resolved local, initialized, typed,
+  type-alias, borrowed, and dereferenced method receiver proof edge projection.
+- `cargo test -p ploke-db --features call_graph trait_family_method_call_proof -- --nocapture`
+  passed with `1 passed` for real resolved generic-bound, imported-trait,
+  constrained-generic-self, and blanket trait method proof edge projection.
+- `cargo test -p ploke-db --features call_graph result_and_field_receiver_method_call_proof -- --nocapture`
+  passed with `1 passed` for real resolved path/method/await result receiver
+  method chains and tuple-field receiver method proof edge projection.
+- `cargo test -p ploke-db --features call_graph target_centered_call_proof -- --nocapture`
+  passed with `1 passed` for target-centered proof projection from the real
+  `try_local_assoc` incoming caller edge. `cargo test -p ploke-db --features call_graph target_centered_method_call_proof -- --nocapture`
+  passed with `1 passed` for target-centered proof projection from the real
+  `LocalAssoc::instance_value` method target.
+  `cargo test -p ploke-db --features call_graph fixture_projection_stores_real_target_centered_associated_function_call_proof_facts -- --nocapture`
+  passed with `1 passed` for target-centered proof projection from the real
+  `LocalAssoc::make` associated-function target.
+  `cargo test -p ploke-db --features call_graph fixture_projection_stores_real_target_centered_imported_trait_assoc_function_call_proof_facts -- --nocapture`
+  passed with `1 passed` for target-centered proof projection from the real
+  `ImportedAssocFunctionTrait::imported_trait_make` target.
+- `cargo test -p ploke-db --features call_graph dynamic_call_proof -- --nocapture`
+  passed with `2 passed` for real resolved dynamic owner proof and
+  target-centered dynamic proof projection. `cargo test -p ploke-db --features call_graph unsupported_dynamic_call_without_edges -- --nocapture`
+  passed with `1 passed` for real unsupported closure-binding cast/deref
+  dynamic blocker projection.
+- `cargo test -p ploke-db --features call_graph branch_and_match_dynamic_call_proof -- --nocapture`
+  passed with `1 passed` for real resolved same-target branch/match dynamic
+  proof edge projection.
+- `cargo test -p ploke-db --features call_graph callable_expression_dynamic_call_proof -- --nocapture`
+  passed with `1 passed` for real resolved parenthesized path/binding,
+  cast/deref, block, and indexed-array dynamic proof edge projection.
+- `cargo test -p ploke-db --features call_graph field_dynamic_call_proof -- --nocapture`
+  passed with `1 passed` for real resolved named-field, indexed named-field,
+  and indexed tuple-field dynamic proof edge projection.
+- `cargo test -p ploke-db --features call_graph branch_and_match_dynamic_failures -- --nocapture`
+  passed with `1 passed` for real ambiguous branch/match and
+  guarded/opaque/nested branch/match dynamic blocker projection.
+- `cargo test -p ploke-db --features call_graph initializer_call_proof -- --nocapture`
+  passed with `2 passed` for real const/static and associated-const
+  initializer owner proof projection.
+- Exact constructor fixture/proof batch passed after the shared-case
+  consolidation; each command passed with `1 passed`:
+  ```bash
+  cargo test -p ploke-db --features call_graph fixture_expand_call_context_target_seed_preserves_constructor_callers -- --nocapture
+  cargo test -p ploke-db --features call_graph fixture_projection_stores_real_constructor_call_proof_facts -- --nocapture
+  cargo test -p ploke-db --features call_graph fixture_projection_stores_real_target_centered_constructor_call_proof_facts -- --nocapture
+  ```
+- `cargo test -p ploke-db --features call_graph macro_call_without_edges -- --nocapture`
+  passed with `1 passed` for real targetless macro blocker projection.
+  `cargo test -p ploke-db --features call_graph ambiguous_call_without_edges -- --nocapture`
+  passed with `1 passed` for real targetless ambiguous blocker projection.
+- `cargo test -p ploke-db --features call_graph ambiguous_local_targets -- --nocapture`
+  passed with `2 passed` for strict rejection of owner-scoped and
+  target-centered ambiguous rows that still carry local target edges.
+- `cargo test -p ploke-db --features call_graph target_centered_proof_projection_rejects_non_resolved_local_targets -- --nocapture`
+  passed with `1 passed` for strict target-centered rejection of inconsistent
+  incoming rows.
+- `cargo test -p ploke-db --features call_graph call_graph_queries -- --nocapture`
+  passed for the synthetic DB helper/proof module, currently `34 passed`.
+- `cargo test -p ploke-db --features call_graph call_graph_fixture_queries -- --nocapture`
+  passed for the fresh parser -> transform -> DB fixture-backed module in the
+  last full fixture-module run before constructor proof assertions were
+  consolidated into shared fixture cases.
+- Latest unfiltered `cargo test -p ploke-db --features call_graph -- --nocapture`
+  now passes `src/lib.rs`, `callsite_logging_tests`, and `debug_obsv`, then
+  remains red only in backup-backed type-graph tests under `tests/mod.rs`: 34
+  failures all report `Cannot find requested stored relation 'call_relation'`.
+- `cargo test -p ploke-rag --features call_graph call_context -- --nocapture`
+  passed for synthetic collection, fresh fixture-backed collection, and
+  owner-seeded outgoing callee expansion and target-centered incoming caller
+  expansion through both the helper and public `get_context` path, including
+  real trait-dispatch method target expansion to concrete trait-object callers
+  through both the helper and public sparse `get_context` path, local and
+  imported trait associated-function target expansion through public sparse
+  `get_context`, and both helper and public sparse `get_context` `local_target`
+  expansion excluding closure/async body outer owners while preserving both
+  ordinary path callers and real dynamic callers, plus call-expansion
+  provenance on final assembled expansion candidates and fail-safe degradation
+  when call-graph relations are absent,
+  currently `23 passed`.
+  `cargo test -p ploke-rag --features call_graph real_fixture_constructor_rows -- --nocapture`
+  passed with `1 passed` for real tuple struct and enum variant constructor
+  target-family payloads. `cargo test -p ploke-rag --features call_graph real_fixture_blocker_rows -- --nocapture`
+  passed with `1 passed` for real targetless macro and ambiguous method blocker
+  payloads. `cargo test -p ploke-rag --features call_graph real_fixture_external_rows -- --nocapture`
+  passed with `1 passed` for real targetless external path, literal receiver,
+  and typed-local receiver payloads.
+- Full `cargo test -p ploke-rag --features call_graph -- --nocapture` remains
+  red with stale backup fixtures missing `call_relation` plus pre-existing
+  search/snippet fixture failures; keep this under
+  `CALL_GRAPH_GATE:fixture-regeneration` / `CALL_GRAPH_GATE:non-callgraph-reds`
+  instead of weakening call-graph relation checks.
+- `cargo test -p ploke-tui --features call_graph format_call_context_block_renders_fixture_derived_rows -- --nocapture`
+  passed for TUI rendering of the fixture-derived `Ok(...)`,
+  `try_local_assoc()`, try-result method receiver payload shape, and
+  `AssociatedFunction`, `DynamicFunction`, `TupleStructConstructor`, and
+  `EnumVariantConstructor` target relation rendering, plus targetless macro and
+  ambiguous method blockers under the existing row cap.
+- `cargo test -p ploke-tui --features call_graph call_context -- --nocapture`
+  passed for the broader TUI call-context filter, currently `10 passed`,
+  including prompt formatting, expanded context-plan overlay details,
+  callable-path blocker row rendering, trait-dispatch initialized-local receiver
+  rendering, call-expansion provenance rendering, and model-visible call-context
+  degradation notes.
+- `cargo test -p ploke-tui --features call_graph tool_io_roundtrip -- --nocapture`
+  passed for the public tool result carrier roundtrips, currently `3 passed`,
+  including `ConciseContext.call_context` JSON roundtrip and `from_assembled`
+  preservation for `request_code_context` with call-expansion provenance,
+  separate ordinary path and dynamic incoming caller payloads, trait-dispatch
+  initialized-local receiver rows, local and imported trait associated-function
+  rows, dynamic and constructor call-context rows plus targetless external,
+  macro, and ambiguous blocker rows.
+- `cargo test -p ploke-db --features call_graph -- --nocapture` remains red in
   backup-backed type-graph tests because the registered typed corpus backups
-  still predate `call_relation`; the only failing target was
-  `ploke-db --test mod`, with 34 failures all reporting
-  `Cannot find requested stored relation 'call_relation'`. In the latest
-  feature-gated run, `src/lib.rs`, `proof_graph_store`, `proof_invariant_checker`,
-  observability tests, and doctests passed. This is classified under
-  `CALL_GRAPH_GATE:fixture-regeneration`, not as a DB helper or proof projection
-  regression.
+  still predate `call_relation`; `src/lib.rs` passed with `98 passed`, and the
+  remaining failures were all in `ploke-db --test mod`, with `195 passed`, `34
+  failed`, and all failures reporting `Cannot find requested stored relation
+  'call_relation'`. This is classified under `CALL_GRAPH_GATE:fixture-regeneration`,
+  not as a DB helper or proof projection regression.
 - `docs/testing/BACKUP_DB_FIXTURES.md` was last reviewed on 2026-06-12; as of
   2026-06-23 the fixture review is overdue before any backup-fixture changes.
 - `cargo test --workspace --no-fail-fast` no longer reports `call_relation`
@@ -879,7 +1288,7 @@ cargo check -p ploke-tui --features call_graph
 ```
 
 Result: parser, transform, DB helper, and RAG checks passed. The latest
-`call_sites` filter ran 203 paranoid fixture tests; transform projection tests
+`call_sites` filter ran 206 paranoid fixture tests; transform projection tests
 passed for resolved function/method/associated-function/constructor call edges
 and unsupported call statuses.
 

@@ -246,6 +246,8 @@ const UNIMPORTED_TRAIT_METHOD_CALL_SPAN: (usize, usize) = (6787, 6807);
 const REEXPORTED_TRAIT_METHOD_CALL_SPAN: (usize, usize) = (19919, 19939);
 const GROUPED_IMPORTED_TRAIT_METHOD_CALL_SPAN: (usize, usize) = (24562, 24582);
 const CONSTRAINED_GENERIC_SELF_TRAIT_METHOD_CALL_SPAN: (usize, usize) = (25425, 25463);
+const GROUPED_IMPORTED_ALIAS_CALL_SPAN: (usize, usize) = (25696, 25711);
+const GROUPED_IMPORTED_GLOBBED_ALIAS_CALL_SPAN: (usize, usize) = (25786, 25809);
 const PARENTHESIZED_TYPED_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (6936, 6960);
 const PARENTHESIZED_INITIALIZED_LOCAL_TRAIT_CALL_SPAN: (usize, usize) = (7073, 7094);
 const IMPORTED_ASSOC_IMPL_SPAN: (usize, usize) = (7164, 7249);
@@ -256,6 +258,7 @@ const DIRECT_IMPORTED_TRAIT_ASSOC_FUNCTION_CALL_SPAN: (usize, usize) = (8087, 81
 const ALIAS_IMPORTED_TRAIT_ASSOC_FUNCTION_CALL_SPAN: (usize, usize) = (8382, 8430);
 const GLOB_IMPORTED_TRAIT_ASSOC_FUNCTION_CALL_SPAN: (usize, usize) = (8620, 8669);
 const REEXPORTED_TRAIT_ASSOC_FUNCTION_CALL_SPAN: (usize, usize) = (24853, 24904);
+const GROUPED_IMPORTED_TRAIT_ASSOC_FUNCTION_CALL_SPAN: (usize, usize) = (26060, 26108);
 const CRATE_MODULE_NESTED_TARGET_CALL_SPAN: (usize, usize) = (8743, 8776);
 const SELF_MODULE_NESTED_TARGET_CALL_SPAN: (usize, usize) = (8833, 8865);
 const METHOD_AS_ASSOCIATED_FUNCTION_CALL_SPAN: (usize, usize) = (8954, 8988);
@@ -2946,6 +2949,56 @@ paranoid_call_site_test!(
 );
 
 paranoid_call_site_test!(
+    fixture_call_graph_call_grouped_imported_alias_target_resolves_imported_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate", "grouped_function_import_scope"],
+        name: "call_grouped_imported_alias_target"
+    },
+    expected: {
+        let target_args =
+            fixture_call_graph_function_args(&["crate", "import_targets"], "imported_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("imported_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["grouped_alias"],
+            GROUPED_IMPORTED_ALIAS_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_grouped_imported_globbed_alias_target_resolves_imported_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate", "grouped_function_import_scope"],
+        name: "call_grouped_imported_globbed_target"
+    },
+    expected: {
+        let target_args =
+            fixture_call_graph_function_args(&["crate", "import_targets"], "globbed_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("globbed_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["grouped_globbed_alias"],
+            GROUPED_IMPORTED_GLOBBED_ALIAS_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
     fixture_call_graph_call_param_instance_method_resolves_local_binding_method_call_site,
     fixture: "fixture_call_graph",
     owner: function {
@@ -3751,6 +3804,31 @@ paranoid_call_site_test!(
 );
 
 paranoid_call_site_test!(
+    fixture_call_graph_call_grouped_imported_trait_associated_function_resolves_trait_assoc_function_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate", "grouped_trait_assoc_function_scope"],
+        name: "call_grouped_imported_trait_associated_function"
+    },
+    expected: {
+        let target_args =
+            fixture_call_graph_imported_assoc_function_trait_args("imported_trait_make");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_method_pid(&parsed_graphs)?;
+        ExpectedCallSite::path(
+            &["GroupedAssocFunctionTrait", "imported_trait_make"],
+            GROUPED_IMPORTED_TRAIT_ASSOC_FUNCTION_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedAssociatedFunctionLocalExact {
+                target: target_info.test_method_id(),
+            },
+        )
+    },
+);
+
+paranoid_call_site_test!(
     fixture_call_graph_call_method_as_associated_function_resolves_inherent_method_path_call_site,
     fixture: "fixture_call_graph",
     owner: function {
@@ -3952,13 +4030,14 @@ paranoid_call_site_test!(
 );
 
 paranoid_call_site_test!(
-    fixture_call_graph_call_function_pointer_param_cast_fails_closed_dynamic_call_site,
+    fixture_call_graph_call_function_pointer_param_cast_records_cast_local_binding_dynamic_call_site,
     fixture: "fixture_call_graph",
     owner: function {
         module_path: &["crate"],
         name: "call_function_pointer_param_cast"
     },
-    expected: ExpectedCallSite::dynamic(
+    expected: ExpectedCallSite::dynamic_fn_pointer_cast_local_binding(
+        &["f"],
         FUNCTION_POINTER_PARAM_CAST_DYNAMIC_CALL_SPAN,
         0,
         &[],

@@ -230,6 +230,8 @@ pub enum ExpectedDynamicCallee<'a> {
         path: &'a [&'a str],
         init_path: &'a [&'a str],
     },
+    /// The callee expression is an opaque local binding or parameter cast to a bare function pointer.
+    FnPointerCastLocalBinding { path: &'a [&'a str] },
     /// The callee expression is a dereferenced initialized local binding.
     DereferencedInitializedLocalBinding {
         path: &'a [&'a str],
@@ -274,6 +276,11 @@ impl ExpectedDynamicCallee<'_> {
                 DynamicCallCallee::FnPointerCastInitializedLocalBinding {
                     path: path.iter().copied().map(String::from).collect(),
                     init_path: init_path.iter().copied().map(String::from).collect(),
+                }
+            }
+            Self::FnPointerCastLocalBinding { path } => {
+                DynamicCallCallee::FnPointerCastLocalBinding {
+                    path: path.iter().copied().map(String::from).collect(),
                 }
             }
             Self::DereferencedInitializedLocalBinding { path, init_path } => {
@@ -548,6 +555,25 @@ impl<'a> ExpectedCallSite<'a> {
                     path,
                     init_path,
                 },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is an opaque local binding cast to a function pointer.
+    pub const fn dynamic_fn_pointer_cast_local_binding(
+        path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::FnPointerCastLocalBinding { path },
                 arg_count,
             },
             span,

@@ -16,14 +16,14 @@ mod tests {
     use std::{collections::BTreeMap, default, ops::Deref, sync::Arc};
 
     use crate::{ApproxCharTokenizer, AssemblyPolicy, RetrievalStrategy, TokenBudget};
-    use cozo::{DataValue, UuidWrapper};
+    use cozo::{DataValue, Db, MemStorage, UuidWrapper};
     use itertools::Itertools;
     use lazy_static::lazy_static;
     use ploke_core::rag_types::TypeContextKind;
     #[cfg(feature = "call_graph")]
     use ploke_core::rag_types::{
-        CallCalleeInfo, CallReceiverInfo, CallResolutionKind, CallSiteKind, CallStatusKind,
-        CallTargetKind,
+        CallCalleeInfo, CallExpansionKind, CallReceiverInfo, CallResolutionKind, CallSiteKind,
+        CallStatusKind, CallTargetKind,
     };
     use ploke_core::{CrateId, EmbeddingData, RetrievalScope};
     use ploke_db::get_by_id::{GetNodeInfo, NodePaths};
@@ -544,6 +544,15 @@ mod tests {
         item_in_file_query("struct", name)
     }
 
+    #[cfg(feature = "call_graph")]
+    fn variant_by_enum_query(enum_name: &str, variant_name: &str) -> String {
+        format!(
+            r#"?[id] :=
+                *enum {{ id: enum_id, name: "{enum_name}" @ 'NOW' }},
+                *variant {{ id, name: "{variant_name}", owner_id: enum_id @ 'NOW' }}"#
+        )
+    }
+
     fn trait_in_module_query(module_path_items: &[&str], name: &str) -> String {
         let module_path = module_path(module_path_items);
         format!(
@@ -560,6 +569,15 @@ mod tests {
 
     fn trait_in_file_query(name: &str) -> String {
         item_in_file_query("trait", name)
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn trait_method_query(trait_name: &str, method: &str) -> String {
+        format!(
+            r#"?[method_id] :=
+                *method {{ id: method_id, name: "{method}", owner_id: trait_id @ 'NOW' }},
+                *trait {{ id: trait_id, name: "{trait_name}" @ 'NOW' }}"#
+        )
     }
 
     fn method_by_impl_self_query(self_type: &str, method: &str) -> String {
@@ -1583,6 +1601,45 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
 
     #[cfg(feature = "call_graph")]
     #[tokio::test]
+    async fn call_context_disabled_safely_when_relations_absent() -> Result<(), Error> {
+        init_tracing_once();
+
+        let raw = Db::new(MemStorage::default()).expect("in-memory cozo db");
+        raw.initialize().expect("initialize cozo db");
+        let db = Arc::new(Database::new(raw));
+        assert!(
+            !db.has_call_graph_relations().map_err(Error::from)?,
+            "schema-less DB must not expose call-graph relations for this regression"
+        );
+
+        let rag = init_test_rag_mock(Arc::clone(&db));
+        assert!(
+            rag.call_context_degraded(),
+            "RagService must record degraded call-context when call graph relations are absent"
+        );
+        assert!(
+            !rag.cfg.call_context.enabled,
+            "degraded call-context should disable downstream collection and expansion"
+        );
+
+        let seed = Uuid::from_u128(0xfeed);
+        let expanded = rag.expand_hits_with_call_context(&[(seed, 1.0)])?;
+        assert_eq!(
+            expanded,
+            vec![(seed, 1.0)],
+            "degraded call-context must not query callers from a DB without call graph relations"
+        );
+        let context = rag.collect_call_context(&[(seed, 1.0)])?;
+        assert!(
+            context.is_empty(),
+            "degraded call-context must not query or attach call rows from a DB without call graph relations: {context:#?}"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
     async fn call_context_collection_attaches_outgoing_call_payloads() -> Result<(), Error> {
         init_tracing_once();
         let db = Arc::new(Database::init_with_schema()?);
@@ -1922,6 +1979,2153 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
     }
 
     #[cfg(feature = "call_graph")]
+    #[tokio::test]
+    async fn call_context_collection_reads_real_fixture_rows() -> Result<(), Error> {
+        init_tracing_once();
+        let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_call_graph",
+        )?));
+        let owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_try_result_instance_method"),
+        )?;
+        let try_target = unique_id_by_name(&db, "function", "try_local_assoc")?;
+        let method_target = one_uuid(
+            &db,
+            &method_by_impl_self_query("LocalAssoc", "instance_value"),
+        )?;
+        let rag = init_test_rag_mock(Arc::clone(&db));
+        assert!(
+            !rag.call_context_degraded(),
+            "fresh fixture call_graph schema should enable call context collection"
+        );
+
+        let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+        let owner_context = call_context
+            .get(&owner)
+            .expect("fixture owner should receive outgoing call context");
+        assert_eq!(owner_context.len(), 3, "owner context: {owner_context:#?}");
+
+        let ok_call = owner_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec!["Ok".to_string()],
+                        }
+            })
+            .expect("Ok wrapper call should stay visible");
+        assert_eq!(ok_call.status, CallStatusKind::Unsupported);
+        assert!(ok_call.resolution.is_none());
+        assert!(ok_call.targets.is_empty());
+
+        let try_call = owner_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec!["try_local_assoc".to_string()],
+                        }
+            })
+            .expect("try_local_assoc path call should be present");
+        assert_eq!(try_call.status, CallStatusKind::Resolved);
+        assert_eq!(try_call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(try_call.targets.len(), 1);
+        assert_eq!(try_call.targets[0].target_id, try_target);
+        assert_eq!(try_call.targets[0].relation, CallTargetKind::Function);
+
+        let method_call = owner_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Method
+                    && call.callee
+                        == CallCalleeInfo::Method {
+                            name: "instance_value".to_string(),
+                            receiver: Some(CallReceiverInfo::TryPathCallResult {
+                                path: vec!["try_local_assoc".to_string()],
+                            }),
+                        }
+            })
+            .expect("try-result method call should be present");
+        assert_eq!(method_call.status, CallStatusKind::Resolved);
+        assert_eq!(method_call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(method_call.targets.len(), 1);
+        assert_eq!(method_call.targets[0].target_id, method_target);
+        assert_eq!(method_call.targets[0].relation, CallTargetKind::Method);
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
+    async fn call_context_collection_reads_real_fixture_constructor_rows() -> Result<(), Error> {
+        init_tracing_once();
+
+        let tuple_db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_call_graph",
+        )?));
+        let tuple_owner = one_uuid(
+            &tuple_db,
+            &function_in_module_query(&["crate"], "call_new_type_constructor"),
+        )?;
+        let tuple_target = one_uuid(&tuple_db, &struct_in_module_query(&["crate"], "NewType"))?;
+        let tuple_rag = init_test_rag_mock(Arc::clone(&tuple_db));
+        assert!(
+            !tuple_rag.call_context_degraded(),
+            "fresh fixture call_graph schema should enable tuple constructor call context"
+        );
+
+        let tuple_context = tuple_rag.collect_call_context(&[(tuple_owner, 1.0)])?;
+        let tuple_owner_context = tuple_context
+            .get(&tuple_owner)
+            .expect("tuple constructor owner should receive outgoing call context");
+        assert_eq!(
+            tuple_owner_context.len(),
+            1,
+            "tuple constructor context: {tuple_owner_context:#?}"
+        );
+        let tuple_call = &tuple_owner_context[0];
+        assert_eq!(tuple_call.kind, CallSiteKind::Path);
+        assert_eq!(
+            tuple_call.callee,
+            CallCalleeInfo::Path {
+                path: vec!["NewType".to_string()],
+            }
+        );
+        assert_eq!(tuple_call.status, CallStatusKind::Resolved);
+        assert_eq!(tuple_call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(tuple_call.targets.len(), 1);
+        assert_eq!(tuple_call.targets[0].target_id, tuple_target);
+        assert_eq!(
+            tuple_call.targets[0].relation,
+            CallTargetKind::TupleStructConstructor
+        );
+
+        let variant_db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_nodes",
+        )?));
+        let variant_owner = one_uuid(
+            &variant_db,
+            &function_in_module_query(&["crate", "imports"], "use_imported_items"),
+        )?;
+        let variant_target = one_uuid(
+            &variant_db,
+            &variant_by_enum_query("EnumWithData", "Variant1"),
+        )?;
+        let variant_rag = init_test_rag_mock(Arc::clone(&variant_db));
+        assert!(
+            !variant_rag.call_context_degraded(),
+            "fresh fixture_nodes call_graph schema should enable enum variant call context"
+        );
+
+        let variant_context = variant_rag.collect_call_context(&[(variant_owner, 1.0)])?;
+        let variant_owner_context = variant_context
+            .get(&variant_owner)
+            .expect("enum variant owner should receive outgoing call context");
+        let variant_call = variant_owner_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec!["EnumWithData".to_string(), "Variant1".to_string()],
+                        }
+            })
+            .expect("EnumWithData::Variant1 call should be present");
+        assert_eq!(variant_call.status, CallStatusKind::Resolved);
+        assert_eq!(
+            variant_call.resolution,
+            Some(CallResolutionKind::LocalExact)
+        );
+        assert_eq!(variant_call.targets.len(), 1);
+        assert_eq!(variant_call.targets[0].target_id, variant_target);
+        assert_eq!(
+            variant_call.targets[0].relation,
+            CallTargetKind::EnumVariantConstructor
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
+    async fn call_context_collection_reads_real_fixture_blocker_rows() -> Result<(), Error> {
+        init_tracing_once();
+        let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_call_graph",
+        )?));
+        let macro_owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_crate_scoped_macro"),
+        )?;
+        let ambiguous_owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_ambiguous_trait_method"),
+        )?;
+        let rag = init_test_rag_mock(Arc::clone(&db));
+        assert!(
+            !rag.call_context_degraded(),
+            "fresh fixture call_graph schema should enable blocker call context"
+        );
+
+        let call_context =
+            rag.collect_call_context(&[(macro_owner, 1.0), (ambiguous_owner, 1.0)])?;
+        let macro_context = call_context
+            .get(&macro_owner)
+            .expect("macro owner should receive outgoing call context");
+        assert_eq!(
+            macro_context.len(),
+            1,
+            "macro owner context: {macro_context:#?}"
+        );
+        let macro_call = &macro_context[0];
+        assert_eq!(macro_call.kind, CallSiteKind::Macro);
+        assert_eq!(
+            macro_call.callee,
+            CallCalleeInfo::Macro {
+                name: "crate::crate_scoped_macro".to_string(),
+            }
+        );
+        assert_eq!(macro_call.status, CallStatusKind::Unsupported);
+        assert!(macro_call.resolution.is_none());
+        assert!(
+            macro_call.targets.is_empty(),
+            "macro blocker rows must not fabricate RAG targets: {macro_call:#?}"
+        );
+
+        let ambiguous_context = call_context
+            .get(&ambiguous_owner)
+            .expect("ambiguous owner should receive outgoing call context");
+        assert_eq!(
+            ambiguous_context.len(),
+            1,
+            "ambiguous owner context: {ambiguous_context:#?}"
+        );
+        let ambiguous_call = &ambiguous_context[0];
+        assert_eq!(ambiguous_call.kind, CallSiteKind::Method);
+        assert_eq!(
+            ambiguous_call.callee,
+            CallCalleeInfo::Method {
+                name: "overlap".to_string(),
+                receiver: Some(CallReceiverInfo::LocalBinding {
+                    name: "value".to_string(),
+                }),
+            }
+        );
+        assert_eq!(ambiguous_call.status, CallStatusKind::Ambiguous);
+        assert!(ambiguous_call.resolution.is_none());
+        assert!(
+            ambiguous_call.targets.is_empty(),
+            "ambiguous blocker rows must not fabricate RAG targets: {ambiguous_call:#?}"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
+    async fn call_context_collection_reads_real_fixture_external_rows() -> Result<(), Error> {
+        init_tracing_once();
+        let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_call_graph",
+        )?));
+        let string_owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_prelude_string_new"),
+        )?;
+        let literal_owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_literal_str_to_string"),
+        )?;
+        let vec_owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_typed_vec_len_external"),
+        )?;
+        let rag = init_test_rag_mock(Arc::clone(&db));
+        assert!(
+            !rag.call_context_degraded(),
+            "fresh fixture call_graph schema should enable external call context"
+        );
+
+        let call_context = rag.collect_call_context(&[
+            (string_owner, 1.0),
+            (literal_owner, 1.0),
+            (vec_owner, 1.0),
+        ])?;
+
+        let string_context = call_context
+            .get(&string_owner)
+            .expect("String::new owner should receive outgoing call context");
+        assert_eq!(
+            string_context.len(),
+            1,
+            "String::new owner context: {string_context:#?}"
+        );
+        let string_call = &string_context[0];
+        assert_eq!(string_call.kind, CallSiteKind::Path);
+        assert_eq!(
+            string_call.callee,
+            CallCalleeInfo::Path {
+                path: vec!["String".to_string(), "new".to_string()],
+            }
+        );
+        assert_eq!(string_call.status, CallStatusKind::External);
+        assert!(string_call.resolution.is_none());
+        assert!(
+            string_call.targets.is_empty(),
+            "external path calls must not fabricate RAG targets: {string_call:#?}"
+        );
+
+        let literal_context = call_context
+            .get(&literal_owner)
+            .expect("literal method owner should receive outgoing call context");
+        assert_eq!(
+            literal_context.len(),
+            1,
+            "literal method owner context: {literal_context:#?}"
+        );
+        let literal_call = &literal_context[0];
+        assert_eq!(literal_call.kind, CallSiteKind::Method);
+        assert_eq!(
+            literal_call.callee,
+            CallCalleeInfo::Method {
+                name: "to_string".to_string(),
+                receiver: Some(CallReceiverInfo::Literal),
+            }
+        );
+        assert_eq!(literal_call.status, CallStatusKind::External);
+        assert!(literal_call.resolution.is_none());
+        assert!(
+            literal_call.targets.is_empty(),
+            "external literal method calls must not fabricate RAG targets: {literal_call:#?}"
+        );
+
+        let vec_context = call_context
+            .get(&vec_owner)
+            .expect("typed Vec owner should receive outgoing call context");
+        assert_eq!(
+            vec_context.len(),
+            2,
+            "typed Vec owner context: {vec_context:#?}"
+        );
+        let vec_new = vec_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec!["Vec".to_string(), "new".to_string()],
+                        }
+            })
+            .expect("Vec::new path call should stay visible");
+        assert_eq!(vec_new.status, CallStatusKind::External);
+        assert!(vec_new.resolution.is_none());
+        assert!(vec_new.targets.is_empty());
+
+        let vec_len = vec_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Method
+                    && call.callee
+                        == CallCalleeInfo::Method {
+                            name: "len".to_string(),
+                            receiver: Some(CallReceiverInfo::TypedLocalBinding {
+                                name: "value".to_string(),
+                                type_path: vec!["Vec".to_string()],
+                            }),
+                        }
+            })
+            .expect("typed Vec::len method call should stay visible");
+        assert_eq!(vec_len.status, CallStatusKind::External);
+        assert!(vec_len.resolution.is_none());
+        assert!(
+            vec_len.targets.is_empty(),
+            "external Vec::len calls must not fabricate RAG targets: {vec_len:#?}"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
+    async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Result<(), Error> {
+        init_tracing_once();
+        let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_call_graph",
+        )?));
+        let make_fn = unique_id_by_name(&db, "function", "make_fn")?;
+        let returned_owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_returned_function"),
+        )?;
+        let fn_param_owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_function_pointer_param"),
+        )?;
+        let generic_owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_generic_fn_once_value_binding"),
+        )?;
+        let boxed_owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_boxed_dyn_fn_value_binding"),
+        )?;
+        let vec_owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_prelude_vec_new"),
+        )?;
+        let rag = init_test_rag_mock(Arc::clone(&db));
+        assert!(
+            !rag.call_context_degraded(),
+            "fresh fixture call_graph schema should enable callable path call context"
+        );
+
+        let call_context = rag.collect_call_context(&[
+            (returned_owner, 1.0),
+            (fn_param_owner, 1.0),
+            (generic_owner, 1.0),
+            (boxed_owner, 1.0),
+            (vec_owner, 1.0),
+        ])?;
+
+        let returned_context = call_context
+            .get(&returned_owner)
+            .expect("returned-function owner should receive outgoing call context");
+        assert_eq!(
+            returned_context.len(),
+            2,
+            "returned-function owner context: {returned_context:#?}"
+        );
+        let returned_path = returned_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec!["make_fn".to_string()],
+                        }
+            })
+            .expect("inner make_fn path call should stay visible");
+        assert_eq!(returned_path.status, CallStatusKind::Resolved);
+        assert_eq!(
+            returned_path.resolution,
+            Some(CallResolutionKind::LocalExact)
+        );
+        assert_eq!(returned_path.targets.len(), 1);
+        assert_eq!(returned_path.targets[0].target_id, make_fn);
+        assert_eq!(returned_path.targets[0].relation, CallTargetKind::Function);
+
+        let returned_dynamic = returned_context
+            .iter()
+            .find(|call| call.kind == CallSiteKind::Dynamic)
+            .expect("outer returned-function dynamic call should stay visible");
+        assert_eq!(returned_dynamic.callee, CallCalleeInfo::Dynamic);
+        assert_eq!(returned_dynamic.status, CallStatusKind::Unsupported);
+        assert!(returned_dynamic.resolution.is_none());
+        assert!(
+            returned_dynamic.targets.is_empty(),
+            "returned-function dynamic calls must not fabricate RAG targets: {returned_dynamic:#?}"
+        );
+
+        let fn_param_context = call_context
+            .get(&fn_param_owner)
+            .expect("function-pointer param owner should receive outgoing call context");
+        assert_eq!(
+            fn_param_context.len(),
+            1,
+            "function-pointer param context: {fn_param_context:#?}"
+        );
+        let fn_param_call = &fn_param_context[0];
+        assert_eq!(fn_param_call.kind, CallSiteKind::Path);
+        assert_eq!(
+            fn_param_call.callee,
+            CallCalleeInfo::Path {
+                path: vec!["f".to_string()],
+            }
+        );
+        assert_eq!(fn_param_call.status, CallStatusKind::Unsupported);
+        assert!(fn_param_call.resolution.is_none());
+        assert!(
+            fn_param_call.targets.is_empty(),
+            "opaque fn pointer path calls must not fabricate RAG targets: {fn_param_call:#?}"
+        );
+
+        let generic_context = call_context
+            .get(&generic_owner)
+            .expect("generic FnOnce owner should receive outgoing call context");
+        assert_eq!(
+            generic_context.len(),
+            1,
+            "generic FnOnce context: {generic_context:#?}"
+        );
+        let generic_call = &generic_context[0];
+        assert_eq!(generic_call.kind, CallSiteKind::Path);
+        assert_eq!(
+            generic_call.callee,
+            CallCalleeInfo::Path {
+                path: vec!["generic_f".to_string()],
+            }
+        );
+        assert_eq!(generic_call.status, CallStatusKind::Unsupported);
+        assert!(generic_call.resolution.is_none());
+        assert!(
+            generic_call.targets.is_empty(),
+            "generic FnOnce path calls must not fabricate RAG targets: {generic_call:#?}"
+        );
+
+        let boxed_context = call_context
+            .get(&boxed_owner)
+            .expect("boxed dyn Fn owner should receive outgoing call context");
+        assert_eq!(
+            boxed_context.len(),
+            2,
+            "boxed dyn Fn context: {boxed_context:#?}"
+        );
+        let box_new = boxed_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec!["Box".to_string(), "new".to_string()],
+                        }
+            })
+            .expect("Box::new setup call should stay visible");
+        assert_eq!(box_new.status, CallStatusKind::External);
+        assert!(box_new.resolution.is_none());
+        assert!(box_new.targets.is_empty());
+
+        let boxed_call = boxed_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec!["boxed_fn".to_string()],
+                        }
+            })
+            .expect("boxed dyn Fn path call should stay visible");
+        assert_eq!(boxed_call.status, CallStatusKind::Unsupported);
+        assert!(boxed_call.resolution.is_none());
+        assert!(
+            boxed_call.targets.is_empty(),
+            "boxed dyn Fn path calls must not fabricate RAG targets: {boxed_call:#?}"
+        );
+
+        let vec_context = call_context
+            .get(&vec_owner)
+            .expect("Vec::new owner should receive outgoing call context");
+        assert_eq!(vec_context.len(), 1, "Vec::new context: {vec_context:#?}");
+        let vec_new = &vec_context[0];
+        assert_eq!(vec_new.kind, CallSiteKind::Path);
+        assert_eq!(
+            vec_new.callee,
+            CallCalleeInfo::Path {
+                path: vec!["Vec".to_string(), "new".to_string()],
+            }
+        );
+        assert_eq!(vec_new.status, CallStatusKind::External);
+        assert!(vec_new.resolution.is_none());
+        assert!(
+            vec_new.targets.is_empty(),
+            "Vec::new external calls must not fabricate RAG targets: {vec_new:#?}"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
+    async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(), Error> {
+        init_tracing_once();
+        let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_call_graph",
+        )?));
+        let target = unique_id_by_name(&db, "function", "local_target")?;
+        let resolved_owner = one_uuid(
+            &db,
+            &function_in_module_query(
+                &["crate"],
+                "call_aliased_indexed_named_field_function_binding",
+            ),
+        )?;
+        let unsupported_owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_dereferenced_closure_binding"),
+        )?;
+
+        let rag = init_test_rag_mock(Arc::clone(&db));
+        assert!(
+            !rag.call_context_degraded(),
+            "fresh fixture call_graph schema should enable dynamic call context collection"
+        );
+
+        let call_context =
+            rag.collect_call_context(&[(resolved_owner, 1.0), (unsupported_owner, 1.0)])?;
+        let resolved_context = call_context
+            .get(&resolved_owner)
+            .expect("resolved dynamic owner should receive outgoing call context");
+        let resolved_call = resolved_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Dynamic
+                    && call.callee == CallCalleeInfo::Dynamic
+                    && call
+                        .targets
+                        .iter()
+                        .any(|target_info| target_info.target_id == target)
+            })
+            .expect("resolved dynamic function call should stay visible in RAG call context");
+        assert_eq!(resolved_call.status, CallStatusKind::Resolved);
+        assert_eq!(
+            resolved_call.resolution,
+            Some(CallResolutionKind::LocalExact)
+        );
+        assert_eq!(resolved_call.targets.len(), 1);
+        assert_eq!(resolved_call.targets[0].target_id, target);
+        assert_eq!(
+            resolved_call.targets[0].relation,
+            CallTargetKind::DynamicFunction
+        );
+
+        let unsupported_context = call_context
+            .get(&unsupported_owner)
+            .expect("unsupported dynamic owner should receive outgoing call context");
+        assert_eq!(
+            unsupported_context.len(),
+            1,
+            "unsupported dynamic owner context: {unsupported_context:#?}"
+        );
+        let unsupported_call = &unsupported_context[0];
+        assert_eq!(unsupported_call.kind, CallSiteKind::Dynamic);
+        assert_eq!(unsupported_call.callee, CallCalleeInfo::Dynamic);
+        assert_eq!(unsupported_call.status, CallStatusKind::Unsupported);
+        assert!(unsupported_call.resolution.is_none());
+        assert!(
+            unsupported_call.targets.is_empty(),
+            "unsupported dynamic calls must not fabricate RAG targets: {unsupported_call:#?}"
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
+    async fn call_context_expansion_adds_outgoing_fixture_targets() -> Result<(), Error> {
+        init_tracing_once();
+        let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_call_graph",
+        )?));
+        let owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_crate_local_target"),
+        )?;
+        let target = unique_id_by_name(&db, "function", "local_target")?;
+
+        let rag = init_test_rag_mock(Arc::clone(&db));
+        assert!(
+            !rag.call_context_degraded(),
+            "fresh fixture call_graph schema should enable outgoing target expansion"
+        );
+
+        let expanded = rag.expand_hits_with_call_context(&[(owner, 1.0)])?;
+        let expanded_ids = expanded.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        assert!(
+            expanded_ids.contains(&owner),
+            "outgoing target expansion must preserve the seed owner; expanded: {expanded:#?}"
+        );
+        assert!(
+            expanded_ids.contains(&target),
+            "owner-centered expansion should materialize the outgoing callee target; expanded: {expanded:#?}"
+        );
+
+        let target_score = expanded
+            .iter()
+            .find(|(id, _)| *id == target)
+            .map(|(_, score)| *score)
+            .expect("outgoing target should be present");
+        assert_eq!(target_score, 0.5);
+
+        let call_context = rag.collect_call_context(&expanded)?;
+        let owner_context = call_context
+            .get(&owner)
+            .expect("seed owner should retain outgoing call context");
+        let path_call = owner_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec!["crate".to_string(), "local_target".to_string()],
+                        }
+            })
+            .expect("owner should preserve the call edge to local_target");
+        assert_eq!(path_call.status, CallStatusKind::Resolved);
+        assert_eq!(path_call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(path_call.targets.len(), 1);
+        assert_eq!(path_call.targets[0].target_id, target);
+        assert_eq!(path_call.targets[0].relation, CallTargetKind::Function);
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
+    async fn call_context_expansion_adds_incoming_fixture_callers() -> Result<(), Error> {
+        init_tracing_once();
+        let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_call_graph",
+        )?));
+        let target = unique_id_by_name(&db, "function", "try_local_assoc")?;
+        let caller_owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_try_result_instance_method"),
+        )?;
+
+        let rag = init_test_rag_mock(Arc::clone(&db));
+        assert!(
+            !rag.call_context_degraded(),
+            "fresh fixture call_graph schema should enable call context expansion"
+        );
+
+        let expanded = rag.expand_hits_with_call_context(&[(target, 1.0)])?;
+        let expanded_ids = expanded.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        assert!(
+            expanded_ids.contains(&target),
+            "incoming caller expansion must preserve the seed target; expanded: {expanded:#?}"
+        );
+        assert!(
+            expanded_ids.contains(&caller_owner),
+            "target-centered expansion should materialize the caller owner; expanded: {expanded:#?}"
+        );
+
+        let call_context = rag.collect_call_context(&expanded)?;
+        let caller_context = call_context
+            .get(&caller_owner)
+            .expect("caller owner should receive outgoing call context");
+        let path_call = caller_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec!["try_local_assoc".to_string()],
+                        }
+            })
+            .expect("caller should preserve the call edge to try_local_assoc");
+        assert_eq!(path_call.status, CallStatusKind::Resolved);
+        assert_eq!(path_call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(path_call.targets.len(), 1);
+        assert_eq!(path_call.targets[0].target_id, target);
+        assert_eq!(path_call.targets[0].relation, CallTargetKind::Function);
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
+    async fn call_context_expansion_respects_max_caller_hits_by_score() -> Result<(), Error> {
+        init_tracing_once();
+        let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_call_graph",
+        )?));
+        let high_target = unique_id_by_name(&db, "function", "try_local_assoc")?;
+        let high_caller = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_try_result_instance_method"),
+        )?;
+        let low_target = one_uuid(&db, &method_by_impl_self_query("LocalAssoc", "make"))?;
+        let low_self_caller = one_uuid(
+            &db,
+            &method_by_impl_self_query("LocalAssoc", "call_self_make"),
+        )?;
+        let low_qualified_caller = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_qualified_local_assoc_make"),
+        )?;
+
+        let mut rag = init_test_rag_mock(Arc::clone(&db));
+        rag.cfg.call_context.max_owner_hits = 2;
+        rag.cfg.call_context.max_caller_hits = 1;
+        rag.cfg.call_context.caller_factor = 0.5;
+        assert!(
+            !rag.call_context_degraded(),
+            "fresh fixture call_graph schema should enable call context expansion"
+        );
+
+        let expanded =
+            rag.expand_hits_with_call_context(&[(high_target, 1.0), (low_target, 0.2)])?;
+        let expanded_ids = expanded.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        assert_eq!(
+            expanded_ids.len(),
+            3,
+            "max_caller_hits=1 should add exactly one caller to the two seed hits: {expanded:#?}"
+        );
+        assert!(
+            expanded_ids.contains(&high_target) && expanded_ids.contains(&low_target),
+            "incoming caller expansion must preserve seed hits: {expanded:#?}"
+        );
+        assert!(
+            expanded_ids.contains(&high_caller),
+            "higher-scored target should contribute the sole caller hit: {expanded:#?}"
+        );
+        assert!(
+            !expanded_ids.contains(&low_self_caller)
+                && !expanded_ids.contains(&low_qualified_caller),
+            "lower-scored associated-function callers should be truncated by max_caller_hits=1: {expanded:#?}"
+        );
+
+        let high_score = expanded
+            .iter()
+            .find(|(id, _)| *id == high_caller)
+            .map(|(_, score)| *score)
+            .expect("high caller should be present");
+        assert_eq!(high_score, 0.5);
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
+    async fn call_context_expansion_adds_incoming_fixture_dynamic_callers() -> Result<(), Error> {
+        init_tracing_once();
+        let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_call_graph",
+        )?));
+        let target = unique_id_by_name(&db, "function", "local_target")?;
+        let dynamic_owner = one_uuid(
+            &db,
+            &function_in_module_query(
+                &["crate"],
+                "call_aliased_indexed_named_field_function_binding",
+            ),
+        )?;
+
+        let mut rag = init_test_rag_mock(Arc::clone(&db));
+        rag.cfg.call_context.max_owner_hits = 128;
+        rag.cfg.call_context.max_caller_hits = 1024;
+        assert!(
+            !rag.call_context_degraded(),
+            "fresh fixture call_graph schema should enable dynamic caller expansion"
+        );
+
+        let expanded = rag.expand_hits_with_call_context(&[(target, 1.0)])?;
+        let expanded_ids = expanded.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        assert!(
+            expanded_ids.contains(&target),
+            "incoming dynamic caller expansion must preserve the seed target; expanded: {expanded:#?}"
+        );
+        assert!(
+            expanded_ids.contains(&dynamic_owner),
+            "function target expansion should materialize a dynamic-function caller owner; expanded: {expanded:#?}"
+        );
+
+        let call_context = rag.collect_call_context(&expanded)?;
+        let dynamic_context = call_context
+            .get(&dynamic_owner)
+            .expect("dynamic caller owner should receive outgoing call context");
+        let dynamic_call = dynamic_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Dynamic
+                    && call.callee == CallCalleeInfo::Dynamic
+                    && call
+                        .targets
+                        .iter()
+                        .any(|target_info| target_info.target_id == target)
+            })
+            .expect("dynamic caller should preserve the DynamicFunction edge to local_target");
+        assert_eq!(dynamic_call.status, CallStatusKind::Resolved);
+        assert_eq!(
+            dynamic_call.resolution,
+            Some(CallResolutionKind::LocalExact)
+        );
+        assert_eq!(dynamic_call.targets.len(), 1);
+        assert_eq!(dynamic_call.targets[0].target_id, target);
+        assert_eq!(
+            dynamic_call.targets[0].relation,
+            CallTargetKind::DynamicFunction
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
+    async fn call_context_expansion_excludes_closure_async_outer_owners_for_local_target()
+    -> Result<(), Error> {
+        init_tracing_once();
+        let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_call_graph",
+        )?));
+        let target = unique_id_by_name(&db, "function", "local_target")?;
+        let dynamic_owner = one_uuid(
+            &db,
+            &function_in_module_query(
+                &["crate"],
+                "call_aliased_indexed_named_field_function_binding",
+            ),
+        )?;
+        let forbidden_owners = [
+            one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "closure_body_call_is_not_outer_call_site"),
+            )?,
+            one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "async_block_call_is_not_outer_call_site"),
+            )?,
+            one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_move_closure_literal_with_body_call"),
+            )?,
+            one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_async_closure_literal_with_body_call"),
+            )?,
+        ];
+
+        let mut rag = init_test_rag_mock(Arc::clone(&db));
+        rag.cfg.call_context.max_owner_hits = 128;
+        rag.cfg.call_context.max_caller_hits = 1024;
+        assert!(
+            !rag.call_context_degraded(),
+            "fresh fixture call_graph schema should enable local_target caller expansion"
+        );
+
+        let expanded = rag.expand_hits_with_call_context(&[(target, 1.0)])?;
+        let expanded_ids = expanded.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        assert!(
+            expanded_ids.contains(&target),
+            "incoming local_target expansion must preserve the seed target; expanded: {expanded:#?}"
+        );
+        assert!(
+            expanded_ids.contains(&dynamic_owner),
+            "local_target expansion should still materialize real dynamic callers; expanded: {expanded:#?}"
+        );
+        assert!(
+            forbidden_owners
+                .iter()
+                .all(|owner| !expanded_ids.contains(owner)),
+            "local_target expansion leaked closure/async body outer owners: {expanded:#?}"
+        );
+
+        let call_context = rag.collect_call_context(&expanded)?;
+        for owner in forbidden_owners {
+            assert!(
+                !call_context.contains_key(&owner),
+                "closure/async outer owner received RAG call context after target expansion: {call_context:#?}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
+    async fn call_context_expansion_adds_incoming_fixture_method_callers() -> Result<(), Error> {
+        init_tracing_once();
+        let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_call_graph",
+        )?));
+        let target = one_uuid(
+            &db,
+            &method_by_impl_self_query("LocalAssoc", "instance_value"),
+        )?;
+        let method_owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_typed_local_instance_method"),
+        )?;
+        let assoc_owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_method_as_associated_function"),
+        )?;
+
+        let mut rag = init_test_rag_mock(Arc::clone(&db));
+        rag.cfg.call_context.max_owner_hits = 64;
+        rag.cfg.call_context.max_caller_hits = 64;
+        assert!(
+            !rag.call_context_degraded(),
+            "fresh fixture call_graph schema should enable call context expansion"
+        );
+
+        let expanded = rag.expand_hits_with_call_context(&[(target, 1.0)])?;
+        let expanded_ids = expanded.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        assert!(
+            expanded_ids.contains(&target),
+            "incoming method caller expansion must preserve the seed target; expanded: {expanded:#?}"
+        );
+        assert!(
+            expanded_ids.contains(&method_owner),
+            "method target expansion should materialize the method-call owner; expanded: {expanded:#?}"
+        );
+        assert!(
+            expanded_ids.contains(&assoc_owner),
+            "method target expansion should materialize the associated-function call owner; expanded: {expanded:#?}"
+        );
+
+        let call_context = rag.collect_call_context(&expanded)?;
+        let method_context = call_context
+            .get(&method_owner)
+            .expect("method-call owner should receive outgoing call context");
+        let method_call = method_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Method
+                    && call.callee
+                        == CallCalleeInfo::Method {
+                            name: "instance_value".to_string(),
+                            receiver: Some(CallReceiverInfo::TypedLocalBinding {
+                                name: "value".to_string(),
+                                type_path: vec!["LocalAssoc".to_string()],
+                            }),
+                        }
+            })
+            .expect("caller should preserve the method call edge to LocalAssoc::instance_value");
+        assert_eq!(method_call.status, CallStatusKind::Resolved);
+        assert_eq!(method_call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(method_call.targets.len(), 1);
+        assert_eq!(method_call.targets[0].target_id, target);
+        assert_eq!(method_call.targets[0].relation, CallTargetKind::Method);
+
+        let assoc_context = call_context
+            .get(&assoc_owner)
+            .expect("associated-function caller should receive outgoing call context");
+        let assoc_call = assoc_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec!["LocalAssoc".to_string(), "instance_value".to_string()],
+                        }
+            })
+            .expect(
+                "caller should preserve the associated-function edge to LocalAssoc::instance_value",
+            );
+        assert_eq!(assoc_call.status, CallStatusKind::Resolved);
+        assert_eq!(assoc_call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(assoc_call.targets.len(), 1);
+        assert_eq!(assoc_call.targets[0].target_id, target);
+        assert_eq!(
+            assoc_call.targets[0].relation,
+            CallTargetKind::AssociatedFunction
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
+    async fn call_context_expansion_adds_incoming_fixture_trait_dispatch_callers()
+    -> Result<(), Error> {
+        init_tracing_once();
+        let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_call_graph",
+        )?));
+        let target = one_uuid(
+            &db,
+            &method_by_impl_trait_self_query(
+                "LocalDispatchTrait",
+                "TraitDispatchTarget",
+                "trait_value",
+            ),
+        )?;
+        let initialized_owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_initialized_local_trait_method"),
+        )?;
+        let chained_owner = one_uuid(
+            &db,
+            &function_in_module_query(
+                &["crate"],
+                "call_reference_chain_trait_object_binding_method",
+            ),
+        )?;
+
+        let mut rag = init_test_rag_mock(Arc::clone(&db));
+        rag.cfg.call_context.max_owner_hits = 64;
+        rag.cfg.call_context.max_caller_hits = 64;
+        assert!(
+            !rag.call_context_degraded(),
+            "fresh fixture call_graph schema should enable trait-dispatch caller expansion"
+        );
+
+        let expanded = rag.expand_hits_with_call_context(&[(target, 1.0)])?;
+        let expanded_ids = expanded.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        assert!(
+            expanded_ids.contains(&target),
+            "incoming trait-dispatch expansion must preserve the seed target; expanded: {expanded:#?}"
+        );
+        assert!(
+            expanded_ids.contains(&initialized_owner),
+            "trait-dispatch target expansion should materialize the initialized local caller; expanded: {expanded:#?}"
+        );
+        assert!(
+            expanded_ids.contains(&chained_owner),
+            "trait-dispatch target expansion should materialize the chained trait-object caller; expanded: {expanded:#?}"
+        );
+
+        let call_context = rag.collect_call_context(&expanded)?;
+        for owner in [initialized_owner, chained_owner] {
+            let context = call_context
+                .get(&owner)
+                .expect("trait-dispatch caller should receive outgoing call context");
+            let call = context
+                .iter()
+                .find(|call| {
+                    call.kind == CallSiteKind::Method
+                        && call.callee
+                            == CallCalleeInfo::Method {
+                                name: "trait_value".to_string(),
+                                receiver: Some(CallReceiverInfo::InitializedLocalBinding {
+                                    name: "value".to_string(),
+                                    init_path: vec!["TraitDispatchTarget".to_string()],
+                                }),
+                            }
+                })
+                .expect("caller should preserve the trait-dispatch edge to the seed target");
+            assert_eq!(call.status, CallStatusKind::Resolved);
+            assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+            assert_eq!(call.targets.len(), 1);
+            assert_eq!(call.targets[0].target_id, target);
+            assert_eq!(call.targets[0].relation, CallTargetKind::Method);
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
+    async fn call_context_expansion_adds_incoming_fixture_associated_function_callers()
+    -> Result<(), Error> {
+        init_tracing_once();
+        let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_call_graph",
+        )?));
+        let target = one_uuid(&db, &method_by_impl_self_query("LocalAssoc", "make"))?;
+        let self_owner = one_uuid(
+            &db,
+            &method_by_impl_self_query("LocalAssoc", "call_self_make"),
+        )?;
+        let qualified_owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_qualified_local_assoc_make"),
+        )?;
+
+        let mut rag = init_test_rag_mock(Arc::clone(&db));
+        rag.cfg.call_context.max_owner_hits = 64;
+        rag.cfg.call_context.max_caller_hits = 64;
+        assert!(
+            !rag.call_context_degraded(),
+            "fresh fixture call_graph schema should enable associated-function caller expansion"
+        );
+
+        let expanded = rag.expand_hits_with_call_context(&[(target, 1.0)])?;
+        let expanded_ids = expanded.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        assert!(
+            expanded_ids.contains(&target),
+            "incoming associated-function caller expansion must preserve the seed target; expanded: {expanded:#?}"
+        );
+        assert!(
+            expanded_ids.contains(&self_owner),
+            "associated-function target expansion should materialize the method owner for Self::make; expanded: {expanded:#?}"
+        );
+        assert!(
+            expanded_ids.contains(&qualified_owner),
+            "associated-function target expansion should materialize the qualified function owner; expanded: {expanded:#?}"
+        );
+
+        let call_context = rag.collect_call_context(&expanded)?;
+        let self_context = call_context
+            .get(&self_owner)
+            .expect("Self::make caller method owner should receive outgoing call context");
+        let self_call = self_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec!["Self".to_string(), "make".to_string()],
+                        }
+            })
+            .expect("method owner should preserve the Self::make edge to LocalAssoc::make");
+        assert_eq!(self_call.status, CallStatusKind::Resolved);
+        assert_eq!(self_call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(self_call.targets.len(), 1);
+        assert_eq!(self_call.targets[0].target_id, target);
+        assert_eq!(
+            self_call.targets[0].relation,
+            CallTargetKind::AssociatedFunction
+        );
+
+        let qualified_context = call_context
+            .get(&qualified_owner)
+            .expect("qualified associated-function caller should receive outgoing call context");
+        let qualified_call = qualified_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec!["LocalAssoc".to_string(), "make".to_string()],
+                        }
+            })
+            .expect("function owner should preserve the qualified edge to LocalAssoc::make");
+        assert_eq!(qualified_call.status, CallStatusKind::Resolved);
+        assert_eq!(
+            qualified_call.resolution,
+            Some(CallResolutionKind::LocalExact)
+        );
+        assert_eq!(qualified_call.targets.len(), 1);
+        assert_eq!(qualified_call.targets[0].target_id, target);
+        assert_eq!(
+            qualified_call.targets[0].relation,
+            CallTargetKind::AssociatedFunction
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
+    async fn call_context_expansion_adds_incoming_fixture_constructor_callers() -> Result<(), Error>
+    {
+        init_tracing_once();
+
+        let tuple_db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_call_graph",
+        )?));
+        let tuple_target = one_uuid(&tuple_db, &struct_in_module_query(&["crate"], "NewType"))?;
+        let tuple_owner = one_uuid(
+            &tuple_db,
+            &function_in_module_query(&["crate"], "call_new_type_constructor"),
+        )?;
+
+        let mut tuple_rag = init_test_rag_mock(Arc::clone(&tuple_db));
+        tuple_rag.cfg.call_context.max_owner_hits = 64;
+        tuple_rag.cfg.call_context.max_caller_hits = 64;
+        assert!(
+            !tuple_rag.call_context_degraded(),
+            "fresh fixture call_graph schema should enable tuple-constructor caller expansion"
+        );
+
+        let tuple_hits = tuple_rag.expand_hits_with_call_context(&[(tuple_target, 1.0)])?;
+        let tuple_ids = tuple_hits.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        assert!(
+            tuple_ids.contains(&tuple_target),
+            "incoming tuple-constructor expansion must preserve the seed target; expanded: {tuple_hits:#?}"
+        );
+        assert!(
+            tuple_ids.contains(&tuple_owner),
+            "tuple-struct constructor target expansion should materialize the caller owner; expanded: {tuple_hits:#?}"
+        );
+
+        let tuple_context = tuple_rag.collect_call_context(&tuple_hits)?;
+        let tuple_owner_context = tuple_context
+            .get(&tuple_owner)
+            .expect("tuple constructor caller should receive outgoing call context");
+        let tuple_call = tuple_owner_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec!["NewType".to_string()],
+                        }
+            })
+            .expect("caller should preserve the NewType constructor edge");
+        assert_eq!(tuple_call.status, CallStatusKind::Resolved);
+        assert_eq!(tuple_call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(tuple_call.targets.len(), 1);
+        assert_eq!(tuple_call.targets[0].target_id, tuple_target);
+        assert_eq!(
+            tuple_call.targets[0].relation,
+            CallTargetKind::TupleStructConstructor
+        );
+
+        let variant_db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_nodes",
+        )?));
+        let variant_target = one_uuid(
+            &variant_db,
+            &variant_by_enum_query("EnumWithData", "Variant1"),
+        )?;
+        let variant_owner = one_uuid(
+            &variant_db,
+            &function_in_module_query(&["crate", "imports"], "use_imported_items"),
+        )?;
+
+        let mut variant_rag = init_test_rag_mock(Arc::clone(&variant_db));
+        variant_rag.cfg.call_context.max_owner_hits = 64;
+        variant_rag.cfg.call_context.max_caller_hits = 64;
+        assert!(
+            !variant_rag.call_context_degraded(),
+            "fresh fixture_nodes call_graph schema should enable enum-constructor caller expansion"
+        );
+
+        let variant_hits = variant_rag.expand_hits_with_call_context(&[(variant_target, 1.0)])?;
+        let variant_ids = variant_hits.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        assert!(
+            variant_ids.contains(&variant_target),
+            "incoming enum-constructor expansion must preserve the seed target; expanded: {variant_hits:#?}"
+        );
+        assert!(
+            variant_ids.contains(&variant_owner),
+            "enum-variant constructor target expansion should materialize the caller owner; expanded: {variant_hits:#?}"
+        );
+
+        let variant_context = variant_rag.collect_call_context(&variant_hits)?;
+        let variant_owner_context = variant_context
+            .get(&variant_owner)
+            .expect("enum constructor caller should receive outgoing call context");
+        let variant_call = variant_owner_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec!["EnumWithData".to_string(), "Variant1".to_string()],
+                        }
+            })
+            .expect("caller should preserve the EnumWithData::Variant1 constructor edge");
+        assert_eq!(variant_call.status, CallStatusKind::Resolved);
+        assert_eq!(
+            variant_call.resolution,
+            Some(CallResolutionKind::LocalExact)
+        );
+        assert_eq!(variant_call.targets.len(), 1);
+        assert_eq!(variant_call.targets[0].target_id, variant_target);
+        assert_eq!(
+            variant_call.targets[0].relation,
+            CallTargetKind::EnumVariantConstructor
+        );
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
+    async fn call_context_sparse_get_context_expands_owner_hits_to_fixture_callees()
+    -> Result<(), Error> {
+        init_tracing_once();
+        let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_call_graph",
+        )?));
+        let owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_crate_local_target"),
+        )?;
+        let target = unique_id_by_name(&db, "function", "local_target")?;
+        let query = "call_crate_local_target";
+        let mut cfg = crate::RagConfig::default();
+        cfg.type_context.enabled = false;
+        cfg.call_context.max_caller_hits = 64;
+        let rag = RagService::new_full(
+            Arc::clone(&db),
+            runtime_for(&db, EmbeddingProcessor::new_mock()),
+            IoManagerHandle::new(),
+            cfg,
+        )?;
+        assert!(
+            !rag.call_context_degraded(),
+            "fresh fixture call_graph schema should enable public outgoing call-context expansion"
+        );
+
+        rag.bm25_rebuild().await?;
+        let sparse_hits = rag
+            .search_bm25_strict(query, 1, LOADED_WORKSPACE_SCOPE)
+            .await?;
+        assert_eq!(
+            sparse_hits.len(),
+            1,
+            "test query should seed get_context with the caller owner only"
+        );
+        assert_eq!(
+            sparse_hits[0].0, owner,
+            "test query should seed get_context with the caller owner only"
+        );
+
+        let assembled = rag
+            .get_context(
+                query,
+                1,
+                &TokenBudget {
+                    max_total: 4096,
+                    per_file_max: 4096,
+                    per_part_max: 1024,
+                },
+                &RetrievalStrategy::Sparse { strict: Some(true) },
+                LOADED_WORKSPACE_SCOPE,
+            )
+            .await?;
+
+        let caller_part = assembled
+            .parts
+            .iter()
+            .find(|part| part.id == owner)
+            .expect("public get_context should preserve the caller owner seed");
+        let call = caller_part
+            .call_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec!["crate".to_string(), "local_target".to_string()],
+                        }
+            })
+            .expect("caller part should retain outgoing call context to the callee target");
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(call.targets.len(), 1);
+        assert_eq!(call.targets[0].target_id, target);
+        assert_eq!(call.targets[0].relation, CallTargetKind::Function);
+
+        let target_part = assembled
+            .parts
+            .iter()
+            .find(|part| part.id == target)
+            .expect("public get_context should materialize the outgoing callee target");
+        let expansion = target_part
+            .call_expansion
+            .expect("expanded callee target should carry call-expansion provenance");
+        assert_eq!(expansion.seed_id, owner);
+        assert_eq!(expansion.relation, CallExpansionKind::OutgoingTarget);
+        assert_eq!(expansion.call_site_id, call.site_id);
+        assert_eq!(expansion.target_id, target);
+        assert_eq!(expansion.distance, 1);
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
+    async fn call_context_sparse_get_context_expands_target_hits_to_fixture_callers()
+    -> Result<(), Error> {
+        init_tracing_once();
+        let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_call_graph",
+        )?));
+        let target = unique_id_by_name(&db, "function", "try_local_assoc")?;
+        let caller_owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_try_result_instance_method"),
+        )?;
+        let query = "try_local_assoc";
+        let mut cfg = crate::RagConfig::default();
+        cfg.type_context.enabled = false;
+        cfg.call_context.max_caller_hits = 64;
+        let rag = RagService::new_full(
+            Arc::clone(&db),
+            runtime_for(&db, EmbeddingProcessor::new_mock()),
+            IoManagerHandle::new(),
+            cfg,
+        )?;
+        assert!(
+            !rag.call_context_degraded(),
+            "fresh fixture call_graph schema should enable public call-context expansion"
+        );
+
+        rag.bm25_rebuild().await?;
+        let sparse_hits = rag
+            .search_bm25_strict(query, 1, LOADED_WORKSPACE_SCOPE)
+            .await?;
+        assert_eq!(
+            sparse_hits.len(),
+            1,
+            "test query should seed get_context with the callee target only"
+        );
+        assert_eq!(
+            sparse_hits[0].0, target,
+            "test query should seed get_context with the callee target only"
+        );
+
+        let assembled = rag
+            .get_context(
+                query,
+                1,
+                &TokenBudget {
+                    max_total: 4096,
+                    per_file_max: 4096,
+                    per_part_max: 1024,
+                },
+                &RetrievalStrategy::Sparse { strict: Some(true) },
+                LOADED_WORKSPACE_SCOPE,
+            )
+            .await?;
+
+        let caller_part = assembled
+            .parts
+            .iter()
+            .find(|part| part.id == caller_owner)
+            .expect("public get_context should materialize the incoming caller owner");
+        let call = caller_part
+            .call_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec!["try_local_assoc".to_string()],
+                        }
+            })
+            .expect("caller part should retain outgoing call context to the seed target");
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(call.targets.len(), 1);
+        assert_eq!(call.targets[0].target_id, target);
+        assert_eq!(call.targets[0].relation, CallTargetKind::Function);
+        let expansion = caller_part
+            .call_expansion
+            .expect("expanded incoming caller should carry call-expansion provenance");
+        assert_eq!(expansion.seed_id, target);
+        assert_eq!(expansion.relation, CallExpansionKind::IncomingCaller);
+        assert_eq!(expansion.call_site_id, call.site_id);
+        assert_eq!(expansion.target_id, target);
+        assert_eq!(expansion.distance, 1);
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
+    async fn call_context_sparse_get_context_excludes_closure_async_outer_owners_for_local_target()
+    -> Result<(), Error> {
+        init_tracing_once();
+        let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_call_graph",
+        )?));
+        let target = unique_id_by_name(&db, "function", "local_target")?;
+        let path_owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_crate_local_target"),
+        )?;
+        let dynamic_owner = one_uuid(
+            &db,
+            &function_in_module_query(
+                &["crate"],
+                "call_aliased_indexed_named_field_function_binding",
+            ),
+        )?;
+        let forbidden_owners = [
+            one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "closure_body_call_is_not_outer_call_site"),
+            )?,
+            one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "async_block_call_is_not_outer_call_site"),
+            )?,
+            one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_move_closure_literal_with_body_call"),
+            )?,
+            one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "call_async_closure_literal_with_body_call"),
+            )?,
+        ];
+        let query = "pub fn local_target";
+        let mut cfg = crate::RagConfig::default();
+        cfg.type_context.enabled = false;
+        cfg.call_context.max_owner_hits = 64;
+        cfg.call_context.max_caller_hits = 1024;
+        let rag = RagService::new_full(
+            Arc::clone(&db),
+            runtime_for(&db, EmbeddingProcessor::new_mock()),
+            IoManagerHandle::new(),
+            cfg,
+        )?;
+        assert!(
+            !rag.call_context_degraded(),
+            "fresh fixture call_graph schema should enable public local_target expansion"
+        );
+
+        rag.bm25_rebuild().await?;
+        let sparse_hits = rag
+            .search_bm25_strict(query, 1, LOADED_WORKSPACE_SCOPE)
+            .await?;
+        assert_eq!(
+            sparse_hits.len(),
+            1,
+            "test query should seed get_context with local_target only"
+        );
+        assert_eq!(
+            sparse_hits[0].0, target,
+            "test query should seed get_context with local_target only; hits: {sparse_hits:#?}"
+        );
+
+        let assembled = rag
+            .get_context(
+                query,
+                1,
+                &TokenBudget {
+                    max_total: 65_536,
+                    per_file_max: 65_536,
+                    per_part_max: 4096,
+                },
+                &RetrievalStrategy::Sparse { strict: Some(true) },
+                LOADED_WORKSPACE_SCOPE,
+            )
+            .await?;
+
+        let path_part = assembled
+            .parts
+            .iter()
+            .find(|part| part.id == path_owner)
+            .expect("public get_context should materialize the ordinary local_target path caller");
+        let path_call = path_part
+            .call_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec!["crate".to_string(), "local_target".to_string()],
+                        }
+                    && call
+                        .targets
+                        .iter()
+                        .any(|target_info| target_info.target_id == target)
+            })
+            .expect("path caller part should retain outgoing call context to local_target");
+        assert_eq!(path_call.status, CallStatusKind::Resolved);
+        assert_eq!(path_call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(path_call.targets.len(), 1);
+        assert_eq!(path_call.targets[0].target_id, target);
+        assert_eq!(path_call.targets[0].relation, CallTargetKind::Function);
+        let path_expansion = path_part
+            .call_expansion
+            .expect("expanded path caller should carry call-expansion provenance");
+        assert_eq!(path_expansion.seed_id, target);
+        assert_eq!(path_expansion.relation, CallExpansionKind::IncomingCaller);
+        assert_eq!(path_expansion.call_site_id, path_call.site_id);
+        assert_eq!(path_expansion.target_id, target);
+        assert_eq!(path_expansion.distance, 1);
+
+        let dynamic_part = assembled
+            .parts
+            .iter()
+            .find(|part| part.id == dynamic_owner)
+            .expect("public get_context should materialize a real dynamic local_target caller");
+        let dynamic_call = dynamic_part
+            .call_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Dynamic
+                    && call
+                        .targets
+                        .iter()
+                        .any(|target_info| target_info.target_id == target)
+            })
+            .expect("dynamic caller part should retain outgoing call context to local_target");
+        assert_eq!(dynamic_call.status, CallStatusKind::Resolved);
+        assert_eq!(
+            dynamic_call.resolution,
+            Some(CallResolutionKind::LocalExact)
+        );
+        assert_eq!(dynamic_call.targets.len(), 1);
+        assert_eq!(dynamic_call.targets[0].target_id, target);
+        assert_eq!(
+            dynamic_call.targets[0].relation,
+            CallTargetKind::DynamicFunction
+        );
+        let expansion = dynamic_part
+            .call_expansion
+            .expect("expanded dynamic caller should carry call-expansion provenance");
+        assert_eq!(expansion.seed_id, target);
+        assert_eq!(expansion.relation, CallExpansionKind::IncomingCaller);
+        assert_eq!(expansion.call_site_id, dynamic_call.site_id);
+        assert_eq!(expansion.target_id, target);
+        assert_eq!(expansion.distance, 1);
+
+        for forbidden in forbidden_owners {
+            assert!(
+                assembled.parts.iter().all(|part| part.id != forbidden),
+                "public local_target expansion leaked closure/async outer owner {forbidden}: {:#?}",
+                assembled.parts
+            );
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
+    async fn call_context_sparse_get_context_expands_method_target_hits_to_fixture_callers()
+    -> Result<(), Error> {
+        init_tracing_once();
+        let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_call_graph",
+        )?));
+        let target = one_uuid(
+            &db,
+            &method_by_impl_self_query("LocalAssoc", "instance_value"),
+        )?;
+        let method_owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_typed_local_instance_method"),
+        )?;
+        let assoc_owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_method_as_associated_function"),
+        )?;
+        let query = "instance_value";
+        let mut cfg = crate::RagConfig::default();
+        cfg.type_context.enabled = false;
+        cfg.call_context.max_owner_hits = 64;
+        cfg.call_context.max_caller_hits = 64;
+        let rag = RagService::new_full(
+            Arc::clone(&db),
+            runtime_for(&db, EmbeddingProcessor::new_mock()),
+            IoManagerHandle::new(),
+            cfg,
+        )?;
+        assert!(
+            !rag.call_context_degraded(),
+            "fresh fixture call_graph schema should enable public method call-context expansion"
+        );
+
+        rag.bm25_rebuild().await?;
+        let sparse_hits = rag
+            .search_bm25_strict(query, 1, LOADED_WORKSPACE_SCOPE)
+            .await?;
+        assert_eq!(
+            sparse_hits.len(),
+            1,
+            "test query should seed get_context with the method target only"
+        );
+        assert_eq!(
+            sparse_hits[0].0, target,
+            "test query should seed get_context with the method target only"
+        );
+
+        let assembled = rag
+            .get_context(
+                query,
+                1,
+                &TokenBudget {
+                    max_total: 4096,
+                    per_file_max: 4096,
+                    per_part_max: 1024,
+                },
+                &RetrievalStrategy::Sparse { strict: Some(true) },
+                LOADED_WORKSPACE_SCOPE,
+            )
+            .await?;
+
+        let method_part = assembled
+            .parts
+            .iter()
+            .find(|part| part.id == method_owner)
+            .expect("public get_context should materialize the method-call caller owner");
+        let method_call = method_part
+            .call_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Method
+                    && call.callee
+                        == CallCalleeInfo::Method {
+                            name: "instance_value".to_string(),
+                            receiver: Some(CallReceiverInfo::TypedLocalBinding {
+                                name: "value".to_string(),
+                                type_path: vec!["LocalAssoc".to_string()],
+                            }),
+                        }
+            })
+            .expect("caller part should retain outgoing method call context to the seed target");
+        assert_eq!(method_call.status, CallStatusKind::Resolved);
+        assert_eq!(method_call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(method_call.targets.len(), 1);
+        assert_eq!(method_call.targets[0].target_id, target);
+        assert_eq!(method_call.targets[0].relation, CallTargetKind::Method);
+        let expansion = method_part
+            .call_expansion
+            .expect("expanded method caller should carry call-expansion provenance");
+        assert_eq!(expansion.seed_id, target);
+        assert_eq!(expansion.relation, CallExpansionKind::IncomingCaller);
+        assert_eq!(expansion.call_site_id, method_call.site_id);
+        assert_eq!(expansion.target_id, target);
+        assert_eq!(expansion.distance, 1);
+
+        let assoc_part = assembled
+            .parts
+            .iter()
+            .find(|part| part.id == assoc_owner)
+            .expect("public get_context should materialize the associated-function caller owner");
+        let assoc_call = assoc_part
+            .call_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec!["LocalAssoc".to_string(), "instance_value".to_string()],
+                        }
+            })
+            .expect(
+                "caller part should retain outgoing associated-function context to the seed target",
+            );
+        assert_eq!(assoc_call.status, CallStatusKind::Resolved);
+        assert_eq!(assoc_call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(assoc_call.targets.len(), 1);
+        assert_eq!(assoc_call.targets[0].target_id, target);
+        assert_eq!(
+            assoc_call.targets[0].relation,
+            CallTargetKind::AssociatedFunction
+        );
+        let expansion = assoc_part
+            .call_expansion
+            .expect("expanded associated-function caller should carry call-expansion provenance");
+        assert_eq!(expansion.seed_id, target);
+        assert_eq!(expansion.relation, CallExpansionKind::IncomingCaller);
+        assert_eq!(expansion.call_site_id, assoc_call.site_id);
+        assert_eq!(expansion.target_id, target);
+        assert_eq!(expansion.distance, 1);
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
+    async fn call_context_sparse_get_context_expands_associated_function_target_hits_to_fixture_callers()
+    -> Result<(), Error> {
+        init_tracing_once();
+        let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_call_graph",
+        )?));
+        let target = one_uuid(
+            &db,
+            &trait_method_query("LocalAssocFunctionTrait", "trait_make"),
+        )?;
+        let caller_owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_trait_associated_function"),
+        )?;
+        let query = "233 trait_make";
+        let mut cfg = crate::RagConfig::default();
+        cfg.type_context.enabled = false;
+        cfg.call_context.max_owner_hits = 64;
+        cfg.call_context.max_caller_hits = 64;
+        let rag = RagService::new_full(
+            Arc::clone(&db),
+            runtime_for(&db, EmbeddingProcessor::new_mock()),
+            IoManagerHandle::new(),
+            cfg,
+        )?;
+        assert!(
+            !rag.call_context_degraded(),
+            "fresh fixture call_graph schema should enable public associated-function call-context expansion"
+        );
+
+        rag.bm25_rebuild().await?;
+        let sparse_hits = rag
+            .search_bm25_strict(query, 1, LOADED_WORKSPACE_SCOPE)
+            .await?;
+        assert_eq!(
+            sparse_hits.len(),
+            1,
+            "test query should seed get_context with the associated-function target only"
+        );
+        assert_eq!(
+            sparse_hits[0].0, target,
+            "test query should seed get_context with the LocalAssocFunctionTrait::trait_make target only; hits: {sparse_hits:#?}"
+        );
+
+        let assembled = rag
+            .get_context(
+                query,
+                1,
+                &TokenBudget {
+                    max_total: 20_000,
+                    per_file_max: 20_000,
+                    per_part_max: 4_096,
+                },
+                &RetrievalStrategy::Sparse { strict: Some(true) },
+                LOADED_WORKSPACE_SCOPE,
+            )
+            .await?;
+
+        let caller_part = assembled
+            .parts
+            .iter()
+            .find(|part| part.id == caller_owner)
+            .expect(
+                "public get_context should materialize the trait associated-function caller owner",
+            );
+        let call = caller_part
+            .call_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec![
+                                "LocalAssocFunctionTrait".to_string(),
+                                "trait_make".to_string(),
+                            ],
+                        }
+            })
+            .expect("caller part should retain outgoing trait associated-function context to the seed target");
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(call.targets.len(), 1);
+        assert_eq!(call.targets[0].target_id, target);
+        assert_eq!(call.targets[0].relation, CallTargetKind::AssociatedFunction);
+        let expansion = caller_part
+            .call_expansion
+            .expect("expanded associated-function caller should carry call-expansion provenance");
+        assert_eq!(expansion.seed_id, target);
+        assert_eq!(expansion.relation, CallExpansionKind::IncomingCaller);
+        assert_eq!(expansion.call_site_id, call.site_id);
+        assert_eq!(expansion.target_id, target);
+        assert_eq!(expansion.distance, 1);
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
+    async fn call_context_sparse_get_context_expands_imported_trait_associated_function_target_hits_to_fixture_callers()
+    -> Result<(), Error> {
+        init_tracing_once();
+        let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_call_graph",
+        )?));
+        let target = one_uuid(
+            &db,
+            &trait_method_query("ImportedAssocFunctionTrait", "imported_trait_make"),
+        )?;
+        let callers = [
+            (
+                &["crate", "trait_assoc_function_scope", "with_direct_import"][..],
+                "call_direct_imported_trait_associated_function",
+                &["ImportedAssocFunctionTrait", "imported_trait_make"][..],
+            ),
+            (
+                &["crate", "trait_assoc_function_scope", "with_alias_import"][..],
+                "call_alias_imported_trait_associated_function",
+                &["VisibleAssocFunctionTrait", "imported_trait_make"][..],
+            ),
+            (
+                &["crate", "trait_assoc_function_scope", "with_glob_import"][..],
+                "call_glob_imported_trait_associated_function",
+                &["ImportedAssocFunctionTrait", "imported_trait_make"][..],
+            ),
+            (
+                &["crate", "trait_assoc_reexport_scope"][..],
+                "call_reexported_trait_associated_function",
+                &["ReexportedAssocFunctionTrait", "imported_trait_make"][..],
+            ),
+            (
+                &["crate", "grouped_trait_assoc_function_scope"][..],
+                "call_grouped_imported_trait_associated_function",
+                &["GroupedAssocFunctionTrait", "imported_trait_make"][..],
+            ),
+        ];
+        let caller_owners = callers
+            .iter()
+            .map(|(module_path, name, expected_path)| {
+                Ok((
+                    one_uuid(&db, &function_in_module_query(module_path, name))?,
+                    *expected_path,
+                ))
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        let query = "987 imported_trait_make";
+        let mut cfg = crate::RagConfig::default();
+        cfg.type_context.enabled = false;
+        cfg.call_context.max_owner_hits = 64;
+        cfg.call_context.max_caller_hits = 64;
+        let rag = RagService::new_full(
+            Arc::clone(&db),
+            runtime_for(&db, EmbeddingProcessor::new_mock()),
+            IoManagerHandle::new(),
+            cfg,
+        )?;
+        assert!(
+            !rag.call_context_degraded(),
+            "fresh fixture call_graph schema should enable public imported trait associated-function call-context expansion"
+        );
+
+        rag.bm25_rebuild().await?;
+        let sparse_hits = rag
+            .search_bm25_strict(query, 1, LOADED_WORKSPACE_SCOPE)
+            .await?;
+        assert_eq!(
+            sparse_hits.len(),
+            1,
+            "test query should seed get_context with the imported trait associated-function target only"
+        );
+        assert_eq!(
+            sparse_hits[0].0, target,
+            "test query should seed get_context with the ImportedAssocFunctionTrait::imported_trait_make target only; hits: {sparse_hits:#?}"
+        );
+
+        let assembled = rag
+            .get_context(
+                query,
+                1,
+                &TokenBudget {
+                    max_total: 24_000,
+                    per_file_max: 24_000,
+                    per_part_max: 4_096,
+                },
+                &RetrievalStrategy::Sparse { strict: Some(true) },
+                LOADED_WORKSPACE_SCOPE,
+            )
+            .await?;
+
+        for (caller_owner, expected_path) in caller_owners {
+            let caller_part = assembled
+                .parts
+                .iter()
+                .find(|part| part.id == caller_owner)
+                .expect(
+                    "public get_context should materialize the imported trait associated-function caller owner",
+                );
+            let call = caller_part
+                .call_context
+                .iter()
+                .find(|call| {
+                    call.kind == CallSiteKind::Path
+                        && call.callee
+                            == CallCalleeInfo::Path {
+                                path: expected_path
+                                    .iter()
+                                    .map(|segment| (*segment).to_string())
+                                    .collect(),
+                            }
+                })
+                .expect("caller part should retain outgoing imported trait associated-function context to the seed target");
+            assert_eq!(call.status, CallStatusKind::Resolved);
+            assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+            assert_eq!(call.targets.len(), 1);
+            assert_eq!(call.targets[0].target_id, target);
+            assert_eq!(call.targets[0].relation, CallTargetKind::AssociatedFunction);
+            let expansion = caller_part.call_expansion.expect(
+                "expanded imported trait associated-function caller should carry call-expansion provenance",
+            );
+            assert_eq!(expansion.seed_id, target);
+            assert_eq!(expansion.relation, CallExpansionKind::IncomingCaller);
+            assert_eq!(expansion.call_site_id, call.site_id);
+            assert_eq!(expansion.target_id, target);
+            assert_eq!(expansion.distance, 1);
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
+    async fn call_context_sparse_get_context_expands_trait_dispatch_target_hits_to_fixture_callers()
+    -> Result<(), Error> {
+        init_tracing_once();
+        let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_call_graph",
+        )?));
+        let target = one_uuid(
+            &db,
+            &method_by_impl_trait_self_query(
+                "LocalDispatchTrait",
+                "TraitDispatchTarget",
+                "trait_value",
+            ),
+        )?;
+        let initialized_owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_initialized_local_trait_method"),
+        )?;
+        let chained_owner = one_uuid(
+            &db,
+            &function_in_module_query(
+                &["crate"],
+                "call_reference_chain_trait_object_binding_method",
+            ),
+        )?;
+        let query = "144 trait_value";
+        let mut cfg = crate::RagConfig::default();
+        cfg.type_context.enabled = false;
+        cfg.call_context.max_owner_hits = 64;
+        cfg.call_context.max_caller_hits = 64;
+        let rag = RagService::new_full(
+            Arc::clone(&db),
+            runtime_for(&db, EmbeddingProcessor::new_mock()),
+            IoManagerHandle::new(),
+            cfg,
+        )?;
+        assert!(
+            !rag.call_context_degraded(),
+            "fresh fixture call_graph schema should enable public trait-dispatch call-context expansion"
+        );
+
+        rag.bm25_rebuild().await?;
+        let sparse_hits = rag
+            .search_bm25_strict(query, 5, LOADED_WORKSPACE_SCOPE)
+            .await?;
+        assert!(
+            sparse_hits.iter().any(|(id, _)| *id == target),
+            "test query should seed get_context with the concrete trait-dispatch method target; hits: {sparse_hits:#?}"
+        );
+
+        let assembled = rag
+            .get_context(
+                query,
+                5,
+                &TokenBudget {
+                    max_total: 20_000,
+                    per_file_max: 20_000,
+                    per_part_max: 4_096,
+                },
+                &RetrievalStrategy::Sparse { strict: Some(true) },
+                LOADED_WORKSPACE_SCOPE,
+            )
+            .await?;
+
+        for owner in [initialized_owner, chained_owner] {
+            let caller_part =
+                assembled.parts.iter().find(|part| part.id == owner).expect(
+                    "public get_context should materialize the trait-dispatch caller owner",
+                );
+            let call = caller_part
+                .call_context
+                .iter()
+                .find(|call| {
+                    call.kind == CallSiteKind::Method
+                        && call.callee
+                            == CallCalleeInfo::Method {
+                                name: "trait_value".to_string(),
+                                receiver: Some(CallReceiverInfo::InitializedLocalBinding {
+                                    name: "value".to_string(),
+                                    init_path: vec!["TraitDispatchTarget".to_string()],
+                                }),
+                            }
+                })
+                .expect(
+                    "caller part should retain outgoing trait-dispatch context to the seed target",
+                );
+            assert_eq!(call.status, CallStatusKind::Resolved);
+            assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+            assert_eq!(call.targets.len(), 1);
+            assert_eq!(call.targets[0].target_id, target);
+            assert_eq!(call.targets[0].relation, CallTargetKind::Method);
+            let expansion = caller_part
+                .call_expansion
+                .expect("expanded trait-dispatch caller should carry call-expansion provenance");
+            assert_eq!(expansion.seed_id, target);
+            assert_eq!(expansion.relation, CallExpansionKind::IncomingCaller);
+            assert_eq!(expansion.call_site_id, call.site_id);
+            assert_eq!(expansion.target_id, target);
+            assert_eq!(expansion.distance, 1);
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
     struct CallSeed<'a> {
         id: Uuid,
         owner: Uuid,
@@ -1982,6 +4186,8 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
 
     #[cfg(feature = "call_graph")]
     fn insert_call_edge(db: &Database, owner: Uuid, site: Uuid, kind: &str) -> Result<(), Error> {
+        ensure_function_owner(db, owner)?;
+
         let mut params = BTreeMap::new();
         params.insert("owner_id".to_string(), uuid(owner));
         params.insert("site_id".to_string(), uuid(site));
@@ -2003,6 +4209,53 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
     }
 
     #[cfg(feature = "call_graph")]
+    fn ensure_function_owner(db: &Database, owner: Uuid) -> Result<(), Error> {
+        let mut params = BTreeMap::new();
+        params.insert("id".to_string(), uuid(owner));
+        let rows = db
+            .raw_query_params(
+                r#"?[id] := *function { id @ 'NOW' }, id = $id"#,
+                params.clone(),
+            )
+            .map_err(Error::from)?;
+        if !rows.rows.is_empty() {
+            return Ok(());
+        }
+
+        let module = Uuid::from_u128(0xfeed_0000_0000_0000_0000_0000_0000_0002);
+        params.insert("name".to_string(), DataValue::from("caller"));
+        params.insert("docstring".to_string(), DataValue::Null);
+        params.insert("vis_kind".to_string(), DataValue::from("Public"));
+        params.insert("vis_path".to_string(), DataValue::Null);
+        params.insert("span".to_string(), span((0, 100)));
+        params.insert("tracking_hash".to_string(), uuid(Uuid::from_u128(97)));
+        params.insert("cfgs".to_string(), list(&[]));
+        params.insert("return_type_id".to_string(), DataValue::Null);
+        params.insert("body".to_string(), DataValue::Null);
+        params.insert("module_id".to_string(), uuid(module));
+
+        db.raw_query_mut_params(
+            r#"?[id, at, name, docstring, vis_kind, vis_path, span, tracking_hash, cfgs, return_type_id, body, module_id] :=
+                id = $id,
+                name = $name,
+                docstring = $docstring,
+                vis_kind = $vis_kind,
+                vis_path = $vis_path,
+                span = $span,
+                tracking_hash = $tracking_hash,
+                cfgs = $cfgs,
+                return_type_id = $return_type_id,
+                body = $body,
+                module_id = $module_id,
+                at = 'ASSERT'
+            :put function { id, at => name, docstring, vis_kind, vis_path, span, tracking_hash, cfgs, return_type_id, body, module_id }"#,
+            params,
+        )
+        .map_err(Error::from)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
     fn insert_call_target(
         db: &Database,
         site: Uuid,
@@ -2011,6 +4264,8 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         source_kind: &str,
         target_kind: &str,
     ) -> Result<(), Error> {
+        ensure_call_target(db, target, target_kind)?;
+
         let mut params = BTreeMap::new();
         params.insert("site_id".to_string(), uuid(site));
         params.insert("target_id".to_string(), uuid(target));
@@ -2031,6 +4286,132 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         )
         .map_err(Error::from)?;
         Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn ensure_call_target(db: &Database, target: Uuid, kind: &str) -> Result<(), Error> {
+        match kind {
+            "Function" => ensure_function_owner(db, target),
+            "Method" => ensure_method_target(db, target),
+            "Struct" => ensure_struct_target(db, target),
+            "Variant" => ensure_variant_target(db, target),
+            other => panic!("unexpected synthetic call target kind {other}"),
+        }
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn ensure_method_target(db: &Database, target: Uuid) -> Result<(), Error> {
+        if relation_has_id(db, "method", target)? {
+            return Ok(());
+        }
+
+        let mut params = BTreeMap::new();
+        params.insert("id".to_string(), uuid(target));
+        params.insert("name".to_string(), DataValue::from("target_method"));
+        params.insert("span".to_string(), span((0, 100)));
+        params.insert("vis_kind".to_string(), DataValue::from("Public"));
+        params.insert("vis_path".to_string(), DataValue::Null);
+        params.insert("docstring".to_string(), DataValue::Null);
+        params.insert("body".to_string(), DataValue::Null);
+        params.insert("tracking_hash".to_string(), uuid(Uuid::from_u128(0x101)));
+        params.insert("cfgs".to_string(), list(&[]));
+        params.insert("owner_id".to_string(), uuid(Uuid::from_u128(0x102)));
+
+        db.raw_query_mut_params(
+            r#"?[id, at, name, span, vis_kind, vis_path, docstring, body, tracking_hash, cfgs, owner_id] :=
+                id = $id,
+                name = $name,
+                span = $span,
+                vis_kind = $vis_kind,
+                vis_path = $vis_path,
+                docstring = $docstring,
+                body = $body,
+                tracking_hash = $tracking_hash,
+                cfgs = $cfgs,
+                owner_id = $owner_id,
+                at = 'ASSERT'
+            :put method { id, at => name, span, vis_kind, vis_path, docstring, body, tracking_hash, cfgs, owner_id }"#,
+            params,
+        )
+        .map_err(Error::from)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn ensure_struct_target(db: &Database, target: Uuid) -> Result<(), Error> {
+        if relation_has_id(db, "struct", target)? {
+            return Ok(());
+        }
+
+        let mut params = BTreeMap::new();
+        params.insert("id".to_string(), uuid(target));
+        params.insert("name".to_string(), DataValue::from("TargetStruct"));
+        params.insert("span".to_string(), span((0, 100)));
+        params.insert("vis_kind".to_string(), DataValue::from("Public"));
+        params.insert("vis_path".to_string(), DataValue::Null);
+        params.insert("docstring".to_string(), DataValue::Null);
+        params.insert("tracking_hash".to_string(), uuid(Uuid::from_u128(0x103)));
+        params.insert("cfgs".to_string(), list(&[]));
+
+        db.raw_query_mut_params(
+            r#"?[id, at, name, span, vis_kind, vis_path, docstring, tracking_hash, cfgs] :=
+                id = $id,
+                name = $name,
+                span = $span,
+                vis_kind = $vis_kind,
+                vis_path = $vis_path,
+                docstring = $docstring,
+                tracking_hash = $tracking_hash,
+                cfgs = $cfgs,
+                at = 'ASSERT'
+            :put struct { id, at => name, span, vis_kind, vis_path, docstring, tracking_hash, cfgs }"#,
+            params,
+        )
+        .map_err(Error::from)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn ensure_variant_target(db: &Database, target: Uuid) -> Result<(), Error> {
+        if relation_has_id(db, "variant", target)? {
+            return Ok(());
+        }
+
+        let mut params = BTreeMap::new();
+        params.insert("id".to_string(), uuid(target));
+        params.insert("name".to_string(), DataValue::from("TargetVariant"));
+        params.insert("owner_id".to_string(), uuid(Uuid::from_u128(0x104)));
+        params.insert("index".to_string(), DataValue::from(0));
+        params.insert("discriminant".to_string(), DataValue::Null);
+        params.insert("cfgs".to_string(), list(&[]));
+
+        db.raw_query_mut_params(
+            r#"?[id, at, name, owner_id, index, discriminant, cfgs] :=
+                id = $id,
+                name = $name,
+                owner_id = $owner_id,
+                index = $index,
+                discriminant = $discriminant,
+                cfgs = $cfgs,
+                at = 'ASSERT'
+            :put variant { id, at => name, owner_id, index, discriminant, cfgs }"#,
+            params,
+        )
+        .map_err(Error::from)?;
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn relation_has_id(db: &Database, relation: &str, id: Uuid) -> Result<bool, Error> {
+        let mut params = BTreeMap::new();
+        params.insert("id".to_string(), uuid(id));
+        let rows = db
+            .raw_query_params(
+                &format!(r#"?[id] := *{relation} {{ id @ 'NOW' }}, id = $id"#),
+                params,
+            )
+            .map_err(Error::from)?;
+        Ok(!rows.rows.is_empty())
     }
 
     #[cfg(feature = "call_graph")]

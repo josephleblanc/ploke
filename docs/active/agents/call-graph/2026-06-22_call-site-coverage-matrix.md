@@ -65,7 +65,7 @@ All focused call-site rows now run through the `paranoid_call_site_test!` harnes
 - `generic_identity::<i32>(123)` -> `PathCall` with `generic_arg_count = 1`, `Resolved(LocalExact)`, `CallRelation::Function`.
 - `r#match()` -> `PathCall` preserving raw identifier spelling, `Resolved(LocalExact)`, `CallRelation::Function`.
 - `value.r#type()` -> `MethodCall` preserving raw identifier spelling, `Resolved(LocalExact)`, `CallRelation::Method`.
-- `imported_alias()`, `globbed_target()`, `reexported_target()`, and `targets_alias::globbed_target()` in `fixture_call_graph` -> `PathCall`, `Resolved(LocalExact)`, `CallRelation::Function`.
+- `imported_alias()`, `globbed_target()`, grouped import aliases, `reexported_target()`, and `targets_alias::globbed_target()` in `fixture_call_graph` -> `PathCall`, `Resolved(LocalExact)`, `CallRelation::Function`.
 - `Self::make()` inside an inherent impl and `LocalAssoc::make()` for a directly visible local type -> `PathCall`, `Resolved(LocalExact)`, `CallRelation::AssociatedFunction`.
 - `LocalAssoc::instance_value(&value)` as method-as-associated-function syntax -> `PathCall`, `Resolved(LocalExact)`, `CallRelation::AssociatedFunction`.
 - `<LocalAssoc>::make()` for a qualified directly visible local type -> `PathCall`, `Resolved(LocalExact)`, `CallRelation::AssociatedFunction`.
@@ -102,7 +102,7 @@ All focused call-site rows now run through the `paranoid_call_site_test!` harnes
 - `Self::required_assoc()` in a trait default method body -> `PathCall`, `Resolved(LocalExact)`, `CallRelation::AssociatedFunction` targeting the same-trait associated function declaration with no `self` receiver.
 - `local_target()` inside closure and async block bodies in `fixture_call_graph` -> no outer-owner call site until nested closure/async owners exist.
 - `<TraitAssocFunctionTarget as LocalAssocFunctionTrait>::trait_make()` for a directly visible local trait associated function with no `self` receiver -> `PathCall`, `Resolved(LocalExact)`, `CallRelation::AssociatedFunction`.
-- `ImportedAssocFunctionTrait::imported_trait_make()` and imported aliases of the same shorthand trait path -> `PathCall`, `Resolved(LocalExact)`, `CallRelation::AssociatedFunction` for direct, alias, glob, and local re-export imported local traits with no `self` receiver.
+- `ImportedAssocFunctionTrait::imported_trait_make()` and imported aliases of the same shorthand trait path -> `PathCall`, `Resolved(LocalExact)`, `CallRelation::AssociatedFunction` for direct, alias, glob, grouped, and local re-export imported local traits with no `self` receiver.
 - `alias_checker(&_trait_user)` where `alias_checker` is a local closure binding -> `PathCall` with `ValueBinding { path: ["alias_checker"] }`, `Unsupported`, no edge, so syntactic path calls to closure bindings stay visible without fake local function edges.
 - `let local_target = || 377; local_target()` -> `PathCall` with `ValueBinding { path: ["local_target"] }`, `Unsupported`, no edge, so local bindings do not fake-resolve to same-named module functions.
 - `let f = local_target; f()` -> `PathCall` with `InitializedValueBinding { path: ["f"], init_path: ["local_target"] }`, `Resolved(LocalExact)`, `CallRelation::Function`.
@@ -170,38 +170,229 @@ Current DB helper behavior:
 
 `ploke-db --features call_graph` exposes typed helpers over the persisted
 relations: `call_sites_for_owner`, `call_targets_for_site`,
-`call_resolution_for_site`, and `call_context_for_owner`. The first helper tests
-cover resolved function targets, resolved method targets, resolved
-associated-function targets with method endpoint kind, constructor targets,
-resolved dynamic function targets with `relation_kind = "DynamicFunction"`,
-unsupported dynamic sites with no edge, `SelfField`, `LocalBinding`, and
-`TypedLocalBinding` and `InitializedLocalBinding` method receiver payload
-decoding, and fail-closed behavior when a persisted call site lacks
-`call_resolution_status`.
+`call_resolution_for_site`, `call_context_for_owner`, and
+`callers_for_target`, plus the application-facing `expand_call_context` helper
+modeled after `expand_type_context`. The first helper tests cover resolved
+function targets, resolved method targets, resolved associated-function targets
+with method endpoint kind, constructor targets, resolved dynamic function
+targets with `relation_kind = "DynamicFunction"`, unsupported dynamic sites
+with no edge, `SelfField`, `LocalBinding`, and `TypedLocalBinding` and
+`InitializedLocalBinding` method receiver payload decoding, target-centered
+incoming caller rows, owner/target call-context expansion candidates, and
+fail-closed behavior when a persisted call site lacks
+`call_resolution_status`. Expansion promotes only resolved call edges; raw
+low-level helpers still expose persisted non-resolved target rows for stricter
+proof validation. The DB read helpers now also validate call-relation endpoint
+families before surfacing persisted rows, so malformed `call_relation` facts
+whose `source_kind` disagrees with the actual call-site kind or whose
+`relation_kind/source_kind/target_kind` tuple is not one of the typed parser
+families are excluded from owner context, target-centered callers, and
+call-context expansion. `call_resolution_status` rows are also checked against
+the actual call-site kind before downstream helpers trust the status.
+`BodyContainsCall` edges are likewise checked against the actual call-site kind
+before owner context or target-centered callers assemble the site. Fixture DB
+invariants now also assert every persisted `call_site` has one matching
+`BodyContainsCall` edge, every call site has one matching
+`call_resolution_status`, and every `call_relation` is anchored to an existing
+call site and endpoint node. They also assert persisted `call_site.id` values
+stay disjoint from stored code-node and type-use/type IDs, so the DB projection
+keeps call occurrences in the `CallId` universe instead of a `NodeId` or
+`TypeId` endpoint family. The inverse checks assert every persisted
+`BodyContainsCall` and `call_resolution_status` row points back to an existing
+matching owner and call site, with no orphaned rows. Status-to-relation
+cardinality checks assert each raw `Resolved(LocalExact)` site has exactly one
+semantic `call_relation`, while non-resolved sites have none. Proof projection
+linkage checks assert a mixed real owner projects one `call_site` and one
+`call_resolution` fact per call site, resolved rows project exactly one
+`call_edge`, and non-resolved rows project no edge plus a blocker reason.
+Target-centered proof projection linkage checks assert the real `local_target`
+incoming caller set projects one `call_site`, one `call_resolution`, and one
+matching `call_edge` fact per caller row, with no unrelated proof rows and with
+source provenance matching the originating call-site span.
+Synthetic receiver-decoder coverage now also pins the remaining method receiver
+families exposed by the typed DB helper, including `SelfValue`,
+borrowed/dereferenced locals, field receivers, path/method result receivers,
+await/try result receivers, and literal receivers.
+
+The first fixture-backed DB contracts live in
+`crates/ploke-db/tests/unit/call_graph_fixture_queries.rs`. They parse and
+transform `fixture_call_graph` and `fixture_nodes` into an in-memory DB before
+asserting persisted rows for resolved path calls, local/initialized/typed-local
+method receivers including parenthesized receivers and Rust type-alias receiver
+annotations, associated-function calls, imported/re-exported type and trait
+associated-function calls, tuple and enum constructors, nested
+returned-function calls, dynamic function calls, trait-dispatch method calls,
+borrowed/dereferenced method receiver rows,
+path/method/await/try result receiver rows, tuple-field method/dynamic rows,
+raw identifier path/method calls, prelude `drop(...)` vs local shadowed `drop`
+resolution, explicit inherent `drop(self)` calls, literal/prelude method
+classification, `String::new` / `Vec::new` targetless external rows, local
+shadowed `Vec::len` resolution, inherent-over-trait precedence,
+cast/deref/block/branch, field, and indexed dynamic function rows including
+exact member/index aliases and parenthesized function-item / typed
+function-pointer alias bindings, boxed/generic Fn-style targetless dynamic
+failures, bare callable-value path failures, fail-closed guarded/nested branch
+and opaque closure/index dynamic callees, Rust type-alias associated-function
+and instance-method rows, method-as-associated-function rows, function-item and
+typed function pointer binding rows, imported function-item binding rows,
+generic-bound and trait-object declaration-target rows, aliased/reference
+trait-object concrete receiver rows, constrained generic self-type trait impl
+rows, imported-trait impl method rows,
+blanket-trait impl method rows, method-body owner rows for trait defaults and
+impl method bodies, const/static and associated-const initializer owner rows,
+expanded borrowed/reference/dereferenced receiver rows, closure/async body
+call non-projection onto enclosing owners, and macro status rows.
+Ordinary path-call resolution rows now include unqualified local functions,
+self/super paths, import aliases, glob imports, grouped imports, re-exports,
+and module aliases;
+associated-function owner rows now include inherent
+`Self::make()`, qualified `<LocalAssoc>::make()`, and fully qualified local
+trait associated-function forms. They also assert real transformed
+external, ambiguous, and unsupported statuses carry no semantic target rows,
+assert target-centered incoming caller rows for real local function, method,
+associated-function, tuple-struct constructor, and enum-variant constructor
+targets, assert target-centered local-function caller queries and
+target-seeded expansion exclude closure/async body outer owners,
+assert real outgoing and incoming `expand_call_context` candidates preserve
+persisted call-site identity for ordinary path and resolved dynamic callers,
+and project resolved/external rows into proof facts from real fixture owner
+provenance.
+Fixture proof-store coverage now also checks `proof_symbol_lookup` links real
+owner-scoped and target-centered resolved callee hits back to companion
+`call_site` and `call_resolution` facts by call-site identity, including
+target-centered `local_target` lookup with both an ordinary path caller and a
+resolved dynamic caller.
+
+Downstream RAG coverage now exercises the DB call-context expansion helper
+through both private expansion and the public sparse `get_context` path for
+owner-seeded outgoing callee targets and target-seeded incoming callers,
+including function and method targets plus private expansion for
+associated-function targets. The method-target public path seeds
+`LocalAssoc::instance_value`, materializes both the instance-method caller and
+the associated-function path-call caller, and verifies the final assembled
+context keeps the outgoing call edges pointed at the seeded method target and
+keeps `CallExpansionInfo` with seed, relation, call-site ID, target ID, and
+distance. Owner-seeded public coverage also verifies an outgoing callee target
+part carries an `OutgoingTarget` expansion reason. The associated-function
+expansion path seeds `LocalAssoc::make` and verifies both method-owner
+`Self::make` and qualified function-owner `LocalAssoc::make` callers keep
+outgoing `AssociatedFunction` context.
+TUI formatter and context-plan overlay coverage now render the same
+associated-function payload shape as `AssociatedFunction:<id>` rather than
+collapsing it into a method or function target label, and now render
+call-expansion provenance separately from outgoing call-context rows.
 
 Current proof projection behavior:
 
 `ploke-db --features call_graph` projects owner-scoped persisted call graph rows
 into the existing `proof_fact` store through `call_proof_facts_for_owner` and
-`project_call_proof_facts_for_owner`. The projection requires an explicit
+`project_call_proof_facts_for_owner`, and projects target-centered incoming
+caller rows through `call_proof_facts_for_target` and
+`project_call_proof_facts_for_target`. The projection requires an explicit
 `build_domain_id`, derives source-file provenance through existing module/file
 ancestry rules, stores resolved local targets as proof `call_edge` facts, and
-maps external/unsupported/unresolved call statuses to fail-closed
-`call_resolution` blocker reasons without inventing local edges.
+maps external/unsupported/unresolved/ambiguous call statuses to fail-closed
+`call_resolution` blocker reasons without inventing local edges. Any local
+target row on a non-resolved call status is rejected before proof facts are
+stored.
+Fixture-backed proof coverage now includes both single-row resolved/external
+owners, local/self/super/crate/module-qualified/imported function path
+resolution owners, owner-scoped associated-function path owners across inherent,
+type-import, type-alias, method-as-associated, and trait associated-function
+forms, owner-scoped local/initialized/typed/type-alias/borrowed/dereferenced
+method receiver owners, owner-scoped generic-bound/imported-trait/constrained
+generic-self/blanket trait method owners, owner-scoped path/method/await result
+receiver and tuple-field receiver method owners, a mixed multi-row owner with
+unsupported `Ok(...)`, resolved
+`try_local_assoc()`, and a resolved try-result method receiver, plus
+target-centered projection of the incoming `try_local_assoc` caller edge without
+including unrelated unsupported owner calls. Method-target proof projection now
+also covers the real `LocalAssoc::instance_value` target and verifies resolved
+proof edges for both incoming method-call and associated-function path-call
+owners. Trait-dispatch proof projection now covers owner-scoped and
+target-centered resolved proof edges for real `LocalDispatchTrait for
+TraitDispatchTarget` method calls, including concrete trait-object alias and
+chained-reference callers. Dynamic proof projection now covers real resolved
+`DynamicFunction` calls including parenthesized path/binding, cast/deref, block,
+indexed-array, named-field/tuple-field, and same-target branch/match callees,
+unsupported
+closure-binding cast and dereferenced closure-binding dynamic calls as
+`dynamic_dispatch_unbounded` blockers, ambiguous branch/match dynamic calls as
+`type_resolution_missing` blockers, guarded/opaque/nested branch/match dynamic
+calls as `dynamic_dispatch_unbounded` blockers, and target-centered projection
+from `local_target` that preserves a dynamic incoming caller edge without
+pulling in unrelated unsupported dynamic blockers or closure/async body
+outer-owner proof facts. Initializer-owner proof projection now
+covers top-level const/static and associated-const owners, preserving the value
+owner as the proof caller and storing resolved edges to the local initializer
+functions. Constructor proof projection now uses shared fixture cases to cover
+resolved tuple struct and enum variant constructor target families as proof
+edges to `StructNodeId` and `VariantNodeId` callees in both owner-scoped and
+target-centered projections.
+Macro proof projection now covers real targetless macro
+calls as `macro_expansion_not_available` blockers, and ambiguous method
+projection covers real targetless ambiguity as a `type_resolution_missing`
+blocker. Real fixture-derived external call-resolution blockers now also feed
+`proof_invariant_findings` when proof-only effect evidence references the same
+call site. Synthetic DB coverage also asserts owner-scoped and target-centered
+projection reject local target edges whose call status is not resolved,
+including ambiguous rows, and does not store partial proof facts after the
+rejection.
 
 Current RAG/TUI call-context behavior:
 
 `ploke-rag --features call_graph` collects outgoing call context for materialized
-owner hits when the active DB has all four call graph relations. The payload is
-attached to `ContextPart.call_context` and forwarded to
-`ConciseContext.call_context`; `RagService` degrades call-context collection off
-for databases missing those relations so stale backups do not make ordinary RAG
-context retrieval fail. TUI context-plan/system formatting now displays
-outgoing-call summaries with callee shape, span, status/resolution, and target
-relation IDs; RAG preserves `LocalBinding` and
-`TypedLocalBinding` and `InitializedLocalBinding` method receiver payloads plus
-`DynamicFunction`, `AssociatedFunction`, `TupleStructConstructor`, and
-`EnumVariantConstructor` relation kinds in target payloads.
+owner hits when the active DB has all four call graph relations. It also expands
+target-centered hits to materializable caller owners through
+`Database::callers_for_target(...)` before optional reranking/context assembly.
+The payload is attached to `ContextPart.call_context` and forwarded to
+`ConciseContext.call_context`; `RagService` degrades call-context collection and
+expansion off for databases missing those relations so stale backups do not
+make ordinary RAG context retrieval fail. TUI context-plan/system formatting now
+displays outgoing-call summaries with callee shape, span, status/resolution, and
+target relation IDs; RAG preserves `LocalBinding` and `TypedLocalBinding` and
+`InitializedLocalBinding` method receiver payloads plus `DynamicFunction`,
+`AssociatedFunction`, `TupleStructConstructor`, and `EnumVariantConstructor`
+relation kinds in target payloads. Fixture-backed RAG coverage now
+parses/transforms `fixture_call_graph` and asserts real
+`call_try_result_instance_method` outgoing rows are collected for unsupported
+`Ok(...)`, resolved `try_local_assoc()`, and the resolved try-result method
+receiver. It also asserts real dynamic outgoing rows are collected for resolved
+`DynamicFunction` calls and targetless unsupported dynamic calls, and real
+constructor rows are collected for `TupleStructConstructor` and
+`EnumVariantConstructor` target families. It also asserts real external
+targetless rows preserve path, literal receiver, and typed-local receiver
+payloads without semantic targets, and real targetless macro and ambiguous
+method blocker rows are collected without semantic targets.
+Incoming
+expansion coverage seeds with `try_local_assoc`, `local_target`, method
+targets, associated-function targets, constructor targets, and concrete
+trait-dispatch method targets, and asserts caller owners are materialized with
+outgoing call context pointing back to the seed target while helper-level
+`local_target` expansion excludes closure/async body outer owners and preserves
+exact path/dynamic call-site provenance. Public
+`get_context` coverage now proves the function, method, concrete
+trait-dispatch, and `local_target` closure/async-exclusion target-centered
+expansions survive sparse retrieval and final context assembly, with
+`local_target` preserving both ordinary path and resolved dynamic callers. TUI formatter
+coverage asserts the same payload shape renders with
+callee shape, span, status/resolution, and target relation IDs intact in both
+model-facing context text and expanded context-plan overlay details, including
+associated-function, dynamic-function, tuple-struct-constructor, and
+enum-variant-constructor target labels, plus targetless macro and ambiguous
+method blocker rows under the existing call-context row cap. Separate compact
+formatter/overlay/tool-carrier coverage asserts external targetless path,
+literal receiver, typed-local receiver, separate ordinary path and dynamic
+incoming caller payloads, callable-path blocker, returned-function mixed,
+boxed `dyn Fn` setup/failure, and `Vec::new()` external rows render without
+targets. TUI formatter/overlay coverage also asserts concrete trait-dispatch
+method rows render initialized-local receiver proof such as
+`value = TraitDispatchTarget` and preserve the `Method:<id>` target label. Tool JSON roundtrip
+coverage asserts `request_code_context` preserves both
+`ConciseContext.call_expansion` and `ConciseContext.call_context` through
+`ContextPart -> ConciseContext` conversion and serde, including
+trait-dispatch initialized-local receiver rows, dynamic-function, constructor,
+external targetless, macro blocker, and ambiguous blocker call-context rows.
 
 ## Fixture-backed target index
 
@@ -242,7 +433,7 @@ This section maps the exhaustive rows below to concrete fixtures we can use. Pre
 | `fixture_edge_cases` | `src/lib.rs:115-117` | `utils::internal_helper()`, `utils::super_helper()`, `restricted::restricted_func()` in cfg-gated visibility function | P03/P04 | **green** | Covered by `fixture_edge_cases_test_visibility_resolves_internal_helper_path_call_site`, `fixture_edge_cases_test_visibility_resolves_super_helper_path_call_site`, and `fixture_edge_cases_test_visibility_resolves_restricted_func_path_call_site`; effective cfg is `not (feature = "type_bearing_ids")`, and local module-relative path calls resolve to `CallRelation::Function`. |
 | `fixture_type_resolution_v2` | `src/lib.rs:66` | `panic!(...)` in generic associated const initializer | X02/X09, owner associated const | **green** | Covered by `fixture_type_resolution_v2_generic_assoc_const_records_panic_macro_call_site`; macro invocation is attributed to the impl associated const owner and remains `Unsupported` with no expansion edge. |
 | `fixture_generics` | `src/lib.rs:32,62` | `T::default()` in `generic_function`, `format!(...)` in generic trait impl method | P14/P20-like, X02/X09 | **green** | Covered by `fixture_generics_generic_function_records_t_default_unsupported_path_call_site` and `fixture_generics_trait_impl_process_records_format_macro_call_site`; generic type-parameter associated-function-looking path calls fail closed as `Unsupported`, and macro invocation is recorded structurally without expansion. |
-| `fixture_edge_cases` | `src/lib.rs` | remaining unusual syntax | P28/raw identifiers maybe | **partial scan** | `use_imports`, visibility-call, trait-impl macro, and generic-associated rows are green; remaining raw identifiers still need targeted rows. |
+| `fixture_edge_cases` | `src/lib.rs` | remaining unusual syntax | P28/raw identifiers maybe | **partial scan** | `use_imports`, visibility-call, trait-impl macro, and generic-associated rows are green; raw identifier coverage is owned by `fixture_call_graph`. |
 | `fixture_call_graph` | `src/lib.rs:5` | `(closure)()` | D01/D02 | **green** | Focused fixture added for dynamic call syntax; covered by `fixture_call_graph_dynamic_calls_records_parenthesized_binding_dynamic_call_site`. |
 | `fixture_call_graph` | `src/lib.rs:6` | `(|| 11)()` | D03 | **green** | Focused fixture added for closure literal call syntax; covered by `fixture_call_graph_dynamic_calls_records_closure_literal_dynamic_call_site`. |
 | `fixture_call_graph` | `src/lib.rs:710` | `(move || local_target())()` | D03 / owner matrix closure | **green** | Covered by `fixture_call_graph_call_move_closure_literal_with_body_call_records_outer_dynamic_call_site` and `fixture_call_graph_move_closure_body_call_is_not_recorded_as_outer_call_site`; outer dynamic call is visible, inner closure-body call is not owned by the enclosing function. |
@@ -268,6 +459,7 @@ This section maps the exhaustive rows below to concrete fixtures we can use. Pre
 | `fixture_call_graph` | `src/lib.rs:76` | `globbed_target()` | P06 | **green** | Covered by `fixture_call_graph_call_glob_imported_target_resolves_glob_path_call_site`; local glob import resolves through `ImportedBy` to `CallRelation::Function`. |
 | `fixture_call_graph` | `src/lib.rs:80` | `reexported_target()` | P05 | **green** | Covered by `fixture_call_graph_call_reexported_target_resolves_reexport_path_call_site`; local re-export alias resolves through import binding backlinks to `CallRelation::Function`. |
 | `fixture_call_graph` | `src/lib.rs:84` | `targets_alias::globbed_target()` | P03/P05 | **green** | Covered by `fixture_call_graph_call_imported_module_target_resolves_module_alias_path_call_site`; imported local module alias resolves then terminal function resolves to `CallRelation::Function`. |
+| `fixture_call_graph` | `src/lib.rs:1182,1186` | `grouped_alias()`, `grouped_globbed_alias()` from `use super::import_targets::{...}` | P05 | **green** | Covered by `fixture_call_graph_call_grouped_imported_*_target_resolves_imported_path_call_site`; grouped import syntax expands into the same import backlink proof as direct aliases. |
 | `fixture_call_graph` | `src/lib.rs:458` | `super::local_target()` | P04 | **green** | Covered by `fixture_call_graph_call_super_local_target_resolves_super_path_call_site`; explicit super local path resolves to `CallRelation::Function`. |
 | `fixture_call_graph` | `src/lib.rs:94` | `value.instance_value()` | M05 | **green** | Covered by `fixture_call_graph_call_param_instance_method_resolves_local_binding_method_call_site`; named owner parameter receiver resolves to inherent `CallRelation::Method`. |
 | `fixture_call_graph` | `src/lib.rs:99` | `value.instance_value()` after `let value: LocalAssoc = ...` | M05 | **green** | Covered by `fixture_call_graph_call_typed_local_instance_method_resolves_typed_local_binding_method_call_site`; explicit local type annotation resolves to inherent `CallRelation::Method`. |
@@ -306,6 +498,7 @@ This section maps the exhaustive rows below to concrete fixtures we can use. Pre
 | `fixture_call_graph` | `src/lib.rs:398` | `VisibleAssocFunctionTrait::imported_trait_make()` with aliased imported trait | P17/P05 | **green** | Covered by `fixture_call_graph_call_alias_imported_trait_associated_function_resolves_trait_assoc_function_path_call_site`; shorthand alias-imported local trait associated function resolves to `CallRelation::AssociatedFunction`. |
 | `fixture_call_graph` | `src/lib.rs:406` | `ImportedAssocFunctionTrait::imported_trait_make()` with glob imported trait | P17/P06 | **green** | Covered by `fixture_call_graph_call_glob_imported_trait_associated_function_resolves_trait_assoc_function_path_call_site`; shorthand glob-imported local trait associated function resolves to `CallRelation::AssociatedFunction`. |
 | `fixture_call_graph` | `src/lib.rs:1150` | `ReexportedAssocFunctionTrait::imported_trait_make()` with local re-exported trait import | P17/P05 | **green** | Covered by `fixture_call_graph_call_reexported_trait_associated_function_resolves_trait_assoc_function_path_call_site`; shorthand local re-exported trait associated function resolves to `CallRelation::AssociatedFunction`. |
+| `fixture_call_graph` | `src/lib.rs:1196` | `GroupedAssocFunctionTrait::imported_trait_make()` with grouped aliased imported trait | P17/P05 | **green** | Covered by `fixture_call_graph_call_grouped_imported_trait_associated_function_resolves_trait_assoc_function_path_call_site`; shorthand grouped alias-imported local trait associated function resolves to `CallRelation::AssociatedFunction` and is projected through `ploke-db` call context. |
 | `fixture_call_graph` | `src/lib.rs:182` | `local_target()` after `let local_target = || 377` | P25 | **green** | Covered by `fixture_call_graph_call_shadowed_local_target_binding_records_value_binding_path_call_site`; records value-binding path callee and fails closed with `Unsupported`, no fake edge to the module function. |
 | `fixture_call_graph` | `src/lib.rs:187` | `f()` after `let f = local_target` | P25/P26-ish | **green** | Covered by `fixture_call_graph_call_local_function_item_binding_resolves_initialized_value_binding_path_call_site`; records initialized value-binding path callee and resolves the initializer path to `CallRelation::Function`. |
 | `fixture_call_graph` | `src/lib.rs:1119` | `f()` after `let f = imported_alias` | P25/P26/P05 | **green** | Covered by `fixture_call_graph_call_imported_function_item_binding_resolves_initialized_value_binding_path_call_site`; initialized function-item binding proof preserves the import-alias initializer path and resolves through import backlinks to `import_targets::imported_target`. |
@@ -331,7 +524,7 @@ This section maps the exhaustive rows below to concrete fixtures we can use. Pre
 | `fixture_call_graph` | `src/lib.rs:433` | `(g)()` after `let f: fn() -> i32 = local_target; let g: fn() -> i32 = f` | D01/P26 | **green** | Covered by `fixture_call_graph_call_parenthesized_typed_function_pointer_alias_binding_resolves_dynamic_function_call_site`; typed initialized dynamic binding proof propagates through the alias and resolves to `CallRelation::DynamicFunction`. |
 | `fixture_call_graph` | `src/lib.rs:676` | `f()` where `f: fn() -> i32` is a parameter | P26 | **green** | Covered by `fixture_call_graph_call_function_pointer_param_records_value_binding_path_call_site`; opaque function-pointer parameters record a value-binding path call and fail closed with `Unsupported`. |
 | `fixture_call_graph` | `src/lib.rs:680` | `(f)()` where `f: fn() -> i32` is a parameter | D01/P26 | **green** | Covered by `fixture_call_graph_call_parenthesized_function_pointer_param_records_dynamic_local_binding_call_site`; opaque function-pointer parameters record a dynamic local binding and fail closed with `Unsupported`. |
-| `fixture_call_graph` | `src/lib.rs:684` | `(f as fn() -> i32)()` where `f: fn() -> i32` is a parameter | D11/P26 | **green** | Covered by `fixture_call_graph_call_function_pointer_param_cast_fails_closed_dynamic_call_site`; opaque parameter casts fail closed instead of using same-name local function lookup. |
+| `fixture_call_graph` | `src/lib.rs:684` | `(f as fn() -> i32)()` where `f: fn() -> i32` is a parameter | D11/P26 | **green** | Covered by `fixture_call_graph_call_function_pointer_param_cast_records_cast_local_binding_dynamic_call_site`; opaque parameter casts preserve the local binding path and fail closed instead of using same-name local function lookup. |
 | `fixture_call_graph` | `src/lib.rs:689` | `(closure as fn() -> i32)()` where `closure` is a local closure binding | D11/P25 | **green** | Covered by `fixture_call_graph_call_closure_binding_cast_fails_closed_dynamic_call_site`; opaque closure-binding casts fail closed instead of using same-name local function lookup. |
 | `fixture_call_graph` | `src/lib.rs:694` | `(*closure)()` where `closure` is a local closure binding | D10/P25 | **green** | Covered by `fixture_call_graph_call_dereferenced_closure_binding_fails_closed_dynamic_call_site`; dereferenced closure bindings remain unsupported until closure/Fn semantic target modeling exists. |
 | `fixture_call_graph` | `src/lib.rs:702` | `(holder.callback)()` where `holder: CallbackHolder` is a parameter | D08 | **green** | Covered by `fixture_call_graph_call_field_function_param_records_dynamic_field_call_site`; field callees rooted at opaque parameters record `FieldLocalBinding` and fail closed. |
@@ -453,7 +646,7 @@ This section maps the exhaustive rows below to concrete fixtures we can use. Pre
 | P02 | `crate::m::callee()` | `fixture_call_graph::call_crate_module_nested_target` | `PathCall` | `Resolved(LocalExact)` for explicit crate-root local module paths when the terminal function is proven exactly | `FunctionNodeId` |
 | P03 | `self::callee()` in module / `self::m::callee()` | `fixture_call_graph::{local_mod::call_self_nested_target, call_self_module_nested_target}` | `PathCall` | `Resolved(LocalExact)` for explicit self-root local module paths when the terminal function is proven exactly | `FunctionNodeId` |
 | P04 | `super::callee()` | `fixture_path_resolution`, `fixture_call_graph::super_path_scope::call_super_local_target` | `PathCall` | `Resolved(LocalExact)` for explicit super paths when the terminal function is proven exactly | `FunctionNodeId` |
-| P05 | renamed local import `alias()` | `fixture_call_graph::call_imported_alias_target` / `call_reexported_target` | `PathCall` | `Resolved(LocalExact)` through local import/re-export binding backlinks | `FunctionNodeId` |
+| P05 | renamed local import `alias()` | `fixture_call_graph::call_imported_alias_target` / `call_reexported_target` / `grouped_function_import_scope::*` | `PathCall` | `Resolved(LocalExact)` through local import/re-export/grouped-import binding backlinks | `FunctionNodeId` |
 | P06 | glob-imported local fn `callee()` | `fixture_call_graph::call_glob_imported_target` | `PathCall` | `Resolved(LocalExact)` through local glob import backlinks | `FunctionNodeId` |
 | P07 | external imported fn `read_to_string(...)` | `fs::read_to_string("dummy")` in `fixture_nodes/src/imports.rs` | `PathCall` | `External`, no edge | external summary |
 | P08 | std/prelude fn `drop(x)` | `fixture_call_graph::call_prelude_drop_value` plus `prelude_shadow_scope::call_local_drop_shadow` | `PathCall` | `External`, no edge only after local lookup declines a local function target; local `fn drop` still resolves locally | external/builtin summary |
@@ -465,7 +658,7 @@ This section maps the exhaustive rows below to concrete fixtures we can use. Pre
 | P14 | `SimpleStruct::new(1)` | `fixture_call_graph::{call_local_assoc_make, call_imported_type_assoc_make, call_glob_imported_type_assoc_make, call_reexported_type_assoc_make, call_type_alias_assoc_make, call_type_alias_chain_assoc_make}` covers local, imported, glob-imported, re-exported, and Rust type-alias local type associated functions | `PathCall` | `Resolved(LocalExact)` for visible local type + inherent impl self-type proof, including bounded Rust type-alias chains when type relations prove each alias target exactly | `MethodNodeId` |
 | P15 | `<Type>::new()` | `fixture_call_graph::call_qualified_local_assoc_make` | `PathCall` with qself type qualifier normalized to `[Type, new]` | `Resolved(LocalExact)` for directly visible local type + inherent impl self-type proof | `MethodNodeId` |
 | P16 | `<Type as Trait>::assoc_fn()` | `fixture_call_graph::call_trait_associated_function` | `PathCall` with qself/trait qualifier normalized to `[Trait, assoc_fn]` | `Resolved(LocalExact)` when `Trait` is a directly visible local trait and the associated method has no `self` receiver; broader trait dispatch remains future | `MethodNodeId` |
-| P17 | `Trait::assoc_fn()` | `fixture_call_graph::trait_assoc_function_scope::*` | `PathCall` | `Resolved(LocalExact)` for visible local traits through direct, alias, and glob imports when the associated method has no `self` receiver; broader trait dispatch remains future | `MethodNodeId` |
+| P17 | `Trait::assoc_fn()` | `fixture_call_graph::trait_assoc_function_scope::*`, `fixture_call_graph::grouped_trait_assoc_function_scope::*`, and `fixture_call_graph::trait_assoc_reexport_scope::*` | `PathCall` | `Resolved(LocalExact)` for visible local traits through direct, alias, glob, grouped, and local re-export imports when the associated method has no `self` receiver; broader trait dispatch remains future | `MethodNodeId` |
 | P18 | `HashMap::<String, i32>::new()` | `fixture_nodes/src/imports.rs` | `PathCall`, generic count on path | `External`, no edge | external assoc fn |
 | P19 | `PathBuf::new()` | current green test | `PathCall` | `External`, no edge | external assoc fn |
 | P20 | `Duration::from_secs(1)` | `fixture_nodes/src/imports.rs` | `PathCall` | `External`, no edge | external assoc fn |
@@ -474,7 +667,7 @@ This section maps the exhaustive rows below to concrete fixtures we can use. Pre
 | P23 | `EnumWithData::Variant1(1)` | `fixture_nodes/src/imports.rs` | `PathCall` | `Resolved(LocalExact)` as `CallRelation::EnumVariantConstructor` when the local tuple variant and arity are proven | `VariantNodeId` |
 | P24 | `NewType(value)` | `fixture_call_graph::call_new_type_constructor` | `PathCall` | `Resolved(LocalExact)` as `CallRelation::TupleStructConstructor` when the local tuple struct and arity are proven | `StructNodeId` |
 | P25 | `closure_binding()` / same-name shadowing `local_target()` / function-item binding `f()` or alias `g()` | `fixture_call_graph::{call_shadowed_local_target_binding, call_local_function_item_binding, call_imported_function_item_binding, call_parenthesized_function_item_binding, call_aliased_function_item_binding, call_parenthesized_aliased_function_item_binding, call_closure_binding_cast, call_dereferenced_closure_binding}` | syntactically `PathCall` with value-binding or initialized-value-binding callee classifier when local binding is visible; parenthesized form is `DynamicCall` with matching initialized-binding proof; opaque closure-binding cast/deref forms are plain `DynamicCall` | `Unsupported`, no edge for opaque value bindings; `Resolved(LocalExact)` when the binding initializer path, imported initializer path, or exact local alias resolves to one local function | closure target or Fn impl |
-| P26 | `fn_ptr()` / typed function pointer binding `f()` or alias `g()` | `fixture_call_graph::{call_typed_function_pointer_binding, call_typed_function_pointer_alias_binding, call_parenthesized_typed_function_pointer_alias_binding, call_function_pointer_param, call_parenthesized_function_pointer_param, call_function_pointer_param_cast}` | syntactically `PathCall` for bare calls and `DynamicCall` for parenthesized/cast calls; local binding keeps initializer path proof when available | `Resolved(LocalExact)` for typed function pointer bindings initialized directly from one local function or exact alias of one; opaque function-pointer parameters fail closed with `Unsupported` and no edge | fn pointer |
+| P26 | `fn_ptr()` / typed function pointer binding `f()` or alias `g()` | `fixture_call_graph::{call_typed_function_pointer_binding, call_typed_function_pointer_alias_binding, call_parenthesized_typed_function_pointer_alias_binding, call_function_pointer_param, call_parenthesized_function_pointer_param, call_function_pointer_param_cast}` | syntactically `PathCall` for bare calls and `DynamicCall` for parenthesized/cast calls; local binding keeps initializer path proof when available, and function-pointer casts over opaque parameters preserve the local binding path | `Resolved(LocalExact)` for typed function pointer bindings initialized directly from one local function or exact alias of one; opaque function-pointer parameters fail closed with `Unsupported` and no edge | fn pointer |
 | P27 | generic `F: Fn`, `f()` | `fixture_call_graph::call_generic_fn_once_value_binding` | syntactically `PathCall`; semantic Fn impl | `Unsupported`, no edge for generic value-binding calls until Fn/FnOnce semantic resolution exists | Fn trait impl |
 | P28 | raw identifier function `r#match()` | `fixture_call_graph::call_raw_identifier_function` | `PathCall` preserving raw spelling | `Resolved(LocalExact)` for exactly proven local functions | `FunctionNodeId` |
 | P29 | call in argument `outer(inner())` | many fixtures | two `PathCall` sites | each gets independent status | varies |

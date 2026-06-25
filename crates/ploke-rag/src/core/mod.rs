@@ -12,14 +12,14 @@ use super::*;
 use ploke_core::rag_types::AssembledContext;
 #[cfg(feature = "call_graph")]
 use ploke_core::rag_types::{
-    CallCalleeInfo, CallContextInfo, CallReceiverInfo, CallResolutionKind as RagCallResolutionKind,
-    CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind, CallTargetInfo,
-    CallTargetKind,
+    CallCalleeInfo, CallContextInfo, CallExpansionInfo, CallExpansionKind, CallReceiverInfo,
+    CallResolutionKind as RagCallResolutionKind, CallSiteKind as RagCallSiteKind,
+    CallStatusKind as RagCallStatusKind, CallTargetInfo, CallTargetKind,
 };
 #[cfg(feature = "call_graph")]
 use ploke_db::{
-    CallContextRow, CallReceiver, CallRelationKind, CallResolutionKind, CallSiteKind,
-    CallStatusKind,
+    CallContextOptions, CallContextRelation, CallContextRow, CallContextSeed, CallReceiver,
+    CallRelationKind, CallResolutionKind, CallSiteKind, CallStatusKind,
 };
 use ploke_embed::indexer::EmbeddingProcessor;
 use ploke_embed::runtime::EmbeddingRuntime;
@@ -115,6 +115,8 @@ pub struct CallContextConfig {
     pub max_owner_hits: usize,
     pub max_sites_per_owner: usize,
     pub max_targets_per_site: usize,
+    pub max_caller_hits: usize,
+    pub caller_factor: f32,
 }
 
 #[cfg(feature = "call_graph")]
@@ -125,6 +127,8 @@ impl Default for CallContextConfig {
             max_owner_hits: 12,
             max_sites_per_owner: 16,
             max_targets_per_site: 8,
+            max_caller_hits: 12,
+            caller_factor: 0.5,
         }
     }
 }
@@ -189,6 +193,14 @@ fn type_context_kind(relation: TypeContextRelation) -> TypeContextKind {
         TypeContextRelation::TraitBound => TypeContextKind::TraitBound,
         TypeContextRelation::IteratorSurface => TypeContextKind::IteratorSurface,
         TypeContextRelation::ConstGenericAlias => TypeContextKind::ConstGenericAlias,
+    }
+}
+
+#[cfg(feature = "call_graph")]
+fn call_expansion_kind(relation: CallContextRelation) -> CallExpansionKind {
+    match relation {
+        CallContextRelation::OutgoingTarget => CallExpansionKind::OutgoingTarget,
+        CallContextRelation::IncomingCaller => CallExpansionKind::IncomingCaller,
     }
 }
 
@@ -937,13 +949,40 @@ impl RagService {
         &self,
         hits: &[(Uuid, f32)],
     ) -> Result<HashMap<Uuid, Vec<CallContextInfo>>, RagError> {
+        self.collect_call_context_with_required(hits, &HashSet::new())
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn collect_call_context_with_required(
+        &self,
+        hits: &[(Uuid, f32)],
+        required: &HashSet<Uuid>,
+    ) -> Result<HashMap<Uuid, Vec<CallContextInfo>>, RagError> {
         let cfg = self.cfg.call_context;
         if !cfg.enabled || cfg.max_owner_hits == 0 || hits.is_empty() {
             return Ok(HashMap::new());
         }
 
-        let mut out = HashMap::new();
+        let hit_ids = hits.iter().map(|(id, _)| *id).collect::<HashSet<_>>();
+        let mut seen = HashSet::new();
+        let mut owners = Vec::new();
         for &(owner_id, _) in hits.iter().take(cfg.max_owner_hits) {
+            if seen.insert(owner_id) {
+                owners.push(owner_id);
+            }
+        }
+        for owner_id in required
+            .iter()
+            .copied()
+            .filter(|owner_id| hit_ids.contains(owner_id))
+        {
+            if seen.insert(owner_id) {
+                owners.push(owner_id);
+            }
+        }
+
+        let mut out = HashMap::new();
+        for owner_id in owners {
             let rows = self.db.call_context_for_owner(owner_id)?;
             if rows.is_empty() {
                 continue;
@@ -958,6 +997,126 @@ impl RagService {
             }
         }
         Ok(out)
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn expand_hits_with_call_context(
+        &self,
+        hits: &[(Uuid, f32)],
+    ) -> Result<Vec<(Uuid, f32)>, RagError> {
+        Ok(self.expand_hits_with_call_context_info(hits)?.0)
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn expand_hits_with_call_context_info(
+        &self,
+        hits: &[(Uuid, f32)],
+    ) -> Result<(Vec<(Uuid, f32)>, HashMap<Uuid, CallExpansionInfo>), RagError> {
+        let cfg = self.cfg.call_context;
+        if !cfg.enabled
+            || cfg.max_owner_hits == 0
+            || cfg.max_caller_hits == 0
+            || cfg.caller_factor <= 0.0
+            || hits.is_empty()
+        {
+            return Ok((hits.to_vec(), HashMap::new()));
+        }
+
+        let mut scores: HashMap<Uuid, f32> = HashMap::with_capacity(hits.len());
+        for &(id, score) in hits {
+            scores.entry(id).or_insert(score);
+        }
+
+        let mut expanded: HashMap<Uuid, f32> = HashMap::new();
+        let mut expanded_context: HashMap<Uuid, CallExpansionInfo> = HashMap::new();
+        for &(seed_id, score) in hits.iter().take(cfg.max_owner_hits) {
+            let seed_options = [
+                (
+                    CallContextSeed::Owner(seed_id),
+                    CallContextOptions {
+                        include_outgoing_targets: true,
+                        include_incoming_callers: false,
+                        max_candidates: cfg.max_caller_hits,
+                    },
+                ),
+                (
+                    CallContextSeed::Target(seed_id),
+                    CallContextOptions {
+                        include_outgoing_targets: false,
+                        include_incoming_callers: true,
+                        max_candidates: cfg.max_caller_hits,
+                    },
+                ),
+            ];
+
+            for (seed, options) in seed_options {
+                for candidate in self.db.expand_call_context(seed, options)? {
+                    let candidate_id = candidate.node_id;
+                    if candidate_id == seed_id || scores.contains_key(&candidate_id) {
+                        continue;
+                    }
+                    let derived = score * cfg.caller_factor;
+                    expanded
+                        .entry(candidate_id)
+                        .and_modify(|existing| *existing = existing.max(derived))
+                        .or_insert(derived);
+                    let info = CallExpansionInfo {
+                        seed_id,
+                        relation: call_expansion_kind(candidate.relation),
+                        call_site_id: candidate.call_site_id,
+                        target_id: candidate.target_id,
+                        distance: candidate.distance,
+                    };
+                    expanded_context
+                        .entry(candidate_id)
+                        .and_modify(|existing| {
+                            if info.distance < existing.distance
+                                || (info.distance == existing.distance
+                                    && (info.relation, info.seed_id.as_u128())
+                                        < (existing.relation, existing.seed_id.as_u128()))
+                            {
+                                *existing = info;
+                            }
+                        })
+                        .or_insert(info);
+                }
+            }
+        }
+
+        if expanded.is_empty() {
+            return Ok((hits.to_vec(), HashMap::new()));
+        }
+
+        let mut caller_hits = expanded.into_iter().collect::<Vec<_>>();
+        caller_hits.sort_by(|(left_id, left_score), (right_id, right_score)| {
+            match right_score
+                .partial_cmp(left_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+            {
+                std::cmp::Ordering::Equal => left_id.as_bytes().cmp(right_id.as_bytes()),
+                other => other,
+            }
+        });
+        caller_hits.truncate(cfg.max_caller_hits);
+
+        let caller_ids = caller_hits.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+        let materialized_ids = self
+            .db
+            .get_snippet_nodes_ordered(caller_ids)
+            .map_err(|e| RagError::Embed(e.to_string()))?
+            .into_iter()
+            .map(|node| node.id)
+            .collect::<HashSet<_>>();
+
+        let mut merged = Vec::with_capacity(hits.len() + materialized_ids.len());
+        merged.extend_from_slice(hits);
+        merged.extend(
+            caller_hits
+                .into_iter()
+                .filter(|(id, _)| materialized_ids.contains(id)),
+        );
+        expanded_context.retain(|id, _| materialized_ids.contains(id));
+        Ok((merged, expanded_context))
     }
 
     /// High-level API: retrieve and assemble a context using the chosen strategy and budget.
@@ -1007,6 +1166,9 @@ impl RagService {
 
         let (hits, type_context) = self.expand_hits_with_type_context(&hits)?;
 
+        #[cfg(feature = "call_graph")]
+        let (hits, call_expansion) = self.expand_hits_with_call_context_info(&hits)?;
+
         // Optional reranker: requires IoManager to fetch texts
         let final_hits: Vec<(Uuid, f32)> = if let Some(rr) = &self.cfg.reranker {
             let io = self
@@ -1048,7 +1210,10 @@ impl RagService {
         };
 
         #[cfg(feature = "call_graph")]
-        let call_context = self.collect_call_context(&final_hits)?;
+        let call_context = {
+            let required = call_expansion.keys().copied().collect::<HashSet<_>>();
+            self.collect_call_context_with_required(&final_hits, &required)?
+        };
 
         // 2) Assemble context
         let io = self
@@ -1069,6 +1234,7 @@ impl RagService {
                 &io,
                 &type_context,
                 &call_context,
+                &call_expansion,
             )
             .await;
         }

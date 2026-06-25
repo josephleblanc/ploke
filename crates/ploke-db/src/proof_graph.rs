@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::{Database, DbError};
 #[cfg(feature = "call_graph")]
 use crate::{
-    call_graph::{CallContextRow, CallSiteKind, CallStatusKind, CallTargetRow},
+    call_graph::{CallCallerRow, CallContextRow, CallSiteKind, CallStatusKind, CallTargetRow},
     multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE},
 };
 
@@ -317,6 +317,45 @@ impl Database {
     }
 
     #[cfg(feature = "call_graph")]
+    pub fn call_proof_facts_for_target(
+        &self,
+        target_id: Uuid,
+        build_domain_id: &str,
+    ) -> Result<Vec<Value>, DbError> {
+        if build_domain_id.is_empty() {
+            return Err(DbError::QueryConstruction(
+                "call proof projection requires non-empty build_domain_id".to_string(),
+            ));
+        }
+
+        let callers = self.callers_for_target(target_id)?;
+        let mut values = Vec::with_capacity(callers.len() * 3);
+
+        for caller in callers {
+            let source_file = self.source_file_for_owner(caller.site.owner_id)?;
+            let row = caller_context_row(caller);
+            validate_call_context(&row)?;
+            values.push(call_site_fact(&row, build_domain_id, &source_file));
+            values.extend(call_edge_facts(&row));
+            values.push(call_resolution_fact(&row));
+        }
+
+        Ok(values)
+    }
+
+    #[cfg(feature = "call_graph")]
+    pub fn project_call_proof_facts_for_target(
+        &self,
+        target_id: Uuid,
+        build_domain_id: &str,
+    ) -> Result<usize, DbError> {
+        let values = self.call_proof_facts_for_target(target_id, build_domain_id)?;
+        let count = values.len();
+        <Self as ProofGraphStore>::upsert_proof_fact_values(self, &values)?;
+        Ok(count)
+    }
+
+    #[cfg(feature = "call_graph")]
     fn source_file_for_owner(&self, owner_id: Uuid) -> Result<String, DbError> {
         let mut params = BTreeMap::new();
         params.insert(
@@ -469,7 +508,10 @@ fn validate_call_context(row: &CallContextRow) -> Result<(), DbError> {
             row.site.id,
             row.targets.len()
         ))),
-        CallStatusKind::Unresolved | CallStatusKind::External | CallStatusKind::Unsupported
+        CallStatusKind::Unresolved
+        | CallStatusKind::Ambiguous
+        | CallStatusKind::External
+        | CallStatusKind::Unsupported
             if !row.targets.is_empty() =>
         {
             Err(DbError::Cozo(format!(
@@ -478,6 +520,15 @@ fn validate_call_context(row: &CallContextRow) -> Result<(), DbError> {
             )))
         }
         _ => Ok(()),
+    }
+}
+
+#[cfg(feature = "call_graph")]
+fn caller_context_row(row: CallCallerRow) -> CallContextRow {
+    CallContextRow {
+        site: row.site,
+        status: row.status,
+        targets: vec![row.target],
     }
 }
 

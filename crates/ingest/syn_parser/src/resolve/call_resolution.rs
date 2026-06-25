@@ -549,6 +549,7 @@ impl<'a> CallRelationResolver<'a> {
             DynamicCallCallee::LocalBinding { .. }
             | DynamicCallCallee::InitializedLocalBinding { .. }
             | DynamicCallCallee::FnPointerCastInitializedLocalBinding { .. }
+            | DynamicCallCallee::FnPointerCastLocalBinding { .. }
             | DynamicCallCallee::DereferencedInitializedLocalBinding { .. }
             | DynamicCallCallee::FieldLocalBinding { .. }
             | DynamicCallCallee::FieldInitializedLocalBinding { .. }

@@ -79,9 +79,25 @@ fn type_context_degraded_note() -> String {
         .to_string()
 }
 
+#[cfg(feature = "call_graph")]
+fn call_context_degraded_note() -> String {
+    "Call-context expansion is unavailable for this workspace index; results omit call graph payloads and incoming caller expansion."
+        .to_string()
+}
+
 fn type_context_degraded_next_steps() -> Vec<String> {
     vec![
         "Re-index the workspace with a typed type-graph build if typed neighbors are required."
+            .to_string(),
+        "Use code_item_lookup or read_file when you need exact definitions rather than broad retrieval."
+            .to_string(),
+    ]
+}
+
+#[cfg(feature = "call_graph")]
+fn call_context_degraded_next_steps() -> Vec<String> {
+    vec![
+        "Re-index the workspace with call-graph projection enabled if call payloads or caller expansion are required."
             .to_string(),
         "Use code_item_lookup or read_file when you need exact definitions rather than broad retrieval."
             .to_string(),
@@ -98,6 +114,19 @@ fn apply_type_context_degraded_note(result: &mut RequestCodeContextResult) {
         None => result.note = Some(note),
     }
     result.next_steps.extend(type_context_degraded_next_steps());
+}
+
+#[cfg(feature = "call_graph")]
+fn apply_call_context_degraded_note(result: &mut RequestCodeContextResult) {
+    let note = call_context_degraded_note();
+    match result.note.as_mut() {
+        Some(existing) => {
+            existing.push_str("\n\n");
+            existing.push_str(&note);
+        }
+        None => result.note = Some(note),
+    }
+    result.next_steps.extend(call_context_degraded_next_steps());
 }
 
 fn summarize_request_code_context_result(
@@ -287,6 +316,10 @@ impl super::Tool for RequestCodeContextGat {
         if rag.type_context_degraded() {
             apply_type_context_degraded_note(&mut result);
         }
+        #[cfg(feature = "call_graph")]
+        if rag.call_context_degraded() {
+            apply_call_context_degraded_note(&mut result);
+        }
         let mut ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
             .with_field("search_term", result.search_term.as_str())
             .with_field(
@@ -452,6 +485,148 @@ mod gat_tests {
         Ok(())
     }
 
+    #[cfg(all(feature = "call_graph", feature = "test_harness"))]
+    #[tokio::test]
+    async fn request_code_context_returns_method_target_callers_with_call_context()
+    -> color_eyre::Result<()> {
+        use crate::app::commands::harness::TestRuntime;
+        use crate::user_config::RetrievalStrategyUser;
+        use ploke_core::ArcStr;
+        use ploke_core::rag_types::{
+            CallCalleeInfo, CallExpansionKind, CallReceiverInfo, CallResolutionKind, CallSiteKind,
+            CallStatusKind, CallTargetKind, RequestCodeContextResult,
+        };
+        use ploke_db::Database;
+        use ploke_db::bm25_index::bm25_service::Bm25Status;
+        use ploke_embed::indexer::EmbeddingProcessor;
+        use ploke_test_utils::setup_db_full_multi_embedding;
+        use std::borrow::Cow;
+        use std::sync::Arc;
+        use tokio::time::{Duration, sleep};
+        use uuid::Uuid;
+
+        let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+            "fixture_call_graph",
+        )?));
+        let target = one_uuid(
+            &db,
+            &method_by_impl_self_query("LocalAssoc", "instance_value"),
+        )?;
+        let method_owner = one_uuid(
+            &db,
+            &function_in_module_query(&["crate"], "call_typed_local_instance_method"),
+        )?;
+
+        let rt = TestRuntime::new_with_embedding_processor(&db, EmbeddingProcessor::new_mock());
+        rt.setup_loaded_standalone_crate(ploke_test_utils::workspace_root())
+            .await;
+        let state = rt.state_arc();
+        {
+            let mut cfg = state.config.write().await;
+            cfg.rag.strategy = RetrievalStrategyUser::Sparse { strict: true };
+            cfg.rag.top_k = 1;
+            cfg.rag.per_part_max_tokens = 4096;
+            cfg.token_limit = 65_536;
+        }
+        let rag = state
+            .rag
+            .as_ref()
+            .expect("test runtime should provide RagService")
+            .clone();
+        assert!(
+            !rag.call_context_degraded(),
+            "fresh fixture_call_graph projection should enable call-context expansion"
+        );
+        rag.bm25_rebuild().await?;
+        let mut ready = false;
+        for _ in 0..50 {
+            match rag.bm25_status().await? {
+                Bm25Status::Ready { docs } if docs > 0 => {
+                    ready = true;
+                    break;
+                }
+                Bm25Status::Error(err) => panic!("BM25 rebuild failed: {err}"),
+                _ => sleep(Duration::from_millis(50)).await,
+            }
+        }
+        assert!(
+            ready,
+            "BM25 index must become ready before request_code_context"
+        );
+
+        let ctx = super::super::Ctx {
+            state,
+            event_bus: Arc::new(crate::EventBus::new(crate::EventBusCaps::default())),
+            request_id: Uuid::new_v4(),
+            parent_id: Uuid::new_v4(),
+            call_id: ArcStr::from("method_call_context"),
+        };
+        let tool_result = RequestCodeContextGat::execute(
+            RequestCodeContextParams {
+                token_budget_per_result: Some(4096),
+                token_budget_total: Some(65_536),
+                search_term: Some(Cow::Borrowed("instance_value")),
+            },
+            ctx,
+        )
+        .await?;
+
+        let result: RequestCodeContextResult = serde_json::from_str(&tool_result.content)?;
+        assert!(
+            result.ok,
+            "request_code_context returned error: {result:#?}"
+        );
+        assert_eq!(result.search_term, "instance_value");
+        assert_eq!(result.top_k, 1);
+        assert!(
+            result
+                .note
+                .as_deref()
+                .is_none_or(|note| !note.contains("Call-context expansion is unavailable")),
+            "call-context degradation should not be surfaced for fixture_call_graph: {result:#?}"
+        );
+
+        let method_part = result
+            .context
+            .iter()
+            .find(|part| part.id == method_owner)
+            .expect("request_code_context should materialize the method-call caller owner");
+        let method_call = method_part
+            .call_context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Method
+                    && call.callee
+                        == CallCalleeInfo::Method {
+                            name: "instance_value".to_string(),
+                            receiver: Some(CallReceiverInfo::TypedLocalBinding {
+                                name: "value".to_string(),
+                                type_path: vec!["LocalAssoc".to_string()],
+                            }),
+                        }
+                    && call
+                        .targets
+                        .iter()
+                        .any(|target_info| target_info.target_id == target)
+            })
+            .expect("method caller should retain outgoing call context to the seed target");
+        assert_eq!(method_call.status, CallStatusKind::Resolved);
+        assert_eq!(method_call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(method_call.targets.len(), 1);
+        assert_eq!(method_call.targets[0].target_id, target);
+        assert_eq!(method_call.targets[0].relation, CallTargetKind::Method);
+        let expansion = method_part
+            .call_expansion
+            .expect("expanded method caller should carry call-expansion provenance");
+        assert_eq!(expansion.seed_id, target);
+        assert_eq!(expansion.relation, CallExpansionKind::IncomingCaller);
+        assert_eq!(expansion.call_site_id, method_call.site_id);
+        assert_eq!(expansion.target_id, target);
+        assert_eq!(expansion.distance, 1);
+
+        Ok(())
+    }
+
     #[test]
     fn stale_snippet_skips_are_model_visible_degraded_context() {
         let mut result = RequestCodeContextResult::from_assembled(
@@ -485,6 +660,38 @@ mod gat_tests {
                 .next_steps
                 .iter()
                 .any(|step| step.contains("Refresh or re-resolve"))
+        );
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[test]
+    fn call_context_degradation_is_model_visible() {
+        let mut result = RequestCodeContextResult::from_assembled(
+            Vec::new(),
+            AssembledMeta {
+                search_term: "callers".to_string(),
+                top_k: 3,
+                kind: ContextPartKind::Code,
+            },
+        );
+
+        apply_call_context_degraded_note(&mut result);
+
+        let note = result
+            .note
+            .as_deref()
+            .expect("call-context degradation should surface a note for the model");
+        assert!(
+            note.contains("Call-context expansion is unavailable"),
+            "unexpected note: {note}"
+        );
+        assert!(
+            result
+                .next_steps
+                .iter()
+                .any(|step| step.contains("call-graph projection enabled")),
+            "call-context degradation should include recovery next steps: {:#?}",
+            result.next_steps
         );
     }
 

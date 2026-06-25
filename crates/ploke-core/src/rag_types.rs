@@ -14,6 +14,8 @@ pub struct ContextPart {
     #[serde(default)]
     pub type_context: Option<TypeContextInfo>,
     #[serde(default)]
+    pub call_expansion: Option<CallExpansionInfo>,
+    #[serde(default)]
     pub call_context: Vec<CallContextInfo>,
 }
 
@@ -115,6 +117,31 @@ impl TypeContextKind {
 pub struct TypeContextInfo {
     pub seed_id: Uuid,
     pub relation: TypeContextKind,
+    pub distance: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum CallExpansionKind {
+    OutgoingTarget,
+    IncomingCaller,
+}
+
+impl CallExpansionKind {
+    pub fn to_static_str(self) -> &'static str {
+        match self {
+            Self::OutgoingTarget => "OutgoingTarget",
+            Self::IncomingCaller => "IncomingCaller",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallExpansionInfo {
+    pub seed_id: Uuid,
+    pub relation: CallExpansionKind,
+    pub call_site_id: Uuid,
+    pub target_id: Uuid,
     pub distance: u32,
 }
 
@@ -354,6 +381,7 @@ impl From<ContextPart> for ConciseContext {
             canon_path: value.canon_path.clone(),
             snippet: value.text,
             type_context: value.type_context,
+            call_expansion: value.call_expansion,
             call_context: value.call_context,
         }
     }
@@ -399,6 +427,8 @@ pub struct ConciseContext {
     pub snippet: String,
     #[serde(default)]
     pub type_context: Option<TypeContextInfo>,
+    #[serde(default)]
+    pub call_expansion: Option<CallExpansionInfo>,
     #[serde(default)]
     pub call_context: Vec<CallContextInfo>,
 }

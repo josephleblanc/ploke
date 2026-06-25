@@ -304,6 +304,7 @@ for a more fuzzy search."#
             )),
             snippet,
             type_context: None,
+            call_expansion: None,
             call_context: Vec::new(),
         };
 
