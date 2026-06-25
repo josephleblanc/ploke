@@ -1,4 +1,6 @@
 use super::*;
+use syn_parser::parser::nodes::{DynamicCallNode, DynamicCallSiteId, FunctionNodeId};
+use syn_parser::resolve::call_resolution::CallResolutionReport;
 
 // CALL_GRAPH_GATE:db-projection - dynamic function edges must not be flattened to path functions.
 #[cfg(feature = "call_graph")]
@@ -30,292 +32,151 @@ fn test_call_graph_projection_for_dynamic_function_call() -> Result<(), Box<dyn 
             })
             .collect::<Vec<_>>()
     };
-    let (call_site_id, target_function_id) = call_report
-        .relations
-        .iter()
-        .copied()
-        .find_map(|relation| match relation {
-            CallRelation::DynamicFunction { source, target } => {
-                let source_any = AnyCallSiteId::Dynamic(source);
-                let call = merged
-                    .call_sites()
-                    .iter()
-                    .find(|call| call.id() == source_any)?;
-                match call {
-                    CallNode::DynamicCall(dynamic_call)
-                        if matches!(
-                            &dynamic_call.callee,
-                            DynamicCallCallee::Path { path }
-                                if path.as_slice() == ["local_target"]
-                        ) =>
-                    {
-                        Some((source, target))
-                    }
-                    _ => None,
-                }
-            }
-            CallRelation::Function { .. }
-            | CallRelation::Method { .. }
-            | CallRelation::AssociatedFunction { .. }
-            | CallRelation::TupleStructConstructor { .. }
-            | CallRelation::EnumVariantConstructor { .. } => None,
-        })
-        .expect("fixture_call_graph should resolve (local_target)() as DynamicFunction");
+    let (call_site_id, target_function_id) = find_dynamic_relation(
+        &call_report,
+        &merged,
+        |dynamic_call| {
+            matches!(
+                &dynamic_call.callee,
+                DynamicCallCallee::Path { path } if path.as_slice() == ["local_target"]
+            )
+        },
+        "fixture_call_graph should resolve (local_target)() as DynamicFunction",
+    );
     let call_site_db_id = call_site_id.to_cozo_uuid();
     let target_db_id: DataValue = target_function_id.into();
-    let (cast_site_id, cast_target_id) = call_report
-        .relations
-        .iter()
-        .copied()
-        .find_map(|relation| match relation {
-            CallRelation::DynamicFunction { source, target } => {
-                let source_any = AnyCallSiteId::Dynamic(source);
-                let call = merged
-                    .call_sites()
-                    .iter()
-                    .find(|call| call.id() == source_any)?;
-                match call {
-                    CallNode::DynamicCall(dynamic_call)
-                        if matches!(
-                            &dynamic_call.callee,
-                            DynamicCallCallee::FnPointerCastPath { path }
-                                if path.as_slice() == ["local_target"]
-                        ) =>
-                    {
-                        Some((source, target))
-                    }
-                    _ => None,
-                }
-            }
-            CallRelation::Function { .. }
-            | CallRelation::Method { .. }
-            | CallRelation::AssociatedFunction { .. }
-            | CallRelation::TupleStructConstructor { .. }
-            | CallRelation::EnumVariantConstructor { .. } => None,
-        })
-        .expect(
-            "fixture_call_graph should resolve (local_target as fn() -> i32)() as DynamicFunction",
-        );
+    let (cast_site_id, cast_target_id) = find_dynamic_relation(
+        &call_report,
+        &merged,
+        |dynamic_call| {
+            matches!(
+                &dynamic_call.callee,
+                DynamicCallCallee::FnPointerCastPath { path }
+                    if path.as_slice() == ["local_target"]
+            )
+        },
+        "fixture_call_graph should resolve (local_target as fn() -> i32)() as DynamicFunction",
+    );
     let cast_site_db = cast_site_id.to_cozo_uuid();
     let cast_target_db: DataValue = cast_target_id.into();
-    let (binding_cast_site_id, binding_cast_target_id) = call_report
-        .relations
-        .iter()
-        .copied()
-        .find_map(|relation| match relation {
-            CallRelation::DynamicFunction { source, target } => {
-                let source_any = AnyCallSiteId::Dynamic(source);
-                let call = merged
-                    .call_sites()
-                    .iter()
-                    .find(|call| call.id() == source_any)?;
-                match call {
-                    CallNode::DynamicCall(dynamic_call)
-                        if matches!(
-                            &dynamic_call.callee,
-                            DynamicCallCallee::FnPointerCastInitializedLocalBinding {
-                                path,
-                                init_path,
-                            } if path.as_slice() == ["f"]
-                                && init_path.as_slice() == ["local_target"]
-                        ) =>
-                    {
-                        Some((source, target))
-                    }
-                    _ => None,
-                }
-            }
-            CallRelation::Function { .. }
-            | CallRelation::Method { .. }
-            | CallRelation::AssociatedFunction { .. }
-            | CallRelation::TupleStructConstructor { .. }
-            | CallRelation::EnumVariantConstructor { .. } => None,
-        })
-        .expect("fixture_call_graph should resolve (f as fn() -> i32)() as DynamicFunction");
+    let (binding_cast_site_id, binding_cast_target_id) = find_dynamic_relation(
+        &call_report,
+        &merged,
+        |dynamic_call| {
+            matches!(
+                &dynamic_call.callee,
+                DynamicCallCallee::FnPointerCastInitializedLocalBinding {
+                    path,
+                    init_path,
+                } if path.as_slice() == ["f"] && init_path.as_slice() == ["local_target"]
+            )
+        },
+        "fixture_call_graph should resolve (f as fn() -> i32)() as DynamicFunction",
+    );
     let binding_cast_site_db = binding_cast_site_id.to_cozo_uuid();
     let binding_cast_target_db: DataValue = binding_cast_target_id.into();
-    let (deref_site_id, deref_target_id) = call_report
-        .relations
-        .iter()
-        .copied()
-        .find_map(|relation| match relation {
-            CallRelation::DynamicFunction { source, target } => {
-                let source_any = AnyCallSiteId::Dynamic(source);
-                let call = merged
-                    .call_sites()
-                    .iter()
-                    .find(|call| call.id() == source_any)?;
-                match call {
-                    CallNode::DynamicCall(dynamic_call)
-                        if matches!(
-                            &dynamic_call.callee,
-                            DynamicCallCallee::DereferencedInitializedLocalBinding {
-                                path,
-                                init_path,
-                            } if path.as_slice() == ["f"]
-                                && init_path.as_slice() == ["local_target"]
-                        ) =>
-                    {
-                        Some((source, target))
-                    }
-                    _ => None,
-                }
-            }
-            CallRelation::Function { .. }
-            | CallRelation::Method { .. }
-            | CallRelation::AssociatedFunction { .. }
-            | CallRelation::TupleStructConstructor { .. }
-            | CallRelation::EnumVariantConstructor { .. } => None,
-        })
-        .expect("fixture_call_graph should resolve (*f)() as DynamicFunction");
+    let (deref_site_id, deref_target_id) = find_dynamic_relation(
+        &call_report,
+        &merged,
+        |dynamic_call| {
+            matches!(
+                &dynamic_call.callee,
+                DynamicCallCallee::DereferencedInitializedLocalBinding {
+                    path,
+                    init_path,
+                } if path.as_slice() == ["f"] && init_path.as_slice() == ["local_target"]
+            )
+        },
+        "fixture_call_graph should resolve (*f)() as DynamicFunction",
+    );
     let deref_site_db = deref_site_id.to_cozo_uuid();
     let deref_target_db: DataValue = deref_target_id.into();
-    let (block_site_id, block_target_id) = call_report
-        .relations
-        .iter()
-        .copied()
-        .find_map(|relation| match relation {
-            CallRelation::DynamicFunction { source, target } => {
-                let source_any = AnyCallSiteId::Dynamic(source);
-                let call = merged
-                    .call_sites()
-                    .iter()
-                    .find(|call| call.id() == source_any)?;
-                match call {
-                    CallNode::DynamicCall(dynamic_call)
-                        if dynamic_call.span == (13065, 13085)
-                            && matches!(
-                                &dynamic_call.callee,
-                                DynamicCallCallee::Path { path }
-                                    if path.as_slice() == ["local_target"]
-                            ) =>
-                    {
-                        Some((source, target))
-                    }
-                    _ => None,
-                }
-            }
-            CallRelation::Function { .. }
-            | CallRelation::Method { .. }
-            | CallRelation::AssociatedFunction { .. }
-            | CallRelation::TupleStructConstructor { .. }
-            | CallRelation::EnumVariantConstructor { .. } => None,
-        })
-        .expect("fixture_call_graph should resolve ({ local_target })() as DynamicFunction");
+    let (block_site_id, block_target_id) = find_dynamic_relation(
+        &call_report,
+        &merged,
+        |dynamic_call| {
+            dynamic_call.span == (13065, 13085)
+                && matches!(
+                    &dynamic_call.callee,
+                    DynamicCallCallee::Path { path } if path.as_slice() == ["local_target"]
+                )
+        },
+        "fixture_call_graph should resolve ({ local_target })() as DynamicFunction",
+    );
     let block_site_db = block_site_id.to_cozo_uuid();
     let block_target_db: DataValue = block_target_id.into();
-    let (branch_site_id, branch_target_id) = call_report
-        .relations
-        .iter()
-        .copied()
-        .find_map(|relation| match relation {
-            CallRelation::DynamicFunction { source, target } => {
-                let source_any = AnyCallSiteId::Dynamic(source);
-                let call = merged
-                    .call_sites()
-                    .iter()
-                    .find(|call| call.id() == source_any)?;
-                match call {
-                    CallNode::DynamicCall(dynamic_call)
-                        if dynamic_call.span == (13188, 13238)
-                            && matches!(
-                                &dynamic_call.callee,
-                                DynamicCallCallee::IfBranchPaths { paths }
-                                    if paths.as_slice()
-                                        == [vec!["local_target".to_string()], vec!["local_target".to_string()]]
-                            ) =>
-                    {
-                        Some((source, target))
-                    }
-                    _ => None,
-                }
-            }
-            CallRelation::Function { .. }
-            | CallRelation::Method { .. }
-            | CallRelation::AssociatedFunction { .. }
-            | CallRelation::TupleStructConstructor { .. }
-            | CallRelation::EnumVariantConstructor { .. } => None,
-        })
-        .expect(
-            "fixture_call_graph should resolve if same-branch dynamic call as DynamicFunction",
-        );
+    let (branch_site_id, branch_target_id) = find_dynamic_relation(
+        &call_report,
+        &merged,
+        |dynamic_call| {
+            dynamic_call.span == (13188, 13238)
+                && matches!(
+                    &dynamic_call.callee,
+                    DynamicCallCallee::IfBranchPaths { paths }
+                        if paths.as_slice()
+                            == [
+                                vec!["local_target".to_string()],
+                                vec!["local_target".to_string()]
+                            ]
+                )
+        },
+        "fixture_call_graph should resolve if same-branch dynamic call as DynamicFunction",
+    );
     let branch_site_db = branch_site_id.to_cozo_uuid();
     let branch_target_db: DataValue = branch_target_id.into();
-    let branch_ambiguous_site_id = merged
-        .call_sites()
-        .iter()
-        .find_map(|call| match call {
-            CallNode::DynamicCall(dynamic_call)
-                if dynamic_call.span == (13306, 13356)
-                    && matches!(
-                        &dynamic_call.callee,
-                        DynamicCallCallee::IfBranchPaths { paths }
-                            if paths.as_slice()
-                                == [vec!["local_target".to_string()], vec!["other_target".to_string()]]
-                    ) =>
-            {
-                Some(dynamic_call.id)
-            }
-            _ => None,
-        })
-        .expect("fixture_call_graph should record ambiguous if-branch dynamic call site");
+    let branch_ambiguous_site_id = find_dynamic_site(
+        &merged,
+        |dynamic_call| {
+            dynamic_call.span == (13306, 13356)
+                && matches!(
+                    &dynamic_call.callee,
+                    DynamicCallCallee::IfBranchPaths { paths }
+                        if paths.as_slice()
+                            == [
+                                vec!["local_target".to_string()],
+                                vec!["other_target".to_string()]
+                            ]
+                )
+        },
+        "fixture_call_graph should record ambiguous if-branch dynamic call site",
+    );
     let branch_ambiguous_targets = dynamic_relation_targets(branch_ambiguous_site_id);
     let branch_ambiguous_site_db = branch_ambiguous_site_id.to_cozo_uuid();
-    let (match_site_id, match_target_id) = call_report
-        .relations
-        .iter()
-        .copied()
-        .find_map(|relation| match relation {
-            CallRelation::DynamicFunction { source, target } => {
-                let source_any = AnyCallSiteId::Dynamic(source);
-                let call = merged
-                    .call_sites()
-                    .iter()
-                    .find(|call| call.id() == source_any)?;
-                match call {
-                    CallNode::DynamicCall(dynamic_call)
-                        if dynamic_call.span == (13422, 13505)
-                            && matches!(
-                                &dynamic_call.callee,
-                                DynamicCallCallee::MatchArmPaths { paths }
-                                    if paths.as_slice()
-                                        == [vec!["local_target".to_string()], vec!["local_target".to_string()]]
-                            ) =>
-                    {
-                        Some((source, target))
-                    }
-                    _ => None,
-                }
-            }
-            CallRelation::Function { .. }
-            | CallRelation::Method { .. }
-            | CallRelation::AssociatedFunction { .. }
-            | CallRelation::TupleStructConstructor { .. }
-            | CallRelation::EnumVariantConstructor { .. } => None,
-        })
-        .expect(
-            "fixture_call_graph should resolve match same-arm dynamic call as DynamicFunction",
-        );
+    let (match_site_id, match_target_id) = find_dynamic_relation(
+        &call_report,
+        &merged,
+        |dynamic_call| {
+            dynamic_call.span == (13422, 13505)
+                && matches!(
+                    &dynamic_call.callee,
+                    DynamicCallCallee::MatchArmPaths { paths }
+                        if paths.as_slice()
+                            == [
+                                vec!["local_target".to_string()],
+                                vec!["local_target".to_string()]
+                            ]
+                )
+        },
+        "fixture_call_graph should resolve match same-arm dynamic call as DynamicFunction",
+    );
     let match_site_db = match_site_id.to_cozo_uuid();
     let match_target_db: DataValue = match_target_id.into();
-    let match_ambiguous_site_id = merged
-        .call_sites()
-        .iter()
-        .find_map(|call| match call {
-            CallNode::DynamicCall(dynamic_call)
-                if dynamic_call.span == (13576, 13659)
-                    && matches!(
-                        &dynamic_call.callee,
-                        DynamicCallCallee::MatchArmPaths { paths }
-                            if paths.as_slice()
-                                == [vec!["local_target".to_string()], vec!["other_target".to_string()]]
-                    ) =>
-            {
-                Some(dynamic_call.id)
-            }
-            _ => None,
-        })
-        .expect("fixture_call_graph should record ambiguous match-arm dynamic call site");
+    let match_ambiguous_site_id = find_dynamic_site(
+        &merged,
+        |dynamic_call| {
+            dynamic_call.span == (13576, 13659)
+                && matches!(
+                    &dynamic_call.callee,
+                    DynamicCallCallee::MatchArmPaths { paths }
+                        if paths.as_slice()
+                            == [
+                                vec!["local_target".to_string()],
+                                vec!["other_target".to_string()]
+                            ]
+                )
+        },
+        "fixture_call_graph should record ambiguous match-arm dynamic call site",
+    );
     let match_ambiguous_targets = dynamic_relation_targets(match_ambiguous_site_id);
     let match_ambiguous_site_db = match_ambiguous_site_id.to_cozo_uuid();
 
@@ -387,6 +248,60 @@ fn test_call_graph_projection_for_dynamic_function_call() -> Result<(), Box<dyn 
     }
 
     Ok(())
+}
+
+fn find_dynamic_relation(
+    call_report: &CallResolutionReport,
+    graph: &ParsedCodeGraph,
+    predicate: impl Fn(&DynamicCallNode) -> bool,
+    message: &str,
+) -> (DynamicCallSiteId, FunctionNodeId) {
+    call_report
+        .relations
+        .iter()
+        .copied()
+        .find_map(|relation| match relation {
+            CallRelation::DynamicFunction { source, target } => {
+                let dynamic_call = dynamic_call_by_id(graph, source)?;
+                predicate(dynamic_call).then_some((source, target))
+            }
+            CallRelation::Function { .. }
+            | CallRelation::Method { .. }
+            | CallRelation::AssociatedFunction { .. }
+            | CallRelation::TupleStructConstructor { .. }
+            | CallRelation::EnumVariantConstructor { .. } => None,
+        })
+        .expect(message)
+}
+
+fn find_dynamic_site(
+    graph: &ParsedCodeGraph,
+    predicate: impl Fn(&DynamicCallNode) -> bool,
+    message: &str,
+) -> DynamicCallSiteId {
+    graph
+        .call_sites()
+        .iter()
+        .find_map(|call| match call {
+            CallNode::DynamicCall(dynamic_call) if predicate(dynamic_call) => Some(dynamic_call.id),
+            _ => None,
+        })
+        .expect(message)
+}
+
+fn dynamic_call_by_id(
+    graph: &ParsedCodeGraph,
+    site_id: DynamicCallSiteId,
+) -> Option<&DynamicCallNode> {
+    let source_any = AnyCallSiteId::Dynamic(site_id);
+    graph
+        .call_sites()
+        .iter()
+        .find(|call| call.id() == source_any)
+        .and_then(|call| match call {
+            CallNode::DynamicCall(dynamic_call) => Some(dynamic_call),
+            _ => None,
+        })
 }
 
 fn assert_dynamic_relation(
