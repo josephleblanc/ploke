@@ -34,10 +34,19 @@ impl<'a> TargetlessRowCase<'a> {
         status: CallStatusKind,
         label: &'a str,
     ) -> Self {
+        Self::dynamic_args(path, 0, status, label)
+    }
+
+    pub(in crate::unit) fn dynamic_args(
+        path: Option<&'a [&'a str]>,
+        args: u32,
+        status: CallStatusKind,
+        label: &'a str,
+    ) -> Self {
         Self {
             kind: CallSiteKind::Dynamic,
             path,
-            args: Some(0),
+            args: Some(args),
             generics: None,
             status,
             resolution: None,

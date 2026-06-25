@@ -211,17 +211,10 @@ fn fixture_context_reads_projected_generic_unsafe_extern_and_chained_calls() -> 
     let owner = function_id_by_name(&db, "call_extern_c_function")?;
     let context = db.call_context_for_owner(owner)?;
     assert_eq!(context.len(), 1, "extern C context rows: {context:#?}");
-    let row = &context[0];
-    assert_eq!(row.site.owner_id, owner);
-    assert_eq!(row.site.kind, CallSiteKind::Path);
-    assert_eq!(row.site.path.as_ref(), Some(&path(&["abs"])));
-    assert_eq!(row.site.arg_count, Some(1));
-    assert_eq!(row.site.generic_arg_count, Some(0));
-    assert_eq!(row.status.status, CallStatusKind::External);
-    assert_eq!(row.status.resolution, None);
-    assert!(
-        row.targets.is_empty(),
-        "extern C call must not fabricate local target edges: {row:#?}"
+    assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::path(&["abs"], 1, CallStatusKind::External, "extern C abs"),
     );
 
     let owner = function_id_by_name(&db, "call_chained_returned_function")?;
@@ -240,24 +233,15 @@ fn fixture_context_reads_projected_generic_unsafe_extern_and_chained_calls() -> 
         CallTargetKind::Function,
     );
 
-    let dynamic_rows = context
-        .iter()
-        .filter(|row| row.site.kind == CallSiteKind::Dynamic)
-        .collect::<Vec<_>>();
-    assert_eq!(
-        dynamic_rows.len(),
-        1,
-        "expected one outer dynamic call row: {context:#?}"
-    );
-    let row = dynamic_rows[0];
-    assert_eq!(row.site.owner_id, owner);
-    assert_eq!(row.site.arg_count, Some(1));
-    assert_eq!(row.site.generic_arg_count, None);
-    assert_eq!(row.status.status, CallStatusKind::Unsupported);
-    assert_eq!(row.status.resolution, None);
-    assert!(
-        row.targets.is_empty(),
-        "returned-function dynamic call must remain unsupported without fake targets: {row:#?}"
+    assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::dynamic_args(
+            None,
+            1,
+            CallStatusKind::Unsupported,
+            "returned-function dynamic call",
+        ),
     );
 
     Ok(())
@@ -319,17 +303,10 @@ fn fixture_context_reads_projected_prelude_drop_shadowing() -> Result<(), DbErro
     let context = db.call_context_for_owner(owner)?;
     assert_eq!(context.len(), 1, "prelude drop context rows: {context:#?}");
 
-    let row = &context[0];
-    assert_eq!(row.site.owner_id, owner);
-    assert_eq!(row.site.kind, CallSiteKind::Path);
-    assert_eq!(row.site.path.as_ref(), Some(&path(&["drop"])));
-    assert_eq!(row.site.arg_count, Some(1));
-    assert_eq!(row.site.generic_arg_count, Some(0));
-    assert_eq!(row.status.status, CallStatusKind::External);
-    assert_eq!(row.status.resolution, None);
-    assert!(
-        row.targets.is_empty(),
-        "prelude drop must not fabricate local target edges: {row:#?}"
+    assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::path(&["drop"], 1, CallStatusKind::External, "prelude drop"),
     );
 
     let owner = function_id_by_name_in_module(
