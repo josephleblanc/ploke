@@ -8,24 +8,8 @@ fn fixture_callers_for_target_reads_real_incoming_callers() -> Result<(), DbErro
     let dynamic_owner = function_id_by_name(&db, "call_parenthesized_local_target")?;
 
     let callers = db.callers_for_target(target)?;
-    assert!(
-        callers.len() >= 2,
-        "local_target should have multiple incoming callers: {callers:#?}"
-    );
-    assert!(
-        callers
-            .iter()
-            .all(|caller| caller.target.target_id == target),
-        "incoming caller query returned a mismatched target edge: {callers:#?}"
-    );
-    let resolved_callers = callers
-        .iter()
-        .filter(|caller| caller.status.status == CallStatusKind::Resolved)
-        .collect::<Vec<_>>();
-    assert!(
-        resolved_callers.len() >= 2,
-        "local_target should have multiple resolved incoming callers: {callers:#?}"
-    );
+    assert_callers_for_target(&callers, target, 2, "local_target");
+    assert_min_resolved_callers(&callers, 2, "local_target");
 
     let path = caller_by_owner_kind_path(
         &callers,
@@ -99,23 +83,7 @@ fn fixture_callers_for_target_reads_method_and_associated_callers() -> Result<()
 
     let target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "instance_value")?;
     let callers = db.callers_for_target(target)?;
-    assert!(
-        callers.len() >= 2,
-        "LocalAssoc::instance_value should have multiple incoming callers: {callers:#?}"
-    );
-    assert!(
-        callers
-            .iter()
-            .all(|caller| caller.target.target_id == target),
-        "method target caller query returned a mismatched target edge: {callers:#?}"
-    );
-    assert!(
-        callers
-            .iter()
-            .all(|caller| caller.status.status == CallStatusKind::Resolved
-                && caller.status.resolution == Some(CallResolutionKind::LocalExact)),
-        "incoming method callers should preserve resolved statuses: {callers:#?}"
-    );
+    assert_resolved_callers_for_target(&callers, target, 2, "LocalAssoc::instance_value");
 
     let owner = function_id_by_name(&db, "call_typed_local_instance_method")?;
     let caller = caller_by_owner_method_receiver(
@@ -145,16 +113,7 @@ fn fixture_callers_for_target_reads_method_and_associated_callers() -> Result<()
 
     let target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "make")?;
     let callers = db.callers_for_target(target)?;
-    assert!(
-        callers.len() >= 3,
-        "LocalAssoc::make should have multiple incoming callers: {callers:#?}"
-    );
-    assert!(
-        callers
-            .iter()
-            .all(|caller| caller.target.target_id == target),
-        "associated-function target caller query returned a mismatched target edge: {callers:#?}"
-    );
+    assert_callers_for_target(&callers, target, 3, "LocalAssoc::make");
 
     let owner = function_id_by_name(&db, "call_local_assoc_make")?;
     let caller =

@@ -104,6 +104,58 @@ pub(in crate::unit) fn caller_by_owner_method_receiver<'a>(
     matches[0]
 }
 
+pub(in crate::unit) fn assert_callers_for_target(
+    callers: &[CallCallerRow],
+    target: Uuid,
+    min_count: usize,
+    label: &str,
+) {
+    assert!(
+        callers.len() >= min_count,
+        "{label} should have at least {min_count} incoming callers: {callers:#?}"
+    );
+    assert!(
+        callers
+            .iter()
+            .all(|caller| caller.target.target_id == target),
+        "{label} caller query returned a mismatched target edge: {callers:#?}"
+    );
+}
+
+pub(in crate::unit) fn assert_min_resolved_callers(
+    callers: &[CallCallerRow],
+    min_count: usize,
+    label: &str,
+) {
+    let resolved = callers
+        .iter()
+        .filter(|caller| {
+            caller.status.status == CallStatusKind::Resolved
+                && caller.status.resolution == Some(CallResolutionKind::LocalExact)
+        })
+        .count();
+    assert!(
+        resolved >= min_count,
+        "{label} should have at least {min_count} resolved incoming callers: {callers:#?}"
+    );
+}
+
+pub(in crate::unit) fn assert_resolved_callers_for_target(
+    callers: &[CallCallerRow],
+    target: Uuid,
+    min_count: usize,
+    label: &str,
+) {
+    assert_callers_for_target(callers, target, min_count, label);
+    assert!(
+        callers.iter().all(|caller| {
+            caller.status.status == CallStatusKind::Resolved
+                && caller.status.resolution == Some(CallResolutionKind::LocalExact)
+        }),
+        "{label} incoming callers should preserve resolved statuses: {callers:#?}"
+    );
+}
+
 pub(in crate::unit) fn assert_resolved_target(
     row: &CallContextRow,
     target: Uuid,
