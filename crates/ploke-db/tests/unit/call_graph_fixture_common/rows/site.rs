@@ -1,18 +1,5 @@
 use super::*;
 
-pub(in crate::unit) fn data_str<'a>(value: &'a DataValue, label: &str) -> &'a str {
-    value
-        .get_str()
-        .unwrap_or_else(|| panic!("{label} should be a string, got {value:?}"))
-}
-
-pub(in crate::unit) fn optional_data_str<'a>(value: &'a DataValue, label: &str) -> Option<&'a str> {
-    match value {
-        DataValue::Null => None,
-        other => Some(data_str(other, label)),
-    }
-}
-
 pub(in crate::unit) fn body_edges_for_site(
     db: &Database,
     site_id: Uuid,
@@ -168,41 +155,4 @@ pub(in crate::unit) fn call_target_exists(
             *{relation} {{ id @ 'NOW' }}"#
     ))?;
     Ok(rows.rows.len() == 1)
-}
-
-pub(in crate::unit) fn assert_valid_status_shape(
-    site_id: Uuid,
-    status: &str,
-    resolution: Option<&str>,
-) {
-    let valid = match status {
-        "Resolved" => resolution == Some("LocalExact"),
-        "Unresolved" | "Ambiguous" | "External" | "Unsupported" => resolution.is_none(),
-        other => panic!("unexpected call status kind {other} for {site_id}"),
-    };
-    assert!(
-        valid,
-        "call_resolution_status resolution_kind {resolution:?} is invalid for {status} call site {site_id}"
-    );
-}
-
-pub(in crate::unit) fn proof_kind_count(rows: &[&ProofGraphContextRow], kind: &str) -> usize {
-    rows.iter().filter(|row| row.kind == kind).count()
-}
-
-pub(in crate::unit) fn proof_fact_for_kind<'a>(
-    rows: &'a [&ProofGraphContextRow],
-    kind: &str,
-) -> &'a ProofGraphContextRow {
-    let matches = rows
-        .iter()
-        .copied()
-        .filter(|row| row.kind == kind)
-        .collect::<Vec<_>>();
-    assert_eq!(
-        matches.len(),
-        1,
-        "expected exactly one {kind} proof fact; rows: {rows:#?}"
-    );
-    matches[0]
 }
