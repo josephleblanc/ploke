@@ -19,7 +19,7 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `feb23599 test: split associated context fixtures`
+  `4574718d test: split trait method context fixtures`
 - Current quality focus: DB/proof/query hardening before adding parser breadth.
 - Recent endpoint-family cleanup:
   - `e53a2301 Split call target endpoint kind`
@@ -44,6 +44,7 @@ are not acceptable as a continuing implementation style.
   - `23db798b test: split resolved proof fixtures`
   - `9740a04e test: split dynamic context fixtures`
   - `feb23599 test: split associated context fixtures`
+  - `4574718d test: split trait method context fixtures`
 
 ## Resumption rules
 
@@ -70,7 +71,7 @@ are not acceptable as a continuing implementation style.
 | ID | Priority | Status | Issue | Required direction |
 | --- | --- | --- | --- | --- |
 | CGQ-1 | P1 | Open | Implementation focus drifted toward parser breadth while DB/proof quality lagged. | Shift next resumed work to DB/proof/query hardening and shared test structure. |
-| CGQ-2 | P1 | Partial 2026-06-25 | `call_graph_fixture_queries.rs` and `call_graph_queries.rs` are far larger and less modular than the type-graph precedent. | First cleanup extracted repeated ambiguous dynamic candidate context/proof assertions into shared helpers, moved them to `call_graph_fixture_common.rs`, moved shared proof and constructor fixture helpers to common, and split invariant, dynamic, target-centered, blocker, proof-lookup, constructor proof, call-context, mixed proof, resolved proof, dynamic context, and associated context fixture tests into `call_graph_fixture_queries/` submodules. Remaining work is to continue splitting by concern and introduce shared matrices before adding more cases. |
+| CGQ-2 | P1 | Partial 2026-06-25 | `call_graph_fixture_queries.rs` and `call_graph_queries.rs` are far larger and less modular than the type-graph precedent. | First cleanup extracted repeated ambiguous dynamic candidate context/proof assertions into shared helpers, moved them to `call_graph_fixture_common.rs`, moved shared proof and constructor fixture helpers to common, and split invariant, dynamic, target-centered, blocker, proof-lookup, constructor proof, call-context, mixed proof, resolved proof, dynamic context, associated context, and trait-method context fixture tests into `call_graph_fixture_queries/` submodules. Remaining work is to continue splitting by concern and introduce shared matrices before adding more cases. |
 | CGQ-3 | P1 | Partial 2026-06-25 | Call endpoint-family rules are duplicated across transform insertion, DB Cozo queries, Rust validation, and tests. | DB query helpers and Rust validation now share `VALID_CALL_TARGET_FAMILIES`; remaining work is transform insertion/test helper surfaces. |
 | CGQ-4 | P1 | Done 2026-06-25 | DB `CallRelationKind` mixed relation semantics with target-kind semantics, including `Struct` and `Variant`. | `CallTargetKind` now carries DB endpoint families separately from call relation kinds, while persisted relation strings remain unchanged. |
 | CGQ-5 | P1 | Done 2026-06-25 | External proof projection reported `externally_summarized` while also using blocker reason `external_dependency_summary_missing`. | Current parser-projected external rows now emit blocked/missing-summary proof state until a real external summary fact exists. |
@@ -194,5 +195,12 @@ For `feb23599 test: split associated context fixtures`:
 
 - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::associated_context -- --nocapture`
   - passed: `tests/mod.rs` 5 passed, 0 failed.
+- `cargo test -p ploke-db --features call_graph fixture_projection -- --nocapture`
+  - passed: `tests/mod.rs` 34 passed, 0 failed.
+
+For `4574718d test: split trait method context fixtures`:
+
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::trait_method_context -- --nocapture`
+  - passed: `tests/mod.rs` 6 passed, 0 failed.
 - `cargo test -p ploke-db --features call_graph fixture_projection -- --nocapture`
   - passed: `tests/mod.rs` 34 passed, 0 failed.
