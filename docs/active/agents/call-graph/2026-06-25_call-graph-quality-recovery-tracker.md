@@ -19,7 +19,7 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `15f0ce68 test: share RAG call expansion assertions`
+  `2aa601b0 test: split dynamic fixture helpers`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent TUI/model-visible cleanup:
   - `cc808347 test: cover variant constructor tool context`
@@ -94,6 +94,8 @@ are not acceptable as a continuing implementation style.
   - `9dbb7fbd test: reuse resolved seed in context queries`
   - `03ab767e test: share target proof site helpers`
   - `3a64af16 test: reuse target proof count helper`
+  - `f32af71d test: split targetless fixture helpers`
+  - `2aa601b0 test: split dynamic fixture helpers`
 - Recent DB test-module split:
   - `7e51101d test: split dynamic call proof fixtures`
   - `09f8f967 test: split target proof fixtures`
@@ -202,9 +204,23 @@ are not acceptable as a continuing implementation style.
   proof fact count formula.
 - RAG call-context public sparse `get_context` tests now share call-expansion
   provenance assertions for incoming and outgoing call-context expansion rows.
+- `call_graph_fixture_common/targetless.rs` is now split into a thin
+  `targetless/` helper root with row, method, and macro targetless assertions
+  separated by concern while preserving the existing `targetless::*` import
+  surface.
+- `call_graph_fixture_common/dynamic.rs` is now split into a thin `dynamic/`
+  helper root with ambiguous candidate helpers, dynamic context matrices, and
+  dynamic proof assertions separated by concern while preserving the existing
+  `dynamic::*` import surface.
 
 ## Recent verification
 
+- `2aa601b0 test: split dynamic fixture helpers`
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+    passed: 93 passed, 0 failed.
+- `f32af71d test: split targetless fixture helpers`
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+    passed: 93 passed, 0 failed.
 - `15f0ce68 test: share RAG call expansion assertions`
   - `cargo test -p ploke-rag --features call_graph call_context_sparse_get_context -- --nocapture`
     passed: 8 passed, 0 failed.
