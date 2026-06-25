@@ -97,6 +97,10 @@ pub trait ProofGraphStore {
     fn upsert_proof_fact_values(&self, values: &[Value]) -> Result<(), DbError>;
     fn proof_symbol_lookup(&self, symbol: &str) -> Result<Vec<ProofGraphContextRow>, DbError>;
     fn proof_graphrag_context(&self, query: &str) -> Result<Vec<ProofGraphContextRow>, DbError>;
+    fn proof_domain_context(
+        &self,
+        build_domain_id: &str,
+    ) -> Result<Vec<ProofGraphContextRow>, DbError>;
     fn proof_checker_edges(&self) -> Result<Vec<ProofCheckerEdgeRow>, DbError>;
     fn proof_blockers(&self) -> Result<Vec<ProofBlockerRow>, DbError>;
     fn proof_source_provenance(
@@ -157,45 +161,29 @@ impl ProofGraphStore for Database {
     fn proof_symbol_lookup(&self, symbol: &str) -> Result<Vec<ProofGraphContextRow>, DbError> {
         let symbol = symbol.to_ascii_lowercase();
         let rows = self.fetch_proof_rows()?;
-        let linked_call_sites = rows
-            .iter()
-            .filter(|row| row.matches_query(&symbol))
-            .filter_map(|row| row.call_site_id.clone())
-            .collect::<BTreeSet<_>>();
-
-        Ok(rows
-            .into_iter()
-            .filter(|row| {
-                row.matches_query(&symbol)
-                    || row
-                        .call_site_id
-                        .as_ref()
-                        .is_some_and(|id| linked_call_sites.contains(id))
-            })
-            .map(ProofGraphContextRow::from)
-            .collect())
+        Ok(linked_context_rows(rows, |row| row.matches_query(&symbol)))
     }
 
     fn proof_graphrag_context(&self, query: &str) -> Result<Vec<ProofGraphContextRow>, DbError> {
         let query = query.to_ascii_lowercase();
         let rows = self.fetch_proof_rows()?;
-        let linked_call_sites = rows
-            .iter()
-            .filter(|row| row.matches_query(&query))
-            .filter_map(|row| row.call_site_id.clone())
-            .collect::<BTreeSet<_>>();
+        Ok(linked_context_rows(rows, |row| row.matches_query(&query)))
+    }
 
-        Ok(rows
-            .into_iter()
-            .filter(|row| {
-                row.matches_query(&query)
-                    || row
-                        .call_site_id
-                        .as_ref()
-                        .is_some_and(|id| linked_call_sites.contains(id))
-            })
-            .map(ProofGraphContextRow::from)
-            .collect())
+    fn proof_domain_context(
+        &self,
+        build_domain_id: &str,
+    ) -> Result<Vec<ProofGraphContextRow>, DbError> {
+        if build_domain_id.is_empty() {
+            return Err(DbError::QueryConstruction(
+                "proof domain context requires non-empty build_domain_id".to_string(),
+            ));
+        }
+
+        let rows = self.fetch_proof_rows()?;
+        Ok(linked_context_rows(rows, |row| {
+            row.build_domain_id.as_deref() == Some(build_domain_id)
+        }))
     }
 
     fn proof_checker_edges(&self) -> Result<Vec<ProofCheckerEdgeRow>, DbError> {
@@ -673,4 +661,26 @@ fn is_idempotent_schema_error(message: &str) -> bool {
         || message.contains("already")
         || message.contains("conflicts with an existing one")
         || message.to_ascii_lowercase().contains("conflict")
+}
+
+fn linked_context_rows(
+    rows: Vec<ProofFactRow>,
+    is_seed: impl Fn(&ProofFactRow) -> bool,
+) -> Vec<ProofGraphContextRow> {
+    let linked_call_sites = rows
+        .iter()
+        .filter(|row| is_seed(row))
+        .filter_map(|row| row.call_site_id.clone())
+        .collect::<BTreeSet<_>>();
+
+    rows.into_iter()
+        .filter(|row| {
+            is_seed(row)
+                || row
+                    .call_site_id
+                    .as_ref()
+                    .is_some_and(|id| linked_call_sites.contains(id))
+        })
+        .map(ProofGraphContextRow::from)
+        .collect()
 }
