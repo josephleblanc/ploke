@@ -353,12 +353,11 @@ Implemented/scaffolded:
   - fresh RAG expansion coverage also seeds retrieval with tuple-struct and
     enum-variant constructor targets and asserts real caller owners are
     materialized with outgoing constructor-family call context.
-  - public `get_context` coverage also proves sparse retrieval seeded by the
-    `NewType` tuple-struct constructor target materializes the constructor
-    caller owner while preserving the outgoing `TupleStructConstructor` edge
-    and incoming-caller expansion provenance through final context assembly.
-    Enum-variant constructor expansion remains helper-level coverage until
-    variant nodes are sparse retrieval seeds.
+  - public `get_context` coverage also proves sparse retrieval seeded by tuple
+    struct and enum variant constructor targets materializes the constructor
+    target seed and caller owner while preserving the outgoing constructor
+    edge and incoming-caller expansion provenance through final context
+    assembly.
   - public `get_context` coverage proves sparse retrieval seeded by
     `try_local_assoc` materializes the incoming caller owner and preserves that
     outgoing call-context edge through final context assembly, with

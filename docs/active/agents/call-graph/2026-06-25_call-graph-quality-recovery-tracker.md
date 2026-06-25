@@ -19,8 +19,10 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `3cce5b86 Split call graph DB module`
+  `31d19d3c Add variant sparse call-context seeds`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
+- Recent RAG/DB context cleanup:
+  - `31d19d3c Add variant sparse call-context seeds`
 - Recent coverage inventory cleanup:
   - Added `2026-06-25_call-graph-coverage-inventory.md` as the compact layer inventory.
 - Recent production pattern cleanup:
@@ -214,6 +216,22 @@ next likely slices are:
    that batch before adding cases.
 
 ## Latest verification
+
+For `31d19d3c Add variant sparse call-context seeds`:
+
+- Red check before implementation:
+  `cargo test -p ploke-rag --features call_graph call_context_sparse_get_context_expands_constructor_target_hits_to_fixture_callers -- --nocapture`
+  failed because the enum-variant constructor query produced no sparse hit for
+  the `Variant` target.
+- `cargo test -p ploke-db collect_rebuild_sources_includes_secondary_search_nodes -- --nocapture`
+  - passed: BM25 source matrix ran 1 test, 0 failed.
+- `cargo test -p ploke-rag --features call_graph call_context_sparse_get_context_expands_constructor_target_hits_to_fixture_callers -- --nocapture`
+  - passed: public sparse constructor `get_context` filter ran 1 test, 0
+    failed.
+- `cargo test -p ploke-db bm25_index::tests -- --nocapture`
+  - passed: BM25 module filter ran 12 tests, 0 failed.
+- `cargo test -p ploke-rag --features call_graph call_context -- --nocapture`
+  - passed: RAG call-context filter ran 25 tests, 0 failed.
 
 For `3cce5b86 Split call graph DB module` and `e431a2f7 Expose proof context payload fields`:
 
