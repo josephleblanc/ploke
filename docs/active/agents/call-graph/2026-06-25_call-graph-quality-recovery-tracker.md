@@ -19,7 +19,7 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `53081563 test: reuse try-result fixture scenario`
+  `056705b8 test: split local target prevalidation cases`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent TUI/model-visible cleanup:
   - `cc808347 test: cover variant constructor tool context`
@@ -107,6 +107,8 @@ are not acceptable as a continuing implementation style.
   - `9cb4f5b0 test: share try-result fixture setup`
   - `6d417c1c test: share initializer fixture scenarios`
   - `53081563 test: reuse try-result fixture scenario`
+  - `02a874b1 test: split receiver decode query cases`
+  - `056705b8 test: split local target prevalidation cases`
 - Recent DB test-module split:
   - `7e51101d test: split dynamic call proof fixtures`
   - `09f8f967 test: split target proof fixtures`
@@ -261,9 +263,29 @@ are not acceptable as a continuing implementation style.
   context/proof assertions, so owner-context and mixed-proof initializer
   fixtures no longer duplicate owner lookup, context-row validation, source
   provenance, and proof-edge setup.
+- `call_graph_queries/receiver_decode.rs` is now a thin synthetic query module
+  root with receiver decode matrices split by persisted receiver shape:
+  structured receiver payloads and raw receiver payloads share one insertion
+  and assertion helper.
+- `call_graph_queries/proof_projection/prevalidation/local_targets.rs` is now
+  a thin module root with owner-scoped and target-centered local-target
+  prevalidation tests split by concern and sharing synthetic local target row
+  setup.
 
 ## Recent verification
 
+- `056705b8 test: split local target prevalidation cases`
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection::prevalidation::local_targets -- --nocapture`
+    passed: 4 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection -- --nocapture`
+    passed: 14 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_queries -- --nocapture`
+    passed: 34 passed, 0 failed.
+- `02a874b1 test: split receiver decode query cases`
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::receiver_decode -- --nocapture`
+    passed: 2 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_queries -- --nocapture`
+    passed: 34 passed, 0 failed.
 - `53081563 test: reuse try-result fixture scenario`
   - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::method_context -- --nocapture`
     passed: 8 passed, 0 failed.
