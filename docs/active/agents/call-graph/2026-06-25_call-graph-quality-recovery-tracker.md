@@ -19,10 +19,12 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `f7349dd7 Share call target family rules with tests`
+  `2d6320d1 Require populated call graph availability`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent production pattern cleanup:
   - `5fad4c98 Remove dormant call graph semantic storage`
+- Recent availability cleanup:
+  - `2d6320d1 Require populated call graph availability`
 - Recent endpoint-family cleanup:
   - `f7349dd7 Share call target family rules with tests`
   - `38640a2c Centralize call relation endpoint kinds`
@@ -175,12 +177,25 @@ are not acceptable as a continuing implementation style.
 Continue production-side pattern cleanup before parser/resolver breadth. The
 next likely slices are:
 
-1. Tighten call-graph availability semantics to distinguish schema presence
-   from populated projection data.
-2. Move/table-drive transform call-graph projection tests out of the broad
+1. Move/table-drive transform call-graph projection tests out of the broad
    transform module.
+2. Add/update a stable call-graph coverage matrix instead of extending the
+   diary-style notes.
 
 ## Latest verification
+
+For `2d6320d1 Require populated call graph availability`:
+
+- Red check before implementation:
+  `cargo test -p ploke-db --features call_graph unit::call_graph_queries::schema -- --nocapture`
+  failed because schema-only databases still reported call graph availability.
+- Green checks after implementation:
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::schema -- --nocapture`
+    - passed: schema availability filter ran 1 test, 0 failed.
+  - `cargo test -p ploke-rag --features call_graph call_context_disabled_safely_when_relations_absent -- --nocapture`
+    - passed: RAG absent-call-graph degradation filter ran 1 test, 0 failed.
+  - `cargo test -p ploke-rag --features call_graph call_context_collection_attaches_outgoing_call_payloads -- --nocapture`
+    - passed: RAG populated call-context collection filter ran 1 test, 0 failed.
 
 For `f7349dd7 Share call target family rules with tests`:
 
