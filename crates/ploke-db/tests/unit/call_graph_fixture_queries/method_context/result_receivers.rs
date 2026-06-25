@@ -105,21 +105,18 @@ fn fixture_context_reads_projected_result_receiver_method_chains() -> Result<(),
         CallTargetKind::Method,
     );
 
-    let owner = function_id_by_name(&db, "call_try_result_instance_method")?;
-    let try_target = function_id_by_name(&db, "try_local_assoc")?;
-    let context = db.call_context_for_owner(owner)?;
-    assert_eq!(context.len(), 3, "try-result context rows: {context:#?}");
+    let case = try_result_context(&db)?;
 
     assert_targetless_row(
-        &context,
-        owner,
+        &case.context,
+        case.owner,
         TargetlessRowCase::path(&["Ok"], 1, CallStatusKind::Unsupported, "try-result Ok"),
     );
 
-    let row = row_by_path(&context, &["try_local_assoc"]);
+    let row = row_by_path(&case.context, &["try_local_assoc"]);
     assert_resolved_target(
         row,
-        try_target,
+        case.targets.try_fn,
         CallRelationKind::Function,
         CallSiteKind::Path,
         CallTargetKind::Function,
@@ -128,10 +125,10 @@ fn fixture_context_reads_projected_result_receiver_method_chains() -> Result<(),
     let try_receiver = CallReceiver::TryPathCallResult {
         path: path(&["try_local_assoc"]),
     };
-    let row = row_by_method_receiver(&context, "instance_value", &try_receiver);
+    let row = row_by_method_receiver(&case.context, "instance_value", &try_receiver);
     assert_resolved_target(
         row,
-        method_target,
+        case.targets.method,
         CallRelationKind::Method,
         CallSiteKind::Method,
         CallTargetKind::Method,
