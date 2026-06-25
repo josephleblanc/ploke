@@ -19,7 +19,7 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `83111953 test: batch resolved dynamic proof assertions`
+  `bb27b696 test: share resolved proof fixture assertion`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent TUI/model-visible cleanup:
   - `cc808347 test: cover variant constructor tool context`
@@ -100,6 +100,8 @@ are not acceptable as a continuing implementation style.
   - `334b87af test: split target proof helpers`
   - `b8af3b29 test: share call expansion candidate assertions`
   - `83111953 test: batch resolved dynamic proof assertions`
+  - `02313e8e test: share target caller assertions`
+  - `bb27b696 test: share resolved proof fixture assertion`
 - Recent DB test-module split:
   - `7e51101d test: split dynamic call proof fixtures`
   - `09f8f967 test: split target proof fixtures`
@@ -231,9 +233,26 @@ are not acceptable as a continuing implementation style.
 - Resolved dynamic proof fixture tests now share a dynamic proof batch helper
   that preserves fresh-DB isolation per proof group while moving repeated
   target lookup, proof projection, and owner-edge assertions out of each test.
+- Target-caller context expansion fixture tests now share caller target/status
+  shape assertions through `call_graph_fixture_common/selectors.rs`.
+- Resolved proof fixtures now share the common fixture domain/source/blocker
+  assertion wrapper for owner proof projection, avoiding repeated
+  `resolved_proof_edges` plus `assert_owner_proof_edges` boilerplate across
+  associated-function, trait-family, local-receiver, and result/field method
+  proof tests.
 
 ## Recent verification
 
+- `bb27b696 test: share resolved proof fixture assertion`
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::resolved_proof -- --nocapture`
+    passed: 7 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+    passed: 93 passed, 0 failed.
+- `02313e8e test: share target caller assertions`
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::context_expansion -- --nocapture`
+    passed: 7 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+    passed: 93 passed, 0 failed.
 - `83111953 test: batch resolved dynamic proof assertions`
   - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::dynamic_proof -- --nocapture`
     passed: 7 passed, 0 failed.
