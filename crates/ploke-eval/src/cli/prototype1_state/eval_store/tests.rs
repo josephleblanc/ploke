@@ -8,10 +8,10 @@ use sha2::{Digest, Sha256};
 
 use super::*;
 use super::{
-    APPLY_EVENT_REL, ARTIFACT_REF_REL, ARTIFACT_REL, ARTIFACT_SURFACE_REL, BINARY_REF_REL,
-    BUILD_EVENT_REL, CONTINUATION_DECISION_REL, EVALUATION_INSTANCE_REL, EVALUATION_REL,
-    OPERATION_REL, PATCH_REL, SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL,
-    SELECTION_FINDING_REL, SELECTION_SCORE_REL,
+    APPLY_EVENT_REL, ARTIFACT_REF_REL, ARTIFACT_REL, ARTIFACT_SURFACE_REL, BASELINE_REL,
+    BINARY_REF_REL, BUILD_EVENT_REL, CAMPAIGN_REL, CLOSURE_REF_REL, CONTINUATION_DECISION_REL,
+    EVALUATION_INSTANCE_REL, EVALUATION_REL, OPERATION_REL, PATCH_REL, PROFILE_COMMITMENT_REL,
+    SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL, SELECTION_FINDING_REL, SELECTION_SCORE_REL,
     api::EvalStorageMode,
     cozo_schema::eval_relation_exists,
     error::EvalStoreError,
@@ -25,8 +25,13 @@ use crate::cli::prototype1_state::{
     event::RecordedAt,
     identity::{PARENT_IDENTITY_SCHEMA_VERSION, ParentIdentity},
     journal::{self, JournalAppendReceipt, JournalEntry, ParentStartedEntry, PrototypeJournal},
+    profile,
 };
-use crate::intervention::RecordStore;
+use crate::intervention::{BaselineInstance, CompleteBaseline, RecordStore};
+use crate::{
+    BenchmarkFamily, CampaignManifest, ClosureClass, EvalCampaignPolicy, OperationalRunMetrics,
+    PatchApplyState, ProtocolCampaignPolicy, record::SubmissionArtifactState,
+};
 
 #[test]
 fn prototype1_eval_store_parent_start_fs_appends_expected_entries() {
@@ -103,6 +108,12 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
         .install_schema()
         .expect("schema install is idempotent");
 
+    assert!(eval_relation_exists(&db, CAMPAIGN_REL).expect("campaign rel exists"));
+    assert!(
+        eval_relation_exists(&db, PROFILE_COMMITMENT_REL).expect("profile commitment rel exists")
+    );
+    assert!(eval_relation_exists(&db, CLOSURE_REF_REL).expect("closure ref rel exists"));
+    assert!(eval_relation_exists(&db, BASELINE_REL).expect("baseline rel exists"));
     assert!(eval_relation_exists(&db, EVENT_REL).expect("event rel exists"));
     assert!(eval_relation_exists(&db, ATTEMPT_REL).expect("attempt rel exists"));
     assert!(eval_relation_exists(&db, EVALUATION_REL).expect("evaluation rel exists"));
@@ -134,6 +145,108 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
     assert!(eval_relation_exists(&db, RECORD_REL).expect("record rel exists"));
     assert!(eval_relation_exists(&db, LOG_REF_REL).expect("log rel exists"));
     assert!(eval_relation_exists(&db, TRACE_EVENT_REL).expect("trace rel exists"));
+}
+
+#[test]
+fn prototype1_eval_store_setup_relations_round_trip_actual_loop_types() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign_id = CampaignId::from("campaign");
+    let manifest_path = tmp.path().join("campaign.json");
+    let closure_path = tmp.path().join("closure-state.json");
+    let manifest = sample_campaign_manifest(campaign_id.clone());
+    let closure = sample_closure_state(campaign_id.clone());
+    fs::write(
+        &manifest_path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest json"),
+    )
+    .expect("manifest file");
+    fs::write(
+        &closure_path,
+        serde_json::to_vec_pretty(&closure).expect("closure json"),
+    )
+    .expect("closure file");
+    let admitted = sample_admitted_profile(tmp.path());
+    let baseline = sample_complete_baseline(campaign_id.clone());
+    let parent = parent_identity();
+    let db = Database::new_init().expect("db");
+    let store = DbEvalStore::new(&db);
+
+    store
+        .put_r0_context(
+            &manifest_path,
+            &manifest,
+            profile::EvalStorageBackend::DualStrict,
+            Some(&admitted),
+            &closure_path,
+            &closure,
+        )
+        .expect("r0 context rows write");
+    let baseline_id = store
+        .put_baseline(
+            &parent,
+            &baseline,
+            Some((&closure_path, &closure)),
+            None,
+            None,
+            "2026-06-23T00:00:00Z".to_string(),
+        )
+        .expect("baseline row writes");
+
+    let campaign = query_campaign(&db, &campaign_id);
+    assert_eq!(campaign.rows.len(), 1);
+    let row = campaign.row_refs().next().expect("campaign row");
+    assert_eq!(
+        row.get::<String>("storage_backend")
+            .expect("storage backend"),
+        "dual-strict"
+    );
+    assert!(
+        !row.get::<String>("profile_ref_id")
+            .expect("profile ref")
+            .is_empty()
+    );
+
+    let profiles = query_profile_commitments(&db, &campaign_id);
+    assert_eq!(profiles.rows.len(), 1);
+    let profile_row = profiles.row_refs().next().expect("profile row");
+    assert_eq!(
+        profile_row
+            .get::<String>("profile_name")
+            .expect("profile name"),
+        admitted.profile.name
+    );
+
+    let closures = query_closure_refs(&db, &campaign_id);
+    assert_eq!(closures.rows.len(), 1);
+    let closure_row = closures.row_refs().next().expect("closure row");
+    assert_eq!(
+        closure_row
+            .get::<String>("recorded_at")
+            .expect("recorded at"),
+        closure.updated_at
+    );
+
+    let baselines = query_baselines(&db, &campaign_id);
+    assert_eq!(baselines.rows.len(), 1);
+    let baseline_row = baselines.row_refs().next().expect("baseline row");
+    assert_eq!(
+        baseline_row
+            .get::<String>("baseline_id")
+            .expect("baseline id"),
+        baseline_id
+    );
+    assert_eq!(
+        baseline_row
+            .get::<String>("source_kind")
+            .expect("source kind"),
+        "generation0_closure"
+    );
+    assert_eq!(
+        baseline_row
+            .get::<i64>("instance_count")
+            .expect("instance count"),
+        1
+    );
 }
 
 #[test]
@@ -656,6 +769,158 @@ fn prototype1_eval_store_parent_start_dual_strict_failure_keeps_repairable_journ
     assert_eq!(query_record_refs(&db, &evidence.campaign_id).rows.len(), 2);
 }
 
+fn sample_campaign_manifest(campaign_id: CampaignId) -> CampaignManifest {
+    CampaignManifest {
+        schema_version: crate::campaign::CAMPAIGN_MANIFEST_SCHEMA_VERSION.to_string(),
+        campaign_id,
+        benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+        dataset_sources: Vec::new(),
+        model_id: None,
+        provider_slug: None,
+        route_source: None,
+        required_procedures: Vec::new(),
+        instances_root: None,
+        batches_root: None,
+        eval: EvalCampaignPolicy::default(),
+        protocol: ProtocolCampaignPolicy::default(),
+        framework: crate::spec::FrameworkConfig::default(),
+    }
+}
+
+fn sample_admitted_profile(root: &std::path::Path) -> profile::AdmittedRunProfile {
+    profile::AdmittedRunProfile {
+        commitment: profile::RunProfileCommitment {
+            schema_version: profile::RUN_PROFILE_COMMITMENT_SCHEMA_VERSION.to_string(),
+            profile_path: root.join("prototype1/run-profile.toml"),
+            sha256: "profile-sha256".to_string(),
+            source_path: Some(root.join("operator-profile.toml")),
+            admitted_at: "2026-06-23T00:00:00Z".to_string(),
+        },
+        profile: profile::Prototype1RunProfile {
+            schema_version: profile::RUN_PROFILE_SCHEMA_VERSION.to_string(),
+            name: "test-profile".to_string(),
+            storage: profile::Storage {
+                worktree_root: root.join("worktrees"),
+                eval: profile::EvalStorage {
+                    backend: profile::EvalStorageBackend::DualStrict,
+                },
+            },
+            target: profile::Target::default(),
+            model: profile::ModelDefaults::default(),
+            search: profile::Search::default(),
+            generation: profile::Generation::default(),
+            selection: profile::Selection::default(),
+            protocol: profile::Protocol::default(),
+            execution: profile::Execution::default(),
+            control: profile::Control::default(),
+        },
+    }
+}
+
+fn sample_closure_state(campaign_id: CampaignId) -> crate::closure::ClosureState {
+    crate::closure::ClosureState {
+        schema_version: crate::closure::CLOSURE_STATE_SCHEMA_VERSION.to_string(),
+        campaign_id,
+        updated_at: "2026-06-23T00:00:00Z".to_string(),
+        config: crate::closure::ClosureConfig {
+            benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+            model_id: None,
+            provider_slug: None,
+            route_source: None,
+            registry_path: None,
+            dataset_sources: Vec::new(),
+            required_procedures: Vec::new(),
+            instances_root: PathBuf::from("/tmp/instances"),
+            batches_root: PathBuf::from("/tmp/batches"),
+            framework: crate::spec::FrameworkConfig::default(),
+        },
+        registry: crate::closure::RegistryClosureSummary {
+            expected_total: 1,
+            mapped_total: 1,
+            missing_total: 0,
+            ambiguous_total: 0,
+            status: ClosureClass::Complete,
+        },
+        eval: crate::closure::EvalClosureSummary {
+            expected_total: 1,
+            complete_total: 1,
+            failed_total: 0,
+            missing_total: 0,
+            partial_total: 0,
+            in_progress_total: 0,
+            status: ClosureClass::Complete,
+            last_transition_at: None,
+        },
+        protocol: crate::closure::ProtocolClosureSummary {
+            expected_total: 1,
+            full_total: 0,
+            partial_total: 0,
+            failed_total: 0,
+            missing_total: 1,
+            incompatible_total: 0,
+            ineligible_total: 0,
+            in_progress_total: 0,
+            status: ClosureClass::Missing,
+            required_procedures: Vec::new(),
+            status_by_procedure: BTreeMap::new(),
+            last_transition_at: None,
+        },
+        instances: vec![crate::closure::ClosureInstanceRow {
+            instance_id: "instance".to_string(),
+            dataset_label: "test".to_string(),
+            repo_family: "test".to_string(),
+            registry_status: crate::closure::RegistryInstanceStatus::Mapped,
+            eval_status: ClosureClass::Complete,
+            protocol_status: ClosureClass::Missing,
+            eval_failure: None,
+            protocol_failure: None,
+            artifacts: crate::closure::ClosureArtifactRefs {
+                registration_path: Some(PathBuf::from("/tmp/baseline/registration.json")),
+                record_path: Some(PathBuf::from("/tmp/baseline/record.json.gz")),
+                ..Default::default()
+            },
+            protocol_procedures: BTreeMap::new(),
+            protocol_counts: None,
+            last_event_at: None,
+        }],
+    }
+}
+
+fn sample_complete_baseline(campaign_id: CampaignId) -> CompleteBaseline {
+    CompleteBaseline::complete(
+        campaign_id,
+        "parent".to_string(),
+        "branch-parent".to_string(),
+        "eval-set".to_string(),
+        vec![BaselineInstance {
+            instance_id: "instance".to_string(),
+            registration_path: Some(PathBuf::from("/tmp/baseline/registration.json")),
+            record_path: PathBuf::from("/tmp/baseline/record.json.gz"),
+            metrics: sample_metrics(),
+        }],
+    )
+    .expect("complete baseline")
+}
+
+fn sample_metrics() -> OperationalRunMetrics {
+    OperationalRunMetrics {
+        tool_calls_total: 1,
+        tool_calls_failed: 0,
+        patch_attempted: true,
+        patch_apply_state: PatchApplyState::Applied,
+        submission_artifact_state: SubmissionArtifactState::Nonempty,
+        patch_projection_check_state: ploke_records::evaluation::PatchProjectionCheckState::Passed,
+        partial_patch_failures: 0,
+        same_file_patch_retry_count: 0,
+        same_file_patch_max_streak: 0,
+        aborted: false,
+        aborted_repair_loop: false,
+        nonempty_valid_patch: true,
+        convergence: true,
+        oracle_eligible: true,
+    }
+}
+
 fn parent_started_evidence(repo_root: PathBuf) -> ParentStartedEvidence {
     ParentStartedEvidence {
         campaign_id: CampaignId::from("campaign"),
@@ -719,6 +984,62 @@ fn hex_lower_for_test(bytes: &[u8]) -> String {
         out.push(HEX[(byte & 0x0f) as usize] as char);
     }
     out
+}
+
+fn query_campaign(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[campaign_id, storage_backend, profile_ref_id] :=
+    *eval_campaign { campaign_id, storage_backend, profile_ref_id },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query campaign")
+}
+
+fn query_profile_commitments(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[profile_ref_id, profile_name, content_sha256, storage_ref] :=
+    *eval_profile_commitment { profile_ref_id, campaign_id, profile_name, content_sha256, storage_ref },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query profile commitments")
+}
+
+fn query_closure_refs(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[closure_ref_id, recorded_at, summary_json] :=
+    *eval_closure_ref { closure_ref_id, campaign_id, recorded_at, summary_json },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query closure refs")
+}
+
+fn query_baselines(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[baseline_id, source_kind, instance_count, closure_ref_id] :=
+    *eval_baseline { baseline_id, campaign_id, source_kind, instance_count, closure_ref_id },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query baselines")
 }
 
 fn query_transition_event(db: &Database, event_id: &str) -> QueryResult {

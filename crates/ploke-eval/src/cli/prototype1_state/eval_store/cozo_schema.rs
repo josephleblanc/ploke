@@ -15,6 +15,7 @@ use super::{
     },
     operation::ensure_operation_schema,
     selection::ensure_selection_schema,
+    setup::ensure_setup_schema,
 };
 
 pub(super) fn ensure_eval_store_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), EvalStoreError> {
@@ -296,6 +297,7 @@ pub(super) fn ensure_eval_store_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(),
         })?;
     }
 
+    ensure_setup_schema(db)?;
     ensure_evaluation_schema(db)?;
     ensure_continuation_schema(db)?;
     ensure_selection_schema(db)?;

@@ -7,6 +7,16 @@ use std::{
 use cozo::DataValue;
 use ploke_db::{Database, DbError, QueryResult};
 
+use crate::{
+    CampaignManifest,
+    cli::prototype1_state::{
+        identity::ParentIdentity,
+        profile::{AdmittedRunProfile, EvalStorageBackend},
+    },
+    closure::ClosureState,
+    intervention::CompleteBaseline,
+};
+
 use super::{
     cozo_params::{
         attempt_params, channel_message_params, channel_receipt_params, import_event_params,
@@ -27,6 +37,7 @@ use super::{
         record_ref_row_from_evidence, trace_event_row,
     },
     observation::{ObservationJsonlImport, parse_observation_jsonl},
+    setup,
 };
 
 pub(crate) trait EvalDb {
@@ -72,6 +83,54 @@ impl<'a, D: EvalDb + ?Sized> DbEvalStore<'a, D> {
 
     pub(crate) fn install_schema(&self) -> Result<(), EvalStoreError> {
         ensure_eval_store_schema(self.db)
+    }
+
+    pub(crate) fn put_r0_context(
+        &self,
+        manifest_path: &Path,
+        manifest: &CampaignManifest,
+        storage_backend: EvalStorageBackend,
+        admitted_profile: Option<&AdmittedRunProfile>,
+        closure_path: &Path,
+        closure_state: &ClosureState,
+    ) -> Result<(), EvalStoreError> {
+        self.install_schema()?;
+        let profile_ref_id = admitted_profile
+            .map(|admitted| setup::put_profile_commitment(self.db, &manifest.campaign_id, admitted))
+            .transpose()?;
+        setup::put_campaign_manifest(
+            self.db,
+            manifest_path,
+            manifest,
+            storage_backend,
+            profile_ref_id.as_deref(),
+        )?;
+        setup::put_closure_ref(self.db, closure_path, closure_state)?;
+        Ok(())
+    }
+
+    pub(crate) fn put_baseline(
+        &self,
+        parent: &ParentIdentity,
+        baseline: &CompleteBaseline,
+        closure: Option<(&Path, &ClosureState)>,
+        evaluation_id: Option<&str>,
+        record_ref: Option<&str>,
+        recorded_at: String,
+    ) -> Result<String, EvalStoreError> {
+        self.install_schema()?;
+        let closure_ref_id = closure
+            .map(|(path, state)| setup::put_closure_ref(self.db, path, state))
+            .transpose()?;
+        setup::put_baseline(
+            self.db,
+            parent,
+            baseline,
+            closure_ref_id.as_deref(),
+            evaluation_id,
+            record_ref,
+            recorded_at,
+        )
     }
 
     pub(crate) fn put_parent_started_from_receipt(
@@ -320,6 +379,52 @@ pub(crate) fn write_record_ref_to_owner_db(
     let receipt = store.put_record_ref(evidence)?;
     persist_owner_eval_database(&db, db_path)?;
     Ok(receipt)
+}
+
+pub(crate) fn write_r0_context_to_owner_db(
+    db_path: &Path,
+    manifest_path: &Path,
+    manifest: &CampaignManifest,
+    storage_backend: EvalStorageBackend,
+    admitted_profile: Option<&AdmittedRunProfile>,
+    closure_path: &Path,
+    closure_state: &ClosureState,
+) -> Result<(), EvalStoreError> {
+    let db = load_owner_eval_database(db_path)?;
+    let store = DbEvalStore::new(&db);
+    store.put_r0_context(
+        manifest_path,
+        manifest,
+        storage_backend,
+        admitted_profile,
+        closure_path,
+        closure_state,
+    )?;
+    persist_owner_eval_database(&db, db_path)?;
+    Ok(())
+}
+
+pub(crate) fn write_baseline_to_owner_db(
+    db_path: &Path,
+    parent: &ParentIdentity,
+    baseline: &CompleteBaseline,
+    closure: Option<(&Path, &ClosureState)>,
+    evaluation_id: Option<&str>,
+    record_ref: Option<&str>,
+    recorded_at: String,
+) -> Result<String, EvalStoreError> {
+    let db = load_owner_eval_database(db_path)?;
+    let store = DbEvalStore::new(&db);
+    let baseline_id = store.put_baseline(
+        parent,
+        baseline,
+        closure,
+        evaluation_id,
+        record_ref,
+        recorded_at,
+    )?;
+    persist_owner_eval_database(&db, db_path)?;
+    Ok(baseline_id)
 }
 
 pub(super) fn persist_owner_eval_database(

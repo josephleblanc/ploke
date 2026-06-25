@@ -18,6 +18,7 @@ mod evidence;
 mod observation;
 mod operation;
 mod selection;
+mod setup;
 
 #[cfg(test)]
 mod tests;
@@ -45,10 +46,10 @@ pub(crate) use continuation::{
 #[cfg(test)]
 pub(crate) use cozo_store::{DbEvalStore, load_owner_eval_database};
 pub(crate) use cozo_store::{
-    owner_eval_db_file_for_record_path, prototype1_eval_store_db_path,
+    owner_eval_db_file_for_record_path, prototype1_eval_store_db_path, write_baseline_to_owner_db,
     write_channel_message_to_owner_db, write_channel_receipt_to_owner_db,
-    write_import_event_to_owner_db, write_invocation_to_owner_db, write_record_ref_to_owner_db,
-    write_trace_event_to_owner_db,
+    write_import_event_to_owner_db, write_invocation_to_owner_db, write_r0_context_to_owner_db,
+    write_record_ref_to_owner_db, write_trace_event_to_owner_db,
 };
 pub(crate) use error::EvalStoreError;
 #[cfg(test)]
@@ -75,3 +76,5 @@ pub(crate) use selection::{
     SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL, SELECTION_FINDING_REL, SELECTION_SCORE_REL,
 };
 pub(crate) use selection::{SelectionDecisionEvidence, write_selection_decision_to_owner_db};
+#[cfg(test)]
+pub(crate) use setup::{BASELINE_REL, CAMPAIGN_REL, CLOSURE_REF_REL, PROFILE_COMMITMENT_REL};

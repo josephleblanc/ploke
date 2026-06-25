@@ -5,11 +5,13 @@
 
 use std::fs;
 
+use chrono::Utc;
 use ploke_core::EXECUTION_DEBUG_TARGET;
 use tracing::{debug, info};
 
 use crate::{
     CampaignOverrides, ResolvedCampaignConfig,
+    campaign::campaign_closure_state_path,
     cli::{
         InspectOutputFormat, Prototype1StateStopAfter,
         prototype1_process::{
@@ -33,19 +35,21 @@ use crate::{
             },
             eval_store::{
                 ConfiguredEvalStore, EvalStore, ParentStartedEvidence,
-                prototype1_eval_store_db_path,
+                prototype1_eval_store_db_path, write_baseline_to_owner_db,
+                write_r0_context_to_owner_db,
             },
             event::RecordedAt,
             invocation::{self, InvocationAuthority, SuccessorCompletionStatus},
             journal::{self, JournalEntry, PrototypeJournal, prototype1_transition_journal_path},
             observe,
             parent::{Check, Genesis, Parent, Predecessor, Startup, Unchecked},
-            profile::EvalStorageBackend,
+            profile::{self, EvalStorageBackend},
             successor::Record as SuccessorRecord,
             typestate,
         },
     },
     intervention::{Prototype1ChildBudget, Prototype1ChildScheduleMode, RecordStore},
+    load_campaign_manifest, load_closure_state,
     spec::PrepareError,
 };
 
@@ -70,7 +74,27 @@ pub(crate) fn r0_to_r1(
     let run_shape = Prototype1StateRunShape::resolve(&command, &manifest_path)?;
     let resolved_campaign =
         resolve_campaign_config_for_id(&campaign_id, &CampaignOverrides::default())?;
-    ensure_prototype1_baseline_closure_state(&resolved_campaign)?;
+    let closure_state_path = ensure_prototype1_baseline_closure_state(&resolved_campaign)?;
+    match run_shape.eval_storage_backend {
+        EvalStorageBackend::Fs => {}
+        EvalStorageBackend::Database | EvalStorageBackend::DualStrict => {
+            let manifest = load_campaign_manifest(&campaign_id)?;
+            let admitted_profile = profile::load_admitted_run_profile(&manifest_path)?;
+            let closure_state = load_closure_state(&campaign_id)?;
+            write_r0_context_to_owner_db(
+                &prototype1_eval_store_db_path(&manifest_path),
+                &manifest_path,
+                &manifest,
+                run_shape.eval_storage_backend,
+                admitted_profile.as_ref(),
+                &closure_state_path,
+                &closure_state,
+            )
+            .map_err(|err| {
+                prototype1_state_transition_error("prototype1_r0_context", err.to_string())
+            })?;
+        }
+    }
     let journal_path = prototype1_transition_journal_path(&manifest_path);
     let journal = PrototypeJournal::new(journal_path.clone());
 
@@ -459,6 +483,33 @@ pub(crate) async fn r5_to_r6(
         &parent_identity,
     )
     .await?;
+    match parts.run_shape.eval_storage_backend {
+        EvalStorageBackend::Fs => {}
+        EvalStorageBackend::Database | EvalStorageBackend::DualStrict => {
+            let closure = if parent_identity.generation() == 0 {
+                let path = campaign_closure_state_path(&parts.campaign_id)?;
+                let state = load_closure_state(&parts.campaign_id)?;
+                Some((path, state))
+            } else {
+                None
+            };
+            let closure_ref = closure
+                .as_ref()
+                .map(|(path, state)| (path.as_path(), state));
+            write_baseline_to_owner_db(
+                &prototype1_eval_store_db_path(&parts.manifest_path),
+                &parent_identity,
+                &parent_baseline,
+                closure_ref,
+                None,
+                None,
+                Utc::now().to_rfc3339(),
+            )
+            .map_err(|err| {
+                prototype1_state_transition_error("prototype1_parent_baseline", err.to_string())
+            })?;
+        }
+    }
     parts.facts.parent_baseline = Some(parent_baseline);
     Ok(typestate::R6::from_collected_parent(
         parts.into_collected(),
