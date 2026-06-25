@@ -3308,6 +3308,147 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
 
     #[cfg(feature = "call_graph")]
     #[tokio::test]
+    async fn call_context_sparse_get_context_expands_constructor_target_hits_to_fixture_callers()
+    -> Result<(), Error> {
+        init_tracing_once();
+
+        struct Case<'a> {
+            label: &'a str,
+            fixture: &'a str,
+            query: &'a str,
+            target_module: &'a [&'a str],
+            target_name: &'a str,
+            owner_module: &'a [&'a str],
+            owner: &'a str,
+            path: &'a [&'a str],
+            relation: CallTargetKind,
+        }
+
+        let cases = [Case {
+            label: "tuple-struct constructor",
+            fixture: "fixture_call_graph",
+            query: "pub struct NewType",
+            target_module: &["crate"],
+            target_name: "NewType",
+            owner_module: &["crate"],
+            owner: "call_new_type_constructor",
+            path: &["NewType"],
+            relation: CallTargetKind::TupleStructConstructor,
+        }];
+
+        for case in cases {
+            let db = Arc::new(Database::new(setup_db_full_multi_embedding(case.fixture)?));
+            let target = one_uuid(
+                &db,
+                &struct_in_module_query(case.target_module, case.target_name),
+            )?;
+            let owner = one_uuid(
+                &db,
+                &function_in_module_query(case.owner_module, case.owner),
+            )?;
+
+            let mut cfg = crate::RagConfig::default();
+            cfg.type_context.enabled = false;
+            cfg.call_context.max_owner_hits = 64;
+            cfg.call_context.max_caller_hits = 64;
+            let rag = RagService::new_full(
+                Arc::clone(&db),
+                runtime_for(&db, EmbeddingProcessor::new_mock()),
+                IoManagerHandle::new(),
+                cfg,
+            )?;
+            assert!(
+                !rag.call_context_degraded(),
+                "fresh {} call_graph schema should enable public {} expansion",
+                case.fixture,
+                case.label
+            );
+
+            rag.bm25_rebuild().await?;
+            let sparse_hits = rag
+                .search_bm25_strict(case.query, 1, LOADED_WORKSPACE_SCOPE)
+                .await?;
+            assert_eq!(
+                sparse_hits.len(),
+                1,
+                "{} query should seed get_context with one target hit",
+                case.label
+            );
+            assert_eq!(
+                sparse_hits[0].0, target,
+                "{} query should seed get_context with the constructor target only; hits: {sparse_hits:#?}",
+                case.label
+            );
+
+            let assembled = rag
+                .get_context(
+                    case.query,
+                    1,
+                    &TokenBudget {
+                        max_total: 20_000,
+                        per_file_max: 20_000,
+                        per_part_max: 4_096,
+                    },
+                    &RetrievalStrategy::Sparse { strict: Some(true) },
+                    LOADED_WORKSPACE_SCOPE,
+                )
+                .await?;
+
+            let caller_part = assembled
+                .parts
+                .iter()
+                .find(|part| part.id == owner)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "public get_context should materialize the {} caller owner",
+                        case.label
+                    )
+                });
+            let expected_path = case
+                .path
+                .iter()
+                .map(|segment| (*segment).to_string())
+                .collect::<Vec<_>>();
+            let call = caller_part
+                .call_context
+                .iter()
+                .find(|call| {
+                    call.kind == CallSiteKind::Path
+                        && call.callee
+                            == CallCalleeInfo::Path {
+                                path: expected_path.clone(),
+                            }
+                        && call
+                            .targets
+                            .iter()
+                            .any(|target_info| target_info.target_id == target)
+                })
+                .unwrap_or_else(|| {
+                    panic!(
+                        "caller part should retain outgoing {} context to the seed target",
+                        case.label
+                    )
+                });
+            assert_eq!(call.status, CallStatusKind::Resolved);
+            assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+            assert_eq!(call.targets.len(), 1);
+            assert_eq!(call.targets[0].target_id, target);
+            assert_eq!(call.targets[0].relation, case.relation);
+            let expansion = caller_part
+                .call_expansion
+                .expect("expanded constructor caller should carry call-expansion provenance");
+            assert_eq!(expansion.seed_id, target);
+            assert_eq!(expansion.relation, CallExpansionKind::IncomingCaller);
+            assert_eq!(expansion.call_site_id, call.site_id);
+            assert_eq!(expansion.target_id, target);
+            assert_eq!(expansion.distance, 1);
+        }
+
+        Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[tokio::test]
     async fn call_context_sparse_get_context_expands_owner_hits_to_fixture_callees()
     -> Result<(), Error> {
         init_tracing_once();

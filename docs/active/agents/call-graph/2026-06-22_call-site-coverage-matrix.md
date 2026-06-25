@@ -371,10 +371,12 @@ trait-dispatch method targets, and asserts caller owners are materialized with
 outgoing call context pointing back to the seed target while helper-level
 `local_target` expansion excludes closure/async body outer owners and preserves
 exact path/dynamic call-site provenance. Public
-`get_context` coverage now proves the function, method, concrete
-trait-dispatch, and `local_target` closure/async-exclusion target-centered
-expansions survive sparse retrieval and final context assembly, with
-`local_target` preserving both ordinary path and resolved dynamic callers. TUI formatter
+`get_context` coverage now proves the function, method, tuple-struct
+constructor, concrete trait-dispatch, and `local_target`
+closure/async-exclusion target-centered expansions survive sparse retrieval and
+final context assembly, with `local_target` preserving both ordinary path and
+resolved dynamic callers. Enum-variant constructor expansion remains pinned at
+the helper layer until variant nodes become sparse retrieval seeds. TUI formatter
 coverage asserts the same payload shape renders with
 callee shape, span, status/resolution, and target relation IDs intact in both
 model-facing context text and expanded context-plan overlay details, including
