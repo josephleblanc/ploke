@@ -11,25 +11,18 @@ fn call_proof_facts_for_owner_preserves_mixed_resolution_shape() -> Result<(), D
     let external = Uuid::from_u128(145);
     let dynamic = Uuid::from_u128(146);
 
-    insert_owner_source(&db, owner, module, "src/lib.rs")?;
-    insert_call_site(
+    insert_resolved_graph(
         &db,
-        SiteSeed {
-            id: resolved,
+        ResolvedGraphSeed {
             owner,
-            kind: "Path",
+            module,
+            site: resolved,
+            target,
+            file: Some("src/lib.rs"),
             span: (10, 20),
-            path: Some(vec!["crate", "helper"]),
-            method: None,
-            macro_name: None,
-            receiver: None,
-            arg_count: Some(0),
-            generic_arg_count: Some(0),
+            path: &["crate", "helper"],
         },
     )?;
-    insert_edge(&db, owner, resolved, "Path")?;
-    insert_relation(&db, resolved, target, "Function", "Path", "Function")?;
-    insert_status(&db, resolved, "Path", "Resolved", Some("LocalExact"))?;
 
     insert_call_site(
         &db,

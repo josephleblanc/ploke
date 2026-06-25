@@ -9,25 +9,10 @@ fn proof_projection_stores_resolved_call_facts() -> Result<(), DbError> {
     let site = Uuid::from_u128(33);
     let target = Uuid::from_u128(34);
 
-    insert_owner_source(&db, owner, module, "src/lib.rs")?;
-    insert_call_site(
+    insert_resolved_graph(
         &db,
-        SiteSeed {
-            id: site,
-            owner,
-            kind: "Path",
-            span: (10, 24),
-            path: Some(vec!["crate", "helper"]),
-            method: None,
-            macro_name: None,
-            receiver: None,
-            arg_count: Some(0),
-            generic_arg_count: Some(0),
-        },
+        ResolvedGraphSeed::path_call(owner, module, site, target, Some("src/lib.rs")),
     )?;
-    insert_edge(&db, owner, site, "Path")?;
-    insert_relation(&db, site, target, "Function", "Path", "Function")?;
-    insert_status(&db, site, "Path", "Resolved", Some("LocalExact"))?;
 
     let count = db.project_call_proof_facts_for_owner(owner, "bd:test")?;
     assert_eq!(count, 3);
@@ -62,25 +47,10 @@ fn owner_and_target_projection_share_stable_fact_identity() -> Result<(), DbErro
     let site = Uuid::from_u128(0x173);
     let target = Uuid::from_u128(0x174);
 
-    insert_owner_source(&db, owner, module, "src/lib.rs")?;
-    insert_call_site(
+    insert_resolved_graph(
         &db,
-        SiteSeed {
-            id: site,
-            owner,
-            kind: "Path",
-            span: (10, 24),
-            path: Some(vec!["crate", "helper"]),
-            method: None,
-            macro_name: None,
-            receiver: None,
-            arg_count: Some(0),
-            generic_arg_count: Some(0),
-        },
+        ResolvedGraphSeed::path_call(owner, module, site, target, Some("src/lib.rs")),
     )?;
-    insert_edge(&db, owner, site, "Path")?;
-    insert_relation(&db, site, target, "Function", "Path", "Function")?;
-    insert_status(&db, site, "Path", "Resolved", Some("LocalExact"))?;
 
     assert_eq!(
         db.project_call_proof_facts_for_target(target, "bd:test")?,
