@@ -19,7 +19,7 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `0fee7f60 test: share resolved graph seed helper`
+  `9dbb7fbd test: reuse resolved seed in context queries`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent TUI/model-visible cleanup:
   - `cc808347 test: cover variant constructor tool context`
@@ -87,6 +87,9 @@ are not acceptable as a continuing implementation style.
   - `8f371fa5 test: share projected blocker helper`
   - `162322ec test: reuse external blocker proof helper`
   - `0fee7f60 test: share resolved graph seed helper`
+  - `b8173ff9 test: reuse resolved graph seed cases`
+  - `4fba3095 test: share targetless status seed helper`
+  - `9dbb7fbd test: reuse resolved seed in context queries`
 - Recent DB test-module split:
   - `7e51101d test: split dynamic call proof fixtures`
   - `09f8f967 test: split target proof fixtures`
@@ -160,7 +163,11 @@ are not acceptable as a continuing implementation style.
   `BlockerProofSite` collection.
 - `call_graph_common/resolved.rs` owns the synthetic `ResolvedGraphSeed`
   helper used by proof-projection query tests, so resolved path graph setup is
-  shared across graph-context and prevalidation tests.
+  shared across graph-context, prevalidation, resolved proof-projection, mixed
+  proof-shape, and context-expansion query tests.
+- `call_graph_common/targetless.rs` owns the synthetic `TargetlessStatusSeed`
+  helper used by proof-projection blocker query tests for external and dynamic
+  targetless status rows.
 - `ProofGraphStore` now exposes a build-domain scoped proof context query and
   shares linked-call-site row selection across symbol, GraphRAG text, and
   build-domain proof lookups. Real fixture proof lookup assertions are
@@ -244,6 +251,45 @@ next likely slices are:
    that batch before adding cases.
 
 ## Latest verification
+
+For `9dbb7fbd test: reuse resolved seed in context queries`:
+
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries::context_expansion::owner -- --nocapture`
+  - passed: owner context-expansion query filter ran 1 test, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries::context_expansion::callers -- --nocapture`
+  - passed: target callers context-expansion query filter ran 1 test, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries::context_expansion::expand::navigation -- --nocapture`
+  - passed: expansion navigation query filter ran 1 test, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries::context_expansion -- --nocapture`
+  - passed: context-expansion query filter ran 4 tests, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries -- --nocapture`
+  - passed: synthetic call-graph query filter ran 33 tests, 0 failed.
+
+For `4fba3095 test: share targetless status seed helper`:
+
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection::blockers::unresolved -- --nocapture`
+  - passed: unresolved blocker projection query filter ran 1 test, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection::blockers::mixed_shape -- --nocapture`
+  - passed: mixed-shape blocker projection query filter ran 1 test, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection::blockers::invariants -- --nocapture`
+  - passed: blocker invariant query filter ran 1 test, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection::blockers -- --nocapture`
+  - passed: proof blocker projection query filter ran 5 tests, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection -- --nocapture`
+  - passed: proof projection query filter ran 14 tests, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries -- --nocapture`
+  - passed: synthetic call-graph query filter ran 33 tests, 0 failed.
+
+For `b8173ff9 test: reuse resolved graph seed cases`:
+
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection::resolved -- --nocapture`
+  - passed: resolved proof-projection query filter ran 2 tests, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection::blockers::mixed_shape -- --nocapture`
+  - passed: mixed-shape blocker projection query filter ran 1 test, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection -- --nocapture`
+  - passed: proof projection query filter ran 14 tests, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries -- --nocapture`
+  - passed: synthetic call-graph query filter ran 33 tests, 0 failed.
 
 For `0fee7f60 test: share resolved graph seed helper`:
 
