@@ -29,7 +29,7 @@ future work can choose the next batch without rereading the diary-style notes.
 | Path-call resolution | Partial | Local unqualified and explicit `crate`/`self`/`super` calls, module-qualified local calls, selected import/re-export/glob local paths, associated-function paths, aliases, tuple constructors, enum variant constructors, raw identifiers, and direct external roots are covered. | Broader import/re-export/glob paths, external summaries, prelude coverage beyond explicit cases, and proof-grade macro-expanded paths. |
 | Method resolution | Partial | Exact inherent `self.method()`, selected non-self local receivers, result/await/try receivers, field/tuple receivers, alias-backed receivers, selected trait impl dispatch, generic/impl-trait/trait-object receiver methods, and trait-associated calls are covered conservatively. | Broader trait dispatch, autoderef/autoref depth, dynamic dispatch, blanket impl breadth, and method lookup parity with rustc remain open. |
 | Dynamic calls | Partial | Structural dynamic calls and exact local function-item binding calls are modeled; branch/match candidates preserve ambiguous candidate provenance; unsupported Fn/FnOnce and boxed dyn Fn shapes fail closed. | Full dynamic dispatch, closure value targets, Fn/FnOnce/FnMut semantic resolution, and runtime trait-object call edges. |
-| Transform projection | Gated | Behind `call_graph`, transform projects `call_site`, `call_site_edge`, `call_relation`, and `call_resolution_status`. Endpoint kind strings are sourced from typed `CallRelation` helpers. Projection tests now live outside the broad transform module. | Continue table-driving the large dynamic transform projection test before adding cases. Default backup fixtures still need review/regeneration before ungating. |
+| Transform projection | Gated | Behind `call_graph`, transform projects `call_site`, `call_site_edge`, `call_relation`, and `call_resolution_status`. Endpoint kind strings are sourced from typed `CallRelation` helpers. Projection tests now live outside the broad transform module, and dynamic projection cases are split into lookup, case construction, and DB assertion helpers. | Default backup fixtures still need review/regeneration before ungating. |
 | DB endpoint invariants | Green | DB query helpers and Rust validation share `VALID_CALL_TARGET_FAMILIES`; fixture invariant tests use exported DB helper predicates instead of a copied matrix. Missing endpoint rows and invalid endpoint-family rows are excluded. | Keep future endpoint families in the shared DB family table and transform typed helpers together. |
 | DB availability gate | Green | `has_call_graph_relations()` distinguishes relation registration from populated projection data by requiring a coherent projected call site, body edge, and status. RAG disables call context when projection data is absent. | If projection supports targetless-only or alternate owner shapes beyond current rows, update the sentinel with tests. |
 | DB query API | Partial | Owner call context, target callers, expansion, receiver decoding, relation decoding, schema/invariant checks, and fixture-backed contexts have focused coverage. | Finish inventory-driven table matrices before adding new query cases; keep large helper files split by concern. |
@@ -40,10 +40,8 @@ future work can choose the next batch without rereading the diary-style notes.
 
 ## Next implementation batches
 
-1. Table-drive and further split the dedicated dynamic transform projection
-   tests before adding projection breadth.
-2. Use this inventory plus the detailed call-site matrix to choose the next DB
+1. Use this inventory plus the detailed call-site matrix to choose the next DB
    or proof case batch; do not add parser breadth without matching DB/RAG/proof
    assertions.
-3. Keep the rollout gate active until backup fixture review/regeneration is
+2. Keep the rollout gate active until backup fixture review/regeneration is
    explicitly approved and broad workspace verification is green.

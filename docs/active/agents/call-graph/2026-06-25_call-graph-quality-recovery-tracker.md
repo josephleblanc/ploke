@@ -19,7 +19,7 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `056705b8 test: split local target prevalidation cases`
+  `b0fd0655 test: split dynamic transform projection cases`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent TUI/model-visible cleanup:
   - `cc808347 test: cover variant constructor tool context`
@@ -42,6 +42,7 @@ are not acceptable as a continuing implementation style.
   - `b25fa650 test: table drive dynamic transform projection`
   - `8d3dc030 test: split transform call graph projection tests`
   - `c26aeedd test: share dynamic transform lookup helpers`
+  - `b0fd0655 test: split dynamic transform projection cases`
 - Recent availability cleanup:
   - `2d6320d1 Require populated call graph availability`
 - Recent endpoint-family cleanup:
@@ -208,6 +209,10 @@ are not acceptable as a continuing implementation style.
 - `call_graph_tests/dynamic.rs` in `ploke-transform` now shares local
   `DynamicFunction` lookup helpers instead of repeating the full
   `CallRelation::DynamicFunction` scan for every dynamic projection case.
+- `call_graph_tests/dynamic.rs` in `ploke-transform` is now a thin test
+  orchestration module. Dynamic projection case construction, dynamic call
+  lookup, and persisted Cozo assertion helpers live in
+  `call_graph_tests/dynamic/{cases,lookup,assertions}.rs`.
 - `call_graph_fixture_common/proof/targets.rs` now owns shared target-centered
   proof-site case helpers used by function, dynamic, method, associated
   function, trait dispatch, and imported trait associated-function proof
@@ -274,6 +279,13 @@ are not acceptable as a continuing implementation style.
 
 ## Recent verification
 
+- `b0fd0655 test: split dynamic transform projection cases`
+  - `cargo test -p ploke-transform --features call_graph transform::call_graph_tests::dynamic -- --nocapture`
+    passed: 1 passed, 0 failed.
+  - `cargo test -p ploke-transform --features call_graph transform::call_graph_tests -- --nocapture`
+    passed: 4 passed, 0 failed.
+  - `cargo test -p ploke-transform --features call_graph transform::tests -- --nocapture`
+    passed: 1 passed, 0 failed.
 - `056705b8 test: split local target prevalidation cases`
   - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection::prevalidation::local_targets -- --nocapture`
     passed: 4 passed, 0 failed.
@@ -416,9 +428,9 @@ are not acceptable as a continuing implementation style.
 Continue production-side pattern cleanup before parser/resolver breadth. The
 next likely slices are:
 
-1. Continue DB/proof cleanup before parser breadth. Prefer existing common
-   helpers and only extract new macro/method blocker helpers if another file
-   shares the same shape.
+1. Continue DB/proof/RAG/TUI coverage work before parser breadth. Prefer
+   existing common helpers and only extract new macro/method blocker helpers if
+   another file shares the same shape.
 2. Use the stable coverage inventory plus detailed call-site matrix to choose
    the next DB/proof/RAG/TUI batch before parser breadth.
 3. Keep splitting/table-driving any large helper or projection test touched by
