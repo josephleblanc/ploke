@@ -15,6 +15,7 @@ mod lookup;
 mod proof;
 mod rows;
 mod selectors;
+mod targetless;
 
 pub(super) use constructor::*;
 pub(super) use dynamic::*;
@@ -22,6 +23,7 @@ pub(super) use lookup::*;
 pub(super) use proof::*;
 pub(super) use rows::*;
 pub(super) use selectors::*;
+pub(super) use targetless::*;
 
 pub(super) fn setup_call_graph_fixture_db(fixture: &'static str) -> Result<Database, DbError> {
     let db = Db::new(MemStorage::default()).expect("in-memory cozo db");

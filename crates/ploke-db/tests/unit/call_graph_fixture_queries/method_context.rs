@@ -101,43 +101,41 @@ fn fixture_context_reads_projected_external_and_shadowed_method_calls() -> Resul
         "literal to_string context rows: {context:#?}"
     );
 
-    let row = &context[0];
-    assert_eq!(row.site.owner_id, owner);
-    assert_eq!(row.site.kind, CallSiteKind::Method);
-    assert_eq!(row.site.method.as_deref(), Some("to_string"));
-    assert_eq!(row.site.receiver, Some(CallReceiver::Literal));
-    assert_eq!(row.status.status, CallStatusKind::External);
-    assert_eq!(row.status.resolution, None);
-    assert!(
-        row.targets.is_empty(),
-        "literal to_string must not fabricate local target edges: {row:#?}"
+    let receiver = CallReceiver::Literal;
+    assert_targetless_method_row(
+        &context,
+        owner,
+        TargetlessMethodCase::method(
+            "to_string",
+            &receiver,
+            CallStatusKind::External,
+            "literal to_string",
+        ),
     );
 
     let owner = function_id_by_name(&db, "call_typed_vec_len_external")?;
     let context = db.call_context_for_owner(owner)?;
     assert_eq!(context.len(), 2, "typed Vec context rows: {context:#?}");
 
-    let new_row = row_by_path(&context, &["Vec", "new"]);
-    assert_eq!(new_row.status.status, CallStatusKind::External);
-    assert_eq!(new_row.status.resolution, None);
-    assert!(
-        new_row.targets.is_empty(),
-        "Vec::new must not fabricate local target edges: {new_row:#?}"
+    assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::path(&["Vec", "new"], 0, CallStatusKind::External, "Vec::new"),
     );
 
-    let row = row_by_method_receiver(
+    let receiver = CallReceiver::TypedLocalBinding {
+        name: "value".to_string(),
+        type_path: path(&["Vec"]),
+    };
+    assert_targetless_method_row(
         &context,
-        "len",
-        &CallReceiver::TypedLocalBinding {
-            name: "value".to_string(),
-            type_path: path(&["Vec"]),
-        },
-    );
-    assert_eq!(row.status.status, CallStatusKind::External);
-    assert_eq!(row.status.resolution, None);
-    assert!(
-        row.targets.is_empty(),
-        "unshadowed Vec::len must not fabricate local target edges: {row:#?}"
+        owner,
+        TargetlessMethodCase::method(
+            "len",
+            &receiver,
+            CallStatusKind::External,
+            "unshadowed Vec::len",
+        ),
     );
 
     let owner = function_id_by_name_in_module(
@@ -345,10 +343,11 @@ fn fixture_context_reads_projected_result_receiver_method_chains() -> Result<(),
     let context = db.call_context_for_owner(owner)?;
     assert_eq!(context.len(), 3, "try-result context rows: {context:#?}");
 
-    let row = row_by_path(&context, &["Ok"]);
-    assert_eq!(row.status.status, CallStatusKind::Unsupported);
-    assert_eq!(row.status.resolution, None);
-    assert!(row.targets.is_empty(), "Ok row targets: {row:#?}");
+    assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::path(&["Ok"], 1, CallStatusKind::Unsupported, "try-result Ok"),
+    );
 
     let row = row_by_path(&context, &["try_local_assoc"]);
     assert_resolved_target(
