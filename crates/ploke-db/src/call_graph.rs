@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, fmt::Write as _};
 
 use cozo::{DataValue, Num, ScriptMutability, UuidWrapper};
 
@@ -19,6 +19,15 @@ pub enum CallSiteKind {
 }
 
 impl CallSiteKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Path => "Path",
+            Self::Method => "Method",
+            Self::Dynamic => "Dynamic",
+            Self::Macro => "Macro",
+        }
+    }
+
     fn from_str(value: &str) -> Result<Self, DbError> {
         match value {
             "Path" => Ok(Self::Path),
@@ -327,6 +336,17 @@ pub enum CallRelationKind {
 }
 
 impl CallRelationKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Function => "Function",
+            Self::DynamicFunction => "DynamicFunction",
+            Self::Method => "Method",
+            Self::AssociatedFunction => "AssociatedFunction",
+            Self::TupleStructConstructor => "TupleStructConstructor",
+            Self::EnumVariantConstructor => "EnumVariantConstructor",
+        }
+    }
+
     fn from_str(value: &str) -> Result<Self, DbError> {
         match value {
             "Function" => Ok(Self::Function),
@@ -351,6 +371,15 @@ pub enum CallTargetKind {
 }
 
 impl CallTargetKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Function => "Function",
+            Self::Method => "Method",
+            Self::Struct => "Struct",
+            Self::Variant => "Variant",
+        }
+    }
+
     fn from_str(value: &str) -> Result<Self, DbError> {
         match value {
             "Function" => Ok(Self::Function),
@@ -359,6 +388,61 @@ impl CallTargetKind {
             "Variant" => Ok(Self::Variant),
             other => Err(DbError::Cozo(format!("unknown call target kind {other:?}"))),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CallTargetFamily {
+    relation: CallRelationKind,
+    source: CallSiteKind,
+    target: CallTargetKind,
+    target_relation: &'static str,
+}
+
+const VALID_CALL_TARGET_FAMILIES: [CallTargetFamily; 6] = [
+    CallTargetFamily {
+        relation: CallRelationKind::Function,
+        source: CallSiteKind::Path,
+        target: CallTargetKind::Function,
+        target_relation: "function",
+    },
+    CallTargetFamily {
+        relation: CallRelationKind::DynamicFunction,
+        source: CallSiteKind::Dynamic,
+        target: CallTargetKind::Function,
+        target_relation: "function",
+    },
+    CallTargetFamily {
+        relation: CallRelationKind::Method,
+        source: CallSiteKind::Method,
+        target: CallTargetKind::Method,
+        target_relation: "method",
+    },
+    CallTargetFamily {
+        relation: CallRelationKind::AssociatedFunction,
+        source: CallSiteKind::Path,
+        target: CallTargetKind::Method,
+        target_relation: "method",
+    },
+    CallTargetFamily {
+        relation: CallRelationKind::TupleStructConstructor,
+        source: CallSiteKind::Path,
+        target: CallTargetKind::Struct,
+        target_relation: "struct",
+    },
+    CallTargetFamily {
+        relation: CallRelationKind::EnumVariantConstructor,
+        source: CallSiteKind::Path,
+        target: CallTargetKind::Variant,
+        target_relation: "variant",
+    },
+];
+
+impl CallTargetFamily {
+    fn matches(self, target: &CallTargetRow) -> bool {
+        self.relation == target.relation
+            && self.source == target.source_kind
+            && self.target == target.target_kind
     }
 }
 
@@ -574,44 +658,9 @@ impl Database {
         let mut params = BTreeMap::new();
         params.insert("site_id".to_string(), DataValue::Uuid(UuidWrapper(site_id)));
 
-        let rows = self.run_script(
+        let mut script = valid_call_target_rules();
+        script.push_str(
             r#"
-            valid_target[target_id, relation_kind, source_kind, target_kind] :=
-                relation_kind = "Function",
-                source_kind = "Path",
-                target_kind = "Function",
-                *function { id: target_id @ 'NOW' }
-
-            valid_target[target_id, relation_kind, source_kind, target_kind] :=
-                relation_kind = "DynamicFunction",
-                source_kind = "Dynamic",
-                target_kind = "Function",
-                *function { id: target_id @ 'NOW' }
-
-            valid_target[target_id, relation_kind, source_kind, target_kind] :=
-                relation_kind = "Method",
-                source_kind = "Method",
-                target_kind = "Method",
-                *method { id: target_id @ 'NOW' }
-
-            valid_target[target_id, relation_kind, source_kind, target_kind] :=
-                relation_kind = "AssociatedFunction",
-                source_kind = "Path",
-                target_kind = "Method",
-                *method { id: target_id @ 'NOW' }
-
-            valid_target[target_id, relation_kind, source_kind, target_kind] :=
-                relation_kind = "TupleStructConstructor",
-                source_kind = "Path",
-                target_kind = "Struct",
-                *struct { id: target_id @ 'NOW' }
-
-            valid_target[target_id, relation_kind, source_kind, target_kind] :=
-                relation_kind = "EnumVariantConstructor",
-                source_kind = "Path",
-                target_kind = "Variant",
-                *variant { id: target_id @ 'NOW' }
-
             ?[site_id, target_id, relation_kind, source_kind, target_kind] :=
                 site_id = $site_id,
                 *call_site {
@@ -627,9 +676,9 @@ impl Database {
                 },
                 valid_target[target_id, relation_kind, source_kind, target_kind]
             :sort target_id"#,
-            params,
-            ScriptMutability::Immutable,
-        )?;
+        );
+
+        let rows = self.run_script(&script, params, ScriptMutability::Immutable)?;
 
         Ok(rows
             .rows
@@ -714,44 +763,9 @@ impl Database {
             DataValue::Uuid(UuidWrapper(target_id)),
         );
 
-        let rows = self.run_script(
+        let mut script = valid_call_target_rules();
+        script.push_str(
             r#"
-            valid_target[target_id, relation_kind, source_kind, target_kind] :=
-                relation_kind = "Function",
-                source_kind = "Path",
-                target_kind = "Function",
-                *function { id: target_id @ 'NOW' }
-
-            valid_target[target_id, relation_kind, source_kind, target_kind] :=
-                relation_kind = "DynamicFunction",
-                source_kind = "Dynamic",
-                target_kind = "Function",
-                *function { id: target_id @ 'NOW' }
-
-            valid_target[target_id, relation_kind, source_kind, target_kind] :=
-                relation_kind = "Method",
-                source_kind = "Method",
-                target_kind = "Method",
-                *method { id: target_id @ 'NOW' }
-
-            valid_target[target_id, relation_kind, source_kind, target_kind] :=
-                relation_kind = "AssociatedFunction",
-                source_kind = "Path",
-                target_kind = "Method",
-                *method { id: target_id @ 'NOW' }
-
-            valid_target[target_id, relation_kind, source_kind, target_kind] :=
-                relation_kind = "TupleStructConstructor",
-                source_kind = "Path",
-                target_kind = "Struct",
-                *struct { id: target_id @ 'NOW' }
-
-            valid_target[target_id, relation_kind, source_kind, target_kind] :=
-                relation_kind = "EnumVariantConstructor",
-                source_kind = "Path",
-                target_kind = "Variant",
-                *variant { id: target_id @ 'NOW' }
-
             ?[
                 id,
                 owner_id,
@@ -817,9 +831,9 @@ impl Database {
                 id = relation_site_id,
                 call_kind = source_kind
             :sort owner_id, span, relation_kind"#,
-            params,
-            ScriptMutability::Immutable,
-        )?;
+        );
+
+        let rows = self.run_script(&script, params, ScriptMutability::Immutable)?;
 
         let callers = rows
             .rows
@@ -1005,6 +1019,28 @@ fn non_empty_string(value: Option<&str>) -> bool {
     value.is_some_and(|value| !value.is_empty())
 }
 
+fn valid_call_target_rules() -> String {
+    let mut rules = String::new();
+    for family in VALID_CALL_TARGET_FAMILIES {
+        let relation = family.relation.as_str();
+        let source = family.source.as_str();
+        let target = family.target.as_str();
+        let target_relation = family.target_relation;
+        writeln!(
+            &mut rules,
+            r#"
+            valid_target[target_id, relation_kind, source_kind, target_kind] :=
+                relation_kind = "{relation}",
+                source_kind = "{source}",
+                target_kind = "{target}",
+                *{target_relation} {{ id: target_id @ 'NOW' }}
+"#
+        )
+        .expect("writing call target rule to String should not fail");
+    }
+    rules
+}
+
 fn decode_target(row: &[DataValue]) -> Result<CallTargetRow, DbError> {
     Ok(CallTargetRow {
         site_id: to_uuid(&row[0])?,
@@ -1016,34 +1052,9 @@ fn decode_target(row: &[DataValue]) -> Result<CallTargetRow, DbError> {
 }
 
 fn valid_call_target(target: &CallTargetRow) -> bool {
-    matches!(
-        (target.relation, target.source_kind, target.target_kind,),
-        (
-            CallRelationKind::Function,
-            CallSiteKind::Path,
-            CallTargetKind::Function,
-        ) | (
-            CallRelationKind::DynamicFunction,
-            CallSiteKind::Dynamic,
-            CallTargetKind::Function,
-        ) | (
-            CallRelationKind::Method,
-            CallSiteKind::Method,
-            CallTargetKind::Method,
-        ) | (
-            CallRelationKind::AssociatedFunction,
-            CallSiteKind::Path,
-            CallTargetKind::Method,
-        ) | (
-            CallRelationKind::TupleStructConstructor,
-            CallSiteKind::Path,
-            CallTargetKind::Struct,
-        ) | (
-            CallRelationKind::EnumVariantConstructor,
-            CallSiteKind::Path,
-            CallTargetKind::Variant,
-        )
-    )
+    VALID_CALL_TARGET_FAMILIES
+        .iter()
+        .any(|family| family.matches(target))
 }
 
 fn decode_resolution(row: &[DataValue]) -> Result<CallResolutionRow, DbError> {
