@@ -519,3 +519,19 @@ fn fixture_context_reads_projected_callable_value_path_failures_and_vec_external
 
     Ok(())
 }
+
+#[test]
+fn fixture_context_reads_projected_ambiguous_dynamic_candidates() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let expected = dynamic_candidates(&db)?;
+
+    for owner_name in AMBIGUOUS_DYNAMIC_OWNERS {
+        let owner = function_id_by_name(&db, owner_name)?;
+        let context = db.call_context_for_owner(owner)?;
+        assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
+
+        assert_dynamic_candidates(&context[0], owner, &expected, owner_name);
+    }
+
+    Ok(())
+}
