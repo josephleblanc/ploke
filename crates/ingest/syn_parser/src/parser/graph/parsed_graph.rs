@@ -313,12 +313,6 @@ impl ParsedCodeGraph {
         self.graph
             .call_site_relations
             .append(&mut other.graph.call_site_relations);
-        self.graph
-            .call_relations
-            .append(&mut other.graph.call_relations);
-        self.graph
-            .call_resolution_statuses
-            .append(&mut other.graph.call_resolution_statuses);
         self.graph.modules.append(&mut other.graph.modules);
         self.graph.consts.append(&mut other.graph.consts); // Use consts
         self.graph.statics.append(&mut other.graph.statics); // Use statics
@@ -709,24 +703,6 @@ impl ParsedCodeGraph {
                     live_call_owners.contains(source) && live_call_ids.contains(target)
                 }
             });
-        self.call_relations_mut().retain(|relation| match relation {
-            CallRelation::Function { source, .. } => live_call_ids.contains(&(*source).into()),
-            CallRelation::DynamicFunction { source, .. } => {
-                live_call_ids.contains(&(*source).into())
-            }
-            CallRelation::Method { source, .. } => live_call_ids.contains(&(*source).into()),
-            CallRelation::AssociatedFunction { source, .. } => {
-                live_call_ids.contains(&(*source).into())
-            }
-            CallRelation::TupleStructConstructor { source, .. } => {
-                live_call_ids.contains(&(*source).into())
-            }
-            CallRelation::EnumVariantConstructor { source, .. } => {
-                live_call_ids.contains(&(*source).into())
-            }
-        });
-        self.call_resolution_statuses_mut()
-            .retain(|status| live_call_ids.contains(&status.source()));
         // ANCHOR_END: prune_methods_and_retain
 
         // -- handle pruning module ids
@@ -1115,14 +1091,6 @@ impl GraphAccess for ParsedCodeGraph {
         &self.graph.call_site_relations
     }
 
-    fn call_relations(&self) -> &[CallRelation] {
-        &self.graph.call_relations
-    }
-
-    fn call_resolution_statuses(&self) -> &[CallResolutionStatus] {
-        &self.graph.call_resolution_statuses
-    }
-
     fn modules(&self) -> &[ModuleNode] {
         &self.graph.modules
     }
@@ -1177,14 +1145,6 @@ impl GraphAccess for ParsedCodeGraph {
 
     fn call_site_relations_mut(&mut self) -> &mut Vec<CallSiteRelation> {
         &mut self.graph.call_site_relations
-    }
-
-    fn call_relations_mut(&mut self) -> &mut Vec<CallRelation> {
-        &mut self.graph.call_relations
-    }
-
-    fn call_resolution_statuses_mut(&mut self) -> &mut Vec<CallResolutionStatus> {
-        &mut self.graph.call_resolution_statuses
     }
 
     fn modules_mut(&mut self) -> &mut Vec<ModuleNode> {

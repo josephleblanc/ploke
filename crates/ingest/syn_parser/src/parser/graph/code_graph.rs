@@ -8,7 +8,7 @@ use crate::parser::{
         CallNode, ConstNode, FunctionNode, ImplNode, ImportNode, MacroNode, ModuleNode, StaticNode,
         TraitNode, TypeDefNode, UnresolvedNode,
     },
-    relations::{CallRelation, CallResolutionStatus, CallSiteRelation, SyntacticRelation}, // Use new relation enum
+    relations::{CallSiteRelation, SyntacticRelation}, // Use new relation enum
     types::TypeNode,
 };
 
@@ -36,12 +36,6 @@ pub struct CodeGraph {
     // Relations between function-like bodies and call-site records
     #[serde(default)]
     pub call_site_relations: Vec<CallSiteRelation>,
-    // Resolved call-target edges emitted by resolver passes
-    #[serde(default)]
-    pub call_relations: Vec<CallRelation>,
-    // Resolver outcome statuses for structural call sites
-    #[serde(default)]
-    pub call_resolution_statuses: Vec<CallResolutionStatus>,
     // Modules defined in the code
     pub modules: Vec<ModuleNode>,
     // Constants defined in the code
@@ -87,14 +81,6 @@ impl GraphAccess for CodeGraph {
 
     fn call_site_relations(&self) -> &[CallSiteRelation] {
         &self.call_site_relations
-    }
-
-    fn call_relations(&self) -> &[CallRelation] {
-        &self.call_relations
-    }
-
-    fn call_resolution_statuses(&self) -> &[CallResolutionStatus] {
-        &self.call_resolution_statuses
     }
 
     fn modules(&self) -> &[ModuleNode] {
@@ -155,14 +141,6 @@ impl GraphAccess for CodeGraph {
         &mut self.call_site_relations
     }
 
-    fn call_relations_mut(&mut self) -> &mut Vec<CallRelation> {
-        &mut self.call_relations
-    }
-
-    fn call_resolution_statuses_mut(&mut self) -> &mut Vec<CallResolutionStatus> {
-        &mut self.call_resolution_statuses
-    }
-
     fn modules_mut(&mut self) -> &mut Vec<ModuleNode> {
         &mut self.modules
     }
@@ -216,9 +194,6 @@ impl CodeGraph {
         self.call_sites.append(&mut other.call_sites);
         self.call_site_relations
             .append(&mut other.call_site_relations);
-        self.call_relations.append(&mut other.call_relations);
-        self.call_resolution_statuses
-            .append(&mut other.call_resolution_statuses);
         self.modules.append(&mut other.modules);
         self.consts.append(&mut other.consts); // Added
         self.statics.append(&mut other.statics); // Added

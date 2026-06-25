@@ -69,8 +69,6 @@ impl VisitorState {
                 relations: Vec::new(),
                 call_sites: Vec::new(),
                 call_site_relations: Vec::new(),
-                call_relations: Vec::new(),
-                call_resolution_statuses: Vec::new(),
                 modules: Vec::new(),
                 consts: Vec::new(),  // Initialize consts
                 statics: Vec::new(), // Initialize statics

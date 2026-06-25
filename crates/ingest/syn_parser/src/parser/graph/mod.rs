@@ -31,7 +31,7 @@ use crate::parser::{
         CallNode, ConstNode, FunctionNode, ImplNode, ImportNode, MacroNode, MethodNode, ModuleNode,
         StaticNode, TraitNode, TypeDefNode,
     }, // Updated node types
-    relations::{CallRelation, CallResolutionStatus, CallSiteRelation, SyntacticRelation}, // Use new relation enum
+    relations::{CallSiteRelation, SyntacticRelation}, // Use new relation enum
     types::TypeNode,
 };
 
@@ -46,8 +46,6 @@ pub trait GraphAccess {
     fn relations(&self) -> &[SyntacticRelation]; // Updated type
     fn call_sites(&self) -> &[CallNode];
     fn call_site_relations(&self) -> &[CallSiteRelation];
-    fn call_relations(&self) -> &[CallRelation];
-    fn call_resolution_statuses(&self) -> &[CallResolutionStatus];
     fn modules(&self) -> &[ModuleNode];
     fn consts(&self) -> &[ConstNode]; // Added
     fn statics(&self) -> &[StaticNode]; // Added
@@ -63,8 +61,6 @@ pub trait GraphAccess {
     fn relations_mut(&mut self) -> &mut Vec<SyntacticRelation>; // Updated type
     fn call_sites_mut(&mut self) -> &mut Vec<CallNode>;
     fn call_site_relations_mut(&mut self) -> &mut Vec<CallSiteRelation>;
-    fn call_relations_mut(&mut self) -> &mut Vec<CallRelation>;
-    fn call_resolution_statuses_mut(&mut self) -> &mut Vec<CallResolutionStatus>;
     fn modules_mut(&mut self) -> &mut Vec<ModuleNode>;
     fn consts_mut(&mut self) -> &mut Vec<ConstNode>; // Added
     fn statics_mut(&mut self) -> &mut Vec<StaticNode>; // Added
