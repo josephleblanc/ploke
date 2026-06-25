@@ -133,7 +133,13 @@ where
     }
 }
 
-fn streams(config: &C3, runtime_id: RuntimeId) -> Streams {
+fn streams<AckState>(
+    config: &Prototype<Parent, Child, Present, AckState>,
+    runtime_id: RuntimeId,
+) -> Streams
+where
+    AckState: ChildAckState,
+{
     let dir = config
         .node
         .node_dir
@@ -676,12 +682,21 @@ fn mirror_child_spawn_provenance(next: &C4) -> Result<(), eval_store::EvalStoreE
         return Ok(());
     }
 
-    let runtime_id = next
+    let runtime_id = *next
         .binary
         .child_runtime
         .as_ref()
-        .expect("C4 carries acknowledged child runtime")
-        .to_string();
+        .expect("C4 carries acknowledged child runtime");
+    let runtime_id_ref = runtime_id.to_string();
+    let stream_paths = streams(next, runtime_id);
+    let recorded_at = chrono::Utc::now().to_rfc3339();
+    mirror_runtime_stream_log_refs(
+        &db_path,
+        &next.campaign_id,
+        runtime_id,
+        &stream_paths,
+        &recorded_at,
+    )?;
     let artifact_id = next
         .node
         .derived_artifact_id
@@ -689,14 +704,13 @@ fn mirror_child_spawn_provenance(next: &C4) -> Result<(), eval_store::EvalStoreE
         .map(|id| id.to_string());
     let binary_path = next.binary.child_path.clone();
     let binary_hash = eval_store::file_sha256(&binary_path)?;
-    let recorded_at = chrono::Utc::now().to_rfc3339();
     eval_store::write_build_provenance_to_owner_db(
         &db_path,
         eval_store::BuildProvenanceEvidence {
             binary_ref: eval_store::BinaryRefEvidence {
                 campaign_id: next.campaign_id.clone(),
                 artifact_id: artifact_id.clone(),
-                built_by: Some(runtime_id.clone()),
+                built_by: Some(runtime_id_ref.clone()),
                 source_ref: binary_path.display().to_string(),
                 content_sha256: Some(binary_hash),
                 protocol_digest: None,
@@ -705,7 +719,7 @@ fn mirror_child_spawn_provenance(next: &C4) -> Result<(), eval_store::EvalStoreE
             build_event: eval_store::BuildEventEvidence {
                 campaign_id: next.campaign_id.clone(),
                 node_id: next.node.node_id.clone(),
-                runtime_id: Some(runtime_id),
+                runtime_id: Some(runtime_id_ref),
                 artifact_id,
                 phase: "spawn".to_string(),
                 outcome: "acknowledged".to_string(),
@@ -715,6 +729,36 @@ fn mirror_child_spawn_provenance(next: &C4) -> Result<(), eval_store::EvalStoreE
             },
         },
     )?;
+    Ok(())
+}
+
+fn mirror_runtime_stream_log_refs(
+    db_path: &std::path::Path,
+    campaign_id: &ploke_records::ids::CampaignId,
+    runtime_id: RuntimeId,
+    streams: &Streams,
+    recorded_at: &str,
+) -> Result<(), eval_store::EvalStoreError> {
+    for (log_kind, source_ref) in [
+        ("runtime_stdout", streams.stdout.display().to_string()),
+        ("runtime_stderr", streams.stderr.display().to_string()),
+    ] {
+        eval_store::write_log_ref_to_owner_db(
+            db_path,
+            eval_store::LogRefEvidence {
+                campaign_id: Some(campaign_id.clone()),
+                runtime_id: Some(runtime_id),
+                store_scope: "runtime".to_string(),
+                log_kind: log_kind.to_string(),
+                source_ref,
+                byte_start: None,
+                byte_len: None,
+                content_sha256: None,
+                sensitivity: Some("runtime_log".to_string()),
+                recorded_at: Some(recorded_at.to_string()),
+            },
+        )?;
+    }
     Ok(())
 }
 
@@ -801,5 +845,76 @@ mod tests {
         let pid = parts.next().expect("pid");
         let pgid = parts.next().expect("pgid");
         assert_eq!(pid, pgid);
+    }
+
+    #[test]
+    fn prototype1_eval_store_runtime_streams_write_log_refs() {
+        let temp = tempfile::tempdir().expect("tmp");
+        let prototype_root = temp.path().join("prototype1");
+        let db_path = prototype_root.join("eval-store.cozo.sqlite");
+        let stream_root = prototype_root.join("nodes/node-1/streams/runtime-1");
+        let streams = Streams {
+            stdout: stream_root.join("stdout.log"),
+            stderr: stream_root.join("stderr.log"),
+        };
+        let campaign_id = ploke_records::ids::CampaignId::from("campaign");
+        let runtime_id = RuntimeId::new();
+
+        mirror_runtime_stream_log_refs(
+            &db_path,
+            &campaign_id,
+            runtime_id,
+            &streams,
+            "2026-06-25T00:00:00Z",
+        )
+        .expect("mirror runtime stream log refs");
+
+        let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(
+            "runtime_id".to_string(),
+            cozo::DataValue::from(runtime_id.to_string()),
+        );
+        let rows = db
+            .raw_query_params(
+                r#"
+?[log_kind, source_ref, store_scope, sensitivity, recorded_at] :=
+    *eval_log_ref { log_kind, source_ref, store_scope, sensitivity, recorded_at, runtime_id },
+    runtime_id = $runtime_id
+"#,
+                params,
+            )
+            .expect("query runtime log refs");
+
+        assert_eq!(rows.rows.len(), 2);
+        let observed: std::collections::BTreeSet<_> = rows
+            .row_refs()
+            .map(|row| {
+                (
+                    row.get::<String>("log_kind").expect("kind"),
+                    row.get::<String>("source_ref").expect("source"),
+                    row.get::<String>("store_scope").expect("scope"),
+                    row.get::<String>("sensitivity").expect("sensitivity"),
+                    row.get::<String>("recorded_at").expect("recorded_at"),
+                )
+            })
+            .collect();
+        let expected = std::collections::BTreeSet::from([
+            (
+                "runtime_stdout".to_string(),
+                streams.stdout.display().to_string(),
+                "runtime".to_string(),
+                "runtime_log".to_string(),
+                "2026-06-25T00:00:00Z".to_string(),
+            ),
+            (
+                "runtime_stderr".to_string(),
+                streams.stderr.display().to_string(),
+                "runtime".to_string(),
+                "runtime_log".to_string(),
+                "2026-06-25T00:00:00Z".to_string(),
+            ),
+        ]);
+        assert_eq!(observed, expected);
     }
 }

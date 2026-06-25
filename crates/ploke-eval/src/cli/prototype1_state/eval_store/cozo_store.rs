@@ -381,6 +381,17 @@ pub(crate) fn write_record_ref_to_owner_db(
     Ok(receipt)
 }
 
+pub(crate) fn write_log_ref_to_owner_db(
+    db_path: &Path,
+    evidence: LogRefEvidence,
+) -> Result<LogRefReceipt, EvalStoreError> {
+    let db = load_owner_eval_database(db_path)?;
+    let store = DbEvalStore::new(&db);
+    let receipt = store.put_log_ref(evidence)?;
+    persist_owner_eval_database(&db, db_path)?;
+    Ok(receipt)
+}
+
 pub(crate) fn write_r0_context_to_owner_db(
     db_path: &Path,
     manifest_path: &Path,
