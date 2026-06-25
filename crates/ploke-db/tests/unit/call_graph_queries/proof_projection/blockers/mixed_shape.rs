@@ -24,41 +24,14 @@ fn call_proof_facts_for_owner_preserves_mixed_resolution_shape() -> Result<(), D
         },
     )?;
 
-    insert_call_site(
+    insert_targetless_status(
         &db,
-        SiteSeed {
-            id: external,
-            owner,
-            kind: "Path",
-            span: (30, 40),
-            path: Some(vec!["String", "new"]),
-            method: None,
-            macro_name: None,
-            receiver: None,
-            arg_count: Some(0),
-            generic_arg_count: Some(0),
-        },
+        TargetlessStatusSeed::external(owner, module, external, None, &["String", "new"], 0),
     )?;
-    insert_edge(&db, owner, external, "Path")?;
-    insert_status(&db, external, "Path", "External", None)?;
-
-    insert_call_site(
+    insert_targetless_status(
         &db,
-        SiteSeed {
-            id: dynamic,
-            owner,
-            kind: "Dynamic",
-            span: (50, 60),
-            path: None,
-            method: None,
-            macro_name: None,
-            receiver: None,
-            arg_count: Some(0),
-            generic_arg_count: None,
-        },
+        TargetlessStatusSeed::dynamic(owner, module, dynamic, None),
     )?;
-    insert_edge(&db, owner, dynamic, "Dynamic")?;
-    insert_status(&db, dynamic, "Dynamic", "Unsupported", None)?;
 
     let facts = db.call_proof_facts_for_owner(owner, "bd:test")?;
     assert_eq!(facts.len(), 7, "proof facts: {facts:#?}");

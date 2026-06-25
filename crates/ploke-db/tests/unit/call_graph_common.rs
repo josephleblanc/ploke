@@ -8,6 +8,7 @@ mod facts;
 mod resolved;
 mod site;
 mod source;
+mod targetless;
 mod targets;
 mod values;
 
@@ -15,6 +16,7 @@ pub(super) use facts::{fact_count, fact_for_call_site};
 pub(super) use resolved::{ResolvedGraphSeed, insert_resolved_graph};
 pub(super) use site::{SiteSeed, insert_call_site, insert_call_site_raw_receiver};
 pub(super) use source::insert_owner_source;
+pub(super) use targetless::{TargetlessStatusSeed, insert_targetless_status};
 pub(super) use values::list;
 
 use targets::{ensure_call_target, ensure_function_owner};

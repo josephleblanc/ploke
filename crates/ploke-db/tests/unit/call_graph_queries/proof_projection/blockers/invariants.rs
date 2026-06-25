@@ -8,24 +8,17 @@ fn generated_call_resolution_blockers_feed_proof_invariants() -> Result<(), DbEr
     let module = Uuid::from_u128(152);
     let external = Uuid::from_u128(153);
 
-    insert_owner_source(&db, owner, module, "src/lib.rs")?;
-    insert_call_site(
+    insert_targetless_status(
         &db,
-        SiteSeed {
-            id: external,
+        TargetlessStatusSeed::external(
             owner,
-            kind: "Path",
-            span: (30, 40),
-            path: Some(vec!["std", "process", "Command", "new"]),
-            method: None,
-            macro_name: None,
-            receiver: None,
-            arg_count: Some(1),
-            generic_arg_count: Some(0),
-        },
+            module,
+            external,
+            Some("src/lib.rs"),
+            &["std", "process", "Command", "new"],
+            1,
+        ),
     )?;
-    insert_edge(&db, owner, external, "Path")?;
-    insert_status(&db, external, "Path", "External", None)?;
 
     let count = db.project_call_proof_facts_for_owner(owner, "bd:test")?;
     assert_eq!(count, 2);
