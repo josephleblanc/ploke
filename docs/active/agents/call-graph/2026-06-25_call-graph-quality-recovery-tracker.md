@@ -19,10 +19,12 @@ are not acceptable as a continuing implementation style.
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
 - Latest committed call-graph quality checkpoint:
-  `2d6320d1 Require populated call graph availability`
+  `8d3dc030 test: split transform call graph projection tests`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent production pattern cleanup:
   - `5fad4c98 Remove dormant call graph semantic storage`
+- Recent transform test cleanup:
+  - `8d3dc030 test: split transform call graph projection tests`
 - Recent availability cleanup:
   - `2d6320d1 Require populated call graph availability`
 - Recent endpoint-family cleanup:
@@ -177,12 +179,19 @@ are not acceptable as a continuing implementation style.
 Continue production-side pattern cleanup before parser/resolver breadth. The
 next likely slices are:
 
-1. Move/table-drive transform call-graph projection tests out of the broad
-   transform module.
-2. Add/update a stable call-graph coverage matrix instead of extending the
+1. Add/update a stable call-graph coverage matrix instead of extending the
    diary-style notes.
+2. Continue table-driving the dedicated transform dynamic projection tests
+   before adding any new transform projection cases.
 
 ## Latest verification
+
+For `8d3dc030 test: split transform call graph projection tests`:
+
+- `cargo test -p ploke-transform --features call_graph transform::call_graph_tests -- --nocapture`
+  - passed: moved call-graph projection filter ran 4 tests, 0 failed.
+- `cargo test -p ploke-transform --features call_graph transform::tests -- --nocapture`
+  - passed: remaining inline transform filter ran 1 test, 0 failed.
 
 For `2d6320d1 Require populated call graph availability`:
 
