@@ -83,17 +83,13 @@ fn fixture_projection_marks_real_macro_call_without_edges() -> Result<(), DbErro
         let owner = function_id_by_name(&db, owner_name)?;
         let context = db.call_context_for_owner(owner)?;
         assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
-        let row = &context[0];
+        let row = assert_targetless_macro_row(
+            &context,
+            owner,
+            TargetlessMacroCase::macro_call(macro_name, owner_name),
+        );
         let site = row.site.id;
         let span = row.site.span;
-        assert_eq!(row.site.kind, CallSiteKind::Macro);
-        assert_eq!(row.site.macro_name.as_deref(), Some(macro_name));
-        assert_eq!(row.status.status, CallStatusKind::Unsupported);
-        assert_eq!(row.status.resolution, None);
-        assert!(
-            row.targets.is_empty(),
-            "{owner_name} macro proof setup must be targetless: {row:#?}"
-        );
 
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
         assert_eq!(count, 2);

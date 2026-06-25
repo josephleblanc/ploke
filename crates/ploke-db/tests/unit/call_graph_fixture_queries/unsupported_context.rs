@@ -107,16 +107,11 @@ fn fixture_context_reads_projected_macro_statuses_without_targets() -> Result<()
         let context = db.call_context_for_owner(owner)?;
         assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
 
-        let row = &context[0];
-        assert_eq!(row.site.owner_id, owner);
-        assert_eq!(row.site.kind, CallSiteKind::Macro);
-        assert_eq!(row.site.macro_name.as_deref(), Some(macro_name));
-        assert_eq!(row.site.path, None);
-        assert_eq!(row.site.receiver, None);
-        assert_eq!(row.site.arg_count, None);
-        assert_eq!(row.status.status, CallStatusKind::Unsupported);
-        assert_eq!(row.status.resolution, None);
-        assert!(row.targets.is_empty(), "macro row targets: {row:#?}");
+        assert_targetless_macro_row(
+            &context,
+            owner,
+            TargetlessMacroCase::macro_call(macro_name, owner_name),
+        );
     }
 
     Ok(())
