@@ -2,70 +2,45 @@ use super::*;
 
 #[test]
 fn fixture_projection_stores_real_dynamic_call_proof_facts() -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let target = function_id_by_name(&db, "local_target")?;
-    let expected_edges = resolved_dynamic_proof_edges(
-        &db,
-        target,
-        &[ResolvedDynamicContextCase {
-            owner: "call_aliased_indexed_named_field_function_binding",
-            path: &["alias", "callbacks", "0"],
-            expected_rows: 1,
-        }],
-    );
-    let expected_edges = expected_edges?;
+    let cases = [ResolvedDynamicContextCase {
+        owner: "call_aliased_indexed_named_field_function_binding",
+        path: &["alias", "callbacks", "0"],
+        expected_rows: 1,
+    }];
 
-    assert_owner_proof_edges(
-        &db,
-        "dynamic",
-        &expected_edges,
-        "fixture_call_graph/src/lib.rs",
-        "dynamic_dispatch_unbounded",
-        ProofEdgeCount::Exact,
-    )?;
-
-    Ok(())
+    assert_fixture_resolved_dynamic_proof_batches(&[ResolvedDynamicProofBatch {
+        label: "dynamic",
+        cases: &cases,
+        count: ProofEdgeCount::Exact,
+    }])
 }
 
 #[test]
 fn fixture_projection_stores_real_branch_and_match_dynamic_call_proof_facts() -> Result<(), DbError>
 {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let target = function_id_by_name(&db, "local_target")?;
-    let expected_edges = resolved_dynamic_proof_edges(
-        &db,
-        target,
-        &[
-            ResolvedDynamicContextCase {
-                owner: "call_if_same_function_item",
-                path: &["local_target"],
-                expected_rows: 1,
-            },
-            ResolvedDynamicContextCase {
-                owner: "call_match_same_function_item",
-                path: &["local_target"],
-                expected_rows: 1,
-            },
-        ],
-    )?;
+    let cases = [
+        ResolvedDynamicContextCase {
+            owner: "call_if_same_function_item",
+            path: &["local_target"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_match_same_function_item",
+            path: &["local_target"],
+            expected_rows: 1,
+        },
+    ];
 
-    assert_owner_proof_edges(
-        &db,
-        "branch/match dynamic",
-        &expected_edges,
-        "fixture_call_graph/src/lib.rs",
-        "dynamic_dispatch_unbounded",
-        ProofEdgeCount::Exact,
-    )?;
-
-    Ok(())
+    assert_fixture_resolved_dynamic_proof_batches(&[ResolvedDynamicProofBatch {
+        label: "branch/match dynamic",
+        cases: &cases,
+        count: ProofEdgeCount::Exact,
+    }])
 }
 
 #[test]
 fn fixture_projection_stores_real_callable_expression_dynamic_call_proof_facts()
 -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let target = function_id_by_name(&db, "local_target")?;
     let cases = [
         ResolvedDynamicContextCase {
             owner: "call_parenthesized_local_target",
@@ -123,24 +98,16 @@ fn fixture_projection_stores_real_callable_expression_dynamic_call_proof_facts()
             expected_rows: 1,
         },
     ];
-    let expected_edges = resolved_dynamic_proof_edges(&db, target, &cases)?;
 
-    assert_owner_proof_edges(
-        &db,
-        "callable dynamic",
-        &expected_edges,
-        "fixture_call_graph/src/lib.rs",
-        "dynamic_dispatch_unbounded",
-        ProofEdgeCount::Exact,
-    )?;
-
-    Ok(())
+    assert_fixture_resolved_dynamic_proof_batches(&[ResolvedDynamicProofBatch {
+        label: "callable dynamic",
+        cases: &cases,
+        count: ProofEdgeCount::Exact,
+    }])
 }
 
 #[test]
 fn fixture_projection_stores_real_field_dynamic_call_proof_facts() -> Result<(), DbError> {
-    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
-    let target = function_id_by_name(&db, "local_target")?;
     let cases = [
         ResolvedDynamicContextCase {
             owner: "call_named_field_function_binding",
@@ -183,16 +150,10 @@ fn fixture_projection_stores_real_field_dynamic_call_proof_facts() -> Result<(),
             expected_rows: 2,
         },
     ];
-    let expected_edges = resolved_dynamic_proof_edges(&db, target, &cases)?;
 
-    assert_owner_proof_edges(
-        &db,
-        "field dynamic",
-        &expected_edges,
-        "fixture_call_graph/src/lib.rs",
-        "dynamic_dispatch_unbounded",
-        ProofEdgeCount::AtLeast,
-    )?;
-
-    Ok(())
+    assert_fixture_resolved_dynamic_proof_batches(&[ResolvedDynamicProofBatch {
+        label: "field dynamic",
+        cases: &cases,
+        count: ProofEdgeCount::AtLeast,
+    }])
 }

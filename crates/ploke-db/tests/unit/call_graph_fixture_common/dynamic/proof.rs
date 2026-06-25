@@ -42,6 +42,33 @@ pub(in crate::unit) fn resolved_dynamic_proof_edges(
     Ok(expected)
 }
 
+pub(in crate::unit) struct ResolvedDynamicProofBatch<'a> {
+    pub(in crate::unit) label: &'a str,
+    pub(in crate::unit) cases: &'a [ResolvedDynamicContextCase],
+    pub(in crate::unit) count: ProofEdgeCount,
+}
+
+pub(in crate::unit) fn assert_fixture_resolved_dynamic_proof_batches(
+    batches: &[ResolvedDynamicProofBatch<'_>],
+) -> Result<(), DbError> {
+    for batch in batches {
+        let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+        let target = function_id_by_name(&db, "local_target")?;
+        let expected_edges = resolved_dynamic_proof_edges(&db, target, batch.cases)?;
+
+        assert_owner_proof_edges(
+            &db,
+            batch.label,
+            &expected_edges,
+            "fixture_call_graph/src/lib.rs",
+            "dynamic_dispatch_unbounded",
+            batch.count,
+        )?;
+    }
+
+    Ok(())
+}
+
 pub(in crate::unit) fn assert_candidate_proof(
     facts: &[serde_json::Value],
     site: &str,
