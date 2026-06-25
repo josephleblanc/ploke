@@ -5,6 +5,7 @@
 //! and must not replace History, channel transport, MessageBox authority,
 //! invocation/bootstrap, or artifact/worktree mutation.
 
+mod agent_turn;
 mod api;
 mod artifact;
 mod build;
@@ -17,12 +18,20 @@ mod evaluation;
 mod evidence;
 mod observation;
 mod operation;
+mod schema;
 mod selection;
 mod setup;
 
 #[cfg(test)]
 mod tests;
 
+pub(crate) use agent_turn::AgentTurnBundleEvidence;
+#[cfg(test)]
+pub(crate) use agent_turn::{
+    AGENT_TURN_EVENT_REL, AGENT_TURN_REL, MESSAGE_EVENT_REL, MODEL_EXCHANGE_REL, TOOL_EVENT_REL,
+};
+#[cfg(test)]
+pub(crate) use agent_turn::{AgentTurnEvidence, write_agent_turn_to_owner_db};
 pub(crate) use api::{ConfiguredEvalStore, EvalStore};
 #[cfg(test)]
 pub(crate) use api::{FileDbEvalStore, FsEvalStore};
