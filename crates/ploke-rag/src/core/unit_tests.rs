@@ -22,8 +22,8 @@ mod tests {
     use ploke_core::rag_types::TypeContextKind;
     #[cfg(feature = "call_graph")]
     use ploke_core::rag_types::{
-        CallCalleeInfo, CallExpansionKind, CallReceiverInfo, CallResolutionKind, CallSiteKind,
-        CallStatusKind, CallTargetKind,
+        CallCalleeInfo, CallContextInfo, CallExpansionKind, CallReceiverInfo, CallResolutionKind,
+        CallSiteKind, CallStatusKind, CallTargetKind, ContextPart,
     };
     use ploke_core::{CrateId, EmbeddingData, RetrievalScope};
     use ploke_db::get_by_id::{GetNodeInfo, NodePaths};
@@ -3468,14 +3468,7 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
             assert_eq!(call.targets.len(), 1);
             assert_eq!(call.targets[0].target_id, target);
             assert_eq!(call.targets[0].relation, case.relation);
-            let expansion = caller_part
-                .call_expansion
-                .expect("expanded constructor caller should carry call-expansion provenance");
-            assert_eq!(expansion.seed_id, target);
-            assert_eq!(expansion.relation, CallExpansionKind::IncomingCaller);
-            assert_eq!(expansion.call_site_id, call.site_id);
-            assert_eq!(expansion.target_id, target);
-            assert_eq!(expansion.distance, 1);
+            assert_incoming_expansion(caller_part, call, target);
         }
 
         Ok(())
@@ -3564,14 +3557,7 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
             .iter()
             .find(|part| part.id == target)
             .expect("public get_context should materialize the outgoing callee target");
-        let expansion = target_part
-            .call_expansion
-            .expect("expanded callee target should carry call-expansion provenance");
-        assert_eq!(expansion.seed_id, owner);
-        assert_eq!(expansion.relation, CallExpansionKind::OutgoingTarget);
-        assert_eq!(expansion.call_site_id, call.site_id);
-        assert_eq!(expansion.target_id, target);
-        assert_eq!(expansion.distance, 1);
+        assert_outgoing_expansion(target_part, call, owner, target);
 
         Ok(())
     }
@@ -3653,14 +3639,7 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         assert_eq!(call.targets.len(), 1);
         assert_eq!(call.targets[0].target_id, target);
         assert_eq!(call.targets[0].relation, CallTargetKind::Function);
-        let expansion = caller_part
-            .call_expansion
-            .expect("expanded incoming caller should carry call-expansion provenance");
-        assert_eq!(expansion.seed_id, target);
-        assert_eq!(expansion.relation, CallExpansionKind::IncomingCaller);
-        assert_eq!(expansion.call_site_id, call.site_id);
-        assert_eq!(expansion.target_id, target);
-        assert_eq!(expansion.distance, 1);
+        assert_incoming_expansion(caller_part, call, target);
 
         Ok(())
     }
@@ -3772,14 +3751,7 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         assert_eq!(path_call.targets.len(), 1);
         assert_eq!(path_call.targets[0].target_id, target);
         assert_eq!(path_call.targets[0].relation, CallTargetKind::Function);
-        let path_expansion = path_part
-            .call_expansion
-            .expect("expanded path caller should carry call-expansion provenance");
-        assert_eq!(path_expansion.seed_id, target);
-        assert_eq!(path_expansion.relation, CallExpansionKind::IncomingCaller);
-        assert_eq!(path_expansion.call_site_id, path_call.site_id);
-        assert_eq!(path_expansion.target_id, target);
-        assert_eq!(path_expansion.distance, 1);
+        assert_incoming_expansion(path_part, path_call, target);
 
         let dynamic_part = assembled
             .parts
@@ -3808,14 +3780,7 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
             dynamic_call.targets[0].relation,
             CallTargetKind::DynamicFunction
         );
-        let expansion = dynamic_part
-            .call_expansion
-            .expect("expanded dynamic caller should carry call-expansion provenance");
-        assert_eq!(expansion.seed_id, target);
-        assert_eq!(expansion.relation, CallExpansionKind::IncomingCaller);
-        assert_eq!(expansion.call_site_id, dynamic_call.site_id);
-        assert_eq!(expansion.target_id, target);
-        assert_eq!(expansion.distance, 1);
+        assert_incoming_expansion(dynamic_part, dynamic_call, target);
 
         for forbidden in forbidden_owners {
             assert!(
@@ -3917,14 +3882,7 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         assert_eq!(method_call.targets.len(), 1);
         assert_eq!(method_call.targets[0].target_id, target);
         assert_eq!(method_call.targets[0].relation, CallTargetKind::Method);
-        let expansion = method_part
-            .call_expansion
-            .expect("expanded method caller should carry call-expansion provenance");
-        assert_eq!(expansion.seed_id, target);
-        assert_eq!(expansion.relation, CallExpansionKind::IncomingCaller);
-        assert_eq!(expansion.call_site_id, method_call.site_id);
-        assert_eq!(expansion.target_id, target);
-        assert_eq!(expansion.distance, 1);
+        assert_incoming_expansion(method_part, method_call, target);
 
         let assoc_part = assembled
             .parts
@@ -3952,14 +3910,7 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
             assoc_call.targets[0].relation,
             CallTargetKind::AssociatedFunction
         );
-        let expansion = assoc_part
-            .call_expansion
-            .expect("expanded associated-function caller should carry call-expansion provenance");
-        assert_eq!(expansion.seed_id, target);
-        assert_eq!(expansion.relation, CallExpansionKind::IncomingCaller);
-        assert_eq!(expansion.call_site_id, assoc_call.site_id);
-        assert_eq!(expansion.target_id, target);
-        assert_eq!(expansion.distance, 1);
+        assert_incoming_expansion(assoc_part, assoc_call, target);
 
         Ok(())
     }
@@ -4050,14 +4001,7 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
         assert_eq!(call.targets.len(), 1);
         assert_eq!(call.targets[0].target_id, target);
         assert_eq!(call.targets[0].relation, CallTargetKind::AssociatedFunction);
-        let expansion = caller_part
-            .call_expansion
-            .expect("expanded associated-function caller should carry call-expansion provenance");
-        assert_eq!(expansion.seed_id, target);
-        assert_eq!(expansion.relation, CallExpansionKind::IncomingCaller);
-        assert_eq!(expansion.call_site_id, call.site_id);
-        assert_eq!(expansion.target_id, target);
-        assert_eq!(expansion.distance, 1);
+        assert_incoming_expansion(caller_part, call, target);
 
         Ok(())
     }
@@ -4181,14 +4125,7 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
             assert_eq!(call.targets.len(), 1);
             assert_eq!(call.targets[0].target_id, target);
             assert_eq!(call.targets[0].relation, CallTargetKind::AssociatedFunction);
-            let expansion = caller_part.call_expansion.expect(
-                "expanded imported trait associated-function caller should carry call-expansion provenance",
-            );
-            assert_eq!(expansion.seed_id, target);
-            assert_eq!(expansion.relation, CallExpansionKind::IncomingCaller);
-            assert_eq!(expansion.call_site_id, call.site_id);
-            assert_eq!(expansion.target_id, target);
-            assert_eq!(expansion.distance, 1);
+            assert_incoming_expansion(caller_part, call, target);
         }
 
         Ok(())
@@ -4287,17 +4224,55 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
             assert_eq!(call.targets.len(), 1);
             assert_eq!(call.targets[0].target_id, target);
             assert_eq!(call.targets[0].relation, CallTargetKind::Method);
-            let expansion = caller_part
-                .call_expansion
-                .expect("expanded trait-dispatch caller should carry call-expansion provenance");
-            assert_eq!(expansion.seed_id, target);
-            assert_eq!(expansion.relation, CallExpansionKind::IncomingCaller);
-            assert_eq!(expansion.call_site_id, call.site_id);
-            assert_eq!(expansion.target_id, target);
-            assert_eq!(expansion.distance, 1);
+            assert_incoming_expansion(caller_part, call, target);
         }
 
         Ok(())
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn assert_incoming_expansion(part: &ContextPart, call: &CallContextInfo, target_id: Uuid) {
+        assert_call_expansion(
+            part,
+            call,
+            target_id,
+            CallExpansionKind::IncomingCaller,
+            target_id,
+        );
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn assert_outgoing_expansion(
+        part: &ContextPart,
+        call: &CallContextInfo,
+        seed_id: Uuid,
+        target_id: Uuid,
+    ) {
+        assert_call_expansion(
+            part,
+            call,
+            seed_id,
+            CallExpansionKind::OutgoingTarget,
+            target_id,
+        );
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn assert_call_expansion(
+        part: &ContextPart,
+        call: &CallContextInfo,
+        seed_id: Uuid,
+        relation: CallExpansionKind,
+        target_id: Uuid,
+    ) {
+        let expansion = part
+            .call_expansion
+            .expect("expanded call-context part should carry call-expansion provenance");
+        assert_eq!(expansion.seed_id, seed_id);
+        assert_eq!(expansion.relation, relation);
+        assert_eq!(expansion.call_site_id, call.site_id);
+        assert_eq!(expansion.target_id, target_id);
+        assert_eq!(expansion.distance, 1);
     }
 
     #[cfg(feature = "call_graph")]
