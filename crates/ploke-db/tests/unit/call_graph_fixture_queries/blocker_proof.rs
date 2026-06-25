@@ -1,3 +1,5 @@
+use ploke_db::ProofInvariantStatus;
+
 use super::*;
 
 #[test]
