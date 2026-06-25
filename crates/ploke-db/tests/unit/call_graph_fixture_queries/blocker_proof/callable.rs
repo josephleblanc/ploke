@@ -14,7 +14,7 @@ fn fixture_projection_marks_real_callable_path_and_vec_external_rows_without_edg
             &db,
             &mut expected,
             owner_name,
-            &[ExpectedBlocker {
+            &[TargetlessBlockerCase {
                 row: TargetlessRowCase::path(
                     expected_path,
                     0,
@@ -31,7 +31,7 @@ fn fixture_projection_marks_real_callable_path_and_vec_external_rows_without_edg
         &mut expected,
         "call_boxed_dyn_fn_value_binding",
         &[
-            ExpectedBlocker {
+            TargetlessBlockerCase {
                 row: TargetlessRowCase::path(
                     &["Box", "new"],
                     1,
@@ -40,7 +40,7 @@ fn fixture_projection_marks_real_callable_path_and_vec_external_rows_without_edg
                 ),
                 blocker_reason: "external_dependency_summary_missing",
             },
-            ExpectedBlocker {
+            TargetlessBlockerCase {
                 row: TargetlessRowCase::path(
                     &["boxed_fn"],
                     0,
@@ -56,7 +56,7 @@ fn fixture_projection_marks_real_callable_path_and_vec_external_rows_without_edg
         &db,
         &mut expected,
         "call_prelude_vec_new",
-        &[ExpectedBlocker {
+        &[TargetlessBlockerCase {
             row: TargetlessRowCase::path(
                 &["Vec", "new"],
                 0,
@@ -87,7 +87,7 @@ fn fixture_projection_marks_real_parenthesized_callable_dynamic_rows_without_edg
         &db,
         &mut expected,
         "call_parenthesized_generic_fn_once_value_binding",
-        &[ExpectedBlocker {
+        &[TargetlessBlockerCase {
             row: TargetlessRowCase::dynamic(
                 Some(&["generic_f"]),
                 CallStatusKind::Unsupported,
@@ -102,7 +102,7 @@ fn fixture_projection_marks_real_parenthesized_callable_dynamic_rows_without_edg
         &mut expected,
         "call_parenthesized_boxed_dyn_fn_value_binding",
         &[
-            ExpectedBlocker {
+            TargetlessBlockerCase {
                 row: TargetlessRowCase::path(
                     &["Box", "new"],
                     1,
@@ -111,7 +111,7 @@ fn fixture_projection_marks_real_parenthesized_callable_dynamic_rows_without_edg
                 ),
                 blocker_reason: "external_dependency_summary_missing",
             },
-            ExpectedBlocker {
+            TargetlessBlockerCase {
                 row: TargetlessRowCase::dynamic(
                     Some(&["boxed_fn"]),
                     CallStatusKind::Unsupported,
@@ -129,39 +129,5 @@ fn fixture_projection_marks_real_parenthesized_callable_dynamic_rows_without_edg
         "fixture_call_graph/src/lib.rs",
     )?;
 
-    Ok(())
-}
-
-#[derive(Clone, Copy)]
-struct ExpectedBlocker<'a> {
-    row: TargetlessRowCase<'a>,
-    blocker_reason: &'static str,
-}
-
-fn assert_projected_blockers(
-    db: &Database,
-    expected: &mut Vec<BlockerProofSite>,
-    owner_name: &str,
-    blockers: &[ExpectedBlocker<'_>],
-) -> Result<(), DbError> {
-    let owner = function_id_by_name(db, owner_name)?;
-    let context = db.call_context_for_owner(owner)?;
-    assert_eq!(
-        context.len(),
-        blockers.len(),
-        "{owner_name} proof context rows: {context:#?}"
-    );
-
-    for blocker in blockers {
-        let row = assert_targetless_row(&context, owner, blocker.row);
-        expected.push(BlockerProofSite {
-            site: row.site.id,
-            span: row.site.span,
-            blocker_reason: blocker.blocker_reason,
-        });
-    }
-
-    let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
-    assert_eq!(count, blockers.len() * 2);
     Ok(())
 }

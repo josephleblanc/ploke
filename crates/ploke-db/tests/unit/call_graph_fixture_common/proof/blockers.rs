@@ -7,6 +7,40 @@ pub(in crate::unit) struct BlockerProofSite {
     pub(in crate::unit) blocker_reason: &'static str,
 }
 
+#[derive(Clone, Copy)]
+pub(in crate::unit) struct TargetlessBlockerCase<'a> {
+    pub(in crate::unit) row: TargetlessRowCase<'a>,
+    pub(in crate::unit) blocker_reason: &'static str,
+}
+
+pub(in crate::unit) fn assert_projected_blockers(
+    db: &Database,
+    expected: &mut Vec<BlockerProofSite>,
+    owner_name: &str,
+    blockers: &[TargetlessBlockerCase<'_>],
+) -> Result<(), DbError> {
+    let owner = function_id_by_name(db, owner_name)?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        blockers.len(),
+        "{owner_name} proof context rows: {context:#?}"
+    );
+
+    for blocker in blockers {
+        let row = assert_targetless_row(&context, owner, blocker.row);
+        expected.push(BlockerProofSite {
+            site: row.site.id,
+            span: row.site.span,
+            blocker_reason: blocker.blocker_reason,
+        });
+    }
+
+    let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
+    assert_eq!(count, blockers.len() * 2);
+    Ok(())
+}
+
 pub(in crate::unit) fn assert_targetless_blocker_proofs(
     db: &Database,
     label: &str,

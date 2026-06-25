@@ -9,24 +9,15 @@ fn fixture_projection_marks_real_unsupported_dynamic_call_without_edges() -> Res
         "call_closure_binding_cast",
         "call_dereferenced_closure_binding",
     ] {
-        let owner = function_id_by_name(&db, owner_name)?;
-        let context = db.call_context_for_owner(owner)?;
-        assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
-        let row = assert_targetless_row(
-            &context,
-            owner,
-            TargetlessRowCase::dynamic(None, CallStatusKind::Unsupported, owner_name),
-        );
-        let site = row.site.id;
-        let span = row.site.span;
-
-        let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
-        assert_eq!(count, 2);
-        expected.push(BlockerProofSite {
-            site,
-            span,
-            blocker_reason: "dynamic_dispatch_unbounded",
-        });
+        assert_projected_blockers(
+            &db,
+            &mut expected,
+            owner_name,
+            &[TargetlessBlockerCase {
+                row: TargetlessRowCase::dynamic(None, CallStatusKind::Unsupported, owner_name),
+                blocker_reason: "dynamic_dispatch_unbounded",
+            }],
+        )?;
     }
 
     assert_targetless_blocker_proofs(
@@ -84,24 +75,15 @@ fn fixture_projection_marks_real_branch_and_match_dynamic_failures_without_edges
     let mut expected = Vec::new();
 
     for (owner_name, expected_status, blocker_reason) in cases {
-        let owner = function_id_by_name(&db, owner_name)?;
-        let context = db.call_context_for_owner(owner)?;
-        assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
-        let row = assert_targetless_row(
-            &context,
-            owner,
-            TargetlessRowCase::dynamic(None, expected_status, owner_name),
-        );
-        let site = row.site.id;
-        let span = row.site.span;
-
-        let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
-        assert_eq!(count, 2);
-        expected.push(BlockerProofSite {
-            site,
-            span,
-            blocker_reason,
-        });
+        assert_projected_blockers(
+            &db,
+            &mut expected,
+            owner_name,
+            &[TargetlessBlockerCase {
+                row: TargetlessRowCase::dynamic(None, expected_status, owner_name),
+                blocker_reason,
+            }],
+        )?;
     }
 
     assert_targetless_blocker_proofs(
