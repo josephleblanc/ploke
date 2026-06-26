@@ -64,6 +64,10 @@ fn derived_gap_matches_scope(
 }
 
 fn derived_gap_reason(row: &ProofFactRow, rows: &[ProofFactRow]) -> Option<String> {
+    if build_domain_reference_missing(row, rows) {
+        return Some("canonical_identity_mismatch".to_string());
+    }
+
     match row.kind.as_str() {
         "cfg_domain"
             if row.blocker_reason.is_some()
@@ -151,6 +155,19 @@ fn derived_gap_reason(row: &ProofFactRow, rows: &[ProofFactRow]) -> Option<Strin
         },
         _ => None,
     }
+}
+
+fn build_domain_reference_missing(row: &ProofFactRow, rows: &[ProofFactRow]) -> bool {
+    if row.kind == "build_domain" {
+        return false;
+    }
+    let Some(build_domain_id) = row.build_domain_id.as_deref() else {
+        return false;
+    };
+    !rows.iter().any(|candidate| {
+        candidate.kind == "build_domain"
+            && candidate.build_domain_id.as_deref() == Some(build_domain_id)
+    })
 }
 
 fn external_summary_gap_is_discharged(

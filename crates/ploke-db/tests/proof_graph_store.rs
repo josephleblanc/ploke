@@ -5,6 +5,7 @@ const PROOF_FACT_SCHEMA_VERSION: &str = "ploke-proof-facts.v1";
 
 fn proof_records() -> Vec<serde_json::Value> {
     vec![
+        build_domain_record(),
         json!({
             "fact_kind": "call_site",
             "schema_version": PROOF_FACT_SCHEMA_VERSION,
@@ -78,6 +79,16 @@ fn proof_records() -> Vec<serde_json::Value> {
     ]
 }
 
+fn proof_record_by_kind_mut<'a>(
+    records: &'a mut [serde_json::Value],
+    kind: &str,
+) -> &'a mut serde_json::Value {
+    records
+        .iter_mut()
+        .find(|record| record.get("fact_kind").and_then(serde_json::Value::as_str) == Some(kind))
+        .unwrap_or_else(|| panic!("missing proof record kind {kind}"))
+}
+
 fn build_domain_record() -> serde_json::Value {
     json!({
         "fact_kind": "build_domain",
@@ -98,6 +109,12 @@ fn build_domain_record() -> serde_json::Value {
         "extractor_version": "proof-graph-test",
         "proof_policy_version": "proof-policy-test"
     })
+}
+
+fn build_domain_record_for(build_domain_id: &str) -> serde_json::Value {
+    let mut value = build_domain_record();
+    value["build_domain_id"] = json!(build_domain_id);
+    value
 }
 
 fn cfg_domain_record() -> serde_json::Value {
@@ -356,9 +373,7 @@ fn proof_graph_store_rejects_external_summary_without_artifact_identity() {
 fn proof_graphrag_context_exposes_build_domain_metadata() {
     let db = Database::new_init().expect("create db");
     db.ensure_proof_graph_schema().expect("proof graph schema");
-    let mut records = proof_records();
-    records.push(build_domain_record());
-    db.upsert_proof_fact_values(&records)
+    db.upsert_proof_fact_values(&proof_records())
         .expect("import proof facts");
 
     let rows = db
@@ -533,6 +548,7 @@ fn proof_blockers_include_derived_summary_and_resolution_gaps() {
         .expect("boundary object")
         .remove("blocking_reason");
     let records = vec![
+        build_domain_record(),
         externally_summarized_resolution(Some("external-summary:dep:serde")),
         boundary,
         external_summary_record(),
@@ -613,8 +629,14 @@ fn proof_blockers_discharge_linked_admitted_external_summary_artifacts() {
     let mut summary = external_summary_record();
     summary["summary_class"] = json!("audited_no_process_effects");
     summary["status"] = json!("admitted");
-    db.upsert_proof_fact_values(&[external_call_site_record(), resolution, boundary, summary])
-        .expect("import admitted external summary proof facts");
+    db.upsert_proof_fact_values(&[
+        build_domain_record(),
+        external_call_site_record(),
+        resolution,
+        boundary,
+        summary,
+    ])
+    .expect("import admitted external summary proof facts");
 
     let blockers = db.proof_blockers().expect("blocker inspection");
     assert!(
@@ -645,7 +667,7 @@ fn proof_blockers_require_linked_call_site_domain_for_external_summary_discharge
     let mut summary = external_summary_record();
     summary["summary_class"] = json!("audited_no_process_effects");
     summary["status"] = json!("admitted");
-    db.upsert_proof_fact_values(&[resolution, summary])
+    db.upsert_proof_fact_values(&[build_domain_record(), resolution, summary])
         .expect("import unscoped external summary proof facts");
 
     let blockers = db.proof_blockers().expect("blocker inspection");
@@ -688,7 +710,7 @@ fn proof_blockers_require_allowed_effect_for_external_summary_discharge() {
     summary["summary_class"] = json!("audited_no_process_effects");
     summary["status"] = json!("admitted");
     summary["allowed_effects"] = json!(["durable_evidence_read"]);
-    db.upsert_proof_fact_values(&[resolution, boundary, summary])
+    db.upsert_proof_fact_values(&[build_domain_record(), resolution, boundary, summary])
         .expect("import admitted external summary proof facts");
 
     let blockers = db.proof_blockers().expect("blocker inspection");
@@ -718,8 +740,14 @@ fn proof_blockers_require_call_site_domain_match_for_external_summary_discharge(
     summary["summary_class"] = json!("audited_no_process_effects");
     summary["status"] = json!("admitted");
     summary["build_domain_id"] = json!("bd:other");
-    db.upsert_proof_fact_values(&[external_call_site_record(), resolution, summary])
-        .expect("import mismatched external summary proof facts");
+    db.upsert_proof_fact_values(&[
+        build_domain_record(),
+        build_domain_record_for("bd:other"),
+        external_call_site_record(),
+        resolution,
+        summary,
+    ])
+    .expect("import mismatched external summary proof facts");
 
     let blockers = db.proof_blockers().expect("blocker inspection");
     assert_eq!(
@@ -748,7 +776,7 @@ fn proof_blockers_keep_macro_and_build_summary_gaps_without_specific_semantics()
         let mut summary = external_summary_record();
         summary["summary_class"] = json!("audited_no_process_effects");
         summary["status"] = json!("admitted");
-        db.upsert_proof_fact_values(&[boundary, summary])
+        db.upsert_proof_fact_values(&[build_domain_record(), boundary, summary])
             .expect("import admitted external summary proof facts");
 
         let blockers = db.proof_blockers().expect("blocker inspection");
@@ -1045,7 +1073,8 @@ fn proof_graph_store_rejects_schema_version_mismatch_before_storage() {
     let db = Database::new_init().expect("create db");
     db.ensure_proof_graph_schema().expect("proof graph schema");
     let mut records = proof_records();
-    records[0]["schema_version"] = json!("stale-proof-facts.v0");
+    proof_record_by_kind_mut(&mut records, "call_site")["schema_version"] =
+        json!("stale-proof-facts.v0");
 
     let error = db
         .upsert_proof_fact_values(&records)
@@ -1063,7 +1092,8 @@ fn proof_graph_store_prevalidates_batch_before_partial_storage() {
     let db = Database::new_init().expect("create db");
     db.ensure_proof_graph_schema().expect("proof graph schema");
     let mut records = proof_records();
-    records[1]["schema_version"] = json!("stale-proof-facts.v0");
+    proof_record_by_kind_mut(&mut records, "call_edge")["schema_version"] =
+        json!("stale-proof-facts.v0");
 
     let error = db
         .upsert_proof_fact_values(&records)
@@ -1081,7 +1111,7 @@ fn proof_graph_store_rejects_missing_kind_required_fields_before_storage() {
     let db = Database::new_init().expect("create db");
     db.ensure_proof_graph_schema().expect("proof graph schema");
     let mut records = proof_records();
-    records[1]
+    proof_record_by_kind_mut(&mut records, "call_edge")
         .as_object_mut()
         .expect("call edge object")
         .remove("caller_def_id");
@@ -1102,7 +1132,7 @@ fn proof_graph_store_accepts_source_spans_without_optional_line_numbers() {
     let db = Database::new_init().expect("create db");
     db.ensure_proof_graph_schema().expect("proof graph schema");
     let mut records = proof_records();
-    let source_span = records[0]
+    let source_span = proof_record_by_kind_mut(&mut records, "call_site")
         .get_mut("source_span")
         .and_then(serde_json::Value::as_object_mut)
         .expect("call-site source span");
@@ -1154,7 +1184,7 @@ fn proof_graph_store_rejects_missing_build_and_effect_schema_fields() {
     assert!(build_error.to_string().contains("target_root"));
 
     let mut effect_records = proof_records();
-    effect_records[2]
+    proof_record_by_kind_mut(&mut effect_records, "effect_seed")
         .as_object_mut()
         .expect("effect seed object")
         .remove("blocker_if_unresolved");
@@ -1170,11 +1200,43 @@ fn proof_graph_store_rejects_missing_build_and_effect_schema_fields() {
 }
 
 #[test]
+fn proof_blockers_report_missing_build_domain_references() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    db.upsert_proof_fact_values(&[external_call_site_record()])
+        .expect("import call-site proof fact without build-domain fact");
+
+    let blockers = db.proof_blockers().expect("blocker inspection");
+    assert_eq!(
+        blockers.len(),
+        1,
+        "call-site proof facts with absent build-domain evidence should fail closed: {blockers:#?}"
+    );
+    assert_eq!(blockers[0].blocker_id, "call:external");
+    assert_eq!(blockers[0].reason, "canonical_identity_mismatch");
+    assert_eq!(blockers[0].build_domain_id.as_deref(), Some("bd:main"));
+    assert_eq!(blockers[0].call_site_id.as_deref(), Some("call:external"));
+
+    let rows = db
+        .proof_graphrag_context("call:external")
+        .expect("call-site proof context");
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "call_site"
+                && row.call_site_id.as_deref() == Some("call:external")
+                && row.blocker_reason.as_deref() == Some("canonical_identity_mismatch")
+        }),
+        "proof context should expose the missing build-domain blocker: {rows:#?}"
+    );
+}
+
+#[test]
 fn proof_graph_store_rejects_invalid_enum_like_fields_before_storage() {
     let db = Database::new_init().expect("create db");
     db.ensure_proof_graph_schema().expect("proof graph schema");
     let mut records = proof_records();
-    records[0]["evidence_use"] = json!("proof-and-navigation");
+    proof_record_by_kind_mut(&mut records, "call_site")["evidence_use"] =
+        json!("proof-and-navigation");
 
     let error = db
         .upsert_proof_fact_values(&records)
@@ -1187,7 +1249,8 @@ fn proof_graph_store_rejects_invalid_enum_like_fields_before_storage() {
     );
 
     let mut effect_records = proof_records();
-    effect_records[2]["effect_class"] = json!("shell_command");
+    proof_record_by_kind_mut(&mut effect_records, "effect_seed")["effect_class"] =
+        json!("shell_command");
     let effect_error = db
         .upsert_proof_fact_values(&effect_records)
         .expect_err("non-schema effect_class alias should be rejected before storage");
@@ -1261,8 +1324,9 @@ fn proof_graph_store_accepts_all_stable_effect_class_values() {
         let db = Database::new_init().expect("create db");
         db.ensure_proof_graph_schema().expect("proof graph schema");
         let mut records = proof_records();
-        records[2]["effect_seed_id"] = json!(format!("effect:{effect_class}"));
-        records[2]["effect_class"] = json!(effect_class);
+        let effect_seed = proof_record_by_kind_mut(&mut records, "effect_seed");
+        effect_seed["effect_seed_id"] = json!(format!("effect:{effect_class}"));
+        effect_seed["effect_class"] = json!(effect_class);
 
         db.upsert_proof_fact_values(&records)
             .unwrap_or_else(|error| {

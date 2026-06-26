@@ -8,6 +8,28 @@ const PROOF_FACT_SCHEMA_VERSION: &str = "ploke-proof-facts.v1";
 const DETACHED_INVARIANT: &str = "detached_process_successor_handoff";
 const CROWN_INVARIANT: &str = "crown_ruling_lineage_uniqueness";
 
+fn build_domain(build_domain_id: &str) -> Value {
+    json!({
+        "fact_kind": "build_domain",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "build_domain_id": build_domain_id,
+        "cargo_metadata_hash": "sha256:metadata",
+        "cargo_lock_hash": "sha256:lock",
+        "package_id": "ploke 0.1.0",
+        "target_kind": "library",
+        "target_name": "ploke",
+        "target_root": "src/lib.rs",
+        "target_triple": "x86_64-unknown-linux-gnu",
+        "host_triple": "x86_64-unknown-linux-gnu",
+        "profile": "dev",
+        "features_hash": "sha256:features",
+        "active_cfg_hash": "sha256:cfg",
+        "rustc_version": "rustc 1.96.0",
+        "extractor_version": "proof-invariant-test",
+        "proof_policy_version": "proof-policy-test"
+    })
+}
+
 fn call_site() -> Value {
     call_site_named("call:handoff-spawn", "bd:checker", "def:handoff", 4)
 }
@@ -253,6 +275,7 @@ fn unscoped_blocker(reason: &str) -> Value {
 
 fn legal_handoff_records() -> Vec<Value> {
     vec![
+        build_domain("bd:checker"),
         call_site(),
         call_edge(),
         process_effect(),
@@ -301,6 +324,7 @@ fn unscoped_legal_handoff_records_for(
     let caller_def_id = format!("def:{label}-handoff");
     let callee_def_id = format!("def:{label}-successor");
     vec![
+        build_domain(build_domain_id),
         call_site_named(&call_site_id, build_domain_id, &caller_def_id, line_base),
         call_edge_named(&call_edge_id, &call_site_id, &caller_def_id, &callee_def_id),
         process_effect_named(&effect_seed_id, &call_site_id),
@@ -488,7 +512,12 @@ fn proof_invariant_checker_accepts_proof_and_navigation_evidence_for_handoff() {
 fn proof_invariant_checker_treats_process_replace_as_detached_process_obligation() {
     let mut replace_effect = process_effect();
     replace_effect["effect_class"] = json!("operating_system_process_replace");
-    let db = db_with(vec![call_site(), call_edge(), replace_effect]);
+    let db = db_with(vec![
+        build_domain("bd:checker"),
+        call_site(),
+        call_edge(),
+        replace_effect,
+    ]);
 
     let findings = db
         .proof_invariant_findings()
@@ -523,6 +552,7 @@ fn proof_invariant_checker_blocks_active_blocker_even_without_process_scope() {
 #[test]
 fn proof_invariant_checker_ignores_scoped_blocker_without_process_scope() {
     let db = db_with(vec![
+        build_domain("bd:checker"),
         call_site_named("call:non-process", "bd:checker", "def:non-process", 12),
         blocker_for(
             "process_lifetime_evidence_missing",
@@ -569,7 +599,12 @@ fn proof_invariant_checker_blocks_scoped_blocker_with_missing_call_site_without_
 
 #[test]
 fn proof_invariant_checker_fails_illegal_detached_spawn_without_successor() {
-    let db = db_with(vec![call_site(), call_edge(), process_effect()]);
+    let db = db_with(vec![
+        build_domain("bd:checker"),
+        call_site(),
+        call_edge(),
+        process_effect(),
+    ]);
 
     let findings = db
         .proof_invariant_findings()
@@ -607,6 +642,7 @@ fn proof_invariant_checker_fails_two_crown_ruling_parents_in_one_lineage() {
 #[test]
 fn proof_invariant_checker_blocks_incomplete_process_or_authority_evidence() {
     let db = db_with(vec![
+        build_domain("bd:checker"),
         call_site(),
         call_edge(),
         process_effect(),
@@ -869,6 +905,7 @@ fn proof_invariant_checker_requires_call_site_domain_match_for_external_summary_
 #[test]
 fn proof_invariant_checker_blocks_authority_evidence_gap_without_demoting_to_fail() {
     let db = db_with(vec![
+        build_domain("bd:checker"),
         call_site(),
         call_edge(),
         process_effect(),
@@ -887,6 +924,7 @@ fn proof_invariant_checker_blocks_authority_evidence_gap_without_demoting_to_fai
 #[test]
 fn proof_invariant_checker_ignores_navigation_only_authority_for_detached_handoff() {
     let db = db_with(vec![
+        build_domain("bd:checker"),
         call_site(),
         call_edge(),
         process_effect(),
@@ -928,6 +966,7 @@ fn proof_invariant_checker_rejects_unknown_evidence_use_for_authority() {
     db.ensure_proof_graph_schema().expect("proof graph schema");
     let error = db
         .upsert_proof_fact_values(&[
+            build_domain("bd:checker"),
             call_site(),
             call_edge(),
             process_effect(),
@@ -949,6 +988,8 @@ fn proof_invariant_checker_rejects_unknown_evidence_use_for_authority() {
 #[test]
 fn proof_invariant_checker_requires_authority_build_domain_match_for_same_call_site() {
     let db = db_with(vec![
+        build_domain("bd:primary"),
+        build_domain("bd:other"),
         call_site_named("call:shared-spawn", "bd:primary", "def:shared", 20),
         call_edge_named(
             "edge:shared-spawn",
@@ -1013,6 +1054,7 @@ fn proof_invariant_checker_blocks_mismatched_call_site_identity_fail_closed() {
     let mut mismatched_edge = call_edge();
     mismatched_edge["caller_def_id"] = json!("def:other-caller");
     let db = db_with(vec![
+        build_domain("bd:checker"),
         call_site(),
         mismatched_edge,
         process_effect(),
@@ -1039,6 +1081,7 @@ fn proof_invariant_checker_blocks_mismatched_call_site_identity_fail_closed() {
 #[test]
 fn proof_invariant_checker_blocks_unresolved_proof_critical_call() {
     let db = db_with(vec![
+        build_domain("bd:checker"),
         call_site(),
         unresolved_call_edge_for("call:handoff-spawn", "proof_only"),
         process_effect(),
