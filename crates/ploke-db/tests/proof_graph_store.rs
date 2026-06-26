@@ -796,10 +796,13 @@ fn proof_domain_context_keeps_linked_blockers_for_build_domain() {
     assert!(
         rows.iter().any(|hit| {
             hit.kind == "effect_seed"
+                && hit.effect_seed_id.as_deref() == Some("effect:spawn")
                 && hit.call_site_id.as_deref() == Some("call:spawn")
                 && hit.effect_class.as_deref() == Some("operating_system_process_create")
+                && hit.confidence.as_deref() == Some("command-spawn")
+                && hit.blocker_if_unresolved == Some(true)
         }),
-        "build-domain context should expose linked effect seed classification: {rows:#?}"
+        "build-domain context should expose linked effect seed metadata: {rows:#?}"
     );
     assert!(
         rows.iter().any(|hit| {

@@ -382,6 +382,12 @@ pub struct ProofContextInfo {
     #[serde(default)]
     pub environment_hash: Option<String>,
     #[serde(default)]
+    pub effect_seed_id: Option<String>,
+    #[serde(default)]
+    pub confidence: Option<String>,
+    #[serde(default)]
+    pub blocker_if_unresolved: Option<bool>,
+    #[serde(default)]
     pub authority_term: Option<String>,
     #[serde(default)]
     pub summary_class: Option<String>,

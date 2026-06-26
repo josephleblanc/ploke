@@ -508,6 +508,11 @@ fn format_proof_context(row: &ProofContextInfo) -> String {
         row.argument_vector_hash.as_deref(),
     );
     push_opt(&mut parts, "env_hash", row.environment_hash.as_deref());
+    push_opt(&mut parts, "effect_seed", row.effect_seed_id.as_deref());
+    push_opt(&mut parts, "confidence", row.confidence.as_deref());
+    if let Some(blocker_if_unresolved) = row.blocker_if_unresolved {
+        parts.push(format!("blocker_if_unresolved={blocker_if_unresolved}"));
+    }
     push_opt(&mut parts, "authority", row.authority_term.as_deref());
     push_opt(&mut parts, "summary", row.summary_class.as_deref());
     push_opt(&mut parts, "artifact", row.artifact_hash.as_deref());

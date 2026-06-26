@@ -463,6 +463,63 @@ async fn proof_context_seed_exposes_cfg_and_rustc_metadata() -> Result<(), Error
 }
 
 #[tokio::test]
+async fn proof_context_seed_exposes_effect_seed_metadata() -> Result<(), Error> {
+    init_tracing_once();
+
+    let raw = Db::new(MemStorage::default()).expect("in-memory cozo db");
+    raw.initialize().expect("initialize cozo db");
+    let db = Arc::new(Database::new(raw));
+    db.ensure_proof_graph_schema().map_err(Error::from)?;
+    let seed = Uuid::from_u128(0xefc);
+    let call_site_id = seed.to_string();
+    db.upsert_proof_fact_values(&[
+        serde_json::json!({
+            "fact_kind": "call_site",
+            "schema_version": "ploke-proof-facts.v1",
+            "call_site_id": call_site_id,
+            "build_domain_id": "bd:rag",
+            "caller_def_id": "def:effect",
+            "source_span": {
+                "file": "src/lib.rs",
+                "start_byte": 40,
+                "end_byte": 64
+            },
+            "evidence_use": "proof_only"
+        }),
+        serde_json::json!({
+            "fact_kind": "effect_seed",
+            "schema_version": "ploke-proof-facts.v1",
+            "effect_seed_id": "effect:rag",
+            "call_site_id": seed.to_string(),
+            "effect_class": "operating_system_process_create",
+            "confidence": "command-spawn",
+            "blocker_if_unresolved": true,
+            "evidence_use": "proof_only"
+        }),
+    ])
+    .map_err(Error::from)?;
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    let proof_context = rag.collect_proof_context(&[(seed, 1.0)])?;
+    let rows = proof_context
+        .get(&seed)
+        .expect("effect seed should receive linked proof context rows");
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "effect_seed"
+                && row.call_site_id.as_deref() == Some(call_site_id.as_str())
+                && row.effect_seed_id.as_deref() == Some("effect:rag")
+                && row.effect_class.as_deref() == Some("operating_system_process_create")
+                && row.confidence.as_deref() == Some("command-spawn")
+                && row.blocker_if_unresolved == Some(true)
+        }),
+        "RAG proof context should expose effect-seed metadata: {rows:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn proof_context_seed_exposes_derived_blocker_reasons() -> Result<(), Error> {
     init_tracing_once();
 

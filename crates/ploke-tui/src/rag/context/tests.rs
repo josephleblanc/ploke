@@ -204,6 +204,9 @@ fn reformat_context_to_system_includes_proof_context_details() {
             working_directory: None,
             argument_vector_hash: None,
             environment_hash: None,
+            effect_seed_id: None,
+            confidence: None,
+            blocker_if_unresolved: None,
             authority_term: Some("successor".to_string()),
             summary_class: None,
             artifact_hash: None,
@@ -289,6 +292,9 @@ fn reformat_context_to_system_includes_expansion_metadata() {
             working_directory: None,
             argument_vector_hash: None,
             environment_hash: None,
+            effect_seed_id: None,
+            confidence: None,
+            blocker_if_unresolved: None,
             authority_term: None,
             summary_class: None,
             artifact_hash: None,
@@ -363,6 +369,9 @@ fn reformat_context_to_system_includes_build_domain_metadata() {
             working_directory: None,
             argument_vector_hash: None,
             environment_hash: None,
+            effect_seed_id: None,
+            confidence: None,
+            blocker_if_unresolved: None,
             authority_term: None,
             summary_class: None,
             artifact_hash: None,
@@ -439,6 +448,9 @@ fn reformat_context_to_system_includes_cfg_and_rustc_metadata() {
             working_directory: Some("/workspace/ploke".to_string()),
             argument_vector_hash: Some("sha256:argv".to_string()),
             environment_hash: Some("sha256:env".to_string()),
+            effect_seed_id: None,
+            confidence: None,
+            blocker_if_unresolved: None,
             authority_term: None,
             summary_class: None,
             artifact_hash: None,
@@ -471,6 +483,82 @@ fn reformat_context_to_system_includes_cfg_and_rustc_metadata() {
     assert!(rendered.contains("working_dir=/workspace/ploke"));
     assert!(rendered.contains("argument_hash=sha256:argv"));
     assert!(rendered.contains("env_hash=sha256:env"));
+}
+
+#[test]
+fn reformat_context_to_system_includes_effect_seed_metadata() {
+    let part = ContextPart {
+        id: Uuid::from_u128(45),
+        file_path: NodeFilepath::new("src/lib.rs".to_string()),
+        canon_path: CanonPath::new("crate::effect".to_string()),
+        ranges: vec![],
+        kind: ContextPartKind::Metadata,
+        text: "std::process::Command::new(\"echo\")".to_string(),
+        score: 0.1,
+        modality: Modality::Sparse,
+        type_context: None,
+        call_expansion: None,
+        call_context: Vec::new(),
+        proof_context: vec![ProofContextInfo {
+            fact_id: "effect:spawn".to_string(),
+            kind: "effect_seed".to_string(),
+            build_domain_id: None,
+            call_site_id: Some("call:spawn".to_string()),
+            call_edge_id: None,
+            caller_def_id: None,
+            callee_def_id: None,
+            resolution_state: None,
+            resolved_def_id: None,
+            candidate_def_ids: Vec::new(),
+            external_summary_id: None,
+            boundary_id: None,
+            boundary_kind: None,
+            expanded_item_id: None,
+            definition_id: None,
+            target_kind: None,
+            target_name: None,
+            target_root: None,
+            profile: None,
+            rustc_version: None,
+            proof_policy_version: None,
+            cfg_domain_id: None,
+            active_cfg_hash: None,
+            invocation_id: None,
+            rustc_program: None,
+            working_directory: None,
+            argument_vector_hash: None,
+            environment_hash: None,
+            effect_seed_id: Some("effect:spawn".to_string()),
+            confidence: Some("command-spawn".to_string()),
+            blocker_if_unresolved: Some(true),
+            authority_term: None,
+            summary_class: None,
+            artifact_hash: None,
+            summary_version: None,
+            review_method: None,
+            scope_of_validity: None,
+            allowed_effects: Vec::new(),
+            required_containment: None,
+            invalidation_conditions: None,
+            evidence_use: Some("proof_only".to_string()),
+            source_file: None,
+            start_byte: None,
+            end_byte: None,
+            line_start: None,
+            line_end: None,
+            effect_class: Some("operating_system_process_create".to_string()),
+            blocker_reason: None,
+            status: None,
+            detail: Some("command-spawn".to_string()),
+        }],
+    };
+
+    let rendered = reformat_context_to_system(part);
+
+    assert!(rendered.contains("effect_seed"));
+    assert!(rendered.contains("effect_seed=effect:spawn"));
+    assert!(rendered.contains("confidence=command-spawn"));
+    assert!(rendered.contains("blocker_if_unresolved=true"));
 }
 
 #[test]
@@ -516,6 +604,9 @@ fn reformat_context_to_system_includes_external_summary_metadata() {
             working_directory: None,
             argument_vector_hash: None,
             environment_hash: None,
+            effect_seed_id: None,
+            confidence: None,
+            blocker_if_unresolved: None,
             authority_term: None,
             summary_class: Some("opaque_blocked".to_string()),
             artifact_hash: Some("sha256:serde-artifact".to_string()),
