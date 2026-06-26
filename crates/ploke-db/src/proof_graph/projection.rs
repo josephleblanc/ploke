@@ -46,8 +46,7 @@ impl ProofFactProjection {
         validate_required_fields(value, &kind)?;
         validate_enum_fields(value, &kind)?;
         let mut projection = Self::base(fact_id, kind.clone(), schema_version, value.clone());
-        projection.evidence_use =
-            json_string(value, "evidence_use").or(Some("proof_only".to_string()));
+        projection.evidence_use = json_string(value, "evidence_use");
         projection.build_domain_id = json_string(value, "build_domain_id");
         projection.call_site_id = json_string(value, "call_site_id");
         projection.call_edge_id = json_string(value, "call_edge_id");

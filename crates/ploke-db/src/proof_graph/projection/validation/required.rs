@@ -23,6 +23,7 @@ pub(in crate::proof_graph::projection) fn validate_required_fields(
                 "rustc_version",
                 "extractor_version",
                 "proof_policy_version",
+                "evidence_use",
             ],
         ),
         "cfg_domain" => require_fields(
@@ -32,6 +33,7 @@ pub(in crate::proof_graph::projection) fn validate_required_fields(
                 "build_domain_id",
                 "active_cfg_hash",
                 "status",
+                "evidence_use",
             ],
         ),
         "rustc_invocation" => require_fields(
@@ -45,6 +47,7 @@ pub(in crate::proof_graph::projection) fn validate_required_fields(
                 "argument_vector_hash",
                 "environment_hash",
                 "status",
+                "evidence_use",
             ],
         ),
         "expansion_boundary" => {
@@ -55,6 +58,7 @@ pub(in crate::proof_graph::projection) fn validate_required_fields(
                     "build_domain_id",
                     "boundary_kind",
                     "expansion_state",
+                    "evidence_use",
                 ],
             )?;
             require_source_span(value)?;
@@ -68,12 +72,21 @@ pub(in crate::proof_graph::projection) fn validate_required_fields(
                     "boundary_id",
                     "build_domain_id",
                     "definition_id",
+                    "evidence_use",
                 ],
             )?;
             require_source_span(value)
         }
         "call_site" => {
-            require_fields(value, &["call_site_id", "build_domain_id", "caller_def_id"])?;
+            require_fields(
+                value,
+                &[
+                    "call_site_id",
+                    "build_domain_id",
+                    "caller_def_id",
+                    "evidence_use",
+                ],
+            )?;
             require_source_span(value)
         }
         "call_edge" => require_fields(
@@ -83,6 +96,7 @@ pub(in crate::proof_graph::projection) fn validate_required_fields(
                 "call_site_id",
                 "caller_def_id",
                 "resolution_state",
+                "evidence_use",
             ],
         ),
         "call_resolution" => {
@@ -116,6 +130,7 @@ pub(in crate::proof_graph::projection) fn validate_required_fields(
                     "call_site_id",
                     "effect_class",
                     "confidence",
+                    "evidence_use",
                 ],
             )?;
             require_json_bool(value, "blocker_if_unresolved")
@@ -128,11 +143,15 @@ pub(in crate::proof_graph::projection) fn validate_required_fields(
                     "build_domain_id",
                     "authority_term",
                     "status",
+                    "evidence_use",
                 ],
             )?;
             require_source_span(value)
         }
-        "proof_blocker" => require_fields(value, &["blocker_id", "reason", "status", "detail"]),
+        "proof_blocker" => require_fields(
+            value,
+            &["blocker_id", "reason", "status", "detail", "evidence_use"],
+        ),
         other => Err(DbError::QueryConstruction(format!(
             "unknown proof fact kind {other}"
         ))),

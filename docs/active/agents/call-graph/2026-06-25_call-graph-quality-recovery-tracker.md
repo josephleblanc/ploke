@@ -90,6 +90,11 @@ are not acceptable as a continuing implementation style.
   - `3284dd45 Add proof domain context lookup`
   - `5fad4c98 Remove dormant call graph semantic storage`
 - Recent proof context test cleanup:
+  - Proof-fact admission now requires explicit `evidence_use` for every known
+    stored fact kind, and `ProofFactProjection::from_value` no longer
+    silently defaults missing evidence to `proof_only`. The DB store test uses
+    a single table-driven fixture over all fact kinds, with RAG and call-graph
+    proof projection verification kept green.
   - `8f700869 Show proof source line spans`
   - `ea1bf28d Keep macro summary blockers fail closed`
   - `b7168f49 Scope summary discharge by call-site domain`

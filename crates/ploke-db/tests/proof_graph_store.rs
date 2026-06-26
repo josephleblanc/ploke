@@ -1,6 +1,8 @@
 use ploke_db::{Database, ProofGraphContextRow, ProofGraphStore};
 use serde_json::json;
 
+#[path = "proof_graph_store/evidence_use.rs"]
+mod evidence_use;
 #[path = "proof_graph_store/external_summary.rs"]
 mod external_summary;
 #[path = "proof_graph_store/proof_domain.rs"]
@@ -56,7 +58,8 @@ fn proof_records() -> Vec<serde_json::Value> {
             "status": "blocked",
             "build_domain_id": "bd:main",
             "call_site_id": "call:spawn",
-            "detail": "process create lacks handoff/lifetime evidence"
+            "detail": "process create lacks handoff/lifetime evidence",
+            "evidence_use": "proof_only"
         }),
         json!({
             "fact_kind": "call_site",
@@ -114,7 +117,8 @@ fn build_domain_record() -> serde_json::Value {
         "active_cfg_hash": "sha256:cfg",
         "rustc_version": "rustc 1.96.0",
         "extractor_version": "proof-graph-test",
-        "proof_policy_version": "proof-policy-test"
+        "proof_policy_version": "proof-policy-test",
+        "evidence_use": "proof_only"
     })
 }
 
@@ -132,7 +136,8 @@ fn cfg_domain_record() -> serde_json::Value {
         "build_domain_id": "bd:main",
         "active_cfg_hash": "sha256:cfg",
         "status": "blocked",
-        "blocking_reason": "cfg_domain_not_materialized"
+        "blocking_reason": "cfg_domain_not_materialized",
+        "evidence_use": "proof_only"
     })
 }
 
@@ -158,7 +163,8 @@ fn rustc_invocation_record() -> serde_json::Value {
         "argument_vector_hash": "sha256:argv",
         "environment_hash": "sha256:env",
         "status": "blocked",
-        "blocking_reason": "rustc_invocation_evidence_missing"
+        "blocking_reason": "rustc_invocation_evidence_missing",
+        "evidence_use": "proof_only"
     })
 }
 
@@ -627,7 +633,8 @@ fn proof_checker_edges_retains_multiple_blockers_for_one_call_site() {
         "status": "blocked",
         "build_domain_id": "bd:main",
         "call_site_id": "call:spawn",
-        "detail": "call-site identity does not match canonical source"
+        "detail": "call-site identity does not match canonical source",
+        "evidence_use": "proof_only"
     }));
     db.upsert_proof_fact_values(&records)
         .expect("import proof facts");

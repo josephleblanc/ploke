@@ -21,7 +21,8 @@ fn proof_graph_store_rejects_missing_build_and_effect_schema_fields() {
         "active_cfg_hash": "sha256:cfg",
         "rustc_version": "rustc 1.96.0",
         "extractor_version": "proof-graph-test",
-        "proof_policy_version": "proof-policy-test"
+        "proof_policy_version": "proof-policy-test",
+        "evidence_use": "proof_only"
     })];
     records[0]
         .as_object_mut()

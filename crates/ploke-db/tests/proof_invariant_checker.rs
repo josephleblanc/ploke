@@ -26,7 +26,8 @@ fn build_domain(build_domain_id: &str) -> Value {
         "active_cfg_hash": "sha256:cfg",
         "rustc_version": "rustc 1.96.0",
         "extractor_version": "proof-invariant-test",
-        "proof_policy_version": "proof-policy-test"
+        "proof_policy_version": "proof-policy-test",
+        "evidence_use": "proof_only"
     })
 }
 
@@ -189,7 +190,8 @@ fn cfg_domain(build_domain_id: &str, status: &str, blocking_reason: Option<&str>
         "cfg_domain_id": format!("cfg:{build_domain_id}"),
         "build_domain_id": build_domain_id,
         "active_cfg_hash": "sha256:cfg",
-        "status": status
+        "status": status,
+        "evidence_use": "proof_only"
     });
     if let Some(blocking_reason) = blocking_reason {
         value["blocking_reason"] = json!(blocking_reason);
@@ -284,7 +286,8 @@ fn blocker_for(reason: &str, build_domain_id: &str, call_site_id: Option<&str>) 
         "reason": reason,
         "status": "blocked",
         "build_domain_id": build_domain_id,
-        "detail": "fixture blocker"
+        "detail": "fixture blocker",
+        "evidence_use": "proof_only"
     });
     if let Some(call_site_id) = call_site_id {
         value["call_site_id"] = json!(call_site_id);
@@ -299,7 +302,8 @@ fn unscoped_blocker(reason: &str) -> Value {
         "blocker_id": format!("blocker:{reason}"),
         "reason": reason,
         "status": "blocked",
-        "detail": "fixture blocker"
+        "detail": "fixture blocker",
+        "evidence_use": "proof_only"
     })
 }
 

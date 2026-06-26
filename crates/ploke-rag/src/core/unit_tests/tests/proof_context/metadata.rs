@@ -73,7 +73,8 @@ async fn proof_context_seed_exposes_cfg_and_rustc_metadata() -> Result<(), Error
             "build_domain_id": build_domain_id.clone(),
             "active_cfg_hash": "sha256:cfg",
             "status": "blocked",
-            "blocking_reason": "cfg_domain_not_materialized"
+            "blocking_reason": "cfg_domain_not_materialized",
+            "evidence_use": "proof_only"
         }),
         serde_json::json!({
             "fact_kind": "rustc_invocation",
