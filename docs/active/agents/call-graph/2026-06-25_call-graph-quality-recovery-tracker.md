@@ -23,6 +23,9 @@ are not acceptable as a continuing implementation style.
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent TUI/model-visible cleanup:
   - `cc808347 test: cover variant constructor tool context`
+  - TUI RAG context prompt-formatting tests were moved out of the inline
+    `rag/context.rs` test module into `rag/context/tests.rs`, leaving the
+    production context assembly/formatting module as the root surface.
 - Recent RAG/DB context cleanup:
   - `31d19d3c Add variant sparse call-context seeds`
   - `15f0ce68 test: share RAG call expansion assertions`
@@ -225,6 +228,9 @@ are not acceptable as a continuing implementation style.
 - `call_graph/queries.rs` is now a thin module root with availability,
   owner/status, target/caller, and expansion query methods split into
   `call_graph/queries/` child modules.
+- `ploke-tui/src/rag/context.rs` now keeps the production context assembly and
+  prompt-formatting code in the root while the existing context-plan and
+  call-context formatting tests live in `rag/context/tests.rs`.
 - `call_graph_tests/dynamic.rs` in `ploke-transform` now shares local
   `DynamicFunction` lookup helpers instead of repeating the full
   `CallRelation::DynamicFunction` scan for every dynamic projection case.
