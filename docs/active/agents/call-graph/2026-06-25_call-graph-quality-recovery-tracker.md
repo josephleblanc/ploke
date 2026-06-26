@@ -238,6 +238,10 @@ are not acceptable as a continuing implementation style.
   scope-matching, blocker derivation, and finding helpers in the root while the
   detached-process and crown-ruling invariant evaluators live in
   `proof_graph/invariants/{detached,crown}.rs`.
+- `proof_graph/projection.rs` now keeps the proof-fact projection DTO and
+  `from_value` assembly in the root while fact-id/JSON extraction and
+  required-field/enum validation live in
+  `proof_graph/projection/{extract,validation}.rs`.
 - `call_graph.rs` now keeps only the public DB call-graph surface while
   concern modules own row DTOs, call-site/target/status kind decoding,
   receiver decoding, target-family rules, row validation, and query methods:
@@ -360,6 +364,13 @@ are not acceptable as a continuing implementation style.
 
 ## Recent verification
 
+- Proof fact projection helper split
+  - `cargo xtask verify-fixtures`
+    passed: all required fixtures present.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection -- --nocapture`
+    passed: 14 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+    passed: 93 passed, 0 failed.
 - RAG call-context collection case split
   - `cargo test -p ploke-rag --features call_graph call_context_collection -- --nocapture`
     passed: 7 passed, 0 failed.
