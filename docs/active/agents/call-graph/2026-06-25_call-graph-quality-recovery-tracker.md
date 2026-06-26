@@ -46,6 +46,8 @@ are not acceptable as a continuing implementation style.
     `ploke-rag/src/core/unit_tests/tests/call_context/collection/helpers.rs`.
   - Public sparse `get_context` call-context tests were split by concern under
     `ploke-rag/src/core/unit_tests/tests/call_context/public/`.
+  - RAG call-context expansion tests were split by concern under
+    `ploke-rag/src/core/unit_tests/tests/call_context/expansion/`.
 - Recent coverage inventory cleanup:
   - Added `2026-06-25_call-graph-coverage-inventory.md` as the compact layer inventory.
 - Recent production pattern cleanup:
@@ -243,6 +245,10 @@ are not acceptable as a continuing implementation style.
   module root with constructor, path-call, local-target, method,
   associated-function, and trait-dispatch public `get_context` tests split into
   child files.
+- `ploke-rag/src/core/unit_tests/tests/call_context/expansion.rs` is now a
+  thin module root with path, dynamic, local-target, method,
+  associated-function, constructor, and trait-dispatch expansion tests split
+  into child files.
 - `call_graph_tests/dynamic.rs` in `ploke-transform` now shares local
   `DynamicFunction` lookup helpers instead of repeating the full
   `CallRelation::DynamicFunction` scan for every dynamic projection case.
