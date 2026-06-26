@@ -1,10 +1,7 @@
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::{
-    Database, DbError,
-    call_graph::{CallCallerRow, CallContextRow},
-};
+use crate::{Database, DbError};
 
 use super::{PROOF_FACT_SCHEMA_VERSION, ProofGraphStore};
 
@@ -12,7 +9,7 @@ mod context;
 mod facts;
 mod source;
 
-use context::{caller_context_row, validate_call_context};
+use context::validate_call_context;
 use facts::{call_edge_facts, call_resolution_fact, call_site_fact};
 
 impl Database {
@@ -62,13 +59,11 @@ impl Database {
             ));
         }
 
-        let callers = self.callers_for_target(target_id)?;
-        let mut values = Vec::with_capacity(callers.len() * 3);
+        let context = self.call_context_for_target(target_id)?;
+        let mut values = Vec::with_capacity(context.len() * 3);
 
-        for caller in callers {
-            let targets = self.call_targets_for_site(caller.site.id)?;
-            let source_file = self.source_file_for_owner(caller.site.owner_id)?;
-            let row = caller_context_row(caller, targets);
+        for row in context {
+            let source_file = self.source_file_for_owner(row.site.owner_id)?;
             validate_call_context(&row)?;
             values.push(call_site_fact(&row, build_domain_id, &source_file));
             values.extend(call_edge_facts(&row));

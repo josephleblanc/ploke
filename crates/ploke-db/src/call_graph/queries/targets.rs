@@ -159,6 +159,22 @@ impl Database {
         Ok(valid_callers)
     }
 
+    pub fn call_context_for_target(&self, target_id: Uuid) -> Result<Vec<CallContextRow>, DbError> {
+        let callers = self.callers_for_target(target_id)?;
+        let mut out = Vec::with_capacity(callers.len());
+        for caller in callers {
+            let targets = self.call_targets_for_site(caller.site.id)?;
+            let row = CallContextRow {
+                site: caller.site,
+                status: caller.status,
+                targets,
+            };
+            validate_owner_context_targets(&row)?;
+            out.push(row);
+        }
+        Ok(out)
+    }
+
     fn validate_target_centered_caller_targets(
         &self,
         caller: &CallCallerRow,

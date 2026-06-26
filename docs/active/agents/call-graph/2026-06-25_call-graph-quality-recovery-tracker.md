@@ -81,6 +81,9 @@ are not acceptable as a continuing implementation style.
 - Recent coverage inventory cleanup:
   - Added `2026-06-25_call-graph-coverage-inventory.md` as the compact layer inventory.
 - Recent production pattern cleanup:
+  - DB target-centered call queries now expose a full `CallContextRow` helper,
+    so proof projection and future consumers can preserve every target/candidate
+    for a matched call site without bespoke rehydration.
   - Split proof graph schema, storage, and query implementation by concern
   - Split call graph DB query implementation by concern
   - `3cce5b86 Split call graph DB module`
