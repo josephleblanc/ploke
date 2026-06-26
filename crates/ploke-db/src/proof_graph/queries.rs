@@ -4,7 +4,9 @@ use crate::{Database, DbError};
 
 use super::{
     ProofBlockerRow, ProofCheckerEdgeRow, ProofGraphContextRow, ProofInvariantFinding,
-    ProofSourceProvenanceRow, invariants::evaluate_proof_invariants, rows::ProofFactRow,
+    ProofSourceProvenanceRow,
+    invariants::{derived_proof_blocker_reason, evaluate_proof_invariants},
+    rows::ProofFactRow,
 };
 
 impl Database {
@@ -107,20 +109,14 @@ impl Database {
     }
 
     pub(super) fn proof_blockers(&self) -> Result<Vec<ProofBlockerRow>, DbError> {
-        Ok(self
-            .fetch_proof_rows()?
-            .into_iter()
-            .filter(|row| row.kind == "proof_blocker")
-            .filter_map(|row| {
-                Some(ProofBlockerRow {
-                    blocker_id: row.fact_id,
-                    reason: row.blocker_reason?,
-                    status: row.status?,
-                    build_domain_id: row.build_domain_id,
-                    call_site_id: row.call_site_id,
-                    detail: row.detail?,
-                })
-            })
+        let rows = self.fetch_proof_rows()?;
+        Ok(rows
+            .iter()
+            .filter_map(explicit_blocker_row)
+            .chain(
+                rows.iter()
+                    .filter_map(|row| derived_blocker_row(row, &rows)),
+            )
             .collect())
     }
 
@@ -150,6 +146,37 @@ impl Database {
         let rows = self.fetch_proof_rows()?;
         Ok(evaluate_proof_invariants(&rows))
     }
+}
+
+fn explicit_blocker_row(row: &ProofFactRow) -> Option<ProofBlockerRow> {
+    if row.kind != "proof_blocker" {
+        return None;
+    }
+    Some(ProofBlockerRow {
+        blocker_id: row.fact_id.clone(),
+        reason: row.blocker_reason.clone()?,
+        status: row.status.clone()?,
+        build_domain_id: row.build_domain_id.clone(),
+        call_site_id: row.call_site_id.clone(),
+        detail: row.detail.clone()?,
+    })
+}
+
+fn derived_blocker_row(row: &ProofFactRow, rows: &[ProofFactRow]) -> Option<ProofBlockerRow> {
+    let reason = derived_proof_blocker_reason(row, rows)?;
+    let status = row
+        .status
+        .clone()
+        .or_else(|| row.resolution_state.clone())
+        .unwrap_or_else(|| "blocked".to_string());
+    Some(ProofBlockerRow {
+        blocker_id: row.fact_id.clone(),
+        detail: row.detail.clone().unwrap_or_else(|| reason.clone()),
+        reason,
+        status,
+        build_domain_id: row.build_domain_id.clone(),
+        call_site_id: row.call_site_id.clone(),
+    })
 }
 
 fn linked_context_rows(

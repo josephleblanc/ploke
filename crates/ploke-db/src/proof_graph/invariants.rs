@@ -24,6 +24,13 @@ pub(super) fn evaluate_proof_invariants(rows: &[ProofFactRow]) -> Vec<ProofInvar
     findings
 }
 
+pub(super) fn derived_proof_blocker_reason(
+    row: &ProofFactRow,
+    rows: &[ProofFactRow],
+) -> Option<String> {
+    blockers::derived_proof_blocker_reason(row, rows)
+}
+
 fn finding(
     invariant: &str,
     status: ProofInvariantStatus,

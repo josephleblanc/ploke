@@ -35,6 +35,19 @@ fn derived_proof_gap_reasons(rows: &[ProofFactRow], scope: Option<&ProofScope>) 
         .collect()
 }
 
+pub(super) fn derived_proof_blocker_reason(
+    row: &ProofFactRow,
+    rows: &[ProofFactRow],
+) -> Option<String> {
+    if row.kind == "proof_blocker" {
+        return None;
+    }
+    if !is_proof_evidence(row) && !is_navigation_only_unresolved_process_call(row, rows) {
+        return None;
+    }
+    derived_gap_reason(row, rows)
+}
+
 fn derived_gap_matches_scope(
     row: &ProofFactRow,
     rows: &[ProofFactRow],

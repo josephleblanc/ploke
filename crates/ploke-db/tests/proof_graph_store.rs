@@ -336,6 +336,88 @@ fn proof_graphrag_context_exposes_external_summary_ids() {
 }
 
 #[test]
+fn proof_blockers_include_derived_summary_and_resolution_gaps() {
+    struct Case<'a> {
+        blocker_id: &'a str,
+        reason: &'a str,
+        status: &'a str,
+        build_domain_id: Option<&'a str>,
+        call_site_id: Option<&'a str>,
+        detail: &'a str,
+    }
+
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    let mut boundary = externally_summarized_boundary(Some("external-summary:dep:serde"));
+    boundary
+        .as_object_mut()
+        .expect("boundary object")
+        .remove("blocking_reason");
+    let records = vec![
+        externally_summarized_resolution(Some("external-summary:dep:serde")),
+        boundary,
+        external_summary_record(),
+    ];
+    db.upsert_proof_fact_values(&records)
+        .expect("import proof facts");
+
+    let blockers = db.proof_blockers().expect("blocker inspection");
+    let cases = [
+        Case {
+            blocker_id: "boundary:external-summary",
+            reason: "external_dependency_summary_missing",
+            status: "externally_summarized",
+            build_domain_id: Some("bd:main"),
+            call_site_id: None,
+            detail: "external_summary",
+        },
+        Case {
+            blocker_id: "external-summary:dep:serde",
+            reason: "opaque_blocked",
+            status: "blocked",
+            build_domain_id: Some("bd:main"),
+            call_site_id: None,
+            detail: "opaque_blocked",
+        },
+        Case {
+            blocker_id: "resolution:call:external",
+            reason: "external_dependency_summary_missing",
+            status: "externally_summarized",
+            build_domain_id: None,
+            call_site_id: Some("call:external"),
+            detail: "external_dependency_summary_missing",
+        },
+    ];
+
+    assert_eq!(
+        blockers.len(),
+        cases.len(),
+        "derived proof blockers: {blockers:#?}"
+    );
+    for case in cases {
+        let row = blockers
+            .iter()
+            .find(|row| row.blocker_id == case.blocker_id)
+            .unwrap_or_else(|| panic!("missing blocker {} in {blockers:#?}", case.blocker_id));
+        assert_eq!(row.reason, case.reason, "{}", case.blocker_id);
+        assert_eq!(row.status, case.status, "{}", case.blocker_id);
+        assert_eq!(
+            row.build_domain_id.as_deref(),
+            case.build_domain_id,
+            "{}",
+            case.blocker_id
+        );
+        assert_eq!(
+            row.call_site_id.as_deref(),
+            case.call_site_id,
+            "{}",
+            case.blocker_id
+        );
+        assert_eq!(row.detail, case.detail, "{}", case.blocker_id);
+    }
+}
+
+#[test]
 fn proof_graph_store_retains_blockers_for_graphrag_and_checker_queries() {
     let db = Database::new_init().expect("create db");
     db.ensure_proof_graph_schema().expect("proof graph schema");
@@ -361,8 +443,25 @@ fn proof_graph_store_retains_blockers_for_graphrag_and_checker_queries() {
     );
 
     let blockers = db.proof_blockers().expect("blocker inspection");
-    assert_eq!(blockers.len(), 1);
-    assert_eq!(blockers[0].call_site_id.as_deref(), Some("call:spawn"));
+    assert_eq!(
+        blockers.len(),
+        2,
+        "explicit and derived blockers should be inspectable: {blockers:#?}"
+    );
+    assert!(
+        blockers.iter().any(|row| {
+            row.call_site_id.as_deref() == Some("call:spawn")
+                && row.reason == "process_lifetime_evidence_missing"
+        }),
+        "explicit blocker should remain inspectable: {blockers:#?}"
+    );
+    assert!(
+        blockers.iter().any(|row| {
+            row.call_site_id.as_deref() == Some("call:spawn")
+                && row.reason == "type_resolution_missing"
+        }),
+        "derived unresolved call-edge blocker should be inspectable: {blockers:#?}"
+    );
 
     let provenance = db
         .proof_source_provenance("call:spawn")
