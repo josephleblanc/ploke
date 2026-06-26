@@ -6,6 +6,8 @@ const PROOF_FACT_SCHEMA_VERSION: &str = "ploke-proof-facts.v1";
 fn proof_records() -> Vec<serde_json::Value> {
     vec![
         build_domain_record(),
+        admitted_cfg_domain_record(),
+        admitted_rustc_invocation_record(),
         json!({
             "fact_kind": "call_site",
             "schema_version": PROOF_FACT_SCHEMA_VERSION,
@@ -129,6 +131,16 @@ fn cfg_domain_record() -> serde_json::Value {
     })
 }
 
+fn admitted_cfg_domain_record() -> serde_json::Value {
+    let mut value = cfg_domain_record();
+    value["status"] = json!("admitted");
+    value
+        .as_object_mut()
+        .expect("cfg domain object")
+        .remove("blocking_reason");
+    value
+}
+
 fn rustc_invocation_record() -> serde_json::Value {
     json!({
         "fact_kind": "rustc_invocation",
@@ -143,6 +155,16 @@ fn rustc_invocation_record() -> serde_json::Value {
         "status": "blocked",
         "blocking_reason": "rustc_invocation_evidence_missing"
     })
+}
+
+fn admitted_rustc_invocation_record() -> serde_json::Value {
+    let mut value = rustc_invocation_record();
+    value["status"] = json!("admitted");
+    value
+        .as_object_mut()
+        .expect("rustc invocation object")
+        .remove("blocking_reason");
+    value
 }
 
 fn expansion_boundary_record() -> serde_json::Value {
@@ -1227,6 +1249,37 @@ fn proof_blockers_report_missing_build_domain_references() {
                 && row.blocker_reason.as_deref() == Some("canonical_identity_mismatch")
         }),
         "proof context should expose the missing build-domain blocker: {rows:#?}"
+    );
+}
+
+#[test]
+fn proof_blockers_report_incomplete_build_domain_evidence() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    db.upsert_proof_fact_values(&[build_domain_record()])
+        .expect("import build-domain proof fact without cfg/rustc evidence");
+
+    let blockers = db.proof_blockers().expect("blocker inspection");
+    let reasons = blockers
+        .iter()
+        .map(|row| row.reason.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        reasons,
+        std::collections::BTreeSet::from([
+            "cfg_domain_not_materialized",
+            "rustc_invocation_evidence_missing",
+        ]),
+        "build-domain proof facts without cfg and rustc evidence should fail closed: {blockers:#?}"
+    );
+    assert!(
+        blockers.iter().all(|row| {
+            row.blocker_id == "bd:main"
+                && row.status == "blocked"
+                && row.build_domain_id.as_deref() == Some("bd:main")
+                && row.call_site_id.is_none()
+        }),
+        "build-domain blockers should stay scoped to the build domain: {blockers:#?}"
     );
 }
 

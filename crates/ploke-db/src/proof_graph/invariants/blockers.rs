@@ -31,7 +31,7 @@ pub(super) fn active_proof_blocker_reasons(rows: &[ProofFactRow]) -> Vec<String>
 fn derived_proof_gap_reasons(rows: &[ProofFactRow], scope: Option<&ProofScope>) -> Vec<String> {
     rows.iter()
         .filter(|row| derived_gap_matches_scope(row, rows, scope))
-        .filter_map(|row| derived_gap_reason(row, rows))
+        .flat_map(|row| derived_gap_reasons(row, rows))
         .collect()
 }
 
@@ -39,13 +39,20 @@ pub(super) fn derived_proof_blocker_reason(
     row: &ProofFactRow,
     rows: &[ProofFactRow],
 ) -> Option<String> {
+    derived_proof_blocker_reasons(row, rows).into_iter().next()
+}
+
+pub(super) fn derived_proof_blocker_reasons(
+    row: &ProofFactRow,
+    rows: &[ProofFactRow],
+) -> Vec<String> {
     if row.kind == "proof_blocker" {
-        return None;
+        return Vec::new();
     }
     if !is_proof_evidence(row) && !is_navigation_only_unresolved_process_call(row, rows) {
-        return None;
+        return Vec::new();
     }
-    derived_gap_reason(row, rows)
+    derived_gap_reasons(row, rows)
 }
 
 fn derived_gap_matches_scope(
@@ -157,6 +164,18 @@ fn derived_gap_reason(row: &ProofFactRow, rows: &[ProofFactRow]) -> Option<Strin
     }
 }
 
+fn derived_gap_reasons(row: &ProofFactRow, rows: &[ProofFactRow]) -> Vec<String> {
+    if build_domain_reference_missing(row, rows) {
+        return vec!["canonical_identity_mismatch".to_string()];
+    }
+
+    let mut reasons = build_domain_evidence_gap_reasons(row, rows);
+    if let Some(reason) = derived_gap_reason(row, rows) {
+        reasons.push(reason);
+    }
+    dedupe_reasons(reasons)
+}
+
 fn build_domain_reference_missing(row: &ProofFactRow, rows: &[ProofFactRow]) -> bool {
     if row.kind == "build_domain" {
         return false;
@@ -167,6 +186,66 @@ fn build_domain_reference_missing(row: &ProofFactRow, rows: &[ProofFactRow]) -> 
     !rows.iter().any(|candidate| {
         candidate.kind == "build_domain"
             && candidate.build_domain_id.as_deref() == Some(build_domain_id)
+    })
+}
+
+fn build_domain_evidence_gap_reasons(row: &ProofFactRow, rows: &[ProofFactRow]) -> Vec<String> {
+    if row.kind != "build_domain" {
+        return Vec::new();
+    }
+    let Some(build_domain_id) = row.build_domain_id.as_deref() else {
+        return Vec::new();
+    };
+
+    let mut reasons = Vec::new();
+    if !has_admitted_cfg_domain(row, rows, build_domain_id) {
+        reasons.push("cfg_domain_not_materialized".to_string());
+    }
+    if !has_admitted_rustc_invocation(row, rows, build_domain_id) {
+        reasons.push("rustc_invocation_evidence_missing".to_string());
+    }
+    reasons
+}
+
+fn has_admitted_cfg_domain(
+    build_domain: &ProofFactRow,
+    rows: &[ProofFactRow],
+    build_domain_id: &str,
+) -> bool {
+    rows.iter().any(|candidate| {
+        candidate.kind == "cfg_domain"
+            && is_proof_evidence(candidate)
+            && candidate.build_domain_id.as_deref() == Some(build_domain_id)
+            && candidate.status.as_deref() == Some("admitted")
+            && build_domain
+                .active_cfg_hash
+                .as_deref()
+                .is_none_or(|hash| candidate.active_cfg_hash.as_deref() == Some(hash))
+    })
+}
+
+fn has_admitted_rustc_invocation(
+    build_domain: &ProofFactRow,
+    rows: &[ProofFactRow],
+    build_domain_id: &str,
+) -> bool {
+    rows.iter().any(|candidate| {
+        candidate.kind == "rustc_invocation"
+            && is_proof_evidence(candidate)
+            && candidate.build_domain_id.as_deref() == Some(build_domain_id)
+            && candidate.status.as_deref() == Some("admitted")
+            && build_domain
+                .rustc_version
+                .as_deref()
+                .is_none_or(|version| candidate.rustc_version.as_deref() == Some(version))
+            && candidate
+                .argument_vector_hash
+                .as_deref()
+                .is_some_and(|hash| !hash.is_empty())
+            && candidate
+                .environment_hash
+                .as_deref()
+                .is_some_and(|hash| !hash.is_empty())
     })
 }
 

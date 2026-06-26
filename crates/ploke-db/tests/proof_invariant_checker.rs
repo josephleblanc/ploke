@@ -195,6 +195,34 @@ fn cfg_domain(build_domain_id: &str, status: &str, blocking_reason: Option<&str>
     value
 }
 
+fn admitted_cfg_domain(build_domain_id: &str) -> Value {
+    cfg_domain(build_domain_id, "admitted", None)
+}
+
+fn rustc_invocation(build_domain_id: &str, status: &str, blocking_reason: Option<&str>) -> Value {
+    let mut value = json!({
+        "fact_kind": "rustc_invocation",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "invocation_id": format!("rustc:{build_domain_id}"),
+        "build_domain_id": build_domain_id,
+        "rustc_program": "rustc",
+        "rustc_version": "rustc 1.96.0",
+        "working_directory": "/workspace/ploke",
+        "argument_vector_hash": "sha256:argv",
+        "environment_hash": "sha256:env",
+        "status": status,
+        "evidence_use": "proof_only"
+    });
+    if let Some(blocking_reason) = blocking_reason {
+        value["blocking_reason"] = json!(blocking_reason);
+    }
+    value
+}
+
+fn admitted_rustc_invocation(build_domain_id: &str) -> Value {
+    rustc_invocation(build_domain_id, "admitted", None)
+}
+
 fn authority(id: &str, term: &str, status: &str, line: u32) -> Value {
     authority_with_scope(
         id,
@@ -276,6 +304,8 @@ fn unscoped_blocker(reason: &str) -> Value {
 fn legal_handoff_records() -> Vec<Value> {
     vec![
         build_domain("bd:checker"),
+        admitted_cfg_domain("bd:checker"),
+        admitted_rustc_invocation("bd:checker"),
         call_site(),
         call_edge(),
         process_effect(),
@@ -325,6 +355,8 @@ fn unscoped_legal_handoff_records_for(
     let callee_def_id = format!("def:{label}-successor");
     vec![
         build_domain(build_domain_id),
+        admitted_cfg_domain(build_domain_id),
+        admitted_rustc_invocation(build_domain_id),
         call_site_named(&call_site_id, build_domain_id, &caller_def_id, line_base),
         call_edge_named(&call_edge_id, &call_site_id, &caller_def_id, &callee_def_id),
         process_effect_named(&effect_seed_id, &call_site_id),
@@ -514,6 +546,8 @@ fn proof_invariant_checker_treats_process_replace_as_detached_process_obligation
     replace_effect["effect_class"] = json!("operating_system_process_replace");
     let db = db_with(vec![
         build_domain("bd:checker"),
+        admitted_cfg_domain("bd:checker"),
+        admitted_rustc_invocation("bd:checker"),
         call_site(),
         call_edge(),
         replace_effect,
@@ -553,6 +587,8 @@ fn proof_invariant_checker_blocks_active_blocker_even_without_process_scope() {
 fn proof_invariant_checker_ignores_scoped_blocker_without_process_scope() {
     let db = db_with(vec![
         build_domain("bd:checker"),
+        admitted_cfg_domain("bd:checker"),
+        admitted_rustc_invocation("bd:checker"),
         call_site_named("call:non-process", "bd:checker", "def:non-process", 12),
         blocker_for(
             "process_lifetime_evidence_missing",
@@ -601,6 +637,8 @@ fn proof_invariant_checker_blocks_scoped_blocker_with_missing_call_site_without_
 fn proof_invariant_checker_fails_illegal_detached_spawn_without_successor() {
     let db = db_with(vec![
         build_domain("bd:checker"),
+        admitted_cfg_domain("bd:checker"),
+        admitted_rustc_invocation("bd:checker"),
         call_site(),
         call_edge(),
         process_effect(),
@@ -643,6 +681,8 @@ fn proof_invariant_checker_fails_two_crown_ruling_parents_in_one_lineage() {
 fn proof_invariant_checker_blocks_incomplete_process_or_authority_evidence() {
     let db = db_with(vec![
         build_domain("bd:checker"),
+        admitted_cfg_domain("bd:checker"),
+        admitted_rustc_invocation("bd:checker"),
         call_site(),
         call_edge(),
         process_effect(),
@@ -906,6 +946,8 @@ fn proof_invariant_checker_requires_call_site_domain_match_for_external_summary_
 fn proof_invariant_checker_blocks_authority_evidence_gap_without_demoting_to_fail() {
     let db = db_with(vec![
         build_domain("bd:checker"),
+        admitted_cfg_domain("bd:checker"),
+        admitted_rustc_invocation("bd:checker"),
         call_site(),
         call_edge(),
         process_effect(),
@@ -925,6 +967,8 @@ fn proof_invariant_checker_blocks_authority_evidence_gap_without_demoting_to_fai
 fn proof_invariant_checker_ignores_navigation_only_authority_for_detached_handoff() {
     let db = db_with(vec![
         build_domain("bd:checker"),
+        admitted_cfg_domain("bd:checker"),
+        admitted_rustc_invocation("bd:checker"),
         call_site(),
         call_edge(),
         process_effect(),
@@ -967,6 +1011,8 @@ fn proof_invariant_checker_rejects_unknown_evidence_use_for_authority() {
     let error = db
         .upsert_proof_fact_values(&[
             build_domain("bd:checker"),
+            admitted_cfg_domain("bd:checker"),
+            admitted_rustc_invocation("bd:checker"),
             call_site(),
             call_edge(),
             process_effect(),
@@ -989,7 +1035,11 @@ fn proof_invariant_checker_rejects_unknown_evidence_use_for_authority() {
 fn proof_invariant_checker_requires_authority_build_domain_match_for_same_call_site() {
     let db = db_with(vec![
         build_domain("bd:primary"),
+        admitted_cfg_domain("bd:primary"),
+        admitted_rustc_invocation("bd:primary"),
         build_domain("bd:other"),
+        admitted_cfg_domain("bd:other"),
+        admitted_rustc_invocation("bd:other"),
         call_site_named("call:shared-spawn", "bd:primary", "def:shared", 20),
         call_edge_named(
             "edge:shared-spawn",
@@ -1055,6 +1105,8 @@ fn proof_invariant_checker_blocks_mismatched_call_site_identity_fail_closed() {
     mismatched_edge["caller_def_id"] = json!("def:other-caller");
     let db = db_with(vec![
         build_domain("bd:checker"),
+        admitted_cfg_domain("bd:checker"),
+        admitted_rustc_invocation("bd:checker"),
         call_site(),
         mismatched_edge,
         process_effect(),
@@ -1082,6 +1134,8 @@ fn proof_invariant_checker_blocks_mismatched_call_site_identity_fail_closed() {
 fn proof_invariant_checker_blocks_unresolved_proof_critical_call() {
     let db = db_with(vec![
         build_domain("bd:checker"),
+        admitted_cfg_domain("bd:checker"),
+        admitted_rustc_invocation("bd:checker"),
         call_site(),
         unresolved_call_edge_for("call:handoff-spawn", "proof_only"),
         process_effect(),

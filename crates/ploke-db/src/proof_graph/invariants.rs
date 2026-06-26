@@ -31,6 +31,13 @@ pub(super) fn derived_proof_blocker_reason(
     blockers::derived_proof_blocker_reason(row, rows)
 }
 
+pub(super) fn derived_proof_blocker_reasons(
+    row: &ProofFactRow,
+    rows: &[ProofFactRow],
+) -> Vec<String> {
+    blockers::derived_proof_blocker_reasons(row, rows)
+}
+
 fn finding(
     invariant: &str,
     status: ProofInvariantStatus,

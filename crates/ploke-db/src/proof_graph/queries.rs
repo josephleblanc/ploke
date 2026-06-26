@@ -5,7 +5,9 @@ use crate::{Database, DbError};
 use super::{
     ProofBlockerRow, ProofCheckerEdgeRow, ProofGraphContextRow, ProofInvariantFinding,
     ProofSourceProvenanceRow,
-    invariants::{derived_proof_blocker_reason, evaluate_proof_invariants},
+    invariants::{
+        derived_proof_blocker_reason, derived_proof_blocker_reasons, evaluate_proof_invariants,
+    },
     rows::ProofFactRow,
 };
 
@@ -121,10 +123,7 @@ impl Database {
         Ok(rows
             .iter()
             .filter_map(explicit_blocker_row)
-            .chain(
-                rows.iter()
-                    .filter_map(|row| derived_blocker_row(row, &rows)),
-            )
+            .chain(rows.iter().flat_map(|row| derived_blocker_rows(row, &rows)))
             .collect())
     }
 
@@ -170,21 +169,24 @@ fn explicit_blocker_row(row: &ProofFactRow) -> Option<ProofBlockerRow> {
     })
 }
 
-fn derived_blocker_row(row: &ProofFactRow, rows: &[ProofFactRow]) -> Option<ProofBlockerRow> {
-    let reason = derived_proof_blocker_reason(row, rows)?;
+fn derived_blocker_rows(row: &ProofFactRow, rows: &[ProofFactRow]) -> Vec<ProofBlockerRow> {
+    let reasons = derived_proof_blocker_reasons(row, rows);
     let status = row
         .status
         .clone()
         .or_else(|| row.resolution_state.clone())
         .unwrap_or_else(|| "blocked".to_string());
-    Some(ProofBlockerRow {
-        blocker_id: row.fact_id.clone(),
-        detail: row.detail.clone().unwrap_or_else(|| reason.clone()),
-        reason,
-        status,
-        build_domain_id: row.build_domain_id.clone(),
-        call_site_id: row.call_site_id.clone(),
-    })
+    reasons
+        .into_iter()
+        .map(|reason| ProofBlockerRow {
+            blocker_id: row.fact_id.clone(),
+            detail: row.detail.clone().unwrap_or_else(|| reason.clone()),
+            reason,
+            status: status.clone(),
+            build_domain_id: row.build_domain_id.clone(),
+            call_site_id: row.call_site_id.clone(),
+        })
+        .collect()
 }
 
 fn linked_context_rows(
