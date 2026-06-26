@@ -100,6 +100,34 @@ fn build_domain_record() -> serde_json::Value {
     })
 }
 
+fn cfg_domain_record() -> serde_json::Value {
+    json!({
+        "fact_kind": "cfg_domain",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "cfg_domain_id": "cfg:main",
+        "build_domain_id": "bd:main",
+        "active_cfg_hash": "sha256:cfg",
+        "status": "blocked",
+        "blocking_reason": "cfg_domain_not_materialized"
+    })
+}
+
+fn rustc_invocation_record() -> serde_json::Value {
+    json!({
+        "fact_kind": "rustc_invocation",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "invocation_id": "rustc:main",
+        "build_domain_id": "bd:main",
+        "rustc_program": "rustc",
+        "rustc_version": "rustc 1.96.0",
+        "working_directory": "/workspace/ploke",
+        "argument_vector_hash": "sha256:argv",
+        "environment_hash": "sha256:env",
+        "status": "blocked",
+        "blocking_reason": "rustc_invocation_evidence_missing"
+    })
+}
+
 fn expansion_boundary_record() -> serde_json::Value {
     json!({
         "fact_kind": "expansion_boundary",
@@ -333,6 +361,53 @@ fn proof_graphrag_context_exposes_build_domain_metadata() {
                 && row.proof_policy_version.as_deref() == Some("proof-policy-test")
         }),
         "GraphRAG proof lookup should expose build-domain metadata: {rows:#?}"
+    );
+}
+
+#[test]
+fn proof_graphrag_context_exposes_cfg_and_rustc_metadata() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    let mut records = proof_records();
+    records.push(cfg_domain_record());
+    records.push(rustc_invocation_record());
+    db.upsert_proof_fact_values(&records)
+        .expect("import proof facts");
+
+    let cfg_rows = db
+        .proof_graphrag_context("sha256:cfg")
+        .expect("cfg-domain proof context");
+    assert!(
+        cfg_rows.iter().any(|row| {
+            row.kind == "cfg_domain"
+                && row.fact_id == "cfg:main"
+                && row.cfg_domain_id.as_deref() == Some("cfg:main")
+                && row.build_domain_id.as_deref() == Some("bd:main")
+                && row.active_cfg_hash.as_deref() == Some("sha256:cfg")
+                && row.status.as_deref() == Some("blocked")
+                && row.blocker_reason.as_deref() == Some("cfg_domain_not_materialized")
+        }),
+        "GraphRAG proof lookup should expose cfg-domain metadata: {cfg_rows:#?}"
+    );
+
+    let rustc_rows = db
+        .proof_graphrag_context("sha256:argv")
+        .expect("rustc-invocation proof context");
+    assert!(
+        rustc_rows.iter().any(|row| {
+            row.kind == "rustc_invocation"
+                && row.fact_id == "rustc:main"
+                && row.invocation_id.as_deref() == Some("rustc:main")
+                && row.build_domain_id.as_deref() == Some("bd:main")
+                && row.rustc_program.as_deref() == Some("rustc")
+                && row.working_directory.as_deref() == Some("/workspace/ploke")
+                && row.argument_vector_hash.as_deref() == Some("sha256:argv")
+                && row.environment_hash.as_deref() == Some("sha256:env")
+                && row.rustc_version.as_deref() == Some("rustc 1.96.0")
+                && row.status.as_deref() == Some("blocked")
+                && row.blocker_reason.as_deref() == Some("rustc_invocation_evidence_missing")
+        }),
+        "GraphRAG proof lookup should expose rustc-invocation metadata: {rustc_rows:#?}"
     );
 }
 

@@ -368,6 +368,20 @@ pub struct ProofContextInfo {
     #[serde(default)]
     pub proof_policy_version: Option<String>,
     #[serde(default)]
+    pub cfg_domain_id: Option<String>,
+    #[serde(default)]
+    pub active_cfg_hash: Option<String>,
+    #[serde(default)]
+    pub invocation_id: Option<String>,
+    #[serde(default)]
+    pub rustc_program: Option<String>,
+    #[serde(default)]
+    pub working_directory: Option<String>,
+    #[serde(default)]
+    pub argument_vector_hash: Option<String>,
+    #[serde(default)]
+    pub environment_hash: Option<String>,
+    #[serde(default)]
     pub authority_term: Option<String>,
     #[serde(default)]
     pub summary_class: Option<String>,

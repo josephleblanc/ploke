@@ -197,6 +197,13 @@ fn reformat_context_to_system_includes_proof_context_details() {
             profile: None,
             rustc_version: None,
             proof_policy_version: None,
+            cfg_domain_id: None,
+            active_cfg_hash: None,
+            invocation_id: None,
+            rustc_program: None,
+            working_directory: None,
+            argument_vector_hash: None,
+            environment_hash: None,
             authority_term: Some("successor".to_string()),
             summary_class: None,
             artifact_hash: None,
@@ -275,6 +282,13 @@ fn reformat_context_to_system_includes_expansion_metadata() {
             profile: None,
             rustc_version: None,
             proof_policy_version: None,
+            cfg_domain_id: None,
+            active_cfg_hash: None,
+            invocation_id: None,
+            rustc_program: None,
+            working_directory: None,
+            argument_vector_hash: None,
+            environment_hash: None,
             authority_term: None,
             summary_class: None,
             artifact_hash: None,
@@ -342,6 +356,13 @@ fn reformat_context_to_system_includes_build_domain_metadata() {
             profile: Some("dev".to_string()),
             rustc_version: Some("rustc 1.96.0".to_string()),
             proof_policy_version: Some("proof-policy-test".to_string()),
+            cfg_domain_id: None,
+            active_cfg_hash: None,
+            invocation_id: None,
+            rustc_program: None,
+            working_directory: None,
+            argument_vector_hash: None,
+            environment_hash: None,
             authority_term: None,
             summary_class: None,
             artifact_hash: None,
@@ -373,6 +394,83 @@ fn reformat_context_to_system_includes_build_domain_metadata() {
     assert!(rendered.contains("profile=dev"));
     assert!(rendered.contains("rustc=rustc 1.96.0"));
     assert!(rendered.contains("proof_policy=proof-policy-test"));
+}
+
+#[test]
+fn reformat_context_to_system_includes_cfg_and_rustc_metadata() {
+    let part = ContextPart {
+        id: Uuid::from_u128(44),
+        file_path: NodeFilepath::new("target/proof.json".to_string()),
+        canon_path: CanonPath::new("crate::proof_env".to_string()),
+        ranges: vec![],
+        kind: ContextPartKind::Metadata,
+        text: "{}".to_string(),
+        score: 0.1,
+        modality: Modality::Sparse,
+        type_context: None,
+        call_expansion: None,
+        call_context: Vec::new(),
+        proof_context: vec![ProofContextInfo {
+            fact_id: "rustc:main".to_string(),
+            kind: "rustc_invocation".to_string(),
+            build_domain_id: Some("bd:fixture-call-graph".to_string()),
+            call_site_id: None,
+            call_edge_id: None,
+            caller_def_id: None,
+            callee_def_id: None,
+            resolution_state: None,
+            resolved_def_id: None,
+            candidate_def_ids: Vec::new(),
+            external_summary_id: None,
+            boundary_id: None,
+            boundary_kind: None,
+            expanded_item_id: None,
+            definition_id: None,
+            target_kind: None,
+            target_name: None,
+            target_root: None,
+            profile: None,
+            rustc_version: Some("rustc 1.96.0".to_string()),
+            proof_policy_version: None,
+            cfg_domain_id: Some("cfg:main".to_string()),
+            active_cfg_hash: Some("sha256:cfg".to_string()),
+            invocation_id: Some("rustc:main".to_string()),
+            rustc_program: Some("rustc".to_string()),
+            working_directory: Some("/workspace/ploke".to_string()),
+            argument_vector_hash: Some("sha256:argv".to_string()),
+            environment_hash: Some("sha256:env".to_string()),
+            authority_term: None,
+            summary_class: None,
+            artifact_hash: None,
+            summary_version: None,
+            review_method: None,
+            scope_of_validity: None,
+            allowed_effects: Vec::new(),
+            required_containment: None,
+            invalidation_conditions: None,
+            evidence_use: Some("proof_only".to_string()),
+            source_file: None,
+            start_byte: None,
+            end_byte: None,
+            line_start: None,
+            line_end: None,
+            effect_class: None,
+            blocker_reason: Some("rustc_invocation_evidence_missing".to_string()),
+            status: Some("blocked".to_string()),
+            detail: None,
+        }],
+    };
+
+    let rendered = reformat_context_to_system(part);
+
+    assert!(rendered.contains("rustc_invocation"));
+    assert!(rendered.contains("cfg_domain=cfg:main"));
+    assert!(rendered.contains("active_cfg=sha256:cfg"));
+    assert!(rendered.contains("invocation=rustc:main"));
+    assert!(rendered.contains("rustc_program=rustc"));
+    assert!(rendered.contains("working_dir=/workspace/ploke"));
+    assert!(rendered.contains("argument_hash=sha256:argv"));
+    assert!(rendered.contains("env_hash=sha256:env"));
 }
 
 #[test]
@@ -411,6 +509,13 @@ fn reformat_context_to_system_includes_external_summary_metadata() {
             profile: None,
             rustc_version: None,
             proof_policy_version: None,
+            cfg_domain_id: None,
+            active_cfg_hash: None,
+            invocation_id: None,
+            rustc_program: None,
+            working_directory: None,
+            argument_vector_hash: None,
+            environment_hash: None,
             authority_term: None,
             summary_class: Some("opaque_blocked".to_string()),
             artifact_hash: Some("sha256:serde-artifact".to_string()),

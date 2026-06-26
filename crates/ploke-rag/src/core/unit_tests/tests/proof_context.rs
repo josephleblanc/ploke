@@ -393,6 +393,76 @@ async fn proof_context_seed_exposes_build_domain_metadata() -> Result<(), Error>
 }
 
 #[tokio::test]
+async fn proof_context_seed_exposes_cfg_and_rustc_metadata() -> Result<(), Error> {
+    init_tracing_once();
+
+    let raw = Db::new(MemStorage::default()).expect("in-memory cozo db");
+    raw.initialize().expect("initialize cozo db");
+    let db = Arc::new(Database::new(raw));
+    db.ensure_proof_graph_schema().map_err(Error::from)?;
+    let seed = Uuid::from_u128(0xc96);
+    let build_domain_id = seed.to_string();
+    db.upsert_proof_fact_values(&[
+        serde_json::json!({
+            "fact_kind": "cfg_domain",
+            "schema_version": "ploke-proof-facts.v1",
+            "cfg_domain_id": "cfg:rag",
+            "build_domain_id": build_domain_id.clone(),
+            "active_cfg_hash": "sha256:cfg",
+            "status": "blocked",
+            "blocking_reason": "cfg_domain_not_materialized"
+        }),
+        serde_json::json!({
+            "fact_kind": "rustc_invocation",
+            "schema_version": "ploke-proof-facts.v1",
+            "invocation_id": "rustc:rag",
+            "build_domain_id": build_domain_id.clone(),
+            "rustc_program": "rustc",
+            "rustc_version": "rustc 1.96.0",
+            "working_directory": "/workspace/ploke",
+            "argument_vector_hash": "sha256:argv",
+            "environment_hash": "sha256:env",
+            "status": "blocked",
+            "blocking_reason": "rustc_invocation_evidence_missing",
+            "evidence_use": "proof_only"
+        }),
+    ])
+    .map_err(Error::from)?;
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    let proof_context = rag.collect_proof_context(&[(seed, 1.0)])?;
+    let rows = proof_context
+        .get(&seed)
+        .expect("cfg/rustc seed should receive matching proof context rows");
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "cfg_domain"
+                && row.build_domain_id.as_deref() == Some(build_domain_id.as_str())
+                && row.cfg_domain_id.as_deref() == Some("cfg:rag")
+                && row.active_cfg_hash.as_deref() == Some("sha256:cfg")
+                && row.blocker_reason.as_deref() == Some("cfg_domain_not_materialized")
+        }),
+        "RAG proof context should expose cfg-domain metadata: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "rustc_invocation"
+                && row.build_domain_id.as_deref() == Some(build_domain_id.as_str())
+                && row.invocation_id.as_deref() == Some("rustc:rag")
+                && row.rustc_program.as_deref() == Some("rustc")
+                && row.working_directory.as_deref() == Some("/workspace/ploke")
+                && row.argument_vector_hash.as_deref() == Some("sha256:argv")
+                && row.environment_hash.as_deref() == Some("sha256:env")
+                && row.rustc_version.as_deref() == Some("rustc 1.96.0")
+                && row.blocker_reason.as_deref() == Some("rustc_invocation_evidence_missing")
+        }),
+        "RAG proof context should expose rustc-invocation metadata: {rows:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn proof_context_seed_exposes_derived_blocker_reasons() -> Result<(), Error> {
     init_tracing_once();
 

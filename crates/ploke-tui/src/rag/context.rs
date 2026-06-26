@@ -497,6 +497,17 @@ fn format_proof_context(row: &ProofContextInfo) -> String {
         "proof_policy",
         row.proof_policy_version.as_deref(),
     );
+    push_opt(&mut parts, "cfg_domain", row.cfg_domain_id.as_deref());
+    push_opt(&mut parts, "active_cfg", row.active_cfg_hash.as_deref());
+    push_opt(&mut parts, "invocation", row.invocation_id.as_deref());
+    push_opt(&mut parts, "rustc_program", row.rustc_program.as_deref());
+    push_opt(&mut parts, "working_dir", row.working_directory.as_deref());
+    push_opt(
+        &mut parts,
+        "argument_hash",
+        row.argument_vector_hash.as_deref(),
+    );
+    push_opt(&mut parts, "env_hash", row.environment_hash.as_deref());
     push_opt(&mut parts, "authority", row.authority_term.as_deref());
     push_opt(&mut parts, "summary", row.summary_class.as_deref());
     push_opt(&mut parts, "artifact", row.artifact_hash.as_deref());
