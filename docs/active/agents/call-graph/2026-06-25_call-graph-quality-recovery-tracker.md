@@ -71,6 +71,7 @@ are not acceptable as a continuing implementation style.
   - `3284dd45 Add proof domain context lookup`
   - `5fad4c98 Remove dormant call graph semantic storage`
 - Recent proof context test cleanup:
+  - `a1199145 Expose proof effect metadata`
   - `f42fba3e Expose proof summary metadata`
   - `9583fc6e Expose proof expansion metadata`
   - `f349e631 Expose proof build metadata`
@@ -108,6 +109,10 @@ are not acceptable as a continuing implementation style.
   - Cfg-domain hashes and rustc-invocation evidence metadata now flow through
     DB/RAG/TUI proof context from the same JSON-backed path, leaving proof
     invariant evaluation and discharge semantics unchanged.
+  - Effect-seed IDs, confidence, and unresolved-blocker flags now flow through
+    DB/RAG/TUI proof context from the same JSON-backed path. This exposes
+    existing strict `effect_seed` proof metadata without changing the
+    `proof_fact` relation shape or relaxing proof validation.
   - Proof-fact validation now rejects incoherent `external_summary` artifacts
     that claim `status: admitted` while retaining `summary_class:
     opaque_blocked`; this is a strict admission precondition and does not yet
