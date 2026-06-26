@@ -474,6 +474,10 @@ fn format_proof_context(row: &ProofContextInfo) -> String {
     push_opt(&mut parts, "caller", row.caller_def_id.as_deref());
     push_opt(&mut parts, "callee", row.callee_def_id.as_deref());
     push_opt(&mut parts, "state", row.resolution_state.as_deref());
+    push_opt(&mut parts, "resolved", row.resolved_def_id.as_deref());
+    if !row.candidate_def_ids.is_empty() {
+        parts.push(format_candidates(&row.candidate_def_ids, 4));
+    }
     push_opt(&mut parts, "status", row.status.as_deref());
     push_opt(&mut parts, "blocker", row.blocker_reason.as_deref());
     push_opt(&mut parts, "evidence", row.evidence_use.as_deref());
@@ -490,6 +494,16 @@ fn push_opt(parts: &mut Vec<String>, label: &str, value: Option<&str>) {
     if let Some(value) = value {
         parts.push(format!("{label}={value}"));
     }
+}
+
+fn format_candidates(candidates: &[String], limit: usize) -> String {
+    let limit = limit.max(1);
+    let mut visible = candidates.iter().take(limit).cloned().collect::<Vec<_>>();
+    let hidden = candidates.len().saturating_sub(limit);
+    if hidden > 0 {
+        visible.push(format!("... {hidden} more"));
+    }
+    format!("candidates=[{}]", visible.join(", "))
 }
 
 fn format_callee(callee: &CallCalleeInfo) -> String {

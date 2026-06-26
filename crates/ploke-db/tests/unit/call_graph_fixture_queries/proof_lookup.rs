@@ -58,14 +58,10 @@ fn fixture_proof_symbol_lookup_links_target_centered_local_target_facts() -> Res
     );
 
     let rows = db.proof_symbol_lookup(&target.to_string())?;
-    let resolved_count = callers
-        .iter()
-        .filter(|caller| caller.status.status == CallStatusKind::Resolved)
-        .count();
     assert_eq!(
         rows.len(),
-        resolved_count * 3,
-        "target-centered symbol lookup should return linked call_site, call_edge, and call_resolution facts for resolved callers: {rows:#?}"
+        expected_target_proof_count(&callers),
+        "target-centered symbol lookup should return linked resolved facts and candidate-only ambiguous facts: {rows:#?}"
     );
 
     for (owner, site) in [(path_owner, path_site), (dynamic_owner, dynamic_site)] {
@@ -96,6 +92,59 @@ fn fixture_proof_symbol_lookup_links_target_centered_local_target_facts() -> Res
         let resolution = proof_fact_for_kind(&site_rows, "call_resolution");
         assert_eq!(resolution.blocker_reason, None);
     }
+
+    Ok(())
+}
+
+#[test]
+fn fixture_proof_symbol_lookup_matches_ambiguous_dynamic_candidate_payloads() -> Result<(), DbError>
+{
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let target = function_id_by_name(&db, "other_target")?;
+    let sibling = function_id_by_name(&db, "local_target")?;
+    let owner = function_id_by_name(&db, "call_if_ambiguous_function_item")?;
+    let callers = db.callers_for_target(target)?;
+    assert_eq!(
+        callers.len(),
+        2,
+        "other_target should be reachable only through the two ambiguous dynamic fixture callers: {callers:#?}"
+    );
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(context.len(), 1, "ambiguous owner context: {context:#?}");
+    let site = context[0].site.id;
+
+    let count = db.project_call_proof_facts_for_target(target, "bd:fixture-call-graph")?;
+    assert_eq!(
+        count,
+        expected_target_proof_count(&callers),
+        "ambiguous target-centered proof count"
+    );
+
+    let rows = db.proof_symbol_lookup(&target.to_string())?;
+    let site_id = site.to_string();
+    let site_rows = rows
+        .iter()
+        .filter(|fact| fact.call_site_id.as_deref() == Some(site_id.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        site_rows.len(),
+        2,
+        "ambiguous candidate lookup should include linked call_site and call_resolution facts without a resolved call_edge: {site_rows:#?}"
+    );
+    assert_eq!(proof_kind_count(&site_rows, "call_site"), 1);
+    assert_eq!(proof_kind_count(&site_rows, "call_resolution"), 1);
+    assert_eq!(proof_kind_count(&site_rows, "call_edge"), 0);
+
+    let resolution = proof_fact_for_kind(&site_rows, "call_resolution");
+    assert_eq!(resolution.resolution_state.as_deref(), Some("ambiguous"));
+    let mut actual = resolution.candidate_def_ids.clone();
+    actual.sort();
+    let mut expected = vec![target.to_string(), sibling.to_string()];
+    expected.sort();
+    assert_eq!(
+        actual, expected,
+        "symbol lookup should expose the full ambiguous candidate set"
+    );
 
     Ok(())
 }

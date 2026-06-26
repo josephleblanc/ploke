@@ -184,6 +184,11 @@ are not acceptable as a continuing implementation style.
   `call_targets_for_site` before emitting proof facts, so ambiguous dynamic
   candidate sets are not collapsed to only the target that matched the
   target-centered query.
+- Proof context lookup now reads `resolved_def_id` and `candidate_def_ids` from
+  the stored proof-fact JSON, matches symbol lookups against candidate IDs, and
+  carries those fields through RAG/TUI proof-context payloads. This keeps the
+  existing `proof_fact` relation shape stable while making ambiguous sibling
+  candidates visible to downstream model-facing context.
 - `call_resolution.rs` now keeps the resolver orchestration and remaining path,
   method, constructor, and lookup logic while dynamic-call resolution lives in
   `resolve/call_resolution/dynamic.rs`.
@@ -380,6 +385,23 @@ are not acceptable as a continuing implementation style.
 
 ## Recent verification
 
+- Proof-context candidate payload exposure
+  - Red check before implementation:
+    `cargo test -p ploke-rag --features call_graph proof_context_target_seed_preserves_ambiguous_dynamic_candidates -- --nocapture`
+    failed because target-seeded proof lookup did not reach ambiguous dynamic
+    candidate-only proof rows.
+  - `cargo check -p ploke-db -p ploke-rag -p ploke-tui --features call_graph`
+    passed.
+  - `cargo test -p ploke-db --features call_graph proof_lookup -- --nocapture`
+    passed.
+  - `cargo test -p ploke-rag --features call_graph proof_context -- --nocapture`
+    passed.
+  - `cargo test -p ploke-tui --features call_graph reformat_context_to_system_includes_proof_context_details -- --nocapture`
+    passed.
+  - `cargo test -p ploke-tui --features call_graph serde_roundtrip_request_code_context -- --nocapture`
+    passed.
+  - `cargo test -p ploke-tui --features call_graph expanded_rag_part_displays_call_context_details -- --nocapture`
+    passed.
 - Target-centered ambiguous-candidate blocker fix
   - Red check before implementation:
     `cargo test -p ploke-db --features call_graph fixture_projection_marks_real_branch_and_match_dynamic_ambiguity_with_candidates -- --nocapture`

@@ -24,6 +24,8 @@ pub struct ProofGraphContextRow {
     pub caller_def_id: Option<String>,
     pub callee_def_id: Option<String>,
     pub resolution_state: Option<String>,
+    pub resolved_def_id: Option<String>,
+    pub candidate_def_ids: Vec<String>,
     pub evidence_use: Option<String>,
     pub source_file: Option<String>,
     pub start_byte: Option<u32>,

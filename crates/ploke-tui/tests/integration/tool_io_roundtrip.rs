@@ -213,6 +213,8 @@ fn serde_roundtrip_request_code_context() {
         caller_def_id: Some("def:caller".to_string()),
         callee_def_id: Some("def:callee".to_string()),
         resolution_state: Some("resolved".to_string()),
+        resolved_def_id: Some("def:callee".to_string()),
+        candidate_def_ids: Vec::new(),
         evidence_use: Some("proof_only".to_string()),
         source_file: Some("src/lib.rs".to_string()),
         start_byte: Some(1),

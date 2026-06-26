@@ -1,4 +1,5 @@
 use cozo::DataValue;
+use serde_json::Value;
 
 use super::ProofGraphContextRow;
 use crate::DbError;
@@ -14,6 +15,8 @@ pub(super) struct ProofFactRow {
     pub(super) caller_def_id: Option<String>,
     pub(super) callee_def_id: Option<String>,
     pub(super) resolution_state: Option<String>,
+    pub(super) resolved_def_id: Option<String>,
+    pub(super) candidate_def_ids: Vec<String>,
     pub(super) source_file: Option<String>,
     pub(super) start_byte: Option<u32>,
     pub(super) end_byte: Option<u32>,
@@ -27,6 +30,7 @@ pub(super) struct ProofFactRow {
 
 impl ProofFactRow {
     pub(super) fn from_data_values(row: &[DataValue]) -> Result<Self, DbError> {
+        let json = optional_json(row, 19);
         Ok(Self {
             fact_id: required_string(row, 0, "fact_id")?,
             kind: required_string(row, 1, "kind")?,
@@ -37,6 +41,10 @@ impl ProofFactRow {
             caller_def_id: optional_string(row, 7),
             callee_def_id: optional_string(row, 8),
             resolution_state: optional_string(row, 9),
+            resolved_def_id: json.and_then(|value| json_string(value, "resolved_def_id")),
+            candidate_def_ids: json
+                .map(|value| json_string_array(value, "candidate_def_ids"))
+                .unwrap_or_default(),
             source_file: optional_string(row, 10),
             start_byte: optional_u32(row, 11, "start_byte")?,
             end_byte: optional_u32(row, 12, "end_byte")?,
@@ -53,7 +61,7 @@ impl ProofFactRow {
         if query.is_empty() {
             return true;
         }
-        [
+        let scalar_match = [
             Some(self.fact_id.as_str()),
             Some(self.kind.as_str()),
             self.evidence_use.as_deref(),
@@ -63,6 +71,7 @@ impl ProofFactRow {
             self.caller_def_id.as_deref(),
             self.callee_def_id.as_deref(),
             self.resolution_state.as_deref(),
+            self.resolved_def_id.as_deref(),
             self.source_file.as_deref(),
             self.effect_class.as_deref(),
             self.blocker_reason.as_deref(),
@@ -71,7 +80,12 @@ impl ProofFactRow {
         ]
         .into_iter()
         .flatten()
-        .any(|value| value.to_ascii_lowercase().contains(query))
+        .any(|value| value.to_ascii_lowercase().contains(query));
+        let candidate_match = self
+            .candidate_def_ids
+            .iter()
+            .any(|value| value.to_ascii_lowercase().contains(query));
+        scalar_match || candidate_match
     }
 }
 
@@ -86,6 +100,8 @@ impl From<ProofFactRow> for ProofGraphContextRow {
             caller_def_id: row.caller_def_id,
             callee_def_id: row.callee_def_id,
             resolution_state: row.resolution_state,
+            resolved_def_id: row.resolved_def_id,
+            candidate_def_ids: row.candidate_def_ids,
             evidence_use: row.evidence_use,
             source_file: row.source_file,
             start_byte: row.start_byte,
@@ -116,6 +132,27 @@ fn optional_string(row: &[DataValue], index: usize) -> Option<String> {
     row.get(index)
         .and_then(DataValue::get_str)
         .map(ToOwned::to_owned)
+}
+
+fn optional_json(row: &[DataValue], index: usize) -> Option<&Value> {
+    match row.get(index) {
+        Some(DataValue::Json(value)) => Some(&value.0),
+        _ => None,
+    }
+}
+
+fn json_string(value: &Value, field: &str) -> Option<String> {
+    value.get(field)?.as_str().map(ToOwned::to_owned)
+}
+
+fn json_string_array(value: &Value, field: &str) -> Vec<String> {
+    value
+        .get(field)
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|candidate| candidate.as_str().map(ToOwned::to_owned))
+        .collect()
 }
 
 fn required_string(row: &[DataValue], index: usize, field: &str) -> Result<String, DbError> {
