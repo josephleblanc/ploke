@@ -29,11 +29,12 @@ are not acceptable as a continuing implementation style.
     execute-path coverage under `call_graph`.
   - `7c7f06c6 test: cover projected proof request context`
   - `ed010f12 test: cover ambiguous proof request context`
+  - `89353140 Surface blocker counts in request context UI`
   - `request_code_context` now has execute-path coverage for populated proof
     facts as well: resolved owner-scoped proof rows are returned in the tool
-    payload, UI carrier counts match the aggregate proof rows, and
-    target-centered ambiguous dynamic proof rows preserve sibling candidates in
-    `candidate_def_ids`.
+    payload, UI carrier and blocker counts match the aggregate call/proof rows,
+    and target-centered ambiguous dynamic proof rows preserve sibling
+    candidates in `candidate_def_ids`.
   - `cc808347 test: cover variant constructor tool context`
   - TUI RAG context prompt-formatting tests were moved out of the inline
     `rag/context.rs` test module into `rag/context/tests.rs`, leaving the
@@ -791,6 +792,10 @@ For TUI `request_code_context` proof-context tool paths:
   - passed: ambiguous target-centered proof-context request filter ran 1 test, 0 failed.
 - `cargo test -p ploke-tui --features call_graph request_code_context::gat_tests::proof_context_tests -- --nocapture`
   - passed: proof-context GAT request filter ran 1 test, 0 failed.
+- `cargo test -p ploke-tui --features call_graph request_code_context_ui_payload_reports_context_carrier_counts -- --nocapture`
+  - passed: request-code-context UI payload count filter ran 1 test, 0 failed.
+- `cargo test -p ploke-tui --features call_graph request_code_context::gat_tests -- --nocapture`
+  - passed: request-code-context GAT filter ran 16 tests, 0 failed, 2 ignored for existing live/quarantined reasons.
 
 For context-plan overlay proof blocker presentation:
 
