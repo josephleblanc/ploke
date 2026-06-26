@@ -27,6 +27,8 @@ are not acceptable as a continuing implementation style.
   - `31d19d3c Add variant sparse call-context seeds`
   - `15f0ce68 test: share RAG call expansion assertions`
 - Recent RAG test-module cleanup:
+  - RAG call-context collection cases were split by concern under
+    `unit_tests/tests/call_context/collection/cases/`.
   - Public sparse `get_context` call-context tests were moved out of the
     monolithic `ploke-rag/src/core/unit_tests.rs` file into
     `ploke-rag/src/core/unit_tests/tests/call_context/public.rs`.
@@ -274,6 +276,9 @@ are not acceptable as a continuing implementation style.
   collection-test consumer in `unit_tests/tests/call_context/collection/`,
   leaving `unit_tests.rs` as the shared setup/query surface instead of the
   owner of call-context fixture builders.
+- RAG call-context collection tests now use a thin `cases.rs` module root with
+  degraded-gate, synthetic payload, and fixture-backed collection assertions in
+  child modules.
 - Resolved dynamic proof fixture tests now share a dynamic proof batch helper
   that preserves fresh-DB isolation per proof group while moving repeated
   target lookup, proof projection, and owner-edge assertions out of each test.
@@ -311,6 +316,11 @@ are not acceptable as a continuing implementation style.
 
 ## Recent verification
 
+- RAG call-context collection case split
+  - `cargo test -p ploke-rag --features call_graph call_context_collection -- --nocapture`
+    passed: 7 passed, 0 failed.
+  - `cargo test -p ploke-rag --features call_graph call_context -- --nocapture`
+    passed: 25 passed, 0 failed.
 - Proof graph schema/storage/query implementation split
   - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection -- --nocapture`
     passed: 14 passed, 0 failed.
