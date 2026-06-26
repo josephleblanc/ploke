@@ -563,6 +563,12 @@ are not acceptable as a continuing implementation style.
     `tests/fixture_crates/fixture_nodes/src/const_static.rs`, which makes
     snippet materialization skip the row that should contain
     `use_all_const_static`.
+  - Focused repro:
+    `cargo test -p ploke-rag test_search -- --nocapture` failed on
+    2026-06-26 with 7 passed and 3 failed. The first failing test was
+    `core::unit_tests::tests::test_search_function_definitions`, which
+    panicked at `crates/ploke-rag/src/core/unit_tests.rs:923` with
+    `No snippet found containing 'use_all_const_static'`.
   - The fixture source currently contains `use_all_const_static`; this points
     to stale checkout-local backup rows, not a missing source item. Do not
     weaken snippet/hash validation. Per
