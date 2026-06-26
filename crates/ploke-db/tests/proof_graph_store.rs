@@ -183,6 +183,37 @@ fn proof_graph_store_accepts_external_summary_artifacts() {
 }
 
 #[test]
+fn proof_graphrag_context_links_external_summary_artifacts_and_resolution_refs() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    let mut records = proof_records();
+    records.push(externally_summarized_resolution(Some(
+        "external-summary:dep:serde",
+    )));
+    records.push(external_summary_record());
+    db.upsert_proof_fact_values(&records)
+        .expect("import proof facts");
+
+    let rows = db
+        .proof_graphrag_context("external-summary:dep:serde")
+        .expect("external summary proof context");
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "external_summary" && row.fact_id == "external-summary:dep:serde"
+        }),
+        "summary-id lookup should include the stored external summary artifact: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "call_resolution"
+                && row.call_site_id.as_deref() == Some("call:external")
+                && row.external_summary_id.as_deref() == Some("external-summary:dep:serde")
+        }),
+        "summary-id lookup should include call_resolution rows that reference the artifact: {rows:#?}"
+    );
+}
+
+#[test]
 fn proof_graph_store_rejects_external_summary_without_artifact_identity() {
     let db = Database::new_init().expect("create db");
     db.ensure_proof_graph_schema().expect("proof graph schema");
