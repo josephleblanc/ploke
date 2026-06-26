@@ -174,7 +174,7 @@ fn has_matching_admitted_external_summary(row: &ProofFactRow, rows: &[ProofFactR
             && summary.status.as_deref() == Some("admitted")
             && summary.summary_class.as_deref() != Some("opaque_blocked")
             && summary_allows_external_summary_boundary(summary)
-            && external_summary_domain_matches(row, summary)
+            && external_summary_domain_matches(row, summary, rows)
     })
 }
 
@@ -185,15 +185,41 @@ fn summary_allows_external_summary_boundary(summary: &ProofFactRow) -> bool {
         .any(|effect| effect == "external_summary_boundary")
 }
 
-fn external_summary_domain_matches(row: &ProofFactRow, summary: &ProofFactRow) -> bool {
+fn external_summary_domain_matches(
+    row: &ProofFactRow,
+    summary: &ProofFactRow,
+    rows: &[ProofFactRow],
+) -> bool {
+    if let Some(row_domain) = row.build_domain_id.as_deref() {
+        return summary.build_domain_id.as_deref() == Some(row_domain);
+    }
+
+    let call_site_domains = linked_call_site_domains(row, rows);
+    if call_site_domains.is_empty() {
+        return true;
+    }
+    if call_site_domains.len() > 1 {
+        return false;
+    }
     match (
-        row.build_domain_id.as_deref(),
+        call_site_domains.first().copied(),
         summary.build_domain_id.as_deref(),
     ) {
         (Some(row_domain), Some(summary_domain)) => row_domain == summary_domain,
         (Some(_), None) => false,
         (None, _) => true,
     }
+}
+
+fn linked_call_site_domains<'a>(row: &ProofFactRow, rows: &'a [ProofFactRow]) -> BTreeSet<&'a str> {
+    let Some(call_site_id) = row.call_site_id.as_deref() else {
+        return BTreeSet::new();
+    };
+    rows.iter()
+        .filter(|candidate| candidate.kind == "call_site")
+        .filter(|candidate| candidate.call_site_id.as_deref() == Some(call_site_id))
+        .filter_map(|candidate| candidate.build_domain_id.as_deref())
+        .collect()
 }
 
 fn expansion_boundary_gap_reason(row: &ProofFactRow) -> String {

@@ -653,6 +653,45 @@ fn proof_blockers_require_allowed_effect_for_external_summary_discharge() {
 }
 
 #[test]
+fn proof_blockers_require_call_site_domain_match_for_external_summary_discharge() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    let call_site = json!({
+        "fact_kind": "call_site",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "call_site_id": "call:external",
+        "build_domain_id": "bd:main",
+        "caller_def_id": "def:launch",
+        "source_span": {
+            "file": "src/lib.rs",
+            "start_byte": 100,
+            "end_byte": 110
+        },
+        "evidence_use": "proof_only"
+    });
+    let mut resolution = externally_summarized_resolution(Some("external-summary:dep:serde"));
+    resolution
+        .as_object_mut()
+        .expect("resolution object")
+        .remove("blocking_reason");
+    let mut summary = external_summary_record();
+    summary["summary_class"] = json!("audited_no_process_effects");
+    summary["status"] = json!("admitted");
+    summary["build_domain_id"] = json!("bd:other");
+    db.upsert_proof_fact_values(&[call_site, resolution, summary])
+        .expect("import mismatched external summary proof facts");
+
+    let blockers = db.proof_blockers().expect("blocker inspection");
+    assert_eq!(
+        blockers.len(),
+        1,
+        "external summary in a different build domain should not discharge call-site scoped resolution blockers: {blockers:#?}"
+    );
+    assert_eq!(blockers[0].blocker_id, "resolution:call:external");
+    assert_eq!(blockers[0].reason, "external_dependency_summary_missing");
+}
+
+#[test]
 fn proof_context_rows_include_derived_blocker_reasons() {
     let db = Database::new_init().expect("create db");
     db.ensure_proof_graph_schema().expect("proof graph schema");
