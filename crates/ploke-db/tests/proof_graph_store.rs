@@ -438,6 +438,40 @@ fn proof_context_rows_include_derived_blocker_reasons() {
 }
 
 #[test]
+fn proof_graphrag_context_exposes_authority_terms() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    db.upsert_proof_fact_values(&[json!({
+        "fact_kind": "authority",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "authority_fact_id": "authority:handoff:successor",
+        "build_domain_id": "bd:main",
+        "authority_term": "successor",
+        "status": "admitted",
+        "evidence_use": "proof_only",
+        "source_span": {
+            "file": "src/lib.rs",
+            "start_byte": 50,
+            "end_byte": 60
+        }
+    })])
+    .expect("import authority proof fact");
+
+    let rows = db
+        .proof_graphrag_context("authority:handoff")
+        .expect("authority proof context");
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "authority"
+                && row.authority_term.as_deref() == Some("successor")
+                && row.status.as_deref() == Some("admitted")
+                && row.effect_class.as_deref() == Some("successor")
+        }),
+        "proof context should expose authority_term without losing existing checker field: {rows:#?}"
+    );
+}
+
+#[test]
 fn proof_graph_store_retains_blockers_for_graphrag_and_checker_queries() {
     let db = Database::new_init().expect("create db");
     db.ensure_proof_graph_schema().expect("proof graph schema");

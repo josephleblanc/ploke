@@ -311,6 +311,48 @@ async fn proof_context_seed_exposes_derived_blocker_reasons() -> Result<(), Erro
     Ok(())
 }
 
+#[tokio::test]
+async fn proof_context_seed_exposes_authority_terms() -> Result<(), Error> {
+    init_tracing_once();
+
+    let raw = Db::new(MemStorage::default()).expect("in-memory cozo db");
+    raw.initialize().expect("initialize cozo db");
+    let db = Arc::new(Database::new(raw));
+    db.ensure_proof_graph_schema().map_err(Error::from)?;
+    let seed = Uuid::from_u128(0xa17);
+    db.upsert_proof_fact_values(&[serde_json::json!({
+        "fact_kind": "authority",
+        "schema_version": "ploke-proof-facts.v1",
+        "authority_fact_id": seed.to_string(),
+        "build_domain_id": "bd:rag",
+        "authority_term": "successor",
+        "status": "admitted",
+        "evidence_use": "proof_only",
+        "source_span": {
+            "file": "src/lib.rs",
+            "start_byte": 30,
+            "end_byte": 40
+        }
+    })])
+    .map_err(Error::from)?;
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    let proof_context = rag.collect_proof_context(&[(seed, 1.0)])?;
+    let rows = proof_context
+        .get(&seed)
+        .expect("authority seed should receive matching proof context rows");
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "authority"
+                && row.authority_term.as_deref() == Some("successor")
+                && row.status.as_deref() == Some("admitted")
+        }),
+        "RAG proof context should expose authority terms explicitly: {rows:#?}"
+    );
+
+    Ok(())
+}
+
 fn assert_projected_owner_rows(rows: &[ProofContextInfo], owner: Uuid, target: Uuid) {
     let owner = owner.to_string();
     let target = target.to_string();

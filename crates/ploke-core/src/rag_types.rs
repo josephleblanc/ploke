@@ -348,6 +348,8 @@ pub struct ProofContextInfo {
     #[serde(default)]
     pub external_summary_id: Option<String>,
     #[serde(default)]
+    pub authority_term: Option<String>,
+    #[serde(default)]
     pub evidence_use: Option<String>,
     #[serde(default)]
     pub source_file: Option<String>,

@@ -295,6 +295,7 @@ fn row_to_proof_context(row: ProofGraphContextRow) -> ProofContextInfo {
         resolved_def_id: row.resolved_def_id,
         candidate_def_ids: row.candidate_def_ids,
         external_summary_id: row.external_summary_id,
+        authority_term: row.authority_term,
         evidence_use: row.evidence_use,
         source_file: row.source_file,
         start_byte: row.start_byte,

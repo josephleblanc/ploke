@@ -483,6 +483,7 @@ fn format_proof_context(row: &ProofContextInfo) -> String {
         "external_summary",
         row.external_summary_id.as_deref(),
     );
+    push_opt(&mut parts, "authority", row.authority_term.as_deref());
     push_opt(&mut parts, "status", row.status.as_deref());
     push_opt(&mut parts, "blocker", row.blocker_reason.as_deref());
     push_opt(&mut parts, "effect", row.effect_class.as_deref());
