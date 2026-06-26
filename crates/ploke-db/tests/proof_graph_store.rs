@@ -97,6 +97,17 @@ fn expansion_boundary_record() -> serde_json::Value {
     })
 }
 
+fn externally_summarized_boundary(summary_id: Option<&str>) -> serde_json::Value {
+    let mut value = expansion_boundary_record();
+    value["boundary_id"] = json!("boundary:external-summary");
+    value["boundary_kind"] = json!("external_summary");
+    value["expansion_state"] = json!("externally_summarized");
+    if let Some(summary_id) = summary_id {
+        value["external_summary_id"] = json!(summary_id);
+    }
+    value
+}
+
 fn externally_summarized_resolution(summary_id: Option<&str>) -> serde_json::Value {
     let mut value = json!({
         "fact_kind": "call_resolution",
@@ -233,6 +244,50 @@ fn proof_graph_store_rejects_external_summary_without_artifact_identity() {
         db.proof_graphrag_context("")
             .expect("query graph")
             .is_empty()
+    );
+}
+
+#[test]
+fn proof_graph_store_rejects_external_summary_boundary_without_summary_id() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    let mut records = proof_records();
+    records.push(externally_summarized_boundary(None));
+
+    let error = db
+        .upsert_proof_fact_values(&records)
+        .expect_err("externally_summarized expansion_boundary should require external_summary_id");
+    assert!(error.to_string().contains("external_summary_id"));
+    assert!(
+        db.proof_graphrag_context("")
+            .expect("query graph")
+            .is_empty()
+    );
+}
+
+#[test]
+fn proof_graphrag_context_exposes_external_summary_boundary_ids() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    let mut records = proof_records();
+    records.push(externally_summarized_boundary(Some(
+        "external-summary:macro:serde",
+    )));
+    db.upsert_proof_fact_values(&records)
+        .expect("import proof facts");
+
+    let rows = db
+        .proof_graphrag_context("external-summary:macro:serde")
+        .expect("boundary summary proof context");
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "expansion_boundary"
+                && row.fact_id == "boundary:external-summary"
+                && row.status.as_deref() == Some("externally_summarized")
+                && row.detail.as_deref() == Some("external_summary")
+                && row.external_summary_id.as_deref() == Some("external-summary:macro:serde")
+        }),
+        "GraphRAG proof lookup should expose external_summary_id for externally_summarized expansion boundaries: {rows:#?}"
     );
 }
 

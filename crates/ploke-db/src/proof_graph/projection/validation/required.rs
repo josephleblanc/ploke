@@ -57,7 +57,8 @@ pub(in crate::proof_graph::projection) fn validate_required_fields(
                     "expansion_state",
                 ],
             )?;
-            require_source_span(value)
+            require_source_span(value)?;
+            require_external_summary_id_for_state(value, "expansion_state")
         }
         "expanded_item" => {
             require_fields(
@@ -86,7 +87,7 @@ pub(in crate::proof_graph::projection) fn validate_required_fields(
         ),
         "call_resolution" => {
             require_fields(value, &["call_site_id", "resolution_state"])?;
-            require_external_summary_id(value)
+            require_external_summary_id_for_state(value, "resolution_state")
         }
         "external_summary" => {
             require_fields(
@@ -144,8 +145,8 @@ fn require_fields(value: &Value, fields: &[&str]) -> Result<(), DbError> {
     Ok(())
 }
 
-fn require_external_summary_id(value: &Value) -> Result<(), DbError> {
-    if value.get("resolution_state").and_then(Value::as_str) == Some("externally_summarized") {
+fn require_external_summary_id_for_state(value: &Value, state_field: &str) -> Result<(), DbError> {
+    if value.get(state_field).and_then(Value::as_str) == Some("externally_summarized") {
         required_json_string(value, "external_summary_id")?;
     }
     Ok(())
