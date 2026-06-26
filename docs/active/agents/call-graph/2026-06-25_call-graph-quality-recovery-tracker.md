@@ -246,6 +246,9 @@ are not acceptable as a continuing implementation style.
   `from_value` assembly in the root while fact-id/JSON extraction and
   required-field/enum validation live in
   `proof_graph/projection/{extract,validation}.rs`.
+- `proof_graph/projection/validation.rs` is now a thin validation root while
+  required-field checks and enum allow-list checks live in
+  `proof_graph/projection/validation/{required,enums}.rs`.
 - `call_graph.rs` now keeps only the public DB call-graph surface while
   concern modules own row DTOs, call-site/target/status kind decoding,
   receiver decoding, target-family rules, row validation, and query methods:
@@ -402,6 +405,13 @@ are not acceptable as a continuing implementation style.
     passed: 2 passed, 0 failed.
   - `cargo test -p ploke-db --features call_graph unit::call_graph_queries -- --nocapture`
     passed: 34 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+    passed: 93 passed, 0 failed.
+- Proof projection validation table split
+  - `cargo xtask verify-fixtures`
+    passed: all required fixtures present.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection -- --nocapture`
+    passed: 14 passed, 0 failed.
   - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
     passed: 93 passed, 0 failed.
 - RAG call-context collection case split
