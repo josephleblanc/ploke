@@ -804,6 +804,27 @@ fn proof_graph_store_rejects_invalid_enum_like_fields_before_storage() {
 }
 
 #[test]
+fn proof_graph_store_rejects_admitted_opaque_external_summary() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    let mut records = proof_records();
+    let mut summary = external_summary_record();
+    summary["status"] = json!("admitted");
+    summary["summary_class"] = json!("opaque_blocked");
+    records.push(summary);
+
+    let error = db
+        .upsert_proof_fact_values(&records)
+        .expect_err("opaque_blocked external summaries cannot be admitted");
+    assert!(error.to_string().contains("opaque_blocked"));
+    assert!(
+        db.proof_graphrag_context("")
+            .expect("query graph")
+            .is_empty()
+    );
+}
+
+#[test]
 fn proof_graph_store_accepts_all_stable_effect_class_values() {
     for effect_class in [
         "operating_system_process_create",
