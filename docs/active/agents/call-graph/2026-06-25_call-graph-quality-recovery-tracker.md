@@ -179,6 +179,10 @@ are not acceptable as a continuing implementation style.
     incomplete build-domain evidence, and required build/effect schema fields
     moved out of the 1,400-line `proof_graph_store.rs` root into
     `proof_graph_store/proof_domain.rs`.
+  - `bb62de6e test: split external summary store cases`
+  - DB external-summary store tests for artifact metadata, linked resolution
+    references, summary ID validation, discharge scope, and macro/build summary
+    fail-closed behavior moved into `proof_graph_store/external_summary.rs`.
   - Generic external-summary discharge now applies only to
     external-dependency summary gaps. Proc-macro and build-script expansion
     summary gaps retain their specific blockers until those summary semantics
@@ -560,8 +564,14 @@ are not acceptable as a continuing implementation style.
     `cargo test -p ploke-db --features call_graph fixture_projection_marks_real_branch_and_match_dynamic_ambiguity_with_candidates -- --nocapture`
     failed because target-centered proof facts emitted only the matched
     candidate in `candidate_def_ids`.
+  - Implementation commit: `0c43bd40 fix: preserve ambiguous target proof
+    candidates`.
   - `cargo test -p ploke-db --features call_graph fixture_projection_marks_real_branch_and_match_dynamic_ambiguity_with_candidates -- --nocapture`
-    passed: 1 passed, 0 failed.
+    passed: 1 passed, 0 failed; reverified 2026-06-26 after the blocker
+    override.
+  - `cargo test -p ploke-db --features call_graph fixture_proof_symbol_lookup_matches_ambiguous_dynamic_candidate_payloads -- --nocapture`
+    passed: 1 passed, 0 failed; this proves persisted target-centered proof
+    lookup preserves the sibling ambiguous candidate set.
   - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::dynamic_proof -- --nocapture`
     passed: 7 passed, 0 failed.
   - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::target_proof -- --nocapture`
