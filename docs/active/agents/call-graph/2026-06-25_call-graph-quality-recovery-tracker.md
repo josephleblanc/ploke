@@ -71,6 +71,7 @@ are not acceptable as a continuing implementation style.
   - `3284dd45 Add proof domain context lookup`
   - `5fad4c98 Remove dormant call graph semantic storage`
 - Recent proof context test cleanup:
+  - `8f700869 Show proof source line spans`
   - `ea1bf28d Keep macro summary blockers fail closed`
   - `b7168f49 Scope summary discharge by call-site domain`
   - `00ba49b6 Require summary authority for blocker discharge`
@@ -135,6 +136,8 @@ are not acceptable as a continuing implementation style.
     external-dependency summary gaps. Proc-macro and build-script expansion
     summary gaps retain their specific blockers until those summary semantics
     are implemented.
+  - TUI proof-context formatting now includes source line spans alongside byte
+    spans when proof rows carry `line_start`/`line_end`.
   - `97e64623 test: cover proof domain store lookups`
   - `8a6eeae1 test: table drive proof context lookups`
 - Recent transform test cleanup:
