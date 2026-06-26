@@ -71,11 +71,13 @@ are not acceptable as a continuing implementation style.
   - `3284dd45 Add proof domain context lookup`
   - `5fad4c98 Remove dormant call graph semantic storage`
 - Recent proof context test cleanup:
+  - `66bb98b7 Expose derived checker blockers`
   - `68fa7ef8 Expose derived proof blockers`
   - `proof_blockers()` now includes explicit `proof_blocker` facts plus the
     same derived blocker reasons used by invariant checks for unresolved call
     edges, externally summarized resolutions/boundaries, and blocked/rejected
-    external summary artifacts.
+    external summary artifacts. `proof_checker_edges()` now joins those
+    derived unresolved call-edge blockers into checker traversal rows as well.
   - `97e64623 test: cover proof domain store lookups`
   - `8a6eeae1 test: table drive proof context lookups`
 - Recent transform test cleanup:
