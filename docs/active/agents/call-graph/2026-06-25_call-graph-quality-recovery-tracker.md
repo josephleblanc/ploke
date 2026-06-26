@@ -234,10 +234,13 @@ are not acceptable as a continuing implementation style.
   Call-proof projection generation, call-context validation, proof fact JSON
   construction, and owner source-file lookup remain in
   `proof_graph/call_projection.rs`.
-- `proof_graph/invariants.rs` now keeps the shared invariant state,
-  scope-matching, blocker derivation, and finding helpers in the root while the
-  detached-process and crown-ruling invariant evaluators live in
-  `proof_graph/invariants/{detached,crown}.rs`.
+- `proof_graph/invariants/{detached,crown}.rs` own the detached-process and
+  crown-ruling invariant evaluators while `proof_graph/invariants.rs`
+  orchestrates evaluation and builds `ProofInvariantFinding` rows.
+- `proof_graph/invariants.rs` is now a thin evaluator root; process scope
+  derivation, proof blocker reason derivation, authority evidence queries, and
+  evidence predicates live in
+  `proof_graph/invariants/{scope,blockers,authority,evidence}.rs`.
 - `proof_graph/projection.rs` now keeps the proof-fact projection DTO and
   `from_value` assembly in the root while fact-id/JSON extraction and
   required-field/enum validation live in
@@ -367,6 +370,17 @@ are not acceptable as a continuing implementation style.
 - Proof fact projection helper split
   - `cargo xtask verify-fixtures`
     passed: all required fixtures present.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection -- --nocapture`
+    passed: 14 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+    passed: 93 passed, 0 failed.
+- Proof invariant helper split
+  - `cargo xtask verify-fixtures`
+    passed: all required fixtures present.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection::blockers::invariants -- --nocapture`
+    passed: targeted invariant blocker projection test passed.
+  - `cargo test -p ploke-db --features call_graph fixture_projected_external_call_blocker_feeds_proof_invariants -- --nocapture`
+    passed: targeted external blocker fixture invariant test passed.
   - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection -- --nocapture`
     passed: 14 passed, 0 failed.
   - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
