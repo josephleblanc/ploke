@@ -62,7 +62,8 @@ impl ProofFactProjection {
             json_string(value, "status").or_else(|| json_string(value, "expansion_state"));
         projection.detail = json_string(value, "detail")
             .or_else(|| json_string(value, "confidence"))
-            .or_else(|| json_string(value, "target_name"));
+            .or_else(|| json_string(value, "target_name"))
+            .or_else(|| json_string(value, "boundary_kind"));
         if let Some(span) = value.get("source_span") {
             projection.source_file = json_string(span, "file");
             projection.start_byte = json_u32(span, "start_byte")?;

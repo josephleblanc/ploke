@@ -182,6 +182,7 @@ fn proof_graphrag_context_matches_json_only_expansion_boundary_fields() {
                 && row.fact_id == "boundary:macro-rules"
                 && row.status.as_deref() == Some("unresolved")
                 && row.blocker_reason.as_deref() == Some("macro_expansion_not_available")
+                && row.detail.as_deref() == Some("macro_rules_invocation")
         }),
         "GraphRAG proof lookup should match JSON-only boundary_kind fields: {rows:#?}"
     );
