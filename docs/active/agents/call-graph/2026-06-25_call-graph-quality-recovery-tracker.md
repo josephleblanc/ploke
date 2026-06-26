@@ -71,6 +71,7 @@ are not acceptable as a continuing implementation style.
   - `3284dd45 Add proof domain context lookup`
   - `5fad4c98 Remove dormant call graph semantic storage`
 - Recent proof context test cleanup:
+  - `00ba49b6 Require summary authority for blocker discharge`
   - `35f10904 Discharge admitted external summary blockers`
   - `a1199145 Expose proof effect metadata`
   - `f42fba3e Expose proof summary metadata`
@@ -121,6 +122,10 @@ are not acceptable as a continuing implementation style.
     missing-summary blockers for `externally_summarized` call-resolution and
     expansion-boundary rows. Blocked/rejected summaries and unlinked summaries
     still fail closed.
+  - External-summary discharge also requires the admitted linked artifact to
+    authorize `external_summary_boundary` in `allowed_effects`; admitted
+    summaries with unrelated allowed effects retain the missing-summary
+    blockers.
   - `97e64623 test: cover proof domain store lookups`
   - `8a6eeae1 test: table drive proof context lookups`
 - Recent transform test cleanup:
