@@ -299,6 +299,12 @@ async fn request_code_context_ui_payload_reports_context_carrier_counts() -> col
         .iter()
         .map(|part| part.call_context.len())
         .sum::<usize>();
+    let expected_call_blockers = result
+        .context
+        .iter()
+        .flat_map(|part| part.call_context.iter())
+        .filter(|call| call.status != CallStatusKind::Resolved)
+        .count();
     let expected_type_context = result
         .context
         .iter()
@@ -314,6 +320,12 @@ async fn request_code_context_ui_payload_reports_context_carrier_counts() -> col
         .iter()
         .map(|part| part.proof_context.len())
         .sum::<usize>();
+    let expected_proof_blockers = result
+        .context
+        .iter()
+        .flat_map(|part| part.proof_context.iter())
+        .filter(|proof| proof.blocker_reason.is_some())
+        .count();
 
     assert_eq!(
         ui_field(payload, "type_context"),
@@ -324,12 +336,20 @@ async fn request_code_context_ui_payload_reports_context_carrier_counts() -> col
         expected_call_context.to_string()
     );
     assert_eq!(
+        ui_field(payload, "call_blockers"),
+        expected_call_blockers.to_string()
+    );
+    assert_eq!(
         ui_field(payload, "call_expansion"),
         expected_call_expansion.to_string()
     );
     assert_eq!(
         ui_field(payload, "proof_context"),
         expected_proof_context.to_string()
+    );
+    assert_eq!(
+        ui_field(payload, "proof_blockers"),
+        expected_proof_blockers.to_string()
     );
 
     Ok(())

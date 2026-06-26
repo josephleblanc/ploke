@@ -1,5 +1,6 @@
 use ploke_core::rag_types::{
-    AssembledContext, AssembledMeta, ConciseContext, ContextStats, RequestCodeContextResult,
+    AssembledContext, AssembledMeta, CallStatusKind, ConciseContext, ContextStats,
+    RequestCodeContextResult,
 };
 use ploke_db::get_by_id::{GetNodeInfo, NodePaths};
 
@@ -197,7 +198,16 @@ fn summarize_request_code_context_result(
     }
 }
 
-fn context_carrier_counts(result: &RequestCodeContextResult) -> (usize, usize, usize, usize) {
+struct ContextCarrierCounts {
+    type_context: usize,
+    call_context: usize,
+    call_blockers: usize,
+    call_expansion: usize,
+    proof_context: usize,
+    proof_blockers: usize,
+}
+
+fn context_carrier_counts(result: &RequestCodeContextResult) -> ContextCarrierCounts {
     let type_context = result
         .context
         .iter()
@@ -208,6 +218,12 @@ fn context_carrier_counts(result: &RequestCodeContextResult) -> (usize, usize, u
         .iter()
         .map(|part| part.call_context.len())
         .sum();
+    let call_blockers = result
+        .context
+        .iter()
+        .flat_map(|part| part.call_context.iter())
+        .filter(|call| call.status != CallStatusKind::Resolved)
+        .count();
     let call_expansion = result
         .context
         .iter()
@@ -218,7 +234,20 @@ fn context_carrier_counts(result: &RequestCodeContextResult) -> (usize, usize, u
         .iter()
         .map(|part| part.proof_context.len())
         .sum();
-    (type_context, call_context, call_expansion, proof_context)
+    let proof_blockers = result
+        .context
+        .iter()
+        .flat_map(|part| part.proof_context.iter())
+        .filter(|proof| proof.blocker_reason.is_some())
+        .count();
+    ContextCarrierCounts {
+        type_context,
+        call_context,
+        call_blockers,
+        call_expansion,
+        proof_context,
+        proof_blockers,
+    }
 }
 
 // --- GAT-based tool impl ---
@@ -379,8 +408,7 @@ impl super::Tool for RequestCodeContextGat {
         if rag.proof_context_degraded() {
             apply_proof_context_degraded_note(&mut result);
         }
-        let (type_context, call_context, call_expansion, proof_context) =
-            context_carrier_counts(&result);
+        let counts = context_carrier_counts(&result);
         let mut ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
             .with_field("search_term", result.search_term.as_str())
             .with_field(
@@ -390,10 +418,12 @@ impl super::Tool for RequestCodeContextGat {
             .with_field("token_budget_total", token_budget_total.to_string())
             .with_field("top_k", result.top_k.to_string())
             .with_field("returned", result.context.len().to_string())
-            .with_field("type_context", type_context.to_string())
-            .with_field("call_context", call_context.to_string())
-            .with_field("call_expansion", call_expansion.to_string())
-            .with_field("proof_context", proof_context.to_string());
+            .with_field("type_context", counts.type_context.to_string())
+            .with_field("call_context", counts.call_context.to_string())
+            .with_field("call_blockers", counts.call_blockers.to_string())
+            .with_field("call_expansion", counts.call_expansion.to_string())
+            .with_field("proof_context", counts.proof_context.to_string())
+            .with_field("proof_blockers", counts.proof_blockers.to_string());
         if let Some(note) = result.note.as_ref() {
             let details = std::iter::once(note.as_str().to_string())
                 .chain(
