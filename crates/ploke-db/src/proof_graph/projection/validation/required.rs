@@ -88,6 +88,24 @@ pub(in crate::proof_graph::projection) fn validate_required_fields(
             require_fields(value, &["call_site_id", "resolution_state"])?;
             require_external_summary_id(value)
         }
+        "external_summary" => {
+            require_fields(
+                value,
+                &[
+                    "external_summary_id",
+                    "build_domain_id",
+                    "summary_class",
+                    "artifact_hash",
+                    "version",
+                    "review_method",
+                    "scope_of_validity",
+                    "required_containment",
+                    "invalidation_conditions",
+                    "status",
+                ],
+            )?;
+            require_json_string_array(value, "allowed_effects")
+        }
         "effect_seed" => {
             require_fields(
                 value,
@@ -163,4 +181,18 @@ fn require_json_bool(value: &Value, field: &str) -> Result<(), DbError> {
         .ok_or_else(|| {
             DbError::QueryConstruction(format!("proof fact JSON missing bool field {field}"))
         })
+}
+
+fn require_json_string_array(value: &Value, field: &str) -> Result<(), DbError> {
+    let Some(items) = value.get(field).and_then(Value::as_array) else {
+        return Err(DbError::QueryConstruction(format!(
+            "proof fact JSON missing string array field {field}"
+        )));
+    };
+    if items.is_empty() || items.iter().any(|item| item.as_str().is_none()) {
+        return Err(DbError::QueryConstruction(format!(
+            "proof fact JSON field {field} must be a non-empty string array"
+        )));
+    }
+    Ok(())
 }

@@ -27,33 +27,9 @@ pub(in crate::proof_graph::projection) fn validate_enum_fields(
         "expansion_state",
         &["expanded", "unresolved", "externally_summarized", "blocked"],
     )?;
-    validate_optional_enum(
-        value,
-        "effect_class",
-        &[
-            "operating_system_process_create",
-            "operating_system_process_replace",
-            "operating_system_process_configure",
-            "operating_system_process_wait",
-            "operating_system_process_kill",
-            "operating_system_process_reap",
-            "async_task_spawn",
-            "async_task_join",
-            "async_task_abort",
-            "authority_mint",
-            "authority_retire",
-            "authority_lock",
-            "authority_unlock",
-            "history_open_block",
-            "history_seal_block",
-            "history_append_block",
-            "surface_measure",
-            "surface_digest_compare",
-            "durable_evidence_write",
-            "durable_evidence_read",
-            "external_summary_boundary",
-        ],
-    )?;
+    validate_optional_enum(value, "effect_class", EFFECT_CLASSES)?;
+    validate_optional_enum_array(value, "allowed_effects", EFFECT_CLASSES)?;
+    validate_optional_enum(value, "summary_class", SUMMARY_CLASSES)?;
     validate_optional_enum(
         value,
         "authority_term",
@@ -117,6 +93,38 @@ const PROOF_BLOCKER_REASONS: &[&str] = &[
     "rustc_invocation_evidence_missing",
 ];
 
+const EFFECT_CLASSES: &[&str] = &[
+    "operating_system_process_create",
+    "operating_system_process_replace",
+    "operating_system_process_configure",
+    "operating_system_process_wait",
+    "operating_system_process_kill",
+    "operating_system_process_reap",
+    "async_task_spawn",
+    "async_task_join",
+    "async_task_abort",
+    "authority_mint",
+    "authority_retire",
+    "authority_lock",
+    "authority_unlock",
+    "history_open_block",
+    "history_seal_block",
+    "history_append_block",
+    "surface_measure",
+    "surface_digest_compare",
+    "durable_evidence_write",
+    "durable_evidence_read",
+    "external_summary_boundary",
+];
+
+const SUMMARY_CLASSES: &[&str] = &[
+    "analyzed_source",
+    "audited_no_process_effects",
+    "audited_bounded_process_effects",
+    "opaque_blocked",
+    "allowed_only_under_containment",
+];
+
 fn validate_optional_enum(value: &Value, field: &str, allowed: &[&str]) -> Result<(), DbError> {
     let Some(raw) = value.get(field) else {
         return Ok(());
@@ -133,4 +141,32 @@ fn validate_optional_enum(value: &Value, field: &str, allowed: &[&str]) -> Resul
             "proof fact JSON field {field} has invalid value {text}"
         )))
     }
+}
+
+fn validate_optional_enum_array(
+    value: &Value,
+    field: &str,
+    allowed: &[&str],
+) -> Result<(), DbError> {
+    let Some(raw) = value.get(field) else {
+        return Ok(());
+    };
+    let Some(items) = raw.as_array() else {
+        return Err(DbError::QueryConstruction(format!(
+            "proof fact JSON field {field} is not an array"
+        )));
+    };
+    for item in items {
+        let Some(text) = item.as_str() else {
+            return Err(DbError::QueryConstruction(format!(
+                "proof fact JSON field {field} contains a non-string value"
+            )));
+        };
+        if !allowed.contains(&text) {
+            return Err(DbError::QueryConstruction(format!(
+                "proof fact JSON field {field} has invalid value {text}"
+            )));
+        }
+    }
+    Ok(())
 }

@@ -111,6 +111,25 @@ fn externally_summarized_resolution(summary_id: Option<&str>) -> serde_json::Val
     value
 }
 
+fn external_summary_record() -> serde_json::Value {
+    json!({
+        "fact_kind": "external_summary",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "external_summary_id": "external-summary:dep:serde",
+        "build_domain_id": "bd:main",
+        "summary_class": "opaque_blocked",
+        "artifact_hash": "sha256:serde-artifact",
+        "version": "serde 1.0.0",
+        "review_method": "manual-review",
+        "scope_of_validity": "dependency serde under bd:main",
+        "allowed_effects": ["external_summary_boundary"],
+        "required_containment": "none",
+        "invalidation_conditions": "artifact hash or proof policy changes",
+        "status": "blocked",
+        "evidence_use": "proof_only"
+    })
+}
+
 fn assert_process_context(label: &str, hits: &[ProofGraphContextRow]) {
     assert!(
         hits.iter()
@@ -127,6 +146,62 @@ fn assert_process_context(label: &str, hits: &[ProofGraphContextRow]) {
         hits.iter()
             .any(|hit| hit.evidence_use.as_deref() == Some("navigation_only")),
         "{label} should include linked navigation-only helper rows: {hits:#?}"
+    );
+}
+
+#[test]
+fn proof_graph_store_accepts_external_summary_artifacts() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    let mut records = proof_records();
+    records.push(external_summary_record());
+    db.upsert_proof_fact_values(&records)
+        .expect("import proof facts");
+
+    let by_id = db
+        .proof_graphrag_context("external-summary:dep:serde")
+        .expect("external summary proof context");
+    assert!(
+        by_id.iter().any(|row| {
+            row.kind == "external_summary"
+                && row.fact_id == "external-summary:dep:serde"
+                && row.build_domain_id.as_deref() == Some("bd:main")
+                && row.status.as_deref() == Some("blocked")
+        }),
+        "GraphRAG proof lookup should expose stored external summary artifacts: {by_id:#?}"
+    );
+
+    let by_class = db
+        .proof_graphrag_context("opaque_blocked")
+        .expect("external summary class proof context");
+    assert!(
+        by_class.iter().any(
+            |row| row.kind == "external_summary" && row.fact_id == "external-summary:dep:serde"
+        ),
+        "GraphRAG proof lookup should match JSON-only external summary class fields: {by_class:#?}"
+    );
+}
+
+#[test]
+fn proof_graph_store_rejects_external_summary_without_artifact_identity() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    let mut records = proof_records();
+    let mut summary = external_summary_record();
+    summary
+        .as_object_mut()
+        .expect("external summary object")
+        .remove("artifact_hash");
+    records.push(summary);
+
+    let error = db
+        .upsert_proof_fact_values(&records)
+        .expect_err("external_summary without artifact_hash should reject the whole batch");
+    assert!(error.to_string().contains("artifact_hash"));
+    assert!(
+        db.proof_graphrag_context("")
+            .expect("query graph")
+            .is_empty()
     );
 }
 
@@ -495,6 +570,24 @@ fn proof_graph_store_rejects_invalid_enum_like_fields_before_storage() {
         .upsert_proof_fact_values(&effect_records)
         .expect_err("non-schema effect_class alias should be rejected before storage");
     assert!(effect_error.to_string().contains("effect_class"));
+
+    let mut summary_records = proof_records();
+    let mut summary = external_summary_record();
+    summary["summary_class"] = json!("trusted_common_dependency");
+    summary_records.push(summary);
+    let summary_error = db
+        .upsert_proof_fact_values(&summary_records)
+        .expect_err("non-schema summary_class alias should be rejected before storage");
+    assert!(summary_error.to_string().contains("summary_class"));
+
+    let mut allowed_effect_records = proof_records();
+    let mut summary = external_summary_record();
+    summary["allowed_effects"] = json!(["shell_command"]);
+    allowed_effect_records.push(summary);
+    let allowed_effect_error = db
+        .upsert_proof_fact_values(&allowed_effect_records)
+        .expect_err("non-schema allowed_effects value should be rejected before storage");
+    assert!(allowed_effect_error.to_string().contains("allowed_effects"));
 }
 
 #[test]

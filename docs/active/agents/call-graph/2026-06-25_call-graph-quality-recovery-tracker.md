@@ -191,8 +191,10 @@ are not acceptable as a continuing implementation style.
   candidates visible to downstream model-facing context.
 - `externally_summarized` proof `call_resolution` facts now fail closed without
   `external_summary_id`; the same JSON-backed proof context path exposes that
-  ID through DB, RAG, and TUI payloads. Real external summary artifacts and
-  admission semantics remain open.
+  ID through DB, RAG, and TUI payloads. The DB proof store now accepts strict
+  `external_summary` artifacts with summary class, artifact identity, scope,
+  allowed effects, containment, and invalidation metadata, but admission
+  semantics remain open.
 - `call_resolution.rs` now keeps the resolver orchestration and remaining path,
   method, constructor, and lookup logic while dynamic-call resolution lives in
   `resolve/call_resolution/dynamic.rs`.
