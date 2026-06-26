@@ -249,6 +249,7 @@ fn expanded_rag_part_displays_call_context_details() {
     assert!(line_text(&item.title).contains("call IncomingCaller"));
     assert!(line_text(&item.title).contains("calls 9"));
     assert!(line_text(&item.title).contains("proofs 1"));
+    assert!(line_text(&item.title).contains("proof blockers 1"));
 
     let details = item
         .details

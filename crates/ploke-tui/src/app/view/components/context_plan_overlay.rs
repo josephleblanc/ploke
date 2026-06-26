@@ -951,11 +951,23 @@ fn build_display_items(
                 } else {
                     format!(", proofs {}", part.proof_context.len())
                 };
+                let proof_blockers = part
+                    .proof_context
+                    .iter()
+                    .filter(|proof| proof.blocker_reason.is_some())
+                    .count();
+                let proof_blocker_suffix = if proof_blockers == 0 {
+                    String::new()
+                } else {
+                    format!(", proof blockers {proof_blockers}")
+                };
                 let suffix = format!(
                     " ({}, score {:.3}{}) — ~{} tok",
                     part.kind.to_static_str(),
                     part.score,
-                    format_args!("{type_suffix}{expansion_suffix}{call_suffix}{proof_suffix}"),
+                    format_args!(
+                        "{type_suffix}{expansion_suffix}{call_suffix}{proof_suffix}{proof_blocker_suffix}"
+                    ),
                     part.estimated_tokens
                 );
                 let title_path =
