@@ -7401,6 +7401,43 @@ pub(crate) fn select_successor_for_profile(
     Ok(selection)
 }
 
+pub(crate) fn emit_selection_decision_for_backend(
+    manifest_path: &Path,
+    parent_identity: &ParentIdentity,
+    decision: &SuccessorDecision,
+    material: &SelectionSealMaterial,
+    backend: profile::EvalStorageBackend,
+) -> Result<(), PrepareError> {
+    let db_path = eval_store::prototype1_eval_store_db_path(manifest_path);
+    match backend {
+        profile::EvalStorageBackend::Fs => Ok(()),
+        profile::EvalStorageBackend::DbMirror | profile::EvalStorageBackend::Database => {
+            if db_path.is_file() {
+                persist_selection_decision_to_owner_db(
+                    &db_path,
+                    parent_identity,
+                    decision,
+                    material,
+                )
+            } else {
+                Ok(())
+            }
+        }
+        profile::EvalStorageBackend::DualStrict => {
+            if !db_path.is_file() {
+                return Err(PrepareError::DatabaseSetup {
+                    phase: "eval_selection_decision_db_missing",
+                    detail: format!(
+                        "dual-strict selection persistence requires owner eval DB at '{}'",
+                        db_path.display()
+                    ),
+                });
+            }
+            persist_selection_decision_to_owner_db(&db_path, parent_identity, decision, material)
+        }
+    }
+}
+
 fn emit_selection_decision_if_owner_db_exists(
     manifest_path: &Path,
     parent_identity: &ParentIdentity,
@@ -7411,6 +7448,15 @@ fn emit_selection_decision_if_owner_db_exists(
     if !db_path.is_file() {
         return Ok(());
     }
+    persist_selection_decision_to_owner_db(&db_path, parent_identity, decision, material)
+}
+
+fn persist_selection_decision_to_owner_db(
+    db_path: &Path,
+    parent_identity: &ParentIdentity,
+    decision: &SuccessorDecision,
+    material: &SelectionSealMaterial,
+) -> Result<(), PrepareError> {
     let entry = material.clone().into_entry(decision.clone())?;
     let evidence = eval_store::SelectionDecisionEvidence {
         campaign_id: parent_identity.campaign_id().clone(),
@@ -7423,7 +7469,7 @@ fn emit_selection_decision_if_owner_db_exists(
         entry,
         recorded_at: Some(Utc::now().to_rfc3339()),
     };
-    eval_store::write_selection_decision_to_owner_db(&db_path, evidence).map_err(|source| {
+    eval_store::write_selection_decision_to_owner_db(db_path, evidence).map_err(|source| {
         PrepareError::DatabaseSetup {
             phase: "eval_selection_decision_put",
             detail: format!(

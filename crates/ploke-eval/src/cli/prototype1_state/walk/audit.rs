@@ -44,6 +44,11 @@ const EVAL_RELS: &[(&str, &str)] = &[
     ("eval_channel_receipt", "receipt_id"),
     ("eval_import_event", "import_id"),
     ("eval_trace_event", "trace_event_id"),
+    ("eval_agent_turn", "turn_id"),
+    ("eval_agent_turn_event", "event_id"),
+    ("eval_model_exchange", "exchange_id"),
+    ("eval_message_event", "message_event_id"),
+    ("eval_tool_event", "tool_event_id"),
     ("eval_evaluation", "evaluation_id"),
     ("eval_evaluation_instance", "evaluation_id"),
     ("eval_continuation_decision", "decision_id"),
@@ -837,6 +842,38 @@ fn transition_checklist(
                     ),
                     "admitted/rejected broad harness results feed child-plan membership",
                 ),
+                item(
+                    "agent-turn bundles",
+                    optional_count_side(
+                        root.clone(),
+                        |path| count_dirs_named(path, "turn-live"),
+                        "not used when broad headless TUI does not run",
+                    ),
+                    db_side_when_file_present(
+                        database,
+                        "eval_agent_turn",
+                        &root,
+                        |root| count_dirs_named(root, "turn-live"),
+                        "not used when broad headless TUI does not run",
+                    ),
+                    "headless-TUI turn-live bundles mirror into queryable eval_agent_turn rows",
+                ),
+                item(
+                    "agent-turn events",
+                    optional_count_side(
+                        root.clone(),
+                        |path| count_dirs_named(path, "turn-live"),
+                        "not used when broad headless TUI does not run",
+                    ),
+                    db_side_when_file_present(
+                        database,
+                        "eval_agent_turn_event",
+                        &root,
+                        |root| count_dirs_named(root, "turn-live"),
+                        "not used when broad headless TUI does not run",
+                    ),
+                    "turn summaries produce ordered event rows for conversation/tool timelines",
+                ),
             ],
         ),
         checklist_transition(
@@ -1533,6 +1570,19 @@ fn db_side_for_file(
     db_side(database, relation, compare, DbCompare::AnyRows)
 }
 
+fn db_side_when_file_present(
+    database: &DatabaseAudit,
+    relation: &'static str,
+    proto_root: &Option<PathBuf>,
+    count: impl Fn(&Path) -> Result<i64, String>,
+    empty_detail: &'static str,
+) -> PersistenceSide {
+    match proto_root.as_deref().and_then(|root| count(root).ok()) {
+        Some(value) if value > 0 => db_side(database, relation, None, DbCompare::AnyRows),
+        _ => PersistenceSide::not_applicable(empty_detail),
+    }
+}
+
 fn db_count_status(count: i64, compare: DbCompare) -> PersistenceStatus {
     match compare {
         DbCompare::AnyRows => {
@@ -1705,6 +1755,30 @@ fn count_dirs(path: &Path) -> Result<i64, String> {
         if meta.is_dir() {
             total += 1;
             total += count_dirs(&entry.path())?;
+        }
+    }
+    Ok(total)
+}
+
+fn count_dirs_named(path: &Path, name: &str) -> Result<i64, String> {
+    let meta = match fs::metadata(path) {
+        Ok(meta) => meta,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(source) => return Err(source.to_string()),
+    };
+    if !meta.is_dir() {
+        return Ok(0);
+    }
+    let mut total = i64::from(
+        path.file_name()
+            .and_then(|file| file.to_str())
+            .is_some_and(|file| file == name || file.ends_with(&format!(".{name}"))),
+    );
+    for entry in fs::read_dir(path).map_err(|source| source.to_string())? {
+        let entry = entry.map_err(|source| source.to_string())?;
+        let meta = entry.metadata().map_err(|source| source.to_string())?;
+        if meta.is_dir() {
+            total += count_dirs_named(&entry.path(), name)?;
         }
     }
     Ok(total)

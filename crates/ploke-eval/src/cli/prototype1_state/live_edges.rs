@@ -23,15 +23,16 @@ use crate::{
             cli_facing::{
                 ParentSelection, PlannedChildren, Prototype1StateReport, Prototype1StateRunShape,
                 append_parent_target_sample, campaign_manifest_path_for_id,
-                current_dir_as_repo_root, ensure_prototype1_baseline_closure_state,
-                establish_parent_baseline_for_id, initialize_prototype1_parent_identity,
-                live_successor_continuation_decision, outcome_for_report,
-                prototype1_state_report_path, prototype1_state_successor_handoff_mode,
-                prototype1_state_transition_error, record_active_prototype1_monitor_target,
-                resolve_campaign_config_for_id, resolve_child_plan_for_id,
-                resolve_parent_policy_budget, resolve_prototype1_parent_identity,
-                resolve_prototype1_state_campaign, run_adaptive_child_fanout, run_child_fanout,
-                same_existing_path, select_artifact_for_handoff, traversal_metric_inputs,
+                current_dir_as_repo_root, emit_selection_decision_for_backend,
+                ensure_prototype1_baseline_closure_state, establish_parent_baseline_for_id,
+                initialize_prototype1_parent_identity, live_successor_continuation_decision,
+                outcome_for_report, prototype1_state_report_path,
+                prototype1_state_successor_handoff_mode, prototype1_state_transition_error,
+                record_active_prototype1_monitor_target, resolve_campaign_config_for_id,
+                resolve_child_plan_for_id, resolve_parent_policy_budget,
+                resolve_prototype1_parent_identity, resolve_prototype1_state_campaign,
+                run_adaptive_child_fanout, run_child_fanout, same_existing_path,
+                select_artifact_for_handoff, traversal_metric_inputs,
             },
             eval_store::{
                 ConfiguredEvalStore, EvalStore, ParentStartedEvidence,
@@ -778,6 +779,15 @@ pub(crate) async fn r10_to_r11(
         };
         (child_outcomes, selection)
     };
+    if let Some((decision, material)) = selection.as_ref() {
+        emit_selection_decision_for_backend(
+            &parts.manifest_path,
+            &parent_identity,
+            decision,
+            material,
+            parts.run_shape.eval_storage_backend,
+        )?;
+    }
     parts.facts.child_outcomes = Some(child_outcomes);
     parts.facts.selection = selection;
     parts.facts.rejected_attempt_payloads = None;

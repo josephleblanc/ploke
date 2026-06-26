@@ -7863,6 +7863,23 @@ seed = 0
             "source=CurrentGeneration",
         ],
     ));
+
+    fs::remove_file(&db_path).expect("remove owner eval DB for strict-missing check");
+    let err = crate::cli::prototype1_state::cli_facing::emit_selection_decision_for_backend(
+        &manifest_path,
+        &parent_identity,
+        &decision,
+        &material,
+        profile::EvalStorageBackend::DualStrict,
+    )
+    .expect_err("dual-strict selection persistence requires owner eval DB");
+    match err {
+        PrepareError::DatabaseSetup { phase, detail } => {
+            assert_eq!(phase, "eval_selection_decision_db_missing");
+            assert!(detail.contains("dual-strict selection persistence requires owner eval DB"));
+        }
+        other => panic!("unexpected strict selection DB error: {other:?}"),
+    }
 }
 
 #[test]
