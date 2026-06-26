@@ -132,6 +132,9 @@ are not acceptable as a continuing implementation style.
   - Discharge now also checks build-domain scope through the summarized row or
     its linked `call_site` fact. A summary from another build domain no longer
     clears call-site scoped `externally_summarized` blockers.
+  - Call-site scoped `externally_summarized` resolutions now also require a
+    linked `call_site` fact to prove their build-domain scope before an
+    admitted external summary can discharge the derived missing-summary blocker.
   - Generic external-summary discharge now applies only to
     external-dependency summary gaps. Proc-macro and build-script expansion
     summary gaps retain their specific blockers until those summary semantics
@@ -271,8 +274,11 @@ are not acceptable as a continuing implementation style.
   payloads now expose those fields. Externally summarized expansion boundaries
   now derive summary-missing blocker reasons by boundary kind, and
   blocked/rejected summary artifacts block by summary class; incoherent
-  admitted opaque artifacts are rejected before storage. Discharging linked
-  summary blockers from admitted artifacts remains open.
+  admitted opaque artifacts are rejected before storage. Linked admitted
+  external summaries discharge external-dependency summary blockers only when
+  they authorize `external_summary_boundary`, match direct or linked
+  build-domain scope, and fail closed for call-site scoped resolutions whose
+  linked `call_site` domain fact is absent.
 - `call_resolution.rs` now keeps the resolver orchestration and remaining path,
   method, constructor, and lookup logic while dynamic-call resolution lives in
   `resolve/call_resolution/dynamic.rs`.
