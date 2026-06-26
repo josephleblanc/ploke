@@ -34,6 +34,8 @@ are not acceptable as a continuing implementation style.
     `ploke-rag/src/core/unit_tests/tests/call_context/collection.rs`.
   - RAG call-context expansion tests were moved into
     `ploke-rag/src/core/unit_tests/tests/call_context/expansion.rs`.
+  - RAG synthetic call-context insertion helpers were moved under
+    `ploke-rag/src/core/unit_tests/tests/call_context/collection/helpers.rs`.
 - Recent coverage inventory cleanup:
   - Added `2026-06-25_call-graph-coverage-inventory.md` as the compact layer inventory.
 - Recent production pattern cleanup:
@@ -261,6 +263,10 @@ are not acceptable as a continuing implementation style.
   `unit_tests/tests/call_context/expansion.rs`, leaving the parent RAG unit
   test module with only shared call-context helpers before the next helper
   extraction.
+- RAG synthetic call-context insertion helpers now live beside their only
+  collection-test consumer in `unit_tests/tests/call_context/collection/`,
+  leaving `unit_tests.rs` as the shared setup/query surface instead of the
+  owner of call-context fixture builders.
 - Resolved dynamic proof fixture tests now share a dynamic proof batch helper
   that preserves fresh-DB isolation per proof group while moving repeated
   target lookup, proof projection, and owner-edge assertions out of each test.
@@ -316,6 +322,11 @@ are not acceptable as a continuing implementation style.
 - RAG call-context expansion module split
   - `cargo test -p ploke-rag --features call_graph call_context_expansion -- --nocapture`
     passed: 9 passed, 0 failed.
+  - `cargo test -p ploke-rag --features call_graph call_context -- --nocapture`
+    passed: 25 passed, 0 failed.
+- RAG call-context collection helper extraction
+  - `cargo test -p ploke-rag --features call_graph call_context_collection -- --nocapture`
+    passed: 7 passed, 0 failed.
   - `cargo test -p ploke-rag --features call_graph call_context -- --nocapture`
     passed: 25 passed, 0 failed.
 - `056705b8 test: split local target prevalidation cases`
