@@ -2706,25 +2706,34 @@ fn advance_select(diagnosis: Diagnosis) -> Result<(), PrepareError> {
     )?;
     if let Some((decision, material)) = selection {
         let selected = material.selected_artifact()?;
+        let continuation = live_successor_continuation_decision(
+            &diagnosis.context.manifest_path,
+            &diagnosis.context.parent_identity,
+            &diagnosis.context.admitted_profile.profile.search_policy(),
+            &decision,
+            &material,
+            selected.node(),
+        )?;
+        let record = if continuation.disposition.allows_successor() {
+            successor::Record::selected_with_decision(
+                diagnosis.context.campaign_id.clone(),
+                selected.node().node_id.clone(),
+                continuation,
+                decision,
+            )
+        } else {
+            successor::Record::stopped(
+                diagnosis.context.campaign_id.clone(),
+                selected.node().node_id.clone(),
+                continuation,
+                decision,
+            )
+        };
         let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(
             &diagnosis.context.manifest_path,
         ));
         journal
-            .append(JournalEntry::Successor(
-                successor::Record::selected_with_decision(
-                    diagnosis.context.campaign_id.clone(),
-                    selected.node().node_id.clone(),
-                    live_successor_continuation_decision(
-                        &diagnosis.context.manifest_path,
-                        &diagnosis.context.parent_identity,
-                        &diagnosis.context.admitted_profile.profile.search_policy(),
-                        &decision,
-                        &material,
-                        selected.node(),
-                    )?,
-                    decision,
-                ),
-            ))
+            .append(JournalEntry::Successor(record))
             .map_err(|err| PrepareError::InvalidBatchSelection {
                 detail: format!("failed to append successor selection record: {err}"),
             })?;

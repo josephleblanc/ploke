@@ -935,19 +935,6 @@ pub(crate) fn r12_to_r13(
         ))
         .success();
         parts
-            .journal
-            .append(JournalEntry::Successor(
-                SuccessorRecord::selected_with_decision(
-                    parts.campaign_id.clone(),
-                    node.node_id.clone(),
-                    decision.clone(),
-                    selection_decision.clone(),
-                ),
-            ))
-            .map_err(|err| {
-                prototype1_state_transition_error("prototype1_successor_selection", err.to_string())
-            })?;
-        parts
             .facts
             .report
             .as_mut()
@@ -962,6 +949,22 @@ pub(crate) fn r12_to_r13(
 
         // ANCHOR: prototype1_live_edge_r12_handoff_branch
         if let Some((selected_artifact, selection_entry)) = handoff {
+            parts
+                .journal
+                .append(JournalEntry::Successor(
+                    SuccessorRecord::selected_with_decision(
+                        parts.campaign_id.clone(),
+                        node.node_id.clone(),
+                        decision.clone(),
+                        selection_decision.clone(),
+                    ),
+                ))
+                .map_err(|err| {
+                    prototype1_state_transition_error(
+                        "prototype1_successor_selection",
+                        err.to_string(),
+                    )
+                })?;
             match spawn_and_handoff_prototype1_successor(
                 &parts.campaign_id,
                 selected_artifact,
