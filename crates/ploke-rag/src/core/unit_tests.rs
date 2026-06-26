@@ -23,7 +23,7 @@ mod tests {
     #[cfg(feature = "call_graph")]
     use ploke_core::rag_types::{
         CallCalleeInfo, CallContextInfo, CallExpansionKind, CallReceiverInfo, CallResolutionKind,
-        CallSiteKind, CallStatusKind, CallTargetKind, ContextPart,
+        CallSiteKind, CallStatusKind, CallTargetKind, ContextPart, ProofContextInfo,
     };
     use ploke_core::{CrateId, EmbeddingData, RetrievalScope};
     use ploke_db::get_by_id::{GetNodeInfo, NodePaths};
@@ -1601,6 +1601,8 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
 
     #[cfg(feature = "call_graph")]
     mod call_context;
+    #[cfg(feature = "call_graph")]
+    mod proof_context;
 
     #[cfg(feature = "call_graph")]
     fn assert_incoming_expansion(part: &ContextPart, call: &CallContextInfo, target_id: Uuid) {

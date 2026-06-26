@@ -14,12 +14,13 @@ use ploke_core::rag_types::AssembledContext;
 use ploke_core::rag_types::{
     CallCalleeInfo, CallContextInfo, CallExpansionInfo, CallExpansionKind, CallReceiverInfo,
     CallResolutionKind as RagCallResolutionKind, CallSiteKind as RagCallSiteKind,
-    CallStatusKind as RagCallStatusKind, CallTargetInfo, CallTargetKind,
+    CallStatusKind as RagCallStatusKind, CallTargetInfo, CallTargetKind, ProofContextInfo,
 };
 #[cfg(feature = "call_graph")]
 use ploke_db::{
     CallContextOptions, CallContextRelation, CallContextRow, CallContextSeed, CallReceiver,
-    CallRelationKind, CallResolutionKind, CallSiteKind, CallStatusKind,
+    CallRelationKind, CallResolutionKind, CallSiteKind, CallStatusKind as DbCallStatusKind,
+    ProofGraphContextRow, ProofGraphStore,
 };
 use ploke_embed::indexer::EmbeddingProcessor;
 use ploke_embed::runtime::EmbeddingRuntime;
@@ -82,6 +83,8 @@ pub struct RagConfig {
     pub type_context: TypeContextConfig,
     #[cfg(feature = "call_graph")]
     pub call_context: CallContextConfig,
+    #[cfg(feature = "call_graph")]
+    pub proof_context: ProofContextConfig,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -133,6 +136,25 @@ impl Default for CallContextConfig {
     }
 }
 
+#[cfg(feature = "call_graph")]
+#[derive(Debug, Clone, Copy)]
+pub struct ProofContextConfig {
+    pub enabled: bool,
+    pub max_seed_hits: usize,
+    pub max_rows_per_part: usize,
+}
+
+#[cfg(feature = "call_graph")]
+impl Default for ProofContextConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_seed_hits: 12,
+            max_rows_per_part: 12,
+        }
+    }
+}
+
 impl Default for RagConfig {
     fn default() -> Self {
         Self {
@@ -149,6 +171,8 @@ impl Default for RagConfig {
             type_context: TypeContextConfig::default(),
             #[cfg(feature = "call_graph")]
             call_context: CallContextConfig::default(),
+            #[cfg(feature = "call_graph")]
+            proof_context: ProofContextConfig::default(),
         }
     }
 }
@@ -258,6 +282,30 @@ fn row_to_call_context(
 }
 
 #[cfg(feature = "call_graph")]
+fn row_to_proof_context(row: ProofGraphContextRow) -> ProofContextInfo {
+    ProofContextInfo {
+        fact_id: row.fact_id,
+        kind: row.kind,
+        build_domain_id: row.build_domain_id,
+        call_site_id: row.call_site_id,
+        call_edge_id: row.call_edge_id,
+        caller_def_id: row.caller_def_id,
+        callee_def_id: row.callee_def_id,
+        resolution_state: row.resolution_state,
+        evidence_use: row.evidence_use,
+        source_file: row.source_file,
+        start_byte: row.start_byte,
+        end_byte: row.end_byte,
+        line_start: row.line_start,
+        line_end: row.line_end,
+        effect_class: row.effect_class,
+        blocker_reason: row.blocker_reason,
+        status: row.status,
+        detail: row.detail,
+    }
+}
+
+#[cfg(feature = "call_graph")]
 fn site_kind(kind: CallSiteKind) -> RagCallSiteKind {
     match kind {
         CallSiteKind::Path => RagCallSiteKind::Path,
@@ -339,13 +387,13 @@ fn target_kind(kind: CallRelationKind) -> CallTargetKind {
 }
 
 #[cfg(feature = "call_graph")]
-fn status_kind(kind: CallStatusKind) -> RagCallStatusKind {
+fn status_kind(kind: DbCallStatusKind) -> RagCallStatusKind {
     match kind {
-        CallStatusKind::Resolved => RagCallStatusKind::Resolved,
-        CallStatusKind::Unresolved => RagCallStatusKind::Unresolved,
-        CallStatusKind::Ambiguous => RagCallStatusKind::Ambiguous,
-        CallStatusKind::External => RagCallStatusKind::External,
-        CallStatusKind::Unsupported => RagCallStatusKind::Unsupported,
+        DbCallStatusKind::Resolved => RagCallStatusKind::Resolved,
+        DbCallStatusKind::Unresolved => RagCallStatusKind::Unresolved,
+        DbCallStatusKind::Ambiguous => RagCallStatusKind::Ambiguous,
+        DbCallStatusKind::External => RagCallStatusKind::External,
+        DbCallStatusKind::Unsupported => RagCallStatusKind::Unsupported,
     }
 }
 
@@ -378,6 +426,8 @@ pub struct RagService {
     type_context_degraded: bool,
     #[cfg(feature = "call_graph")]
     call_context_degraded: bool,
+    #[cfg(feature = "call_graph")]
+    proof_context_degraded: bool,
 }
 
 impl RagService {
@@ -391,6 +441,8 @@ impl RagService {
         let type_context_degraded = Self::apply_type_context_gate(&db, &mut cfg)?;
         #[cfg(feature = "call_graph")]
         let call_context_degraded = Self::apply_call_context_gate(&db, &mut cfg)?;
+        #[cfg(feature = "call_graph")]
+        let proof_context_degraded = Self::apply_proof_context_gate(&db, &mut cfg)?;
         Ok(Self {
             db,
             dense_embedder,
@@ -400,6 +452,8 @@ impl RagService {
             type_context_degraded,
             #[cfg(feature = "call_graph")]
             call_context_degraded,
+            #[cfg(feature = "call_graph")]
+            proof_context_degraded,
         })
     }
 
@@ -429,6 +483,21 @@ impl RagService {
             "call-context payloads disabled: active database is missing populated call graph projection"
         );
         cfg.call_context.enabled = false;
+        Ok(true)
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn apply_proof_context_gate(db: &Database, cfg: &mut RagConfig) -> Result<bool, RagError> {
+        if !cfg.proof_context.enabled {
+            return Ok(false);
+        }
+        if db.has_proof_graph_facts()? {
+            return Ok(false);
+        }
+        tracing::warn!(
+            "proof-context payloads disabled: active database is missing populated proof facts"
+        );
+        cfg.proof_context.enabled = false;
         Ok(true)
     }
 
@@ -489,6 +558,11 @@ impl RagService {
     #[cfg(feature = "call_graph")]
     pub fn call_context_degraded(&self) -> bool {
         self.call_context_degraded
+    }
+
+    #[cfg(feature = "call_graph")]
+    pub fn proof_context_degraded(&self) -> bool {
+        self.proof_context_degraded
     }
 
     /// Convenience constructor for tests with an in-memory database and mock embedder.
@@ -998,6 +1072,46 @@ impl RagService {
     }
 
     #[cfg(feature = "call_graph")]
+    fn collect_proof_context(
+        &self,
+        hits: &[(Uuid, f32)],
+    ) -> Result<HashMap<Uuid, Vec<ProofContextInfo>>, RagError> {
+        let cfg = self.cfg.proof_context;
+        if !cfg.enabled || cfg.max_seed_hits == 0 || cfg.max_rows_per_part == 0 || hits.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let mut out = HashMap::new();
+        for &(id, _) in hits.iter().take(cfg.max_seed_hits) {
+            let mut seen = HashSet::new();
+            let mut rows = self
+                .db
+                .proof_symbol_lookup(&id.to_string())?
+                .into_iter()
+                .map(row_to_proof_context)
+                .filter(|row| seen.insert(row.fact_id.clone()))
+                .collect::<Vec<_>>();
+            rows.sort_by(|left, right| {
+                (
+                    left.call_site_id.as_deref().unwrap_or(""),
+                    left.kind.as_str(),
+                    left.fact_id.as_str(),
+                )
+                    .cmp(&(
+                        right.call_site_id.as_deref().unwrap_or(""),
+                        right.kind.as_str(),
+                        right.fact_id.as_str(),
+                    ))
+            });
+            rows.truncate(cfg.max_rows_per_part);
+            if !rows.is_empty() {
+                out.insert(id, rows);
+            }
+        }
+        Ok(out)
+    }
+
+    #[cfg(feature = "call_graph")]
     fn expand_hits_with_call_context(
         &self,
         hits: &[(Uuid, f32)],
@@ -1212,6 +1326,8 @@ impl RagService {
             let required = call_expansion.keys().copied().collect::<HashSet<_>>();
             self.collect_call_context_with_required(&final_hits, &required)?
         };
+        #[cfg(feature = "call_graph")]
+        let proof_context = self.collect_proof_context(&final_hits)?;
 
         // 2) Assemble context
         let io = self
@@ -1233,6 +1349,7 @@ impl RagService {
                 &type_context,
                 &call_context,
                 &call_expansion,
+                &proof_context,
             )
             .await;
         }

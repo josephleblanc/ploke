@@ -17,6 +17,8 @@ pub struct ContextPart {
     pub call_expansion: Option<CallExpansionInfo>,
     #[serde(default)]
     pub call_context: Vec<CallContextInfo>,
+    #[serde(default)]
+    pub proof_context: Vec<ProofContextInfo>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -323,6 +325,44 @@ pub struct CallContextInfo {
     pub targets: Vec<CallTargetInfo>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialOrd, Ord, Hash, PartialEq)]
+pub struct ProofContextInfo {
+    pub fact_id: String,
+    pub kind: String,
+    #[serde(default)]
+    pub build_domain_id: Option<String>,
+    #[serde(default)]
+    pub call_site_id: Option<String>,
+    #[serde(default)]
+    pub call_edge_id: Option<String>,
+    #[serde(default)]
+    pub caller_def_id: Option<String>,
+    #[serde(default)]
+    pub callee_def_id: Option<String>,
+    #[serde(default)]
+    pub resolution_state: Option<String>,
+    #[serde(default)]
+    pub evidence_use: Option<String>,
+    #[serde(default)]
+    pub source_file: Option<String>,
+    #[serde(default)]
+    pub start_byte: Option<u32>,
+    #[serde(default)]
+    pub end_byte: Option<u32>,
+    #[serde(default)]
+    pub line_start: Option<u32>,
+    #[serde(default)]
+    pub line_end: Option<u32>,
+    #[serde(default)]
+    pub effect_class: Option<String>,
+    #[serde(default)]
+    pub blocker_reason: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub detail: Option<String>,
+}
+
 impl Modality {
     pub fn to_static_str(self) -> &'static str {
         self.into()
@@ -383,6 +423,7 @@ impl From<ContextPart> for ConciseContext {
             type_context: value.type_context,
             call_expansion: value.call_expansion,
             call_context: value.call_context,
+            proof_context: value.proof_context,
         }
     }
 }
@@ -431,6 +472,8 @@ pub struct ConciseContext {
     pub call_expansion: Option<CallExpansionInfo>,
     #[serde(default)]
     pub call_context: Vec<CallContextInfo>,
+    #[serde(default)]
+    pub proof_context: Vec<ProofContextInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

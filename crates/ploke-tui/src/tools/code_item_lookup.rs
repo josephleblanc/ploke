@@ -291,6 +291,7 @@ for a more fuzzy search."#
             type_context: None,
             call_expansion: None,
             call_context: Vec::new(),
+            proof_context: Vec::new(),
         };
 
         let summary = format!("Resolved item in {}", concise_context.file_path.as_ref());

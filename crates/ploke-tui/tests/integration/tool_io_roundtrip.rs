@@ -15,7 +15,7 @@ use ploke_core::rag_types::{
     ApplyCodeEditResult, AssembledMeta, CallCalleeInfo, CallContextInfo, CallExpansionInfo,
     CallExpansionKind, CallReceiverInfo, CallResolutionKind, CallSiteKind, CallStatusKind,
     CallTargetInfo, CallTargetKind, CanonPath, ConciseContext, ContextPart, ContextPartKind,
-    GetFileMetadataResult, Modality, NodeFilepath, RequestCodeContextArgs,
+    GetFileMetadataResult, Modality, NodeFilepath, ProofContextInfo, RequestCodeContextArgs,
     RequestCodeContextResult, TypeContextInfo, TypeContextKind,
 };
 use uuid::Uuid;
@@ -204,6 +204,26 @@ fn serde_roundtrip_request_code_context() {
         target_id: dynamic_target,
         distance: 1,
     };
+    let proof_context = vec![ProofContextInfo {
+        fact_id: "call-edge:1".to_string(),
+        kind: "call_edge".to_string(),
+        build_domain_id: Some("bd:test".to_string()),
+        call_site_id: Some("call:site".to_string()),
+        call_edge_id: Some("edge:1".to_string()),
+        caller_def_id: Some("def:caller".to_string()),
+        callee_def_id: Some("def:callee".to_string()),
+        resolution_state: Some("resolved".to_string()),
+        evidence_use: Some("proof_only".to_string()),
+        source_file: Some("src/lib.rs".to_string()),
+        start_byte: Some(1),
+        end_byte: Some(10),
+        line_start: Some(1),
+        line_end: Some(1),
+        effect_class: Some("call".to_string()),
+        blocker_reason: None,
+        status: Some("resolved".to_string()),
+        detail: None,
+    }];
     let source = ContextPart {
         id: Uuid::from_u128(2),
         file_path: NodeFilepath("id://dummy".to_string()),
@@ -216,6 +236,7 @@ fn serde_roundtrip_request_code_context() {
         type_context: Some(type_context),
         call_expansion: Some(call_expansion),
         call_context: call_context.clone(),
+        proof_context: proof_context.clone(),
     };
     let path_site = Uuid::from_u128(19);
     let path_call = CallContextInfo {
@@ -251,6 +272,7 @@ fn serde_roundtrip_request_code_context() {
         type_context: None,
         call_expansion: Some(path_expansion),
         call_context: vec![path_call.clone()],
+        proof_context: Vec::new(),
     };
     let mut result = RequestCodeContextResult::from_assembled(
         vec![source, path_source],
@@ -273,6 +295,7 @@ fn serde_roundtrip_request_code_context() {
         type_context: Some(type_context),
         call_expansion: Some(call_expansion),
         call_context,
+        proof_context,
     };
     let path_expected = ConciseContext {
         id: Uuid::from_u128(20),
@@ -282,6 +305,7 @@ fn serde_roundtrip_request_code_context() {
         type_context: None,
         call_expansion: Some(path_expansion),
         call_context: vec![path_call],
+        proof_context: Vec::new(),
     };
     assert_eq!(
         result.context,

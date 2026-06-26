@@ -16,7 +16,7 @@ use ploke_core::{
     ArcStr, RetrievalScope,
     rag_types::{
         AssembledContext, CallCalleeInfo, CallContextInfo, CallExpansionInfo, CallReceiverInfo,
-        CallTargetInfo, ContextPart,
+        CallTargetInfo, ContextPart, ProofContextInfo,
     },
 };
 use tokio::sync::oneshot;
@@ -337,8 +337,16 @@ fn reformat_context_to_system(ctx_part: ContextPart) -> String {
             format_call_context_block(&ctx_part.call_context, "  ", 8)
         )
     };
+    let proof_context = if ctx_part.proof_context.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n{}",
+            format_proof_context_block(&ctx_part.proof_context, "  ", 8)
+        )
+    };
     format!(
-        "file_path: {}\ncanon_path: {}\nkind: {}\nscore: {:.3}{}{}{}\ncode_snippet:\n{}",
+        "file_path: {}\ncanon_path: {}\nkind: {}\nscore: {:.3}{}{}{}{}\ncode_snippet:\n{}",
         ctx_part.file_path.as_ref(),
         ctx_part.canon_path.as_ref(),
         ctx_part.kind.to_static_str(),
@@ -346,6 +354,7 @@ fn reformat_context_to_system(ctx_part: ContextPart) -> String {
         type_context,
         call_expansion,
         call_context,
+        proof_context,
         snippet
     )
 }
@@ -428,6 +437,59 @@ fn format_targets(targets: &[CallTargetInfo]) -> String {
         parts.push(format!("... {hidden} more"));
     }
     format!("targets [{}]", parts.join(", "))
+}
+
+pub(crate) fn format_proof_context_block(
+    rows: &[ProofContextInfo],
+    indent: &str,
+    limit: usize,
+) -> String {
+    if rows.is_empty() {
+        return String::new();
+    }
+
+    let mut out = format!("proof_context: {} proof fact(s)", rows.len());
+    let limit = limit.max(1);
+    for row in rows.iter().take(limit) {
+        out.push('\n');
+        out.push_str(indent);
+        out.push_str("- ");
+        out.push_str(&format_proof_context(row));
+    }
+    let hidden = rows.len().saturating_sub(limit);
+    if hidden > 0 {
+        out.push('\n');
+        out.push_str(indent);
+        out.push_str("- ... ");
+        out.push_str(&hidden.to_string());
+        out.push_str(" more proof fact(s)");
+    }
+    out
+}
+
+fn format_proof_context(row: &ProofContextInfo) -> String {
+    let mut parts = vec![row.kind.clone()];
+    push_opt(&mut parts, "site", row.call_site_id.as_deref());
+    push_opt(&mut parts, "edge", row.call_edge_id.as_deref());
+    push_opt(&mut parts, "caller", row.caller_def_id.as_deref());
+    push_opt(&mut parts, "callee", row.callee_def_id.as_deref());
+    push_opt(&mut parts, "state", row.resolution_state.as_deref());
+    push_opt(&mut parts, "status", row.status.as_deref());
+    push_opt(&mut parts, "blocker", row.blocker_reason.as_deref());
+    push_opt(&mut parts, "evidence", row.evidence_use.as_deref());
+    push_opt(&mut parts, "domain", row.build_domain_id.as_deref());
+    if let (Some(file), Some(start), Some(end)) =
+        (row.source_file.as_deref(), row.start_byte, row.end_byte)
+    {
+        parts.push(format!("source={file}:{start}..{end}"));
+    }
+    parts.join(", ")
+}
+
+fn push_opt(parts: &mut Vec<String>, label: &str, value: Option<&str>) {
+    if let Some(value) = value {
+        parts.push(format!("{label}={value}"));
+    }
 }
 
 fn format_callee(callee: &CallCalleeInfo) -> String {
@@ -541,6 +603,7 @@ fn build_context_plan(
                 type_context: part.type_context,
                 call_expansion: part.call_expansion,
                 call_context: part.call_context.clone(),
+                proof_context: part.proof_context.clone(),
             });
         }
     }

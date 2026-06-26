@@ -3,7 +3,7 @@ use crate::llm::manager::events::ContextPlan;
 use ploke_core::rag_types::{
     CallCalleeInfo, CallContextInfo, CallExpansionInfo, CallExpansionKind, CallReceiverInfo,
     CallResolutionKind, CallSiteKind, CallStatusKind, CallTargetInfo, CallTargetKind,
-    ContextPartKind,
+    ContextPartKind, ProofContextInfo,
 };
 
 fn line_text(line: &Line<'_>) -> String {
@@ -165,6 +165,26 @@ fn expanded_rag_part_displays_call_context_details() {
                     }],
                 },
             ],
+            proof_context: vec![ProofContextInfo {
+                fact_id: "call-edge:1".to_string(),
+                kind: "call_edge".to_string(),
+                build_domain_id: Some("bd:fixture-call-graph".to_string()),
+                call_site_id: Some("call:site".to_string()),
+                call_edge_id: Some("edge:1".to_string()),
+                caller_def_id: Some("def:caller".to_string()),
+                callee_def_id: Some("def:callee".to_string()),
+                resolution_state: Some("resolved".to_string()),
+                evidence_use: Some("proof_only".to_string()),
+                source_file: Some("src/lib.rs".to_string()),
+                start_byte: Some(13),
+                end_byte: Some(28),
+                line_start: Some(1),
+                line_end: Some(1),
+                effect_class: Some("call".to_string()),
+                blocker_reason: None,
+                status: Some("resolved".to_string()),
+                detail: None,
+            }],
         }],
         rag_stats: None,
     };
@@ -196,6 +216,7 @@ fn expanded_rag_part_displays_call_context_details() {
     assert!(item.expanded);
     assert!(line_text(&item.title).contains("call IncomingCaller"));
     assert!(line_text(&item.title).contains("calls 9"));
+    assert!(line_text(&item.title).contains("proofs 1"));
 
     let details = item
         .details
@@ -205,6 +226,10 @@ fn expanded_rag_part_displays_call_context_details() {
         .join("\n");
     assert!(details.contains("call_context: 9 outgoing call site(s)"));
     assert!(details.contains("call_expansion: IncomingCaller"));
+    assert!(details.contains("proof_context: 1 proof fact(s)"));
+    assert!(details.contains("call_edge"));
+    assert!(details.contains("site=call:site"));
+    assert!(details.contains("domain=bd:fixture-call-graph"));
     assert!(details.contains("Path @ 10..12: path Ok => Unsupported, targets []"));
     assert!(
         details.contains(&format!(
@@ -310,6 +335,7 @@ fn expanded_rag_part_displays_external_call_context_details() {
                     targets: Vec::new(),
                 },
             ],
+            proof_context: Vec::new(),
         }],
         rag_stats: None,
     };
@@ -399,6 +425,7 @@ fn expanded_rag_part_displays_trait_dispatch_call_context_details() {
                     relation: CallTargetKind::Method,
                 }],
             }],
+            proof_context: Vec::new(),
         }],
         rag_stats: None,
     };
@@ -538,6 +565,7 @@ fn expanded_rag_part_displays_callable_path_call_context_details() {
                     targets: Vec::new(),
                 },
             ],
+            proof_context: Vec::new(),
         }],
         rag_stats: None,
     };

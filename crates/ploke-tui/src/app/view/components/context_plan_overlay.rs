@@ -20,7 +20,9 @@ use crate::app::view::widgets::expanding_list::{ExpandingItem, ExpandingList, Ex
 use crate::chat_history::{ContextTokens, Message, MessageKind, TokenKind};
 use crate::context_plan::{ContextPlanHistory, ContextPlanSnapshot};
 use crate::llm::manager::events::{ContextExclusionReason, ContextPlanMessage, ContextPlanRagPart};
-use crate::rag::context::{format_call_context_block, format_call_expansion};
+use crate::rag::context::{
+    format_call_context_block, format_call_expansion, format_proof_context_block,
+};
 use crate::ui_theme::UiTheme;
 use unicode_width::UnicodeWidthChar;
 
@@ -944,11 +946,16 @@ fn build_display_items(
                 } else {
                     format!(", calls {}", part.call_context.len())
                 };
+                let proof_suffix = if part.proof_context.is_empty() {
+                    String::new()
+                } else {
+                    format!(", proofs {}", part.proof_context.len())
+                };
                 let suffix = format!(
                     " ({}, score {:.3}{}) — ~{} tok",
                     part.kind.to_static_str(),
                     part.score,
-                    format_args!("{type_suffix}{expansion_suffix}{call_suffix}"),
+                    format_args!("{type_suffix}{expansion_suffix}{call_suffix}{proof_suffix}"),
                     part.estimated_tokens
                 );
                 let title_path =
@@ -984,6 +991,15 @@ fn build_display_items(
                         let call_context = format_call_context_block(&part.call_context, "  ", 8);
                         details.extend(
                             call_context
+                                .lines()
+                                .map(|line| Line::from(format!("    {line}"))),
+                        );
+                    }
+                    if !part.proof_context.is_empty() {
+                        let proof_context =
+                            format_proof_context_block(&part.proof_context, "  ", 8);
+                        details.extend(
+                            proof_context
                                 .lines()
                                 .map(|line| Line::from(format!("    {line}"))),
                         );

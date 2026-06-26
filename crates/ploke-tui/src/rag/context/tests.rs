@@ -19,7 +19,8 @@ use crate::tools::{ToolName, ToolUiPayload};
 use ploke_core::rag_types::{
     CallCalleeInfo, CallContextInfo, CallExpansionInfo, CallExpansionKind, CallReceiverInfo,
     CallResolutionKind, CallSiteKind, CallStatusKind, CallTargetInfo, CallTargetKind, CanonPath,
-    ContextPartKind, ContextStats, Modality, NodeFilepath, TypeContextInfo, TypeContextKind,
+    ContextPartKind, ContextStats, Modality, NodeFilepath, ProofContextInfo, TypeContextInfo,
+    TypeContextKind,
 };
 use std::collections::HashMap;
 
@@ -52,6 +53,7 @@ fn context_plan_is_stable_for_fixed_inputs() {
             type_context: None,
             call_expansion: None,
             call_context: Vec::new(),
+            proof_context: Vec::new(),
         }],
         stats: ContextStats {
             total_tokens: 10,
@@ -101,6 +103,7 @@ fn reformat_context_to_system_truncates_and_includes_meta() {
         }),
         call_expansion: None,
         call_context: Vec::new(),
+        proof_context: Vec::new(),
     };
 
     let rendered = reformat_context_to_system(part);
@@ -146,6 +149,7 @@ fn reformat_context_to_system_includes_call_context_details() {
                 relation: CallTargetKind::DynamicFunction,
             }],
         }],
+        proof_context: Vec::new(),
     };
 
     let rendered = reformat_context_to_system(part);
@@ -155,6 +159,55 @@ fn reformat_context_to_system_includes_call_context_details() {
     assert!(rendered.contains("Dynamic @ 20..29: dynamic"));
     assert!(rendered.contains("Resolved(LocalExact)"));
     assert!(rendered.contains(&format!("DynamicFunction:{target}")));
+}
+
+#[test]
+fn reformat_context_to_system_includes_proof_context_details() {
+    let part = ContextPart {
+        id: Uuid::from_u128(40),
+        file_path: NodeFilepath::new("src/main.rs".to_string()),
+        canon_path: CanonPath::new("crate::main".to_string()),
+        ranges: vec![],
+        kind: ContextPartKind::Code,
+        text: "fn main() { local_target(); }".to_string(),
+        score: 0.42,
+        modality: Modality::Dense,
+        type_context: None,
+        call_expansion: None,
+        call_context: Vec::new(),
+        proof_context: vec![ProofContextInfo {
+            fact_id: "call-edge:1".to_string(),
+            kind: "call_edge".to_string(),
+            build_domain_id: Some("bd:fixture-call-graph".to_string()),
+            call_site_id: Some("call:site".to_string()),
+            call_edge_id: Some("edge:1".to_string()),
+            caller_def_id: Some("def:caller".to_string()),
+            callee_def_id: Some("def:callee".to_string()),
+            resolution_state: Some("resolved".to_string()),
+            evidence_use: Some("proof_only".to_string()),
+            source_file: Some("src/main.rs".to_string()),
+            start_byte: Some(12),
+            end_byte: Some(26),
+            line_start: Some(1),
+            line_end: Some(1),
+            effect_class: Some("call".to_string()),
+            blocker_reason: None,
+            status: Some("resolved".to_string()),
+            detail: None,
+        }],
+    };
+
+    let rendered = reformat_context_to_system(part);
+
+    assert!(rendered.contains("proof_context: 1 proof fact(s)"));
+    assert!(rendered.contains("call_edge"));
+    assert!(rendered.contains("site=call:site"));
+    assert!(rendered.contains("edge=edge:1"));
+    assert!(rendered.contains("caller=def:caller"));
+    assert!(rendered.contains("callee=def:callee"));
+    assert!(rendered.contains("state=resolved"));
+    assert!(rendered.contains("domain=bd:fixture-call-graph"));
+    assert!(rendered.contains("source=src/main.rs:12..26"));
 }
 
 #[test]
@@ -686,6 +739,7 @@ fn context_plan_golden_snapshot_from_chat_history() {
                 }),
                 call_expansion: None,
                 call_context: Vec::new(),
+                proof_context: Vec::new(),
             },
             ContextPart {
                 id: Uuid::from_u128(101),
@@ -705,6 +759,7 @@ fn context_plan_golden_snapshot_from_chat_history() {
                     distance: 1,
                 }),
                 call_context: Vec::new(),
+                proof_context: Vec::new(),
             },
         ],
         stats: ContextStats {

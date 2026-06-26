@@ -306,6 +306,7 @@ for a more fuzzy search."#
             type_context: None,
             call_expansion: None,
             call_context: Vec::new(),
+            proof_context: Vec::new(),
         };
 
         let node_edge_info = NodeEdgeInfo {

@@ -91,6 +91,7 @@ pub struct ProofInvariantFinding {
 pub trait ProofGraphStore {
     fn ensure_proof_graph_schema(&self) -> Result<(), DbError>;
     fn upsert_proof_fact_values(&self, values: &[Value]) -> Result<(), DbError>;
+    fn has_proof_graph_facts(&self) -> Result<bool, DbError>;
     fn proof_symbol_lookup(&self, symbol: &str) -> Result<Vec<ProofGraphContextRow>, DbError>;
     fn proof_graphrag_context(&self, query: &str) -> Result<Vec<ProofGraphContextRow>, DbError>;
     fn proof_domain_context(
@@ -113,6 +114,10 @@ impl ProofGraphStore for Database {
 
     fn upsert_proof_fact_values(&self, values: &[Value]) -> Result<(), DbError> {
         Database::upsert_proof_fact_values(self, values)
+    }
+
+    fn has_proof_graph_facts(&self) -> Result<bool, DbError> {
+        Database::has_proof_graph_facts(self)
     }
 
     fn proof_symbol_lookup(&self, symbol: &str) -> Result<Vec<ProofGraphContextRow>, DbError> {

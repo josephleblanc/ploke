@@ -8,6 +8,25 @@ use super::{
 };
 
 impl Database {
+    pub fn has_proof_graph_facts(&self) -> Result<bool, DbError> {
+        let rows = self.raw_query("::relations")?;
+        let registered = rows
+            .rows
+            .iter()
+            .filter_map(|row| row.first().and_then(|value| value.get_str()))
+            .collect::<BTreeSet<_>>();
+        if !registered.contains("proof_fact") {
+            return Ok(false);
+        }
+
+        let populated = self.raw_query(
+            r#"?[fact_id] :=
+                *proof_fact { fact_id }
+            :limit 1"#,
+        )?;
+        Ok(!populated.rows.is_empty())
+    }
+
     pub(super) fn proof_symbol_lookup(
         &self,
         symbol: &str,
