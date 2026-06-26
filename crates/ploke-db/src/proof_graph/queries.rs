@@ -208,14 +208,26 @@ fn linked_context_rows(
                     .as_ref()
                     .is_some_and(|id| linked_call_sites.contains(id))
         })
-        .map(|row| proof_context_row(row, &all_rows))
+        .flat_map(|row| proof_context_rows(row, &all_rows))
         .collect()
 }
 
-fn proof_context_row(row: ProofFactRow, rows: &[ProofFactRow]) -> ProofGraphContextRow {
-    let mut context = ProofGraphContextRow::from(row.clone());
-    if context.blocker_reason.is_none() {
-        context.blocker_reason = derived_proof_blocker_reason(&row, rows);
+fn proof_context_rows(row: ProofFactRow, rows: &[ProofFactRow]) -> Vec<ProofGraphContextRow> {
+    if row.blocker_reason.is_some() {
+        return vec![ProofGraphContextRow::from(row)];
     }
-    context
+
+    let reasons = derived_proof_blocker_reasons(&row, rows);
+    if reasons.is_empty() {
+        return vec![ProofGraphContextRow::from(row)];
+    }
+
+    reasons
+        .into_iter()
+        .map(|reason| {
+            let mut context = ProofGraphContextRow::from(row.clone());
+            context.blocker_reason = Some(reason);
+            context
+        })
+        .collect()
 }

@@ -1281,6 +1281,19 @@ fn proof_blockers_report_incomplete_build_domain_evidence() {
         }),
         "build-domain blockers should stay scoped to the build domain: {blockers:#?}"
     );
+
+    let context = db
+        .proof_symbol_lookup("bd:main")
+        .expect("build-domain proof context");
+    let context_reasons = context
+        .iter()
+        .filter(|row| row.kind == "build_domain")
+        .filter_map(|row| row.blocker_reason.as_deref())
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        context_reasons, reasons,
+        "proof context should expose every derived build-domain blocker: {context:#?}"
+    );
 }
 
 #[test]

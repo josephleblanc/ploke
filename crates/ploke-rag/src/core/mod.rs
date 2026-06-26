@@ -1144,18 +1144,20 @@ impl RagService {
                 .proof_symbol_lookup(&id.to_string())?
                 .into_iter()
                 .map(row_to_proof_context)
-                .filter(|row| seen.insert(row.fact_id.clone()))
+                .filter(|row| seen.insert((row.fact_id.clone(), row.blocker_reason.clone())))
                 .collect::<Vec<_>>();
             rows.sort_by(|left, right| {
                 (
                     left.call_site_id.as_deref().unwrap_or(""),
                     left.kind.as_str(),
                     left.fact_id.as_str(),
+                    left.blocker_reason.as_deref().unwrap_or(""),
                 )
                     .cmp(&(
                         right.call_site_id.as_deref().unwrap_or(""),
                         right.kind.as_str(),
                         right.fact_id.as_str(),
+                        right.blocker_reason.as_deref().unwrap_or(""),
                     ))
             });
             rows.truncate(cfg.max_rows_per_part);
