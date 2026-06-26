@@ -712,6 +712,11 @@ fn proof_invariant_checker_blocks_external_summary_expansion_boundaries() {
             None,
             63,
         ));
+        if boundary_kind != "external_summary" {
+            let mut summary = external_summary("admitted", "audited_no_process_effects");
+            summary["external_summary_id"] = json!("external-summary:test");
+            records.push(summary);
+        }
         let db = db_with(records);
 
         let findings = db

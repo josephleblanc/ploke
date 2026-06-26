@@ -94,6 +94,7 @@ fn derived_gap_reason(row: &ProofFactRow, rows: &[ProofFactRow]) -> Option<Strin
         {
             let default_reason = expansion_boundary_gap_reason(row);
             if row.status.as_deref() == Some("externally_summarized")
+                && default_reason == "external_dependency_summary_missing"
                 && external_summary_gap_is_discharged(row, rows, &default_reason)
             {
                 None
