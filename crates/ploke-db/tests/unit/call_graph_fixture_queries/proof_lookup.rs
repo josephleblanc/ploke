@@ -1,5 +1,4 @@
 use super::*;
-use ploke_db::ProofGraphContextRow;
 
 #[test]
 fn fixture_proof_context_queries_link_real_resolved_call_facts() -> Result<(), DbError> {
@@ -20,7 +19,7 @@ fn fixture_proof_context_queries_link_real_resolved_call_facts() -> Result<(), D
         ("build domain", db.proof_domain_context(domain)?),
     ];
     for (label, rows) in cases {
-        assert_linked_resolved_facts(label, &rows, owner, site, target);
+        assert_resolved_site_proof(label, &rows, owner, site, target);
     }
 
     Ok(())
@@ -65,32 +64,7 @@ fn fixture_proof_symbol_lookup_links_target_centered_local_target_facts() -> Res
     );
 
     for (owner, site) in [(path_owner, path_site), (dynamic_owner, dynamic_site)] {
-        let owner_id = owner.to_string();
-        let target_id = target.to_string();
-        let site_id = site.to_string();
-        let site_rows = rows
-            .iter()
-            .filter(|fact| fact.call_site_id.as_deref() == Some(site_id.as_str()))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            site_rows.len(),
-            3,
-            "symbol lookup should include linked call_site, call_edge, and call_resolution facts for {site}: {site_rows:#?}"
-        );
-        assert_eq!(proof_kind_count(&site_rows, "call_site"), 1);
-        assert_eq!(proof_kind_count(&site_rows, "call_edge"), 1);
-        assert_eq!(proof_kind_count(&site_rows, "call_resolution"), 1);
-
-        let site_fact = proof_fact_for_kind(&site_rows, "call_site");
-        assert_eq!(site_fact.caller_def_id.as_deref(), Some(owner_id.as_str()));
-
-        let edge = proof_fact_for_kind(&site_rows, "call_edge");
-        assert_eq!(edge.caller_def_id.as_deref(), Some(owner_id.as_str()));
-        assert_eq!(edge.callee_def_id.as_deref(), Some(target_id.as_str()));
-        assert_eq!(edge.blocker_reason, None);
-
-        let resolution = proof_fact_for_kind(&site_rows, "call_resolution");
-        assert_eq!(resolution.blocker_reason, None);
+        assert_resolved_site_proof("target-centered symbol lookup", &rows, owner, site, target);
     }
 
     Ok(())
@@ -121,11 +95,7 @@ fn fixture_proof_symbol_lookup_matches_ambiguous_dynamic_candidate_payloads() ->
     );
 
     let rows = db.proof_symbol_lookup(&target.to_string())?;
-    let site_id = site.to_string();
-    let site_rows = rows
-        .iter()
-        .filter(|fact| fact.call_site_id.as_deref() == Some(site_id.as_str()))
-        .collect::<Vec<_>>();
+    let site_rows = proof_rows_for_site(&rows, site);
     assert_eq!(
         site_rows.len(),
         2,
@@ -147,39 +117,4 @@ fn fixture_proof_symbol_lookup_matches_ambiguous_dynamic_candidate_payloads() ->
     );
 
     Ok(())
-}
-
-fn assert_linked_resolved_facts(
-    label: &str,
-    rows: &[ProofGraphContextRow],
-    owner: Uuid,
-    site: Uuid,
-    target: Uuid,
-) {
-    let owner_id = owner.to_string();
-    let target_id = target.to_string();
-    let site_id = site.to_string();
-    let site_rows = rows
-        .iter()
-        .filter(|fact| fact.call_site_id.as_deref() == Some(site_id.as_str()))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        site_rows.len(),
-        3,
-        "{label} should return linked call_site, call_edge, and call_resolution facts for {site}: {site_rows:#?}"
-    );
-    assert_eq!(proof_kind_count(&site_rows, "call_site"), 1);
-    assert_eq!(proof_kind_count(&site_rows, "call_edge"), 1);
-    assert_eq!(proof_kind_count(&site_rows, "call_resolution"), 1);
-
-    let site_fact = proof_fact_for_kind(&site_rows, "call_site");
-    assert_eq!(site_fact.caller_def_id.as_deref(), Some(owner_id.as_str()));
-
-    let edge = proof_fact_for_kind(&site_rows, "call_edge");
-    assert_eq!(edge.caller_def_id.as_deref(), Some(owner_id.as_str()));
-    assert_eq!(edge.callee_def_id.as_deref(), Some(target_id.as_str()));
-    assert_eq!(edge.blocker_reason, None);
-
-    let resolution = proof_fact_for_kind(&site_rows, "call_resolution");
-    assert_eq!(resolution.blocker_reason, None);
 }
