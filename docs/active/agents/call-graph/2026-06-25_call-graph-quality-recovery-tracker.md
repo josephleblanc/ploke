@@ -39,6 +39,7 @@ are not acceptable as a continuing implementation style.
 - Recent coverage inventory cleanup:
   - Added `2026-06-25_call-graph-coverage-inventory.md` as the compact layer inventory.
 - Recent production pattern cleanup:
+  - Split proof graph schema, storage, and query implementation by concern
   - Split call graph DB query implementation by concern
   - `3cce5b86 Split call graph DB module`
   - `e431a2f7 Expose proof context payload fields`
@@ -209,9 +210,11 @@ are not acceptable as a continuing implementation style.
   `effect_class`, and `status`. Low-level proof store tests cover
   build-domain lookup across generic proof facts, linked blockers, effect
   seeds, and source span payloads.
-- `proof_graph.rs` now keeps public/store/query orchestration in the root while
-  call-proof projection generation, call-context validation, proof fact JSON
-  construction, and owner source-file lookup live in
+- `proof_graph.rs` now keeps public proof row/trait definitions and trait
+  forwarding in the root while proof schema setup, proof fact upsert/fetch, and
+  proof context query shaping live in `proof_graph/{schema,storage,queries}.rs`.
+  Call-proof projection generation, call-context validation, proof fact JSON
+  construction, and owner source-file lookup remain in
   `proof_graph/call_projection.rs`.
 - `call_graph.rs` now keeps only the public DB call-graph surface while
   concern modules own row DTOs, call-site/target/status kind decoding,
@@ -308,6 +311,11 @@ are not acceptable as a continuing implementation style.
 
 ## Recent verification
 
+- Proof graph schema/storage/query implementation split
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection -- --nocapture`
+    passed: 14 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+    passed: 93 passed, 0 failed.
 - Call graph DB query implementation split
   - `cargo test -p ploke-db --features call_graph unit::call_graph_queries -- --nocapture`
     passed: 34 passed, 0 failed.
