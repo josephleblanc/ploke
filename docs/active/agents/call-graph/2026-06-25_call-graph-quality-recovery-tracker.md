@@ -50,6 +50,8 @@ are not acceptable as a continuing implementation style.
     `ploke-rag/src/core/unit_tests/tests/call_context/expansion/`.
   - RAG fixture-backed call-context collection cases were split by concern
     under `ploke-rag/src/core/unit_tests/tests/call_context/collection/cases/fixtures/`.
+  - RAG synthetic call-context collection helpers were split by concern under
+    `ploke-rag/src/core/unit_tests/tests/call_context/collection/helpers/`.
 - Recent coverage inventory cleanup:
   - Added `2026-06-25_call-graph-coverage-inventory.md` as the compact layer inventory.
 - Recent production pattern cleanup:
@@ -254,6 +256,10 @@ are not acceptable as a continuing implementation style.
 - `ploke-rag/src/core/unit_tests/tests/call_context/collection/cases/fixtures.rs`
   is now a thin module root with basic, blocker, callable-path, constructor,
   dynamic, and external fixture collection tests split into child files.
+- `ploke-rag/src/core/unit_tests/tests/call_context/collection/helpers.rs` is
+  now a thin module root with call-site insertion, body-edge insertion, owner
+  setup, target setup, status insertion, and Cozo value conversion helpers
+  split into child files.
 - `call_graph_tests/dynamic.rs` in `ploke-transform` now shares local
   `DynamicFunction` lookup helpers instead of repeating the full
   `CallRelation::DynamicFunction` scan for every dynamic projection case.
