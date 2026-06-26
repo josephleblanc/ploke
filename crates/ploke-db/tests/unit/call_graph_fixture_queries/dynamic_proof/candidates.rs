@@ -21,6 +21,20 @@ fn fixture_projection_marks_real_branch_and_match_dynamic_ambiguity_with_candida
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
         assert_eq!(count, 2, "{owner_name} projected proof fact count");
         assert_candidate_blocker(&db, &site, owner_name)?;
+
+        let target_facts = db
+            .call_proof_facts_for_target(expected[0], "bd:fixture-call-graph")?
+            .into_iter()
+            .filter(|fact| {
+                fact.get("call_site_id").and_then(serde_json::Value::as_str) == Some(site.as_str())
+            })
+            .collect::<Vec<_>>();
+        assert_candidate_proof(
+            &target_facts,
+            &site,
+            &expected_names,
+            &format!("{owner_name} target-centered"),
+        );
     }
 
     Ok(())

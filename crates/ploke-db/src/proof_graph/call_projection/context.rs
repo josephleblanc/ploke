@@ -2,7 +2,7 @@ use crate::{
     DbError,
     call_graph::{
         CallCallerRow, CallContextRow, CallRelationKind, CallSiteKind, CallStatusKind,
-        CallTargetKind,
+        CallTargetKind, CallTargetRow,
     },
 };
 
@@ -33,11 +33,14 @@ pub(super) fn validate_call_context(row: &CallContextRow) -> Result<(), DbError>
     }
 }
 
-pub(super) fn caller_context_row(row: CallCallerRow) -> CallContextRow {
+pub(super) fn caller_context_row(
+    row: CallCallerRow,
+    targets: Vec<CallTargetRow>,
+) -> CallContextRow {
     CallContextRow {
         site: row.site,
         status: row.status,
-        targets: vec![row.target],
+        targets,
     }
 }
 

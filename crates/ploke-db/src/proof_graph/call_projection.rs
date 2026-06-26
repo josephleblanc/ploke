@@ -66,8 +66,9 @@ impl Database {
         let mut values = Vec::with_capacity(callers.len() * 3);
 
         for caller in callers {
+            let targets = self.call_targets_for_site(caller.site.id)?;
             let source_file = self.source_file_for_owner(caller.site.owner_id)?;
-            let row = caller_context_row(caller);
+            let row = caller_context_row(caller, targets);
             validate_call_context(&row)?;
             values.push(call_site_fact(&row, build_domain_id, &source_file));
             values.extend(call_edge_facts(&row));
