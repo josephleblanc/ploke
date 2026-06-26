@@ -163,6 +163,12 @@ are not acceptable as a continuing implementation style.
     invocation evidence. The low-level DB fixtures now seed admitted
     build-domain evidence for ordinary proof rows and keep dedicated failing
     cases for absent domain evidence.
+  - `f067db65 Preserve multiple proof context blockers`
+  - `3cceb5d8 test: cover multiple proof blockers in TUI context`
+  - DB proof-context lookup now preserves every derived blocker row for one
+    proof fact instead of collapsing to the first reason, RAG deduplicates
+    proof rows by fact plus blocker reason, and TUI prompt formatting has
+    coverage for rendering multiple blocker reasons on one proof fact.
   - Generic external-summary discharge now applies only to
     external-dependency summary gaps. Proc-macro and build-script expansion
     summary gaps retain their specific blockers until those summary semantics
@@ -802,6 +808,15 @@ For `67981c03 Block missing proof build domains` and
     build-domain blocker fix.
 - `cargo test -p ploke-db proof_graph_store -- --nocapture`
   - passed: 13 passed, 0 failed.
+- `cargo test -p ploke-rag --features call_graph proof_context_seed_preserves_multiple_derived_blockers_for_one_fact -- --nocapture`
+  - first failed with only `cfg_domain_not_materialized`, then passed after
+    DB context rows and RAG dedup preserved one row per blocker reason.
+- `cargo test -p ploke-rag --features call_graph proof_context -- --nocapture`
+  - passed: 13 passed, 0 failed.
+- `cargo test -p ploke-tui --features call_graph format_proof_context_block_renders_multiple_blockers_for_one_fact -- --nocapture`
+  - passed: 1 passed, 0 failed.
+- `cargo test -p ploke-tui --features call_graph call_context -- --nocapture`
+  - passed: 16 passed, 0 failed.
 - `cargo test -p ploke-db proof_invariant_checker -- --nocapture`
   - passed: 31 passed, 0 failed.
 - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection -- --nocapture`
