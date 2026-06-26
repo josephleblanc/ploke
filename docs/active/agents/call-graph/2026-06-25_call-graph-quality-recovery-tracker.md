@@ -22,6 +22,11 @@ are not acceptable as a continuing implementation style.
   `cb967750 test: move RAG call context helpers`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent TUI/model-visible cleanup:
+  - `78ea933c Surface degraded proof context`
+  - `6989a728 test: cover degraded proof context tool path`
+  - `request_code_context` now surfaces proof-context degradation in model
+    notes and UI details when proof facts are absent, with focused helper and
+    execute-path coverage under `call_graph`.
   - `cc808347 test: cover variant constructor tool context`
   - TUI RAG context prompt-formatting tests were moved out of the inline
     `rag/context.rs` test module into `rag/context/tests.rs`, leaving the
