@@ -282,6 +282,62 @@ async fn request_code_context_returns_function_and_dynamic_owner_call_context()
 }
 
 #[tokio::test]
+async fn request_code_context_ui_payload_reports_context_carrier_counts() -> color_eyre::Result<()>
+{
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+
+    let tool_result =
+        execute_fixture_tool_request(&db, "local_target", 1, "context_count_fields").await?;
+    let result: RequestCodeContextResult = serde_json::from_str(&tool_result.content)?;
+    assert_result_ok(&result, "local_target", 1, "fixture_call_graph");
+
+    let payload = tool_result
+        .ui_payload
+        .as_ref()
+        .expect("request_code_context should emit a UI payload");
+    let field = |name: &str| {
+        payload
+            .fields
+            .iter()
+            .find(|field| field.name.as_ref() == name)
+            .unwrap_or_else(|| panic!("missing {name} field in payload: {payload:#?}"))
+            .value
+            .as_ref()
+            .to_string()
+    };
+
+    let expected_call_context = result
+        .context
+        .iter()
+        .map(|part| part.call_context.len())
+        .sum::<usize>();
+    let expected_type_context = result
+        .context
+        .iter()
+        .filter(|part| part.type_context.is_some())
+        .count();
+    let expected_call_expansion = result
+        .context
+        .iter()
+        .filter(|part| part.call_expansion.is_some())
+        .count();
+    let expected_proof_context = result
+        .context
+        .iter()
+        .map(|part| part.proof_context.len())
+        .sum::<usize>();
+
+    assert_eq!(field("type_context"), expected_type_context.to_string());
+    assert_eq!(field("call_context"), expected_call_context.to_string());
+    assert_eq!(field("call_expansion"), expected_call_expansion.to_string());
+    assert_eq!(field("proof_context"), expected_proof_context.to_string());
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn request_code_context_surfaces_degraded_proof_context_note() -> color_eyre::Result<()> {
     let db = Arc::new(Database::new(setup_db_full_multi_embedding(
         "fixture_call_graph",
@@ -316,6 +372,16 @@ async fn execute_fixture_request(
     top_k: usize,
     call_id: &'static str,
 ) -> color_eyre::Result<RequestCodeContextResult> {
+    let tool_result = execute_fixture_tool_request(db, search_term, top_k, call_id).await?;
+    Ok(serde_json::from_str(&tool_result.content)?)
+}
+
+async fn execute_fixture_tool_request(
+    db: &Arc<Database>,
+    search_term: &str,
+    top_k: usize,
+    call_id: &'static str,
+) -> color_eyre::Result<ToolResult> {
     let rt = TestRuntime::new_with_embedding_processor(db, EmbeddingProcessor::new_mock());
     rt.setup_loaded_standalone_crate(ploke_test_utils::workspace_root())
         .await;
@@ -370,7 +436,7 @@ async fn execute_fixture_request(
     )
     .await?;
 
-    Ok(serde_json::from_str(&tool_result.content)?)
+    Ok(tool_result)
 }
 
 fn assert_result_ok(

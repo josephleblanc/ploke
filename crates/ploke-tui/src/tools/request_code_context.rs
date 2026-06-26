@@ -197,6 +197,30 @@ fn summarize_request_code_context_result(
     }
 }
 
+fn context_carrier_counts(result: &RequestCodeContextResult) -> (usize, usize, usize, usize) {
+    let type_context = result
+        .context
+        .iter()
+        .filter(|part| part.type_context.is_some())
+        .count();
+    let call_context = result
+        .context
+        .iter()
+        .map(|part| part.call_context.len())
+        .sum();
+    let call_expansion = result
+        .context
+        .iter()
+        .filter(|part| part.call_expansion.is_some())
+        .count();
+    let proof_context = result
+        .context
+        .iter()
+        .map(|part| part.proof_context.len())
+        .sum();
+    (type_context, call_context, call_expansion, proof_context)
+}
+
 // --- GAT-based tool impl ---
 use std::borrow::Cow;
 
@@ -355,6 +379,8 @@ impl super::Tool for RequestCodeContextGat {
         if rag.proof_context_degraded() {
             apply_proof_context_degraded_note(&mut result);
         }
+        let (type_context, call_context, call_expansion, proof_context) =
+            context_carrier_counts(&result);
         let mut ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
             .with_field("search_term", result.search_term.as_str())
             .with_field(
@@ -363,7 +389,11 @@ impl super::Tool for RequestCodeContextGat {
             )
             .with_field("token_budget_total", token_budget_total.to_string())
             .with_field("top_k", result.top_k.to_string())
-            .with_field("returned", result.context.len().to_string());
+            .with_field("returned", result.context.len().to_string())
+            .with_field("type_context", type_context.to_string())
+            .with_field("call_context", call_context.to_string())
+            .with_field("call_expansion", call_expansion.to_string())
+            .with_field("proof_context", proof_context.to_string());
         if let Some(note) = result.note.as_ref() {
             let details = std::iter::once(note.as_str().to_string())
                 .chain(
