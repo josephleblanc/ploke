@@ -180,6 +180,13 @@ are not acceptable as a continuing implementation style.
 - Semantic call target/status facts are no longer dormant parser graph fields.
   They are produced by `CallResolutionReport` at the resolver/transform
   boundary, matching the current type-graph-style ownership pattern.
+- Target-centered proof projection now rebuilds complete call-site context from
+  `call_targets_for_site` before emitting proof facts, so ambiguous dynamic
+  candidate sets are not collapsed to only the target that matched the
+  target-centered query.
+- `call_resolution.rs` now keeps the resolver orchestration and remaining path,
+  method, constructor, and lookup logic while dynamic-call resolution lives in
+  `resolve/call_resolution/dynamic.rs`.
 
 ## Recent consolidated DB split detail
 
@@ -373,6 +380,26 @@ are not acceptable as a continuing implementation style.
 
 ## Recent verification
 
+- Target-centered ambiguous-candidate blocker fix
+  - Red check before implementation:
+    `cargo test -p ploke-db --features call_graph fixture_projection_marks_real_branch_and_match_dynamic_ambiguity_with_candidates -- --nocapture`
+    failed because target-centered proof facts emitted only the matched
+    candidate in `candidate_def_ids`.
+  - `cargo test -p ploke-db --features call_graph fixture_projection_marks_real_branch_and_match_dynamic_ambiguity_with_candidates -- --nocapture`
+    passed: 1 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::dynamic_proof -- --nocapture`
+    passed: 7 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::target_proof -- --nocapture`
+    passed: 9 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection -- --nocapture`
+    passed: 14 passed, 0 failed.
+- Dynamic call resolver split
+  - `cargo test -p syn_parser --features call_graph call_sites -- --nocapture`
+    passed: 206 passed, 0 failed.
+  - `cargo test -p ploke-transform --features call_graph transform::call_graph_tests::dynamic -- --nocapture`
+    passed: 1 passed, 0 failed.
+  - `cargo test -p ploke-transform --features call_graph transform::call_graph_tests -- --nocapture`
+    passed: 4 passed, 0 failed.
 - Proof fact projection helper split
   - `cargo xtask verify-fixtures`
     passed: all required fixtures present.
@@ -573,7 +600,7 @@ are not acceptable as a continuing implementation style.
 | CGQ-5 | P1 | Done 2026-06-25 | External proof projection reported `externally_summarized` while also using blocker reason `external_dependency_summary_missing`. | Current parser-projected external rows now emit blocked/missing-summary proof state until a real external summary fact exists. |
 | CGQ-6 | P2 | Done 2026-06-25 | Dynamic branch/match candidate provenance can collapse to `Null` in persisted `call_site` rows. | Ambiguous branch/match dynamic calls now keep proven local function candidates as `DynamicFunction` relations while preserving `Ambiguous` status; proof projection exposes them as `candidate_def_ids` without promoting them to resolved call edges. |
 | CGQ-7 | P2 | Done 2026-06-25 | The "exactly one status per call site" invariant could be hidden by post-hoc sort/dedup. | `CallRelationResolver` now rejects duplicate status sources before dedup, including identical duplicates. |
-| CGQ-8 | P2 | Open | `call_resolution.rs` and `call_extraction.rs` are monolithic. | Avoid adding breadth there without local extraction; split path/method/dynamic/macro logic when touching the area. |
+| CGQ-8 | P2 | Partial 2026-06-26 | `call_resolution.rs` and `call_extraction.rs` are monolithic. | Dynamic-call resolver logic now lives in `resolve/call_resolution/dynamic.rs` without adding resolver breadth. Remaining work: split path/method/constructor/lookup resolver concerns and `call_extraction.rs` before adding breadth there. |
 | CGQ-9 | P2 | Done 2026-06-25 | Call-graph docs were serving as a long running diary rather than a stable coverage inventory. | Added `2026-06-25_call-graph-coverage-inventory.md` as the compact layer-by-layer restart inventory and linked it from the call-graph restart spine. |
 | CGQ-10 | P3 | Done 2026-06-25 | `call_graph` feature name is broader than the actual gate: parser facts exist baseline, DB projection is gated. | Cargo feature comments and active gate docs now state that `call_graph` is a historical feature name whose active rollout gate is DB projection plus downstream consumers while backup fixtures are reviewed/regenerated. |
 | CGQ-11 | P1 | Done 2026-06-25 | `CodeGraph` carried dormant semantic call-target/status storage even though transform consumes `CallResolutionReport` directly. | `CodeGraph`/`ParsedCodeGraph` now keep only structural call occurrence facts; semantic call relations/statuses are report-owned at the resolver/transform boundary. |
