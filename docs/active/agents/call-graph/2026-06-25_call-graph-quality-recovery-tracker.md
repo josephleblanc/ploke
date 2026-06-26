@@ -52,6 +52,8 @@ are not acceptable as a continuing implementation style.
     under `ploke-rag/src/core/unit_tests/tests/call_context/collection/cases/fixtures/`.
   - RAG synthetic call-context collection helpers were split by concern under
     `ploke-rag/src/core/unit_tests/tests/call_context/collection/helpers/`.
+  - The synthetic RAG call-context collection payload test now uses an explicit
+    eight-row case matrix for inserted call facts and expected payload checks.
 - Recent coverage inventory cleanup:
   - Added `2026-06-25_call-graph-coverage-inventory.md` as the compact layer inventory.
 - Recent production pattern cleanup:
@@ -260,6 +262,9 @@ are not acceptable as a continuing implementation style.
   now a thin module root with call-site insertion, body-edge insertion, owner
   setup, target setup, status insertion, and Cozo value conversion helpers
   split into child files.
+- `ploke-rag/src/core/unit_tests/tests/call_context/collection/cases/synthetic.rs`
+  now table-drives synthetic path, associated-function, constructor, method,
+  receiver, and dynamic payload assertions through one shared case runner.
 - `call_graph_tests/dynamic.rs` in `ploke-transform` now shares local
   `DynamicFunction` lookup helpers instead of repeating the full
   `CallRelation::DynamicFunction` scan for every dynamic projection case.
