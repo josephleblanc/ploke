@@ -71,6 +71,7 @@ are not acceptable as a continuing implementation style.
   - `3284dd45 Add proof domain context lookup`
   - `5fad4c98 Remove dormant call graph semantic storage`
 - Recent proof context test cleanup:
+  - `f42fba3e Expose proof summary metadata`
   - `4b58e2fc Expose proof authority terms`
   - `d11ec50d Reject admitted opaque proof summaries`
   - `bd68a81d test: cover proof blocker UI context`
@@ -90,6 +91,10 @@ are not acceptable as a continuing implementation style.
   - Proof context rows now expose `authority_term` explicitly from stored proof
     JSON through DB, RAG, TUI prompt formatting, and public tool serde carriers,
     while keeping the existing checker-facing `effect_class` copy intact.
+  - External-summary artifact metadata now flows through the same JSON-backed
+    proof context path: summary class, artifact hash, version, review method,
+    validity scope, allowed effects, required containment, and invalidation
+    conditions are DB/RAG/TUI visible and searchable where appropriate.
   - Proof-fact validation now rejects incoherent `external_summary` artifacts
     that claim `status: admitted` while retaining `summary_class:
     opaque_blocked`; this is a strict admission precondition and does not yet
@@ -223,11 +228,12 @@ are not acceptable as a continuing implementation style.
   `external_summary_id`; the same JSON-backed proof context path exposes that
   ID through DB, RAG, and TUI payloads. The DB proof store now accepts strict
   `external_summary` artifacts with summary class, artifact identity, scope,
-  allowed effects, containment, and invalidation metadata. Externally
-  summarized expansion boundaries now derive summary-missing blocker reasons by
-  boundary kind, and blocked/rejected summary artifacts block by summary class;
-  incoherent admitted opaque artifacts are rejected before storage. Discharging
-  linked summary blockers from admitted artifacts remains open.
+  allowed effects, containment, and invalidation metadata, and proof-context
+  payloads now expose those fields. Externally summarized expansion boundaries
+  now derive summary-missing blocker reasons by boundary kind, and
+  blocked/rejected summary artifacts block by summary class; incoherent
+  admitted opaque artifacts are rejected before storage. Discharging linked
+  summary blockers from admitted artifacts remains open.
 - `call_resolution.rs` now keeps the resolver orchestration and remaining path,
   method, constructor, and lookup logic while dynamic-call resolution lives in
   `resolve/call_resolution/dynamic.rs`.
