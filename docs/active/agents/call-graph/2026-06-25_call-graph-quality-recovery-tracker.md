@@ -169,6 +169,11 @@ are not acceptable as a continuing implementation style.
     proof fact instead of collapsing to the first reason, RAG deduplicates
     proof rows by fact plus blocker reason, and TUI prompt formatting has
     coverage for rendering multiple blocker reasons on one proof fact.
+  - `beac07b3 test: cover request proof blocker multiplicity`
+  - `06ebe3dd test: cover RAG proof blocker multiplicity`
+  - Public RAG `get_context` and TUI `request_code_context` execute-path tests
+    now prove multiple derived blocker rows survive assembled context, serde
+    tool payloads, and UI blocker counts for one proof fact.
   - Generic external-summary discharge now applies only to
     external-dependency summary gaps. Proc-macro and build-script expansion
     summary gaps retain their specific blockers until those summary semantics
@@ -817,6 +822,14 @@ For `67981c03 Block missing proof build domains` and
   - passed: 1 passed, 0 failed.
 - `cargo test -p ploke-tui --features call_graph call_context -- --nocapture`
   - passed: 16 passed, 0 failed.
+- `cargo test -p ploke-rag --features call_graph proof_context_sparse_get_context_preserves_multiple_derived_blockers_for_one_fact -- --nocapture`
+  - passed: 1 passed, 0 failed.
+- `cargo test -p ploke-rag --features call_graph proof_context -- --nocapture`
+  - passed after the public `get_context` case was added: 14 passed, 0 failed.
+- `cargo test -p ploke-tui --features call_graph request_code_context_preserves_multiple_proof_blockers_for_one_fact -- --nocapture`
+  - passed: 1 passed, 0 failed.
+- `cargo test -p ploke-tui --features call_graph request_code_context::gat_tests -- --nocapture`
+  - passed: 17 passed, 0 failed, 2 ignored.
 - `cargo test -p ploke-db proof_invariant_checker -- --nocapture`
   - passed: 31 passed, 0 failed.
 - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection -- --nocapture`
