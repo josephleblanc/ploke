@@ -7,7 +7,7 @@ use ploke_core::rag_types::{
     CallCalleeInfo, CallContextInfo, CallExpansionKind, CallReceiverInfo, CallResolutionKind,
     CallSiteKind, CallStatusKind, CallTargetKind, ConciseContext, RequestCodeContextResult,
 };
-use ploke_db::Database;
+use ploke_db::{Database, ProofGraphStore};
 use ploke_test_utils::setup_db_full_multi_embedding;
 use std::sync::Arc;
 use uuid::Uuid;
