@@ -618,6 +618,41 @@ fn proof_blockers_discharge_linked_admitted_external_summary_artifacts() {
 }
 
 #[test]
+fn proof_blockers_require_allowed_effect_for_external_summary_discharge() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    let mut resolution = externally_summarized_resolution(Some("external-summary:dep:serde"));
+    resolution
+        .as_object_mut()
+        .expect("resolution object")
+        .remove("blocking_reason");
+    let mut boundary = externally_summarized_boundary(Some("external-summary:dep:serde"));
+    boundary
+        .as_object_mut()
+        .expect("boundary object")
+        .remove("blocking_reason");
+    let mut summary = external_summary_record();
+    summary["summary_class"] = json!("audited_no_process_effects");
+    summary["status"] = json!("admitted");
+    summary["allowed_effects"] = json!(["durable_evidence_read"]);
+    db.upsert_proof_fact_values(&[resolution, boundary, summary])
+        .expect("import admitted external summary proof facts");
+
+    let blockers = db.proof_blockers().expect("blocker inspection");
+    assert_eq!(
+        blockers.len(),
+        2,
+        "admitted external summary without external-summary authority should fail closed: {blockers:#?}"
+    );
+    assert!(
+        blockers
+            .iter()
+            .all(|row| row.reason == "external_dependency_summary_missing"),
+        "missing allowed external-summary effect should preserve missing-summary blockers: {blockers:#?}"
+    );
+}
+
+#[test]
 fn proof_context_rows_include_derived_blocker_reasons() {
     let db = Database::new_init().expect("create db");
     db.ensure_proof_graph_schema().expect("proof graph schema");

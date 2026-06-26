@@ -798,6 +798,42 @@ fn proof_invariant_checker_discharges_linked_admitted_external_summary_gaps() {
 }
 
 #[test]
+fn proof_invariant_checker_requires_allowed_effect_for_external_summary_discharge() {
+    let mut records = legal_handoff_records();
+    records.push(call_resolution_for(
+        "call:handoff-spawn",
+        "externally_summarized",
+        None,
+    ));
+    records.push(expansion_boundary(
+        "boundary:external-summary",
+        "bd:checker",
+        "external_summary",
+        "externally_summarized",
+        None,
+        63,
+    ));
+    let mut summary = external_summary("admitted", "audited_no_process_effects");
+    summary["external_summary_id"] = json!("external-summary:test");
+    summary["allowed_effects"] = json!(["durable_evidence_read"]);
+    records.push(summary);
+    let db = db_with(records);
+
+    let findings = db
+        .proof_invariant_findings()
+        .expect("proof invariant findings");
+    let finding = finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn");
+
+    assert_eq!(finding.status, ProofInvariantStatus::Blocked);
+    assert!(
+        finding
+            .reason
+            .contains("external_dependency_summary_missing"),
+        "summary without external-summary authority should fail closed: {finding:#?}"
+    );
+}
+
+#[test]
 fn proof_invariant_checker_blocks_authority_evidence_gap_without_demoting_to_fail() {
     let db = db_with(vec![
         call_site(),

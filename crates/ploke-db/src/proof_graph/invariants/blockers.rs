@@ -173,8 +173,16 @@ fn has_matching_admitted_external_summary(row: &ProofFactRow, rows: &[ProofFactR
             && summary.external_summary_id.as_deref() == Some(external_summary_id)
             && summary.status.as_deref() == Some("admitted")
             && summary.summary_class.as_deref() != Some("opaque_blocked")
+            && summary_allows_external_summary_boundary(summary)
             && external_summary_domain_matches(row, summary)
     })
+}
+
+fn summary_allows_external_summary_boundary(summary: &ProofFactRow) -> bool {
+    summary
+        .allowed_effects
+        .iter()
+        .any(|effect| effect == "external_summary_boundary")
 }
 
 fn external_summary_domain_matches(row: &ProofFactRow, summary: &ProofFactRow) -> bool {
