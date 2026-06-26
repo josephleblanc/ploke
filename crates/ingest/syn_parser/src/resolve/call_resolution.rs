@@ -15,11 +15,11 @@ use crate::{
         graph::GraphAccess,
         nodes::{
             AnyCallSiteId, AnyNodeId, AnyTypeId, AsAnyNodeId, AssociatedItemNodeId,
-            CallBodyOwnerId, CallNode, EnumNodeId, FunctionNodeId, ImplNode, ImplNodeId,
-            ImportKind, ImportNodeId, MethodCallNode, MethodCallReceiver, MethodNodeId,
-            ModuleNodeId, OrdinaryTypeSourceId, OrdinaryTypeTargetId, OrdinaryTypeUseId, ParamData,
-            PathCallNode, StructNodeId, TraitNode, TraitNodeId, TraitTypeSourceId, TypeAliasNodeId,
-            TypeGenericParamNodeId, VariantNodeId,
+            CallBodyOwnerId, CallNode, FunctionNodeId, ImplNode, ImplNodeId, ImportKind,
+            ImportNodeId, MethodCallNode, MethodCallReceiver, MethodNodeId, ModuleNodeId,
+            OrdinaryTypeSourceId, OrdinaryTypeTargetId, OrdinaryTypeUseId, ParamData, StructNodeId,
+            TraitNode, TraitNodeId, TraitTypeSourceId, TypeAliasNodeId, TypeGenericParamNodeId,
+            VariantNodeId,
         },
         relations::{
             CallRelation, CallResolutionKind, CallResolutionStatus, SyntacticRelation, TypeRelation,
@@ -30,6 +30,8 @@ use crate::{
 
 use super::{RelationIndexer, module_tree::ModuleTree};
 
+mod associated;
+mod constructors;
 mod dynamic;
 mod path;
 
@@ -198,204 +200,6 @@ impl<'a> CallRelationResolver<'a> {
             statuses,
             summary,
         })
-    }
-
-    fn resolve_associated_function_path(
-        &self,
-        owner: CallBodyOwnerId,
-        path: &[String],
-        type_relations: &[TypeRelation],
-    ) -> Result<Option<AssocPathResolution>, SynParserError> {
-        let [type_segment, method_name] = path else {
-            return Ok(None);
-        };
-
-        if type_segment == "Self" {
-            return self
-                .resolve_self_associated_function(owner, method_name)
-                .map(Some);
-        }
-
-        if matches!(type_segment.as_str(), "crate" | "self" | "super") {
-            return Ok(None);
-        }
-
-        if let Some(resolution) =
-            self.resolve_trait_associated_function_path(owner, type_segment, method_name)?
-        {
-            return Ok(Some(resolution));
-        }
-
-        match self.resolve_local_type_segment(owner, type_segment)? {
-            LocalTypeResolution::Resolved(target) => {
-                self.resolve_type_associated_function(target, method_name, type_relations)
-            }
-            LocalTypeResolution::Unresolved => Ok(None),
-            LocalTypeResolution::Ambiguous => Ok(Some(AssocPathResolution::Ambiguous)),
-        }
-    }
-
-    fn resolve_trait_associated_function_path(
-        &self,
-        owner: CallBodyOwnerId,
-        trait_segment: &str,
-        method_name: &str,
-    ) -> Result<Option<AssocPathResolution>, SynParserError> {
-        match self.resolve_local_trait_segment(owner, trait_segment)? {
-            LocalTraitResolution::Resolved(trait_id) => {
-                let trait_node = self.graph.get_trait_checked(trait_id)?;
-                Ok(Some(self.resolve_associated_function_in_trait(
-                    trait_node,
-                    method_name,
-                )))
-            }
-            LocalTraitResolution::Unresolved => Ok(None),
-            LocalTraitResolution::Ambiguous => Ok(Some(AssocPathResolution::Ambiguous)),
-        }
-    }
-
-    fn resolve_self_associated_function(
-        &self,
-        owner: CallBodyOwnerId,
-        method_name: &str,
-    ) -> Result<AssocPathResolution, SynParserError> {
-        let CallBodyOwnerId::Method(owner_method_id) = owner else {
-            return Ok(AssocPathResolution::Unsupported);
-        };
-
-        if let Some(impl_id) = self.impl_for_owner_method(owner_method_id)? {
-            let impl_node = self.impl_node(impl_id)?;
-            if impl_node.trait_type.is_some() {
-                return Ok(AssocPathResolution::Unsupported);
-            }
-            return Ok(self.resolve_method_in_impl(impl_node, method_name));
-        }
-
-        let Some(trait_id) = self.trait_for_owner_method(owner_method_id)? else {
-            return Ok(AssocPathResolution::Unsupported);
-        };
-        let trait_node = self.graph.get_trait_checked(trait_id)?;
-        Ok(self.resolve_associated_function_in_trait(trait_node, method_name))
-    }
-
-    fn resolve_constructor_path(
-        &self,
-        call: &PathCallNode,
-    ) -> Result<Option<ConstructorPathResolution>, SynParserError> {
-        match call.path.as_slice() {
-            [struct_name] => {
-                let resolution = match self.resolve_local_type_segment(call.owner, struct_name)? {
-                    LocalTypeResolution::Resolved(target) => {
-                        self.resolve_tuple_struct_constructor(target, call.arg_count)?
-                    }
-                    LocalTypeResolution::Unresolved => return Ok(None),
-                    LocalTypeResolution::Ambiguous => ConstructorPathResolution::Ambiguous,
-                };
-                Ok(Some(resolution))
-            }
-            [enum_name, variant_name] => {
-                let resolution = match self.resolve_local_type_segment(call.owner, enum_name)? {
-                    LocalTypeResolution::Resolved(target) => {
-                        self.resolve_enum_variant_constructor(target, variant_name, call.arg_count)?
-                    }
-                    LocalTypeResolution::Unresolved => return Ok(None),
-                    LocalTypeResolution::Ambiguous => ConstructorPathResolution::Ambiguous,
-                };
-                Ok(Some(resolution))
-            }
-            _ => Ok(None),
-        }
-    }
-
-    fn resolve_tuple_struct_constructor(
-        &self,
-        target: OrdinaryTypeTargetId,
-        arg_count: usize,
-    ) -> Result<ConstructorPathResolution, SynParserError> {
-        let Ok(struct_id) = StructNodeId::try_from(target) else {
-            return Ok(ConstructorPathResolution::Unresolved);
-        };
-        let struct_node = self.graph.get_struct_checked(struct_id)?;
-        if struct_node.fields.is_empty()
-            || !struct_node.fields.iter().all(|field| {
-                field.name.as_deref().is_some_and(|name| {
-                    name.starts_with(&format!("unnamed_field{}", struct_node.name))
-                })
-            })
-            || struct_node.fields.len() != arg_count
-        {
-            return Ok(ConstructorPathResolution::Unresolved);
-        }
-        Ok(ConstructorPathResolution::TupleStruct(struct_id))
-    }
-
-    fn resolve_enum_variant_constructor(
-        &self,
-        target: OrdinaryTypeTargetId,
-        variant_name: &str,
-        arg_count: usize,
-    ) -> Result<ConstructorPathResolution, SynParserError> {
-        let Ok(enum_id) = EnumNodeId::try_from(target) else {
-            return Ok(ConstructorPathResolution::Unresolved);
-        };
-        let enum_node = self.graph.get_enum_checked(enum_id)?;
-        let mut candidates = enum_node
-            .variants
-            .iter()
-            .filter(|variant| {
-                variant.name == variant_name
-                    && !variant.fields.is_empty()
-                    && variant.fields.iter().all(|field| field.name.is_none())
-                    && variant.fields.len() == arg_count
-            })
-            .map(|variant| variant.id)
-            .collect::<Vec<_>>();
-        candidates.sort_unstable();
-        candidates.dedup();
-
-        Ok(match candidates.as_slice() {
-            [target] => ConstructorPathResolution::EnumVariant(*target),
-            [] => ConstructorPathResolution::Unresolved,
-            _ => ConstructorPathResolution::Ambiguous,
-        })
-    }
-
-    fn resolve_type_associated_function(
-        &self,
-        target: OrdinaryTypeTargetId,
-        method_name: &str,
-        type_relations: &[TypeRelation],
-    ) -> Result<Option<AssocPathResolution>, SynParserError> {
-        let receiver_targets = self.ordinary_receiver_targets(target, type_relations)?;
-        let mut candidates = Vec::new();
-        let mut matched_inherent_impl = false;
-        for impl_node in self
-            .graph
-            .impls()
-            .iter()
-            .filter(|impl_node| impl_node.trait_type.is_none())
-        {
-            let Some(self_target) = self.impl_self_target(impl_node, type_relations)? else {
-                continue;
-            };
-            if !receiver_targets.contains(&self_target) {
-                continue;
-            }
-            matched_inherent_impl = true;
-            candidates.extend(
-                impl_node
-                    .methods
-                    .iter()
-                    .filter(|method| method.name == method_name)
-                    .map(|method| method.id),
-            );
-        }
-
-        if matched_inherent_impl {
-            Ok(Some(Self::method_resolution(candidates)))
-        } else {
-            Ok(None)
-        }
     }
 
     fn ordinary_receiver_targets(
