@@ -550,6 +550,29 @@ are not acceptable as a continuing implementation style.
 
 ## Recent verification
 
+- Rollout gate fixture/default-workspace audit
+  - `cargo xtask verify-backup-dbs` passed on 2026-06-26 for the active
+    registered checkout-local fixtures:
+    `fixture_nodes_canonical`, `fixture_nodes_local_embeddings`,
+    `ploke_db_primary`, `ws_fixture_01_canonical`, and
+    `ws_fixture_01_member_single`.
+  - `cargo test --workspace --exclude ploke-eval --no-fail-fast` failed on
+    2026-06-26 in `-p ploke-rag --lib` and
+    `-p ploke-tui --test integration`. The high-signal failure was
+    `ContentMismatch` for
+    `tests/fixture_crates/fixture_nodes/src/const_static.rs`, which makes
+    snippet materialization skip the row that should contain
+    `use_all_const_static`.
+  - The fixture source currently contains `use_all_const_static`; this points
+    to stale checkout-local backup rows, not a missing source item. Do not
+    weaken snippet/hash validation. Per
+    `docs/testing/BACKUP_DB_FIXTURES.md`, the backup fixture review date is
+    2026-06-12 and is overdue; fixture review/regeneration needs explicit user
+    approval before changing backup fixture artifacts.
+  - GitNexus impact for hardening `verify_registered_backup_fixture` returned
+    HIGH risk: 5 direct callers and 2 affected xtask flows (`dispatch` and
+    `setup_fixtures`). Do not modify the verifier path without an explicit
+    scoped implementation decision.
 - Proof-context candidate payload exposure
   - Red check before implementation:
     `cargo test -p ploke-rag --features call_graph proof_context_target_seed_preserves_ambiguous_dynamic_candidates -- --nocapture`
