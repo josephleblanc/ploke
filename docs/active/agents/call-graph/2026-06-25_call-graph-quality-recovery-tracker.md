@@ -174,6 +174,11 @@ are not acceptable as a continuing implementation style.
   - Public RAG `get_context` and TUI `request_code_context` execute-path tests
     now prove multiple derived blocker rows survive assembled context, serde
     tool payloads, and UI blocker counts for one proof fact.
+  - `97a2968e test: split proof domain store cases`
+  - DB proof-domain store tests for missing build-domain references,
+    incomplete build-domain evidence, and required build/effect schema fields
+    moved out of the 1,400-line `proof_graph_store.rs` root into
+    `proof_graph_store/proof_domain.rs`.
   - Generic external-summary discharge now applies only to
     external-dependency summary gaps. Proc-macro and build-script expansion
     summary gaps retain their specific blockers until those summary semantics
@@ -813,6 +818,8 @@ For `67981c03 Block missing proof build domains` and
     build-domain blocker fix.
 - `cargo test -p ploke-db proof_graph_store -- --nocapture`
   - passed: 13 passed, 0 failed.
+- `cargo test -p ploke-db proof_domain -- --nocapture`
+  - passed after the proof-domain store split: 4 passed, 0 failed.
 - `cargo test -p ploke-rag --features call_graph proof_context_seed_preserves_multiple_derived_blockers_for_one_fact -- --nocapture`
   - first failed with only `cfg_domain_not_materialized`, then passed after
     DB context rows and RAG dedup preserved one row per blocker reason.
