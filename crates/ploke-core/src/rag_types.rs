@@ -356,6 +356,18 @@ pub struct ProofContextInfo {
     #[serde(default)]
     pub definition_id: Option<String>,
     #[serde(default)]
+    pub target_kind: Option<String>,
+    #[serde(default)]
+    pub target_name: Option<String>,
+    #[serde(default)]
+    pub target_root: Option<String>,
+    #[serde(default)]
+    pub profile: Option<String>,
+    #[serde(default)]
+    pub rustc_version: Option<String>,
+    #[serde(default)]
+    pub proof_policy_version: Option<String>,
+    #[serde(default)]
     pub authority_term: Option<String>,
     #[serde(default)]
     pub summary_class: Option<String>,

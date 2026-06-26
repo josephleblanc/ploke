@@ -191,6 +191,12 @@ fn reformat_context_to_system_includes_proof_context_details() {
             boundary_kind: None,
             expanded_item_id: None,
             definition_id: None,
+            target_kind: None,
+            target_name: None,
+            target_root: None,
+            profile: None,
+            rustc_version: None,
+            proof_policy_version: None,
             authority_term: Some("successor".to_string()),
             summary_class: None,
             artifact_hash: None,
@@ -263,6 +269,12 @@ fn reformat_context_to_system_includes_expansion_metadata() {
             boundary_kind: Some("macro_rules_invocation".to_string()),
             expanded_item_id: Some("expanded:item:macro".to_string()),
             definition_id: Some("def:expanded-macro-item".to_string()),
+            target_kind: None,
+            target_name: None,
+            target_root: None,
+            profile: None,
+            rustc_version: None,
+            proof_policy_version: None,
             authority_term: None,
             summary_class: None,
             artifact_hash: None,
@@ -295,6 +307,75 @@ fn reformat_context_to_system_includes_expansion_metadata() {
 }
 
 #[test]
+fn reformat_context_to_system_includes_build_domain_metadata() {
+    let part = ContextPart {
+        id: Uuid::from_u128(43),
+        file_path: NodeFilepath::new("Cargo.toml".to_string()),
+        canon_path: CanonPath::new("crate::build".to_string()),
+        ranges: vec![],
+        kind: ContextPartKind::Metadata,
+        text: "[package]\nname = \"ploke\"".to_string(),
+        score: 0.11,
+        modality: Modality::Sparse,
+        type_context: None,
+        call_expansion: None,
+        call_context: Vec::new(),
+        proof_context: vec![ProofContextInfo {
+            fact_id: "bd:fixture-call-graph".to_string(),
+            kind: "build_domain".to_string(),
+            build_domain_id: Some("bd:fixture-call-graph".to_string()),
+            call_site_id: None,
+            call_edge_id: None,
+            caller_def_id: None,
+            callee_def_id: None,
+            resolution_state: None,
+            resolved_def_id: None,
+            candidate_def_ids: Vec::new(),
+            external_summary_id: None,
+            boundary_id: None,
+            boundary_kind: None,
+            expanded_item_id: None,
+            definition_id: None,
+            target_kind: Some("library".to_string()),
+            target_name: Some("ploke".to_string()),
+            target_root: Some("src/lib.rs".to_string()),
+            profile: Some("dev".to_string()),
+            rustc_version: Some("rustc 1.96.0".to_string()),
+            proof_policy_version: Some("proof-policy-test".to_string()),
+            authority_term: None,
+            summary_class: None,
+            artifact_hash: None,
+            summary_version: None,
+            review_method: None,
+            scope_of_validity: None,
+            allowed_effects: Vec::new(),
+            required_containment: None,
+            invalidation_conditions: None,
+            evidence_use: Some("proof_only".to_string()),
+            source_file: None,
+            start_byte: None,
+            end_byte: None,
+            line_start: None,
+            line_end: None,
+            effect_class: None,
+            blocker_reason: None,
+            status: None,
+            detail: None,
+        }],
+    };
+
+    let rendered = reformat_context_to_system(part);
+
+    assert!(rendered.contains("build_domain"));
+    assert!(rendered.contains("target_kind=library"));
+    assert!(rendered.contains("target_name=ploke"));
+    assert!(rendered.contains("target_root=src/lib.rs"));
+    assert!(rendered.contains("profile=dev"));
+    assert!(rendered.contains("rustc=rustc 1.96.0"));
+    assert!(rendered.contains("proof_policy=proof-policy-test"));
+}
+
+#[test]
 fn reformat_context_to_system_includes_external_summary_metadata() {
     let part = ContextPart {
         id: Uuid::from_u128(41),
@@ -324,6 +405,12 @@ fn reformat_context_to_system_includes_external_summary_metadata() {
             boundary_kind: None,
             expanded_item_id: None,
             definition_id: None,
+            target_kind: None,
+            target_name: None,
+            target_root: None,
+            profile: None,
+            rustc_version: None,
+            proof_policy_version: None,
             authority_term: None,
             summary_class: Some("opaque_blocked".to_string()),
             artifact_hash: Some("sha256:serde-artifact".to_string()),

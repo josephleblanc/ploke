@@ -487,6 +487,16 @@ fn format_proof_context(row: &ProofContextInfo) -> String {
     push_opt(&mut parts, "boundary_kind", row.boundary_kind.as_deref());
     push_opt(&mut parts, "expanded_item", row.expanded_item_id.as_deref());
     push_opt(&mut parts, "definition", row.definition_id.as_deref());
+    push_opt(&mut parts, "target_kind", row.target_kind.as_deref());
+    push_opt(&mut parts, "target_name", row.target_name.as_deref());
+    push_opt(&mut parts, "target_root", row.target_root.as_deref());
+    push_opt(&mut parts, "profile", row.profile.as_deref());
+    push_opt(&mut parts, "rustc", row.rustc_version.as_deref());
+    push_opt(
+        &mut parts,
+        "proof_policy",
+        row.proof_policy_version.as_deref(),
+    );
     push_opt(&mut parts, "authority", row.authority_term.as_deref());
     push_opt(&mut parts, "summary", row.summary_class.as_deref());
     push_opt(&mut parts, "artifact", row.artifact_hash.as_deref());

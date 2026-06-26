@@ -78,6 +78,28 @@ fn proof_records() -> Vec<serde_json::Value> {
     ]
 }
 
+fn build_domain_record() -> serde_json::Value {
+    json!({
+        "fact_kind": "build_domain",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "build_domain_id": "bd:main",
+        "cargo_metadata_hash": "sha256:metadata",
+        "cargo_lock_hash": "sha256:lock",
+        "package_id": "ploke 0.1.0",
+        "target_kind": "library",
+        "target_name": "ploke",
+        "target_root": "src/lib.rs",
+        "target_triple": "x86_64-unknown-linux-gnu",
+        "host_triple": "x86_64-unknown-linux-gnu",
+        "profile": "dev",
+        "features_hash": "sha256:features",
+        "active_cfg_hash": "sha256:cfg",
+        "rustc_version": "rustc 1.96.0",
+        "extractor_version": "proof-graph-test",
+        "proof_policy_version": "proof-policy-test"
+    })
+}
+
 fn expansion_boundary_record() -> serde_json::Value {
     json!({
         "fact_kind": "expansion_boundary",
@@ -283,6 +305,34 @@ fn proof_graph_store_rejects_external_summary_without_artifact_identity() {
         db.proof_graphrag_context("")
             .expect("query graph")
             .is_empty()
+    );
+}
+
+#[test]
+fn proof_graphrag_context_exposes_build_domain_metadata() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    let mut records = proof_records();
+    records.push(build_domain_record());
+    db.upsert_proof_fact_values(&records)
+        .expect("import proof facts");
+
+    let rows = db
+        .proof_graphrag_context("proof-policy-test")
+        .expect("build-domain proof context");
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "build_domain"
+                && row.fact_id == "bd:main"
+                && row.build_domain_id.as_deref() == Some("bd:main")
+                && row.target_kind.as_deref() == Some("library")
+                && row.target_name.as_deref() == Some("ploke")
+                && row.target_root.as_deref() == Some("src/lib.rs")
+                && row.profile.as_deref() == Some("dev")
+                && row.rustc_version.as_deref() == Some("rustc 1.96.0")
+                && row.proof_policy_version.as_deref() == Some("proof-policy-test")
+        }),
+        "GraphRAG proof lookup should expose build-domain metadata: {rows:#?}"
     );
 }
 
