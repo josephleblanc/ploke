@@ -92,11 +92,14 @@ fn derived_gap_reason(row: &ProofFactRow, rows: &[ProofFactRow]) -> Option<Strin
                     Some("blocked" | "unresolved" | "externally_summarized")
                 ) =>
         {
-            Some(
-                row.blocker_reason
-                    .clone()
-                    .unwrap_or_else(|| expansion_boundary_gap_reason(row)),
-            )
+            let default_reason = expansion_boundary_gap_reason(row);
+            if row.status.as_deref() == Some("externally_summarized")
+                && external_summary_gap_is_discharged(row, rows, &default_reason)
+            {
+                None
+            } else {
+                Some(row.blocker_reason.clone().unwrap_or(default_reason))
+            }
         }
         "external_summary"
             if row.blocker_reason.is_some()
@@ -124,6 +127,15 @@ fn derived_gap_reason(row: &ProofFactRow, rows: &[ProofFactRow]) -> Option<Strin
             }
         }
         "call_resolution" => match row.resolution_state.as_deref() {
+            Some("externally_summarized")
+                if external_summary_gap_is_discharged(
+                    row,
+                    rows,
+                    "external_dependency_summary_missing",
+                ) =>
+            {
+                None
+            }
             Some("externally_summarized") => Some(
                 row.blocker_reason
                     .clone()
@@ -137,6 +149,42 @@ fn derived_gap_reason(row: &ProofFactRow, rows: &[ProofFactRow]) -> Option<Strin
             _ => None,
         },
         _ => None,
+    }
+}
+
+fn external_summary_gap_is_discharged(
+    row: &ProofFactRow,
+    rows: &[ProofFactRow],
+    default_reason: &str,
+) -> bool {
+    row.blocker_reason
+        .as_deref()
+        .is_none_or(|reason| reason == default_reason)
+        && has_matching_admitted_external_summary(row, rows)
+}
+
+fn has_matching_admitted_external_summary(row: &ProofFactRow, rows: &[ProofFactRow]) -> bool {
+    let Some(external_summary_id) = row.external_summary_id.as_deref() else {
+        return false;
+    };
+    rows.iter().any(|summary| {
+        summary.kind == "external_summary"
+            && is_proof_evidence(summary)
+            && summary.external_summary_id.as_deref() == Some(external_summary_id)
+            && summary.status.as_deref() == Some("admitted")
+            && summary.summary_class.as_deref() != Some("opaque_blocked")
+            && external_summary_domain_matches(row, summary)
+    })
+}
+
+fn external_summary_domain_matches(row: &ProofFactRow, summary: &ProofFactRow) -> bool {
+    match (
+        row.build_domain_id.as_deref(),
+        summary.build_domain_id.as_deref(),
+    ) {
+        (Some(row_domain), Some(summary_domain)) => row_domain == summary_domain,
+        (Some(_), None) => false,
+        (None, _) => true,
     }
 }
 

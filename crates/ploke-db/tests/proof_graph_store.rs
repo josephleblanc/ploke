@@ -581,6 +581,43 @@ fn proof_blockers_include_derived_summary_and_resolution_gaps() {
 }
 
 #[test]
+fn proof_blockers_discharge_linked_admitted_external_summary_artifacts() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    let mut resolution = externally_summarized_resolution(Some("external-summary:dep:serde"));
+    resolution
+        .as_object_mut()
+        .expect("resolution object")
+        .remove("blocking_reason");
+    let mut boundary = externally_summarized_boundary(Some("external-summary:dep:serde"));
+    boundary
+        .as_object_mut()
+        .expect("boundary object")
+        .remove("blocking_reason");
+    let mut summary = external_summary_record();
+    summary["summary_class"] = json!("audited_no_process_effects");
+    summary["status"] = json!("admitted");
+    db.upsert_proof_fact_values(&[resolution, boundary, summary])
+        .expect("import admitted external summary proof facts");
+
+    let blockers = db.proof_blockers().expect("blocker inspection");
+    assert!(
+        blockers.is_empty(),
+        "admitted linked external summary should discharge derived missing-summary blockers: {blockers:#?}"
+    );
+
+    let rows = db
+        .proof_graphrag_context("external-summary:dep:serde")
+        .expect("external summary proof context");
+    assert!(
+        rows.iter()
+            .filter(|row| { row.kind == "call_resolution" || row.kind == "expansion_boundary" })
+            .all(|row| row.blocker_reason.is_none()),
+        "admitted linked external summary should clear derived context blockers: {rows:#?}"
+    );
+}
+
+#[test]
 fn proof_context_rows_include_derived_blocker_reasons() {
     let db = Database::new_init().expect("create db");
     db.ensure_proof_graph_schema().expect("proof graph schema");
