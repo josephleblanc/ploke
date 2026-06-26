@@ -212,6 +212,53 @@ async fn proof_context_seed_exposes_external_summary_ids() -> Result<(), Error> 
     Ok(())
 }
 
+#[tokio::test]
+async fn proof_context_seed_exposes_external_summary_artifact_detail() -> Result<(), Error> {
+    init_tracing_once();
+
+    let raw = Db::new(MemStorage::default()).expect("in-memory cozo db");
+    raw.initialize().expect("initialize cozo db");
+    let db = Arc::new(Database::new(raw));
+    db.ensure_proof_graph_schema().map_err(Error::from)?;
+    let seed = Uuid::from_u128(0x5efe);
+    let summary_id = seed.to_string();
+    db.upsert_proof_fact_values(&[serde_json::json!({
+        "fact_kind": "external_summary",
+        "schema_version": "ploke-proof-facts.v1",
+        "external_summary_id": summary_id,
+        "build_domain_id": "bd:rag",
+        "summary_class": "opaque_blocked",
+        "artifact_hash": "sha256:external-artifact",
+        "version": "external 1.0.0",
+        "review_method": "manual-review",
+        "scope_of_validity": "rag test fixture",
+        "allowed_effects": ["external_summary_boundary"],
+        "required_containment": "none",
+        "invalidation_conditions": "artifact hash or proof policy changes",
+        "status": "blocked",
+        "evidence_use": "proof_only"
+    })])
+    .map_err(Error::from)?;
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    let proof_context = rag.collect_proof_context(&[(seed, 1.0)])?;
+    let rows = proof_context
+        .get(&seed)
+        .expect("external summary seed should receive matching proof rows");
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "external_summary"
+                && row.fact_id == summary_id
+                && row.build_domain_id.as_deref() == Some("bd:rag")
+                && row.status.as_deref() == Some("blocked")
+                && row.detail.as_deref() == Some("opaque_blocked")
+        }),
+        "RAG proof context should expose external summary artifact details: {rows:#?}"
+    );
+
+    Ok(())
+}
+
 fn assert_projected_owner_rows(rows: &[ProofContextInfo], owner: Uuid, target: Uuid) {
     let owner = owner.to_string();
     let target = target.to_string();
