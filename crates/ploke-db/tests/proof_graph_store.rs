@@ -725,6 +725,28 @@ fn proof_graph_store_accepts_source_spans_without_optional_line_numbers() {
 }
 
 #[test]
+fn proof_graph_store_rejects_call_resolution_without_evidence_use() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    let records = [json!({
+        "fact_kind": "call_resolution",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "call_site_id": "call:resolution",
+        "resolution_state": "resolved"
+    })];
+
+    let error = db
+        .upsert_proof_fact_values(&records)
+        .expect_err("call_resolution without evidence_use should reject before storage");
+    assert!(error.to_string().contains("evidence_use"));
+    assert!(
+        db.proof_graphrag_context("")
+            .expect("query graph")
+            .is_empty()
+    );
+}
+
+#[test]
 fn proof_graph_store_rejects_invalid_enum_like_fields_before_storage() {
     let db = Database::new_init().expect("create db");
     db.ensure_proof_graph_schema().expect("proof graph schema");

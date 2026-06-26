@@ -28,6 +28,16 @@ fn proof_projection_stores_resolved_call_facts() -> Result<(), DbError> {
     assert_eq!(edges[0].resolution_state, "resolved");
     assert!(edges[0].blocker_reason.is_none());
 
+    let rows = db.proof_graphrag_context("")?;
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "call_resolution"
+                && row.call_site_id.as_deref() == Some(site.to_string().as_str())
+                && row.evidence_use.as_deref() == Some("proof_and_navigation")
+        }),
+        "generated call_resolution proof should carry explicit evidence_use: {rows:#?}"
+    );
+
     let provenance = db
         .proof_source_provenance(&site.to_string())?
         .expect("projected call site source provenance");

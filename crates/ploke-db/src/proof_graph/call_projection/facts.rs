@@ -40,7 +40,8 @@ pub(super) fn call_resolution_fact(row: &CallContextRow) -> Value {
         "fact_kind": "call_resolution",
         "schema_version": PROOF_FACT_SCHEMA_VERSION,
         "call_site_id": row.site.id.to_string(),
-        "resolution_state": resolution_state(row.status.status)
+        "resolution_state": resolution_state(row.status.status),
+        "evidence_use": "proof_and_navigation"
     });
 
     if let Some(target) = resolved_target(row) {

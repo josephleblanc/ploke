@@ -86,7 +86,7 @@ pub(in crate::proof_graph::projection) fn validate_required_fields(
             ],
         ),
         "call_resolution" => {
-            require_fields(value, &["call_site_id", "resolution_state"])?;
+            require_fields(value, &["call_site_id", "resolution_state", "evidence_use"])?;
             require_summary_fields_for_state(value, "resolution_state")
         }
         "external_summary" => {
