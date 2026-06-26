@@ -231,9 +231,10 @@ are not acceptable as a continuing implementation style.
 - `proof_graph.rs` now keeps public proof row/trait definitions and trait
   forwarding in the root while proof schema setup, proof fact upsert/fetch, and
   proof context query shaping live in `proof_graph/{schema,storage,queries}.rs`.
-  Call-proof projection generation, call-context validation, proof fact JSON
-  construction, and owner source-file lookup remain in
-  `proof_graph/call_projection.rs`.
+  Call-proof projection orchestration lives in `proof_graph/call_projection.rs`,
+  while call-context validation, proof fact JSON construction, and owner
+  source-file lookup live in
+  `proof_graph/call_projection/{context,facts,source}.rs`.
 - `proof_graph/invariants/{detached,crown}.rs` own the detached-process and
   crown-ruling invariant evaluators while `proof_graph/invariants.rs`
   orchestrates evaluation and builds `ProofInvariantFinding` rows.
@@ -381,6 +382,13 @@ are not acceptable as a continuing implementation style.
     passed: targeted invariant blocker projection test passed.
   - `cargo test -p ploke-db --features call_graph fixture_projected_external_call_blocker_feeds_proof_invariants -- --nocapture`
     passed: targeted external blocker fixture invariant test passed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection -- --nocapture`
+    passed: 14 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+    passed: 93 passed, 0 failed.
+- Call-proof projection helper split
+  - `cargo xtask verify-fixtures`
+    passed: all required fixtures present.
   - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection -- --nocapture`
     passed: 14 passed, 0 failed.
   - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
