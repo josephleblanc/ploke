@@ -154,6 +154,15 @@ are not acceptable as a continuing implementation style.
   - Call-site scoped `externally_summarized` resolutions now also require a
     linked `call_site` fact to prove their build-domain scope before an
     admitted external summary can discharge the derived missing-summary blocker.
+  - `67981c03 Block missing proof build domains`
+  - `0dfe6a7f Block incomplete proof build domains`
+  - Proof blockers now also derive `canonical_identity_mismatch` when
+    proof-useful rows name a missing `build_domain`, and derive
+    `cfg_domain_not_materialized` plus `rustc_invocation_evidence_missing`
+    when a `build_domain` lacks admitted matching cfg-domain and rustc
+    invocation evidence. The low-level DB fixtures now seed admitted
+    build-domain evidence for ordinary proof rows and keep dedicated failing
+    cases for absent domain evidence.
   - Generic external-summary discharge now applies only to
     external-dependency summary gaps. Proc-macro and build-script expansion
     summary gaps retain their specific blockers until those summary semantics
@@ -782,6 +791,24 @@ next likely slices are:
    that batch before adding cases.
 
 ## Latest verification
+
+For `67981c03 Block missing proof build domains` and
+`0dfe6a7f Block incomplete proof build domains`:
+
+- `cargo test -p ploke-db proof_blockers_report_missing_build_domain_references -- --nocapture`
+  - first failed with 0 blockers, then passed after the derived blocker fix.
+- `cargo test -p ploke-db proof_blockers_report_incomplete_build_domain_evidence -- --nocapture`
+  - first failed with no cfg/rustc blockers, then passed after the multi-reason
+    build-domain blocker fix.
+- `cargo test -p ploke-db proof_graph_store -- --nocapture`
+  - passed: 13 passed, 0 failed.
+- `cargo test -p ploke-db proof_invariant_checker -- --nocapture`
+  - passed: 31 passed, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection -- --nocapture`
+  - passed: 14 passed, 0 failed.
+- Additional call-graph proof groups stayed green after the missing-domain
+  blocker: fixture target proof 9 passed, resolved proof 7 passed, blocker
+  proof 6 passed, dynamic proof 7 passed.
 
 For `0dd7b7b0 test: split request context call cases`:
 
