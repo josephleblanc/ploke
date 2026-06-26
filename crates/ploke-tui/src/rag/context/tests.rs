@@ -187,6 +187,10 @@ fn reformat_context_to_system_includes_proof_context_details() {
             resolved_def_id: Some("def:callee".to_string()),
             candidate_def_ids: vec!["def:callee".to_string(), "def:other".to_string()],
             external_summary_id: Some("external-summary:dep:serde".to_string()),
+            boundary_id: None,
+            boundary_kind: None,
+            expanded_item_id: None,
+            definition_id: None,
             authority_term: Some("successor".to_string()),
             summary_class: None,
             artifact_hash: None,
@@ -230,6 +234,67 @@ fn reformat_context_to_system_includes_proof_context_details() {
 }
 
 #[test]
+fn reformat_context_to_system_includes_expansion_metadata() {
+    let part = ContextPart {
+        id: Uuid::from_u128(42),
+        file_path: NodeFilepath::new("src/lib.rs".to_string()),
+        canon_path: CanonPath::new("crate::expanded".to_string()),
+        ranges: vec![],
+        kind: ContextPartKind::Code,
+        text: "macro_rules! demo { () => {} }".to_string(),
+        score: 0.21,
+        modality: Modality::Sparse,
+        type_context: None,
+        call_expansion: None,
+        call_context: Vec::new(),
+        proof_context: vec![ProofContextInfo {
+            fact_id: "expanded:item:macro".to_string(),
+            kind: "expanded_item".to_string(),
+            build_domain_id: Some("bd:fixture-call-graph".to_string()),
+            call_site_id: None,
+            call_edge_id: None,
+            caller_def_id: None,
+            callee_def_id: None,
+            resolution_state: None,
+            resolved_def_id: None,
+            candidate_def_ids: Vec::new(),
+            external_summary_id: None,
+            boundary_id: Some("boundary:macro-rules".to_string()),
+            boundary_kind: Some("macro_rules_invocation".to_string()),
+            expanded_item_id: Some("expanded:item:macro".to_string()),
+            definition_id: Some("def:expanded-macro-item".to_string()),
+            authority_term: None,
+            summary_class: None,
+            artifact_hash: None,
+            summary_version: None,
+            review_method: None,
+            scope_of_validity: None,
+            allowed_effects: Vec::new(),
+            required_containment: None,
+            invalidation_conditions: None,
+            evidence_use: Some("proof_only".to_string()),
+            source_file: Some("src/lib.rs".to_string()),
+            start_byte: Some(90),
+            end_byte: Some(120),
+            line_start: Some(9),
+            line_end: Some(10),
+            effect_class: None,
+            blocker_reason: None,
+            status: None,
+            detail: None,
+        }],
+    };
+
+    let rendered = reformat_context_to_system(part);
+
+    assert!(rendered.contains("expanded_item"));
+    assert!(rendered.contains("boundary=boundary:macro-rules"));
+    assert!(rendered.contains("boundary_kind=macro_rules_invocation"));
+    assert!(rendered.contains("expanded_item=expanded:item:macro"));
+    assert!(rendered.contains("definition=def:expanded-macro-item"));
+}
+
+#[test]
 fn reformat_context_to_system_includes_external_summary_metadata() {
     let part = ContextPart {
         id: Uuid::from_u128(41),
@@ -255,6 +320,10 @@ fn reformat_context_to_system_includes_external_summary_metadata() {
             resolved_def_id: None,
             candidate_def_ids: Vec::new(),
             external_summary_id: Some("external-summary:dep:serde".to_string()),
+            boundary_id: None,
+            boundary_kind: None,
+            expanded_item_id: None,
+            definition_id: None,
             authority_term: None,
             summary_class: Some("opaque_blocked".to_string()),
             artifact_hash: Some("sha256:serde-artifact".to_string()),

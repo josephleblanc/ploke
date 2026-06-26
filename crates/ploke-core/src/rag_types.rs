@@ -348,6 +348,14 @@ pub struct ProofContextInfo {
     #[serde(default)]
     pub external_summary_id: Option<String>,
     #[serde(default)]
+    pub boundary_id: Option<String>,
+    #[serde(default)]
+    pub boundary_kind: Option<String>,
+    #[serde(default)]
+    pub expanded_item_id: Option<String>,
+    #[serde(default)]
+    pub definition_id: Option<String>,
+    #[serde(default)]
     pub authority_term: Option<String>,
     #[serde(default)]
     pub summary_class: Option<String>,

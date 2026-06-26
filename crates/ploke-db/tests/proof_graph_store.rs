@@ -97,6 +97,25 @@ fn expansion_boundary_record() -> serde_json::Value {
     })
 }
 
+fn expanded_item_record() -> serde_json::Value {
+    json!({
+        "fact_kind": "expanded_item",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "expanded_item_id": "expanded:item:macro",
+        "boundary_id": "boundary:macro-rules",
+        "build_domain_id": "bd:main",
+        "definition_id": "def:expanded-macro-item",
+        "source_span": {
+            "file": "src/lib.rs",
+            "start_byte": 90,
+            "end_byte": 120,
+            "line_start": 9,
+            "line_end": 10
+        },
+        "evidence_use": "proof_only"
+    })
+}
+
 fn externally_summarized_boundary(summary_id: Option<&str>) -> serde_json::Value {
     let mut value = expansion_boundary_record();
     value["boundary_id"] = json!("boundary:external-summary");
@@ -578,11 +597,38 @@ fn proof_graphrag_context_matches_json_only_expansion_boundary_fields() {
         rows.iter().any(|row| {
             row.kind == "expansion_boundary"
                 && row.fact_id == "boundary:macro-rules"
+                && row.boundary_id.as_deref() == Some("boundary:macro-rules")
+                && row.boundary_kind.as_deref() == Some("macro_rules_invocation")
                 && row.status.as_deref() == Some("unresolved")
                 && row.blocker_reason.as_deref() == Some("macro_expansion_not_available")
                 && row.detail.as_deref() == Some("macro_rules_invocation")
         }),
         "GraphRAG proof lookup should match JSON-only boundary_kind fields: {rows:#?}"
+    );
+}
+
+#[test]
+fn proof_graphrag_context_exposes_expanded_item_metadata() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    let mut records = proof_records();
+    records.push(expansion_boundary_record());
+    records.push(expanded_item_record());
+    db.upsert_proof_fact_values(&records)
+        .expect("import proof facts");
+
+    let rows = db
+        .proof_graphrag_context("def:expanded-macro-item")
+        .expect("expanded-item proof context");
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "expanded_item"
+                && row.fact_id == "expanded:item:macro"
+                && row.expanded_item_id.as_deref() == Some("expanded:item:macro")
+                && row.boundary_id.as_deref() == Some("boundary:macro-rules")
+                && row.definition_id.as_deref() == Some("def:expanded-macro-item")
+        }),
+        "GraphRAG proof lookup should expose expanded-item linkage metadata: {rows:#?}"
     );
 }
 
