@@ -197,7 +197,7 @@ fn external_summary_domain_matches(
 
     let call_site_domains = linked_call_site_domains(row, rows);
     if call_site_domains.is_empty() {
-        return true;
+        return row.call_site_id.is_none();
     }
     if call_site_domains.len() > 1 {
         return false;

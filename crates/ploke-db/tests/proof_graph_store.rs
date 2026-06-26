@@ -191,6 +191,22 @@ fn externally_summarized_resolution(summary_id: Option<&str>) -> serde_json::Val
     value
 }
 
+fn external_call_site_record() -> serde_json::Value {
+    json!({
+        "fact_kind": "call_site",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "call_site_id": "call:external",
+        "build_domain_id": "bd:main",
+        "caller_def_id": "def:launch",
+        "source_span": {
+            "file": "src/lib.rs",
+            "start_byte": 100,
+            "end_byte": 110
+        },
+        "evidence_use": "proof_only"
+    })
+}
+
 fn external_summary_record() -> serde_json::Value {
     json!({
         "fact_kind": "external_summary",
@@ -597,7 +613,7 @@ fn proof_blockers_discharge_linked_admitted_external_summary_artifacts() {
     let mut summary = external_summary_record();
     summary["summary_class"] = json!("audited_no_process_effects");
     summary["status"] = json!("admitted");
-    db.upsert_proof_fact_values(&[resolution, boundary, summary])
+    db.upsert_proof_fact_values(&[external_call_site_record(), resolution, boundary, summary])
         .expect("import admitted external summary proof facts");
 
     let blockers = db.proof_blockers().expect("blocker inspection");
@@ -614,6 +630,43 @@ fn proof_blockers_discharge_linked_admitted_external_summary_artifacts() {
             .filter(|row| { row.kind == "call_resolution" || row.kind == "expansion_boundary" })
             .all(|row| row.blocker_reason.is_none()),
         "admitted linked external summary should clear derived context blockers: {rows:#?}"
+    );
+}
+
+#[test]
+fn proof_blockers_require_linked_call_site_domain_for_external_summary_discharge() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    let mut resolution = externally_summarized_resolution(Some("external-summary:dep:serde"));
+    resolution
+        .as_object_mut()
+        .expect("resolution object")
+        .remove("blocking_reason");
+    let mut summary = external_summary_record();
+    summary["summary_class"] = json!("audited_no_process_effects");
+    summary["status"] = json!("admitted");
+    db.upsert_proof_fact_values(&[resolution, summary])
+        .expect("import unscoped external summary proof facts");
+
+    let blockers = db.proof_blockers().expect("blocker inspection");
+    assert_eq!(
+        blockers.len(),
+        1,
+        "call-site scoped resolution without a linked call_site domain should fail closed: {blockers:#?}"
+    );
+    assert_eq!(blockers[0].blocker_id, "resolution:call:external");
+    assert_eq!(blockers[0].reason, "external_dependency_summary_missing");
+
+    let rows = db
+        .proof_graphrag_context("external-summary:dep:serde")
+        .expect("external summary proof context");
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "call_resolution"
+                && row.call_site_id.as_deref() == Some("call:external")
+                && row.blocker_reason.as_deref() == Some("external_dependency_summary_missing")
+        }),
+        "context lookup should retain the missing-summary blocker when call_site scope is absent: {rows:#?}"
     );
 }
 
@@ -656,19 +709,6 @@ fn proof_blockers_require_allowed_effect_for_external_summary_discharge() {
 fn proof_blockers_require_call_site_domain_match_for_external_summary_discharge() {
     let db = Database::new_init().expect("create db");
     db.ensure_proof_graph_schema().expect("proof graph schema");
-    let call_site = json!({
-        "fact_kind": "call_site",
-        "schema_version": PROOF_FACT_SCHEMA_VERSION,
-        "call_site_id": "call:external",
-        "build_domain_id": "bd:main",
-        "caller_def_id": "def:launch",
-        "source_span": {
-            "file": "src/lib.rs",
-            "start_byte": 100,
-            "end_byte": 110
-        },
-        "evidence_use": "proof_only"
-    });
     let mut resolution = externally_summarized_resolution(Some("external-summary:dep:serde"));
     resolution
         .as_object_mut()
@@ -678,7 +718,7 @@ fn proof_blockers_require_call_site_domain_match_for_external_summary_discharge(
     summary["summary_class"] = json!("audited_no_process_effects");
     summary["status"] = json!("admitted");
     summary["build_domain_id"] = json!("bd:other");
-    db.upsert_proof_fact_values(&[call_site, resolution, summary])
+    db.upsert_proof_fact_values(&[external_call_site_record(), resolution, summary])
         .expect("import mismatched external summary proof facts");
 
     let blockers = db.proof_blockers().expect("blocker inspection");
