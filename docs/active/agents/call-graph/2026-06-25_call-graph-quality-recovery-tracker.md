@@ -250,6 +250,8 @@ are not acceptable as a continuing implementation style.
   concern modules own row DTOs, call-site/target/status kind decoding,
   receiver decoding, target-family rules, row validation, and query methods:
   `call_graph/{rows,kinds,receiver,families,decode,queries}.rs`.
+- `call_graph/receiver.rs` now keeps the `CallReceiver` data model in the root
+  while Cozo receiver row decoding lives in `call_graph/receiver/decode.rs`.
 - `call_graph/queries.rs` is now a thin module root with availability,
   owner/status, target/caller, and expansion query methods split into
   `call_graph/queries/` child modules.
@@ -391,6 +393,15 @@ are not acceptable as a continuing implementation style.
     passed: all required fixtures present.
   - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection -- --nocapture`
     passed: 14 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+    passed: 93 passed, 0 failed.
+- Call receiver decoder split
+  - `cargo xtask verify-fixtures`
+    passed: all required fixtures present.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::receiver_decode -- --nocapture`
+    passed: 2 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_queries -- --nocapture`
+    passed: 34 passed, 0 failed.
   - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
     passed: 93 passed, 0 failed.
 - RAG call-context collection case split
