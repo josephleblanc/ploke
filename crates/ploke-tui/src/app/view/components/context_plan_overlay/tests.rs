@@ -184,7 +184,7 @@ fn expanded_rag_part_displays_call_context_details() {
                 line_start: Some(1),
                 line_end: Some(1),
                 effect_class: Some("call".to_string()),
-                blocker_reason: None,
+                blocker_reason: Some("type_resolution_missing".to_string()),
                 status: Some("resolved".to_string()),
                 detail: None,
             }],
@@ -232,6 +232,7 @@ fn expanded_rag_part_displays_call_context_details() {
     assert!(details.contains("proof_context: 1 proof fact(s)"));
     assert!(details.contains("call_edge"));
     assert!(details.contains("site=call:site"));
+    assert!(details.contains("blocker=type_resolution_missing"));
     assert!(details.contains("domain=bd:fixture-call-graph"));
     assert!(details.contains("Path @ 10..12: path Ok => Unsupported, targets []"));
     assert!(
