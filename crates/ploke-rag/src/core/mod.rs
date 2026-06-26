@@ -1108,13 +1108,36 @@ impl RagService {
         &self,
         hits: &[(Uuid, f32)],
     ) -> Result<HashMap<Uuid, Vec<ProofContextInfo>>, RagError> {
+        self.collect_proof_context_with_required(hits, &HashSet::new())
+    }
+
+    #[cfg(feature = "call_graph")]
+    fn collect_proof_context_with_required(
+        &self,
+        hits: &[(Uuid, f32)],
+        required: &HashSet<Uuid>,
+    ) -> Result<HashMap<Uuid, Vec<ProofContextInfo>>, RagError> {
         let cfg = self.cfg.proof_context;
         if !cfg.enabled || cfg.max_seed_hits == 0 || cfg.max_rows_per_part == 0 || hits.is_empty() {
             return Ok(HashMap::new());
         }
 
-        let mut out = HashMap::new();
+        let hit_ids = hits.iter().map(|(id, _)| *id).collect::<HashSet<_>>();
+        let mut seen_seeds = HashSet::new();
+        let mut seed_ids = Vec::new();
         for &(id, _) in hits.iter().take(cfg.max_seed_hits) {
+            if seen_seeds.insert(id) {
+                seed_ids.push(id);
+            }
+        }
+        for id in required.iter().copied().filter(|id| hit_ids.contains(id)) {
+            if seen_seeds.insert(id) {
+                seed_ids.push(id);
+            }
+        }
+
+        let mut out = HashMap::new();
+        for id in seed_ids {
             let mut seen = HashSet::new();
             let mut rows = self
                 .db
@@ -1354,12 +1377,11 @@ impl RagService {
         };
 
         #[cfg(feature = "call_graph")]
-        let call_context = {
-            let required = call_expansion.keys().copied().collect::<HashSet<_>>();
-            self.collect_call_context_with_required(&final_hits, &required)?
-        };
+        let required = call_expansion.keys().copied().collect::<HashSet<_>>();
         #[cfg(feature = "call_graph")]
-        let proof_context = self.collect_proof_context(&final_hits)?;
+        let call_context = self.collect_call_context_with_required(&final_hits, &required)?;
+        #[cfg(feature = "call_graph")]
+        let proof_context = self.collect_proof_context_with_required(&final_hits, &required)?;
 
         // 2) Assemble context
         let io = self
