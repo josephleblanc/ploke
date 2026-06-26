@@ -101,7 +101,8 @@ fn call_resolution_for(call_site_id: &str, resolution_state: &str, reason: Optio
         "fact_kind": "call_resolution",
         "schema_version": PROOF_FACT_SCHEMA_VERSION,
         "call_site_id": call_site_id,
-        "resolution_state": resolution_state
+        "resolution_state": resolution_state,
+        "evidence_use": "proof_only"
     });
     if let Some(reason) = reason {
         value["blocking_reason"] = json!(reason);
@@ -150,7 +151,8 @@ fn expansion_boundary(
             "line_start": line,
             "line_end": line
         },
-        "expansion_state": expansion_state
+        "expansion_state": expansion_state,
+        "evidence_use": "proof_only"
     });
     if let Some(blocking_reason) = blocking_reason {
         value["blocking_reason"] = json!(blocking_reason);

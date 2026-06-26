@@ -155,6 +155,38 @@ fn proof_graph_store_rejects_external_summary_without_evidence_use() {
 }
 
 #[test]
+fn proof_graph_store_rejects_externally_summarized_rows_without_evidence_use() {
+    for (label, mut row) in [
+        (
+            "expansion_boundary",
+            externally_summarized_boundary(Some("external-summary:dep:serde")),
+        ),
+        (
+            "call_resolution",
+            externally_summarized_resolution(Some("external-summary:dep:serde")),
+        ),
+    ] {
+        let db = Database::new_init().expect("create db");
+        db.ensure_proof_graph_schema().expect("proof graph schema");
+        row.as_object_mut()
+            .expect("externally summarized row object")
+            .remove("evidence_use");
+        let mut records = proof_records();
+        records.push(row);
+
+        let error = db.upsert_proof_fact_values(&records).expect_err(&format!(
+            "{label} without evidence_use should reject the whole batch"
+        ));
+        assert!(error.to_string().contains("evidence_use"));
+        assert!(
+            db.proof_graphrag_context("")
+                .expect("query graph")
+                .is_empty()
+        );
+    }
+}
+
+#[test]
 fn proof_graph_store_rejects_external_summary_boundary_without_summary_id() {
     let db = Database::new_init().expect("create db");
     db.ensure_proof_graph_schema().expect("proof graph schema");

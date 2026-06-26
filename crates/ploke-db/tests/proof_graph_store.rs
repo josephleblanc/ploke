@@ -187,7 +187,8 @@ fn expansion_boundary_record() -> serde_json::Value {
             "line_end": 8
         },
         "expansion_state": "unresolved",
-        "blocking_reason": "macro_expansion_not_available"
+        "blocking_reason": "macro_expansion_not_available",
+        "evidence_use": "proof_only"
     })
 }
 
@@ -227,7 +228,8 @@ fn externally_summarized_resolution(summary_id: Option<&str>) -> serde_json::Val
         "schema_version": PROOF_FACT_SCHEMA_VERSION,
         "call_site_id": "call:external",
         "resolution_state": "externally_summarized",
-        "blocking_reason": "external_dependency_summary_missing"
+        "blocking_reason": "external_dependency_summary_missing",
+        "evidence_use": "proof_only"
     });
     if let Some(summary_id) = summary_id {
         value["external_summary_id"] = json!(summary_id);

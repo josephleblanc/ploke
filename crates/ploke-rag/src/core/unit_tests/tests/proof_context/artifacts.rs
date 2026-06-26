@@ -17,7 +17,8 @@ async fn proof_context_seed_exposes_external_summary_ids() -> Result<(), Error> 
         "call_site_id": "call:external",
         "resolution_state": "externally_summarized",
         "external_summary_id": summary_id,
-        "blocking_reason": "external_dependency_summary_missing"
+        "blocking_reason": "external_dependency_summary_missing",
+        "evidence_use": "proof_only"
     })])
     .map_err(Error::from)?;
 
