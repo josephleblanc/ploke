@@ -84,7 +84,10 @@ pub(in crate::proof_graph::projection) fn validate_required_fields(
                 "resolution_state",
             ],
         ),
-        "call_resolution" => require_fields(value, &["call_site_id", "resolution_state"]),
+        "call_resolution" => {
+            require_fields(value, &["call_site_id", "resolution_state"])?;
+            require_external_summary_id(value)
+        }
         "effect_seed" => {
             require_fields(
                 value,
@@ -119,6 +122,13 @@ pub(in crate::proof_graph::projection) fn validate_required_fields(
 fn require_fields(value: &Value, fields: &[&str]) -> Result<(), DbError> {
     for field in fields {
         required_json_string(value, field)?;
+    }
+    Ok(())
+}
+
+fn require_external_summary_id(value: &Value) -> Result<(), DbError> {
+    if value.get("resolution_state").and_then(Value::as_str) == Some("externally_summarized") {
+        required_json_string(value, "external_summary_id")?;
     }
     Ok(())
 }

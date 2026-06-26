@@ -84,6 +84,9 @@ fn call_resolution_for(call_site_id: &str, resolution_state: &str, reason: Optio
     if let Some(reason) = reason {
         value["blocking_reason"] = json!(reason);
     }
+    if resolution_state == "externally_summarized" {
+        value["external_summary_id"] = json!("external-summary:test");
+    }
     value
 }
 

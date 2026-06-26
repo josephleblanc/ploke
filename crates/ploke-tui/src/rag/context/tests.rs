@@ -186,6 +186,7 @@ fn reformat_context_to_system_includes_proof_context_details() {
             resolution_state: Some("resolved".to_string()),
             resolved_def_id: Some("def:callee".to_string()),
             candidate_def_ids: vec!["def:callee".to_string(), "def:other".to_string()],
+            external_summary_id: Some("external-summary:dep:serde".to_string()),
             evidence_use: Some("proof_only".to_string()),
             source_file: Some("src/main.rs".to_string()),
             start_byte: Some(12),
@@ -210,6 +211,7 @@ fn reformat_context_to_system_includes_proof_context_details() {
     assert!(rendered.contains("state=resolved"));
     assert!(rendered.contains("resolved=def:callee"));
     assert!(rendered.contains("candidates=[def:callee, def:other]"));
+    assert!(rendered.contains("external_summary=external-summary:dep:serde"));
     assert!(rendered.contains("effect=call"));
     assert!(rendered.contains("detail=edge confirmed"));
     assert!(rendered.contains("domain=bd:fixture-call-graph"));

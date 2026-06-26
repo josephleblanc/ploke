@@ -17,6 +17,7 @@ pub(super) struct ProofFactRow {
     pub(super) resolution_state: Option<String>,
     pub(super) resolved_def_id: Option<String>,
     pub(super) candidate_def_ids: Vec<String>,
+    pub(super) external_summary_id: Option<String>,
     pub(super) source_file: Option<String>,
     pub(super) start_byte: Option<u32>,
     pub(super) end_byte: Option<u32>,
@@ -46,6 +47,7 @@ impl ProofFactRow {
             candidate_def_ids: json
                 .map(|value| json_string_array(value, "candidate_def_ids"))
                 .unwrap_or_default(),
+            external_summary_id: json.and_then(|value| json_string(value, "external_summary_id")),
             source_file: optional_string(row, 10),
             start_byte: optional_u32(row, 11, "start_byte")?,
             end_byte: optional_u32(row, 12, "end_byte")?,
@@ -74,6 +76,7 @@ impl ProofFactRow {
             self.callee_def_id.as_deref(),
             self.resolution_state.as_deref(),
             self.resolved_def_id.as_deref(),
+            self.external_summary_id.as_deref(),
             self.source_file.as_deref(),
             self.effect_class.as_deref(),
             self.blocker_reason.as_deref(),
@@ -108,6 +111,7 @@ impl From<ProofFactRow> for ProofGraphContextRow {
             resolution_state: row.resolution_state,
             resolved_def_id: row.resolved_def_id,
             candidate_def_ids: row.candidate_def_ids,
+            external_summary_id: row.external_summary_id,
             evidence_use: row.evidence_use,
             source_file: row.source_file,
             start_byte: row.start_byte,

@@ -346,6 +346,8 @@ pub struct ProofContextInfo {
     #[serde(default)]
     pub candidate_def_ids: Vec<String>,
     #[serde(default)]
+    pub external_summary_id: Option<String>,
+    #[serde(default)]
     pub evidence_use: Option<String>,
     #[serde(default)]
     pub source_file: Option<String>,
