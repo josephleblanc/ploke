@@ -247,6 +247,7 @@ fn reformat_context_to_system_includes_proof_context_details() {
     assert!(rendered.contains("detail=edge confirmed"));
     assert!(rendered.contains("domain=bd:fixture-call-graph"));
     assert!(rendered.contains("source=src/main.rs:12..26"));
+    assert!(rendered.contains("lines=1..1"));
 }
 
 #[test]

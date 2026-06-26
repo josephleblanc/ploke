@@ -543,6 +543,9 @@ fn format_proof_context(row: &ProofContextInfo) -> String {
     {
         parts.push(format!("source={file}:{start}..{end}"));
     }
+    if let (Some(start), Some(end)) = (row.line_start, row.line_end) {
+        parts.push(format!("lines={start}..{end}"));
+    }
     parts.join(", ")
 }
 
