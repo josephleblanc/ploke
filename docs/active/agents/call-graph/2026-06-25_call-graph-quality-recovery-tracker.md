@@ -27,6 +27,13 @@ are not acceptable as a continuing implementation style.
   - `request_code_context` now surfaces proof-context degradation in model
     notes and UI details when proof facts are absent, with focused helper and
     execute-path coverage under `call_graph`.
+  - `7c7f06c6 test: cover projected proof request context`
+  - `ed010f12 test: cover ambiguous proof request context`
+  - `request_code_context` now has execute-path coverage for populated proof
+    facts as well: resolved owner-scoped proof rows are returned in the tool
+    payload, UI carrier counts match the aggregate proof rows, and
+    target-centered ambiguous dynamic proof rows preserve sibling candidates in
+    `candidate_def_ids`.
   - `cc808347 test: cover variant constructor tool context`
   - TUI RAG context prompt-formatting tests were moved out of the inline
     `rag/context.rs` test module into `rag/context/tests.rs`, leaving the
@@ -758,6 +765,7 @@ For `9dbb7fbd test: reuse resolved seed in context queries`:
 
 - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::context_expansion::owner -- --nocapture`
   - passed: owner context-expansion query filter ran 1 test, 0 failed.
+
 - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::context_expansion::callers -- --nocapture`
   - passed: target callers context-expansion query filter ran 1 test, 0 failed.
 - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::context_expansion::expand::navigation -- --nocapture`
@@ -766,6 +774,17 @@ For `9dbb7fbd test: reuse resolved seed in context queries`:
   - passed: context-expansion query filter ran 4 tests, 0 failed.
 - `cargo test -p ploke-db --features call_graph unit::call_graph_queries -- --nocapture`
   - passed: synthetic call-graph query filter ran 33 tests, 0 failed.
+
+For TUI `request_code_context` proof-context tool paths:
+
+- `cargo test -p ploke-tui --features call_graph request_code_context_returns_projected_proof_context -- --nocapture`
+  - passed: projected resolved proof-context request filter ran 1 test, 0 failed.
+- `cargo test -p ploke-tui --features call_graph request_code_context::gat_tests::call_context_tests -- --nocapture`
+  - passed: call-context GAT request filter ran 6 tests, 0 failed.
+- `cargo test -p ploke-tui --features call_graph request_code_context_preserves_ambiguous_target_candidate_proof_context -- --nocapture`
+  - passed: ambiguous target-centered proof-context request filter ran 1 test, 0 failed.
+- `cargo test -p ploke-tui --features call_graph request_code_context::gat_tests::proof_context_tests -- --nocapture`
+  - passed: proof-context GAT request filter ran 1 test, 0 failed.
 
 For `4fba3095 test: share targetless status seed helper`:
 
