@@ -85,6 +85,12 @@ fn call_context_degraded_note() -> String {
         .to_string()
 }
 
+#[cfg(feature = "call_graph")]
+fn proof_context_degraded_note() -> String {
+    "Proof-context expansion is unavailable for this workspace index; results omit proof graph payloads and proof blockers."
+        .to_string()
+}
+
 fn type_context_degraded_next_steps() -> Vec<String> {
     vec![
         "Re-index the workspace with a typed type-graph build if typed neighbors are required."
@@ -98,6 +104,16 @@ fn type_context_degraded_next_steps() -> Vec<String> {
 fn call_context_degraded_next_steps() -> Vec<String> {
     vec![
         "Re-index the workspace with call-graph projection enabled if call payloads or caller expansion are required."
+            .to_string(),
+        "Use code_item_lookup or read_file when you need exact definitions rather than broad retrieval."
+            .to_string(),
+    ]
+}
+
+#[cfg(feature = "call_graph")]
+fn proof_context_degraded_next_steps() -> Vec<String> {
+    vec![
+        "Project proof facts for the active workspace if proof blockers or proof context are required."
             .to_string(),
         "Use code_item_lookup or read_file when you need exact definitions rather than broad retrieval."
             .to_string(),
@@ -127,6 +143,21 @@ fn apply_call_context_degraded_note(result: &mut RequestCodeContextResult) {
         None => result.note = Some(note),
     }
     result.next_steps.extend(call_context_degraded_next_steps());
+}
+
+#[cfg(feature = "call_graph")]
+fn apply_proof_context_degraded_note(result: &mut RequestCodeContextResult) {
+    let note = proof_context_degraded_note();
+    match result.note.as_mut() {
+        Some(existing) => {
+            existing.push_str("\n\n");
+            existing.push_str(&note);
+        }
+        None => result.note = Some(note),
+    }
+    result
+        .next_steps
+        .extend(proof_context_degraded_next_steps());
 }
 
 fn summarize_request_code_context_result(
@@ -319,6 +350,10 @@ impl super::Tool for RequestCodeContextGat {
         #[cfg(feature = "call_graph")]
         if rag.call_context_degraded() {
             apply_call_context_degraded_note(&mut result);
+        }
+        #[cfg(feature = "call_graph")]
+        if rag.proof_context_degraded() {
+            apply_proof_context_degraded_note(&mut result);
         }
         let mut ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
             .with_field("search_term", result.search_term.as_str())
@@ -552,6 +587,38 @@ mod gat_tests {
                 .iter()
                 .any(|step| step.contains("call-graph projection enabled")),
             "call-context degradation should include recovery next steps: {:#?}",
+            result.next_steps
+        );
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[test]
+    fn proof_context_degradation_is_model_visible() {
+        let mut result = RequestCodeContextResult::from_assembled(
+            Vec::new(),
+            AssembledMeta {
+                search_term: "proofs".to_string(),
+                top_k: 3,
+                kind: ContextPartKind::Code,
+            },
+        );
+
+        apply_proof_context_degraded_note(&mut result);
+
+        let note = result
+            .note
+            .as_deref()
+            .expect("proof-context degradation should surface a note for the model");
+        assert!(
+            note.contains("Proof-context expansion is unavailable"),
+            "unexpected note: {note}"
+        );
+        assert!(
+            result
+                .next_steps
+                .iter()
+                .any(|step| step.contains("Project proof facts")),
+            "proof-context degradation should include recovery next steps: {:#?}",
             result.next_steps
         );
     }
