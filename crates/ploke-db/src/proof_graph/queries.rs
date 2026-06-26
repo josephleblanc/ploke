@@ -196,6 +196,7 @@ fn linked_context_rows(
         .filter(|row| is_seed(row))
         .filter_map(|row| row.call_site_id.clone())
         .collect::<BTreeSet<_>>();
+    let all_rows = rows.clone();
 
     rows.into_iter()
         .filter(|row| {
@@ -205,6 +206,14 @@ fn linked_context_rows(
                     .as_ref()
                     .is_some_and(|id| linked_call_sites.contains(id))
         })
-        .map(ProofGraphContextRow::from)
+        .map(|row| proof_context_row(row, &all_rows))
         .collect()
+}
+
+fn proof_context_row(row: ProofFactRow, rows: &[ProofFactRow]) -> ProofGraphContextRow {
+    let mut context = ProofGraphContextRow::from(row.clone());
+    if context.blocker_reason.is_none() {
+        context.blocker_reason = derived_proof_blocker_reason(&row, rows);
+    }
+    context
 }

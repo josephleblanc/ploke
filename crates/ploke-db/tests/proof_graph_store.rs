@@ -418,6 +418,26 @@ fn proof_blockers_include_derived_summary_and_resolution_gaps() {
 }
 
 #[test]
+fn proof_context_rows_include_derived_blocker_reasons() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    db.upsert_proof_fact_values(&proof_records())
+        .expect("import proof facts");
+
+    let rows = db
+        .proof_graphrag_context("def:launch")
+        .expect("graphrag proof context");
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "call_edge"
+                && row.call_site_id.as_deref() == Some("call:spawn")
+                && row.blocker_reason.as_deref() == Some("type_resolution_missing")
+        }),
+        "derived unresolved call-edge blocker should be visible in proof context rows: {rows:#?}"
+    );
+}
+
+#[test]
 fn proof_graph_store_retains_blockers_for_graphrag_and_checker_queries() {
     let db = Database::new_init().expect("create db");
     db.ensure_proof_graph_schema().expect("proof graph schema");
