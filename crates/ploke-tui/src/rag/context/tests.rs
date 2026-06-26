@@ -251,6 +251,32 @@ fn reformat_context_to_system_includes_proof_context_details() {
 }
 
 #[test]
+fn format_proof_context_block_renders_multiple_blockers_for_one_fact() {
+    let row = |reason: &str| {
+        serde_json::from_value::<ProofContextInfo>(serde_json::json!({
+            "fact_id": "bd:main",
+            "kind": "build_domain",
+            "build_domain_id": "bd:main",
+            "target_kind": "library",
+            "target_name": "ploke",
+            "status": "blocked",
+            "blocker_reason": reason
+        }))
+        .expect("minimal proof context row")
+    };
+    let rows = vec![
+        row("cfg_domain_not_materialized"),
+        row("rustc_invocation_evidence_missing"),
+    ];
+
+    let rendered = format_proof_context_block(&rows, "  ", 8);
+
+    assert!(rendered.contains("proof_context: 2 proof fact(s)"));
+    assert!(rendered.contains("blocker=cfg_domain_not_materialized"));
+    assert!(rendered.contains("blocker=rustc_invocation_evidence_missing"));
+}
+
+#[test]
 fn reformat_context_to_system_includes_expansion_metadata() {
     let part = ContextPart {
         id: Uuid::from_u128(42),
