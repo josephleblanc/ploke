@@ -127,6 +127,7 @@ fn build_rag_config(rag: &crate::user_config::RagUserConfig) -> RagConfig {
     #[cfg(feature = "call_graph")]
     {
         cfg.call_context = rag.call_context.to_rag_config();
+        cfg.proof_context = rag.proof_context.to_rag_config();
     }
     cfg
 }
