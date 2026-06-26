@@ -727,6 +727,9 @@ pub struct RagUserConfig {
     pub rrf: RrfConfig,
     #[serde(default)]
     pub mmr: Option<MmrConfig>,
+    #[cfg(feature = "call_graph")]
+    #[serde(default)]
+    pub call_context: CallContextUserConfig,
 }
 
 impl Default for RagUserConfig {
@@ -740,6 +743,66 @@ impl Default for RagUserConfig {
             strict_bm25_by_default: false,
             rrf: RrfConfig::default(),
             mmr: None,
+            #[cfg(feature = "call_graph")]
+            call_context: CallContextUserConfig::default(),
+        }
+    }
+}
+
+#[cfg(feature = "call_graph")]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+pub struct CallContextUserConfig {
+    #[serde(default = "default_call_context_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_call_context_max_owner_hits")]
+    pub max_owner_hits: usize,
+    #[serde(default = "default_call_context_max_sites_per_owner")]
+    pub max_sites_per_owner: usize,
+    #[serde(default = "default_call_context_max_targets_per_site")]
+    pub max_targets_per_site: usize,
+    #[serde(default = "default_call_context_max_caller_hits")]
+    pub max_caller_hits: usize,
+    #[serde(default = "default_call_context_caller_factor")]
+    pub caller_factor: f32,
+}
+
+#[cfg(feature = "call_graph")]
+impl Default for CallContextUserConfig {
+    fn default() -> Self {
+        let defaults = ploke_rag::CallContextConfig::default();
+        Self {
+            enabled: defaults.enabled,
+            max_owner_hits: defaults.max_owner_hits,
+            max_sites_per_owner: defaults.max_sites_per_owner,
+            max_targets_per_site: defaults.max_targets_per_site,
+            max_caller_hits: defaults.max_caller_hits,
+            caller_factor: defaults.caller_factor,
+        }
+    }
+}
+
+#[cfg(feature = "call_graph")]
+impl CallContextUserConfig {
+    pub fn validated(self) -> Self {
+        Self {
+            enabled: self.enabled,
+            max_owner_hits: self.max_owner_hits.min(1024),
+            max_sites_per_owner: self.max_sites_per_owner.min(1024),
+            max_targets_per_site: self.max_targets_per_site.min(1024),
+            max_caller_hits: self.max_caller_hits.min(4096),
+            caller_factor: self.caller_factor.clamp(0.0, 10.0),
+        }
+    }
+
+    pub(crate) fn to_rag_config(self) -> ploke_rag::CallContextConfig {
+        let cfg = self.validated();
+        ploke_rag::CallContextConfig {
+            enabled: cfg.enabled,
+            max_owner_hits: cfg.max_owner_hits,
+            max_sites_per_owner: cfg.max_sites_per_owner,
+            max_targets_per_site: cfg.max_targets_per_site,
+            max_caller_hits: cfg.max_caller_hits,
+            caller_factor: cfg.caller_factor,
         }
     }
 }
@@ -773,6 +836,8 @@ impl RagUserConfig {
             strict_bm25_by_default: self.strict_bm25_by_default,
             rrf,
             mmr,
+            #[cfg(feature = "call_graph")]
+            call_context: self.call_context.validated(),
         }
     }
 }
@@ -975,6 +1040,36 @@ fn default_bm25_retry_backoff_ms() -> Vec<u64> {
     vec![50, 100]
 }
 
+#[cfg(feature = "call_graph")]
+fn default_call_context_enabled() -> bool {
+    ploke_rag::CallContextConfig::default().enabled
+}
+
+#[cfg(feature = "call_graph")]
+fn default_call_context_max_owner_hits() -> usize {
+    ploke_rag::CallContextConfig::default().max_owner_hits
+}
+
+#[cfg(feature = "call_graph")]
+fn default_call_context_max_sites_per_owner() -> usize {
+    ploke_rag::CallContextConfig::default().max_sites_per_owner
+}
+
+#[cfg(feature = "call_graph")]
+fn default_call_context_max_targets_per_site() -> usize {
+    ploke_rag::CallContextConfig::default().max_targets_per_site
+}
+
+#[cfg(feature = "call_graph")]
+fn default_call_context_max_caller_hits() -> usize {
+    ploke_rag::CallContextConfig::default().max_caller_hits
+}
+
+#[cfg(feature = "call_graph")]
+fn default_call_context_caller_factor() -> f32 {
+    ploke_rag::CallContextConfig::default().caller_factor
+}
+
 fn default_token_limit() -> u32 {
     8_196
 }
@@ -1062,6 +1157,36 @@ mod tests {
     fn runtime_config_preserves_default_llm_timeout() {
         let runtime_cfg: RuntimeConfig = UserConfig::default().into();
         assert_eq!(runtime_cfg.llm_timeout_secs, ploke_llm::LLM_TIMEOUT_SECS);
+    }
+
+    #[cfg(feature = "call_graph")]
+    #[test]
+    fn rag_call_context_config_round_trips_and_validates() {
+        let toml = r#"
+            [rag.call_context]
+            enabled = true
+            max_owner_hits = 64
+            max_sites_per_owner = 24
+            max_targets_per_site = 12
+            max_caller_hits = 2048
+            caller_factor = 0.75
+        "#;
+
+        let cfg: UserConfig = toml::from_str(toml).expect("toml parses");
+        let validated = cfg.rag.validated().call_context;
+        assert!(validated.enabled);
+        assert_eq!(validated.max_owner_hits, 64);
+        assert_eq!(validated.max_sites_per_owner, 24);
+        assert_eq!(validated.max_targets_per_site, 12);
+        assert_eq!(validated.max_caller_hits, 2048);
+        assert!((validated.caller_factor - 0.75).abs() < f32::EPSILON);
+
+        let rag_cfg = validated.to_rag_config();
+        assert_eq!(rag_cfg.max_owner_hits, 64);
+        assert_eq!(rag_cfg.max_sites_per_owner, 24);
+        assert_eq!(rag_cfg.max_targets_per_site, 12);
+        assert_eq!(rag_cfg.max_caller_hits, 2048);
+        assert!((rag_cfg.caller_factor - 0.75).abs() < f32::EPSILON);
     }
 
     #[test]
