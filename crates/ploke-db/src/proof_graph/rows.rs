@@ -19,6 +19,14 @@ pub(super) struct ProofFactRow {
     pub(super) candidate_def_ids: Vec<String>,
     pub(super) external_summary_id: Option<String>,
     pub(super) authority_term: Option<String>,
+    pub(super) summary_class: Option<String>,
+    pub(super) artifact_hash: Option<String>,
+    pub(super) summary_version: Option<String>,
+    pub(super) review_method: Option<String>,
+    pub(super) scope_of_validity: Option<String>,
+    pub(super) allowed_effects: Vec<String>,
+    pub(super) required_containment: Option<String>,
+    pub(super) invalidation_conditions: Option<String>,
     pub(super) source_file: Option<String>,
     pub(super) start_byte: Option<u32>,
     pub(super) end_byte: Option<u32>,
@@ -50,6 +58,17 @@ impl ProofFactRow {
                 .unwrap_or_default(),
             external_summary_id: json.and_then(|value| json_string(value, "external_summary_id")),
             authority_term: json.and_then(|value| json_string(value, "authority_term")),
+            summary_class: json.and_then(|value| json_string(value, "summary_class")),
+            artifact_hash: json.and_then(|value| json_string(value, "artifact_hash")),
+            summary_version: json.and_then(|value| json_string(value, "version")),
+            review_method: json.and_then(|value| json_string(value, "review_method")),
+            scope_of_validity: json.and_then(|value| json_string(value, "scope_of_validity")),
+            allowed_effects: json
+                .map(|value| json_string_array(value, "allowed_effects"))
+                .unwrap_or_default(),
+            required_containment: json.and_then(|value| json_string(value, "required_containment")),
+            invalidation_conditions: json
+                .and_then(|value| json_string(value, "invalidation_conditions")),
             source_file: optional_string(row, 10),
             start_byte: optional_u32(row, 11, "start_byte")?,
             end_byte: optional_u32(row, 12, "end_byte")?,
@@ -80,6 +99,13 @@ impl ProofFactRow {
             self.resolved_def_id.as_deref(),
             self.external_summary_id.as_deref(),
             self.authority_term.as_deref(),
+            self.summary_class.as_deref(),
+            self.artifact_hash.as_deref(),
+            self.summary_version.as_deref(),
+            self.review_method.as_deref(),
+            self.scope_of_validity.as_deref(),
+            self.required_containment.as_deref(),
+            self.invalidation_conditions.as_deref(),
             self.source_file.as_deref(),
             self.effect_class.as_deref(),
             self.blocker_reason.as_deref(),
@@ -93,11 +119,15 @@ impl ProofFactRow {
             .candidate_def_ids
             .iter()
             .any(|value| value.to_ascii_lowercase().contains(query));
+        let effect_match = self
+            .allowed_effects
+            .iter()
+            .any(|value| value.to_ascii_lowercase().contains(query));
         let json_match = self
             .json_terms
             .iter()
             .any(|value| value.to_ascii_lowercase().contains(query));
-        scalar_match || candidate_match || json_match
+        scalar_match || candidate_match || effect_match || json_match
     }
 }
 
@@ -116,6 +146,14 @@ impl From<ProofFactRow> for ProofGraphContextRow {
             candidate_def_ids: row.candidate_def_ids,
             external_summary_id: row.external_summary_id,
             authority_term: row.authority_term,
+            summary_class: row.summary_class,
+            artifact_hash: row.artifact_hash,
+            summary_version: row.summary_version,
+            review_method: row.review_method,
+            scope_of_validity: row.scope_of_validity,
+            allowed_effects: row.allowed_effects,
+            required_containment: row.required_containment,
+            invalidation_conditions: row.invalidation_conditions,
             evidence_use: row.evidence_use,
             source_file: row.source_file,
             start_byte: row.start_byte,

@@ -484,6 +484,24 @@ fn format_proof_context(row: &ProofContextInfo) -> String {
         row.external_summary_id.as_deref(),
     );
     push_opt(&mut parts, "authority", row.authority_term.as_deref());
+    push_opt(&mut parts, "summary", row.summary_class.as_deref());
+    push_opt(&mut parts, "artifact", row.artifact_hash.as_deref());
+    push_opt(&mut parts, "version", row.summary_version.as_deref());
+    push_opt(&mut parts, "review", row.review_method.as_deref());
+    push_opt(&mut parts, "scope", row.scope_of_validity.as_deref());
+    if !row.allowed_effects.is_empty() {
+        parts.push(format_list("allowed_effects", &row.allowed_effects, 4));
+    }
+    push_opt(
+        &mut parts,
+        "containment",
+        row.required_containment.as_deref(),
+    );
+    push_opt(
+        &mut parts,
+        "invalidates",
+        row.invalidation_conditions.as_deref(),
+    );
     push_opt(&mut parts, "status", row.status.as_deref());
     push_opt(&mut parts, "blocker", row.blocker_reason.as_deref());
     push_opt(&mut parts, "effect", row.effect_class.as_deref());
@@ -505,13 +523,17 @@ fn push_opt(parts: &mut Vec<String>, label: &str, value: Option<&str>) {
 }
 
 fn format_candidates(candidates: &[String], limit: usize) -> String {
+    format_list("candidates", candidates, limit)
+}
+
+fn format_list(label: &str, values: &[String], limit: usize) -> String {
     let limit = limit.max(1);
-    let mut visible = candidates.iter().take(limit).cloned().collect::<Vec<_>>();
-    let hidden = candidates.len().saturating_sub(limit);
+    let mut visible = values.iter().take(limit).cloned().collect::<Vec<_>>();
+    let hidden = values.len().saturating_sub(limit);
     if hidden > 0 {
         visible.push(format!("... {hidden} more"));
     }
-    format!("candidates=[{}]", visible.join(", "))
+    format!("{label}=[{}]", visible.join(", "))
 }
 
 fn format_callee(callee: &CallCalleeInfo) -> String {

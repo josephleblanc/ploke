@@ -177,6 +177,15 @@ fn proof_graph_store_accepts_external_summary_artifacts() {
             row.kind == "external_summary"
                 && row.fact_id == "external-summary:dep:serde"
                 && row.build_domain_id.as_deref() == Some("bd:main")
+                && row.summary_class.as_deref() == Some("opaque_blocked")
+                && row.artifact_hash.as_deref() == Some("sha256:serde-artifact")
+                && row.summary_version.as_deref() == Some("serde 1.0.0")
+                && row.review_method.as_deref() == Some("manual-review")
+                && row.scope_of_validity.as_deref() == Some("dependency serde under bd:main")
+                && row.allowed_effects == vec!["external_summary_boundary".to_string()]
+                && row.required_containment.as_deref() == Some("none")
+                && row.invalidation_conditions.as_deref()
+                    == Some("artifact hash or proof policy changes")
                 && row.status.as_deref() == Some("blocked")
                 && row.detail.as_deref() == Some("opaque_blocked")
         }),
@@ -191,6 +200,16 @@ fn proof_graph_store_accepts_external_summary_artifacts() {
             |row| row.kind == "external_summary" && row.fact_id == "external-summary:dep:serde"
         ),
         "GraphRAG proof lookup should match JSON-only external summary class fields: {by_class:#?}"
+    );
+
+    let by_hash = db
+        .proof_graphrag_context("sha256:serde-artifact")
+        .expect("external summary artifact hash context");
+    assert!(
+        by_hash.iter().any(
+            |row| row.kind == "external_summary" && row.fact_id == "external-summary:dep:serde"
+        ),
+        "GraphRAG proof lookup should match external summary artifact hashes: {by_hash:#?}"
     );
 }
 

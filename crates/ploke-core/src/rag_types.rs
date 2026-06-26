@@ -350,6 +350,22 @@ pub struct ProofContextInfo {
     #[serde(default)]
     pub authority_term: Option<String>,
     #[serde(default)]
+    pub summary_class: Option<String>,
+    #[serde(default)]
+    pub artifact_hash: Option<String>,
+    #[serde(default)]
+    pub summary_version: Option<String>,
+    #[serde(default)]
+    pub review_method: Option<String>,
+    #[serde(default)]
+    pub scope_of_validity: Option<String>,
+    #[serde(default)]
+    pub allowed_effects: Vec<String>,
+    #[serde(default)]
+    pub required_containment: Option<String>,
+    #[serde(default)]
+    pub invalidation_conditions: Option<String>,
+    #[serde(default)]
     pub evidence_use: Option<String>,
     #[serde(default)]
     pub source_file: Option<String>,

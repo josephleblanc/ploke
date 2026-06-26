@@ -188,6 +188,14 @@ fn reformat_context_to_system_includes_proof_context_details() {
             candidate_def_ids: vec!["def:callee".to_string(), "def:other".to_string()],
             external_summary_id: Some("external-summary:dep:serde".to_string()),
             authority_term: Some("successor".to_string()),
+            summary_class: None,
+            artifact_hash: None,
+            summary_version: None,
+            review_method: None,
+            scope_of_validity: None,
+            allowed_effects: Vec::new(),
+            required_containment: None,
+            invalidation_conditions: None,
             evidence_use: Some("proof_only".to_string()),
             source_file: Some("src/main.rs".to_string()),
             start_byte: Some(12),
@@ -219,6 +227,69 @@ fn reformat_context_to_system_includes_proof_context_details() {
     assert!(rendered.contains("detail=edge confirmed"));
     assert!(rendered.contains("domain=bd:fixture-call-graph"));
     assert!(rendered.contains("source=src/main.rs:12..26"));
+}
+
+#[test]
+fn reformat_context_to_system_includes_external_summary_metadata() {
+    let part = ContextPart {
+        id: Uuid::from_u128(41),
+        file_path: NodeFilepath::new("src/main.rs".to_string()),
+        canon_path: CanonPath::new("crate::main".to_string()),
+        ranges: vec![],
+        kind: ContextPartKind::Code,
+        text: "fn main() { external(); }".to_string(),
+        score: 0.33,
+        modality: Modality::Dense,
+        type_context: None,
+        call_expansion: None,
+        call_context: Vec::new(),
+        proof_context: vec![ProofContextInfo {
+            fact_id: "external-summary:dep:serde".to_string(),
+            kind: "external_summary".to_string(),
+            build_domain_id: Some("bd:fixture-call-graph".to_string()),
+            call_site_id: None,
+            call_edge_id: None,
+            caller_def_id: None,
+            callee_def_id: None,
+            resolution_state: None,
+            resolved_def_id: None,
+            candidate_def_ids: Vec::new(),
+            external_summary_id: Some("external-summary:dep:serde".to_string()),
+            authority_term: None,
+            summary_class: Some("opaque_blocked".to_string()),
+            artifact_hash: Some("sha256:serde-artifact".to_string()),
+            summary_version: Some("serde 1.0.0".to_string()),
+            review_method: Some("manual-review".to_string()),
+            scope_of_validity: Some("dependency serde under bd:fixture-call-graph".to_string()),
+            allowed_effects: vec!["external_summary_boundary".to_string()],
+            required_containment: Some("none".to_string()),
+            invalidation_conditions: Some("artifact hash or proof policy changes".to_string()),
+            evidence_use: Some("proof_only".to_string()),
+            source_file: None,
+            start_byte: None,
+            end_byte: None,
+            line_start: None,
+            line_end: None,
+            effect_class: None,
+            blocker_reason: Some("opaque_blocked".to_string()),
+            status: Some("blocked".to_string()),
+            detail: Some("opaque_blocked".to_string()),
+        }],
+    };
+
+    let rendered = reformat_context_to_system(part);
+
+    assert!(rendered.contains("proof_context: 1 proof fact(s)"));
+    assert!(rendered.contains("external_summary"));
+    assert!(rendered.contains("external_summary=external-summary:dep:serde"));
+    assert!(rendered.contains("summary=opaque_blocked"));
+    assert!(rendered.contains("artifact=sha256:serde-artifact"));
+    assert!(rendered.contains("version=serde 1.0.0"));
+    assert!(rendered.contains("review=manual-review"));
+    assert!(rendered.contains("scope=dependency serde under bd:fixture-call-graph"));
+    assert!(rendered.contains("allowed_effects=[external_summary_boundary]"));
+    assert!(rendered.contains("containment=none"));
+    assert!(rendered.contains("invalidates=artifact hash or proof policy changes"));
 }
 
 #[test]

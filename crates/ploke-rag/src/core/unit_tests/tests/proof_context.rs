@@ -250,6 +250,15 @@ async fn proof_context_seed_exposes_external_summary_artifact_detail() -> Result
             row.kind == "external_summary"
                 && row.fact_id == summary_id
                 && row.build_domain_id.as_deref() == Some("bd:rag")
+                && row.summary_class.as_deref() == Some("opaque_blocked")
+                && row.artifact_hash.as_deref() == Some("sha256:external-artifact")
+                && row.summary_version.as_deref() == Some("external 1.0.0")
+                && row.review_method.as_deref() == Some("manual-review")
+                && row.scope_of_validity.as_deref() == Some("rag test fixture")
+                && row.allowed_effects == vec!["external_summary_boundary".to_string()]
+                && row.required_containment.as_deref() == Some("none")
+                && row.invalidation_conditions.as_deref()
+                    == Some("artifact hash or proof policy changes")
                 && row.status.as_deref() == Some("blocked")
                 && row.detail.as_deref() == Some("opaque_blocked")
         }),
