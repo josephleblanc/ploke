@@ -1776,9 +1776,10 @@ fn count_dirs_named(path: &Path, name: &str) -> Result<i64, String> {
     );
     for entry in fs::read_dir(path).map_err(|source| source.to_string())? {
         let entry = entry.map_err(|source| source.to_string())?;
+        let entry_path = entry.path();
         let meta = entry.metadata().map_err(|source| source.to_string())?;
-        if meta.is_dir() {
-            total += count_dirs_named(&entry.path(), name)?;
+        if meta.is_dir() && !skip_audit_descent(&entry_path) {
+            total += count_dirs_named(&entry_path, name)?;
         }
     }
     Ok(total)
@@ -1800,12 +1801,20 @@ fn count_files(path: &Path, predicate: &mut dyn FnMut(&Path) -> bool) -> Result<
         let entry_path = entry.path();
         let meta = entry.metadata().map_err(|source| source.to_string())?;
         if meta.is_dir() {
-            total += count_files(&entry_path, predicate)?;
+            if !skip_audit_descent(&entry_path) {
+                total += count_files(&entry_path, predicate)?;
+            }
         } else if predicate(&entry_path) {
             total += 1;
         }
     }
     Ok(total)
+}
+
+fn skip_audit_descent(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|file| file.to_str())
+        .is_some_and(|file| file == "worktree")
 }
 
 fn count_jsonl_rows(path: &Path) -> Result<i64, String> {
@@ -1892,28 +1901,12 @@ fn count_parent_start(path: &Path) -> Result<i64, String> {
 }
 
 fn count_continuation(path: &Path) -> Result<i64, String> {
-    let text = match fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(source) => return Err(source.to_string()),
-    };
-    let mut total = 0_i64;
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let value: serde_json::Value =
-            serde_json::from_str(trimmed).map_err(|source| source.to_string())?;
-        let kind = value.get("kind").and_then(|value| value.as_str());
-        if matches!(
-            kind,
-            Some("successor" | "successor_handoff" | "active_checkout_advanced")
-        ) {
-            total += 1;
-        }
-    }
-    Ok(total)
+    count_journal(path, |value| {
+        journal_kind(value) == Some("successor")
+            && value.get("state").is_some_and(|state| {
+                state.get("selected").is_some() || state.get("stopped").is_some()
+            })
+    })
 }
 
 fn count_channel_lines(path: &Path) -> Result<i64, String> {
@@ -1948,7 +1941,9 @@ fn count_jsonl_named(path: &Path, name: &str) -> Result<i64, String> {
         let entry_path = entry.path();
         let meta = entry.metadata().map_err(|source| source.to_string())?;
         if meta.is_dir() {
-            total += count_jsonl_named(&entry_path, name)?;
+            if !skip_audit_descent(&entry_path) {
+                total += count_jsonl_named(&entry_path, name)?;
+            }
         } else if entry_path.file_name().and_then(|file| file.to_str()) == Some(name) {
             total += count_jsonl_rows(&entry_path)?;
         }
@@ -2521,5 +2516,48 @@ fn persistence_label(status: PersistenceStatus) -> &'static str {
         PersistenceStatus::None => "× none",
         PersistenceStatus::NotApplicable => "- n/a",
         PersistenceStatus::Error => "! error",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn channel_counter_ignores_nested_child_worktree_fixtures() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let nodes = tmp.path().join("nodes");
+        let channel = nodes.join("node-a/channels/runtime-a/child-to-parent.jsonl");
+        let fixture = nodes.join("node-a/worktree/tests/fixtures/child-to-parent.jsonl");
+        fs::create_dir_all(channel.parent().expect("channel parent")).expect("channel dir");
+        fs::create_dir_all(fixture.parent().expect("fixture parent")).expect("fixture dir");
+        fs::write(&channel, "{}\n{}\n").expect("channel file");
+        fs::write(&fixture, "{}\n{}\n{}\n").expect("fixture file");
+
+        assert_eq!(count_channel_lines(&nodes).expect("count channels"), 2);
+    }
+
+    #[test]
+    fn continuation_counter_counts_only_selected_or_stopped_decisions() {
+        let tmp = tempfile::tempdir().expect("tmp");
+        let journal = tmp.path().join("transition-journal.jsonl");
+        fs::write(
+            &journal,
+            concat!(
+                r#"{"kind":"successor","state":{"selected":{}}}"#,
+                "\n",
+                r#"{"kind":"successor","state":{"checkout":{}}}"#,
+                "\n",
+                r#"{"kind":"active_checkout_advanced"}"#,
+                "\n",
+                r#"{"kind":"successor_handoff"}"#,
+                "\n",
+                r#"{"kind":"successor","state":{"stopped":{}}}"#,
+                "\n",
+            ),
+        )
+        .expect("journal");
+
+        assert_eq!(count_continuation(&journal).expect("count continuation"), 2);
     }
 }

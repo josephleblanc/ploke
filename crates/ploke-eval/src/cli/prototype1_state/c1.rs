@@ -439,7 +439,7 @@ pub(crate) enum MaterializeBranchError {
         #[source]
         source: eval_store::EvalStoreError,
     },
-    #[error("failed to mirror broad harness child '{node_id}' operation provenance to eval-store")]
+    #[error("failed to mirror child '{node_id}' operation provenance to eval-store")]
     EvalStoreOperationProvenance {
         node_id: String,
         #[source]
@@ -867,7 +867,69 @@ fn mirror_broad_harness_artifact_provenance(
     Ok(())
 }
 
+fn mirror_materialized_artifact_provenance(
+    next: &Prototype<Parent, Child, Absent, Unacknowledged>,
+) -> Result<(), eval_store::EvalStoreError> {
+    let db_path = eval_store::prototype1_eval_store_db_path(&next.campaign_manifest_path);
+    if !db_path.exists() {
+        return Ok(());
+    }
+
+    let Some(derived_artifact_id) = next
+        .node
+        .derived_artifact_id
+        .as_ref()
+        .map(|id| id.to_string())
+    else {
+        return Ok(());
+    };
+    let base_artifact_id = next.node.base_artifact_id.as_ref().map(|id| id.to_string());
+    let recorded_at = chrono::Utc::now().to_rfc3339();
+    let target_path = next.artifact.repo_root.join(&next.resolved.target_relpath);
+    let source_ref = format!("materialize_branch:{}", target_path.display());
+    let content_hash = next.resolved.branch.proposed_content_hash.clone();
+    let evidence = eval_store::ArtifactProvenanceEvidence {
+        artifact: eval_store::ArtifactEvidence {
+            campaign_id: next.campaign_id.clone(),
+            artifact_id: derived_artifact_id.clone(),
+            tree_hash: None,
+            git_branch: None,
+            git_commit: None,
+            source: "materialize_branch".to_string(),
+            store_scope: "parent".to_string(),
+            created_by: Some(next.node.node_id.clone()),
+            parent_artifact_id: base_artifact_id,
+        },
+        surface: Some(eval_store::ArtifactSurfaceEvidence {
+            campaign_id: next.campaign_id.clone(),
+            artifact_id: derived_artifact_id.clone(),
+            immutable_root: None,
+            mutated_root: Some(next.artifact.repo_root.display().to_string()),
+            ambient_root: None,
+            surface_hash: None,
+            source_ref: Some(source_ref.clone()),
+            recorded_at: Some(recorded_at.clone()),
+        }),
+        refs: vec![eval_store::ArtifactRefEvidence {
+            campaign_id: next.campaign_id.clone(),
+            artifact_id: Some(derived_artifact_id),
+            kind: "materialized_child_artifact".to_string(),
+            source_ref,
+            content_sha256: Some(content_hash),
+            recorded_at: Some(recorded_at),
+        }],
+    };
+    eval_store::write_artifact_provenance_to_owner_db(&db_path, evidence)?;
+    Ok(())
+}
+
 fn mirror_broad_harness_operation_provenance(
+    next: &Prototype<Parent, Child, Absent, Unacknowledged>,
+) -> Result<(), eval_store::EvalStoreError> {
+    mirror_operation_provenance(next)
+}
+
+fn mirror_operation_provenance(
     next: &Prototype<Parent, Child, Absent, Unacknowledged>,
 ) -> Result<(), eval_store::EvalStoreError> {
     let db_path = eval_store::prototype1_eval_store_db_path(&next.campaign_manifest_path);
@@ -1089,6 +1151,18 @@ where
             workspace_root = %next.artifact.repo_root.display(),
             "recorded materialize after entry"
         );
+        mirror_materialized_artifact_provenance(&next).map_err(|source| {
+            CommitError::Transition(MaterializeBranchError::EvalStoreArtifactProvenance {
+                node_id: next.node.node_id.clone(),
+                source,
+            })
+        })?;
+        mirror_operation_provenance(&next).map_err(|source| {
+            CommitError::Transition(MaterializeBranchError::EvalStoreOperationProvenance {
+                node_id: next.node.node_id.clone(),
+                source,
+            })
+        })?;
 
         Ok(Outcome::Advanced(next))
     }

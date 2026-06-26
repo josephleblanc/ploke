@@ -209,6 +209,25 @@ pub(crate) fn prepare_prototype1_parent_setup(
         .map(|profile| profile::admit_run_profile(&campaign.manifest_path, profile))
         .transpose()?;
     let closure_state_path = ensure_prototype1_baseline_closure_state(&campaign.resolved)?;
+    if let Some(admitted) = admitted_profile.as_ref() {
+        let backend = admitted.profile.storage.eval.backend;
+        if backend.mirrors_owner_db() {
+            let manifest = load_campaign_manifest(&campaign.campaign_id)?;
+            let closure_state = load_closure_state(&campaign.campaign_id)?;
+            eval_store::write_r0_context_to_owner_db(
+                &eval_store::prototype1_eval_store_db_path(&campaign.manifest_path),
+                &campaign.manifest_path,
+                &manifest,
+                backend,
+                Some(admitted),
+                &closure_state_path,
+                &closure_state,
+            )
+            .map_err(|err| {
+                prototype1_state_transition_error("prototype1_setup_r0_context", err.to_string())
+            })?;
+        }
+    }
     let repo_root = std::env::current_dir().map_err(|source| PrepareError::ReadManifest {
         path: PathBuf::from("."),
         source,
