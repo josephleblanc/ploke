@@ -42,6 +42,11 @@ are not acceptable as a continuing implementation style.
   - TUI context-plan overlay call-context tests were moved out of the inline
     `context_plan_overlay.rs` test module into `context_plan_overlay/tests.rs`,
     leaving the overlay production renderer in the root surface.
+  - `0dd7b7b0 test: split request context call cases`
+  - TUI `request_code_context` call-context GAT tests now use a thin
+    `call_context_tests.rs` root with caller, degraded-note, projected-proof,
+    UI-payload, and shared assertion concerns split under
+    `gat_tests/call_context_tests/`.
 - Recent RAG/DB context cleanup:
   - `31d19d3c Add variant sparse call-context seeds`
   - `15f0ce68 test: share RAG call expansion assertions`
@@ -67,6 +72,12 @@ are not acceptable as a continuing implementation style.
     `ploke-rag/src/core/unit_tests/tests/call_context/collection/helpers/`.
   - The synthetic RAG call-context collection payload test now uses an explicit
     eight-row case matrix for inserted call facts and expected payload checks.
+  - `ba289a0c test: split RAG proof context cases`
+  - RAG proof-context tests now use a thin `proof_context.rs` root with
+    degraded-state, projected fixture facts, external-summary artifacts,
+    expansion metadata, build/cfg/effect/authority metadata, derived blockers,
+    and shared assertion concerns split under
+    `unit_tests/tests/proof_context/`.
 - Recent coverage inventory cleanup:
   - Added `2026-06-25_call-graph-coverage-inventory.md` as the compact layer inventory.
 - Recent production pattern cleanup:
@@ -174,6 +185,11 @@ are not acceptable as a continuing implementation style.
 - Recent candidate-provenance cleanup:
   - `67fc3a8a Preserve ambiguous dynamic call candidates`
 - Recent DB test-helper cleanup:
+  - `97e9c593 test: share proof lookup row assertions`
+  - `2788bf7d test: reuse proof row site helper`
+  - DB proof lookup and target/mixed proof fixtures now reuse shared proof-row
+    site selection and resolved-site proof assertions instead of repeating
+    call-site filtering and linked call-site/edge/resolution shape checks.
   - `7b9d872e test: extract dynamic candidate assertions`
   - `73e9855a test: move call candidate helpers to common`
   - `74ec3d06 test: move proof fixture helpers to common`
@@ -398,6 +414,14 @@ are not acceptable as a continuing implementation style.
 - `ploke-rag/src/core/unit_tests/tests/call_context/collection/cases/synthetic.rs`
   now table-drives synthetic path, associated-function, constructor, method,
   receiver, and dynamic payload assertions through one shared case runner.
+- `ploke-rag/src/core/unit_tests/tests/proof_context.rs` is now a thin module
+  root. Degraded proof-context behavior, projected fixture facts, external
+  summaries, expansion metadata, build/cfg/effect/authority metadata, derived
+  blockers, and shared proof assertions live in `proof_context/` child modules.
+- `ploke-tui/src/tools/request_code_context/gat_tests/call_context_tests.rs`
+  is now a thin module root. Caller expansion, proof payload, UI payload,
+  degraded proof-context note, and shared call assertions live in
+  `call_context_tests/` child modules.
 - `call_graph_tests/dynamic.rs` in `ploke-transform` now shares local
   `DynamicFunction` lookup helpers instead of repeating the full
   `CallRelation::DynamicFunction` scan for every dynamic projection case.
@@ -719,7 +743,7 @@ are not acceptable as a continuing implementation style.
 | ID | Priority | Status | Issue | Required direction |
 | --- | --- | --- | --- | --- |
 | CGQ-1 | P1 | Open | Implementation focus drifted toward parser breadth while DB/proof quality lagged. | Shift next resumed work to DB/proof/query hardening and shared test structure. |
-| CGQ-2 | P1 | Partial 2026-06-25 | Call-graph DB query tests and helpers were far larger and less modular than the type-graph precedent. | First cleanup extracted repeated ambiguous dynamic candidate context/proof assertions into shared helpers, moved them to `call_graph_fixture_common.rs`, moved shared proof and constructor fixture helpers to common, split the constructor helper case matrix into `call_graph_fixture_common/constructor.rs`, split ambiguous dynamic helper assertions into `call_graph_fixture_common/dynamic.rs`, table-drove resolved/targetless dynamic context assertions and resolved dynamic proof-edge assertions with shared dynamic helpers, split proof fixture assertions into `call_graph_fixture_common/proof.rs`, split row/candidate selectors into `call_graph_fixture_common/selectors.rs`, split lookup helpers into `call_graph_fixture_common/lookup.rs`, split row/shape helpers into `call_graph_fixture_common/rows.rs`, split synthetic call-site/proof-fact/value helpers into `call_graph_common/{site,facts,values}.rs`, split proof owner-source setup into `call_graph_common/source.rs`, split synthetic endpoint setup into `call_graph_common/targets.rs`, split unsupported/external targetless row assertions into `call_graph_fixture_common/targetless.rs`, reused those helpers across matching dynamic context/proof/method-context cases including dynamic proof, macro targetless rows, unsupported-context rows, and path-context targetless rows, and split invariant, dynamic, target-centered, blocker, proof-lookup, constructor proof, call-context, mixed proof, resolved proof, dynamic context, method context, associated context, trait-method context, owner-context, proof-projection, query-invariant, schema, context-expansion, receiver-decode, relation-decode, path-context, constructor-context, unsupported-context, low-level-helper, resolved-proof-family, target-proof, proof-projection query, invariant query, dynamic-context tests, context-expansion query tests, fixture context-expansion tests, proof-prevalidation query tests, trait-method context fixtures, mixed-proof fixtures, path-context fixtures, dynamic-proof fixtures, fixture invariant tests, blocker-proof fixtures, and proof-blocker query tests into submodules. `call_graph_queries.rs`, `call_graph_queries/context_expansion.rs`, `call_graph_queries/proof_projection.rs`, `call_graph_queries/proof_projection/prevalidation.rs`, `call_graph_queries/proof_projection/blockers.rs`, `call_graph_queries/invariants.rs`, `call_graph_fixture_queries/dynamic_context.rs`, `call_graph_fixture_queries/method_context.rs`, `call_graph_fixture_queries/target_proof.rs`, `call_graph_fixture_queries/context_expansion.rs`, `call_graph_fixture_queries/trait_method_context.rs`, `call_graph_fixture_queries/mixed_proof.rs`, `call_graph_fixture_queries/path_context.rs`, `call_graph_fixture_queries/dynamic_proof.rs`, `call_graph_fixture_queries/blocker_proof.rs`, `call_graph_fixture_queries/invariants.rs`, and `call_graph_fixture_queries.rs` are thin module roots, context-expansion query tests are grouped by owner/callers/expand surfaces, fixture context-expansion tests are grouped by callers/constructors/expand surfaces, proof prevalidation tests are grouped by domain/source/local-target concerns, proof blocker queries are grouped by graph-context/unresolved/mixed-shape/invariant concerns, trait-method fixtures are grouped by dispatch/generics/imports/blanket/receiver concerns, mixed proof fixtures are grouped by returned-function/initializer/multi-row concerns, path context fixtures are grouped by basic/resolution/special-form/raw-identifier/prelude concerns, dynamic proof fixtures are grouped by resolved/candidate/blocker concerns, blocker proof fixtures are grouped by external/macro/ambiguous/callable concerns, fixture invariant tests are grouped by body-edge/anchor/cardinality/id-universe concerns, dynamic context fixtures are grouped by bindings/resolved/targetless/ownership/candidates concerns, method context fixtures are grouped by local/external/precedence/result-receiver/field-receiver concerns, resolved proof fixtures are grouped by proof family, target proof fixtures are grouped by linkage/basic/method concerns, proof projection tests are grouped by resolved/prevalidation/blocker concerns, invariant tests are grouped by endpoint/status/cardinality/body-edge/site-shape concerns, and receiver decoding is table-driven. Production proof graph cleanup split invariant evaluation, proof-fact projection parsing/JSON validation, row decoding, and call-proof projection into `proof_graph/{invariants,projection,rows,call_projection}.rs`, reducing the root proof graph module to the public/store/query orchestration surface. Proof context lookup now shares linked-row selection across symbol, GraphRAG text, and build-domain queries, with fixture and low-level store assertions covering those query surfaces; context rows expose `build_domain_id` for downstream consumers. Remaining work is to continue splitting large fixture/common/proof files by concern and introduce shared matrices before adding more cases. |
+| CGQ-2 | P1 | Partial 2026-06-26 | Call-graph DB query tests and helpers were far larger and less modular than the type-graph precedent. | First cleanup extracted repeated ambiguous dynamic candidate context/proof assertions into shared helpers, moved them to `call_graph_fixture_common.rs`, moved shared proof and constructor fixture helpers to common, split the constructor helper case matrix into `call_graph_fixture_common/constructor.rs`, split ambiguous dynamic helper assertions into `call_graph_fixture_common/dynamic.rs`, table-drove resolved/targetless dynamic context assertions and resolved dynamic proof-edge assertions with shared dynamic helpers, split proof fixture assertions into `call_graph_fixture_common/proof.rs`, split row/candidate selectors into `call_graph_fixture_common/selectors.rs`, split lookup helpers into `call_graph_fixture_common/lookup.rs`, split row/shape helpers into `call_graph_fixture_common/rows.rs`, split synthetic call-site/proof-fact/value helpers into `call_graph_common/{site,facts,values}.rs`, split proof owner-source setup into `call_graph_common/source.rs`, split synthetic endpoint setup into `call_graph_common/targets.rs`, split unsupported/external targetless row assertions into `call_graph_fixture_common/targetless.rs`, reused those helpers across matching dynamic context/proof/method-context cases including dynamic proof, macro targetless rows, unsupported-context rows, and path-context targetless rows, and split invariant, dynamic, target-centered, blocker, proof-lookup, constructor proof, call-context, mixed proof, resolved proof, dynamic context, method context, associated context, trait-method context, owner-context, proof-projection, query-invariant, schema, context-expansion, receiver-decode, relation-decode, path-context, constructor-context, unsupported-context, low-level-helper, resolved-proof-family, target-proof, proof-projection query, invariant query, dynamic-context tests, context-expansion query tests, fixture context-expansion tests, proof-prevalidation query tests, trait-method context fixtures, mixed-proof fixtures, path-context fixtures, dynamic-proof fixtures, fixture invariant tests, blocker-proof fixtures, proof-blocker query tests, RAG proof-context tests, and TUI request-code-context call tests into submodules. `call_graph_queries.rs`, `call_graph_queries/context_expansion.rs`, `call_graph_queries/proof_projection.rs`, `call_graph_queries/proof_projection/prevalidation.rs`, `call_graph_queries/proof_projection/blockers.rs`, `call_graph_queries/invariants.rs`, `call_graph_fixture_queries/dynamic_context.rs`, `call_graph_fixture_queries/method_context.rs`, `call_graph_fixture_queries/target_proof.rs`, `call_graph_fixture_queries/context_expansion.rs`, `call_graph_fixture_queries/trait_method_context.rs`, `call_graph_fixture_queries/mixed_proof.rs`, `call_graph_fixture_queries/path_context.rs`, `call_graph_fixture_queries/dynamic_proof.rs`, `call_graph_fixture_queries/blocker_proof.rs`, `call_graph_fixture_queries/invariants.rs`, and `call_graph_fixture_queries.rs` are thin module roots, context-expansion query tests are grouped by owner/callers/expand surfaces, fixture context-expansion tests are grouped by callers/constructors/expand surfaces, proof prevalidation tests are grouped by domain/source/local-target concerns, proof blocker queries are grouped by graph-context/unresolved/mixed-shape/invariant concerns, trait-method fixtures are grouped by dispatch/generics/imports/blanket/receiver concerns, mixed proof fixtures are grouped by returned-function/initializer/multi-row concerns, path context fixtures are grouped by basic/resolution/special-form/raw-identifier/prelude concerns, dynamic proof fixtures are grouped by resolved/candidate/blocker concerns, blocker proof fixtures are grouped by external/macro/ambiguous/callable concerns, fixture invariant tests are grouped by body-edge/anchor/cardinality/id-universe concerns, dynamic context fixtures are grouped by bindings/resolved/targetless/ownership/candidates concerns, method context fixtures are grouped by local/external/precedence/result-receiver/field-receiver concerns, resolved proof fixtures are grouped by proof family, target proof fixtures are grouped by linkage/basic/method concerns, proof projection tests are grouped by resolved/prevalidation/blocker concerns, invariant tests are grouped by endpoint/status/cardinality/body-edge/site-shape concerns, receiver decoding is table-driven, RAG proof-context tests are grouped by concern, and TUI request-code-context call tests are grouped by concern. Production proof graph cleanup split invariant evaluation, proof-fact projection parsing/JSON validation, row decoding, and call-proof projection into `proof_graph/{invariants,projection,rows,call_projection}.rs`, reducing the root proof graph module to the public/store/query orchestration surface. Proof context lookup now shares linked-row selection across symbol, GraphRAG text, and build-domain queries, with fixture and low-level store assertions covering those query surfaces; context rows expose `build_domain_id` for downstream consumers. Remaining work is to continue splitting large fixture/common/proof files by concern and introduce shared matrices before adding more cases. |
 | CGQ-2A | P1 | Done 2026-06-25 | Proof validation allowed arbitrary ambiguous rows with local targets while fixture invariants only allow dynamic function candidates. | `validate_call_context` now rejects non-resolved local targets except the established ambiguous dynamic-candidate shape (`Dynamic` site, `DynamicFunction` relation, `Function` target). |
 | CGQ-3 | P1 | Done 2026-06-25 | Call endpoint-family rules were duplicated across transform insertion, DB Cozo queries, Rust validation, and tests. | DB query helpers and Rust validation share `VALID_CALL_TARGET_FAMILIES`; transform insertion uses typed `CallRelation` endpoint-kind helpers; fixture invariants now use exported DB helper predicates instead of a copied test-local family matrix. |
 | CGQ-4 | P1 | Done 2026-06-25 | DB `CallRelationKind` mixed relation semantics with target-kind semantics, including `Struct` and `Variant`. | `CallTargetKind` now carries DB endpoint families separately from call relation kinds, while persisted relation strings remain unchanged. |
@@ -758,6 +782,36 @@ next likely slices are:
    that batch before adding cases.
 
 ## Latest verification
+
+For `0dd7b7b0 test: split request context call cases`:
+
+- `cargo test -p ploke-tui --features call_graph request_code_context::gat_tests::call_context_tests -- --nocapture`
+  - passed: 6 passed, 0 failed.
+- `cargo test -p ploke-tui --features call_graph request_code_context::gat_tests -- --nocapture`
+  - passed: 16 passed, 0 failed, 2 ignored.
+
+For `ba289a0c test: split RAG proof context cases`:
+
+- `cargo test -p ploke-rag --features call_graph proof_context -- --nocapture`
+  - passed: 12 passed, 0 failed.
+- `cargo test -p ploke-rag --features call_graph call_context -- --nocapture`
+  - passed: 25 passed, 0 failed.
+
+For `97e9c593 test: share proof lookup row assertions` and
+`2788bf7d test: reuse proof row site helper`:
+
+- `cargo test -p ploke-db --features call_graph proof_lookup -- --nocapture`
+  - passed: 3 passed, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+  - passed: 94 passed, 0 failed.
+- `cargo test -p ploke-db --features call_graph fixture_projection_links_target_centered_proof_rows_to_callers -- --nocapture`
+  - passed: 1 passed, 0 failed.
+- `cargo test -p ploke-db --features call_graph fixture_projection_links_mixed_owner_proof_rows_to_call_context -- --nocapture`
+  - passed: 1 passed, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::target_proof -- --nocapture`
+  - passed: 9 passed, 0 failed.
+- `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries::mixed_proof -- --nocapture`
+  - passed: 5 passed, 0 failed.
 
 For `c26aeedd test: share dynamic transform lookup helpers`:
 
