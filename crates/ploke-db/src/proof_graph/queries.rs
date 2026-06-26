@@ -78,16 +78,24 @@ impl Database {
             );
 
         Ok(rows
-            .into_iter()
+            .iter()
             .filter(|row| row.kind == "call_edge")
             .flat_map(|row| {
                 let Some(call_site_id) = row.call_site_id.clone() else {
                     return Vec::new();
                 };
-                let blocker_reasons = blockers_by_site
+                let mut blocker_reasons = blockers_by_site
                     .get(&call_site_id)
                     .cloned()
-                    .unwrap_or_else(|| vec![String::new()]);
+                    .unwrap_or_default()
+                    .into_iter()
+                    .collect::<BTreeSet<_>>();
+                if let Some(reason) = derived_proof_blocker_reason(row, &rows) {
+                    blocker_reasons.insert(reason);
+                }
+                if blocker_reasons.is_empty() {
+                    blocker_reasons.insert(String::new());
+                }
                 blocker_reasons
                     .into_iter()
                     .map(|reason| ProofCheckerEdgeRow {

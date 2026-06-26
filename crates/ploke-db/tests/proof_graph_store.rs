@@ -437,6 +437,13 @@ fn proof_graph_store_retains_blockers_for_graphrag_and_checker_queries() {
                 && edge.blocker_reason.as_deref() == Some("process_lifetime_evidence_missing"))
     );
     assert!(
+        checker_edges
+            .iter()
+            .any(|edge| edge.call_site_id == "call:spawn"
+                && edge.blocker_reason.as_deref() == Some("type_resolution_missing")),
+        "checker edges should expose derived unresolved call-edge blockers: {checker_edges:#?}"
+    );
+    assert!(
         checker_edges.iter().any(
             |edge| edge.call_site_id == "call:helper" && edge.evidence_use == "navigation_only"
         )
