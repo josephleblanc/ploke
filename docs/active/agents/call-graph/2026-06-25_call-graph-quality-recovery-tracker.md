@@ -234,6 +234,10 @@ are not acceptable as a continuing implementation style.
   Call-proof projection generation, call-context validation, proof fact JSON
   construction, and owner source-file lookup remain in
   `proof_graph/call_projection.rs`.
+- `proof_graph/invariants.rs` now keeps the shared invariant state,
+  scope-matching, blocker derivation, and finding helpers in the root while the
+  detached-process and crown-ruling invariant evaluators live in
+  `proof_graph/invariants/{detached,crown}.rs`.
 - `call_graph.rs` now keeps only the public DB call-graph surface while
   concern modules own row DTOs, call-site/target/status kind decoding,
   receiver decoding, target-family rules, row validation, and query methods:
