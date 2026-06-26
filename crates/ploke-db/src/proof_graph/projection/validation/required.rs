@@ -103,6 +103,7 @@ pub(in crate::proof_graph::projection) fn validate_required_fields(
                     "required_containment",
                     "invalidation_conditions",
                     "status",
+                    "evidence_use",
                 ],
             )?;
             require_json_string_array(value, "allowed_effects")

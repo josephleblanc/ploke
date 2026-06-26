@@ -132,6 +132,29 @@ fn proof_graph_store_rejects_external_summary_without_artifact_identity() {
 }
 
 #[test]
+fn proof_graph_store_rejects_external_summary_without_evidence_use() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    let mut records = proof_records();
+    let mut summary = external_summary_record();
+    summary
+        .as_object_mut()
+        .expect("external summary object")
+        .remove("evidence_use");
+    records.push(summary);
+
+    let error = db
+        .upsert_proof_fact_values(&records)
+        .expect_err("external_summary without evidence_use should reject the whole batch");
+    assert!(error.to_string().contains("evidence_use"));
+    assert!(
+        db.proof_graphrag_context("")
+            .expect("query graph")
+            .is_empty()
+    );
+}
+
+#[test]
 fn proof_graph_store_rejects_external_summary_boundary_without_summary_id() {
     let db = Database::new_init().expect("create db");
     db.ensure_proof_graph_schema().expect("proof graph schema");
