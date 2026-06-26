@@ -71,6 +71,8 @@ are not acceptable as a continuing implementation style.
   - `3284dd45 Add proof domain context lookup`
   - `5fad4c98 Remove dormant call graph semantic storage`
 - Recent proof context test cleanup:
+  - `d11ec50d Reject admitted opaque proof summaries`
+  - `bd68a81d test: cover proof blocker UI context`
   - `062de59d Expose derived proof context blockers`
   - `66bb98b7 Expose derived checker blockers`
   - `68fa7ef8 Expose derived proof blockers`
@@ -81,6 +83,13 @@ are not acceptable as a continuing implementation style.
     derived unresolved call-edge blockers into checker traversal rows as well,
     and proof-context lookup decorates DB/RAG rows with the same derived
     blocker reason when the stored proof fact has no explicit reason.
+  - TUI prompt-formatting and context-plan overlay tests now assert that
+    proof-context blocker reasons such as `type_resolution_missing` are visible
+    in model-facing and UI inspection surfaces.
+  - Proof-fact validation now rejects incoherent `external_summary` artifacts
+    that claim `status: admitted` while retaining `summary_class:
+    opaque_blocked`; this is a strict admission precondition and does not yet
+    discharge linked `externally_summarized` blockers.
   - `97e64623 test: cover proof domain store lookups`
   - `8a6eeae1 test: table drive proof context lookups`
 - Recent transform test cleanup:
@@ -211,7 +220,8 @@ are not acceptable as a continuing implementation style.
   allowed effects, containment, and invalidation metadata. Externally
   summarized expansion boundaries now derive summary-missing blocker reasons by
   boundary kind, and blocked/rejected summary artifacts block by summary class;
-  admission semantics remain open.
+  incoherent admitted opaque artifacts are rejected before storage. Discharging
+  linked summary blockers from admitted artifacts remains open.
 - `call_resolution.rs` now keeps the resolver orchestration and remaining path,
   method, constructor, and lookup logic while dynamic-call resolution lives in
   `resolve/call_resolution/dynamic.rs`.
