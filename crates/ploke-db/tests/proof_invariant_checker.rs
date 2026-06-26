@@ -133,6 +133,9 @@ fn expansion_boundary(
     if let Some(blocking_reason) = blocking_reason {
         value["blocking_reason"] = json!(blocking_reason);
     }
+    if expansion_state == "externally_summarized" {
+        value["external_summary_id"] = json!("external-summary:test");
+    }
     value
 }
 
@@ -670,6 +673,44 @@ fn proof_invariant_checker_blocks_external_dependency_resolution_gap_explicitly(
             .reason
             .contains("external_dependency_summary_missing")
     );
+}
+
+#[test]
+fn proof_invariant_checker_blocks_external_summary_expansion_boundaries() {
+    let cases = [
+        ("external_summary", "external_dependency_summary_missing"),
+        ("proc_macro_function", "proc_macro_summary_missing"),
+        ("build_script", "build_script_summary_missing"),
+    ];
+
+    for (boundary_kind, reason) in cases {
+        let mut records = legal_handoff_records();
+        records.push(expansion_boundary(
+            "boundary:external-summary",
+            "bd:checker",
+            boundary_kind,
+            "externally_summarized",
+            None,
+            63,
+        ));
+        let db = db_with(records);
+
+        let findings = db
+            .proof_invariant_findings()
+            .expect("proof invariant findings");
+        let finding = finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn");
+
+        assert_eq!(
+            finding.status,
+            ProofInvariantStatus::Blocked,
+            "{boundary_kind} should block detached proof"
+        );
+        assert!(
+            finding.reason.contains(reason),
+            "{boundary_kind} should report {reason}: {}",
+            finding.reason
+        );
+    }
 }
 
 #[test]

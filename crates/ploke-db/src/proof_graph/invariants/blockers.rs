@@ -74,12 +74,15 @@ fn derived_gap_reason(row: &ProofFactRow, rows: &[ProofFactRow]) -> Option<Strin
         }
         "expansion_boundary"
             if row.blocker_reason.is_some()
-                || matches!(row.status.as_deref(), Some("blocked" | "unresolved")) =>
+                || matches!(
+                    row.status.as_deref(),
+                    Some("blocked" | "unresolved" | "externally_summarized")
+                ) =>
         {
             Some(
                 row.blocker_reason
                     .clone()
-                    .unwrap_or_else(|| "macro_expansion_not_available".to_string()),
+                    .unwrap_or_else(|| expansion_boundary_gap_reason(row)),
             )
         }
         "call_edge" => {
@@ -111,6 +114,17 @@ fn derived_gap_reason(row: &ProofFactRow, rows: &[ProofFactRow]) -> Option<Strin
             _ => None,
         },
         _ => None,
+    }
+}
+
+fn expansion_boundary_gap_reason(row: &ProofFactRow) -> String {
+    match row.detail.as_deref() {
+        Some("proc_macro_derive" | "proc_macro_attribute" | "proc_macro_function") => {
+            "proc_macro_summary_missing".to_string()
+        }
+        Some("build_script") => "build_script_summary_missing".to_string(),
+        Some("external_summary") => "external_dependency_summary_missing".to_string(),
+        _ => "macro_expansion_not_available".to_string(),
     }
 }
 
