@@ -274,6 +274,7 @@ Implemented/scaffolded:
   - `Database::call_resolution_for_site(...)`
   - `Database::call_context_for_owner(...)`
   - `Database::callers_for_target(...)`
+  - `Database::call_context_for_target(...)`
   - fresh fixture-backed DB tests now parse and transform
     `fixture_call_graph` and `fixture_nodes` before asserting persisted context
     rows for resolved path calls, local/initialized/typed-local method
@@ -312,7 +313,9 @@ Implemented/scaffolded:
   - `Database::project_call_proof_facts_for_target(...)`
   - projects existing proof JSON facts for call sites, resolved call edges, and
     call-resolution blockers from persisted owner-scoped and target-centered
-    call graph rows
+    call graph rows; target-centered proof projection now consumes full
+    `CallContextRow` values so ambiguous dynamic sibling candidates stay
+    attached to the matched call site
 - Feature-gated RAG/TUI payload plumbing:
   - `ContextPart.call_context`
   - `ConciseContext.call_context`

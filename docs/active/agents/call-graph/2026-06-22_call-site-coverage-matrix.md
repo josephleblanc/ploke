@@ -287,14 +287,16 @@ Current proof projection behavior:
 `ploke-db --features call_graph` projects owner-scoped persisted call graph rows
 into the existing `proof_fact` store through `call_proof_facts_for_owner` and
 `project_call_proof_facts_for_owner`, and projects target-centered incoming
-caller rows through `call_proof_facts_for_target` and
-`project_call_proof_facts_for_target`. The projection requires an explicit
-`build_domain_id`, derives source-file provenance through existing module/file
-ancestry rules, stores resolved local targets as proof `call_edge` facts, and
-maps external/unsupported/unresolved/ambiguous call statuses to fail-closed
-`call_resolution` blocker reasons without inventing local edges. Any local
-target row on a non-resolved call status is rejected before proof facts are
-stored.
+call sites through full `CallContextRow` values in
+`call_proof_facts_for_target` and `project_call_proof_facts_for_target`. The
+projection requires an explicit `build_domain_id`, derives source-file
+provenance through existing module/file ancestry rules, stores resolved local
+targets as proof `call_edge` facts, and maps
+external/unsupported/unresolved/ambiguous call statuses to fail-closed
+`call_resolution` blocker reasons without inventing local edges. Ambiguous
+dynamic candidate sets stay attached to the target-centered call site rather
+than collapsing to the matched target. Any local target row on a non-resolved
+call status is rejected before proof facts are stored.
 Fixture-backed proof coverage now includes both single-row resolved/external
 owners, local/self/super/crate/module-qualified/imported function path
 resolution owners, owner-scoped associated-function path owners across inherent,
