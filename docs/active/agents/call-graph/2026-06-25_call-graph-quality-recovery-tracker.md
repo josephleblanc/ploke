@@ -71,6 +71,7 @@ are not acceptable as a continuing implementation style.
   - `3284dd45 Add proof domain context lookup`
   - `5fad4c98 Remove dormant call graph semantic storage`
 - Recent proof context test cleanup:
+  - `b7168f49 Scope summary discharge by call-site domain`
   - `00ba49b6 Require summary authority for blocker discharge`
   - `35f10904 Discharge admitted external summary blockers`
   - `a1199145 Expose proof effect metadata`
@@ -126,6 +127,9 @@ are not acceptable as a continuing implementation style.
     authorize `external_summary_boundary` in `allowed_effects`; admitted
     summaries with unrelated allowed effects retain the missing-summary
     blockers.
+  - Discharge now also checks build-domain scope through the summarized row or
+    its linked `call_site` fact. A summary from another build domain no longer
+    clears call-site scoped `externally_summarized` blockers.
   - `97e64623 test: cover proof domain store lookups`
   - `8a6eeae1 test: table drive proof context lookups`
 - Recent transform test cleanup:
