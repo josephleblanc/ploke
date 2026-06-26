@@ -73,6 +73,7 @@ are not acceptable as a continuing implementation style.
 - Recent proof context test cleanup:
   - `f42fba3e Expose proof summary metadata`
   - `9583fc6e Expose proof expansion metadata`
+  - `f349e631 Expose proof build metadata`
   - `4b58e2fc Expose proof authority terms`
   - `d11ec50d Reject admitted opaque proof summaries`
   - `bd68a81d test: cover proof blocker UI context`
@@ -100,6 +101,9 @@ are not acceptable as a continuing implementation style.
     through the same JSON-backed proof context path, making macro/build
     expansion facts DB/RAG/TUI visible without changing the `proof_fact`
     relation shape.
+  - Selected build-domain target and proof-policy metadata now flows through
+    DB/RAG/TUI proof context from the same JSON-backed path, leaving summary
+    and discharge semantics unchanged.
   - Proof-fact validation now rejects incoherent `external_summary` artifacts
     that claim `status: admitted` while retaining `summary_class:
     opaque_blocked`; this is a strict admission precondition and does not yet
