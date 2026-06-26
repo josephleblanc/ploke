@@ -480,6 +480,8 @@ fn format_proof_context(row: &ProofContextInfo) -> String {
     }
     push_opt(&mut parts, "status", row.status.as_deref());
     push_opt(&mut parts, "blocker", row.blocker_reason.as_deref());
+    push_opt(&mut parts, "effect", row.effect_class.as_deref());
+    push_opt(&mut parts, "detail", row.detail.as_deref());
     push_opt(&mut parts, "evidence", row.evidence_use.as_deref());
     push_opt(&mut parts, "domain", row.build_domain_id.as_deref());
     if let (Some(file), Some(start), Some(end)) =

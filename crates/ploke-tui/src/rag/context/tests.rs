@@ -195,7 +195,7 @@ fn reformat_context_to_system_includes_proof_context_details() {
             effect_class: Some("call".to_string()),
             blocker_reason: None,
             status: Some("resolved".to_string()),
-            detail: None,
+            detail: Some("edge confirmed".to_string()),
         }],
     };
 
@@ -210,6 +210,8 @@ fn reformat_context_to_system_includes_proof_context_details() {
     assert!(rendered.contains("state=resolved"));
     assert!(rendered.contains("resolved=def:callee"));
     assert!(rendered.contains("candidates=[def:callee, def:other]"));
+    assert!(rendered.contains("effect=call"));
+    assert!(rendered.contains("detail=edge confirmed"));
     assert!(rendered.contains("domain=bd:fixture-call-graph"));
     assert!(rendered.contains("source=src/main.rs:12..26"));
 }
