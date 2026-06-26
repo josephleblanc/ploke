@@ -32,6 +32,8 @@ are not acceptable as a continuing implementation style.
     `ploke-rag/src/core/unit_tests/tests/call_context/public.rs`.
   - RAG call-context collection and degradation-gate tests were moved into
     `ploke-rag/src/core/unit_tests/tests/call_context/collection.rs`.
+  - RAG call-context expansion tests were moved into
+    `ploke-rag/src/core/unit_tests/tests/call_context/expansion.rs`.
 - Recent coverage inventory cleanup:
   - Added `2026-06-25_call-graph-coverage-inventory.md` as the compact layer inventory.
 - Recent production pattern cleanup:
@@ -255,6 +257,10 @@ are not acceptable as a continuing implementation style.
 - RAG call-context collection and degradation-gate tests now live in
   `unit_tests/tests/call_context/collection.rs`, separate from public
   `get_context` behavior and the remaining expansion tests.
+- RAG call-context expansion tests now live in
+  `unit_tests/tests/call_context/expansion.rs`, leaving the parent RAG unit
+  test module with only shared call-context helpers before the next helper
+  extraction.
 - Resolved dynamic proof fixture tests now share a dynamic proof batch helper
   that preserves fresh-DB isolation per proof group while moving repeated
   target lookup, proof projection, and owner-edge assertions out of each test.
@@ -307,6 +313,11 @@ are not acceptable as a continuing implementation style.
     passed: 7 passed, 0 failed.
   - `cargo test -p ploke-rag --features call_graph call_context_sparse_get_context -- --nocapture`
     passed: 8 passed, 0 failed.
+- RAG call-context expansion module split
+  - `cargo test -p ploke-rag --features call_graph call_context_expansion -- --nocapture`
+    passed: 9 passed, 0 failed.
+  - `cargo test -p ploke-rag --features call_graph call_context -- --nocapture`
+    passed: 25 passed, 0 failed.
 - `056705b8 test: split local target prevalidation cases`
   - `cargo test -p ploke-db --features call_graph unit::call_graph_queries::proof_projection::prevalidation::local_targets -- --nocapture`
     passed: 4 passed, 0 failed.
