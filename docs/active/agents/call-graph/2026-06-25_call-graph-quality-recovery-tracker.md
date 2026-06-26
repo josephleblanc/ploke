@@ -71,6 +71,7 @@ are not acceptable as a continuing implementation style.
   - `3284dd45 Add proof domain context lookup`
   - `5fad4c98 Remove dormant call graph semantic storage`
 - Recent proof context test cleanup:
+  - `4b58e2fc Expose proof authority terms`
   - `d11ec50d Reject admitted opaque proof summaries`
   - `bd68a81d test: cover proof blocker UI context`
   - `062de59d Expose derived proof context blockers`
@@ -86,6 +87,9 @@ are not acceptable as a continuing implementation style.
   - TUI prompt-formatting and context-plan overlay tests now assert that
     proof-context blocker reasons such as `type_resolution_missing` are visible
     in model-facing and UI inspection surfaces.
+  - Proof context rows now expose `authority_term` explicitly from stored proof
+    JSON through DB, RAG, TUI prompt formatting, and public tool serde carriers,
+    while keeping the existing checker-facing `effect_class` copy intact.
   - Proof-fact validation now rejects incoherent `external_summary` artifacts
     that claim `status: admitted` while retaining `summary_class:
     opaque_blocked`; this is a strict admission precondition and does not yet
@@ -212,7 +216,9 @@ are not acceptable as a continuing implementation style.
   the stored proof-fact JSON, matches symbol lookups against candidate IDs, and
   carries those fields through RAG/TUI proof-context payloads. This keeps the
   existing `proof_fact` relation shape stable while making ambiguous sibling
-  candidates visible to downstream model-facing context.
+  candidates visible to downstream model-facing context. It also exposes
+  `authority_term` explicitly for authority facts without changing the stored
+  relation shape.
 - `externally_summarized` proof `call_resolution` facts now fail closed without
   `external_summary_id`; the same JSON-backed proof context path exposes that
   ID through DB, RAG, and TUI payloads. The DB proof store now accepts strict
