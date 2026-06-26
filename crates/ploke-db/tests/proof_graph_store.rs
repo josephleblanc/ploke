@@ -78,6 +78,25 @@ fn proof_records() -> Vec<serde_json::Value> {
     ]
 }
 
+fn expansion_boundary_record() -> serde_json::Value {
+    json!({
+        "fact_kind": "expansion_boundary",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "boundary_id": "boundary:macro-rules",
+        "build_domain_id": "bd:main",
+        "boundary_kind": "macro_rules_invocation",
+        "source_span": {
+            "file": "src/lib.rs",
+            "start_byte": 70,
+            "end_byte": 90,
+            "line_start": 8,
+            "line_end": 8
+        },
+        "expansion_state": "unresolved",
+        "blocking_reason": "macro_expansion_not_available"
+    })
+}
+
 fn assert_process_context(label: &str, hits: &[ProofGraphContextRow]) {
     assert!(
         hits.iter()
@@ -143,6 +162,29 @@ fn proof_symbol_lookup_keeps_linked_blockers_with_matching_symbol() {
 
     let lookup = db.proof_symbol_lookup("def:launch").expect("symbol lookup");
     assert_process_context("symbol lookup", &lookup);
+}
+
+#[test]
+fn proof_graphrag_context_matches_json_only_expansion_boundary_fields() {
+    let db = Database::new_init().expect("create db");
+    db.ensure_proof_graph_schema().expect("proof graph schema");
+    let mut records = proof_records();
+    records.push(expansion_boundary_record());
+    db.upsert_proof_fact_values(&records)
+        .expect("import proof facts");
+
+    let rows = db
+        .proof_graphrag_context("macro_rules_invocation")
+        .expect("boundary-kind proof context");
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "expansion_boundary"
+                && row.fact_id == "boundary:macro-rules"
+                && row.status.as_deref() == Some("unresolved")
+                && row.blocker_reason.as_deref() == Some("macro_expansion_not_available")
+        }),
+        "GraphRAG proof lookup should match JSON-only boundary_kind fields: {rows:#?}"
+    );
 }
 
 #[test]

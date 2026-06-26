@@ -26,6 +26,7 @@ pub(super) struct ProofFactRow {
     pub(super) blocker_reason: Option<String>,
     pub(super) status: Option<String>,
     pub(super) detail: Option<String>,
+    json_terms: Vec<String>,
 }
 
 impl ProofFactRow {
@@ -54,6 +55,7 @@ impl ProofFactRow {
             blocker_reason: optional_string(row, 16),
             status: optional_string(row, 17),
             detail: optional_string(row, 18),
+            json_terms: json.map(json_search_terms).unwrap_or_default(),
         })
     }
 
@@ -85,7 +87,11 @@ impl ProofFactRow {
             .candidate_def_ids
             .iter()
             .any(|value| value.to_ascii_lowercase().contains(query));
-        scalar_match || candidate_match
+        let json_match = self
+            .json_terms
+            .iter()
+            .any(|value| value.to_ascii_lowercase().contains(query));
+        scalar_match || candidate_match || json_match
     }
 }
 
@@ -153,6 +159,29 @@ fn json_string_array(value: &Value, field: &str) -> Vec<String> {
         .flatten()
         .filter_map(|candidate| candidate.as_str().map(ToOwned::to_owned))
         .collect()
+}
+
+fn json_search_terms(value: &Value) -> Vec<String> {
+    let mut terms = Vec::new();
+    collect_json_strings(value, &mut terms);
+    terms
+}
+
+fn collect_json_strings(value: &Value, terms: &mut Vec<String>) {
+    match value {
+        Value::String(text) => terms.push(text.clone()),
+        Value::Array(items) => {
+            for item in items {
+                collect_json_strings(item, terms);
+            }
+        }
+        Value::Object(fields) => {
+            for value in fields.values() {
+                collect_json_strings(value, terms);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) => {}
+    }
 }
 
 fn required_string(row: &[DataValue], index: usize, field: &str) -> Result<String, DbError> {
