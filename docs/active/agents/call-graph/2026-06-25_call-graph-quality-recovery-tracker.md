@@ -26,6 +26,9 @@ are not acceptable as a continuing implementation style.
   - TUI RAG context prompt-formatting tests were moved out of the inline
     `rag/context.rs` test module into `rag/context/tests.rs`, leaving the
     production context assembly/formatting module as the root surface.
+  - TUI context-plan overlay call-context tests were moved out of the inline
+    `context_plan_overlay.rs` test module into `context_plan_overlay/tests.rs`,
+    leaving the overlay production renderer in the root surface.
 - Recent RAG/DB context cleanup:
   - `31d19d3c Add variant sparse call-context seeds`
   - `15f0ce68 test: share RAG call expansion assertions`
@@ -231,6 +234,9 @@ are not acceptable as a continuing implementation style.
 - `ploke-tui/src/rag/context.rs` now keeps the production context assembly and
   prompt-formatting code in the root while the existing context-plan and
   call-context formatting tests live in `rag/context/tests.rs`.
+- `ploke-tui/src/app/view/components/context_plan_overlay.rs` now keeps the
+  context-plan overlay renderer in the root while the call-context overlay
+  detail tests live in `context_plan_overlay/tests.rs`.
 - `call_graph_tests/dynamic.rs` in `ploke-transform` now shares local
   `DynamicFunction` lookup helpers instead of repeating the full
   `CallRelation::DynamicFunction` scan for every dynamic projection case.
