@@ -149,9 +149,11 @@ are not acceptable as a continuing implementation style.
   - TUI proof-context formatting now includes source line spans alongside byte
     spans when proof rows carry `line_start`/`line_end`.
   - `02ce0a91 Show proof blockers in context overlay titles`
+  - `f40ae0eb Show call blockers in context overlay titles`
   - Context-plan overlay collapsed RAG rows now surface proof blocker counts
-    alongside proof counts, so proof-relevant rows are visible before expanding
-    the row details.
+    alongside proof counts and non-resolved call blocker counts alongside call
+    counts, so call/proof-relevant rows are visible before expanding the row
+    details.
   - `97e64623 test: cover proof domain store lookups`
   - `8a6eeae1 test: table drive proof context lookups`
 - Recent transform test cleanup:
@@ -797,6 +799,16 @@ For context-plan overlay proof blocker presentation:
   failed because the collapsed RAG title did not include `proof blockers 1`.
 - `cargo test -p ploke-tui --features call_graph expanded_rag_part_displays_call_context_details -- --nocapture`
   - passed: focused overlay proof-blocker title filter ran 1 test, 0 failed.
+- `cargo test -p ploke-tui --features call_graph context_plan_overlay::tests -- --nocapture`
+  - passed: context-plan overlay filter ran 4 tests, 0 failed.
+
+For context-plan overlay call blocker presentation:
+
+- Red check before implementation:
+  `cargo test -p ploke-tui --features call_graph expanded_rag_part_displays_call_context_details -- --nocapture`
+  failed because the collapsed RAG title did not include `call blockers 3`.
+- `cargo test -p ploke-tui --features call_graph expanded_rag_part_displays_call_context_details -- --nocapture`
+  - passed: focused overlay call-blocker title filter ran 1 test, 0 failed.
 - `cargo test -p ploke-tui --features call_graph context_plan_overlay::tests -- --nocapture`
   - passed: context-plan overlay filter ran 4 tests, 0 failed.
 
