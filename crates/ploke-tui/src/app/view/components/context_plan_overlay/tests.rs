@@ -248,6 +248,7 @@ fn expanded_rag_part_displays_call_context_details() {
     assert!(item.expanded);
     assert!(line_text(&item.title).contains("call IncomingCaller"));
     assert!(line_text(&item.title).contains("calls 9"));
+    assert!(line_text(&item.title).contains("call blockers 3"));
     assert!(line_text(&item.title).contains("proofs 1"));
     assert!(line_text(&item.title).contains("proof blockers 1"));
 

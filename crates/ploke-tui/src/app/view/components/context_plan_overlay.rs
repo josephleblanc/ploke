@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use ploke_core::rag_types::ContextPart;
+use ploke_core::rag_types::{CallStatusKind, ContextPart};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Style, Stylize as _};
@@ -946,6 +946,16 @@ fn build_display_items(
                 } else {
                     format!(", calls {}", part.call_context.len())
                 };
+                let call_blockers = part
+                    .call_context
+                    .iter()
+                    .filter(|call| call.status != CallStatusKind::Resolved)
+                    .count();
+                let call_blocker_suffix = if call_blockers == 0 {
+                    String::new()
+                } else {
+                    format!(", call blockers {call_blockers}")
+                };
                 let proof_suffix = if part.proof_context.is_empty() {
                     String::new()
                 } else {
@@ -966,7 +976,7 @@ fn build_display_items(
                     part.kind.to_static_str(),
                     part.score,
                     format_args!(
-                        "{type_suffix}{expansion_suffix}{call_suffix}{proof_suffix}{proof_blocker_suffix}"
+                        "{type_suffix}{expansion_suffix}{call_suffix}{call_blocker_suffix}{proof_suffix}{proof_blocker_suffix}"
                     ),
                     part.estimated_tokens
                 );
