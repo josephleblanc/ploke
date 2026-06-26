@@ -178,6 +178,7 @@ fn proof_graph_store_accepts_external_summary_artifacts() {
                 && row.fact_id == "external-summary:dep:serde"
                 && row.build_domain_id.as_deref() == Some("bd:main")
                 && row.status.as_deref() == Some("blocked")
+                && row.detail.as_deref() == Some("opaque_blocked")
         }),
         "GraphRAG proof lookup should expose stored external summary artifacts: {by_id:#?}"
     );

@@ -61,6 +61,7 @@ impl ProofFactProjection {
         projection.status =
             json_string(value, "status").or_else(|| json_string(value, "expansion_state"));
         projection.detail = json_string(value, "detail")
+            .or_else(|| json_string(value, "summary_class"))
             .or_else(|| json_string(value, "confidence"))
             .or_else(|| json_string(value, "target_name"))
             .or_else(|| json_string(value, "boundary_kind"));
