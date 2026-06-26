@@ -34,6 +34,7 @@ use super::{
         PARENT_STARTED_TRANSITION, RECORD_REL, STORE_SCOPE, TRACE_EVENT_REL,
         parent_started_db_receipt,
     },
+    schema::EvalRelationSchema,
 };
 use crate::cli::prototype1_state::{
     event::RecordedAt,
@@ -81,6 +82,407 @@ fn eval_store_production_code_uses_schema_generated_cozo_scripts() {
         "production eval-store Cozo scripts must be schema-generated:\n{}",
         offenders.join("\n")
     );
+}
+
+fn eval_schema_params<S: super::schema::EvalRelationSchema>(
+    schema: &S,
+) -> BTreeMap<String, DataValue> {
+    schema
+        .all_fields()
+        .into_iter()
+        .map(|field| (field.name().to_string(), DataValue::Null))
+        .collect()
+}
+
+fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
+    vec![
+        {
+            let schema = &super::setup::CampaignSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::setup::ProfileCommitmentSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::setup::ClosureRefSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::setup::BaselineSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::cozo_schema::TransitionEventSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::cozo_schema::RecordRefSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::cozo_schema::LogRefSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::cozo_schema::AttemptSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::cozo_schema::InvocationSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::cozo_schema::ChannelMessageSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::cozo_schema::ChannelReceiptSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::cozo_schema::ImportEventSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::cozo_schema::TraceEventSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::artifact::ArtifactSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::artifact::ArtifactSurfaceSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::artifact::ArtifactRefSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::build::BinaryRefSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::build::BuildEventSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::evaluation::EvaluationSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::evaluation::EvaluationInstanceSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::continuation::ContinuationDecisionSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::operation::OperationSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::operation::PatchSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::operation::ApplyEventSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::selection::SelectionDecisionSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::selection::SelectionCandidateSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::selection::SelectionFindingSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::selection::SelectionScoreSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+    ]
+}
+
+#[test]
+fn eval_store_non_agent_schema_scripts_are_stable() {
+    let actual = non_agent_schema_scripts();
+    let expected = vec![
+        (
+            "eval_campaign",
+            r#":create eval_campaign { campaign_id: String => schema_version: String, manifest_ref: String, prototype_root: String, manifest_sha256: String, profile_ref_id: String?, storage_backend: String?, ingested_at: String }"#,
+            r#"?[campaign_id, schema_version, manifest_ref, prototype_root, manifest_sha256, profile_ref_id, storage_backend, ingested_at] <- [[$campaign_id, $schema_version, $manifest_ref, $prototype_root, $manifest_sha256, $profile_ref_id, $storage_backend, $ingested_at]] :put eval_campaign { campaign_id => schema_version, manifest_ref, prototype_root, manifest_sha256, profile_ref_id, storage_backend, ingested_at }"#,
+        ),
+        (
+            "eval_profile_commitment",
+            r#":create eval_profile_commitment { profile_ref_id: String => campaign_id: String, schema_version: String, profile_name: String, source_ref: String, profile_path: String, content_sha256: String, source_path: String?, admitted_at: String, storage_ref: String, ingested_at: String }"#,
+            r#"?[profile_ref_id, campaign_id, schema_version, profile_name, source_ref, profile_path, content_sha256, source_path, admitted_at, storage_ref, ingested_at] <- [[$profile_ref_id, $campaign_id, $schema_version, $profile_name, $source_ref, $profile_path, $content_sha256, $source_path, $admitted_at, $storage_ref, $ingested_at]] :put eval_profile_commitment { profile_ref_id => campaign_id, schema_version, profile_name, source_ref, profile_path, content_sha256, source_path, admitted_at, storage_ref, ingested_at }"#,
+        ),
+        (
+            "eval_closure_ref",
+            r#":create eval_closure_ref { closure_ref_id: String => campaign_id: String, run_id: String?, store_scope: String, source_ref: String, content_sha256: String, summary_json: String, recorded_at: String, ingested_at: String }"#,
+            r#"?[closure_ref_id, campaign_id, run_id, store_scope, source_ref, content_sha256, summary_json, recorded_at, ingested_at] <- [[$closure_ref_id, $campaign_id, $run_id, $store_scope, $source_ref, $content_sha256, $summary_json, $recorded_at, $ingested_at]] :put eval_closure_ref { closure_ref_id => campaign_id, run_id, store_scope, source_ref, content_sha256, summary_json, recorded_at, ingested_at }"#,
+        ),
+        (
+            "eval_baseline",
+            r#":create eval_baseline { baseline_id: String => campaign_id: String, parent_id: String, parent_node_id: String, parent_branch_id: String, source_kind: String, closure_ref_id: String?, evaluation_id: String?, record_ref: String?, eval_set_id: String, status: String, instance_count: Int, summary_json: String, recorded_at: String, ingested_at: String }"#,
+            r#"?[baseline_id, campaign_id, parent_id, parent_node_id, parent_branch_id, source_kind, closure_ref_id, evaluation_id, record_ref, eval_set_id, status, instance_count, summary_json, recorded_at, ingested_at] <- [[$baseline_id, $campaign_id, $parent_id, $parent_node_id, $parent_branch_id, $source_kind, $closure_ref_id, $evaluation_id, $record_ref, $eval_set_id, $status, $instance_count, $summary_json, $recorded_at, $ingested_at]] :put eval_baseline { baseline_id => campaign_id, parent_id, parent_node_id, parent_branch_id, source_kind, closure_ref_id, evaluation_id, record_ref, eval_set_id, status, instance_count, summary_json, recorded_at, ingested_at }"#,
+        ),
+        (
+            "eval_transition_event",
+            r#":create eval_transition_event { event_id: String => campaign_id: String, parent_id: String, runtime_id: String, node_id: String, generation: Int, transition: String, phase: String, outcome: String, store_scope: String, producer_role: String, visibility_scope: String, source_class: String, evidence_class: String, validation_status: String, source_stream_id: String, source_event_index: Int, source_line: Int, source_ref: String, content_sha256: String, semantic_hash: String, recorded_at: Int, ingested_at: String }"#,
+            r#"?[event_id, campaign_id, parent_id, runtime_id, node_id, generation, transition, phase, outcome, store_scope, producer_role, visibility_scope, source_class, evidence_class, validation_status, source_stream_id, source_event_index, source_line, source_ref, content_sha256, semantic_hash, recorded_at, ingested_at] <- [[$event_id, $campaign_id, $parent_id, $runtime_id, $node_id, $generation, $transition, $phase, $outcome, $store_scope, $producer_role, $visibility_scope, $source_class, $evidence_class, $validation_status, $source_stream_id, $source_event_index, $source_line, $source_ref, $content_sha256, $semantic_hash, $recorded_at, $ingested_at]] :put eval_transition_event { event_id => campaign_id, parent_id, runtime_id, node_id, generation, transition, phase, outcome, store_scope, producer_role, visibility_scope, source_class, evidence_class, validation_status, source_stream_id, source_event_index, source_line, source_ref, content_sha256, semantic_hash, recorded_at, ingested_at }"#,
+        ),
+        (
+            "eval_record_ref",
+            r#":create eval_record_ref { record_ref_id: String => campaign_id: String, family: String, schema_version: String, store_scope: String, producer_role: String, producer_id: String, source_class: String, evidence_class: String, visibility_scope: String, validation_status: String, source_stream_id: String, source_event_index: Int, source_line: Int, source_ref: String, content_sha256: String, payload_json: String, recorded_at: Int, ingested_at: String }"#,
+            r#"?[record_ref_id, campaign_id, family, schema_version, store_scope, producer_role, producer_id, source_class, evidence_class, visibility_scope, validation_status, source_stream_id, source_event_index, source_line, source_ref, content_sha256, payload_json, recorded_at, ingested_at] <- [[$record_ref_id, $campaign_id, $family, $schema_version, $store_scope, $producer_role, $producer_id, $source_class, $evidence_class, $visibility_scope, $validation_status, $source_stream_id, $source_event_index, $source_line, $source_ref, $content_sha256, $payload_json, $recorded_at, $ingested_at]] :put eval_record_ref { record_ref_id => campaign_id, family, schema_version, store_scope, producer_role, producer_id, source_class, evidence_class, visibility_scope, validation_status, source_stream_id, source_event_index, source_line, source_ref, content_sha256, payload_json, recorded_at, ingested_at }"#,
+        ),
+        (
+            "eval_log_ref",
+            r#":create eval_log_ref { log_ref_id: String => campaign_id: String?, runtime_id: String?, store_scope: String, log_kind: String, source_ref: String, byte_start: Int?, byte_len: Int?, content_sha256: String?, sensitivity: String?, recorded_at: String? }"#,
+            r#"?[log_ref_id, campaign_id, runtime_id, store_scope, log_kind, source_ref, byte_start, byte_len, content_sha256, sensitivity, recorded_at] <- [[$log_ref_id, $campaign_id, $runtime_id, $store_scope, $log_kind, $source_ref, $byte_start, $byte_len, $content_sha256, $sensitivity, $recorded_at]] :put eval_log_ref { log_ref_id => campaign_id, runtime_id, store_scope, log_kind, source_ref, byte_start, byte_len, content_sha256, sensitivity, recorded_at }"#,
+        ),
+        (
+            "eval_attempt",
+            r#":create eval_attempt { attempt_id: String => campaign_id: String, runtime_id: String, role: String, parent_id: String?, node_id: String?, invocation_id: String?, channel_id: String?, artifact_id: String?, binary_ref: String?, started_at: String?, status: String? }"#,
+            r#"?[attempt_id, campaign_id, runtime_id, role, parent_id, node_id, invocation_id, channel_id, artifact_id, binary_ref, started_at, status] <- [[$attempt_id, $campaign_id, $runtime_id, $role, $parent_id, $node_id, $invocation_id, $channel_id, $artifact_id, $binary_ref, $started_at, $status]] :put eval_attempt { attempt_id => campaign_id, runtime_id, role, parent_id, node_id, invocation_id, channel_id, artifact_id, binary_ref, started_at, status }"#,
+        ),
+        (
+            "eval_invocation",
+            r#":create eval_invocation { invocation_id: String => campaign_id: String, node_id: String, runtime_id: String, role: String, store_scope: String, producer_role: String, visibility_scope: String, source_class: String, evidence_class: String, validation_status: String, invocation_path: String, source_ref: String, content_sha256: String, recorded_at: String, ingested_at: String }"#,
+            r#"?[invocation_id, campaign_id, node_id, runtime_id, role, store_scope, producer_role, visibility_scope, source_class, evidence_class, validation_status, invocation_path, source_ref, content_sha256, recorded_at, ingested_at] <- [[$invocation_id, $campaign_id, $node_id, $runtime_id, $role, $store_scope, $producer_role, $visibility_scope, $source_class, $evidence_class, $validation_status, $invocation_path, $source_ref, $content_sha256, $recorded_at, $ingested_at]] :put eval_invocation { invocation_id => campaign_id, node_id, runtime_id, role, store_scope, producer_role, visibility_scope, source_class, evidence_class, validation_status, invocation_path, source_ref, content_sha256, recorded_at, ingested_at }"#,
+        ),
+        (
+            "eval_channel_message",
+            r#":create eval_channel_message { channel_message_id: String => campaign_id: String, node_id: String, runtime_id: String, direction: String, message_kind: String, message_id: String, store_scope: String, producer_role: String, visibility_scope: String, source_class: String, evidence_class: String, validation_status: String, endpoint_path: String, cursor_offset: Int, bytes_written: Int, body_hash: String, content_sha256: String, source_ref: String, recorded_at: String, ingested_at: String }"#,
+            r#"?[channel_message_id, campaign_id, node_id, runtime_id, direction, message_kind, message_id, store_scope, producer_role, visibility_scope, source_class, evidence_class, validation_status, endpoint_path, cursor_offset, bytes_written, body_hash, content_sha256, source_ref, recorded_at, ingested_at] <- [[$channel_message_id, $campaign_id, $node_id, $runtime_id, $direction, $message_kind, $message_id, $store_scope, $producer_role, $visibility_scope, $source_class, $evidence_class, $validation_status, $endpoint_path, $cursor_offset, $bytes_written, $body_hash, $content_sha256, $source_ref, $recorded_at, $ingested_at]] :put eval_channel_message { channel_message_id => campaign_id, node_id, runtime_id, direction, message_kind, message_id, store_scope, producer_role, visibility_scope, source_class, evidence_class, validation_status, endpoint_path, cursor_offset, bytes_written, body_hash, content_sha256, source_ref, recorded_at, ingested_at }"#,
+        ),
+        (
+            "eval_channel_receipt",
+            r#":create eval_channel_receipt { receipt_id: String => channel_id: String, message_id: String, campaign_id: String, node_id: String, runtime_id: String, observed_by: String?, direction: String, validation_status: String, imported_ref: String?, observed_at: String }"#,
+            r#"?[receipt_id, channel_id, message_id, campaign_id, node_id, runtime_id, observed_by, direction, validation_status, imported_ref, observed_at] <- [[$receipt_id, $channel_id, $message_id, $campaign_id, $node_id, $runtime_id, $observed_by, $direction, $validation_status, $imported_ref, $observed_at]] :put eval_channel_receipt { receipt_id => channel_id, message_id, campaign_id, node_id, runtime_id, observed_by, direction, validation_status, imported_ref, observed_at }"#,
+        ),
+        (
+            "eval_import_event",
+            r#":create eval_import_event { import_id: String => campaign_id: String, importer_id: String, source_runtime_id: String?, source_scope: String, target_scope: String, evidence_ref: String, receipt_id: String?, validation_status: String, imported_at: String }"#,
+            r#"?[import_id, campaign_id, importer_id, source_runtime_id, source_scope, target_scope, evidence_ref, receipt_id, validation_status, imported_at] <- [[$import_id, $campaign_id, $importer_id, $source_runtime_id, $source_scope, $target_scope, $evidence_ref, $receipt_id, $validation_status, $imported_at]] :put eval_import_event { import_id => campaign_id, importer_id, source_runtime_id, source_scope, target_scope, evidence_ref, receipt_id, validation_status, imported_at }"#,
+        ),
+        (
+            "eval_trace_event",
+            r#":create eval_trace_event { trace_event_id: String => campaign_id: String?, parent_id: String?, runtime_id: String?, node_id: String?, generation: Int?, branch_id: String?, role: String?, pipeline: String?, stage: String?, authority: String?, transition: String?, event_name: String?, span_name: String?, target: String, level: String, outcome: String?, duration_ms: Int?, record_access: String?, record_kind: String?, record_path: String?, record_index: Int?, record_count: Int?, program: String?, exit_code: Int?, error: String?, source_log_ref: String?, source_event_index: Int?, recorded_at: String? }"#,
+            r#"?[trace_event_id, campaign_id, parent_id, runtime_id, node_id, generation, branch_id, role, pipeline, stage, authority, transition, event_name, span_name, target, level, outcome, duration_ms, record_access, record_kind, record_path, record_index, record_count, program, exit_code, error, source_log_ref, source_event_index, recorded_at] <- [[$trace_event_id, $campaign_id, $parent_id, $runtime_id, $node_id, $generation, $branch_id, $role, $pipeline, $stage, $authority, $transition, $event_name, $span_name, $target, $level, $outcome, $duration_ms, $record_access, $record_kind, $record_path, $record_index, $record_count, $program, $exit_code, $error, $source_log_ref, $source_event_index, $recorded_at]] :put eval_trace_event { trace_event_id => campaign_id, parent_id, runtime_id, node_id, generation, branch_id, role, pipeline, stage, authority, transition, event_name, span_name, target, level, outcome, duration_ms, record_access, record_kind, record_path, record_index, record_count, program, exit_code, error, source_log_ref, source_event_index, recorded_at }"#,
+        ),
+        (
+            "eval_artifact",
+            r#":create eval_artifact { artifact_id: String => campaign_id: String, tree_hash: String?, git_branch: String?, git_commit: String?, source: String, store_scope: String, created_by: String?, parent_artifact_id: String? }"#,
+            r#"?[artifact_id, campaign_id, tree_hash, git_branch, git_commit, source, store_scope, created_by, parent_artifact_id] <- [[$artifact_id, $campaign_id, $tree_hash, $git_branch, $git_commit, $source, $store_scope, $created_by, $parent_artifact_id]] :put eval_artifact { artifact_id => campaign_id, tree_hash, git_branch, git_commit, source, store_scope, created_by, parent_artifact_id }"#,
+        ),
+        (
+            "eval_artifact_surface",
+            r#":create eval_artifact_surface { surface_id: String => campaign_id: String, artifact_id: String, immutable_root: String?, mutated_root: String?, ambient_root: String?, surface_hash: String?, source_ref: String?, recorded_at: String? }"#,
+            r#"?[surface_id, campaign_id, artifact_id, immutable_root, mutated_root, ambient_root, surface_hash, source_ref, recorded_at] <- [[$surface_id, $campaign_id, $artifact_id, $immutable_root, $mutated_root, $ambient_root, $surface_hash, $source_ref, $recorded_at]] :put eval_artifact_surface { surface_id => campaign_id, artifact_id, immutable_root, mutated_root, ambient_root, surface_hash, source_ref, recorded_at }"#,
+        ),
+        (
+            "eval_artifact_ref",
+            r#":create eval_artifact_ref { artifact_ref_id: String => campaign_id: String, artifact_id: String?, kind: String, source_ref: String, content_sha256: String?, recorded_at: String? }"#,
+            r#"?[artifact_ref_id, campaign_id, artifact_id, kind, source_ref, content_sha256, recorded_at] <- [[$artifact_ref_id, $campaign_id, $artifact_id, $kind, $source_ref, $content_sha256, $recorded_at]] :put eval_artifact_ref { artifact_ref_id => campaign_id, artifact_id, kind, source_ref, content_sha256, recorded_at }"#,
+        ),
+        (
+            "eval_binary_ref",
+            r#":create eval_binary_ref { binary_ref_id: String => campaign_id: String, artifact_id: String?, built_by: String?, source_ref: String, content_sha256: String?, protocol_digest: String?, recorded_at: String? }"#,
+            r#"?[binary_ref_id, campaign_id, artifact_id, built_by, source_ref, content_sha256, protocol_digest, recorded_at] <- [[$binary_ref_id, $campaign_id, $artifact_id, $built_by, $source_ref, $content_sha256, $protocol_digest, $recorded_at]] :put eval_binary_ref { binary_ref_id => campaign_id, artifact_id, built_by, source_ref, content_sha256, protocol_digest, recorded_at }"#,
+        ),
+        (
+            "eval_build_event",
+            r#":create eval_build_event { build_id: String => campaign_id: String, node_id: String, runtime_id: String?, artifact_id: String?, phase: String, outcome: String, binary_ref: String?, log_ref: String?, recorded_at: String }"#,
+            r#"?[build_id, campaign_id, node_id, runtime_id, artifact_id, phase, outcome, binary_ref, log_ref, recorded_at] <- [[$build_id, $campaign_id, $node_id, $runtime_id, $artifact_id, $phase, $outcome, $binary_ref, $log_ref, $recorded_at]] :put eval_build_event { build_id => campaign_id, node_id, runtime_id, artifact_id, phase, outcome, binary_ref, log_ref, recorded_at }"#,
+        ),
+        (
+            "eval_evaluation",
+            r#":create eval_evaluation { evaluation_id: String => campaign_id: String, parent_id: String?, branch_id: String, baseline_id: String?, treatment_id: String?, procedure_id: String?, evaluator_id: String?, eval_set_id: String?, policy_ref: String?, disposition: String, record_ref: String?, recorded_at: String? }"#,
+            r#"?[evaluation_id, campaign_id, parent_id, branch_id, baseline_id, treatment_id, procedure_id, evaluator_id, eval_set_id, policy_ref, disposition, record_ref, recorded_at] <- [[$evaluation_id, $campaign_id, $parent_id, $branch_id, $baseline_id, $treatment_id, $procedure_id, $evaluator_id, $eval_set_id, $policy_ref, $disposition, $record_ref, $recorded_at]] :put eval_evaluation { evaluation_id => campaign_id, parent_id, branch_id, baseline_id, treatment_id, procedure_id, evaluator_id, eval_set_id, policy_ref, disposition, record_ref, recorded_at }"#,
+        ),
+        (
+            "eval_evaluation_instance",
+            r#":create eval_evaluation_instance { evaluation_id: String, instance_id: String => baseline_run_id: String?, treatment_run_id: String?, baseline_ref: String?, treatment_ref: String?, status: String, outcome: String?, oracle_ref: String? }"#,
+            r#"?[evaluation_id, instance_id, baseline_run_id, treatment_run_id, baseline_ref, treatment_ref, status, outcome, oracle_ref] <- [[$evaluation_id, $instance_id, $baseline_run_id, $treatment_run_id, $baseline_ref, $treatment_ref, $status, $outcome, $oracle_ref]] :put eval_evaluation_instance { evaluation_id, instance_id => baseline_run_id, treatment_run_id, baseline_ref, treatment_ref, status, outcome, oracle_ref }"#,
+        ),
+        (
+            "eval_continuation_decision",
+            r#":create eval_continuation_decision { decision_id: String => campaign_id: String, parent_id: String, disposition: String, selected_branch_id: String?, next_generation: Int, total_nodes: Int, policy_ref: String?, recorded_at: String? }"#,
+            r#"?[decision_id, campaign_id, parent_id, disposition, selected_branch_id, next_generation, total_nodes, policy_ref, recorded_at] <- [[$decision_id, $campaign_id, $parent_id, $disposition, $selected_branch_id, $next_generation, $total_nodes, $policy_ref, $recorded_at]] :put eval_continuation_decision { decision_id => campaign_id, parent_id, disposition, selected_branch_id, next_generation, total_nodes, policy_ref, recorded_at }"#,
+        ),
+        (
+            "eval_operation",
+            r#":create eval_operation { operation_id: String => campaign_id: String, generator_id: String, target_kind: String, target_ref: String, procedure_id: String?, output_artifact_id: String?, output_patch_id: String?, recorded_at: String? }"#,
+            r#"?[operation_id, campaign_id, generator_id, target_kind, target_ref, procedure_id, output_artifact_id, output_patch_id, recorded_at] <- [[$operation_id, $campaign_id, $generator_id, $target_kind, $target_ref, $procedure_id, $output_artifact_id, $output_patch_id, $recorded_at]] :put eval_operation { operation_id => campaign_id, generator_id, target_kind, target_ref, procedure_id, output_artifact_id, output_patch_id, recorded_at }"#,
+        ),
+        (
+            "eval_patch",
+            r#":create eval_patch { patch_id: String => campaign_id: String, base_artifact_id: String?, creator_id: String?, tool_call_id: String?, target_relpath: String?, patch_ref: String?, content_sha256: String?, status: String? }"#,
+            r#"?[patch_id, campaign_id, base_artifact_id, creator_id, tool_call_id, target_relpath, patch_ref, content_sha256, status] <- [[$patch_id, $campaign_id, $base_artifact_id, $creator_id, $tool_call_id, $target_relpath, $patch_ref, $content_sha256, $status]] :put eval_patch { patch_id => campaign_id, base_artifact_id, creator_id, tool_call_id, target_relpath, patch_ref, content_sha256, status }"#,
+        ),
+        (
+            "eval_apply_event",
+            r#":create eval_apply_event { apply_id: String => campaign_id: String, patch_id: String, runtime_id: String?, artifact_id: String?, outcome: String, output_artifact_id: String?, recorded_at: String }"#,
+            r#"?[apply_id, campaign_id, patch_id, runtime_id, artifact_id, outcome, output_artifact_id, recorded_at] <- [[$apply_id, $campaign_id, $patch_id, $runtime_id, $artifact_id, $outcome, $output_artifact_id, $recorded_at]] :put eval_apply_event { apply_id => campaign_id, patch_id, runtime_id, artifact_id, outcome, output_artifact_id, recorded_at }"#,
+        ),
+        (
+            "eval_selection_decision",
+            r#":create eval_selection_decision { decision_id: String => campaign_id: String, parent_id: String, set_id: String, procedure_id: String, selected_node_id: String?, selected_artifact_id: String?, outcome: String, disposition: String?, decision_ref: String?, decision_hash: String?, recorded_at: String? }"#,
+            r#"?[decision_id, campaign_id, parent_id, set_id, procedure_id, selected_node_id, selected_artifact_id, outcome, disposition, decision_ref, decision_hash, recorded_at] <- [[$decision_id, $campaign_id, $parent_id, $set_id, $procedure_id, $selected_node_id, $selected_artifact_id, $outcome, $disposition, $decision_ref, $decision_hash, $recorded_at]] :put eval_selection_decision { decision_id => campaign_id, parent_id, set_id, procedure_id, selected_node_id, selected_artifact_id, outcome, disposition, decision_ref, decision_hash, recorded_at }"#,
+        ),
+        (
+            "eval_selection_candidate",
+            r#":create eval_selection_candidate { decision_id: String, member_id: String => node_id: String, branch_id: String, selectable: Bool, selected: Bool, exclusion_ref: String? }"#,
+            r#"?[decision_id, member_id, node_id, branch_id, selectable, selected, exclusion_ref] <- [[$decision_id, $member_id, $node_id, $branch_id, $selectable, $selected, $exclusion_ref]] :put eval_selection_candidate { decision_id, member_id => node_id, branch_id, selectable, selected, exclusion_ref }"#,
+        ),
+        (
+            "eval_selection_finding",
+            r#":create eval_selection_finding { finding_id: String => decision_id: String, member_id: String?, domain: String, verdict: String, confidence: String, evidence_ref: String?, rationale_ref: String? }"#,
+            r#"?[finding_id, decision_id, member_id, domain, verdict, confidence, evidence_ref, rationale_ref] <- [[$finding_id, $decision_id, $member_id, $domain, $verdict, $confidence, $evidence_ref, $rationale_ref]] :put eval_selection_finding { finding_id => decision_id, member_id, domain, verdict, confidence, evidence_ref, rationale_ref }"#,
+        ),
+        (
+            "eval_selection_score",
+            r#":create eval_selection_score { decision_id: String, member_id: String => formula_id: String, score_json: String, weight: Float?, rank: Int?, selected: Bool }"#,
+            r#"?[decision_id, member_id, formula_id, score_json, weight, rank, selected] <- [[$decision_id, $member_id, $formula_id, $score_json, $weight, $rank, $selected]] :put eval_selection_score { decision_id, member_id => formula_id, score_json, weight, rank, selected }"#,
+        ),
+    ];
+
+    assert_eq!(actual.len(), expected.len());
+    for ((actual_rel, actual_create, actual_put), (expected_rel, expected_create, expected_put)) in
+        actual.iter().zip(expected)
+    {
+        assert_eq!(actual_rel, &expected_rel, "relation order drifted");
+        assert_eq!(
+            actual_create, expected_create,
+            "create script drifted for {expected_rel}"
+        );
+        assert_eq!(
+            actual_put, expected_put,
+            "put script drifted for {expected_rel}"
+        );
+    }
 }
 
 #[test]
