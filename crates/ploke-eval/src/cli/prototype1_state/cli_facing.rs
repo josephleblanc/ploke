@@ -431,16 +431,7 @@ pub(crate) async fn establish_parent_baseline(
     Ok(baseline)
 }
 
-pub(crate) async fn establish_parent_baseline_for_id(
-    campaign_id: &CampaignId,
-    config: &ResolvedCampaignConfig,
-    manifest_path: &Path,
-    parent: &ParentIdentity,
-) -> Result<CompleteBaseline, PrepareError> {
-    establish_parent_baseline(campaign_id, config, manifest_path, parent).await
-}
-
-pub(crate) fn load_parent_baseline_for_id(
+pub(crate) fn load_parent_baseline(
     campaign_id: &CampaignId,
     config: &ResolvedCampaignConfig,
     manifest_path: &Path,
@@ -470,13 +461,16 @@ async fn establish_initial_parent_baseline(
 ) -> Result<CompleteBaseline, PrepareError> {
     let mut eval_policy = config.eval.clone();
     eval_policy.stop_on_error = false;
+    // TODO:loop-db Make sure this report is persisted in the db either in whole or by its parts.
     advance_eval_closure(config, &eval_policy, false, None).await?;
 
     let mut protocol_policy = config.protocol.clone();
     protocol_policy.stop_on_error = false;
+    // TODO:loop-db Make sure this report is persisted in the db either in whole or by its parts.
     advance_protocol_closure(config, &protocol_policy, false).await?;
 
     let closure = load_closure_state(&config.campaign_id)?;
+    // TODO:loop-db Make sure this report is persisted in the db either in whole or by its parts.
     complete_baseline_from_closure(parent, &closure, &config.eval)
 }
 
@@ -4843,19 +4837,6 @@ pub(crate) fn record_active_prototype1_monitor_target(campaign_id: &CampaignId, 
     if let Err(error) = save_active_prototype1_monitor_target(&target) {
         warn!(%campaign_id, repo_root = %repo_root.display(), error = %error, "failed to cache active Prototype 1 monitor target");
     }
-}
-
-pub(crate) fn campaign_manifest_path_for_id(
-    campaign_id: &CampaignId,
-) -> Result<PathBuf, PrepareError> {
-    campaign_manifest_path(campaign_id)
-}
-
-pub(crate) fn resolve_campaign_config_for_id(
-    campaign_id: &CampaignId,
-    overrides: &CampaignOverrides,
-) -> Result<ResolvedCampaignConfig, PrepareError> {
-    resolve_campaign_config(campaign_id, overrides)
 }
 
 pub(crate) fn resolve_prototype1_state_campaign(

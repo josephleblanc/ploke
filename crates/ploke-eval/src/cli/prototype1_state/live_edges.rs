@@ -12,6 +12,7 @@ use tracing::{debug, info};
 use crate::{
     CampaignOverrides, ResolvedCampaignConfig,
     campaign::campaign_closure_state_path,
+    campaign_manifest_path,
     cli::{
         InspectOutputFormat, Prototype1StateStopAfter,
         prototype1_process::{
@@ -22,13 +23,12 @@ use crate::{
             backend::GitWorktreeBackend,
             cli_facing::{
                 ParentSelection, PlannedChildren, Prototype1StateReport, Prototype1StateRunShape,
-                append_parent_target_sample, campaign_manifest_path_for_id,
-                current_dir_as_repo_root, emit_selection_decision_for_backend,
-                ensure_prototype1_baseline_closure_state, establish_parent_baseline_for_id,
-                initialize_prototype1_parent_identity, live_successor_continuation_decision,
-                outcome_for_report, prototype1_state_report_path,
-                prototype1_state_successor_handoff_mode, prototype1_state_transition_error,
-                record_active_prototype1_monitor_target, resolve_campaign_config_for_id,
+                append_parent_target_sample, current_dir_as_repo_root,
+                emit_selection_decision_for_backend, ensure_prototype1_baseline_closure_state,
+                establish_parent_baseline, initialize_prototype1_parent_identity,
+                live_successor_continuation_decision, outcome_for_report,
+                prototype1_state_report_path, prototype1_state_successor_handoff_mode,
+                prototype1_state_transition_error, record_active_prototype1_monitor_target,
                 resolve_child_plan_for_id, resolve_parent_policy_budget,
                 resolve_prototype1_parent_identity, resolve_prototype1_state_campaign,
                 run_adaptive_child_fanout, run_child_fanout, same_existing_path,
@@ -50,7 +50,7 @@ use crate::{
         },
     },
     intervention::{Prototype1ChildBudget, Prototype1ChildScheduleMode, RecordStore},
-    load_campaign_manifest, load_closure_state,
+    load_campaign_manifest, load_closure_state, resolve_campaign_config,
     spec::PrepareError,
 };
 
@@ -71,10 +71,9 @@ pub(crate) fn r0_to_r1(
     };
     let campaign_id = resolve_prototype1_state_campaign(&command, &repo_root)?;
     record_active_prototype1_monitor_target(&campaign_id, &repo_root);
-    let manifest_path = campaign_manifest_path_for_id(&campaign_id)?;
+    let manifest_path = campaign_manifest_path(&campaign_id)?;
     let run_shape = Prototype1StateRunShape::resolve(&command, &manifest_path)?;
-    let resolved_campaign =
-        resolve_campaign_config_for_id(&campaign_id, &CampaignOverrides::default())?;
+    let resolved_campaign = resolve_campaign_config(&campaign_id, &CampaignOverrides::default())?;
     let closure_state_path = ensure_prototype1_baseline_closure_state(&resolved_campaign)?;
     if run_shape.eval_storage_backend.mirrors_owner_db() {
         let manifest = load_campaign_manifest(&campaign_id)?;
@@ -474,7 +473,7 @@ pub(crate) async fn r5_to_r6(
     let typestate::ReadyParts { collected, parent } = r5.into_parts();
     let mut parts = collected.into_parts();
     let parent_identity = parent.identity().clone();
-    let parent_baseline = establish_parent_baseline_for_id(
+    let parent_baseline = establish_parent_baseline(
         &parts.campaign_id,
         &parts.campaign_config,
         &parts.manifest_path,

@@ -21,12 +21,14 @@ use serde_json::Value as JsonValue;
 use toml::Value as TomlValue;
 
 use crate::{
-    cli::prototype1_state::{
-        cli_facing::campaign_manifest_path_for_id,
-        identity::{load_parent_identity, parent_identity_path},
-        journal::prototype1_transition_journal_path,
+    campaign_manifest_path,
+    cli::{
+        InspectOutputFormat, Prototype1StateWalkSummaryCommand,
+        prototype1_state::{
+            identity::{load_parent_identity, parent_identity_path},
+            journal::prototype1_transition_journal_path,
+        },
     },
-    cli::{InspectOutputFormat, Prototype1StateWalkSummaryCommand},
     spec::PrepareError,
 };
 
@@ -162,7 +164,7 @@ impl WalkSummary {
     fn load(repo_root: &Path) -> Result<Self, PrepareError> {
         let identity = load_parent_identity(repo_root)?;
         let campaign_id = identity.campaign_id().clone();
-        let manifest = campaign_manifest_path_for_id(&campaign_id)?;
+        let manifest = campaign_manifest_path(&campaign_id)?;
         let root = manifest
             .parent()
             .unwrap_or_else(|| Path::new("."))

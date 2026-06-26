@@ -193,7 +193,7 @@ Backend target:
 
 ### R5 -> R6 — establish/load parent baseline
 
-Source: `live_edges::r5_to_r6`, `cli_facing::establish_parent_baseline_for_id`.
+Source: `live_edges::r5_to_r6`, `cli_facing::establish_parent_baseline`.
 
 Writes:
 

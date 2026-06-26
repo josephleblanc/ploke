@@ -34,35 +34,35 @@ use ploke_tui::tools::{
 };
 
 use crate::{
-    ResolvedCampaignConfig,
-    cli::prototype1_state::{
-        cli_facing::{Prototype1StateRunShape, campaign_manifest_path_for_id},
-        driver::{
-            reconstruct::{self, EarlyState},
-            replay::ReplayCursor,
-        },
-        edit_surface::{
-            harness_request::{
-                EvidenceRootKind, EvidenceRootLocation, PublishedBroadHarnessRequest,
-            },
-            tui_adapter::{self, ModelSelection},
-        },
-        identity::{load_parent_identity_optional, parent_identity_path},
-        journal::prototype1_transition_journal_path,
-        live_edges::{
-            r0_to_r1, r1_to_r2a_or_r3, r3_to_r4a, r4a_to_r4b_or_r4c, r4b_to_r4c_genesis, r4c_to_r5,
-            r5_to_r6, r6_to_r7, r7_to_r8, r8_to_r9, r9_to_r10, r10_to_r11, r11_to_r12, r12_to_r13,
-            r13_to_r14,
-        },
-        typestate::{
-            self, AsyncStepInput, R0, R1, R2a, R3, R4a, R4bGenesisChecked, R4cReady, R5, R6, R7,
-            R8, R9, R10, R11FanoutComplete, R11aRejectedOnly, R12, R13aStopped,
-            R13bHandoffCommitted, R14aFinalStopped, R14bFinalHandoff, StepInput,
-        },
-    },
+    ResolvedCampaignConfig, campaign_manifest_path,
     cli::{
         Prototype1StateWalkAuditScope, Prototype1StateWalkAuditTransition,
         Prototype1StateWalkLlmStepSource,
+        prototype1_state::{
+            cli_facing::Prototype1StateRunShape,
+            driver::{
+                reconstruct::{self, EarlyState},
+                replay::ReplayCursor,
+            },
+            edit_surface::{
+                harness_request::{
+                    EvidenceRootKind, EvidenceRootLocation, PublishedBroadHarnessRequest,
+                },
+                tui_adapter::{self, ModelSelection},
+            },
+            identity::{load_parent_identity_optional, parent_identity_path},
+            journal::prototype1_transition_journal_path,
+            live_edges::{
+                r0_to_r1, r1_to_r2a_or_r3, r3_to_r4a, r4a_to_r4b_or_r4c, r4b_to_r4c_genesis,
+                r4c_to_r5, r5_to_r6, r6_to_r7, r7_to_r8, r8_to_r9, r9_to_r10, r10_to_r11,
+                r11_to_r12, r12_to_r13, r13_to_r14,
+            },
+            typestate::{
+                self, AsyncStepInput, R0, R1, R2a, R3, R4a, R4bGenesisChecked, R4cReady, R5, R6,
+                R7, R8, R9, R10, R11FanoutComplete, R11aRejectedOnly, R12, R13aStopped,
+                R13bHandoffCommitted, R14aFinalStopped, R14bFinalHandoff, StepInput,
+            },
+        },
         provider::{headless_model_selection, load_parent_patcher_model_selection},
     },
     layout::prototype1_monitor_target_file,
@@ -932,7 +932,7 @@ impl WalkController {
                 ),
             }
         })?;
-        let manifest = campaign_manifest_path_for_id(identity.campaign_id())?;
+        let manifest = campaign_manifest_path(identity.campaign_id())?;
         let campaign_dir = manifest
             .parent()
             .ok_or_else(|| PrepareError::DatabaseSetup {
@@ -957,7 +957,7 @@ impl WalkController {
                 ),
             }
         })?;
-        let manifest = campaign_manifest_path_for_id(identity.campaign_id())?;
+        let manifest = campaign_manifest_path(identity.campaign_id())?;
         let campaign_dir = manifest
             .parent()
             .ok_or_else(|| PrepareError::DatabaseSetup {
@@ -4158,7 +4158,7 @@ impl WalkFiles {
     }
 
     fn remember_campaign(&mut self, campaign_id: &CampaignId) {
-        let Ok(manifest) = campaign_manifest_path_for_id(campaign_id) else {
+        let Ok(manifest) = campaign_manifest_path(campaign_id) else {
             return;
         };
         self.push("campaign_manifest", manifest.clone());
