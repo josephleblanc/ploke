@@ -552,6 +552,10 @@ mod gat_tests {
 
     #[cfg(all(feature = "call_graph", feature = "test_harness"))]
     mod call_context_tests;
+    #[cfg(all(feature = "call_graph", feature = "test_harness"))]
+    mod helpers;
+    #[cfg(all(feature = "call_graph", feature = "test_harness"))]
+    mod proof_context_tests;
 
     #[test]
     fn stale_snippet_skips_are_model_visible_degraded_context() {
