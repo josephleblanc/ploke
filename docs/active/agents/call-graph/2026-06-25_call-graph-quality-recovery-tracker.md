@@ -18,8 +18,8 @@ are not acceptable as a continuing implementation style.
 ## Current state
 
 - Branch: `prototype1-parent-mwv-live-r16-dangling-symlink-surface-fix-20260615t003337z-gen0`
-- Latest committed call-graph quality checkpoint:
-  `b0fd0655 test: split dynamic transform projection cases`
+- Latest call-graph quality checkpoint before the DB query split:
+  `cb967750 test: move RAG call context helpers`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent TUI/model-visible cleanup:
   - `cc808347 test: cover variant constructor tool context`
@@ -39,6 +39,7 @@ are not acceptable as a continuing implementation style.
 - Recent coverage inventory cleanup:
   - Added `2026-06-25_call-graph-coverage-inventory.md` as the compact layer inventory.
 - Recent production pattern cleanup:
+  - Split call graph DB query implementation by concern
   - `3cce5b86 Split call graph DB module`
   - `e431a2f7 Expose proof context payload fields`
   - `9ba4d247 Split call proof projection module`
@@ -216,6 +217,9 @@ are not acceptable as a continuing implementation style.
   concern modules own row DTOs, call-site/target/status kind decoding,
   receiver decoding, target-family rules, row validation, and query methods:
   `call_graph/{rows,kinds,receiver,families,decode,queries}.rs`.
+- `call_graph/queries.rs` is now a thin module root with availability,
+  owner/status, target/caller, and expansion query methods split into
+  `call_graph/queries/` child modules.
 - `call_graph_tests/dynamic.rs` in `ploke-transform` now shares local
   `DynamicFunction` lookup helpers instead of repeating the full
   `CallRelation::DynamicFunction` scan for every dynamic projection case.
@@ -304,6 +308,11 @@ are not acceptable as a continuing implementation style.
 
 ## Recent verification
 
+- Call graph DB query implementation split
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_queries -- --nocapture`
+    passed: 34 passed, 0 failed.
+  - `cargo test -p ploke-db --features call_graph unit::call_graph_fixture_queries -- --nocapture`
+    passed: 93 passed, 0 failed.
 - `b0fd0655 test: split dynamic transform projection cases`
   - `cargo test -p ploke-transform --features call_graph transform::call_graph_tests::dynamic -- --nocapture`
     passed: 1 passed, 0 failed.
