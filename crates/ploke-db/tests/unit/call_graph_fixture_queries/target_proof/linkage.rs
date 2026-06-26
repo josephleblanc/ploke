@@ -45,11 +45,8 @@ fn fixture_projection_links_target_centered_proof_rows_to_callers() -> Result<()
     );
 
     for caller in &callers {
-        let site = caller.site.id.to_string();
-        let site_rows = proof_rows
-            .iter()
-            .filter(|fact| fact.call_site_id.as_deref() == Some(site.as_str()))
-            .collect::<Vec<_>>();
+        let site = caller.site.id;
+        let site_rows = proof_rows_for_site(&proof_rows, site);
         assert_eq!(
             proof_kind_count(&site_rows, "call_site"),
             1,
@@ -83,9 +80,9 @@ fn fixture_projection_links_target_centered_proof_rows_to_callers() -> Result<()
         }
 
         let provenance = db
-            .proof_source_provenance(&site)?
+            .proof_source_provenance(&site.to_string())?
             .expect("projected target-centered caller source provenance");
-        assert_eq!(provenance.call_site_id, site);
+        assert_eq!(provenance.call_site_id, site.to_string());
         assert!(
             provenance
                 .source_file

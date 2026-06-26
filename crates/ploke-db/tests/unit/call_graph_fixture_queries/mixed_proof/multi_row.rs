@@ -88,11 +88,8 @@ fn fixture_projection_links_mixed_owner_proof_rows_to_call_context() -> Result<(
     );
 
     for row in &case.context {
-        let site = row.site.id.to_string();
-        let site_rows = proof_rows
-            .iter()
-            .filter(|fact| fact.call_site_id.as_deref() == Some(site.as_str()))
-            .collect::<Vec<_>>();
+        let site = row.site.id;
+        let site_rows = proof_rows_for_site(&proof_rows, site);
         assert_eq!(
             proof_kind_count(&site_rows, "call_site"),
             1,
