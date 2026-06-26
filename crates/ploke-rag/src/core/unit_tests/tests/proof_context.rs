@@ -1,4 +1,5 @@
 use super::*;
+use ploke_db::ProofGraphStore;
 
 #[tokio::test]
 async fn proof_context_disabled_safely_when_facts_absent() -> Result<(), Error> {
@@ -163,6 +164,49 @@ async fn proof_context_target_seed_preserves_ambiguous_dynamic_candidates() -> R
     assert_eq!(
         actual, expected,
         "RAG proof context should preserve all ambiguous sibling candidates"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn proof_context_seed_exposes_external_summary_ids() -> Result<(), Error> {
+    init_tracing_once();
+
+    let raw = Db::new(MemStorage::default()).expect("in-memory cozo db");
+    raw.initialize().expect("initialize cozo db");
+    let db = Arc::new(Database::new(raw));
+    db.ensure_proof_graph_schema().map_err(Error::from)?;
+    let seed = Uuid::from_u128(0x5eed);
+    let summary_id = seed.to_string();
+    db.upsert_proof_fact_values(&[serde_json::json!({
+        "fact_kind": "call_resolution",
+        "schema_version": "ploke-proof-facts.v1",
+        "call_site_id": "call:external",
+        "resolution_state": "externally_summarized",
+        "external_summary_id": summary_id,
+        "blocking_reason": "external_dependency_summary_missing"
+    })])
+    .map_err(Error::from)?;
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.proof_context_degraded(),
+        "stored proof facts should enable RAG proof context"
+    );
+
+    let proof_context = rag.collect_proof_context(&[(seed, 1.0)])?;
+    let rows = proof_context
+        .get(&seed)
+        .expect("external summary seed should receive matching proof rows");
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "call_resolution"
+                && row.call_site_id.as_deref() == Some("call:external")
+                && row.resolution_state.as_deref() == Some("externally_summarized")
+                && row.external_summary_id.as_deref() == Some(summary_id.as_str())
+        }),
+        "RAG proof context should expose external_summary_id: {rows:#?}"
     );
 
     Ok(())
