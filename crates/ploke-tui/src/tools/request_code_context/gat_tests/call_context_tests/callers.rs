@@ -210,6 +210,14 @@ async fn request_code_context_returns_function_and_dynamic_owner_call_context()
             callee: CallCalleeInfo::Dynamic,
             relation: CallTargetKind::DynamicFunction,
         },
+        Case {
+            label: "aliased indexed dynamic function caller",
+            search_term: "call_aliased_indexed_named_field_function_binding",
+            owner: "call_aliased_indexed_named_field_function_binding",
+            call_kind: CallSiteKind::Dynamic,
+            callee: CallCalleeInfo::Dynamic,
+            relation: CallTargetKind::DynamicFunction,
+        },
     ];
 
     for case in cases {
