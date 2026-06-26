@@ -195,7 +195,8 @@ are not acceptable as a continuing implementation style.
   `external_summary` artifacts with summary class, artifact identity, scope,
   allowed effects, containment, and invalidation metadata. Externally
   summarized expansion boundaries now derive summary-missing blocker reasons by
-  boundary kind; admission semantics remain open.
+  boundary kind, and blocked/rejected summary artifacts block by summary class;
+  admission semantics remain open.
 - `call_resolution.rs` now keeps the resolver orchestration and remaining path,
   method, constructor, and lookup logic while dynamic-call resolution lives in
   `resolve/call_resolution/dynamic.rs`.

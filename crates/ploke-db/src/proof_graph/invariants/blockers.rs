@@ -85,6 +85,16 @@ fn derived_gap_reason(row: &ProofFactRow, rows: &[ProofFactRow]) -> Option<Strin
                     .unwrap_or_else(|| expansion_boundary_gap_reason(row)),
             )
         }
+        "external_summary"
+            if row.blocker_reason.is_some()
+                || matches!(row.status.as_deref(), Some("blocked" | "rejected")) =>
+        {
+            Some(row.blocker_reason.clone().unwrap_or_else(|| {
+                row.detail
+                    .clone()
+                    .unwrap_or_else(|| "external_dependency_summary_missing".to_string())
+            }))
+        }
         "call_edge" => {
             if call_site_identity_mismatch_reason(row, rows).is_some() {
                 Some("canonical_identity_mismatch".to_string())

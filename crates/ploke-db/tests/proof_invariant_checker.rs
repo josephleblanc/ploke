@@ -139,6 +139,25 @@ fn expansion_boundary(
     value
 }
 
+fn external_summary(status: &str, summary_class: &str) -> Value {
+    json!({
+        "fact_kind": "external_summary",
+        "schema_version": PROOF_FACT_SCHEMA_VERSION,
+        "external_summary_id": format!("external-summary:{status}:{summary_class}"),
+        "build_domain_id": "bd:checker",
+        "summary_class": summary_class,
+        "artifact_hash": format!("sha256:{status}-{summary_class}"),
+        "version": "external 1.0.0",
+        "review_method": "manual-review",
+        "scope_of_validity": "proof invariant fixture",
+        "allowed_effects": ["external_summary_boundary"],
+        "required_containment": "none",
+        "invalidation_conditions": "artifact hash or proof policy changes",
+        "status": status,
+        "evidence_use": "proof_only"
+    })
+}
+
 fn cfg_domain(build_domain_id: &str, status: &str, blocking_reason: Option<&str>) -> Value {
     let mut value = json!({
         "fact_kind": "cfg_domain",
@@ -708,6 +727,36 @@ fn proof_invariant_checker_blocks_external_summary_expansion_boundaries() {
         assert!(
             finding.reason.contains(reason),
             "{boundary_kind} should report {reason}: {}",
+            finding.reason
+        );
+    }
+}
+
+#[test]
+fn proof_invariant_checker_blocks_blocked_external_summary_artifacts() {
+    let cases = [
+        ("blocked", "opaque_blocked"),
+        ("rejected", "audited_no_process_effects"),
+    ];
+
+    for (status, summary_class) in cases {
+        let mut records = legal_handoff_records();
+        records.push(external_summary(status, summary_class));
+        let db = db_with(records);
+
+        let findings = db
+            .proof_invariant_findings()
+            .expect("proof invariant findings");
+        let finding = finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn");
+
+        assert_eq!(
+            finding.status,
+            ProofInvariantStatus::Blocked,
+            "{status} external summary should block detached proof"
+        );
+        assert!(
+            finding.reason.contains(summary_class),
+            "{status} external summary should report {summary_class}: {}",
             finding.reason
         );
     }
