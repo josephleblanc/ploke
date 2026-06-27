@@ -49,3 +49,11 @@ pub(super) fn path(segments: &[&str]) -> Vec<String> {
         .map(|segment| (*segment).to_string())
         .collect()
 }
+
+pub(super) fn trait_method_query(trait_name: &str, method: &str) -> String {
+    format!(
+        r#"?[method_id] :=
+            *method {{ id: method_id, name: "{method}", owner_id: trait_id @ 'NOW' }},
+            *trait {{ id: trait_id, name: "{trait_name}" @ 'NOW' }}"#
+    )
+}

@@ -4,6 +4,7 @@ mod constructors;
 mod expanded;
 mod field_dynamic;
 mod initializers;
+mod method_targets;
 mod projected;
 mod raw_identifiers;
 mod result_field_receivers;

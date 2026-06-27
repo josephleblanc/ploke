@@ -33,6 +33,7 @@ pub(in super::super) async fn execute_fixture_tool_request(
     let mut rag_config = RagConfig::default();
     rag_config.call_context.max_owner_hits = 64;
     rag_config.call_context.max_caller_hits = 64;
+    rag_config.proof_context.max_rows_per_part = 64;
     let rt = TestRuntime::new_with_embedding_processor_and_rag_config(
         db,
         EmbeddingProcessor::new_mock(),

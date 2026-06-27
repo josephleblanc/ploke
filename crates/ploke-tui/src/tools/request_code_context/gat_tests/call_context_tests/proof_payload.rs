@@ -4,6 +4,7 @@ mod field_dynamic;
 mod fixture_blockers;
 mod helpers;
 mod initializers;
+mod method_targets;
 mod projected;
 mod result_field_receivers;
 mod targetless_special_forms;

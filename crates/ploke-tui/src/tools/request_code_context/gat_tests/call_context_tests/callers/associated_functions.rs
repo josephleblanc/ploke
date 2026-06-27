@@ -1,4 +1,6 @@
-use super::super::assertions::{assert_incoming_expansion, assert_resolved_target, path};
+use super::super::assertions::{
+    assert_incoming_expansion, assert_resolved_target, path, trait_method_query,
+};
 use super::super::*;
 
 #[tokio::test]
@@ -72,7 +74,7 @@ async fn request_code_context_returns_associated_function_target_callers_with_ca
         let db = Arc::new(Database::new(setup_db_full_multi_embedding(
             "fixture_call_graph",
         )?));
-        let target = one_uuid(&db, &method_id_by_trait(case.target_trait, case.method))?;
+        let target = one_uuid(&db, &trait_method_query(case.target_trait, case.method))?;
 
         let result = execute_fixture_request(&db, case.search_term, 1, case.call_id).await?;
         assert_result_ok(&result, case.search_term, 1, "fixture_call_graph");
@@ -120,12 +122,4 @@ fn assert_associated_caller(
         });
     assert_resolved_target(call, target, CallTargetKind::AssociatedFunction);
     assert_incoming_expansion(caller_part, call, target);
-}
-
-fn method_id_by_trait(trait_name: &str, method: &str) -> String {
-    format!(
-        r#"?[method_id] :=
-            *method {{ id: method_id, name: "{method}", owner_id: trait_id @ 'NOW' }},
-            *trait {{ id: trait_id, name: "{trait_name}" @ 'NOW' }}"#
-    )
 }
