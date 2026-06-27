@@ -22,6 +22,16 @@ are not acceptable as a continuing implementation style.
   `cb967750 test: move RAG call context helpers`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent TUI/model-visible cleanup:
+  - `5f2c9b44 test: cover associated caller context`
+  - `6ccfd726 test: cover imported associated callers`
+  - `9e4c3b0c test: cover trait dispatch caller context`
+  - `01185fb9 test: cover associated method caller context`
+  - TUI `request_code_context` caller coverage now closes the public-tool
+    surface for target-centered local/imported trait associated-function
+    callers, concrete trait-dispatch method callers, and method targets reached
+    through method-as-associated-function syntax. These tests reuse the split
+    `gat_tests/call_context_tests/callers/` layout instead of expanding the
+    old monolithic request-context test surface.
   - `78ea933c Surface degraded proof context`
   - `6989a728 test: cover degraded proof context tool path`
   - `request_code_context` now surfaces proof-context degradation in model
