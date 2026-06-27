@@ -3,6 +3,7 @@ use crate::prelude::*;
 use sha2::{Digest, Sha256};
 
 use super::ResolvedTreatmentBranch;
+use crate::cli::prototype1_state::eval_store::write_scheduler_node_if_owner_db_exists;
 use crate::loop_graph::{ArtifactId, OperationTarget, PatchId};
 use crate::operational_metrics::OperationalRunMetrics;
 use crate::projection::OperatorProjectionRead;
@@ -612,7 +613,16 @@ fn save_node_record(record: &Prototype1NodeRecord) -> Result<(), PrepareError> {
     })?;
     let record_path = record.node_dir.join("node.json");
     let passive = passive_node_record(record);
-    JsonRecordFile::new(&record_path).emit(&passive).map(|_| ())
+    JsonRecordFile::new(&record_path).emit(&passive)?;
+    write_scheduler_node_if_owner_db_exists(&record_path, record).map_err(|source| {
+        PrepareError::DatabaseSetup {
+            phase: "eval_scheduler_node_put",
+            detail: format!(
+                "failed to persist normalized scheduler node for '{}': {source}",
+                record_path.display()
+            ),
+        }
+    })
 }
 
 fn passive_node_record(record: &Prototype1NodeRecord) -> ploke_records::scheduler::NodeRecord {
@@ -1714,6 +1724,108 @@ mod tests {
             payload.contains("\"planned\""),
             "root registration keeps planned scheduler-node status"
         );
+    }
+
+    #[test]
+    fn prototype1_eval_store_scheduler_node_projection_writes_normalized_rows() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+        let db_path = eval_store::prototype1_eval_store_db_path(&manifest);
+        fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+        ploke_db::Database::new_init()
+            .expect("empty eval db")
+            .write_backup_to_path(&db_path)
+            .expect("seed owner eval db");
+
+        let node = register_root_parent_node(
+            &CampaignId::from("test-campaign"),
+            &manifest,
+            "root-instance",
+            "main",
+            tmp.path(),
+            Prototype1SearchPolicy::default(),
+        )
+        .expect("register root parent node");
+        let running = project_node_status(&node, Prototype1NodeStatus::Running);
+        write_parent_node_projection(&CampaignId::from("test-campaign"), &running)
+            .expect("write running parent projection");
+
+        let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+        let mut params = BTreeMap::new();
+        params.insert(
+            "campaign_id".to_string(),
+            cozo::DataValue::from("test-campaign".to_string()),
+        );
+        params.insert(
+            "node_id".to_string(),
+            cozo::DataValue::from(node.node_id.clone()),
+        );
+        let rows = db
+            .raw_query_params(
+                r#"
+?[projection_schema_version, node_schema_version, status, branch_id, candidate_id, target_relpath, node_path] :=
+    *eval_scheduler_node {
+        campaign_id,
+        node_id,
+        projection_schema_version,
+        node_schema_version,
+        status,
+        branch_id,
+        candidate_id,
+        target_relpath,
+        node_path
+    },
+    campaign_id = $campaign_id,
+    node_id = $node_id
+"#,
+                params.clone(),
+            )
+            .expect("query normalized scheduler node");
+        assert_eq!(rows.rows.len(), 1);
+        let row = rows.row_refs().next().expect("scheduler node row");
+        assert_eq!(
+            row.get::<String>("projection_schema_version")
+                .expect("projection schema"),
+            eval_store::SCHEDULER_NODE_SCHEMA_VERSION
+        );
+        assert_eq!(
+            row.get::<String>("node_schema_version")
+                .expect("node schema"),
+            PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION
+        );
+        assert_eq!(row.get::<String>("status").expect("status"), "running");
+        assert_eq!(row.get::<String>("branch_id").expect("branch"), "main");
+        assert_eq!(
+            row.get::<String>("candidate_id").expect("candidate"),
+            "root-parent"
+        );
+        assert_eq!(
+            row.get::<String>("target_relpath").expect("target"),
+            PARENT_IDENTITY_RELPATH_FOR_SCHEDULER
+        );
+        assert!(
+            row.get::<String>("node_path")
+                .expect("node path")
+                .ends_with("node.json")
+        );
+
+        let statuses = db
+            .raw_query_params(
+                r#"
+?[status] :=
+    *eval_scheduler_node_status_event { campaign_id, node_id, status },
+    campaign_id = $campaign_id,
+    node_id = $node_id
+"#,
+                params,
+            )
+            .expect("query normalized scheduler status history");
+        let mut seen: Vec<_> = statuses
+            .row_refs()
+            .map(|row| row.get::<String>("status").expect("status"))
+            .collect();
+        seen.sort();
+        assert_eq!(seen, vec!["planned".to_string(), "running".to_string()]);
     }
 
     #[test]

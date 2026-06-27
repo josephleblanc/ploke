@@ -19,6 +19,7 @@ mod evaluation;
 mod evidence;
 mod observation;
 mod operation;
+mod scheduler_node;
 mod schema;
 mod selection;
 mod setup;
@@ -86,6 +87,12 @@ pub(crate) use operation::{APPLY_EVENT_REL, OPERATION_REL, PATCH_REL};
 pub(crate) use operation::{
     ApplyEventEvidence, OperationEvidence, OperationProvenanceEvidence, PatchEvidence,
     content_sha256, write_operation_provenance_to_owner_db,
+};
+pub(crate) use scheduler_node::write_scheduler_node_if_owner_db_exists;
+#[cfg(test)]
+pub(crate) use scheduler_node::{
+    SCHEDULER_NODE_REL, SCHEDULER_NODE_SCHEMA_VERSION, SCHEDULER_NODE_STATUS_REL,
+    SCHEDULER_NODE_TARGET_REL,
 };
 #[cfg(test)]
 pub(crate) use selection::{

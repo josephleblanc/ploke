@@ -28,7 +28,8 @@ use super::{
     CHILD_PLAN_REL, CLOSURE_ARTIFACT_REF_REL, CLOSURE_INSTANCE_REL, CLOSURE_PROTOCOL_COUNTS_REL,
     CLOSURE_PROTOCOL_PROCEDURE_REL, CLOSURE_REF_REL, CONTINUATION_DECISION_REL,
     EVALUATION_INSTANCE_REL, EVALUATION_REL, MESSAGE_EVENT_REL, MODEL_EXCHANGE_REL, OPERATION_REL,
-    PATCH_REL, PROFILE_COMMITMENT_REL, SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL,
+    PATCH_REL, PROFILE_COMMITMENT_REL, SCHEDULER_NODE_REL, SCHEDULER_NODE_STATUS_REL,
+    SCHEDULER_NODE_TARGET_REL, SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL,
     SELECTION_FINDING_REL, SELECTION_SCORE_REL, TOOL_EVENT_REL,
     api::EvalStorageMode,
     cozo_schema::eval_relation_exists,
@@ -305,6 +306,30 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
             )
         },
         {
+            let schema = &super::scheduler_node::SchedulerNodeSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::scheduler_node::SchedulerNodeStatusSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::scheduler_node::SchedulerNodeTargetSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
             let schema = &super::artifact::ArtifactSchema::SCHEMA;
             (
                 schema.relation(),
@@ -557,6 +582,21 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
             r#"?[plan_id, attempt_index, campaign_id, parent_node_id, producer_id, proposal_id, run_id, policy, target_relpath, outcome, reason] <- [[$plan_id, $attempt_index, $campaign_id, $parent_node_id, $producer_id, $proposal_id, $run_id, $policy, $target_relpath, $outcome, $reason]] :put eval_child_plan_rejected_attempt { plan_id, attempt_index => campaign_id, parent_node_id, producer_id, proposal_id, run_id, policy, target_relpath, outcome, reason }"#,
         ),
         (
+            "eval_scheduler_node",
+            r#":create eval_scheduler_node { campaign_id: String, node_id: String => projection_schema_version: String, node_schema_version: String, parent_node_id: String?, generation: Int, instance_id: String, source_state_id: String, operation_target_kind: String?, base_artifact_id: String?, patch_id: String?, derived_artifact_id: String?, parent_branch_id: String?, branch_id: String, candidate_id: String, target_relpath: String, node_path: String, node_dir: String, workspace_root: String, binary_path: String, runner_request_path: String, runner_result_path: String, status: String, created_at: String, updated_at: String, content_sha256: String, ingested_at: String }"#,
+            r#"?[campaign_id, node_id, projection_schema_version, node_schema_version, parent_node_id, generation, instance_id, source_state_id, operation_target_kind, base_artifact_id, patch_id, derived_artifact_id, parent_branch_id, branch_id, candidate_id, target_relpath, node_path, node_dir, workspace_root, binary_path, runner_request_path, runner_result_path, status, created_at, updated_at, content_sha256, ingested_at] <- [[$campaign_id, $node_id, $projection_schema_version, $node_schema_version, $parent_node_id, $generation, $instance_id, $source_state_id, $operation_target_kind, $base_artifact_id, $patch_id, $derived_artifact_id, $parent_branch_id, $branch_id, $candidate_id, $target_relpath, $node_path, $node_dir, $workspace_root, $binary_path, $runner_request_path, $runner_result_path, $status, $created_at, $updated_at, $content_sha256, $ingested_at]] :put eval_scheduler_node { campaign_id, node_id => projection_schema_version, node_schema_version, parent_node_id, generation, instance_id, source_state_id, operation_target_kind, base_artifact_id, patch_id, derived_artifact_id, parent_branch_id, branch_id, candidate_id, target_relpath, node_path, node_dir, workspace_root, binary_path, runner_request_path, runner_result_path, status, created_at, updated_at, content_sha256, ingested_at }"#,
+        ),
+        (
+            "eval_scheduler_node_status_event",
+            r#":create eval_scheduler_node_status_event { status_event_id: String => campaign_id: String, node_id: String, projection_schema_version: String, node_schema_version: String, generation: Int, branch_id: String, candidate_id: String, target_relpath: String, status: String, node_path: String, content_sha256: String, recorded_at: String, ingested_at: String }"#,
+            r#"?[status_event_id, campaign_id, node_id, projection_schema_version, node_schema_version, generation, branch_id, candidate_id, target_relpath, status, node_path, content_sha256, recorded_at, ingested_at] <- [[$status_event_id, $campaign_id, $node_id, $projection_schema_version, $node_schema_version, $generation, $branch_id, $candidate_id, $target_relpath, $status, $node_path, $content_sha256, $recorded_at, $ingested_at]] :put eval_scheduler_node_status_event { status_event_id => campaign_id, node_id, projection_schema_version, node_schema_version, generation, branch_id, candidate_id, target_relpath, status, node_path, content_sha256, recorded_at, ingested_at }"#,
+        ),
+        (
+            "eval_scheduler_node_target_part",
+            r#":create eval_scheduler_node_target_part { campaign_id: String, node_id: String, content_sha256: String, target_part: String, target_index: Int => projection_schema_version: String, target_kind: String, artifact_id: String?, patch_id: String?, base_artifact_id: String? }"#,
+            r#"?[campaign_id, node_id, content_sha256, target_part, target_index, projection_schema_version, target_kind, artifact_id, patch_id, base_artifact_id] <- [[$campaign_id, $node_id, $content_sha256, $target_part, $target_index, $projection_schema_version, $target_kind, $artifact_id, $patch_id, $base_artifact_id]] :put eval_scheduler_node_target_part { campaign_id, node_id, content_sha256, target_part, target_index => projection_schema_version, target_kind, artifact_id, patch_id, base_artifact_id }"#,
+        ),
+        (
             "eval_artifact",
             r#":create eval_artifact { artifact_id: String => campaign_id: String, tree_hash: String?, git_branch: String?, git_commit: String?, source: String, store_scope: String, created_by: String?, parent_artifact_id: String? }"#,
             r#"?[artifact_id, campaign_id, tree_hash, git_branch, git_commit, source, store_scope, created_by, parent_artifact_id] <- [[$artifact_id, $campaign_id, $tree_hash, $git_branch, $git_commit, $source, $store_scope, $created_by, $parent_artifact_id]] :put eval_artifact { artifact_id => campaign_id, tree_hash, git_branch, git_commit, source, store_scope, created_by, parent_artifact_id }"#,
@@ -800,6 +840,15 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
     assert!(eval_relation_exists(&db, CHILD_PLAN_CHILD_REL).expect("child plan child rel exists"));
     assert!(
         eval_relation_exists(&db, CHILD_PLAN_REJECTED_REL).expect("child plan rejected rel exists")
+    );
+    assert!(eval_relation_exists(&db, SCHEDULER_NODE_REL).expect("scheduler node rel exists"));
+    assert!(
+        eval_relation_exists(&db, SCHEDULER_NODE_STATUS_REL)
+            .expect("scheduler node status rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, SCHEDULER_NODE_TARGET_REL)
+            .expect("scheduler node target rel exists")
     );
     assert!(eval_relation_exists(&db, AGENT_TURN_REL).expect("agent turn rel exists"));
     assert!(eval_relation_exists(&db, AGENT_TURN_EVENT_REL).expect("agent turn event rel exists"));

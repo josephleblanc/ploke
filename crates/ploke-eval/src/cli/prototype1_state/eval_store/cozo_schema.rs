@@ -15,6 +15,10 @@ use super::{
     error::EvalStoreError,
     evaluation::ensure_evaluation_schema,
     operation::ensure_operation_schema,
+    scheduler_node::{
+        SCHEDULER_NODE_SCHEMA_VERSION, SchedulerNodeSchema, SchedulerNodeStatusSchema,
+        SchedulerNodeTargetSchema, ensure_scheduler_node_schema,
+    },
     schema::{EvalRelationSchema, define_eval_schema},
     selection::ensure_selection_schema,
     setup::ensure_setup_schema,
@@ -212,6 +216,7 @@ pub(super) fn ensure_eval_store_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(),
     let existing = eval_relation_names(db)?;
     reject_unsupported_schema_drift(&existing)?;
     reject_child_plan_row_drift(db, &existing)?;
+    reject_scheduler_node_row_drift(db, &existing)?;
 
     TransitionEventSchema::SCHEMA.ensure_installed(db, "schema.eval_transition_event")?;
     RecordRefSchema::SCHEMA.ensure_installed(db, "schema.eval_record_ref")?;
@@ -231,6 +236,7 @@ pub(super) fn ensure_eval_store_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(),
     ensure_build_schema(db)?;
     ensure_operation_schema(db)?;
     ensure_child_plan_schema(db)?;
+    ensure_scheduler_node_schema(db)?;
     ensure_agent_turn_schema(db)?;
 
     Ok(())
@@ -251,6 +257,9 @@ fn reject_unsupported_schema_drift(existing: &BTreeSet<String>) -> Result<(), Ev
         ChildPlanSchema::RELATION,
         ChildPlanChildSchema::RELATION,
         ChildPlanRejectedSchema::RELATION,
+        SchedulerNodeSchema::RELATION,
+        SchedulerNodeStatusSchema::RELATION,
+        SchedulerNodeTargetSchema::RELATION,
     ];
     let missing = required
         .into_iter()
@@ -304,6 +313,46 @@ fn reject_child_plan_row_drift<D: EvalDb + ?Sized>(
         phase: "schema.eval_child_plan.version",
         detail: format!(
             "existing eval DB contains eval_child_plan rows with an unsupported schema_version; expected {CHILD_PLAN_SCHEMA_VERSION}; regenerate the owner eval DB instead of reusing this backup ({details})"
+        ),
+    })
+}
+
+fn reject_scheduler_node_row_drift<D: EvalDb + ?Sized>(
+    db: &D,
+    existing: &BTreeSet<String>,
+) -> Result<(), EvalStoreError> {
+    if !existing.contains(SchedulerNodeSchema::RELATION) {
+        return Ok(());
+    }
+    let mut params = BTreeMap::new();
+    params.insert(
+        "schema_version".to_string(),
+        SCHEDULER_NODE_SCHEMA_VERSION.to_string().into(),
+    );
+    let query = r#"
+?[campaign_id, node_id, actual_schema_version] :=
+  *eval_scheduler_node { campaign_id: campaign_id, node_id: node_id, projection_schema_version: actual_schema_version },
+  actual_schema_version != $schema_version
+:limit 1
+"#;
+    let result = db
+        .eval_query_params(query, params)
+        .map_err(|source| EvalStoreError::Db {
+            phase: "schema.eval_scheduler_node.version",
+            source,
+        })?;
+    if result.rows.is_empty() {
+        return Ok(());
+    }
+    let details = result
+        .rows
+        .first()
+        .map(|row| format!("row={row:?}"))
+        .unwrap_or_else(|| "row=<unavailable>".to_string());
+    Err(EvalStoreError::DbSetup {
+        phase: "schema.eval_scheduler_node.version",
+        detail: format!(
+            "existing eval DB contains eval_scheduler_node rows with an unsupported projection_schema_version; expected {SCHEDULER_NODE_SCHEMA_VERSION}; regenerate the owner eval DB instead of reusing this backup ({details})"
         ),
     })
 }

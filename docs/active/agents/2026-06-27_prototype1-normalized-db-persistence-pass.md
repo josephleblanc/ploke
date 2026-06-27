@@ -1,6 +1,6 @@
 # 2026-06-27 Prototype 1 normalized DB persistence pass
 
-**Status:** active plan + audit log; child-plan normalized slice implemented in code, fresh-run DB proof still required
+**Status:** active plan + audit log; child-plan normalized slice has fresh DB proof; scheduler-node normalized slice implemented, fresh-run DB proof pending
 **Purpose:** restart spine for a fresh pass over `ploke-eval loop walk` persistence with normalized Cozo relations as the required target.
 **Related:**
 - `docs/active/agents/2026-06-22_prototype1-eval-store-data-model/README.md`
@@ -385,6 +385,39 @@ sha256=f8832b5f7c87bb8598016ccca51784e43e94c62f5ac8eb7c3ce06045939a3056
 
 Conclusion for this slice: fresh DB-backed proof confirms child-plan authority no longer depends on `eval_record_ref.family = "child_plan_file"`. Scheduler-node and runner-request rows are still payload-ref-only and remain separate gaps.
 
+## 2026-06-27 scheduler-node normalized slice
+
+Implemented code slice:
+
+- Added normalized relations:
+  - `eval_scheduler_node`
+  - `eval_scheduler_node_status_event`
+  - `eval_scheduler_node_target_part`
+- `save_node_record` now mirrors every `node.json` projection into the owner DB when an owner DB exists.
+- `eval_scheduler_node` stores the current projection row keyed by `(campaign_id, node_id)`.
+- `eval_scheduler_node_status_event` stores append-style status observations keyed by a deterministic status event hash.
+- `eval_scheduler_node_target_part` stores operation-target parts keyed by `(campaign_id, node_id, content_sha256, target_part, target_index)` so stale target rows cannot masquerade as the current node projection after a future target-shape change.
+- Existing owner DBs that predate these relations now fail loudly under the same no-in-place-migration rule as child-plan rows.
+
+Risk/impact notes:
+
+- GitNexus marked `write_node_projection`, `write_parent_node_projection`, and `save_node_record` as CRITICAL-risk surfaces; the change is additive and only runs the normalized DB mirror after the existing JSON record write succeeds.
+- GitNexus marked `save_runner_request` and `save_runner_result` HIGH-risk; runner request/result normalization was intentionally deferred to a follow-up slice.
+
+Validation commands run:
+
+```text
+cargo fmt --all
+cargo test -p ploke-eval prototype1_eval_store_scheduler_node_projection_writes_normalized_rows --lib
+cargo test -p ploke-eval prototype1_eval_store_parent_start_db_schema_installs_idempotently --lib
+cargo test -p ploke-eval eval_store_non_agent_schema_scripts_are_stable --lib
+cargo test -p ploke-eval existing_owner_db --lib
+cargo build -p ploke-eval
+git diff --check
+```
+
+Fresh DB proof is still pending; use a fresh `dual-strict` campaign after this code is committed. Do not use older DB-backed campaigns as scheduler-node proof because schema install now rejects old owner DBs missing the scheduler-node relations.
+
 ## Initial persistence matrix
 
 Legend:
@@ -400,7 +433,7 @@ Legend:
 | Closure state | `eval_closure_ref`, `eval_closure_instance`, artifact/procedure/count relations | Mostly normalized | Counts relation exists but may be empty; verify semantics before marking complete. |
 | Baseline | `eval_baseline`, instance, metrics relations | Normalized | Current run has two baselines after successor. |
 | Parent-start journal evidence | `eval_transition_event` + some refs | Partially normalized | Later journal events are not comprehensively normalized. |
-| Scheduler node projection `nodes/<node>/node.json` | `eval_record_ref.family=scheduler_node` | Payload-ref only | Needs normalized `eval_scheduler_node` / status-event relation; replace payload-only coverage. |
+| Scheduler node projection `nodes/<node>/node.json` | `eval_scheduler_node`, `eval_scheduler_node_status_event`, `eval_scheduler_node_target_part`; legacy `eval_record_ref.family=scheduler_node` may remain as citation | Implemented, fresh-run DB proof pending | Additive mirror writes normalized current node/status/target-part rows; prove with fresh `dual-strict` campaign via `walk db_query`. |
 | Runner request `runner-request.json` | `eval_record_ref.family=runner_request` | Payload-ref only | Needs normalized runner-request relation with args/list fields. |
 | Child plan MessageBox | `eval_child_plan`, `eval_child_plan_child`, `eval_child_plan_rejected_attempt` | Normalized for R8 child-plan authority | Fresh DB-backed proof: `p1-normchild-db-20260627-100712` at R8 has 1 plan row, 3 child rows, 0 rejected rows, and 0 `eval_record_ref.family=child_plan_file` rows. |
 | Invocation JSON | `eval_invocation`, `eval_attempt` | Normalized metadata; body not normalized | Need decide which embedded invocation payload facts must be normalized for cross-machine Parent/Child. |
@@ -425,10 +458,10 @@ Do not continue live fanout as proof work until these are handled in a structure
    - Writer no longer emits `child_plan_file` as the child-plan persistence surface.
    - Fresh proof campaign `p1-normchild-db-20260627-100712` confirms normalized rows via `walk db_query`.
 
-2. **Create normalized scheduler-node schema**
-   - Replace `scheduler_node` payload-ref-only coverage.
-   - Candidate relations: `eval_scheduler_node`, `eval_scheduler_node_status_event`.
-   - Must preserve status history rather than only latest file payload.
+2. **Create normalized scheduler-node schema** — implemented, fresh proof pending.
+   - Relations: `eval_scheduler_node`, `eval_scheduler_node_status_event`, `eval_scheduler_node_target_part`.
+   - Current node projection and status history are normalized; target parts are keyed by node projection content hash.
+   - Fresh `walk db_query` proof still required on a new owner DB.
 
 3. **Create normalized runner request/result schemas**
    - Runner request: identity, target paths, operation/patch/artifact ids, runner args list.
