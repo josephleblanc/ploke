@@ -22,6 +22,10 @@ are not acceptable as a continuing implementation style.
   `cb967750 test: move RAG call context helpers`
 - Current quality focus: production-side pattern gaps before adding parser breadth.
 - Recent TUI/model-visible cleanup:
+  - `414b07a8 test: split local target request context cases`
+  - TUI local-target `request_code_context` caller tests now use a thin
+    `callers/local_targets/` module root with owner-call and path-family
+    concerns split into separate files.
   - `5f2c9b44 test: cover associated caller context`
   - `6ccfd726 test: cover imported associated callers`
   - `9e4c3b0c test: cover trait dispatch caller context`
@@ -64,6 +68,16 @@ are not acceptable as a continuing implementation style.
     UI-payload, and shared assertion concerns split under
     `gat_tests/call_context_tests/`.
 - Recent RAG/DB context cleanup:
+  - `bad04598 Add call graph node context helper`
+  - `2c75d6c1 test: split RAG path expansion cases`
+  - `a899044d test: share RAG fixture call assertions`
+  - DB now exposes `Database::call_context_for_node(...)` as a typed
+    outgoing/incoming bundle over the existing strict owner and target helpers,
+    with fixture-backed function-owner, function-target, and method-target
+    coverage. RAG path-expansion tests are split into outgoing, incoming, and
+    resolved-path-family modules, and fixture collection tests now share the
+    expected-call carrier/assertions used by result/field receiver and
+    field-dynamic cases.
   - `31d19d3c Add variant sparse call-context seeds`
   - `15f0ce68 test: share RAG call expansion assertions`
   - `de132096 test: split rag proof fixture cases`
