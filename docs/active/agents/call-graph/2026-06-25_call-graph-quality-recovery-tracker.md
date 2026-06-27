@@ -32,6 +32,12 @@ are not acceptable as a continuing implementation style.
     through method-as-associated-function syntax. These tests reuse the split
     `gat_tests/call_context_tests/callers/` layout instead of expanding the
     old monolithic request-context test surface.
+  - `443354e1 test: cover associated method proof payload`
+  - `4cfc2d57 test: cover trait dispatch proof payload`
+  - RAG/TUI proof-context fixture coverage now proves projected owner proof
+    rows survive call-context expansion for method-as-associated-function and
+    concrete trait-dispatch callers, using the existing split proof fixture and
+    request-code-context proof-payload helpers.
   - `78ea933c Surface degraded proof context`
   - `6989a728 test: cover degraded proof context tool path`
   - `request_code_context` now surfaces proof-context degradation in model
