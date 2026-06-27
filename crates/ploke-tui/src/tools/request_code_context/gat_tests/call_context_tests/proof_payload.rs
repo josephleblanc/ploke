@@ -1,6 +1,7 @@
 mod blockers;
 mod constructors;
 mod field_dynamic;
+mod fixture_blockers;
 mod helpers;
 mod initializers;
 mod projected;
