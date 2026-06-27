@@ -1,5 +1,6 @@
 mod ambiguous;
 mod expanded;
+mod field_dynamic;
 mod projected;
 mod raw_identifiers;
 mod result_field_receivers;

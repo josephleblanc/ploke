@@ -4,6 +4,7 @@ mod callable_paths;
 mod constructors;
 mod dynamic;
 mod external;
+mod field_dynamic;
 mod raw_identifiers;
 mod result_field_receivers;
 mod special_forms;
