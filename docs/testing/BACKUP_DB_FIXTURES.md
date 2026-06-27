@@ -1,7 +1,7 @@
 # Backup DB Fixtures
 
-Last reviewed: 2026-06-12
-Last updated: 2026-06-23
+Last reviewed: 2026-06-27
+Last updated: 2026-06-27
 
 This document is the current inventory for backup database fixtures under
 the shared DB snapshot fixture directory. It records which source targets
@@ -212,6 +212,32 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_axum_type_graph_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | typed graphRAG workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_axum_openrouter_embeddings_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | OpenRouter-searchable workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
+
+## 2026-06-27 Active Fixture Review
+
+The active checkout-local fixtures were regenerated with
+`cargo xtask fixtures regenerate --active`, then regenerated again with
+`cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+after feature-gated TUI checks showed that the non-feature regeneration lacked
+the gated call-graph relations.
+
+Post-regeneration verification:
+
+- `cargo xtask verify-backup-dbs` passed for all active registered fixtures in
+  the default fixture profile.
+- `cargo run -p xtask --features call_graph -- verify-backup-dbs` passed for
+  all active registered fixtures with call graph projection relations present
+  (`relations=64`, or `relations=65` for the local-embedding fixture).
+- `cargo test -p ploke-rag test_search -- --nocapture` passed after previously
+  failing to materialize `use_all_const_static` from stale
+  `fixture_nodes/src/const_static.rs` rows.
+- `cargo test --workspace --exclude ploke-eval --no-fail-fast` passed.
+- `cargo test -p ploke-tui --features call_graph request_code_context -- --nocapture`
+  passed after previously failing on missing `call_relation`.
+
+Checkout-local outputs remain under `tests/backup_dbs/local/` and are ignored
+local artifacts; the committed registry paths were not changed for this
+worktree-only refresh.
 
 ## `fixture_nodes_canonical_2026-05-17.sqlite`
 

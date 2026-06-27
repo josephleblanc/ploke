@@ -579,6 +579,24 @@ are not acceptable as a continuing implementation style.
     HIGH risk: 5 direct callers and 2 affected xtask flows (`dispatch` and
     `setup_fixtures`). Do not modify the verifier path without an explicit
     scoped implementation decision.
+  - Approved fixture repair on 2026-06-27:
+    `cargo xtask fixtures regenerate --active` passed and refreshed ignored
+    checkout-local active fixtures. `cargo xtask verify-backup-dbs` then passed.
+  - The first default-profile regeneration fixed the stale snippet failure:
+    `cargo test -p ploke-rag test_search -- --nocapture` passed with 10 tests.
+    `cargo test --workspace --exclude ploke-eval --no-fail-fast` also passed.
+  - Feature-gated TUI verification then exposed that the default-profile
+    regenerated fixtures lacked `call_relation` under `--features call_graph`.
+    The broad `prior_rels_for_plain_backup_import` fix was rejected after
+    GitNexus reported CRITICAL impact. Instead, the established
+    `xtask/call_graph` fixture path was used.
+  - `cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+    passed on 2026-06-27; active checkout-local fixture relation counts are now
+    64, or 65 for `fixture_nodes_local_embeddings`.
+  - `cargo run -p xtask --features call_graph -- verify-backup-dbs` passed.
+  - `cargo test -p ploke-tui --features call_graph request_code_context -- --nocapture`
+    passed after previously failing on missing `call_relation`: 17 unit tests
+    passed, 2 ignored, and the integration target ran 1 passing test.
 - Proof-context candidate payload exposure
   - Red check before implementation:
     `cargo test -p ploke-rag --features call_graph proof_context_target_seed_preserves_ambiguous_dynamic_candidates -- --nocapture`
