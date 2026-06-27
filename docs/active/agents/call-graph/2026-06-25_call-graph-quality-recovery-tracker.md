@@ -71,13 +71,21 @@ are not acceptable as a continuing implementation style.
   - `bad04598 Add call graph node context helper`
   - `2c75d6c1 test: split RAG path expansion cases`
   - `a899044d test: share RAG fixture call assertions`
+  - `7a07b150 Add node-scoped call proof projection`
+  - `614ef404 Use node call context in RAG collection`
+  - `4dc160f2 test: cover target-seed call context payload`
   - DB now exposes `Database::call_context_for_node(...)` as a typed
     outgoing/incoming bundle over the existing strict owner and target helpers,
     with fixture-backed function-owner, function-target, and method-target
-    coverage. RAG path-expansion tests are split into outgoing, incoming, and
-    resolved-path-family modules, and fixture collection tests now share the
-    expected-call carrier/assertions used by result/field receiver and
-    field-dynamic cases.
+    coverage. DB proof projection now has a node-scoped helper over the same
+    strict owner/target context rows, including constructor target coverage.
+    RAG collection now uses node context for direct hits, so target seeds attach
+    incoming caller rows as well as owner outgoing rows. The TUI
+    `request_code_context` payload has focused coverage for that target-seed
+    incoming call context. RAG path-expansion tests are split into outgoing,
+    incoming, and resolved-path-family modules, and fixture collection tests
+    now share the expected-call carrier/assertions used by result/field receiver
+    and field-dynamic cases.
   - `31d19d3c Add variant sparse call-context seeds`
   - `15f0ce68 test: share RAG call expansion assertions`
   - `de132096 test: split rag proof fixture cases`
