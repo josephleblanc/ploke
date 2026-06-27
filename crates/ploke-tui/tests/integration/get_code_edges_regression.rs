@@ -1,11 +1,16 @@
 use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
 use ploke_core::ArcStr;
-use ploke_db::helpers::{graph_resolve_edges, graph_resolve_exact, list_primary_nodes};
+use ploke_db::{
+    Database,
+    helpers::{graph_resolve_edges, graph_resolve_exact, list_primary_nodes},
+};
 use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_io::IoManagerHandle;
-use ploke_rag::TokenBudget;
-use ploke_test_utils::{PLOKE_DB_PRIMARY, shared_backup_fixture_db, workspace_root};
+use ploke_rag::{RagConfig, RagService, TokenBudget};
+use ploke_test_utils::{
+    PLOKE_DB_PRIMARY, setup_db_full_multi_embedding, shared_backup_fixture_db, workspace_root,
+};
 use ploke_tui::{
     EventBus,
     app_state::{
@@ -368,6 +373,117 @@ async fn code_item_edges_returns_edges_for_database_struct_in_ploke_db() {
         returned_edges.len(),
         expected_edges.len(),
         "tool edge count should match direct DB query for selected fixture struct node"
+    );
+}
+
+#[tokio::test]
+async fn code_item_edges_returns_call_context_for_call_graph_item() {
+    let db = Arc::new(Database::new(
+        setup_db_full_multi_embedding("fixture_call_graph").expect("fixture_call_graph db"),
+    ));
+    let cfg = UserConfig::default();
+    let runtime_cfg = RuntimeConfig::from(cfg.clone());
+    let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
+        Arc::clone(&db.active_embedding_set),
+        cfg.load_embedding_processor().expect("embedder"),
+    ));
+    let io_handle = IoManagerHandle::new();
+    let rag = Arc::new(
+        RagService::new_full(
+            Arc::clone(&db),
+            Arc::clone(&embedder),
+            io_handle.clone(),
+            RagConfig::default(),
+        )
+        .expect("rag service"),
+    );
+    assert!(
+        !rag.call_context_degraded(),
+        "fixture_call_graph should expose call context"
+    );
+
+    let crate_root = workspace_root().join("tests/fixture_crates/fixture_call_graph");
+    let state = Arc::new(AppState {
+        chat: ChatState::new(ChatHistory::new()),
+        config: ConfigState::new(runtime_cfg),
+        system: SystemState::new(SystemStatus::new(None)),
+        indexing_state: RwLock::new(None),
+        indexer_task: None,
+        indexing_control: Arc::new(Mutex::new(None)),
+        db: Arc::clone(&db),
+        embedder,
+        io_handle,
+        proposals: RwLock::new(HashMap::new()),
+        create_proposals: RwLock::new(HashMap::new()),
+        rag: Some(rag),
+        budget: TokenBudget::default(),
+    });
+    state
+        .system
+        .set_crate_focus_for_test(crate_root.clone())
+        .await;
+
+    let module_path = vec!["crate".to_string()];
+    let file_path = crate_root.join("src/lib.rs");
+    let owner = graph_resolve_exact(
+        db.as_ref(),
+        "function",
+        file_path.as_path(),
+        &module_path,
+        "call_crate_local_target",
+    )
+    .expect("resolve call_crate_local_target")
+    .pop()
+    .expect("call_crate_local_target row")
+    .id;
+
+    let ctx = Ctx {
+        state,
+        event_bus: Arc::new(EventBus::new(EventBusCaps::default())),
+        request_id: Uuid::new_v4(),
+        parent_id: Uuid::new_v4(),
+        call_id: ArcStr::from("call-graph-edges"),
+    };
+    let params = EdgesParams {
+        item_name: Cow::Borrowed("call_crate_local_target"),
+        file_path: Cow::Owned(file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Borrowed("crate"),
+    };
+
+    let result = CodeItemEdges::execute(params, ctx)
+        .await
+        .expect("tool execution");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let call_context = payload
+        .get("node_info")
+        .and_then(|node| node.get("call_context"))
+        .and_then(|value| value.as_array())
+        .expect("node_info.call_context array");
+
+    assert!(
+        call_context.iter().any(|call| {
+            call.get("owner_id").and_then(serde_json::Value::as_str)
+                == Some(owner.to_string().as_str())
+                && call.get("kind").and_then(serde_json::Value::as_str) == Some("path")
+                && call
+                    .get("targets")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|targets| !targets.is_empty())
+        }),
+        "code_item_edges should return node-scoped call context for call_crate_local_target: {call_context:#?}"
+    );
+    assert_eq!(
+        result
+            .ui_payload
+            .as_ref()
+            .and_then(|payload| payload
+                .fields
+                .iter()
+                .find(|field| field.name.as_ref() == "call_context"))
+            .map(|field| field.value.as_ref()),
+        Some(call_context.len().to_string().as_str())
     );
 }
 

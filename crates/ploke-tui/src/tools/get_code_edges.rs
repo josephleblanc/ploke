@@ -260,6 +260,16 @@ for a more fuzzy search."#
             }
         };
         let resolved_item_id = resolved_item[0].id;
+        let call_context = match ctx.state.rag.as_ref() {
+            Some(rag) if !rag.call_context_degraded() => {
+                rag.call_context_for_node(resolved_item_id).map_err(|err| {
+                    ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                        "failed to collect call context for code item {resolved_item_id}: {err}"
+                    )))
+                })?
+            }
+            _ => Vec::new(),
+        };
 
         let mod_path_vec = params
             .module_path
@@ -305,7 +315,7 @@ for a more fuzzy search."#
             snippet,
             type_context: None,
             call_expansion: None,
-            call_context: Vec::new(),
+            call_context,
             proof_context: Vec::new(),
         };
 
@@ -318,8 +328,12 @@ for a more fuzzy search."#
         let ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
             .with_field("file_path", node_edge_info.node_info.file_path.as_ref())
             .with_field("canon_path", node_edge_info.node_info.canon_path.as_ref())
-            .with_field("edges", node_edge_info.edge_info.len().to_string());
-        let content= serde_json::to_string(&node_edge_info).map_err(|err| {
+            .with_field("edges", node_edge_info.edge_info.len().to_string())
+            .with_field(
+                "call_context",
+                node_edge_info.node_info.call_context.len().to_string(),
+            );
+        let content = serde_json::to_string(&node_edge_info).map_err(|err| {
             ploke_error::Error::Internal(InternalError::CompilerError(format!(
                 "failed to serialize NodeEdgeInfo: {err}. This indicates an error in the ploke application itself, not due to incorrect search terms. Please consider filing an issue on the ploke github."
             )))

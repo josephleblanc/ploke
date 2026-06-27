@@ -454,6 +454,23 @@ impl RagService {
         })
     }
 
+    pub fn call_context_for_node(&self, node_id: Uuid) -> Result<Vec<CallContextInfo>, RagError> {
+        let cfg = self.cfg.call_context;
+        if !cfg.enabled || cfg.max_sites_per_owner == 0 {
+            return Ok(Vec::new());
+        }
+
+        let node = self.db.call_context_for_node(node_id)?;
+        let mut seen_sites = HashSet::new();
+        node.outgoing
+            .into_iter()
+            .chain(node.incoming)
+            .filter(|row| seen_sites.insert(row.site.id))
+            .take(cfg.max_sites_per_owner)
+            .map(|row| row_to_call_context(row, cfg.max_targets_per_site))
+            .collect()
+    }
+
     fn apply_type_context_gate(db: &Database, cfg: &mut RagConfig) -> Result<bool, RagError> {
         if !cfg.type_context.enabled {
             return Ok(false);
@@ -1040,19 +1057,7 @@ impl RagService {
 
         let mut out = HashMap::new();
         for node_id in nodes {
-            let node = self.db.call_context_for_node(node_id)?;
-            if node.outgoing.is_empty() && node.incoming.is_empty() {
-                continue;
-            }
-            let mut seen_sites = HashSet::new();
-            let context = node
-                .outgoing
-                .into_iter()
-                .chain(node.incoming.into_iter())
-                .filter(|row| seen_sites.insert(row.site.id))
-                .take(cfg.max_sites_per_owner)
-                .map(|row| row_to_call_context(row, cfg.max_targets_per_site))
-                .collect::<Result<Vec<_>, _>>()?;
+            let context = self.call_context_for_node(node_id)?;
             if !context.is_empty() {
                 out.insert(node_id, context);
             }
