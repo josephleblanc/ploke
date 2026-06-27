@@ -74,6 +74,16 @@ fn fixture_context_reads_projected_resolved_dynamic_function_shapes() -> Result<
             expected_rows: 1,
         },
         ResolvedDynamicContextCase {
+            owner: "call_if_nested_branch_expression",
+            path: &["local_target"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_match_nested_arm_expression",
+            path: &["local_target"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
             owner: "call_named_field_function_binding",
             path: &["holder", "callback"],
             expected_rows: 1,

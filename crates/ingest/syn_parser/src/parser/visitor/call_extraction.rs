@@ -781,10 +781,9 @@ fn if_branch_paths(
     let syn::Expr::If(branch) = unparen_expr(callee) else {
         return None;
     };
-    let then_path = block_path(&branch.then_branch)?;
+    let mut paths = block_branch_paths(&branch.then_branch, param_names, local_scopes)?;
     let (_else_token, else_expr) = branch.else_branch.as_ref()?;
-    let else_path = branch_path(else_expr.as_ref())?;
-    let paths = vec![then_path, else_path];
+    paths.extend(branch_paths(else_expr.as_ref(), param_names, local_scopes)?);
 
     paths
         .iter()
@@ -807,8 +806,11 @@ fn match_arm_paths(
     let paths = expr
         .arms
         .iter()
-        .map(|arm| branch_path(arm.body.as_ref()))
-        .collect::<Option<Vec<_>>>()?;
+        .map(|arm| branch_paths(arm.body.as_ref(), param_names, local_scopes))
+        .collect::<Option<Vec<_>>>()?
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
     if paths.is_empty() {
         return None;
     }
@@ -819,19 +821,29 @@ fn match_arm_paths(
         .then_some(paths)
 }
 
-fn branch_path(expr: &syn::Expr) -> Option<Vec<String>> {
+fn branch_paths(
+    expr: &syn::Expr,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<Vec<String>>> {
     match unparen_expr(expr) {
-        syn::Expr::Path(path) => expr_path_segments(path),
-        syn::Expr::Block(block) => block_path(&block.block),
+        syn::Expr::Path(path) => expr_path_segments(path).map(|path| vec![path]),
+        syn::Expr::Block(block) => block_branch_paths(&block.block, param_names, local_scopes),
+        syn::Expr::If(_) => if_branch_paths(expr, param_names, local_scopes),
+        syn::Expr::Match(_) => match_arm_paths(expr, param_names, local_scopes),
         _ => None,
     }
 }
 
-fn block_path(block: &syn::Block) -> Option<Vec<String>> {
-    let [syn::Stmt::Expr(syn::Expr::Path(path), None)] = block.stmts.as_slice() else {
+fn block_branch_paths(
+    block: &syn::Block,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<Vec<String>>> {
+    let [syn::Stmt::Expr(expr, None)] = block.stmts.as_slice() else {
         return None;
     };
-    expr_path_segments(path)
+    branch_paths(expr, param_names, local_scopes)
 }
 
 fn expr_path_segments(path: &syn::ExprPath) -> Option<Vec<String>> {

@@ -29,6 +29,16 @@ fn fixture_projection_stores_real_branch_and_match_dynamic_call_proof_facts() ->
             path: &["local_target"],
             expected_rows: 1,
         },
+        ResolvedDynamicContextCase {
+            owner: "call_if_nested_branch_expression",
+            path: &["local_target"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_match_nested_arm_expression",
+            path: &["local_target"],
+            expected_rows: 1,
+        },
     ];
 
     assert_fixture_resolved_dynamic_proof_batches(&[ResolvedDynamicProofBatch {

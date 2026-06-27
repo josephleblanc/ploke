@@ -3594,35 +3594,47 @@ paranoid_call_site_test!(
 );
 
 paranoid_call_site_test!(
-    fixture_call_graph_call_if_nested_branch_expression_fails_closed_dynamic_call_site,
+    fixture_call_graph_call_if_nested_branch_expression_resolves_dynamic_function_call_site,
     fixture: "fixture_call_graph",
     owner: function {
         module_path: &["crate"],
         name: "call_if_nested_branch_expression"
     },
     expected: {
-        ExpectedCallSite::dynamic(
+        let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::dynamic_if_branch_paths(
+            &[&["local_target"], &["local_target"], &["local_target"]],
             IF_NESTED_BRANCH_EXPRESSION_DYNAMIC_CALL_SPAN,
             0,
             &[],
-            ExpectedCallOutcome::Unsupported,
+            ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
     },
 );
 
 paranoid_call_site_test!(
-    fixture_call_graph_call_match_nested_arm_expression_fails_closed_dynamic_call_site,
+    fixture_call_graph_call_match_nested_arm_expression_resolves_dynamic_function_call_site,
     fixture: "fixture_call_graph",
     owner: function {
         module_path: &["crate"],
         name: "call_match_nested_arm_expression"
     },
     expected: {
-        ExpectedCallSite::dynamic(
+        let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::dynamic_match_arm_paths(
+            &[&["local_target"], &["local_target"], &["local_target"]],
             MATCH_NESTED_ARM_EXPRESSION_DYNAMIC_CALL_SPAN,
             0,
             &[],
-            ExpectedCallOutcome::Unsupported,
+            ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
     },
 );
