@@ -34,6 +34,10 @@ async fn request_code_context_returns_method_target_callers_with_call_context()
         &db,
         &function_in_module_query(&["crate"], "call_method_as_associated_function"),
     )?;
+    let self_field_owner = one_uuid(
+        &db,
+        &method_by_impl_self_query("SelfFieldAssocOwner", "call_self_field_instance_method"),
+    )?;
     let cases = [
         Case {
             owner: method_owner,
@@ -57,6 +61,18 @@ async fn request_code_context_returns_method_target_callers_with_call_context()
                 receiver: Some(CallReceiverInfo::TypedLocalBinding {
                     name: "value".to_string(),
                     type_path: vec!["LocalAssoc".to_string()],
+                }),
+            },
+            relation: CallTargetKind::Method,
+        },
+        Case {
+            owner: self_field_owner,
+            label: "self-field method owner",
+            kind: CallSiteKind::Method,
+            callee: CallCalleeInfo::Method {
+                name: "instance_value".to_string(),
+                receiver: Some(CallReceiverInfo::SelfField {
+                    path: vec!["value".to_string()],
                 }),
             },
             relation: CallTargetKind::Method,

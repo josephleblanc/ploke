@@ -31,6 +31,22 @@ fn fixture_projection_stores_real_local_receiver_method_call_proof_facts() -> Re
                 init_path: path(&["LocalAssoc"]),
             },
         )?,
+        ResolvedProofCase {
+            label: "call_self_field_instance_method",
+            owner: method_id_by_impl_self_type_name(
+                &db,
+                "SelfFieldAssocOwner",
+                "call_self_field_instance_method",
+            )?,
+            rows: 1,
+            calls: vec![ResolvedProofCall::method(
+                "instance_value",
+                CallReceiver::SelfField {
+                    path: path(&["value"]),
+                },
+                target,
+            )],
+        },
         method_case(
             "call_parenthesized_typed_local_instance_method",
             CallReceiver::TypedLocalBinding {

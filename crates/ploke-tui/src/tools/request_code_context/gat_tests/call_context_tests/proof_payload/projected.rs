@@ -83,9 +83,14 @@ async fn request_code_context_returns_expanded_method_proof_context() -> color_e
         &db,
         &function_in_module_query(&["crate"], "call_method_as_associated_function"),
     )?;
+    let self_field_owner = one_uuid(
+        &db,
+        &method_by_impl_self_query("SelfFieldAssocOwner", "call_self_field_instance_method"),
+    )?;
     let method_callers = [
         (method_owner, "method-call owner"),
         (nested_ref_owner, "nested-reference method owner"),
+        (self_field_owner, "self-field method owner"),
         (assoc_owner, "method-as-associated-function owner"),
     ];
     for &(owner, label) in &method_callers {

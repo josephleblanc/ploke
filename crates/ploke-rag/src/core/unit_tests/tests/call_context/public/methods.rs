@@ -2,6 +2,12 @@ use super::super::super::*;
 #[tokio::test]
 async fn call_context_sparse_get_context_expands_method_target_hits_to_fixture_callers()
 -> Result<(), Error> {
+    struct Case {
+        owner: Uuid,
+        label: &'static str,
+        callee: CallCalleeInfo,
+    }
+
     init_tracing_once();
     let db = Arc::new(Database::new(setup_db_full_multi_embedding(
         "fixture_call_graph",
@@ -25,6 +31,44 @@ async fn call_context_sparse_get_context_expands_method_target_hits_to_fixture_c
         &db,
         &function_in_module_query(&["crate"], "call_method_as_associated_function"),
     )?;
+    let self_field_owner = one_uuid(
+        &db,
+        &method_by_impl_self_query("SelfFieldAssocOwner", "call_self_field_instance_method"),
+    )?;
+    let method_cases = [
+        Case {
+            owner: method_owner,
+            label: "method-call caller owner",
+            callee: CallCalleeInfo::Method {
+                name: "instance_value".to_string(),
+                receiver: Some(CallReceiverInfo::TypedLocalBinding {
+                    name: "value".to_string(),
+                    type_path: vec!["LocalAssoc".to_string()],
+                }),
+            },
+        },
+        Case {
+            owner: nested_ref_owner,
+            label: "nested-reference method caller owner",
+            callee: CallCalleeInfo::Method {
+                name: "instance_value".to_string(),
+                receiver: Some(CallReceiverInfo::TypedLocalBinding {
+                    name: "value".to_string(),
+                    type_path: vec!["LocalAssoc".to_string()],
+                }),
+            },
+        },
+        Case {
+            owner: self_field_owner,
+            label: "self-field method caller owner",
+            callee: CallCalleeInfo::Method {
+                name: "instance_value".to_string(),
+                receiver: Some(CallReceiverInfo::SelfField {
+                    path: vec!["value".to_string()],
+                }),
+            },
+        },
+    ];
     let query = "instance_value";
     let mut cfg = crate::RagConfig::default();
     cfg.type_context.enabled = false;
@@ -69,62 +113,29 @@ async fn call_context_sparse_get_context_expands_method_target_hits_to_fixture_c
         )
         .await?;
 
-    let method_part = assembled
-        .parts
-        .iter()
-        .find(|part| part.id == method_owner)
-        .expect("public get_context should materialize the method-call caller owner");
-    let method_call = method_part
-        .call_context
-        .iter()
-        .find(|call| {
-            call.kind == CallSiteKind::Method
-                && call.callee
-                    == CallCalleeInfo::Method {
-                        name: "instance_value".to_string(),
-                        receiver: Some(CallReceiverInfo::TypedLocalBinding {
-                            name: "value".to_string(),
-                            type_path: vec!["LocalAssoc".to_string()],
-                        }),
-                    }
-        })
-        .expect("caller part should retain outgoing method call context to the seed target");
-    assert_eq!(method_call.status, CallStatusKind::Resolved);
-    assert_eq!(method_call.resolution, Some(CallResolutionKind::LocalExact));
-    assert_eq!(method_call.targets.len(), 1);
-    assert_eq!(method_call.targets[0].target_id, target);
-    assert_eq!(method_call.targets[0].relation, CallTargetKind::Method);
-    assert_incoming_expansion(method_part, method_call, target);
-
-    let nested_ref_part = assembled
-        .parts
-        .iter()
-        .find(|part| part.id == nested_ref_owner)
-        .expect("public get_context should materialize the nested-reference method caller owner");
-    let nested_ref_call = nested_ref_part
-        .call_context
-        .iter()
-        .find(|call| {
-            call.kind == CallSiteKind::Method
-                && call.callee
-                    == CallCalleeInfo::Method {
-                        name: "instance_value".to_string(),
-                        receiver: Some(CallReceiverInfo::TypedLocalBinding {
-                            name: "value".to_string(),
-                            type_path: vec!["LocalAssoc".to_string()],
-                        }),
-                    }
-        })
-        .expect("nested-reference caller should retain outgoing method context to the seed target");
-    assert_eq!(nested_ref_call.status, CallStatusKind::Resolved);
-    assert_eq!(
-        nested_ref_call.resolution,
-        Some(CallResolutionKind::LocalExact)
-    );
-    assert_eq!(nested_ref_call.targets.len(), 1);
-    assert_eq!(nested_ref_call.targets[0].target_id, target);
-    assert_eq!(nested_ref_call.targets[0].relation, CallTargetKind::Method);
-    assert_incoming_expansion(nested_ref_part, nested_ref_call, target);
+    for case in &method_cases {
+        let part = assembled
+            .parts
+            .iter()
+            .find(|part| part.id == case.owner)
+            .unwrap_or_else(|| panic!("public get_context should materialize the {}", case.label));
+        let call = part
+            .call_context
+            .iter()
+            .find(|call| call.kind == CallSiteKind::Method && call.callee == case.callee)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} should retain outgoing method context to the seed target",
+                    case.label
+                )
+            });
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(call.targets.len(), 1);
+        assert_eq!(call.targets[0].target_id, target);
+        assert_eq!(call.targets[0].relation, CallTargetKind::Method);
+        assert_incoming_expansion(part, call, target);
+    }
 
     let assoc_part = assembled
         .parts

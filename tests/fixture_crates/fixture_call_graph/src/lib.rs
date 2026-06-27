@@ -1201,3 +1201,13 @@ pub fn call_typed_double_reference_local_instance_method() -> i32 {
     let value: &&LocalAssoc = &&LocalAssoc;
     value.instance_value()
 }
+
+pub struct SelfFieldAssocOwner {
+    value: LocalAssoc,
+}
+
+impl SelfFieldAssocOwner {
+    pub fn call_self_field_instance_method(&self) -> i32 {
+        self.value.instance_value()
+    }
+}

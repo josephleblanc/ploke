@@ -26,9 +26,14 @@ async fn proof_context_attaches_rows_to_required_expanded_callers() -> Result<()
         &db,
         &function_in_module_query(&["crate"], "call_method_as_associated_function"),
     )?;
+    let self_field_owner = one_uuid(
+        &db,
+        &method_by_impl_self_query("SelfFieldAssocOwner", "call_self_field_instance_method"),
+    )?;
     let method_callers = [
         (owner, "method-call owner"),
         (nested_ref_owner, "nested-reference method owner"),
+        (self_field_owner, "self-field method owner"),
         (assoc_owner, "method-as-associated-function owner"),
     ];
     for &(owner, label) in &method_callers {

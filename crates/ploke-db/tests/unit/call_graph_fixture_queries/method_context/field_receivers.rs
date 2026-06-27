@@ -5,6 +5,29 @@ fn fixture_context_reads_projected_field_receiver_and_dynamic_field_calls() -> R
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let method_target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "instance_value")?;
 
+    let owner = method_id_by_impl_self_type_name(
+        &db,
+        "SelfFieldAssocOwner",
+        "call_self_field_instance_method",
+    )?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        1,
+        "self-field method context rows: {context:#?}"
+    );
+    let receiver = CallReceiver::SelfField {
+        path: path(&["value"]),
+    };
+    let row = row_by_method_receiver(&context, "instance_value", &receiver);
+    assert_resolved_target(
+        row,
+        method_target,
+        CallRelationKind::Method,
+        CallSiteKind::Method,
+        CallTargetKind::Method,
+    );
+
     let owner = function_id_by_name(&db, "call_tuple_field_instance_method")?;
     let struct_target = struct_id_by_name(&db, "TupleFieldMethodReceiver")?;
     let context = db.call_context_for_owner(owner)?;

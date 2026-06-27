@@ -1,6 +1,12 @@
 use super::super::super::*;
 #[tokio::test]
 async fn call_context_expansion_adds_incoming_fixture_method_callers() -> Result<(), Error> {
+    struct Case {
+        owner: Uuid,
+        label: &'static str,
+        callee: CallCalleeInfo,
+    }
+
     init_tracing_once();
     let db = Arc::new(Database::new(setup_db_full_multi_embedding(
         "fixture_call_graph",
@@ -24,9 +30,43 @@ async fn call_context_expansion_adds_incoming_fixture_method_callers() -> Result
         &db,
         &function_in_module_query(&["crate"], "call_method_as_associated_function"),
     )?;
+    let self_field_owner = one_uuid(
+        &db,
+        &method_by_impl_self_query("SelfFieldAssocOwner", "call_self_field_instance_method"),
+    )?;
     let method_callers = [
-        (method_owner, "method-call owner"),
-        (nested_ref_owner, "nested-reference method owner"),
+        Case {
+            owner: method_owner,
+            label: "method-call owner",
+            callee: CallCalleeInfo::Method {
+                name: "instance_value".to_string(),
+                receiver: Some(CallReceiverInfo::TypedLocalBinding {
+                    name: "value".to_string(),
+                    type_path: vec!["LocalAssoc".to_string()],
+                }),
+            },
+        },
+        Case {
+            owner: nested_ref_owner,
+            label: "nested-reference method owner",
+            callee: CallCalleeInfo::Method {
+                name: "instance_value".to_string(),
+                receiver: Some(CallReceiverInfo::TypedLocalBinding {
+                    name: "value".to_string(),
+                    type_path: vec!["LocalAssoc".to_string()],
+                }),
+            },
+        },
+        Case {
+            owner: self_field_owner,
+            label: "self-field method owner",
+            callee: CallCalleeInfo::Method {
+                name: "instance_value".to_string(),
+                receiver: Some(CallReceiverInfo::SelfField {
+                    path: vec!["value".to_string()],
+                }),
+            },
+        },
     ];
 
     let mut rag = init_test_rag_mock(Arc::clone(&db));
@@ -46,7 +86,7 @@ async fn call_context_expansion_adds_incoming_fixture_method_callers() -> Result
     assert!(
         method_callers
             .iter()
-            .all(|(owner, _label)| expanded_ids.contains(owner)),
+            .all(|case| expanded_ids.contains(&case.owner)),
         "method target expansion should materialize all method callers; expanded: {expanded:#?}"
     );
     assert!(
@@ -55,25 +95,18 @@ async fn call_context_expansion_adds_incoming_fixture_method_callers() -> Result
     );
 
     let call_context = rag.collect_call_context(&expanded)?;
-    for (owner, label) in method_callers {
+    for case in &method_callers {
         let context = call_context
-            .get(&owner)
-            .unwrap_or_else(|| panic!("{label} should receive outgoing call context"));
+            .get(&case.owner)
+            .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
         let call = context
             .iter()
-            .find(|call| {
-                call.kind == CallSiteKind::Method
-                    && call.callee
-                        == CallCalleeInfo::Method {
-                            name: "instance_value".to_string(),
-                            receiver: Some(CallReceiverInfo::TypedLocalBinding {
-                                name: "value".to_string(),
-                                type_path: vec!["LocalAssoc".to_string()],
-                            }),
-                        }
-            })
+            .find(|call| call.kind == CallSiteKind::Method && call.callee == case.callee)
             .unwrap_or_else(|| {
-                panic!("{label} should preserve the method call edge to LocalAssoc::instance_value")
+                panic!(
+                    "{} should preserve the method call edge to LocalAssoc::instance_value",
+                    case.label
+                )
             });
         assert_eq!(call.status, CallStatusKind::Resolved);
         assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));

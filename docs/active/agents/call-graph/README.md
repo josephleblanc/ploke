@@ -1136,11 +1136,16 @@ Implemented in this slice:
 3. The resolver classifies this call as `External` with no local edge when the
    owner impl self type resolves to the local struct and the field type is a
    proven external/prelude concrete type such as `String`.
+4. `self.value.instance_value()` in
+   `fixture_call_graph::SelfFieldAssocOwner::call_self_field_instance_method`
+   now resolves through the proven local field type to `LocalAssoc::instance_value`
+   and persists as a target-centered DB/RAG/TUI caller/proof-context row.
 
 Primary implementation files:
 
 - `crates/ingest/syn_parser/src/parser/nodes/call.rs`
 - `crates/ingest/syn_parser/src/parser/visitor/call_extraction.rs`
+- `crates/ingest/syn_parser/src/resolve/call_resolution.rs`
 - `crates/ingest/syn_parser/tests/uuid_phase3_resolution/call_sites.rs`
 
 ## Completed implementation slice: structural path-call extraction

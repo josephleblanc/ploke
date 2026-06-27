@@ -1332,7 +1332,9 @@ impl<'a> CallRelationResolver<'a> {
 
         let resolution = match &call.receiver {
             MethodCallReceiver::SelfValue => self.resolve_self_method_call(call)?,
-            MethodCallReceiver::SelfField { .. } => AssocPathResolution::Unsupported,
+            MethodCallReceiver::SelfField { field_path } => {
+                self.resolve_self_field_method_call(call, field_path, type_relations)?
+            }
             MethodCallReceiver::LocalBinding { name } => {
                 self.resolve_param_method_call(call, name, type_relations)?
             }
@@ -1426,6 +1428,22 @@ impl<'a> CallRelationResolver<'a> {
             return Ok(false);
         };
         self.is_external_type_method(call.owner, field_type, &call.method_name)
+    }
+
+    fn resolve_self_field_method_call(
+        &self,
+        call: &MethodCallNode,
+        field_path: &[String],
+        type_relations: &[TypeRelation],
+    ) -> Result<AssocPathResolution, SynParserError> {
+        let [field_name] = field_path else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+        let Some(field_type) = self.self_field_type(call.owner, field_name, type_relations)? else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+        self.resolve_type_use_method(call.owner, &[field_type], &call.method_name, type_relations)?
+            .map_or(Ok(AssocPathResolution::Unsupported), Ok)
     }
 
     fn self_field_type(
