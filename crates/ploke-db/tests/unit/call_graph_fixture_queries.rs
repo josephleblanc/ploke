@@ -18,6 +18,7 @@ mod invariants;
 mod low_level_helpers;
 mod method_context;
 mod mixed_proof;
+mod node_proof;
 mod owner_context;
 mod path_context;
 mod proof_lookup;
