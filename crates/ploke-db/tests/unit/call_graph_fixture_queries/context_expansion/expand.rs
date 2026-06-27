@@ -132,23 +132,35 @@ fn fixture_expand_call_context_target_seed_preserves_method_family_callers() -> 
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "instance_value")?;
     let assoc_owner = function_id_by_name(&db, "call_method_as_associated_function")?;
-    let method_callers = [
-        ("call_typed_local_instance_method", "method-call"),
-        (
-            "call_typed_double_reference_local_instance_method",
-            "nested-reference method",
-        ),
-    ];
-
-    let method_receiver = CallReceiver::TypedLocalBinding {
+    let typed_receiver = CallReceiver::TypedLocalBinding {
         name: "value".to_string(),
         type_path: path(&["LocalAssoc"]),
     };
+    let self_field_receiver = CallReceiver::SelfField {
+        path: path(&["value"]),
+    };
+    let self_field_owner = method_id_by_impl_self_type_name(
+        &db,
+        "SelfFieldAssocOwner",
+        "call_self_field_instance_method",
+    )?;
+    let method_callers = [
+        (
+            function_id_by_name(&db, "call_typed_local_instance_method")?,
+            &typed_receiver,
+            "method-call",
+        ),
+        (
+            function_id_by_name(&db, "call_typed_double_reference_local_instance_method")?,
+            &typed_receiver,
+            "nested-reference method",
+        ),
+        (self_field_owner, &self_field_receiver, "self-field method"),
+    ];
     let mut method_candidates = Vec::new();
-    for (owner_name, label) in method_callers {
-        let owner = function_id_by_name(&db, owner_name)?;
+    for (owner, receiver, label) in method_callers {
         let context = db.call_context_for_owner(owner)?;
-        let site = row_by_method_receiver(&context, "instance_value", &method_receiver)
+        let site = row_by_method_receiver(&context, "instance_value", receiver)
             .site
             .id;
         method_candidates.push((owner, site, label));

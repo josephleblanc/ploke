@@ -25,7 +25,7 @@ fn fixture_call_context_for_target_preserves_full_rows_by_target_family() -> Res
         TargetContextCase::new(
             "method",
             method_id_by_impl_self_type_name(&db, "LocalAssoc", "instance_value")?,
-            2,
+            4,
         ),
         TargetContextCase::new(
             "associated function",
