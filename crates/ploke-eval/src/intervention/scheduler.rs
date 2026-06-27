@@ -1365,6 +1365,13 @@ pub fn write_treatment_evaluation_projection(
         source,
     })?;
     write_node_projection(&record)?;
+    emit_parent_eval_record_ref_for_json_file_if_owner_db_exists(
+        &record.node_dir.join("node.json"),
+        campaign_id,
+        "scheduler_node",
+        &record.schema_version,
+        &record.node_id,
+    )?;
     write_runner_request_projection(&request, &runner_request_path)?;
 
     Ok((record, request))

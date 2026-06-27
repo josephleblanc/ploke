@@ -1350,7 +1350,7 @@ async fn run_legacy_parent_target_selection(
         .try_commit(|| {
             open.lock(at, |at, body| {
                 validate_child_plan(&parent_identity, &report, body)?;
-                write_child_plan_file(at.path(), body)
+                write_child_plan_file(env.campaign_id, at.path(), body)
             })
         })
         .map_err(|err| {
@@ -2820,7 +2820,12 @@ fn publish_broad_harness_child_plan_from_attempts(
         // the fatal-abort caller would otherwise re-raise. The failed plan is
         // the durable record, so a persistence failure is the more urgent
         // signal to propagate.
-        persist_rejected_plan(env.manifest_path, ready_parent, rejected_attempts)?;
+        persist_rejected_plan(
+            env.campaign_id,
+            env.manifest_path,
+            ready_parent,
+            rejected_attempts,
+        )?;
         write_node_projection(&failed_parent)?;
         return Err(PrepareError::ChildPlanBelowMinimum {
             runnable_children: usable_results.len(),
@@ -2864,7 +2869,12 @@ fn publish_broad_harness_child_plan_from_attempts(
         .writes(observe::RecordRef::ChildPlanFile(&observed_at))
         .try_commit(|| {
             open.lock(at, |at, body| {
-                validate_and_write_broad_harness_child_plan(&parent_identity, at.path(), body)
+                validate_and_write_broad_harness_child_plan(
+                    env.campaign_id,
+                    &parent_identity,
+                    at.path(),
+                    body,
+                )
             })
         })
         .map_err(|err| {
@@ -2876,6 +2886,7 @@ fn publish_broad_harness_child_plan_from_attempts(
 
 // ANCHOR: prototype1_persist_rejected_child_plan
 fn persist_rejected_plan(
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     parent: Parent<Ready>,
     rejected_surface_attempts: Vec<surface_attempt::Evidence>,
@@ -2891,7 +2902,12 @@ fn persist_rejected_plan(
         .writes(observe::RecordRef::ChildPlanFile(&observed_at))
         .try_commit(|| {
             open.lock(at, |at, body| {
-                validate_and_write_broad_harness_child_plan(&parent_identity, at.path(), body)
+                validate_and_write_broad_harness_child_plan(
+                    campaign_id,
+                    &parent_identity,
+                    at.path(),
+                    body,
+                )
             })
         })
         .map_err(|err| {
@@ -3100,6 +3116,7 @@ fn publish_broad_harness_child_plan_from_admitted(
 
 const TUI_EDIT_SURFACE_PRODUCER_ID: &str = "prototype1:tui-edit-surface:deterministic-v1";
 const TUI_EDIT_SURFACE_POLICY_ID: &str = "surface-policy:tool-surface-v1";
+const PROTOTYPE1_CHILD_PLAN_FILE_SCHEMA_VERSION: &str = "prototype1-child-plan-file.v1";
 
 fn publish_deterministic_tui_tools_child_plan(
     env: ChildPlanEnv<'_>,
@@ -3166,6 +3183,7 @@ fn publish_deterministic_tui_tools_child_plan(
 
     if children.len() < child_budget.min as usize {
         persist_rejected_surface_attempt_child_plan(
+            env.campaign_id,
             env.manifest_path,
             parent,
             generated.rejected_attempts.clone(),
@@ -3186,7 +3204,7 @@ fn publish_deterministic_tui_tools_child_plan(
     let open = Open::<ChildPlan>::from_sender(parent, files);
     let (planned, locked) = open
         .lock(at, |at, body| {
-            validate_and_write_tui_child_plan(&parent_identity, at.path(), body)
+            validate_and_write_tui_child_plan(env.campaign_id, &parent_identity, at.path(), body)
         })
         .map_err(|err| {
             let (_parent, source) = err.into_parts();
@@ -3276,6 +3294,7 @@ fn broad_harness_request_admission_binding(
 }
 
 fn persist_rejected_surface_attempt_child_plan(
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     parent: Parent<Ready>,
     rejected_surface_attempts: Vec<surface_attempt::Evidence>,
@@ -3287,7 +3306,7 @@ fn persist_rejected_surface_attempt_child_plan(
     let open = Open::<ChildPlan>::from_sender(parent, files);
     let _ = open
         .lock(at, |at, body| {
-            validate_and_write_tui_child_plan(&parent_identity, at.path(), body)
+            validate_and_write_tui_child_plan(campaign_id, &parent_identity, at.path(), body)
         })
         .map_err(|err| {
             let (_parent, source) = err.into_parts();
@@ -3297,6 +3316,7 @@ fn persist_rejected_surface_attempt_child_plan(
 }
 
 fn validate_and_write_tui_child_plan(
+    campaign_id: &CampaignId,
     parent: &ParentIdentity,
     path: &Path,
     body: &ChildPlanFiles,
@@ -3350,10 +3370,11 @@ fn validate_and_write_tui_child_plan(
         validate_deterministic_surface_evidence(child)?;
     }
 
-    write_child_plan_file(path, body)
+    write_child_plan_file(campaign_id, path, body)
 }
 
 fn validate_and_write_broad_harness_child_plan(
+    campaign_id: &CampaignId,
     parent: &ParentIdentity,
     path: &Path,
     body: &ChildPlanFiles,
@@ -3386,7 +3407,7 @@ fn validate_and_write_broad_harness_child_plan(
     for child in body.children() {
         validate_requested_broad_harness_child(child)?;
     }
-    write_child_plan_file(path, body)
+    write_child_plan_file(campaign_id, path, body)
 }
 
 fn validate_requested_broad_harness_child(child: &ChildFiles) -> Result<(), PrepareError> {
@@ -4034,6 +4055,7 @@ pub(crate) fn validate_existing_child_plan_for_id(
 }
 
 pub(crate) fn load_existing_child_plan_for_id(
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     parent: Parent<Ready>,
 ) -> Result<PlannedChildren, PrepareError> {
@@ -4063,6 +4085,7 @@ pub(crate) fn load_existing_child_plan_for_id(
                 detail: source.to_string(),
             }
         })?;
+    emit_child_plan_replay_refs(campaign_id, observed_at.path(), plan.body())?;
     let children = plan.body().children().to_vec();
     let rejected_surface_attempts = plan.body().rejected_surface_attempts().to_vec();
     Ok(PlannedChildren {
@@ -4096,7 +4119,7 @@ fn receive_existing_child_plan(
 }
 
 fn receive_child_plan(
-    _env: ChildPlanEnv<'_>,
+    env: ChildPlanEnv<'_>,
     parent_identity: &ParentIdentity,
     planned: Parent<Planned>,
     locked: Locked<ChildPlan>,
@@ -4121,6 +4144,7 @@ fn receive_child_plan(
                 detail: source.to_string(),
             }
         })?;
+    emit_child_plan_replay_refs(env.campaign_id, observed_at.path(), plan.body())?;
     let rejected_surface_attempts = plan.body().rejected_surface_attempts().to_vec();
     Ok(ChildPlanReceipt {
         parent,
@@ -4129,14 +4153,61 @@ fn receive_child_plan(
     })
 }
 
-fn write_child_plan_file(path: &Path, body: &ChildPlanFiles) -> Result<(), PrepareError> {
+fn write_child_plan_file(
+    campaign_id: &CampaignId,
+    path: &Path,
+    body: &ChildPlanFiles,
+) -> Result<(), PrepareError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|source| PrepareError::CreateOutputDir {
             path: parent.to_path_buf(),
             source,
         })?;
     }
-    write_json_file_pretty(path, body)
+    write_json_file_pretty(path, body)?;
+    emit_child_plan_record_ref(campaign_id, path, body)
+}
+
+fn emit_child_plan_record_ref(
+    campaign_id: &CampaignId,
+    path: &Path,
+    body: &ChildPlanFiles,
+) -> Result<(), PrepareError> {
+    crate::record_emission::emit_parent_eval_record_ref_for_json_file_if_owner_db_exists(
+        path,
+        campaign_id,
+        "child_plan_file",
+        PROTOTYPE1_CHILD_PLAN_FILE_SCHEMA_VERSION,
+        body.parent_node_id(),
+    )
+}
+
+fn emit_child_plan_replay_refs(
+    campaign_id: &CampaignId,
+    path: &Path,
+    body: &ChildPlanFiles,
+) -> Result<(), PrepareError> {
+    emit_child_plan_record_ref(campaign_id, path, body)?;
+    for child in body.children() {
+        let node = child.node_record();
+        let path = node.node_dir.join("node.json");
+        if path.is_file() {
+            crate::record_emission::emit_parent_eval_record_ref_for_json_file_if_owner_db_exists(
+                &path,
+                campaign_id,
+                "scheduler_node",
+                &node.schema_version,
+                &node.node_id,
+            )?;
+        } else {
+            warn!(
+                node_id = %node.node_id,
+                path = %path.display(),
+                "skipping replay eval_record_ref mirror for missing child node projection"
+            );
+        }
+    }
+    Ok(())
 }
 
 fn read_child_plan_message(

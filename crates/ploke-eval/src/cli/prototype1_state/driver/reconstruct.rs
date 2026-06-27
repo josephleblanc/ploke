@@ -269,8 +269,11 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
                             parent.identity(),
                         ) {
                             Ok(()) => {
-                                let planned =
-                                    load_existing_child_plan_for_id(&parts.manifest_path, parent)?;
+                                let planned = load_existing_child_plan_for_id(
+                                    &parts.campaign_id,
+                                    &parts.manifest_path,
+                                    parent,
+                                )?;
                                 let parent = planned.parent;
                                 parts.facts.child_plan = Some(typestate::context::ChildPlanFacts {
                                     plan: planned.plan,

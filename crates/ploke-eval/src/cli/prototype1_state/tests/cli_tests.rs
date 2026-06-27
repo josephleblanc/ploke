@@ -2340,6 +2340,47 @@ fn tui_edit_surface_parent_selection_publishes_child_plan() {
         assert!(node.node_dir.join("node.json").exists());
         assert!(node.runner_request_path.exists());
     }
+
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "campaign_id".to_string(),
+        cozo::DataValue::from(CLI_TEST_CAMPAIGN.to_string()),
+    );
+    let refs = db
+        .raw_query_params(
+            r#"
+?[family, producer_id, payload_json] :=
+    *eval_record_ref { campaign_id, family, producer_id, payload_json },
+    campaign_id = $campaign_id
+"#,
+            params,
+        )
+        .expect("query all record refs");
+    let mut nodes = BTreeSet::new();
+    let mut plans = Vec::new();
+    for row in refs.row_refs() {
+        let family = row.get::<String>("family").expect("family");
+        let producer = row.get::<String>("producer_id").expect("producer");
+        let payload = row.get::<String>("payload_json").expect("payload");
+        if family == "scheduler_node" {
+            nodes.insert(producer.clone());
+        }
+        if family == "child_plan_file" && producer == body.parent_node_id() {
+            plans.push(payload);
+        }
+    }
+    for child in body.children() {
+        assert!(
+            nodes.contains(child.node_id()),
+            "child scheduler node '{}' should be mirrored to eval_record_ref",
+            child.node_id()
+        );
+    }
+    assert_eq!(plans.len(), 1, "child-plan file should be mirrored once");
+    assert!(
+        plans[0].contains(body.children()[0].node_id()),
+        "child-plan payload should contain planned child identity"
+    );
 }
 
 #[test]
@@ -6288,8 +6329,13 @@ fn below_min_rejected_attempts_are_persisted_and_recoverable_from_existing_child
     );
 
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
-    persist_rejected_surface_attempt_child_plan(&manifest_path, parent, vec![rejected.clone()])
-        .expect("persist rejected attempt child plan");
+    persist_rejected_surface_attempt_child_plan(
+        &CLI_TEST_CAMPAIGN,
+        &manifest_path,
+        parent,
+        vec![rejected.clone()],
+    )
+    .expect("persist rejected attempt child plan");
 
     let resumed_parent = ready_parent_for_test(&manifest_path, &repo_root);
     let receipt = receive_existing_child_plan(
