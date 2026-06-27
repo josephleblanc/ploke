@@ -40,6 +40,29 @@ pub(in crate::unit) fn row_by_method_receiver<'a>(
     matches[0]
 }
 
+pub(in crate::unit) fn row_by_owner_method_receiver<'a>(
+    context: &'a [CallContextRow],
+    owner: Uuid,
+    method: &str,
+    receiver: &CallReceiver,
+) -> &'a CallContextRow {
+    let matches = context
+        .iter()
+        .filter(|row| {
+            row.site.owner_id == owner
+                && row.site.kind == CallSiteKind::Method
+                && row.site.method.as_deref() == Some(method)
+                && row.site.receiver.as_ref() == Some(receiver)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matches.len(),
+        1,
+        "expected exactly one method row {method} with receiver {receiver:?} owned by {owner}; context rows: {context:#?}"
+    );
+    matches[0]
+}
+
 pub(in crate::unit) fn row_by_kind_path<'a>(
     context: &'a [CallContextRow],
     kind: CallSiteKind,
@@ -54,6 +77,29 @@ pub(in crate::unit) fn row_by_kind_path<'a>(
         matches.len(),
         1,
         "expected exactly one {kind:?} row {expected:?}; context rows: {context:#?}"
+    );
+    matches[0]
+}
+
+pub(in crate::unit) fn row_by_owner_kind_path<'a>(
+    context: &'a [CallContextRow],
+    owner: Uuid,
+    kind: CallSiteKind,
+    expected: &[&str],
+) -> &'a CallContextRow {
+    let expected = path(expected);
+    let matches = context
+        .iter()
+        .filter(|row| {
+            row.site.owner_id == owner
+                && row.site.kind == kind
+                && row.site.path.as_ref() == Some(&expected)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matches.len(),
+        1,
+        "expected exactly one {kind:?} row {expected:?} owned by {owner}; context rows: {context:#?}"
     );
     matches[0]
 }

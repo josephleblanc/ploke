@@ -46,6 +46,13 @@ pub struct CallContextRow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CallNodeContext {
+    pub node_id: Uuid,
+    pub outgoing: Vec<CallContextRow>,
+    pub incoming: Vec<CallContextRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CallCallerRow {
     pub site: CallSiteRow,
     pub status: CallResolutionRow,
