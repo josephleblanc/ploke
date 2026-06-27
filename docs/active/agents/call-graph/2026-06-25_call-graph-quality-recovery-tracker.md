@@ -50,6 +50,13 @@ are not acceptable as a continuing implementation style.
 - Recent RAG/DB context cleanup:
   - `31d19d3c Add variant sparse call-context seeds`
   - `15f0ce68 test: share RAG call expansion assertions`
+  - `de132096 test: split rag proof fixture cases`
+  - `a6882555 test: cover target context families`
+  - RAG proof-context fixture cases are split by concern under
+    `unit_tests/tests/proof_context/fixtures/`, and DB
+    `call_context_for_target` now has a target-family fixture matrix covering
+    function, method, associated-function, tuple-struct constructor, and
+    enum-variant constructor targets without adding parser breadth.
 - Recent RAG test-module cleanup:
   - RAG call-context collection cases were split by concern under
     `unit_tests/tests/call_context/collection/cases/`.
