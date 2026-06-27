@@ -3117,11 +3117,30 @@ fn publish_broad_harness_child_plan_from_admitted(
 const TUI_EDIT_SURFACE_PRODUCER_ID: &str = "prototype1:tui-edit-surface:deterministic-v1";
 const TUI_EDIT_SURFACE_POLICY_ID: &str = "surface-policy:tool-surface-v1";
 
+fn reject_deterministic_tui_tools_child_plan() -> Result<(), PrepareError> {
+    // TODO(prototype1): deterministic target selection is allowed as a future
+    // reproducibility mode, but this implementation is not the intended child
+    // patch generator. Even when targets are selected deterministically, the
+    // parent must still generate real patches for prompt-description surfaces
+    // (for example the `.md` files used by `include_str!` in ploke-tui), either
+    // through the old direct LLM request path or, preferably, through the
+    // broad-harness/ploke-tui adapter path. The current direct-splice EOF
+    // scaffold creates no-op-ish children that then self-evaluate, which drifts
+    // too far from live behavior and can create false progress. If we need a
+    // dry-run target-selection mode, add it explicitly instead of admitting
+    // child nodes here.
+    Err(PrepareError::InvalidBatchSelection {
+        detail: "candidate-generator=deterministic-tui-tools is disabled: deterministic target selection must generate real patches through the LLM/harness path before it can admit child nodes".to_string(),
+    })
+}
+
 fn publish_deterministic_tui_tools_child_plan(
     env: ChildPlanEnv<'_>,
     parent: Parent<Ready>,
     child_budget: Prototype1ChildBudget,
 ) -> Result<ChildPlanReceipt, PrepareError> {
+    reject_deterministic_tui_tools_child_plan()?;
+
     let edit_surface = Prototype1EditSurface::PlokeTuiTools;
     let parent_identity = parent.identity().clone();
     let root_node = parent.node().clone();

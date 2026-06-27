@@ -2200,6 +2200,39 @@ fn deterministic_surface_producer_dedupes_duplicate_proposed_contents() {
 }
 
 #[test]
+fn deterministic_tui_tools_child_plan_is_disabled_until_real_patch_generation_exists() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    write_broad_surface_targets(&repo_root);
+    let parent = ready_parent_for_test(&manifest_path, &repo_root);
+    let budget = Prototype1ChildBudget::new(1, 1);
+
+    let err = match publish_deterministic_tui_tools_child_plan(
+        ChildPlanEnv {
+            campaign_id: &CLI_TEST_CAMPAIGN,
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
+            route_source: ModelRouteSource::DirectGoogle,
+        },
+        parent,
+        budget,
+    ) {
+        Ok(_) => panic!("deterministic no-op child planning must fail loudly"),
+        Err(err) => err,
+    };
+
+    let PrepareError::InvalidBatchSelection { detail } = err else {
+        panic!("unexpected error variant");
+    };
+    assert!(detail.contains("deterministic-tui-tools is disabled"));
+    assert!(detail.contains("generate real patches"));
+}
+
+#[test]
+#[ignore = "obsolete deterministic no-op child publication path is intentionally disabled"]
 fn tui_edit_surface_parent_selection_publishes_child_plan() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
@@ -2995,27 +3028,13 @@ fn broad_harness_complete_run_reaches_request_continuation_hook() {
 #[test]
 fn broad_harness_rejects_unbound_existing_child_plan() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    let manifest_path = tmp.path().join("campaign.json");
-    let repo_root = tmp.path().join("repo");
-    write_broad_surface_targets(&repo_root);
-    let parent = ready_parent_for_test(&manifest_path, &repo_root);
-    let budget = Prototype1ChildBudget::new(1, 1);
-    let receipt = publish_deterministic_tui_tools_child_plan(
-        ChildPlanEnv {
-            campaign_id: &CLI_TEST_CAMPAIGN,
-            manifest_path: &manifest_path,
-            repo_root: &repo_root,
-            broad_tui: profile::BroadTui::default(),
-            eval_storage_backend: profile::EvalStorageBackend::Fs,
-            route_source: ModelRouteSource::DirectGoogle,
-        },
-        parent,
-        budget,
-    )
-    .expect("published deterministic child plan");
+    let node = test_node(tmp.path(), "node-det", "branch-det", "candidate-det");
+    let mut resolved = test_resolved(&node);
+    resolved.branch.synthesized_spec_id = TUI_EDIT_SURFACE_PRODUCER_ID.to_string();
+    let child = ChildFiles::from_resolved(&CLI_TEST_CAMPAIGN, node, resolved, false);
 
     let err = CandidateGenerationConfig::BroadHarnessRequest
-        .validate_received_child_plan(receipt.plan.body().children())
+        .validate_received_child_plan(&[child])
         .expect_err("broad harness must not consume unbound child plans");
 
     let PrepareError::InvalidBatchSelection { detail } = err else {
@@ -3143,6 +3162,110 @@ fn broad_harness_multi_file_admission_mints_one_artifact_child() {
             .derived_artifact_id,
         admitted_derived
     );
+
+    {
+        let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(
+            "campaign_id".to_string(),
+            cozo::DataValue::from(CLI_TEST_CAMPAIGN.to_string()),
+        );
+        params.insert(
+            "parent_node_id".to_string(),
+            cozo::DataValue::from(child_plan.plan.body().parent_node_id().to_string()),
+        );
+        let plans = db
+            .raw_query_params(
+                r#"
+?[plan_id, child_count, rejected_count, message_sha256] :=
+    *eval_child_plan {
+        plan_id,
+        campaign_id,
+        parent_node_id,
+        child_count,
+        rejected_count,
+        message_sha256
+    },
+    campaign_id = $campaign_id,
+    parent_node_id = $parent_node_id
+"#,
+                params,
+            )
+            .expect("query normalized broad-harness child plan");
+        assert_eq!(plans.rows.len(), 1);
+        let plan = plans.row_refs().next().expect("plan row");
+        let plan_id = plan.get::<String>("plan_id").expect("plan id");
+        assert_eq!(plan.get::<i64>("child_count").expect("child count"), 1);
+        assert_eq!(
+            plan.get::<i64>("rejected_count").expect("rejected count"),
+            0
+        );
+        assert!(
+            !plan
+                .get::<String>("message_sha256")
+                .expect("message hash")
+                .is_empty()
+        );
+
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("plan_id".to_string(), cozo::DataValue::from(plan_id));
+        let children = db
+            .raw_query_params(
+                r#"
+?[child_node_id, child_index, status, target_relpath, harness_present, surface_present] :=
+    *eval_child_plan_child {
+        plan_id,
+        child_node_id,
+        child_index,
+        status,
+        target_relpath,
+        harness_present,
+        surface_present
+    },
+    plan_id = $plan_id
+"#,
+                params,
+            )
+            .expect("query normalized broad-harness child rows");
+        assert_eq!(children.rows.len(), 1);
+        let row = children.row_refs().next().expect("child row");
+        assert_eq!(
+            row.get::<String>("child_node_id").expect("child id"),
+            child.node_id()
+        );
+        assert_eq!(row.get::<i64>("child_index").expect("index"), 0);
+        assert_eq!(row.get::<String>("status").expect("status"), "planned");
+        assert_eq!(
+            row.get::<String>("target_relpath").expect("target"),
+            child.node_record().target_relpath.display().to_string()
+        );
+        assert!(row.get::<bool>("harness_present").expect("harness"));
+        assert!(
+            !row.get::<bool>("surface_present").expect("surface"),
+            "broad-harness children carry request-bound harness evidence, not deterministic surface evidence"
+        );
+
+        let refs = db
+            .raw_query_params(
+                r#"
+?[count(record_ref_id)] :=
+    *eval_record_ref { record_ref_id, family },
+    family = "child_plan_file"
+"#,
+                std::collections::BTreeMap::new(),
+            )
+            .expect("query child-plan record refs");
+        let count = refs
+            .row_refs()
+            .next()
+            .expect("count row")
+            .get::<i64>("count(record_ref_id)")
+            .expect("count");
+        assert_eq!(
+            count, 0,
+            "child plan should not use eval_record_ref payloads"
+        );
+    }
 
     let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path));
     let c1 = C1::from_child_plan(
