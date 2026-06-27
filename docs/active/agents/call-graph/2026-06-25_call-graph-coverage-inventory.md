@@ -46,9 +46,10 @@ future work can choose the next batch without rereading the diary-style notes.
   prompt-assembly row caps. The capped `call_context_for_node` and
   `proof_context_for_node` paths remain the RAG prompt collection contract.
   Regression coverage:
-  `code_item_lookup_returns_incoming_callers_for_call_graph_target` proves
-  exact lookup for `local_target` returns incoming caller context and
-  target-centered proof rows.
+  `code_item_lookup_returns_incoming_callers_for_call_graph_target` and
+  `code_item_edges_returns_incoming_callers_for_call_graph_target` prove exact
+  lookup for `local_target` returns incoming caller context and target-centered
+  proof rows through both explicit item tools.
 
 ## Next implementation batches
 
