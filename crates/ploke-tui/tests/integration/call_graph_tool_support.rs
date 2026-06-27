@@ -133,3 +133,57 @@ impl CallGraphToolFixture {
         }
     }
 }
+
+pub(crate) fn assert_incoming_context(
+    calls: &[serde_json::Value],
+    owner: Uuid,
+    target: Uuid,
+    label: &str,
+) {
+    let owner = owner.to_string();
+    let target = target.to_string();
+
+    assert!(
+        calls.iter().any(|call| {
+            call.get("owner_id").and_then(serde_json::Value::as_str) == Some(owner.as_str())
+                && call.get("kind").and_then(serde_json::Value::as_str) == Some("path")
+                && call
+                    .get("targets")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|targets| {
+                        targets.iter().any(|candidate| {
+                            candidate
+                                .get("target_id")
+                                .and_then(serde_json::Value::as_str)
+                                == Some(target.as_str())
+                        })
+                    })
+        }),
+        "{label} should return incoming caller context for local_target: {calls:#?}"
+    );
+}
+
+pub(crate) fn assert_target_proof(
+    proofs: &[serde_json::Value],
+    owner: Uuid,
+    target: Uuid,
+    label: &str,
+) {
+    let owner = owner.to_string();
+    let target = target.to_string();
+
+    assert!(
+        proofs.iter().any(|proof| {
+            proof.get("kind").and_then(serde_json::Value::as_str) == Some("call_edge")
+                && proof
+                    .get("caller_def_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(owner.as_str())
+                && proof
+                    .get("callee_def_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(target.as_str())
+        }),
+        "{label} should return target-centered proof rows for local_target callers: {proofs:#?}"
+    );
+}

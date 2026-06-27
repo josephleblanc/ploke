@@ -5,7 +5,9 @@ use ploke_tui::tools::{
     code_item_lookup::{CodeItemLookup, LookupParams},
 };
 
-use crate::call_graph_tool_support::CallGraphToolFixture;
+use crate::call_graph_tool_support::{
+    CallGraphToolFixture, assert_incoming_context, assert_target_proof,
+};
 
 #[tokio::test]
 async fn code_item_lookup_returns_call_and_proof_context_for_call_graph_item() {
@@ -96,40 +98,17 @@ async fn code_item_lookup_returns_incoming_callers_for_call_graph_target() {
         .get("proof_context")
         .and_then(serde_json::Value::as_array)
         .expect("proof_context array");
-    let owner = fixture.owner.to_string();
-    let target = fixture.target.to_string();
-
-    assert!(
-        call_context.iter().any(|call| {
-            call.get("owner_id").and_then(serde_json::Value::as_str) == Some(owner.as_str())
-                && call.get("kind").and_then(serde_json::Value::as_str) == Some("path")
-                && call
-                    .get("targets")
-                    .and_then(serde_json::Value::as_array)
-                    .is_some_and(|targets| {
-                        targets.iter().any(|candidate| {
-                            candidate
-                                .get("target_id")
-                                .and_then(serde_json::Value::as_str)
-                                == Some(target.as_str())
-                        })
-                    })
-        }),
-        "code_item_lookup should return incoming caller context for local_target: {call_context:#?}"
+    assert_incoming_context(
+        call_context,
+        fixture.owner,
+        fixture.target,
+        "code_item_lookup",
     );
-    assert!(
-        proof_context.iter().any(|proof| {
-            proof.get("kind").and_then(serde_json::Value::as_str) == Some("call_edge")
-                && proof
-                    .get("caller_def_id")
-                    .and_then(serde_json::Value::as_str)
-                    == Some(owner.as_str())
-                && proof
-                    .get("callee_def_id")
-                    .and_then(serde_json::Value::as_str)
-                    == Some(target.as_str())
-        }),
-        "code_item_lookup should return target-centered proof rows for local_target callers: {proof_context:#?}"
+    assert_target_proof(
+        proof_context,
+        fixture.owner,
+        fixture.target,
+        "code_item_lookup",
     );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
