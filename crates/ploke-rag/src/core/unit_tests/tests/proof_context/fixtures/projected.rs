@@ -1,5 +1,5 @@
 use super::super::super::*;
-use super::super::helpers::assert_projected_owner_rows;
+use super::super::helpers::{assert_projected_owner_rows, assert_resolved_call};
 
 #[tokio::test]
 async fn proof_context_sparse_get_context_attaches_projected_owner_facts() -> Result<(), Error> {
@@ -69,6 +69,47 @@ async fn proof_context_sparse_get_context_attaches_projected_owner_facts() -> Re
         .find(|part| part.id == owner)
         .expect("public get_context should preserve the caller owner seed");
     assert_projected_owner_rows(&owner_part.proof_context, owner, target);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn proof_context_collection_preserves_node_projected_target_rows() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let target = unique_id_by_name(&db, "function", "try_local_assoc")?;
+    let owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_try_result_instance_method"),
+    )?;
+    let count = db.project_call_proof_facts_for_node(target, "bd:fixture-call-graph")?;
+    assert!(
+        count >= 3,
+        "node projection should store at least one resolved incoming proof row set"
+    );
+
+    let mut cfg = crate::RagConfig::default();
+    cfg.type_context.enabled = false;
+    cfg.call_context.enabled = false;
+    cfg.proof_context.max_rows_per_part = 64;
+    let rag = RagService::new_full(
+        Arc::clone(&db),
+        runtime_for(&db, EmbeddingProcessor::new_mock()),
+        IoManagerHandle::new(),
+        cfg,
+    )?;
+    assert!(
+        !rag.proof_context_degraded(),
+        "node-projected proof facts should enable RAG proof context"
+    );
+
+    let proof_context = rag.collect_proof_context(&[(target, 1.0)])?;
+    let rows = proof_context
+        .get(&target)
+        .expect("target seed should receive node-projected proof rows");
+    assert_resolved_call(rows, owner, target);
 
     Ok(())
 }

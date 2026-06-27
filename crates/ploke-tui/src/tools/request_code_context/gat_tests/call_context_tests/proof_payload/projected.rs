@@ -1,5 +1,5 @@
 use super::super::*;
-use super::helpers::assert_projected_owner_rows;
+use super::helpers::{assert_projected_owner_rows, assert_resolved_call};
 
 #[tokio::test]
 async fn request_code_context_returns_projected_proof_context() -> color_eyre::Result<()> {
@@ -55,6 +55,52 @@ async fn request_code_context_returns_projected_proof_context() -> color_eyre::R
         ui_field(payload, "proof_context"),
         proof_context_count.to_string()
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn request_code_context_returns_node_projected_target_proof_context() -> color_eyre::Result<()>
+{
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let target = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "try_local_assoc"),
+    )?;
+    let owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_try_result_instance_method"),
+    )?;
+    assert!(
+        db.project_call_proof_facts_for_node(target, "bd:fixture-call-graph")? >= 3,
+        "node projection should store at least one resolved incoming proof row set"
+    );
+
+    let tool_result = execute_fixture_tool_request(
+        &db,
+        "try_local_assoc",
+        1,
+        "node_projected_target_proof_context",
+    )
+    .await?;
+    let result: RequestCodeContextResult = serde_json::from_str(&tool_result.content)?;
+    assert_result_ok(&result, "try_local_assoc", 1, "fixture_call_graph");
+    assert!(
+        result
+            .note
+            .as_deref()
+            .is_none_or(|note| { !note.contains("Proof-context expansion is unavailable") }),
+        "node-projected target proof facts should avoid degraded proof-context note: {result:#?}"
+    );
+
+    let target_part = result
+        .context
+        .iter()
+        .find(|part| part.id == target)
+        .expect("request_code_context should preserve the target proof seed");
+    assert_resolved_call(&target_part.proof_context, owner, target);
 
     Ok(())
 }
