@@ -57,9 +57,9 @@ pub(crate) use cozo_store::DbEvalStore;
 pub(crate) use cozo_store::{
     load_owner_eval_database, owner_eval_db_file_for_record_path, prototype1_eval_store_db_path,
     write_baseline_to_owner_db, write_channel_message_to_owner_db,
-    write_channel_receipt_to_owner_db, write_import_event_to_owner_db,
-    write_invocation_to_owner_db, write_log_ref_to_owner_db, write_r0_context_to_owner_db,
-    write_record_ref_to_owner_db, write_trace_event_to_owner_db,
+    write_channel_receipt_to_owner_db, write_closure_state_to_owner_db,
+    write_import_event_to_owner_db, write_invocation_to_owner_db, write_log_ref_to_owner_db,
+    write_r0_context_to_owner_db, write_record_ref_to_owner_db, write_trace_event_to_owner_db,
 };
 pub(crate) use error::EvalStoreError;
 #[cfg(test)]

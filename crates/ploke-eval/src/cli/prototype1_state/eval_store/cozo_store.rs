@@ -139,6 +139,15 @@ impl<'a, D: EvalDb + ?Sized> DbEvalStore<'a, D> {
         )
     }
 
+    pub(crate) fn put_closure_state(
+        &self,
+        closure_path: &Path,
+        closure_state: &ClosureState,
+    ) -> Result<String, EvalStoreError> {
+        self.install_schema()?;
+        setup::put_closure_ref(self.db, closure_path, closure_state)
+    }
+
     pub(crate) fn put_parent_started_from_receipt(
         &self,
         evidence: &ParentStartedEvidence,
@@ -457,6 +466,17 @@ pub(crate) fn write_baseline_to_owner_db(
             record_ref,
             recorded_at,
         )
+    })
+}
+
+pub(crate) fn write_closure_state_to_owner_db(
+    db_path: &Path,
+    closure_path: &Path,
+    closure_state: &ClosureState,
+) -> Result<String, EvalStoreError> {
+    mutate_owner_db(db_path, |db| {
+        let store = DbEvalStore::new(db);
+        store.put_closure_state(closure_path, closure_state)
     })
 }
 

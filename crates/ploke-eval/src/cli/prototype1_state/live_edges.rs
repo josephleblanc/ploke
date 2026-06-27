@@ -37,7 +37,7 @@ use crate::{
             eval_store::{
                 ConfiguredEvalStore, EvalStore, ParentStartedEvidence,
                 prototype1_eval_store_db_path, write_baseline_to_owner_db,
-                write_r0_context_to_owner_db,
+                write_closure_state_to_owner_db, write_r0_context_to_owner_db,
             },
             event::RecordedAt,
             invocation::{self, InvocationAuthority, SuccessorCompletionStatus},
@@ -473,13 +473,24 @@ pub(crate) async fn r5_to_r6(
     let typestate::ReadyParts { collected, parent } = r5.into_parts();
     let mut parts = collected.into_parts();
     let parent_identity = parent.identity().clone();
-    let parent_baseline = establish_parent_baseline(
+    let parent_baseline = match establish_parent_baseline(
         &parts.campaign_id,
         &parts.campaign_config,
         &parts.manifest_path,
         &parent_identity,
     )
-    .await?;
+    .await
+    {
+        Ok(parent_baseline) => parent_baseline,
+        Err(error) => {
+            if parts.run_shape.eval_storage_backend.mirrors_owner_db()
+                && parent_identity.generation() == 0
+            {
+                mirror_parent_closure_state_after_baseline_error(&parts)?;
+            }
+            return Err(error);
+        }
+    };
     if parts.run_shape.eval_storage_backend.mirrors_owner_db() {
         let closure = if parent_identity.generation() == 0 {
             let path = campaign_closure_state_path(&parts.campaign_id)?;
@@ -509,6 +520,25 @@ pub(crate) async fn r5_to_r6(
         parts.into_collected(),
         parent,
     ))
+}
+
+fn mirror_parent_closure_state_after_baseline_error(
+    parts: &typestate::context::CollectedParts<Prototype1StateRunShape, ResolvedCampaignConfig>,
+) -> Result<(), PrepareError> {
+    let closure_path = campaign_closure_state_path(&parts.campaign_id)?;
+    let closure_state = load_closure_state(&parts.campaign_id)?;
+    write_closure_state_to_owner_db(
+        &prototype1_eval_store_db_path(&parts.manifest_path),
+        &closure_path,
+        &closure_state,
+    )
+    .map(|_| ())
+    .map_err(|err| {
+        prototype1_state_transition_error(
+            "prototype1_parent_baseline_closure_state_mirror",
+            err.to_string(),
+        )
+    })
 }
 // ANCHOR_END: prototype1_live_edge_r5_to_r6
 

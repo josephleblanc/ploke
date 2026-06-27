@@ -443,6 +443,7 @@ pub(crate) fn load_parent_baseline(
             return Ok(None);
         }
         let closure = load_closure_state(campaign_id)?;
+        mirror_closure_state_if_owner_db_exists(manifest_path, &path, &closure)?;
         complete_baseline_from_closure(parent, &closure, &config.eval)?
     } else {
         let report_path = prototype1_branch_evaluation_path(manifest_path, parent.branch_id());
@@ -453,6 +454,23 @@ pub(crate) fn load_parent_baseline(
     };
     baseline.validate_for_parent(campaign_id, parent.node_id(), parent.branch_id())?;
     Ok(Some(baseline))
+}
+
+fn mirror_closure_state_if_owner_db_exists(
+    manifest_path: &Path,
+    closure_path: &Path,
+    closure: &crate::closure::ClosureState,
+) -> Result<(), PrepareError> {
+    let db_path = eval_store::prototype1_eval_store_db_path(manifest_path);
+    if !db_path.exists() {
+        return Ok(());
+    }
+    eval_store::write_closure_state_to_owner_db(&db_path, closure_path, closure)
+        .map(|_| ())
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_closure_state_db_mirror",
+            detail: source.to_string(),
+        })
 }
 
 async fn establish_initial_parent_baseline(
