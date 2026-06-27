@@ -1,6 +1,6 @@
 # 2026-06-27 Prototype 1 normalized DB persistence pass
 
-**Status:** active plan + audit log; child-plan normalized slice has fresh DB proof; scheduler-node setup rows have fresh DB proof; runner request/result normalized slice implemented, fresh-run proof pending
+**Status:** active plan + audit log; child-plan normalized slice has fresh DB proof; scheduler-node setup rows have fresh DB proof; runner-request setup rows have fresh DB proof; runner-result proof still needs a successful child run
 **Purpose:** restart spine for a fresh pass over `ploke-eval loop walk` persistence with normalized Cozo relations as the required target.
 **Related:**
 - `docs/active/agents/2026-06-22_prototype1-eval-store-data-model/README.md`
@@ -544,7 +544,97 @@ cargo build -p ploke-eval
 git diff --check
 ```
 
-Fresh DB proof is pending. Use a new `dual-strict` campaign after this code is committed; older owner DBs missing the runner relations should be rejected rather than extended in place.
+Fresh DB proof after commit `9aaf9848f Mirror runner IO into normalized eval DB`:
+
+- Campaign: `p1-runnerio-db-20260627-125536`
+- Worktree: `/home/brasides/.ploke-eval/worktrees/p1-runnerio-db-20260627-125536`
+- Profile: `p1-broad-db-1x1-20260627-111548`
+- Storage: `dual-strict`
+- Parent: `node-b86fe92de458ef31`
+- Setup branch: `prototype1-parent-p1-runnerio-db-20260627-125536-gen0`
+
+DB proof immediately after setup via `walk db_query`:
+
+```text
+eval_runner_request             present
+eval_runner_request_arg         present
+eval_runner_request_target_part present
+eval_runner_result              present
+eval_scheduler_node*            present
+eval_child_plan*                present
+```
+
+Normalized runner request row:
+
+```json
+{
+  "campaign_id": "p1-runnerio-db-20260627-125536",
+  "node_id": "node-b86fe92de458ef31",
+  "projection_schema_version": "prototype1-runner-request.v1",
+  "request_schema_version": "prototype1-treatment-node.v1",
+  "generation": 0,
+  "branch_id": "prototype1-parent-p1-runnerio-db-20260627-125536-gen0",
+  "target_relpath": ".ploke/prototype1/parent_identity.json",
+  "stop_on_error": false,
+  "runner_arg_count": 4,
+  "content_sha256": "0c74e78ec0b97ad448ed3e14ac31ddc82c2778b8705a8d1324a4def5e0ffd5e3"
+}
+```
+
+Normalized runner args:
+
+```text
+0 loop
+1 prototype1-state
+2 --repo-root
+3 /home/brasides/.ploke-eval/worktrees/p1-runnerio-db-20260627-125536
+```
+
+Additional setup checks:
+
+```text
+eval_runner_request_target_part count = 0
+invalid runner-request projection schema rows = 0
+eval_runner_result count = 0
+eval_record_ref.family=runner_request = 1
+eval_record_ref.family=scheduler_node = 1
+```
+
+Interpretation: setup-time parent runner request is now queryable from normalized DB rows. The legacy `runner_request` record-ref remains only as a citation/payload mirror.
+
+Broad-harness R8 attempt on the same fresh campaign:
+
+- `walk start --until r7` reached `r7 - policy and child budget ready` cleanly.
+- `walk step --until r8 --watch` failed at R7 with:
+
+```text
+child plan has 0 runnable child candidate(s), fewer than required minimum 1
+```
+
+Failed-attempt DB counts:
+
+```text
+eval_runner_request             1
+eval_runner_request_arg         4
+eval_runner_result              0
+eval_child_plan                 1
+eval_child_plan_child           0
+eval_child_plan_rejected_attempt 1
+eval_agent_turn                 1
+eval_tool_event                 0
+```
+
+Rejected attempt row summary:
+
+```text
+producer_id=prototype1:broad-headless-tui-adapter-v1
+policy=workspace_except_ploke_eval
+outcome=rejected
+target_relpath=.
+reason=broad headless-tui slot ... timed out after 300 seconds
+```
+
+Remaining runner proof gap: this failed R8 did not admit or run a child, so `eval_runner_result` remains unproven by `walk db_query` on a live campaign. A successful admitted child run is still required for runner-result DB proof.
 
 ## Initial persistence matrix
 
@@ -562,11 +652,11 @@ Legend:
 | Baseline | `eval_baseline`, instance, metrics relations | Normalized | Current run has two baselines after successor. |
 | Parent-start journal evidence | `eval_transition_event` + some refs | Partially normalized | Later journal events are not comprehensively normalized. |
 | Scheduler node projection `nodes/<node>/node.json` | `eval_scheduler_node`, `eval_scheduler_node_status_event`, `eval_scheduler_node_target_part`; legacy `eval_record_ref.family=scheduler_node` may remain as citation | Implemented; setup/root proof complete, generation-1 child proof pending | Fresh campaign `p1-sched-db-20260627-114548` proves the root parent row and status row. A successful admitted broad-harness child is still needed to prove child scheduler rows. |
-| Runner request `runner-request.json` | `eval_runner_request`, `eval_runner_request_arg`, `eval_runner_request_target_part`; legacy `eval_record_ref.family=runner_request` may remain as citation | Implemented, fresh-run DB proof pending | Normalizes identity, paths, args, target parts, and content hash without JSON summary fields. |
+| Runner request `runner-request.json` | `eval_runner_request`, `eval_runner_request_arg`, `eval_runner_request_target_part`; legacy `eval_record_ref.family=runner_request` may remain as citation | Implemented; setup/root proof complete, child request proof pending | Fresh campaign `p1-runnerio-db-20260627-125536` proves the root parent request row and arg rows. A successful child admission is still needed for child runner requests. |
 | Child plan MessageBox | `eval_child_plan`, `eval_child_plan_child`, `eval_child_plan_rejected_attempt` | Normalized for R8 child-plan authority | Fresh DB-backed proof: `p1-normchild-db-20260627-100712` at R8 has 1 plan row, 3 child rows, 0 rejected rows, and 0 `eval_record_ref.family=child_plan_file` rows. |
 | Invocation JSON | `eval_invocation`, `eval_attempt` | Normalized metadata; body not normalized | Need decide which embedded invocation payload facts must be normalized for cross-machine Parent/Child. |
 | Channel JSONL | `eval_channel_message`, receipt/import rows | Transport metadata | Channel as transport is allowed, but terminal result/treatment payload facts should be normalized. |
-| Runner result JSON | `eval_runner_result`; legacy `eval_record_ref.family=runner_result` may remain as citation | Implemented, fresh-run DB proof pending | Normalizes status/disposition, treatment/evaluation refs, path kind, runtime id when path-scoped, exit/excerpts, and content hash. |
+| Runner result JSON | `eval_runner_result`; legacy `eval_record_ref.family=runner_result` may remain as citation | Implemented, fresh-run DB proof pending | Normalizes status/disposition, treatment/evaluation refs, path kind, runtime id when path-scoped, exit/excerpts, and content hash. Needs successful admitted child run for DB proof. |
 | Branch evaluation report | `eval_evaluation`, `eval_evaluation_instance` | Normalized | Good DB-first inspection path exists. |
 | Branch registry / comparison log | `eval_record_ref.family=branch_registry` | Payload-ref only | Needs normalized branch registry / comparison summary relation. |
 | Build / artifact / patch / apply facts | `eval_artifact*`, `eval_binary_ref`, `eval_build_event`, `eval_operation`, `eval_patch`, `eval_apply_event` | Partly normalized | Need verify whether all file artifacts have normalized coverage or only event projections. |
@@ -592,10 +682,11 @@ Do not continue live fanout as proof work until these are handled in a structure
    - Fresh `walk db_query` proof: `p1-sched-db-20260627-114548` setup has one root parent scheduler row and one planned status row.
    - Remaining proof gap: generation-1 child scheduler rows need a successful admitted broad-harness child; first fresh broad attempt rejected because no admitted changes were produced.
 
-3. **Create normalized runner request/result schemas** — implemented, fresh proof pending.
+3. **Create normalized runner request/result schemas** — implemented; root request proof complete, result proof pending.
    - Runner request: `eval_runner_request`, `eval_runner_request_arg`, `eval_runner_request_target_part`.
    - Runner result: `eval_runner_result`.
-   - Fresh `walk db_query` proof still required on a new owner DB.
+   - Fresh `walk db_query` proof: `p1-runnerio-db-20260627-125536` setup has one root parent request row and four arg rows.
+   - Remaining proof gap: `eval_runner_result` needs a successful admitted child run; first fresh broad attempt timed out before admission.
 
 4. **Normalize parent identity and successor handoff**
    - Parent identity currently changes on disk at handoff; DB should expose current and historical parent lineage.
