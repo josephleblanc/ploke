@@ -79,9 +79,14 @@ async fn request_code_context_returns_expanded_method_proof_context() -> color_e
             "call_typed_double_reference_local_instance_method",
         ),
     )?;
+    let assoc_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_method_as_associated_function"),
+    )?;
     let method_callers = [
         (method_owner, "method-call owner"),
         (nested_ref_owner, "nested-reference method owner"),
+        (assoc_owner, "method-as-associated-function owner"),
     ];
     for &(owner, label) in &method_callers {
         assert_eq!(
@@ -130,7 +135,7 @@ async fn request_code_context_returns_expanded_method_proof_context() -> color_e
         .sum::<usize>();
     assert!(
         proof_context_count >= method_callers.len() * 3,
-        "UI proof-context count should include both expanded method caller proof rows: {result:#?}"
+        "UI proof-context count should include expanded method caller proof rows: {result:#?}"
     );
     assert_eq!(
         ui_field(payload, "proof_context"),

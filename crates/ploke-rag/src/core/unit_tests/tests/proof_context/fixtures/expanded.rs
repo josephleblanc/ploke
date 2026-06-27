@@ -22,9 +22,14 @@ async fn proof_context_attaches_rows_to_required_expanded_callers() -> Result<()
             "call_typed_double_reference_local_instance_method",
         ),
     )?;
+    let assoc_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_method_as_associated_function"),
+    )?;
     let method_callers = [
         (owner, "method-call owner"),
         (nested_ref_owner, "nested-reference method owner"),
+        (assoc_owner, "method-as-associated-function owner"),
     ];
     for &(owner, label) in &method_callers {
         let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
