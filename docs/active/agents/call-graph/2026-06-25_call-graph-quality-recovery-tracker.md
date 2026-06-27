@@ -391,9 +391,10 @@ are not acceptable as a continuing implementation style.
   they authorize `external_summary_boundary`, match direct or linked
   build-domain scope, and fail closed for call-site scoped resolutions whose
   linked `call_site` domain fact is absent.
-- `call_resolution.rs` now keeps the resolver orchestration and remaining path,
-  method, constructor, and lookup logic while dynamic-call resolution lives in
-  `resolve/call_resolution/dynamic.rs`.
+- `call_resolution.rs` now keeps resolver orchestration and remaining method,
+  type, trait, and lookup logic while dynamic-call resolution lives in
+  `resolve/call_resolution/dynamic.rs` and shared path/import/module-scope
+  helpers live in `resolve/call_resolution/scope.rs`.
 
 ## Recent consolidated DB split detail
 
@@ -886,7 +887,7 @@ are not acceptable as a continuing implementation style.
 | CGQ-5 | P1 | Done 2026-06-25 | External proof projection reported `externally_summarized` while also using blocker reason `external_dependency_summary_missing`. | Current parser-projected external rows now emit blocked/missing-summary proof state until a real external summary fact exists. |
 | CGQ-6 | P2 | Done 2026-06-25 | Dynamic branch/match candidate provenance can collapse to `Null` in persisted `call_site` rows. | Ambiguous branch/match dynamic calls now keep proven local function candidates as `DynamicFunction` relations while preserving `Ambiguous` status; proof projection exposes them as `candidate_def_ids` without promoting them to resolved call edges. |
 | CGQ-7 | P2 | Done 2026-06-25 | The "exactly one status per call site" invariant could be hidden by post-hoc sort/dedup. | `CallRelationResolver` now rejects duplicate status sources before dedup, including identical duplicates. |
-| CGQ-8 | P2 | Partial 2026-06-26 | `call_resolution.rs` and `call_extraction.rs` are monolithic. | Dynamic-call resolver logic now lives in `resolve/call_resolution/dynamic.rs` without adding resolver breadth. Remaining work: split path/method/constructor/lookup resolver concerns and `call_extraction.rs` before adding breadth there. |
+| CGQ-8 | P2 | Partial 2026-06-27 | `call_resolution.rs` and `call_extraction.rs` are monolithic. | Dynamic-call resolver logic now lives in `resolve/call_resolution/dynamic.rs`, path-call dispatch remains in the existing thin `path.rs`, and shared path/import/module-scope helpers now live in `resolve/call_resolution/scope.rs` without adding resolver breadth. Remaining work: split method/type/trait/lookup resolver concerns and `call_extraction.rs` before adding breadth there. |
 | CGQ-9 | P2 | Done 2026-06-25 | Call-graph docs were serving as a long running diary rather than a stable coverage inventory. | Added `2026-06-25_call-graph-coverage-inventory.md` as the compact layer-by-layer restart inventory and linked it from the call-graph restart spine. |
 | CGQ-10 | P3 | Done 2026-06-27 | `call_graph` feature name was broader than the actual gate: parser facts existed baseline while DB projection was gated. | DB projection and downstream consumers are now baseline. The Cargo feature remains only as a no-op compatibility alias for old commands; active gate docs now record that `CALL_GRAPH_GATE:db-projection` is closed. |
 | CGQ-11 | P1 | Done 2026-06-25 | `CodeGraph` carried dormant semantic call-target/status storage even though transform consumes `CallResolutionReport` directly. | `CodeGraph`/`ParsedCodeGraph` now keep only structural call occurrence facts; semantic call relations/statuses are report-owned at the resolver/transform boundary. |
