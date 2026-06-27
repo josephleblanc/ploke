@@ -5,5 +5,6 @@ mod constructors;
 mod dynamic;
 mod external;
 mod raw_identifiers;
+mod result_field_receivers;
 mod special_forms;
 mod targetless_special_forms;
