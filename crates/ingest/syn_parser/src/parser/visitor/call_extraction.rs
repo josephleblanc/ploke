@@ -1465,11 +1465,11 @@ fn direct_typed_local_type_path_segments(ty: &syn::Type) -> Option<Vec<String>> 
 }
 
 fn referenced_type_path_segments(ty: &syn::Type) -> Option<Vec<String>> {
-    match ty {
+    match unparen_type(ty) {
         syn::Type::Reference(reference) => {
             direct_typed_local_type_path_segments(unparen_type(reference.elem.as_ref()))
+                .or_else(|| referenced_type_path_segments(reference.elem.as_ref()))
         }
-        syn::Type::Paren(paren) => referenced_type_path_segments(paren.elem.as_ref()),
         _ => None,
     }
 }

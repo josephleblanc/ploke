@@ -1196,3 +1196,8 @@ pub mod grouped_trait_assoc_function_scope {
         GroupedAssocFunctionTrait::imported_trait_make()
     }
 }
+
+pub fn call_typed_double_reference_local_instance_method() -> i32 {
+    let value: &&LocalAssoc = &&LocalAssoc;
+    value.instance_value()
+}

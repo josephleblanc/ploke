@@ -91,6 +91,53 @@ fn fixture_context_reads_projected_local_and_alias_instance_method_receivers() -
 }
 
 #[test]
+fn fixture_context_reads_projected_reference_instance_method_receivers() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "instance_value")?;
+    let cases = [
+        (
+            "call_referenced_local_instance_method",
+            CallReceiver::InitializedLocalBinding {
+                name: "value".to_string(),
+                init_path: path(&["LocalAssoc"]),
+            },
+        ),
+        (
+            "call_typed_reference_local_instance_method",
+            CallReceiver::TypedLocalBinding {
+                name: "value".to_string(),
+                type_path: path(&["LocalAssoc"]),
+            },
+        ),
+        (
+            "call_typed_double_reference_local_instance_method",
+            CallReceiver::TypedLocalBinding {
+                name: "value".to_string(),
+                type_path: path(&["LocalAssoc"]),
+            },
+        ),
+    ];
+
+    for (owner_name, receiver) in cases {
+        let owner = function_id_by_name(&db, owner_name)?;
+        let context = db.call_context_for_owner(owner)?;
+        assert_eq!(context.len(), 1, "{owner_name} context rows: {context:#?}");
+
+        let row = row_by_method_receiver(&context, "instance_value", &receiver);
+        assert_eq!(row.site.owner_id, owner);
+        assert_resolved_target(
+            row,
+            target,
+            CallRelationKind::Method,
+            CallSiteKind::Method,
+            CallTargetKind::Method,
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn fixture_context_reads_projected_explicit_drop_method_call() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let owner = function_id_by_name(&db, "call_explicit_drop_method")?;

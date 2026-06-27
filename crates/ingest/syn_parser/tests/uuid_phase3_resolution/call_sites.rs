@@ -204,6 +204,7 @@ const DEREFERENCED_PARAM_INSTANCE_CALL_SPAN: (usize, usize) = (22104, 22129);
 const BORROWED_PARAM_INSTANCE_CALL_SPAN: (usize, usize) = (22209, 22231);
 const REFERENCED_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (22324, 22346);
 const TYPED_REFERENCE_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (22457, 22479);
+const TYPED_DOUBLE_REFERENCE_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (26234, 26256);
 const LOCAL_TRAIT_OBJECT_BINDING_METHOD_CALL_SPAN: (usize, usize) = (22620, 22639);
 const TRAIT_IMPL_BODY_CALL_IMPL_SPAN: (usize, usize) = (22765, 22964);
 const TRAIT_IMPL_BODY_SELF_METHOD_CALL_SPAN: (usize, usize) = (22931, 22956);
@@ -2286,6 +2287,34 @@ paranoid_call_site_test!(
                 type_path: &["LocalAssoc"],
             },
             TYPED_REFERENCE_LOCAL_INSTANCE_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedMethodLocalExact {
+                target: target_info.test_method_id(),
+            },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_typed_double_reference_local_instance_method_resolves_typed_reference_local_method_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_typed_double_reference_local_instance_method"
+    },
+    expected: {
+        let target_args = fixture_call_graph_instance_method_args("instance_value");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_method_pid(&parsed_graphs)?;
+        ExpectedCallSite::method(
+            "instance_value",
+            ExpectedMethodReceiver::TypedLocalBinding {
+                name: "value",
+                type_path: &["LocalAssoc"],
+            },
+            TYPED_DOUBLE_REFERENCE_LOCAL_INSTANCE_CALL_SPAN,
             0,
             0,
             &[],
