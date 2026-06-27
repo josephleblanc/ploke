@@ -297,6 +297,94 @@ Additional live-run note from the reconstruction status after the proof attempt:
 - Reconstructed phase: `r10` for parent `node-88bcb4fbf7fb309a`.
 - Current blocker reported by reconstruction: terminal child `node-956e2df24fb0374e` is missing a branch evaluation report; observe recovery is needed before durable R11 reconstruction.
 
+### Fresh DB-backed proof for child-plan rows
+
+Committed code slice: `c8f736546 Mirror child plans into normalized eval DB`.
+
+False start cleaned up:
+
+- Campaign `p1-normchild-g35-20260627-100457` used `storage.eval.backend = "fs"`, so it did not create an owner DB. Its worktree/campaign artifacts were removed.
+
+Fresh proof run:
+
+- Campaign: `p1-normchild-db-20260627-100712`
+- Worktree: `/home/brasides/.ploke-eval/worktrees/p1-normchild-db-20260627-100712`
+- Profile: `p1-walk-det2g1x3-rg2209-20260626-200752`
+- Storage: `dual-strict`
+- Parent: `node-7b51248d5a8dc9fe`
+- Child-plan phase reached: `r8 - child-plan authority received`
+- Server stopped at R8 after proof.
+
+Commands:
+
+```text
+git worktree add --detach ~/.ploke-eval/worktrees/p1-normchild-db-20260627-100712 HEAD
+cd ~/.ploke-eval/worktrees/p1-normchild-db-20260627-100712
+CARGO_TARGET_DIR=/home/brasides/code/ploke/target cargo build -p ploke-eval
+/home/brasides/code/ploke/target/debug/ploke-eval loop prototype1-setup \
+  --campaign p1-normchild-db-20260627-100712 \
+  --profile p1-walk-det2g1x3-rg2209-20260626-200752 \
+  --format json
+/home/brasides/code/ploke/target/debug/ploke-eval loop walk use ~/.ploke-eval/worktrees/p1-normchild-db-20260627-100712 --format json
+/home/brasides/code/ploke/target/debug/ploke-eval loop walk start --until r7 --format json
+/home/brasides/code/ploke/target/debug/ploke-eval loop walk step --until r8 --watch --format json
+```
+
+Initial fresh DB state before R8:
+
+```text
+eval_child_plan                  0
+eval_child_plan_child            0
+eval_child_plan_rejected_attempt 0
+eval_record_ref child_plan_file  0
+```
+
+DB proof after R8 via `walk db_query`:
+
+```text
+eval_child_plan                  1
+eval_child_plan_child            3
+eval_child_plan_rejected_attempt 0
+eval_record_ref child_plan_file  0
+invalid child-plan schema rows   0
+```
+
+Normalized parent row:
+
+```json
+{
+  "campaign_id": "p1-normchild-db-20260627-100712",
+  "child_count": 3,
+  "child_generation": 1,
+  "message_sha256": "f8832b5f7c87bb8598016ccca51784e43e94c62f5ac8eb7c3ce06045939a3056",
+  "parent_node_id": "node-7b51248d5a8dc9fe",
+  "plan_id": "cfadfd0bd05e15bc1c7433afaf3f971262d565c80cb03d7197d33539a037025f",
+  "rejected_count": 0,
+  "schema_version": "prototype1-child-plan-file.v1"
+}
+```
+
+Normalized child rows:
+
+```text
+node-96205055dcec2237 child_index=0 status=planned branch=branch-3f5d80faedfd9e69
+node-e85be9ac8e1ede12 child_index=1 status=planned branch=branch-fc02fcd57a07391a
+node-d5b1a097a253c916 child_index=2 status=planned branch=branch-b10541b38742bbf5
+```
+
+Filesystem parity check:
+
+```text
+/home/brasides/.ploke-eval/campaigns/p1-normchild-db-20260627-100712/prototype1/messages/child-plan/node-7b51248d5a8dc9fe.json
+parent_node_id=node-7b51248d5a8dc9fe
+child_generation=1
+child_count=3
+rejected_count=0
+sha256=f8832b5f7c87bb8598016ccca51784e43e94c62f5ac8eb7c3ce06045939a3056
+```
+
+Conclusion for this slice: fresh DB-backed proof confirms child-plan authority no longer depends on `eval_record_ref.family = "child_plan_file"`. Scheduler-node and runner-request rows are still payload-ref-only and remain separate gaps.
+
 ## Initial persistence matrix
 
 Legend:
@@ -314,7 +402,7 @@ Legend:
 | Parent-start journal evidence | `eval_transition_event` + some refs | Partially normalized | Later journal events are not comprehensively normalized. |
 | Scheduler node projection `nodes/<node>/node.json` | `eval_record_ref.family=scheduler_node` | Payload-ref only | Needs normalized `eval_scheduler_node` / status-event relation; replace payload-only coverage. |
 | Runner request `runner-request.json` | `eval_record_ref.family=runner_request` | Payload-ref only | Needs normalized runner-request relation with args/list fields. |
-| Child plan MessageBox | `eval_child_plan`, `eval_child_plan_child`, `eval_child_plan_rejected_attempt` | Implemented in code; fresh-run proof pending | `eval_record_ref.family=child_plan_file` was removed from the writer path. Active old DB proof attempt found unsafe in-place schema extension; use fresh/regenerated DB. |
+| Child plan MessageBox | `eval_child_plan`, `eval_child_plan_child`, `eval_child_plan_rejected_attempt` | Normalized for R8 child-plan authority | Fresh DB-backed proof: `p1-normchild-db-20260627-100712` at R8 has 1 plan row, 3 child rows, 0 rejected rows, and 0 `eval_record_ref.family=child_plan_file` rows. |
 | Invocation JSON | `eval_invocation`, `eval_attempt` | Normalized metadata; body not normalized | Need decide which embedded invocation payload facts must be normalized for cross-machine Parent/Child. |
 | Channel JSONL | `eval_channel_message`, receipt/import rows | Transport metadata | Channel as transport is allowed, but terminal result/treatment payload facts should be normalized. |
 | Runner result JSON | `eval_record_ref.family=runner_result` | Payload-ref only | Needs normalized runner-result relation keyed by node/runtime/path type. |
@@ -332,10 +420,10 @@ Legend:
 
 Do not continue live fanout as proof work until these are handled in a structured way.
 
-1. **Create normalized child-plan schema** — code slice done; fresh/regenerated DB proof still required.
+1. **Create normalized child-plan schema** — done for R8 child-plan authority.
    - Relations: `eval_child_plan`, `eval_child_plan_child`, `eval_child_plan_rejected_attempt`.
    - Writer no longer emits `child_plan_file` as the child-plan persistence surface.
-   - Must confirm with `db_query` on a fresh campaign or regenerated owner DB before marking run parity complete.
+   - Fresh proof campaign `p1-normchild-db-20260627-100712` confirms normalized rows via `walk db_query`.
 
 2. **Create normalized scheduler-node schema**
    - Replace `scheduler_node` payload-ref-only coverage.
