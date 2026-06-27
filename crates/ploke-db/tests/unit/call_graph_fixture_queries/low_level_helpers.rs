@@ -86,3 +86,46 @@ fn fixture_low_level_helpers_read_projected_sites_targets_and_statuses() -> Resu
 
     Ok(())
 }
+
+#[test]
+fn fixture_low_level_helpers_read_method_owner_self_field_site() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = method_id_by_impl_self_type_name(
+        &db,
+        "SelfFieldAssocOwner",
+        "call_self_field_instance_method",
+    )?;
+    let target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "instance_value")?;
+
+    let sites = db.call_sites_for_owner(owner)?;
+    assert_eq!(sites.len(), 1, "self-field method owner sites: {sites:#?}");
+    let receiver = CallReceiver::SelfField {
+        path: path(&["value"]),
+    };
+    let site = sites
+        .iter()
+        .find(|site| {
+            site.kind == CallSiteKind::Method
+                && site.method.as_deref() == Some("instance_value")
+                && site.receiver.as_ref() == Some(&receiver)
+        })
+        .expect("self-field instance method call site");
+
+    let status = db
+        .call_resolution_for_site(site.id)?
+        .expect("self-field method status row");
+    assert_eq!(status.site_id, site.id);
+    assert_eq!(status.site_kind, CallSiteKind::Method);
+    assert_eq!(status.status, CallStatusKind::Resolved);
+    assert_eq!(status.resolution, Some(CallResolutionKind::LocalExact));
+
+    let targets = db.call_targets_for_site(site.id)?;
+    assert_eq!(targets.len(), 1, "self-field method targets: {targets:#?}");
+    assert_eq!(targets[0].site_id, site.id);
+    assert_eq!(targets[0].target_id, target);
+    assert_eq!(targets[0].relation, CallRelationKind::Method);
+    assert_eq!(targets[0].source_kind, CallSiteKind::Method);
+    assert_eq!(targets[0].target_kind, CallTargetKind::Method);
+
+    Ok(())
+}
