@@ -1,0 +1,45 @@
+{
+  "schema_version": "campaign-manifest.v1",
+  "campaign_id": "p1-walk-dbmanifest-20260626-214948",
+  "benchmark_family": "multi_swe_bench_rust",
+  "dataset_sources": [
+    {
+      "path": "/home/brasides/.ploke-eval/campaigns/p1-walk-dbmanifest-20260626-214948/slice.jsonl",
+      "label": "prototype1/ripgrep-burntsushi-ripgrep-2209",
+      "url": "https://huggingface.co/datasets/ByteDance-Seed/Multi-SWE-bench/resolve/main/rust/BurntSushi__ripgrep_dataset.jsonl"
+    }
+  ],
+  "model_id": "google/gemini-2.5-pro",
+  "route_source": "direct_google",
+  "required_procedures": [
+    "tool-call-intent-segments",
+    "tool-call-review",
+    "tool-call-segment-review"
+  ],
+  "instances_root": "/home/brasides/.ploke-eval/instances/prototype1/p1-walk-dbmanifest-20260626-214948",
+  "batches_root": "/home/brasides/.ploke-eval/batches/prototype1/p1-walk-dbmanifest-20260626-214948",
+  "eval": {
+    "include_partial": false,
+    "stop_on_error": false,
+    "budget": {
+      "max_turns": 40,
+      "max_tool_calls": 200,
+      "wall_clock_secs": 1800
+    },
+    "batch_prefix": "ripgrep-burntsushi-ripgrep-2209"
+  },
+  "protocol": {
+    "model_id": "google/gemini-2.5-flash",
+    "route_source": "direct_google",
+    "include_partial": true,
+    "include_incompatible": false,
+    "include_failed": false,
+    "stop_on_error": false,
+    "max_concurrency": 100,
+    "tool_review_parallelism": 1,
+    "max_tokens": 4096,
+    "reasoning": {
+      "mode": "omit"
+    }
+  }
+}

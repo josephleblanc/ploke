@@ -1871,6 +1871,43 @@ fn loop_walk_audit_command_parses() {
 }
 
 #[test]
+fn loop_walk_db_query_command_parses() {
+    let parsed = Cli::try_parse_from([
+        "ploke-eval",
+        "loop",
+        "walk",
+        "db_query",
+        "--repo-root",
+        "/tmp/parent",
+        "--campaign",
+        "campaign-1",
+        "--format",
+        "json",
+        "--script",
+        "::relations",
+    ])
+    .expect("loop walk db_query should parse");
+
+    match parsed.command {
+        Command::Loop(LoopCommand {
+            command: LoopSubcommand::Prototype1StateWalk(cmd),
+        }) => match cmd.command {
+            Prototype1StateWalkSubcommand::DbQuery(cmd) => {
+                assert_eq!(cmd.repo_root, Some(PathBuf::from("/tmp/parent")));
+                assert_eq!(
+                    cmd.campaign.as_ref().map(|id| id.as_str()),
+                    Some("campaign-1")
+                );
+                assert_eq!(cmd.format, InspectOutputFormat::Json);
+                assert_eq!(cmd.script, "::relations");
+            }
+            other => panic!("unexpected walk subcommand: {:?}", other),
+        },
+        other => panic!("unexpected command shape: {:?}", other),
+    }
+}
+
+#[test]
 fn loop_walk_show_with_version_command_parses() {
     let parsed = Cli::try_parse_from([
         "ploke-eval",

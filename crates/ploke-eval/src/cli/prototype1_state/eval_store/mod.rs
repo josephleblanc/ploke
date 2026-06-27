@@ -53,12 +53,13 @@ pub(crate) use continuation::{
     ContinuationDecisionEvidence, write_continuation_decision_to_owner_db,
 };
 #[cfg(test)]
-pub(crate) use cozo_store::{DbEvalStore, load_owner_eval_database};
+pub(crate) use cozo_store::DbEvalStore;
 pub(crate) use cozo_store::{
-    owner_eval_db_file_for_record_path, prototype1_eval_store_db_path, write_baseline_to_owner_db,
-    write_channel_message_to_owner_db, write_channel_receipt_to_owner_db,
-    write_import_event_to_owner_db, write_invocation_to_owner_db, write_log_ref_to_owner_db,
-    write_r0_context_to_owner_db, write_record_ref_to_owner_db, write_trace_event_to_owner_db,
+    load_owner_eval_database, owner_eval_db_file_for_record_path, prototype1_eval_store_db_path,
+    write_baseline_to_owner_db, write_channel_message_to_owner_db,
+    write_channel_receipt_to_owner_db, write_import_event_to_owner_db,
+    write_invocation_to_owner_db, write_log_ref_to_owner_db, write_r0_context_to_owner_db,
+    write_record_ref_to_owner_db, write_trace_event_to_owner_db,
 };
 pub(crate) use error::EvalStoreError;
 #[cfg(test)]
@@ -88,8 +89,7 @@ pub(crate) use selection::{SelectionDecisionEvidence, write_selection_decision_t
 #[cfg(test)]
 pub(crate) use setup::{
     BASELINE_INSTANCE_METRICS_REL, BASELINE_INSTANCE_REL, BASELINE_REL, CAMPAIGN_EVAL_BUDGET_REL,
-    CAMPAIGN_EVAL_LABEL_REL, CAMPAIGN_EVAL_POLICY_REL, CAMPAIGN_FRAMEWORK_TOOL_REL,
-    CAMPAIGN_PROCEDURE_REL, CAMPAIGN_PROTOCOL_POLICY_REL, CAMPAIGN_REL, CAMPAIGN_SOURCE_REL,
-    CLOSURE_ARTIFACT_REF_REL, CLOSURE_INSTANCE_REL, CLOSURE_PROTOCOL_COUNTS_REL,
-    CLOSURE_PROTOCOL_PROCEDURE_REL, CLOSURE_REF_REL, PROFILE_COMMITMENT_REL,
+    CAMPAIGN_EVAL_POLICY_REL, CAMPAIGN_PROTOCOL_POLICY_REL, CAMPAIGN_REL, CLOSURE_ARTIFACT_REF_REL,
+    CLOSURE_INSTANCE_REL, CLOSURE_PROTOCOL_COUNTS_REL, CLOSURE_PROTOCOL_PROCEDURE_REL,
+    CLOSURE_REF_REL, PROFILE_COMMITMENT_REL,
 };

@@ -23,14 +23,12 @@ use super::*;
 use super::{
     AGENT_TURN_EVENT_REL, AGENT_TURN_REL, APPLY_EVENT_REL, ARTIFACT_REF_REL, ARTIFACT_REL,
     ARTIFACT_SURFACE_REL, BASELINE_INSTANCE_METRICS_REL, BASELINE_INSTANCE_REL, BASELINE_REL,
-    BINARY_REF_REL, BUILD_EVENT_REL, CAMPAIGN_EVAL_BUDGET_REL, CAMPAIGN_EVAL_LABEL_REL,
-    CAMPAIGN_EVAL_POLICY_REL, CAMPAIGN_FRAMEWORK_TOOL_REL, CAMPAIGN_PROCEDURE_REL,
-    CAMPAIGN_PROTOCOL_POLICY_REL, CAMPAIGN_REL, CAMPAIGN_SOURCE_REL, CLOSURE_ARTIFACT_REF_REL,
-    CLOSURE_INSTANCE_REL, CLOSURE_PROTOCOL_COUNTS_REL, CLOSURE_PROTOCOL_PROCEDURE_REL,
-    CLOSURE_REF_REL, CONTINUATION_DECISION_REL, EVALUATION_INSTANCE_REL, EVALUATION_REL,
-    MESSAGE_EVENT_REL, MODEL_EXCHANGE_REL, OPERATION_REL, PATCH_REL, PROFILE_COMMITMENT_REL,
-    SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL, SELECTION_FINDING_REL, SELECTION_SCORE_REL,
-    TOOL_EVENT_REL,
+    BINARY_REF_REL, BUILD_EVENT_REL, CAMPAIGN_EVAL_BUDGET_REL, CAMPAIGN_EVAL_POLICY_REL,
+    CAMPAIGN_PROTOCOL_POLICY_REL, CAMPAIGN_REL, CLOSURE_ARTIFACT_REF_REL, CLOSURE_INSTANCE_REL,
+    CLOSURE_PROTOCOL_COUNTS_REL, CLOSURE_PROTOCOL_PROCEDURE_REL, CLOSURE_REF_REL,
+    CONTINUATION_DECISION_REL, EVALUATION_INSTANCE_REL, EVALUATION_REL, MESSAGE_EVENT_REL,
+    MODEL_EXCHANGE_REL, OPERATION_REL, PATCH_REL, PROFILE_COMMITMENT_REL, SELECTION_CANDIDATE_REL,
+    SELECTION_DECISION_REL, SELECTION_FINDING_REL, SELECTION_SCORE_REL, TOOL_EVENT_REL,
     api::EvalStorageMode,
     cozo_schema::eval_relation_exists,
     error::EvalStoreError,
@@ -114,22 +112,6 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
             )
         },
         {
-            let schema = &super::setup::CampaignDatasetSourceSchema::SCHEMA;
-            (
-                schema.relation(),
-                schema.script_create(),
-                schema.script_put(&eval_schema_params(schema)),
-            )
-        },
-        {
-            let schema = &super::setup::CampaignRequiredProcedureSchema::SCHEMA;
-            (
-                schema.relation(),
-                schema.script_create(),
-                schema.script_put(&eval_schema_params(schema)),
-            )
-        },
-        {
             let schema = &super::setup::CampaignEvalPolicySchema::SCHEMA;
             (
                 schema.relation(),
@@ -146,23 +128,7 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
             )
         },
         {
-            let schema = &super::setup::CampaignEvalLabelSchema::SCHEMA;
-            (
-                schema.relation(),
-                schema.script_create(),
-                schema.script_put(&eval_schema_params(schema)),
-            )
-        },
-        {
             let schema = &super::setup::CampaignProtocolPolicySchema::SCHEMA;
-            (
-                schema.relation(),
-                schema.script_create(),
-                schema.script_put(&eval_schema_params(schema)),
-            )
-        },
-        {
-            let schema = &super::setup::CampaignFrameworkToolSchema::SCHEMA;
             (
                 schema.relation(),
                 schema.script_create(),
@@ -442,23 +408,13 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
     let expected = vec![
         (
             "eval_campaign",
-            r#":create eval_campaign { campaign_id: String => schema_version: String, manifest_ref: String, prototype_root: String, manifest_sha256: String, profile_ref_id: String?, storage_backend: String?, benchmark_family: String, model_id: String?, provider_slug: String?, route_source: String?, instances_root: String?, batches_root: String?, ingested_at: String }"#,
-            r#"?[campaign_id, schema_version, manifest_ref, prototype_root, manifest_sha256, profile_ref_id, storage_backend, benchmark_family, model_id, provider_slug, route_source, instances_root, batches_root, ingested_at] <- [[$campaign_id, $schema_version, $manifest_ref, $prototype_root, $manifest_sha256, $profile_ref_id, $storage_backend, $benchmark_family, $model_id, $provider_slug, $route_source, $instances_root, $batches_root, $ingested_at]] :put eval_campaign { campaign_id => schema_version, manifest_ref, prototype_root, manifest_sha256, profile_ref_id, storage_backend, benchmark_family, model_id, provider_slug, route_source, instances_root, batches_root, ingested_at }"#,
-        ),
-        (
-            "eval_campaign_dataset_source",
-            r#":create eval_campaign_dataset_source { campaign_id: String, source_index: Int => source_key: String?, path: String, label: String, url: String?, ingested_at: String }"#,
-            r#"?[campaign_id, source_index, source_key, path, label, url, ingested_at] <- [[$campaign_id, $source_index, $source_key, $path, $label, $url, $ingested_at]] :put eval_campaign_dataset_source { campaign_id, source_index => source_key, path, label, url, ingested_at }"#,
-        ),
-        (
-            "eval_campaign_required_procedure",
-            r#":create eval_campaign_required_procedure { campaign_id: String, procedure_index: Int => procedure: String, ingested_at: String }"#,
-            r#"?[campaign_id, procedure_index, procedure, ingested_at] <- [[$campaign_id, $procedure_index, $procedure, $ingested_at]] :put eval_campaign_required_procedure { campaign_id, procedure_index => procedure, ingested_at }"#,
+            r#":create eval_campaign { campaign_id: String => schema_version: String, manifest_ref: String, prototype_root: String, manifest_sha256: String, profile_ref_id: String?, storage_backend: String?, benchmark_family: String, dataset_sources: [[String?;4]], model_id: String?, provider_slug: String?, route_source: String?, required_procedures: [String], instances_root: String?, batches_root: String?, framework_tools: [[String?;2]], ingested_at: String }"#,
+            r#"?[campaign_id, schema_version, manifest_ref, prototype_root, manifest_sha256, profile_ref_id, storage_backend, benchmark_family, dataset_sources, model_id, provider_slug, route_source, required_procedures, instances_root, batches_root, framework_tools, ingested_at] <- [[$campaign_id, $schema_version, $manifest_ref, $prototype_root, $manifest_sha256, $profile_ref_id, $storage_backend, $benchmark_family, $dataset_sources, $model_id, $provider_slug, $route_source, $required_procedures, $instances_root, $batches_root, $framework_tools, $ingested_at]] :put eval_campaign { campaign_id => schema_version, manifest_ref, prototype_root, manifest_sha256, profile_ref_id, storage_backend, benchmark_family, dataset_sources, model_id, provider_slug, route_source, required_procedures, instances_root, batches_root, framework_tools, ingested_at }"#,
         ),
         (
             "eval_campaign_eval_policy",
-            r#":create eval_campaign_eval_policy { campaign_id: String => include_partial: Bool, stop_on_error: Bool, limit_count: Int?, batch_prefix: String?, embedding_model_id: String?, embedding_provider_slug: String?, ingested_at: String }"#,
-            r#"?[campaign_id, include_partial, stop_on_error, limit_count, batch_prefix, embedding_model_id, embedding_provider_slug, ingested_at] <- [[$campaign_id, $include_partial, $stop_on_error, $limit_count, $batch_prefix, $embedding_model_id, $embedding_provider_slug, $ingested_at]] :put eval_campaign_eval_policy { campaign_id => include_partial, stop_on_error, limit_count, batch_prefix, embedding_model_id, embedding_provider_slug, ingested_at }"#,
+            r#":create eval_campaign_eval_policy { campaign_id: String => include_partial: Bool, stop_on_error: Bool, limit_count: Int?, include_dataset_labels: [String], exclude_dataset_labels: [String], batch_prefix: String?, embedding_model_id: String?, embedding_provider_slug: String?, ingested_at: String }"#,
+            r#"?[campaign_id, include_partial, stop_on_error, limit_count, include_dataset_labels, exclude_dataset_labels, batch_prefix, embedding_model_id, embedding_provider_slug, ingested_at] <- [[$campaign_id, $include_partial, $stop_on_error, $limit_count, $include_dataset_labels, $exclude_dataset_labels, $batch_prefix, $embedding_model_id, $embedding_provider_slug, $ingested_at]] :put eval_campaign_eval_policy { campaign_id => include_partial, stop_on_error, limit_count, include_dataset_labels, exclude_dataset_labels, batch_prefix, embedding_model_id, embedding_provider_slug, ingested_at }"#,
         ),
         (
             "eval_campaign_eval_budget",
@@ -466,19 +422,9 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
             r#"?[campaign_id, max_turns, max_tool_calls, wall_clock_secs, ingested_at] <- [[$campaign_id, $max_turns, $max_tool_calls, $wall_clock_secs, $ingested_at]] :put eval_campaign_eval_budget { campaign_id => max_turns, max_tool_calls, wall_clock_secs, ingested_at }"#,
         ),
         (
-            "eval_campaign_eval_label",
-            r#":create eval_campaign_eval_label { campaign_id: String, filter_kind: String, label_index: Int => label: String, ingested_at: String }"#,
-            r#"?[campaign_id, filter_kind, label_index, label, ingested_at] <- [[$campaign_id, $filter_kind, $label_index, $label, $ingested_at]] :put eval_campaign_eval_label { campaign_id, filter_kind, label_index => label, ingested_at }"#,
-        ),
-        (
             "eval_campaign_protocol_policy",
             r#":create eval_campaign_protocol_policy { campaign_id: String => model_id: String?, provider_slug: String?, route_source: String?, include_partial: Bool, include_incompatible: Bool, include_failed: Bool, stop_on_error: Bool, limit_count: Int?, max_concurrency: Int, tool_review_parallelism: Int, max_tokens: Int, reasoning_mode: String, reasoning_effort: String?, ingested_at: String }"#,
             r#"?[campaign_id, model_id, provider_slug, route_source, include_partial, include_incompatible, include_failed, stop_on_error, limit_count, max_concurrency, tool_review_parallelism, max_tokens, reasoning_mode, reasoning_effort, ingested_at] <- [[$campaign_id, $model_id, $provider_slug, $route_source, $include_partial, $include_incompatible, $include_failed, $stop_on_error, $limit_count, $max_concurrency, $tool_review_parallelism, $max_tokens, $reasoning_mode, $reasoning_effort, $ingested_at]] :put eval_campaign_protocol_policy { campaign_id => model_id, provider_slug, route_source, include_partial, include_incompatible, include_failed, stop_on_error, limit_count, max_concurrency, tool_review_parallelism, max_tokens, reasoning_mode, reasoning_effort, ingested_at }"#,
-        ),
-        (
-            "eval_campaign_framework_tool",
-            r#":create eval_campaign_framework_tool { campaign_id: String, tool_name: String => version: String?, ingested_at: String }"#,
-            r#"?[campaign_id, tool_name, version, ingested_at] <- [[$campaign_id, $tool_name, $version, $ingested_at]] :put eval_campaign_framework_tool { campaign_id, tool_name => version, ingested_at }"#,
         ),
         (
             "eval_profile_commitment",
@@ -739,10 +685,6 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
         .expect("schema install is idempotent");
 
     assert!(eval_relation_exists(&db, CAMPAIGN_REL).expect("campaign rel exists"));
-    assert!(eval_relation_exists(&db, CAMPAIGN_SOURCE_REL).expect("campaign source rel exists"));
-    assert!(
-        eval_relation_exists(&db, CAMPAIGN_PROCEDURE_REL).expect("campaign procedure rel exists")
-    );
     assert!(
         eval_relation_exists(&db, CAMPAIGN_EVAL_POLICY_REL)
             .expect("campaign eval policy rel exists")
@@ -752,15 +694,8 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
             .expect("campaign eval budget rel exists")
     );
     assert!(
-        eval_relation_exists(&db, CAMPAIGN_EVAL_LABEL_REL).expect("campaign eval label rel exists")
-    );
-    assert!(
         eval_relation_exists(&db, CAMPAIGN_PROTOCOL_POLICY_REL)
             .expect("campaign protocol policy rel exists")
-    );
-    assert!(
-        eval_relation_exists(&db, CAMPAIGN_FRAMEWORK_TOOL_REL)
-            .expect("campaign framework tool rel exists")
     );
     assert!(
         eval_relation_exists(&db, PROFILE_COMMITMENT_REL).expect("profile commitment rel exists")
@@ -1061,29 +996,22 @@ fn prototype1_eval_store_setup_relations_round_trip_actual_loop_types() {
         "/tmp/batches"
     );
 
-    let sources = query_campaign_sources(&db, &campaign_id);
-    assert_eq!(sources.rows.len(), 1);
-    let source_row = sources.row_refs().next().expect("campaign source row");
-    assert_eq!(source_row.get::<i64>("source_index").expect("index"), 0);
-    assert_eq!(
-        source_row.get::<String>("source_key").expect("source key"),
-        "ripgrep"
-    );
-    assert_eq!(
-        source_row.get::<String>("label").expect("source label"),
-        "prototype1/ripgrep"
-    );
-
-    let procedures = query_campaign_procedures(&db, &campaign_id);
-    assert_eq!(procedures.rows.len(), 1);
-    let procedure_row = procedures
-        .row_refs()
-        .next()
-        .expect("campaign procedure row");
-    assert_eq!(
-        procedure_row.get::<String>("procedure").expect("procedure"),
-        "tool-call-review"
-    );
+    let sources = row
+        .get::<Vec<Vec<Option<String>>>>("dataset_sources")
+        .expect("dataset sources");
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0][0].as_deref(), Some("ripgrep"));
+    assert_eq!(sources[0][2].as_deref(), Some("prototype1/ripgrep"));
+    let procedures = row
+        .get::<Vec<String>>("required_procedures")
+        .expect("required procedures");
+    assert_eq!(procedures, vec!["tool-call-review".to_string()]);
+    let tools = row
+        .get::<Vec<Vec<Option<String>>>>("framework_tools")
+        .expect("framework tools");
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0][0].as_deref(), Some("cargo"));
+    assert_eq!(tools[0][1].as_deref(), Some("1.85"));
 
     let eval = query_campaign_eval(&db, &campaign_id);
     assert_eq!(eval.rows.len(), 1);
@@ -1111,22 +1039,17 @@ fn prototype1_eval_store_setup_relations_round_trip_actual_loop_types() {
     assert_eq!(budget_row.get::<i64>("max_tool_calls").expect("calls"), 11);
     assert_eq!(budget_row.get::<i64>("wall_clock_secs").expect("wall"), 13);
 
-    let labels = query_campaign_labels(&db, &campaign_id);
-    assert_eq!(labels.rows.len(), 2);
-    let mut label_rows = BTreeMap::new();
-    for label_row in labels.row_refs() {
-        label_rows.insert(
-            label_row.get::<String>("filter_kind").expect("kind"),
-            label_row.get::<String>("label").expect("label"),
-        );
-    }
     assert_eq!(
-        label_rows.get("include_dataset_labels").map(String::as_str),
-        Some("prototype1/ripgrep")
+        eval_row
+            .get::<Vec<String>>("include_dataset_labels")
+            .expect("include labels"),
+        vec!["prototype1/ripgrep".to_string()]
     );
     assert_eq!(
-        label_rows.get("exclude_dataset_labels").map(String::as_str),
-        Some("prototype1/skip")
+        eval_row
+            .get::<Vec<String>>("exclude_dataset_labels")
+            .expect("exclude labels"),
+        vec!["prototype1/skip".to_string()]
     );
 
     let protocol = query_campaign_protocol(&db, &campaign_id);
@@ -1175,15 +1098,6 @@ fn prototype1_eval_store_setup_relations_round_trip_actual_loop_types() {
             .get::<String>("reasoning_mode")
             .expect("reasoning"),
         "omit"
-    );
-
-    let tools = query_campaign_tools(&db, &campaign_id);
-    assert_eq!(tools.rows.len(), 1);
-    let tool_row = tools.row_refs().next().expect("campaign tool row");
-    assert_eq!(tool_row.get::<String>("tool_name").expect("tool"), "cargo");
-    assert_eq!(
-        tool_row.get::<String>("version").expect("tool version"),
-        "1.85"
     );
 
     let loaded = CampaignManifest::read_from_eval_db(&db, &campaign_id)
@@ -1273,6 +1187,44 @@ fn prototype1_eval_store_setup_relations_round_trip_actual_loop_types() {
         "applied"
     );
     assert!(metrics_row.get::<bool>("valid_patch").expect("valid patch"));
+}
+
+#[test]
+fn prototype1_eval_store_campaign_manifest_fixture_round_trips_through_schema() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(
+        "src/tests/fixtures/prototype1-campaign-manifest/p1-walk-dbmanifest-20260626-214948.campaign.json",
+    );
+    let manifest: CampaignManifest =
+        serde_json::from_slice(&fs::read(&fixture).expect("fixture campaign manifest reads"))
+            .expect("fixture campaign manifest parses");
+    let db = Database::new_init().expect("db");
+    let store = DbEvalStore::new(&db);
+    store.install_schema().expect("schema install");
+
+    manifest
+        .put_into_eval_db(&db, &fixture, profile::EvalStorageBackend::DualStrict, None)
+        .expect("fixture campaign manifest writes to eval db");
+
+    let loaded = CampaignManifest::read_from_eval_db(&db, &manifest.campaign_id)
+        .expect("fixture campaign manifest reads from eval db");
+    assert_eq!(
+        serde_json::to_value(&loaded).expect("loaded fixture manifest json"),
+        serde_json::to_value(&manifest).expect("source fixture manifest json")
+    );
+
+    let campaign = query_campaign(&db, &manifest.campaign_id);
+    let row = campaign.row_refs().next().expect("campaign row");
+    assert_eq!(
+        row.get::<Vec<Vec<Option<String>>>>("dataset_sources")
+            .expect("dataset source list")
+            .len(),
+        manifest.dataset_sources.len()
+    );
+    assert_eq!(
+        row.get::<Vec<String>>("required_procedures")
+            .expect("procedure list"),
+        manifest.required_procedures
+    );
 }
 
 #[test]
@@ -2056,8 +2008,8 @@ fn query_campaign(db: &Database, campaign_id: &CampaignId) -> QueryResult {
     params.insert("campaign_id".to_string(), campaign_id.to_string().into());
     db.raw_query_params(
         r#"
-?[campaign_id, storage_backend, profile_ref_id, benchmark_family, model_id, route_source, instances_root, batches_root] :=
-    *eval_campaign { campaign_id, storage_backend, profile_ref_id, benchmark_family, model_id, route_source, instances_root, batches_root },
+?[campaign_id, storage_backend, profile_ref_id, benchmark_family, dataset_sources, model_id, route_source, required_procedures, instances_root, batches_root, framework_tools] :=
+    *eval_campaign { campaign_id, storage_backend, profile_ref_id, benchmark_family, dataset_sources, model_id, route_source, required_procedures, instances_root, batches_root, framework_tools },
     campaign_id = $campaign_id
 "#,
         params,
@@ -2065,41 +2017,13 @@ fn query_campaign(db: &Database, campaign_id: &CampaignId) -> QueryResult {
     .expect("query campaign")
 }
 
-fn query_campaign_sources(db: &Database, campaign_id: &CampaignId) -> QueryResult {
-    let mut params = BTreeMap::new();
-    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
-    db.raw_query_params(
-        r#"
-?[source_index, source_key, path, label, url] :=
-    *eval_campaign_dataset_source { campaign_id, source_index, source_key, path, label, url },
-    campaign_id = $campaign_id
-"#,
-        params,
-    )
-    .expect("query campaign sources")
-}
-
-fn query_campaign_procedures(db: &Database, campaign_id: &CampaignId) -> QueryResult {
-    let mut params = BTreeMap::new();
-    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
-    db.raw_query_params(
-        r#"
-?[procedure_index, procedure] :=
-    *eval_campaign_required_procedure { campaign_id, procedure_index, procedure },
-    campaign_id = $campaign_id
-"#,
-        params,
-    )
-    .expect("query campaign procedures")
-}
-
 fn query_campaign_eval(db: &Database, campaign_id: &CampaignId) -> QueryResult {
     let mut params = BTreeMap::new();
     params.insert("campaign_id".to_string(), campaign_id.to_string().into());
     db.raw_query_params(
         r#"
-?[include_partial, stop_on_error, limit_count, batch_prefix, embedding_model_id, embedding_provider_slug] :=
-    *eval_campaign_eval_policy { campaign_id, include_partial, stop_on_error, limit_count, batch_prefix, embedding_model_id, embedding_provider_slug },
+?[include_partial, stop_on_error, limit_count, include_dataset_labels, exclude_dataset_labels, batch_prefix, embedding_model_id, embedding_provider_slug] :=
+    *eval_campaign_eval_policy { campaign_id, include_partial, stop_on_error, limit_count, include_dataset_labels, exclude_dataset_labels, batch_prefix, embedding_model_id, embedding_provider_slug },
     campaign_id = $campaign_id
 "#,
         params,
@@ -2121,20 +2045,6 @@ fn query_campaign_budget(db: &Database, campaign_id: &CampaignId) -> QueryResult
     .expect("query campaign eval budget")
 }
 
-fn query_campaign_labels(db: &Database, campaign_id: &CampaignId) -> QueryResult {
-    let mut params = BTreeMap::new();
-    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
-    db.raw_query_params(
-        r#"
-?[filter_kind, label_index, label] :=
-    *eval_campaign_eval_label { campaign_id, filter_kind, label_index, label },
-    campaign_id = $campaign_id
-"#,
-        params,
-    )
-    .expect("query campaign labels")
-}
-
 fn query_campaign_protocol(db: &Database, campaign_id: &CampaignId) -> QueryResult {
     let mut params = BTreeMap::new();
     params.insert("campaign_id".to_string(), campaign_id.to_string().into());
@@ -2147,20 +2057,6 @@ fn query_campaign_protocol(db: &Database, campaign_id: &CampaignId) -> QueryResu
         params,
     )
     .expect("query campaign protocol")
-}
-
-fn query_campaign_tools(db: &Database, campaign_id: &CampaignId) -> QueryResult {
-    let mut params = BTreeMap::new();
-    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
-    db.raw_query_params(
-        r#"
-?[tool_name, version] :=
-    *eval_campaign_framework_tool { campaign_id, tool_name, version },
-    campaign_id = $campaign_id
-"#,
-        params,
-    )
-    .expect("query campaign tools")
 }
 
 fn query_profile_commitments(db: &Database, campaign_id: &CampaignId) -> QueryResult {

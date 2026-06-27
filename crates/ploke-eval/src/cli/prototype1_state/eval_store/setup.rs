@@ -38,42 +38,28 @@ define_eval_schema!(CampaignSchema {
     profile_ref_id: "String?",
     storage_backend: "String?",
     benchmark_family: "String",
+    dataset_sources: "[[String?;4]]",
     model_id: "String?",
     provider_slug: "String?",
     route_source: "String?",
+    required_procedures: "[String]",
     instances_root: "String?",
     batches_root: "String?",
+    framework_tools: "[[String?;2]]",
     ingested_at: "String",
 });
 
-// Normalized child rows for non-scalar `CampaignManifest` fields. Keep the
+// Campaign list fields are stored as Cozo lists on their owning rows. Keep the
 // manifest path/hash on `eval_campaign` as provenance, but make campaign config
 // queryable without reading the manifest file.
-define_eval_schema!(CampaignDatasetSourceSchema {
-    "eval_campaign_dataset_source",
-    campaign_id: "String",
-    source_index: "Int" =>
-    source_key: "String?",
-    path: "String",
-    label: "String",
-    url: "String?",
-    ingested_at: "String",
-});
-
-define_eval_schema!(CampaignRequiredProcedureSchema {
-    "eval_campaign_required_procedure",
-    campaign_id: "String",
-    procedure_index: "Int" =>
-    procedure: "String",
-    ingested_at: "String",
-});
-
 define_eval_schema!(CampaignEvalPolicySchema {
     "eval_campaign_eval_policy",
     campaign_id: "String" =>
     include_partial: "Bool",
     stop_on_error: "Bool",
     limit_count: "Int?",
+    include_dataset_labels: "[String]",
+    exclude_dataset_labels: "[String]",
     batch_prefix: "String?",
     embedding_model_id: "String?",
     embedding_provider_slug: "String?",
@@ -86,15 +72,6 @@ define_eval_schema!(CampaignEvalBudgetSchema {
     max_turns: "Int",
     max_tool_calls: "Int",
     wall_clock_secs: "Int",
-    ingested_at: "String",
-});
-
-define_eval_schema!(CampaignEvalLabelSchema {
-    "eval_campaign_eval_label",
-    campaign_id: "String",
-    filter_kind: "String",
-    label_index: "Int" =>
-    label: "String",
     ingested_at: "String",
 });
 
@@ -114,14 +91,6 @@ define_eval_schema!(CampaignProtocolPolicySchema {
     max_tokens: "Int",
     reasoning_mode: "String",
     reasoning_effort: "String?",
-    ingested_at: "String",
-});
-
-define_eval_schema!(CampaignFrameworkToolSchema {
-    "eval_campaign_framework_tool",
-    campaign_id: "String",
-    tool_name: "String" =>
-    version: "String?",
     ingested_at: "String",
 });
 
@@ -263,13 +232,9 @@ define_eval_schema!(BaselineInstanceMetricsSchema {
 });
 
 pub(crate) const CAMPAIGN_REL: &str = CampaignSchema::RELATION;
-pub(crate) const CAMPAIGN_SOURCE_REL: &str = CampaignDatasetSourceSchema::RELATION;
-pub(crate) const CAMPAIGN_PROCEDURE_REL: &str = CampaignRequiredProcedureSchema::RELATION;
 pub(crate) const CAMPAIGN_EVAL_POLICY_REL: &str = CampaignEvalPolicySchema::RELATION;
 pub(crate) const CAMPAIGN_EVAL_BUDGET_REL: &str = CampaignEvalBudgetSchema::RELATION;
-pub(crate) const CAMPAIGN_EVAL_LABEL_REL: &str = CampaignEvalLabelSchema::RELATION;
 pub(crate) const CAMPAIGN_PROTOCOL_POLICY_REL: &str = CampaignProtocolPolicySchema::RELATION;
-pub(crate) const CAMPAIGN_FRAMEWORK_TOOL_REL: &str = CampaignFrameworkToolSchema::RELATION;
 pub(crate) const PROFILE_COMMITMENT_REL: &str = ProfileCommitmentSchema::RELATION;
 pub(crate) const CLOSURE_REF_REL: &str = ClosureRefSchema::RELATION;
 pub(crate) const CLOSURE_INSTANCE_REL: &str = ClosureInstanceSchema::RELATION;
@@ -282,17 +247,10 @@ pub(crate) const BASELINE_INSTANCE_METRICS_REL: &str = BaselineInstanceMetricsSc
 
 pub(super) fn ensure_setup_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), EvalStoreError> {
     CampaignSchema::SCHEMA.ensure_installed(db, "schema.eval_campaign")?;
-    CampaignDatasetSourceSchema::SCHEMA
-        .ensure_installed(db, "schema.eval_campaign_dataset_source")?;
-    CampaignRequiredProcedureSchema::SCHEMA
-        .ensure_installed(db, "schema.eval_campaign_required_procedure")?;
     CampaignEvalPolicySchema::SCHEMA.ensure_installed(db, "schema.eval_campaign_eval_policy")?;
     CampaignEvalBudgetSchema::SCHEMA.ensure_installed(db, "schema.eval_campaign_eval_budget")?;
-    CampaignEvalLabelSchema::SCHEMA.ensure_installed(db, "schema.eval_campaign_eval_label")?;
     CampaignProtocolPolicySchema::SCHEMA
         .ensure_installed(db, "schema.eval_campaign_protocol_policy")?;
-    CampaignFrameworkToolSchema::SCHEMA
-        .ensure_installed(db, "schema.eval_campaign_framework_tool")?;
     ProfileCommitmentSchema::SCHEMA.ensure_installed(db, "schema.eval_profile_commitment")?;
     ClosureRefSchema::SCHEMA.ensure_installed(db, "schema.eval_closure_ref")?;
     ClosureInstanceSchema::SCHEMA.ensure_installed(db, "schema.eval_closure_instance")?;
@@ -418,6 +376,10 @@ impl CampaignManifest {
             enum_string(&self.benchmark_family, "eval_campaign.benchmark_family")?.into(),
         );
         params.insert(
+            "dataset_sources".to_string(),
+            dataset_sources_param(&self.dataset_sources),
+        );
+        params.insert(
             "model_id".to_string(),
             option_string_param(self.model_id.clone()),
         );
@@ -430,6 +392,10 @@ impl CampaignManifest {
             option_enum_string_param(self.route_source.as_ref(), "eval_campaign.route_source")?,
         );
         params.insert(
+            "required_procedures".to_string(),
+            string_list_param(&self.required_procedures),
+        );
+        params.insert(
             "instances_root".to_string(),
             option_path_param(self.instances_root.as_deref()),
         );
@@ -437,14 +403,15 @@ impl CampaignManifest {
             "batches_root".to_string(),
             option_path_param(self.batches_root.as_deref()),
         );
+        params.insert(
+            "framework_tools".to_string(),
+            framework_tools_param(&self.framework),
+        );
         params.insert("ingested_at".to_string(), ingested_at.clone().into());
 
         put_eval_params(db, &CampaignSchema::SCHEMA, params, "put.eval_campaign")?;
-        put_campaign_sources(db, self, &ingested_at)?;
-        put_campaign_procedures(db, self, &ingested_at)?;
         put_campaign_eval_rows(db, self, &ingested_at)?;
         put_campaign_protocol_row(db, self, &ingested_at)?;
-        put_campaign_tool_rows(db, self, &ingested_at)?;
 
         Ok(())
     }
@@ -465,66 +432,6 @@ pub(super) fn put_campaign_manifest<D: EvalDb + ?Sized>(
     profile_ref_id: Option<&str>,
 ) -> Result<(), EvalStoreError> {
     manifest.put_into_eval_db(db, manifest_path, storage_backend, profile_ref_id)
-}
-
-fn put_campaign_sources<D: EvalDb + ?Sized>(
-    db: &D,
-    manifest: &CampaignManifest,
-    ingested_at: &str,
-) -> Result<(), EvalStoreError> {
-    for (index, source) in manifest.dataset_sources.iter().enumerate() {
-        let mut params = BTreeMap::new();
-        params.insert(
-            "campaign_id".to_string(),
-            manifest.campaign_id.to_string().into(),
-        );
-        params.insert(
-            "source_index".to_string(),
-            usize_to_i64(index, "eval_campaign_dataset_source.source_index")?.into(),
-        );
-        params.insert(
-            "source_key".to_string(),
-            option_string_param(source.key.clone()),
-        );
-        params.insert("path".to_string(), source.path.display().to_string().into());
-        params.insert("label".to_string(), source.label.clone().into());
-        params.insert("url".to_string(), option_string_param(source.url.clone()));
-        params.insert("ingested_at".to_string(), ingested_at.to_string().into());
-        put_eval_params(
-            db,
-            &CampaignDatasetSourceSchema::SCHEMA,
-            params,
-            "put.eval_campaign_dataset_source",
-        )?;
-    }
-    Ok(())
-}
-
-fn put_campaign_procedures<D: EvalDb + ?Sized>(
-    db: &D,
-    manifest: &CampaignManifest,
-    ingested_at: &str,
-) -> Result<(), EvalStoreError> {
-    for (index, procedure) in manifest.required_procedures.iter().enumerate() {
-        let mut params = BTreeMap::new();
-        params.insert(
-            "campaign_id".to_string(),
-            manifest.campaign_id.to_string().into(),
-        );
-        params.insert(
-            "procedure_index".to_string(),
-            usize_to_i64(index, "eval_campaign_required_procedure.procedure_index")?.into(),
-        );
-        params.insert("procedure".to_string(), procedure.clone().into());
-        params.insert("ingested_at".to_string(), ingested_at.to_string().into());
-        put_eval_params(
-            db,
-            &CampaignRequiredProcedureSchema::SCHEMA,
-            params,
-            "put.eval_campaign_required_procedure",
-        )?;
-    }
-    Ok(())
 }
 
 fn put_campaign_eval_rows<D: EvalDb + ?Sized>(
@@ -549,6 +456,14 @@ fn put_campaign_eval_rows<D: EvalDb + ?Sized>(
     params.insert(
         "limit_count".to_string(),
         option_usize_param(eval.limit, "eval_campaign_eval_policy.limit_count")?,
+    );
+    params.insert(
+        "include_dataset_labels".to_string(),
+        string_list_param(&eval.include_dataset_labels),
+    );
+    params.insert(
+        "exclude_dataset_labels".to_string(),
+        string_list_param(&eval.exclude_dataset_labels),
     );
     params.insert(
         "batch_prefix".to_string(),
@@ -591,52 +506,7 @@ fn put_campaign_eval_rows<D: EvalDb + ?Sized>(
         &CampaignEvalBudgetSchema::SCHEMA,
         params,
         "put.eval_campaign_eval_budget",
-    )?;
-
-    put_campaign_labels(
-        db,
-        manifest,
-        "include_dataset_labels",
-        &eval.include_dataset_labels,
-        ingested_at,
-    )?;
-    put_campaign_labels(
-        db,
-        manifest,
-        "exclude_dataset_labels",
-        &eval.exclude_dataset_labels,
-        ingested_at,
     )
-}
-
-fn put_campaign_labels<D: EvalDb + ?Sized>(
-    db: &D,
-    manifest: &CampaignManifest,
-    filter_kind: &str,
-    labels: &[String],
-    ingested_at: &str,
-) -> Result<(), EvalStoreError> {
-    for (index, label) in labels.iter().enumerate() {
-        let mut params = BTreeMap::new();
-        params.insert(
-            "campaign_id".to_string(),
-            manifest.campaign_id.to_string().into(),
-        );
-        params.insert("filter_kind".to_string(), filter_kind.to_string().into());
-        params.insert(
-            "label_index".to_string(),
-            usize_to_i64(index, "eval_campaign_eval_label.label_index")?.into(),
-        );
-        params.insert("label".to_string(), label.clone().into());
-        params.insert("ingested_at".to_string(), ingested_at.to_string().into());
-        put_eval_params(
-            db,
-            &CampaignEvalLabelSchema::SCHEMA,
-            params,
-            "put.eval_campaign_eval_label",
-        )?;
-    }
-    Ok(())
 }
 
 fn put_campaign_protocol_row<D: EvalDb + ?Sized>(
@@ -732,41 +602,17 @@ fn put_campaign_protocol_row<D: EvalDb + ?Sized>(
     )
 }
 
-fn put_campaign_tool_rows<D: EvalDb + ?Sized>(
-    db: &D,
-    manifest: &CampaignManifest,
-    ingested_at: &str,
-) -> Result<(), EvalStoreError> {
-    for (tool_name, tool) in &manifest.framework.tools {
-        let mut params = BTreeMap::new();
-        params.insert(
-            "campaign_id".to_string(),
-            manifest.campaign_id.to_string().into(),
-        );
-        params.insert("tool_name".to_string(), tool_name.clone().into());
-        params.insert(
-            "version".to_string(),
-            option_string_param(tool.version.clone()),
-        );
-        params.insert("ingested_at".to_string(), ingested_at.to_string().into());
-        put_eval_params(
-            db,
-            &CampaignFrameworkToolSchema::SCHEMA,
-            params,
-            "put.eval_campaign_framework_tool",
-        )?;
-    }
-    Ok(())
-}
-
 struct CampaignHead {
     schema_version: String,
     benchmark: BenchmarkFamily,
+    dataset_sources: Vec<RegistryDatasetSource>,
     model_id: Option<String>,
     provider_slug: Option<String>,
     route_source: Option<ploke_llm::request::models::ModelRouteSource>,
+    required_procedures: Vec<String>,
     instances_root: Option<PathBuf>,
     batches_root: Option<PathBuf>,
+    framework: FrameworkConfig,
 }
 
 fn read_campaign_manifest<D: EvalDb + ?Sized>(
@@ -776,24 +622,21 @@ fn read_campaign_manifest<D: EvalDb + ?Sized>(
     let head = read_campaign_head(db, campaign_id)?;
     let mut eval = read_campaign_eval(db, campaign_id)?;
     eval.budget = read_campaign_budget(db, campaign_id)?;
-    let (include, exclude) = read_campaign_labels(db, campaign_id)?;
-    eval.include_dataset_labels = include;
-    eval.exclude_dataset_labels = exclude;
 
     Ok(CampaignManifest {
         schema_version: head.schema_version,
         campaign_id: campaign_id.clone(),
         benchmark_family: head.benchmark,
-        dataset_sources: read_campaign_sources(db, campaign_id)?,
+        dataset_sources: head.dataset_sources,
         model_id: head.model_id,
         provider_slug: head.provider_slug,
         route_source: head.route_source,
-        required_procedures: read_campaign_procedures(db, campaign_id)?,
+        required_procedures: head.required_procedures,
         instances_root: head.instances_root,
         batches_root: head.batches_root,
         eval,
         protocol: read_campaign_protocol(db, campaign_id)?,
-        framework: read_campaign_tools(db, campaign_id)?,
+        framework: head.framework,
     })
 }
 
@@ -804,8 +647,8 @@ fn read_campaign_head<D: EvalDb + ?Sized>(
     let rows = query_campaign_rows(
         db,
         r#"
-?[schema_version, benchmark_family, model_id, provider_slug, route_source, instances_root, batches_root] :=
-    *eval_campaign { campaign_id, schema_version, benchmark_family, model_id, provider_slug, route_source, instances_root, batches_root },
+?[schema_version, benchmark_family, dataset_sources, model_id, provider_slug, route_source, required_procedures, instances_root, batches_root, framework_tools] :=
+    *eval_campaign { campaign_id, schema_version, benchmark_family, dataset_sources, model_id, provider_slug, route_source, required_procedures, instances_root, batches_root, framework_tools },
     campaign_id = $campaign_id
 "#,
         campaign_id,
@@ -818,73 +661,18 @@ fn read_campaign_head<D: EvalDb + ?Sized>(
             read_string(&rows, row, "benchmark_family")?,
             "eval_campaign.benchmark_family",
         )?,
+        dataset_sources: read_dataset_sources(&rows, row, "dataset_sources")?,
         model_id: read_optional_string(&rows, row, "model_id")?,
         provider_slug: read_optional_string(&rows, row, "provider_slug")?,
         route_source: parse_optional_enum(
             read_optional_string(&rows, row, "route_source")?,
             "eval_campaign.route_source",
         )?,
+        required_procedures: read_string_list(&rows, row, "required_procedures")?,
         instances_root: read_optional_string(&rows, row, "instances_root")?.map(PathBuf::from),
         batches_root: read_optional_string(&rows, row, "batches_root")?.map(PathBuf::from),
+        framework: read_framework_tools(&rows, row, "framework_tools")?,
     })
-}
-
-fn read_campaign_sources<D: EvalDb + ?Sized>(
-    db: &D,
-    campaign_id: &ploke_records::ids::CampaignId,
-) -> Result<Vec<RegistryDatasetSource>, EvalStoreError> {
-    let rows = query_campaign_rows(
-        db,
-        r#"
-?[source_index, source_key, path, label, url] :=
-    *eval_campaign_dataset_source { campaign_id, source_index, source_key, path, label, url },
-    campaign_id = $campaign_id
-"#,
-        campaign_id,
-        "read.eval_campaign_dataset_source",
-    )?;
-    let mut sources = Vec::new();
-    for row in &rows.rows {
-        sources.push((
-            read_i64(&rows, row, "source_index")?,
-            RegistryDatasetSource {
-                key: read_optional_string(&rows, row, "source_key")?,
-                path: PathBuf::from(read_string(&rows, row, "path")?),
-                label: read_string(&rows, row, "label")?,
-                url: read_optional_string(&rows, row, "url")?,
-            },
-        ));
-    }
-    sources.sort_by_key(|(index, _)| *index);
-    Ok(sources.into_iter().map(|(_, source)| source).collect())
-}
-
-fn read_campaign_procedures<D: EvalDb + ?Sized>(
-    db: &D,
-    campaign_id: &ploke_records::ids::CampaignId,
-) -> Result<Vec<String>, EvalStoreError> {
-    let rows = query_campaign_rows(
-        db,
-        r#"
-?[procedure_index, procedure] :=
-    *eval_campaign_required_procedure { campaign_id, procedure_index, procedure },
-    campaign_id = $campaign_id
-"#,
-        campaign_id,
-        "read.eval_campaign_required_procedure",
-    )?;
-    let mut procedures = Vec::new();
-    for row in &rows.rows {
-        procedures.push((
-            read_i64(&rows, row, "procedure_index")?,
-            read_string(&rows, row, "procedure")?,
-        ));
-    }
-    procedures.sort_by_key(|(index, _)| *index);
-    Ok(procedures
-        .into_iter()
-        .map(|(_, procedure)| procedure)
-        .collect())
 }
 
 fn read_campaign_eval<D: EvalDb + ?Sized>(
@@ -894,8 +682,8 @@ fn read_campaign_eval<D: EvalDb + ?Sized>(
     let rows = query_campaign_rows(
         db,
         r#"
-?[include_partial, stop_on_error, limit_count, batch_prefix, embedding_model_id, embedding_provider_slug] :=
-    *eval_campaign_eval_policy { campaign_id, include_partial, stop_on_error, limit_count, batch_prefix, embedding_model_id, embedding_provider_slug },
+?[include_partial, stop_on_error, limit_count, include_dataset_labels, exclude_dataset_labels, batch_prefix, embedding_model_id, embedding_provider_slug] :=
+    *eval_campaign_eval_policy { campaign_id, include_partial, stop_on_error, limit_count, include_dataset_labels, exclude_dataset_labels, batch_prefix, embedding_model_id, embedding_provider_slug },
     campaign_id = $campaign_id
 "#,
         campaign_id,
@@ -906,8 +694,8 @@ fn read_campaign_eval<D: EvalDb + ?Sized>(
         include_partial: read_bool(&rows, row, "include_partial")?,
         stop_on_error: read_bool(&rows, row, "stop_on_error")?,
         limit: read_optional_usize(&rows, row, "limit_count")?,
-        include_dataset_labels: Vec::new(),
-        exclude_dataset_labels: Vec::new(),
+        include_dataset_labels: read_string_list(&rows, row, "include_dataset_labels")?,
+        exclude_dataset_labels: read_string_list(&rows, row, "exclude_dataset_labels")?,
         budget: EvalBudget::default(),
         batch_prefix: read_optional_string(&rows, row, "batch_prefix")?,
         embedding_model_id: read_optional_string(&rows, row, "embedding_model_id")?,
@@ -935,46 +723,6 @@ fn read_campaign_budget<D: EvalDb + ?Sized>(
         max_tool_calls: read_u32(&rows, row, "max_tool_calls")?,
         wall_clock_secs: read_u32(&rows, row, "wall_clock_secs")?,
     })
-}
-
-fn read_campaign_labels<D: EvalDb + ?Sized>(
-    db: &D,
-    campaign_id: &ploke_records::ids::CampaignId,
-) -> Result<(Vec<String>, Vec<String>), EvalStoreError> {
-    let rows = query_campaign_rows(
-        db,
-        r#"
-?[filter_kind, label_index, label] :=
-    *eval_campaign_eval_label { campaign_id, filter_kind, label_index, label },
-    campaign_id = $campaign_id
-"#,
-        campaign_id,
-        "read.eval_campaign_eval_label",
-    )?;
-    let mut include = Vec::new();
-    let mut exclude = Vec::new();
-    for row in &rows.rows {
-        let entry = (
-            read_i64(&rows, row, "label_index")?,
-            read_string(&rows, row, "label")?,
-        );
-        match read_string(&rows, row, "filter_kind")?.as_str() {
-            "include_dataset_labels" => include.push(entry),
-            "exclude_dataset_labels" => exclude.push(entry),
-            other => {
-                return Err(EvalStoreError::Validation {
-                    field: "eval_campaign_eval_label.filter_kind",
-                    detail: format!("unexpected filter kind '{other}'"),
-                });
-            }
-        }
-    }
-    include.sort_by_key(|(index, _)| *index);
-    exclude.sort_by_key(|(index, _)| *index);
-    Ok((
-        include.into_iter().map(|(_, label)| label).collect(),
-        exclude.into_iter().map(|(_, label)| label).collect(),
-    ))
 }
 
 fn read_campaign_protocol<D: EvalDb + ?Sized>(
@@ -1025,32 +773,6 @@ fn read_campaign_protocol<D: EvalDb + ?Sized>(
         max_tokens: read_u32(&rows, row, "max_tokens")?,
         reasoning,
     })
-}
-
-fn read_campaign_tools<D: EvalDb + ?Sized>(
-    db: &D,
-    campaign_id: &ploke_records::ids::CampaignId,
-) -> Result<FrameworkConfig, EvalStoreError> {
-    let rows = query_campaign_rows(
-        db,
-        r#"
-?[tool_name, version] :=
-    *eval_campaign_framework_tool { campaign_id, tool_name, version },
-    campaign_id = $campaign_id
-"#,
-        campaign_id,
-        "read.eval_campaign_framework_tool",
-    )?;
-    let mut tools = BTreeMap::new();
-    for row in &rows.rows {
-        tools.insert(
-            read_string(&rows, row, "tool_name")?,
-            FrameworkToolConfig {
-                version: read_optional_string(&rows, row, "version")?,
-            },
-        );
-    }
-    Ok(FrameworkConfig { tools })
 }
 
 fn query_campaign_rows<D: EvalDb + ?Sized>(
@@ -1118,6 +840,88 @@ fn read_optional_string(
     field: &'static str,
 ) -> Result<Option<String>, EvalStoreError> {
     match field_value(rows, row, field)? {
+        DataValue::Null => Ok(None),
+        DataValue::Str(value) => Ok(Some(value.to_string())),
+        other => Err(type_error(field, "String?", other)),
+    }
+}
+
+fn read_string_list(
+    rows: &QueryResult,
+    row: &[DataValue],
+    field: &'static str,
+) -> Result<Vec<String>, EvalStoreError> {
+    match field_value(rows, row, field)? {
+        DataValue::List(values) => values
+            .iter()
+            .map(|value| string_value(value, field))
+            .collect(),
+        other => Err(type_error(field, "[String]", other)),
+    }
+}
+
+fn read_dataset_sources(
+    rows: &QueryResult,
+    row: &[DataValue],
+    field: &'static str,
+) -> Result<Vec<RegistryDatasetSource>, EvalStoreError> {
+    let values = match field_value(rows, row, field)? {
+        DataValue::List(values) => values,
+        other => return Err(type_error(field, "[[String?;4]]", other)),
+    };
+    let mut sources = Vec::with_capacity(values.len());
+    for value in values {
+        let columns = match value {
+            DataValue::List(columns) if columns.len() == 4 => columns,
+            other => return Err(type_error(field, "[String?;4]", other)),
+        };
+        sources.push(RegistryDatasetSource {
+            key: optional_string_value(&columns[0], field)?,
+            path: PathBuf::from(string_value(&columns[1], field)?),
+            label: string_value(&columns[2], field)?,
+            url: optional_string_value(&columns[3], field)?,
+        });
+    }
+    Ok(sources)
+}
+
+fn read_framework_tools(
+    rows: &QueryResult,
+    row: &[DataValue],
+    field: &'static str,
+) -> Result<FrameworkConfig, EvalStoreError> {
+    let values = match field_value(rows, row, field)? {
+        DataValue::List(values) => values,
+        other => return Err(type_error(field, "[[String?;2]]", other)),
+    };
+    let mut tools = BTreeMap::new();
+    for value in values {
+        let columns = match value {
+            DataValue::List(columns) if columns.len() == 2 => columns,
+            other => return Err(type_error(field, "[String?;2]", other)),
+        };
+        tools.insert(
+            string_value(&columns[0], field)?,
+            FrameworkToolConfig {
+                version: optional_string_value(&columns[1], field)?,
+            },
+        );
+    }
+    Ok(FrameworkConfig { tools })
+}
+
+fn string_value(value: &DataValue, field: &'static str) -> Result<String, EvalStoreError> {
+    match value {
+        DataValue::Str(value) => Ok(value.to_string()),
+        other => Err(type_error(field, "String", other)),
+    }
+}
+
+fn optional_string_value(
+    value: &DataValue,
+    field: &'static str,
+) -> Result<Option<String>, EvalStoreError> {
+    match value {
         DataValue::Null => Ok(None),
         DataValue::Str(value) => Ok(Some(value.to_string())),
         other => Err(type_error(field, "String?", other)),
@@ -1841,6 +1645,41 @@ fn file_sha256(path: &Path, field: &'static str) -> Result<String, EvalStoreErro
 
 fn option_string_param(value: Option<String>) -> DataValue {
     value.map(DataValue::from).unwrap_or(DataValue::Null)
+}
+
+fn string_list_param(values: &[String]) -> DataValue {
+    DataValue::List(values.iter().cloned().map(DataValue::from).collect())
+}
+
+fn dataset_sources_param(values: &[RegistryDatasetSource]) -> DataValue {
+    DataValue::List(
+        values
+            .iter()
+            .map(|source| {
+                DataValue::List(vec![
+                    option_string_param(source.key.clone()),
+                    DataValue::from(source.path.display().to_string()),
+                    DataValue::from(source.label.clone()),
+                    option_string_param(source.url.clone()),
+                ])
+            })
+            .collect(),
+    )
+}
+
+fn framework_tools_param(value: &FrameworkConfig) -> DataValue {
+    DataValue::List(
+        value
+            .tools
+            .iter()
+            .map(|(name, tool)| {
+                DataValue::List(vec![
+                    DataValue::from(name.clone()),
+                    option_string_param(tool.version.clone()),
+                ])
+            })
+            .collect(),
+    )
 }
 
 fn option_path_param(value: Option<&Path>) -> DataValue {

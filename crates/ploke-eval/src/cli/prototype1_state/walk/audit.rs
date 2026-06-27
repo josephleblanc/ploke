@@ -32,13 +32,9 @@ const SCHEMA_VERSION: &str = "prototype1.walk.audit.v1";
 
 const EVAL_RELS: &[(&str, &str)] = &[
     ("eval_campaign", "campaign_id"),
-    ("eval_campaign_dataset_source", "campaign_id"),
-    ("eval_campaign_required_procedure", "campaign_id"),
     ("eval_campaign_eval_policy", "campaign_id"),
     ("eval_campaign_eval_budget", "campaign_id"),
-    ("eval_campaign_eval_label", "campaign_id"),
     ("eval_campaign_protocol_policy", "campaign_id"),
-    ("eval_campaign_framework_tool", "campaign_id"),
     ("eval_profile_commitment", "profile_ref_id"),
     ("eval_closure_ref", "closure_ref_id"),
     ("eval_closure_instance", "closure_ref_id"),

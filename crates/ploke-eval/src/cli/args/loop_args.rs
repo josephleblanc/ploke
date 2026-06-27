@@ -38,7 +38,7 @@ pub enum LoopSubcommand {
         name = "walk",
         about = "Debug-step Prototype 1 typestate transitions through a local walk server",
         long_about = "Debug-step Prototype 1 typestate transitions through a local walk server.\n\nThe walk server is a local debugging harness over live Prototype 1 transition edges. It is not production loop authority. By default it uses the active walk context if one was set with `walk use`, otherwise the current directory, and a repo-hashed socket under the runtime directory.",
-        after_help = "Common workflows:\n  Set context:       ploke-eval loop walk use /path/to/parent-worktree\n  Start live walk:   ploke-eval loop walk start\n  Inspect progress:  ploke-eval loop walk summary -v\n  Replay history:    ploke-eval loop walk replay --index 0\n  Move replay:       ploke-eval loop walk forward --steps 10 --tail 20\n  Live step:         ploke-eval loop walk step --until r6\n\nSafety notes:\n  replay/back/forward are read-only historical cursor commands.\n  step drives live typestate edges; long live edges require --watch.\n  R12 -> R13b successor handoff mutates checkout state and requires --allow git-changes.\n  branch-live writes only explicit provenance and requires --allow provenance-record."
+        after_help = "Common workflows:\n  Set context:       ploke-eval loop walk use /path/to/parent-worktree\n  Start live walk:   ploke-eval loop walk start\n  Inspect progress:  ploke-eval loop walk summary -v\n  Replay history:    ploke-eval loop walk replay --index 0\n  Query eval DB:     ploke-eval loop walk db_query --script '::relations'\n  Move replay:       ploke-eval loop walk forward --steps 10 --tail 20\n  Live step:         ploke-eval loop walk step --until r6\n\nSafety notes:\n  replay/back/forward and db_query are read-only inspection commands.\n  step drives live typestate edges; long live edges require --watch.\n  R12 -> R13b successor handoff mutates checkout state and requires --allow git-changes.\n  branch-live writes only explicit provenance and requires --allow provenance-record."
     )]
     Prototype1StateWalk(Prototype1StateWalkCommand),
     // ANCHOR_END: prototype1_walk_command_safety_help
@@ -168,6 +168,9 @@ pub enum Prototype1StateWalkSubcommand {
     Show(Prototype1StateWalkShowCommand),
     /// Audit file/database persistence surfaces for a walk transition.
     Audit(Prototype1StateWalkAuditCommand),
+    /// Run an immutable CozoScript query against the active loop run eval DB.
+    #[command(name = "db_query", visible_alias = "db-query")]
+    DbQuery(Prototype1StateWalkDbQueryCommand),
     /// Inspect nested LLM/tool-loop debugger checkpoints.
     Llm(Prototype1StateWalkLlmCommand),
     /// Summarize durable campaign progress without contacting the walk server.
@@ -306,6 +309,28 @@ pub struct Prototype1StateWalkAuditCommand {
     /// Include the note column in the checklist table.
     #[arg(long)]
     pub with_note: bool,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Run an immutable CozoScript query against the active loop run eval DB",
+    after_help = "Examples:\n  ploke-eval loop walk db_query --script '::relations'\n  ploke-eval loop walk db_query --script '?[campaign_id, dataset_sources] := *eval_campaign { campaign_id, dataset_sources }'\n  ploke-eval loop walk db_query --repo-root /path/to/parent-worktree --format json --script '::relations'\n\nThis command is read-only: it restores the owner eval DB backup into memory and executes the script with Cozo ScriptMutability::Immutable."
+)]
+pub struct Prototype1StateWalkDbQueryCommand {
+    /// Parent checkout root. Defaults to active walk context, then current directory.
+    #[arg(long, value_name = "PATH")]
+    pub repo_root: Option<PathBuf>,
+
+    /// Campaign id. Defaults to parent identity in the repo root.
+    #[arg(long)]
+    pub campaign: Option<CampaignId>,
+
+    /// CozoScript to execute immutably against the loop run owner eval DB.
+    #[arg(long, value_name = "COZOSCRIPT")]
+    pub script: String,
+
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
 }
 
 #[derive(Debug, Clone, Parser)]

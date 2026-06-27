@@ -5,18 +5,27 @@
 //! the server when health probing reports it offline.
 
 use std::{
+    collections::BTreeMap,
     path::Path,
     process::{Command, Stdio},
     time::Duration,
 };
 
+use cozo::DataValue;
+use ploke_db::QueryResult;
+use ploke_records::ids::CampaignId;
 use tokio::net::UnixStream;
 
 use crate::{
+    campaign::campaign_manifest_path,
+    cli::prototype1_state::{
+        eval_store::{load_owner_eval_database, prototype1_eval_store_db_path},
+        identity,
+    },
     cli::{
-        InspectOutputFormat, Prototype1StateWalkLlmSubcommand, Prototype1StateWalkShowSubcommand,
-        Prototype1StateWalkStartCommand, Prototype1StateWalkSubcommand,
-        Prototype1StateWalkUseCommand,
+        InspectOutputFormat, Prototype1StateWalkDbQueryCommand, Prototype1StateWalkLlmSubcommand,
+        Prototype1StateWalkShowSubcommand, Prototype1StateWalkStartCommand,
+        Prototype1StateWalkSubcommand, Prototype1StateWalkUseCommand,
     },
     spec::PrepareError,
 };
@@ -269,6 +278,7 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             }
             response_result(response)
         }
+        Prototype1StateWalkSubcommand::DbQuery(command) => run_db_query(command),
         Prototype1StateWalkSubcommand::Summary(command) => summary::run(command),
         Prototype1StateWalkSubcommand::Replay(command) => {
             let format = command.control.format;
@@ -434,6 +444,57 @@ fn use_context(command: Prototype1StateWalkUseCommand) -> Result<(), PrepareErro
     print_context(&context, &context_path, command.format)
 }
 
+fn run_db_query(command: Prototype1StateWalkDbQueryCommand) -> Result<(), PrepareError> {
+    let repo_root = paths::resolve_repo_root(command.repo_root.as_deref())?;
+    let campaign_id = resolve_db_query_campaign(&repo_root, command.campaign)?;
+    let manifest = campaign_manifest_path(&campaign_id)?;
+    let db_path = prototype1_eval_store_db_path(&manifest);
+    if !db_path.exists() {
+        return Err(PrepareError::DatabaseSetup {
+            phase: "prototype1_state_walk_db_query_db_missing",
+            detail: format!("owner eval DB does not exist at '{}'", db_path.display()),
+        });
+    }
+    let db = load_owner_eval_database(&db_path).map_err(|source| PrepareError::DatabaseSetup {
+        phase: "prototype1_state_walk_db_query_open",
+        detail: source.to_string(),
+    })?;
+    let result = db
+        .raw_query_params(&command.script, BTreeMap::new())
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_state_walk_db_query_run",
+            detail: source.to_string(),
+        })?;
+    print_query_result(
+        &repo_root,
+        &campaign_id,
+        &db_path,
+        &command.script,
+        &result,
+        command.format,
+    )
+}
+
+fn resolve_db_query_campaign(
+    repo_root: &Path,
+    campaign: Option<CampaignId>,
+) -> Result<CampaignId, PrepareError> {
+    if let Some(campaign) = campaign {
+        return Ok(campaign);
+    }
+    identity::load_parent_identity_optional(repo_root)?.map_or_else(
+        || {
+            Err(PrepareError::InvalidBatchSelection {
+                detail: format!(
+                    "cannot infer campaign id for db_query; pass --campaign or run `walk use` with a parent checkout containing '{}'",
+                    identity::parent_identity_relpath().display()
+                ),
+            })
+        },
+        |identity| Ok(identity.campaign_id().clone()),
+    )
+}
+
 /// Ensure a healthy server is listening at `socket`, spawning one if absent.
 async fn ensure_server(
     repo_root: &Path,
@@ -593,6 +654,82 @@ fn print_context(
         }
     }
     Ok(())
+}
+
+fn print_query_result(
+    repo_root: &Path,
+    campaign_id: &CampaignId,
+    db_path: &Path,
+    script: &str,
+    result: &QueryResult,
+    format: InspectOutputFormat,
+) -> Result<(), PrepareError> {
+    match format {
+        InspectOutputFormat::Json => {
+            let rows = result
+                .rows
+                .iter()
+                .map(|row| query_row_json(&result.headers, row))
+                .collect::<Vec<_>>();
+            let value = serde_json::json!({
+                "type": "walk_db_query",
+                "repo_root": repo_root,
+                "campaign_id": campaign_id.as_str(),
+                "db_path": db_path,
+                "script": script,
+                "headers": result.headers,
+                "row_count": result.rows.len(),
+                "rows": rows,
+            });
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&value).map_err(PrepareError::Serialize)?
+            );
+        }
+        InspectOutputFormat::Table => {
+            println!("walk db query");
+            println!("{}", "-".repeat(40));
+            println!("status: ok");
+            println!("repo_root: {}", repo_root.display());
+            println!("campaign_id: {}", campaign_id.as_str());
+            println!("db_path: {}", db_path.display());
+            println!("rows: {}", result.rows.len());
+            print_multiline("script", script);
+            if result.headers.is_empty() {
+                println!("headers: -");
+                return Ok(());
+            }
+            println!("headers: {}", result.headers.join(" | "));
+            for (index, row) in result.rows.iter().enumerate() {
+                let cells = row.iter().map(format_data_value).collect::<Vec<_>>();
+                println!("row[{index}]: {}", cells.join(" | "));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn query_row_json(headers: &[String], row: &[DataValue]) -> serde_json::Value {
+    let mut object = serde_json::Map::new();
+    for (header, value) in headers.iter().zip(row.iter()) {
+        object.insert(header.clone(), data_value_json(value));
+    }
+    serde_json::Value::Object(object)
+}
+
+fn data_value_json(value: &DataValue) -> serde_json::Value {
+    match value {
+        DataValue::Bot => serde_json::json!({ "cozo": "bot" }),
+        other => serde_json::Value::from(other.clone()),
+    }
+}
+
+fn format_data_value(value: &DataValue) -> String {
+    match value {
+        DataValue::Str(text) => text.to_string(),
+        DataValue::Null => "null".to_string(),
+        other => other.to_string(),
+    }
 }
 
 /// Render one server response in table or JSON format.
