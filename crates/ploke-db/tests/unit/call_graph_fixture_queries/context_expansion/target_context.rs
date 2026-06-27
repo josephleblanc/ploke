@@ -56,6 +56,7 @@ fn assert_target_context_matches_callers(
 ) -> Result<(), DbError> {
     let callers = db.callers_for_target(case.target)?;
     let context = db.call_context_for_target(case.target)?;
+    let sites = db.call_sites_for_target(case.target)?;
     assert!(
         context.len() >= case.min_rows,
         "{} should expose at least {} target-centered context rows: {context:#?}",
@@ -68,8 +69,20 @@ fn assert_target_context_matches_callers(
         "{} target context should preserve the same caller cardinality as callers_for_target",
         case.label
     );
+    assert_eq!(
+        sites.len(),
+        callers.len(),
+        "{} target sites should preserve the same caller cardinality as callers_for_target",
+        case.label
+    );
 
     for caller in &callers {
+        assert!(
+            sites.iter().any(|site| site == &caller.site),
+            "{} target sites should include caller site {}: {sites:#?}",
+            case.label,
+            caller.site.id
+        );
         let row = context
             .iter()
             .find(|row| row.site.id == caller.site.id)

@@ -6,7 +6,7 @@ use uuid::Uuid;
 use crate::{Database, DbError};
 
 use super::super::{
-    CallCallerRow, CallContextRow, CallTargetRow,
+    CallCallerRow, CallContextRow, CallSiteRow, CallTargetRow,
     decode::{decode_site, decode_target, validate_owner_context_targets},
     families::{valid_call_target, valid_call_target_rules},
 };
@@ -173,6 +173,11 @@ impl Database {
             out.push(row);
         }
         Ok(out)
+    }
+
+    pub fn call_sites_for_target(&self, target_id: Uuid) -> Result<Vec<CallSiteRow>, DbError> {
+        self.call_context_for_target(target_id)
+            .map(|rows| rows.into_iter().map(|row| row.site).collect())
     }
 
     fn validate_target_centered_caller_targets(
