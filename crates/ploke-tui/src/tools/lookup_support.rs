@@ -90,7 +90,7 @@ pub(super) fn context_carriers_for_node(
 
     let call_context = match ctx.state.rag.as_ref() {
         Some(rag) if !rag.call_context_degraded() => {
-            rag.call_context_for_node(node_id).map_err(|err| {
+            rag.exact_call_context(node_id).map_err(|err| {
                 ploke_error::Error::Internal(InternalError::CompilerError(format!(
                     "failed to collect call context for code item {node_id}: {err}"
                 )))
@@ -100,7 +100,7 @@ pub(super) fn context_carriers_for_node(
     };
     let proof_context = match ctx.state.rag.as_ref() {
         Some(rag) if !rag.proof_context_degraded() => {
-            rag.proof_context_for_node(node_id).map_err(|err| {
+            rag.exact_proof_context(node_id).map_err(|err| {
                 ploke_error::Error::Internal(InternalError::CompilerError(format!(
                     "failed to collect proof context for code item {node_id}: {err}"
                 )))

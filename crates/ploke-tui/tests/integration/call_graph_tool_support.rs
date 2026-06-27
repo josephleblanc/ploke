@@ -24,6 +24,7 @@ pub(crate) struct CallGraphToolFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,
     pub(crate) owner: Uuid,
+    pub(crate) target: Uuid,
 }
 
 impl CallGraphToolFixture {
@@ -45,11 +46,28 @@ impl CallGraphToolFixture {
         .pop()
         .expect("call_crate_local_target row")
         .id;
+        let target = graph_resolve_exact(
+            db.as_ref(),
+            "function",
+            file_path.as_path(),
+            &module_path,
+            "local_target",
+        )
+        .expect("resolve local_target")
+        .pop()
+        .expect("local_target row")
+        .id;
         assert!(
             db.project_call_proof_facts_for_node(owner, "bd:fixture-call-graph")
                 .expect("project node proof facts")
                 >= 3,
             "call_crate_local_target should project node-scoped proof rows"
+        );
+        assert!(
+            db.project_call_proof_facts_for_node(target, "bd:fixture-call-graph")
+                .expect("project target proof facts")
+                >= 3,
+            "local_target should project target-scoped proof rows"
         );
 
         let cfg = UserConfig::default();
@@ -101,6 +119,7 @@ impl CallGraphToolFixture {
             state,
             file_path,
             owner,
+            target,
         }
     }
 

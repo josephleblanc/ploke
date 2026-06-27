@@ -460,14 +460,31 @@ impl RagService {
             return Ok(Vec::new());
         }
 
+        self.call_context(node_id, cfg.max_sites_per_owner, cfg.max_targets_per_site)
+    }
+
+    pub fn exact_call_context(&self, node_id: Uuid) -> Result<Vec<CallContextInfo>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(Vec::new());
+        }
+
+        self.call_context(node_id, usize::MAX, usize::MAX)
+    }
+
+    fn call_context(
+        &self,
+        node_id: Uuid,
+        max_sites: usize,
+        max_targets: usize,
+    ) -> Result<Vec<CallContextInfo>, RagError> {
         let node = self.db.call_context_for_node(node_id)?;
         let mut seen_sites = HashSet::new();
         node.outgoing
             .into_iter()
             .chain(node.incoming)
             .filter(|row| seen_sites.insert(row.site.id))
-            .take(cfg.max_sites_per_owner)
-            .map(|row| row_to_call_context(row, cfg.max_targets_per_site))
+            .take(max_sites)
+            .map(|row| row_to_call_context(row, max_targets))
             .collect()
     }
 
@@ -477,6 +494,22 @@ impl RagService {
             return Ok(Vec::new());
         }
 
+        self.proof_context(node_id, Some(cfg.max_rows_per_part))
+    }
+
+    pub fn exact_proof_context(&self, node_id: Uuid) -> Result<Vec<ProofContextInfo>, RagError> {
+        if !self.cfg.proof_context.enabled {
+            return Ok(Vec::new());
+        }
+
+        self.proof_context(node_id, None)
+    }
+
+    fn proof_context(
+        &self,
+        node_id: Uuid,
+        max_rows: Option<usize>,
+    ) -> Result<Vec<ProofContextInfo>, RagError> {
         let mut seen = HashSet::new();
         let mut rows = self
             .db
@@ -499,7 +532,9 @@ impl RagService {
                     right.blocker_reason.as_deref().unwrap_or(""),
                 ))
         });
-        rows.truncate(cfg.max_rows_per_part);
+        if let Some(max_rows) = max_rows {
+            rows.truncate(max_rows);
+        }
         Ok(rows)
     }
 
