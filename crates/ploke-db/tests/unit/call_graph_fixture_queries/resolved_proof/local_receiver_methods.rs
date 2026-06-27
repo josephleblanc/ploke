@@ -92,6 +92,13 @@ fn fixture_projection_stores_real_local_receiver_method_call_proof_facts() -> Re
                 type_path: path(&["LocalAssoc"]),
             },
         )?,
+        method_case(
+            "call_typed_double_reference_local_instance_method",
+            CallReceiver::TypedLocalBinding {
+                name: "value".to_string(),
+                type_path: path(&["LocalAssoc"]),
+            },
+        )?,
     ];
     assert_fixture_resolved_proofs(&db, "local receiver method", &cases)?;
 

@@ -14,6 +14,13 @@ async fn call_context_sparse_get_context_expands_method_target_hits_to_fixture_c
         &db,
         &function_in_module_query(&["crate"], "call_typed_local_instance_method"),
     )?;
+    let nested_ref_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_typed_double_reference_local_instance_method",
+        ),
+    )?;
     let assoc_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_method_as_associated_function"),
@@ -88,6 +95,36 @@ async fn call_context_sparse_get_context_expands_method_target_hits_to_fixture_c
     assert_eq!(method_call.targets[0].target_id, target);
     assert_eq!(method_call.targets[0].relation, CallTargetKind::Method);
     assert_incoming_expansion(method_part, method_call, target);
+
+    let nested_ref_part = assembled
+        .parts
+        .iter()
+        .find(|part| part.id == nested_ref_owner)
+        .expect("public get_context should materialize the nested-reference method caller owner");
+    let nested_ref_call = nested_ref_part
+        .call_context
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Method
+                && call.callee
+                    == CallCalleeInfo::Method {
+                        name: "instance_value".to_string(),
+                        receiver: Some(CallReceiverInfo::TypedLocalBinding {
+                            name: "value".to_string(),
+                            type_path: vec!["LocalAssoc".to_string()],
+                        }),
+                    }
+        })
+        .expect("nested-reference caller should retain outgoing method context to the seed target");
+    assert_eq!(nested_ref_call.status, CallStatusKind::Resolved);
+    assert_eq!(
+        nested_ref_call.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(nested_ref_call.targets.len(), 1);
+    assert_eq!(nested_ref_call.targets[0].target_id, target);
+    assert_eq!(nested_ref_call.targets[0].relation, CallTargetKind::Method);
+    assert_incoming_expansion(nested_ref_part, nested_ref_call, target);
 
     let assoc_part = assembled
         .parts
