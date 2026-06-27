@@ -37,6 +37,15 @@ pub(super) fn assert_projected_owner_rows(rows: &[ProofContextInfo], owner: Uuid
 }
 
 pub(super) fn assert_resolved_call(rows: &[ProofContextInfo], owner: Uuid, target: Uuid) {
+    assert_resolved_call_for_domain(rows, owner, target, "bd:fixture-call-graph");
+}
+
+pub(super) fn assert_resolved_call_for_domain(
+    rows: &[ProofContextInfo],
+    owner: Uuid,
+    target: Uuid,
+    domain: &str,
+) {
     let owner = owner.to_string();
     let target = target.to_string();
     let edge = rows
@@ -57,6 +66,7 @@ pub(super) fn assert_resolved_call(rows: &[ProofContextInfo], owner: Uuid, targe
             row.kind == "call_site"
                 && row.call_site_id.as_deref() == Some(site_id)
                 && row.caller_def_id.as_deref() == Some(owner.as_str())
+                && row.build_domain_id.as_deref() == Some(domain)
         }),
         "proof context should include resolved call_site fact: {rows:#?}"
     );

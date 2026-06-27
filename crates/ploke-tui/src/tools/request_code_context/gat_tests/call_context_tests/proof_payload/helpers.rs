@@ -47,6 +47,15 @@ pub(super) fn assert_resolved_call(
     owner: Uuid,
     target: Uuid,
 ) {
+    assert_resolved_call_for_domain(rows, owner, target, "bd:fixture-call-graph");
+}
+
+pub(super) fn assert_resolved_call_for_domain(
+    rows: &[ploke_core::rag_types::ProofContextInfo],
+    owner: Uuid,
+    target: Uuid,
+    domain: &str,
+) {
     let owner = owner.to_string();
     let target = target.to_string();
     let edge = rows
@@ -67,6 +76,7 @@ pub(super) fn assert_resolved_call(
             row.kind == "call_site"
                 && row.call_site_id.as_deref() == Some(site_id)
                 && row.caller_def_id.as_deref() == Some(owner.as_str())
+                && row.build_domain_id.as_deref() == Some(domain)
         }),
         "proof context should include resolved call_site fact: {rows:#?}"
     );
