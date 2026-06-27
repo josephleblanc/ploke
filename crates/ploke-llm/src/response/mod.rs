@@ -163,18 +163,18 @@ pub struct ErrorResponse {
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct ResponseMessage {
     // When tool_calls are present, role may be null/absent
-    pub(super) role: Option<Role>,
+    pub role: Option<Role>,
     // When tool_calls are present, content may be null/absent
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) content: Option<String>,
+    pub content: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) tool_calls: Option<Vec<ToolCall>>,
+    pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) logprobs: Option<serde_json::Value>,
+    pub logprobs: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) refusal: Option<String>,
+    pub refusal: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) reasoning: Option<String>,
+    pub reasoning: Option<String>,
 }
 
 #[cfg(test)]
