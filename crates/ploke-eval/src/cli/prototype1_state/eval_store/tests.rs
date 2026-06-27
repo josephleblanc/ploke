@@ -28,7 +28,8 @@ use super::{
     CHILD_PLAN_REL, CLOSURE_ARTIFACT_REF_REL, CLOSURE_INSTANCE_REL, CLOSURE_PROTOCOL_COUNTS_REL,
     CLOSURE_PROTOCOL_PROCEDURE_REL, CLOSURE_REF_REL, CONTINUATION_DECISION_REL,
     EVALUATION_INSTANCE_REL, EVALUATION_REL, MESSAGE_EVENT_REL, MODEL_EXCHANGE_REL, OPERATION_REL,
-    PATCH_REL, PROFILE_COMMITMENT_REL, SCHEDULER_NODE_REL, SCHEDULER_NODE_STATUS_REL,
+    PATCH_REL, PROFILE_COMMITMENT_REL, RUNNER_REQUEST_ARG_REL, RUNNER_REQUEST_REL,
+    RUNNER_REQUEST_TARGET_REL, RUNNER_RESULT_REL, SCHEDULER_NODE_REL, SCHEDULER_NODE_STATUS_REL,
     SCHEDULER_NODE_TARGET_REL, SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL,
     SELECTION_FINDING_REL, SELECTION_SCORE_REL, TOOL_EVENT_REL,
     api::EvalStorageMode,
@@ -330,6 +331,38 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
             )
         },
         {
+            let schema = &super::runner_io::RunnerRequestSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::runner_io::RunnerRequestArgSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::runner_io::RunnerRequestTargetSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::runner_io::RunnerResultSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
             let schema = &super::artifact::ArtifactSchema::SCHEMA;
             (
                 schema.relation(),
@@ -597,6 +630,26 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
             r#"?[campaign_id, node_id, content_sha256, target_part, target_index, projection_schema_version, target_kind, artifact_id, patch_id, base_artifact_id] <- [[$campaign_id, $node_id, $content_sha256, $target_part, $target_index, $projection_schema_version, $target_kind, $artifact_id, $patch_id, $base_artifact_id]] :put eval_scheduler_node_target_part { campaign_id, node_id, content_sha256, target_part, target_index => projection_schema_version, target_kind, artifact_id, patch_id, base_artifact_id }"#,
         ),
         (
+            "eval_runner_request",
+            r#":create eval_runner_request { campaign_id: String, node_id: String => projection_schema_version: String, request_schema_version: String, generation: Int, instance_id: String, source_state_id: String, operation_target_kind: String?, base_artifact_id: String?, patch_id: String?, derived_artifact_id: String?, branch_id: String, target_relpath: String, workspace_root: String, binary_path: String, request_path: String, stop_on_error: Bool, runner_arg_count: Int, content_sha256: String, ingested_at: String }"#,
+            r#"?[campaign_id, node_id, projection_schema_version, request_schema_version, generation, instance_id, source_state_id, operation_target_kind, base_artifact_id, patch_id, derived_artifact_id, branch_id, target_relpath, workspace_root, binary_path, request_path, stop_on_error, runner_arg_count, content_sha256, ingested_at] <- [[$campaign_id, $node_id, $projection_schema_version, $request_schema_version, $generation, $instance_id, $source_state_id, $operation_target_kind, $base_artifact_id, $patch_id, $derived_artifact_id, $branch_id, $target_relpath, $workspace_root, $binary_path, $request_path, $stop_on_error, $runner_arg_count, $content_sha256, $ingested_at]] :put eval_runner_request { campaign_id, node_id => projection_schema_version, request_schema_version, generation, instance_id, source_state_id, operation_target_kind, base_artifact_id, patch_id, derived_artifact_id, branch_id, target_relpath, workspace_root, binary_path, request_path, stop_on_error, runner_arg_count, content_sha256, ingested_at }"#,
+        ),
+        (
+            "eval_runner_request_arg",
+            r#":create eval_runner_request_arg { campaign_id: String, node_id: String, content_sha256: String, arg_index: Int => projection_schema_version: String, arg_value: String }"#,
+            r#"?[campaign_id, node_id, content_sha256, arg_index, projection_schema_version, arg_value] <- [[$campaign_id, $node_id, $content_sha256, $arg_index, $projection_schema_version, $arg_value]] :put eval_runner_request_arg { campaign_id, node_id, content_sha256, arg_index => projection_schema_version, arg_value }"#,
+        ),
+        (
+            "eval_runner_request_target_part",
+            r#":create eval_runner_request_target_part { campaign_id: String, node_id: String, content_sha256: String, target_part: String, target_index: Int => projection_schema_version: String, target_kind: String, artifact_id: String?, patch_id: String?, base_artifact_id: String? }"#,
+            r#"?[campaign_id, node_id, content_sha256, target_part, target_index, projection_schema_version, target_kind, artifact_id, patch_id, base_artifact_id] <- [[$campaign_id, $node_id, $content_sha256, $target_part, $target_index, $projection_schema_version, $target_kind, $artifact_id, $patch_id, $base_artifact_id]] :put eval_runner_request_target_part { campaign_id, node_id, content_sha256, target_part, target_index => projection_schema_version, target_kind, artifact_id, patch_id, base_artifact_id }"#,
+        ),
+        (
+            "eval_runner_result",
+            r#":create eval_runner_result { campaign_id: String, node_id: String, result_path: String => projection_schema_version: String, result_schema_version: String, generation: Int, branch_id: String, status: String, disposition: String, treatment_campaign_id: String?, evaluation_artifact_path: String?, detail: String?, exit_code: Int?, stdout_excerpt: String?, stderr_excerpt: String?, runtime_id: String?, path_kind: String, content_sha256: String, recorded_at: String, ingested_at: String }"#,
+            r#"?[campaign_id, node_id, result_path, projection_schema_version, result_schema_version, generation, branch_id, status, disposition, treatment_campaign_id, evaluation_artifact_path, detail, exit_code, stdout_excerpt, stderr_excerpt, runtime_id, path_kind, content_sha256, recorded_at, ingested_at] <- [[$campaign_id, $node_id, $result_path, $projection_schema_version, $result_schema_version, $generation, $branch_id, $status, $disposition, $treatment_campaign_id, $evaluation_artifact_path, $detail, $exit_code, $stdout_excerpt, $stderr_excerpt, $runtime_id, $path_kind, $content_sha256, $recorded_at, $ingested_at]] :put eval_runner_result { campaign_id, node_id, result_path => projection_schema_version, result_schema_version, generation, branch_id, status, disposition, treatment_campaign_id, evaluation_artifact_path, detail, exit_code, stdout_excerpt, stderr_excerpt, runtime_id, path_kind, content_sha256, recorded_at, ingested_at }"#,
+        ),
+        (
             "eval_artifact",
             r#":create eval_artifact { artifact_id: String => campaign_id: String, tree_hash: String?, git_branch: String?, git_commit: String?, source: String, store_scope: String, created_by: String?, parent_artifact_id: String? }"#,
             r#"?[artifact_id, campaign_id, tree_hash, git_branch, git_commit, source, store_scope, created_by, parent_artifact_id] <- [[$artifact_id, $campaign_id, $tree_hash, $git_branch, $git_commit, $source, $store_scope, $created_by, $parent_artifact_id]] :put eval_artifact { artifact_id => campaign_id, tree_hash, git_branch, git_commit, source, store_scope, created_by, parent_artifact_id }"#,
@@ -850,6 +903,15 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
         eval_relation_exists(&db, SCHEDULER_NODE_TARGET_REL)
             .expect("scheduler node target rel exists")
     );
+    assert!(eval_relation_exists(&db, RUNNER_REQUEST_REL).expect("runner request rel exists"));
+    assert!(
+        eval_relation_exists(&db, RUNNER_REQUEST_ARG_REL).expect("runner request arg rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, RUNNER_REQUEST_TARGET_REL)
+            .expect("runner request target rel exists")
+    );
+    assert!(eval_relation_exists(&db, RUNNER_RESULT_REL).expect("runner result rel exists"));
     assert!(eval_relation_exists(&db, AGENT_TURN_REL).expect("agent turn rel exists"));
     assert!(eval_relation_exists(&db, AGENT_TURN_EVENT_REL).expect("agent turn event rel exists"));
     assert!(eval_relation_exists(&db, MODEL_EXCHANGE_REL).expect("model exchange rel exists"));

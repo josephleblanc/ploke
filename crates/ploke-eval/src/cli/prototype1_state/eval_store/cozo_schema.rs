@@ -15,6 +15,11 @@ use super::{
     error::EvalStoreError,
     evaluation::ensure_evaluation_schema,
     operation::ensure_operation_schema,
+    runner_io::{
+        RUNNER_REQUEST_SCHEMA_VERSION, RUNNER_RESULT_SCHEMA_VERSION, RunnerRequestArgSchema,
+        RunnerRequestSchema, RunnerRequestTargetSchema, RunnerResultSchema,
+        ensure_runner_io_schema,
+    },
     scheduler_node::{
         SCHEDULER_NODE_SCHEMA_VERSION, SchedulerNodeSchema, SchedulerNodeStatusSchema,
         SchedulerNodeTargetSchema, ensure_scheduler_node_schema,
@@ -217,6 +222,7 @@ pub(super) fn ensure_eval_store_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(),
     reject_unsupported_schema_drift(&existing)?;
     reject_child_plan_row_drift(db, &existing)?;
     reject_scheduler_node_row_drift(db, &existing)?;
+    reject_runner_row_drift(db, &existing)?;
 
     TransitionEventSchema::SCHEMA.ensure_installed(db, "schema.eval_transition_event")?;
     RecordRefSchema::SCHEMA.ensure_installed(db, "schema.eval_record_ref")?;
@@ -237,6 +243,7 @@ pub(super) fn ensure_eval_store_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(),
     ensure_operation_schema(db)?;
     ensure_child_plan_schema(db)?;
     ensure_scheduler_node_schema(db)?;
+    ensure_runner_io_schema(db)?;
     ensure_agent_turn_schema(db)?;
 
     Ok(())
@@ -260,6 +267,10 @@ fn reject_unsupported_schema_drift(existing: &BTreeSet<String>) -> Result<(), Ev
         SchedulerNodeSchema::RELATION,
         SchedulerNodeStatusSchema::RELATION,
         SchedulerNodeTargetSchema::RELATION,
+        RunnerRequestSchema::RELATION,
+        RunnerRequestArgSchema::RELATION,
+        RunnerRequestTargetSchema::RELATION,
+        RunnerResultSchema::RELATION,
     ];
     let missing = required
         .into_iter()
@@ -353,6 +364,67 @@ fn reject_scheduler_node_row_drift<D: EvalDb + ?Sized>(
         phase: "schema.eval_scheduler_node.version",
         detail: format!(
             "existing eval DB contains eval_scheduler_node rows with an unsupported projection_schema_version; expected {SCHEDULER_NODE_SCHEMA_VERSION}; regenerate the owner eval DB instead of reusing this backup ({details})"
+        ),
+    })
+}
+
+fn reject_runner_row_drift<D: EvalDb + ?Sized>(
+    db: &D,
+    existing: &BTreeSet<String>,
+) -> Result<(), EvalStoreError> {
+    if existing.contains(RunnerRequestSchema::RELATION) {
+        reject_projection_version(
+            db,
+            RunnerRequestSchema::RELATION,
+            "projection_schema_version",
+            RUNNER_REQUEST_SCHEMA_VERSION,
+            "schema.eval_runner_request.version",
+        )?;
+    }
+    if existing.contains(RunnerResultSchema::RELATION) {
+        reject_projection_version(
+            db,
+            RunnerResultSchema::RELATION,
+            "projection_schema_version",
+            RUNNER_RESULT_SCHEMA_VERSION,
+            "schema.eval_runner_result.version",
+        )?;
+    }
+    Ok(())
+}
+
+fn reject_projection_version<D: EvalDb + ?Sized>(
+    db: &D,
+    relation: &'static str,
+    field: &'static str,
+    expected: &'static str,
+    phase: &'static str,
+) -> Result<(), EvalStoreError> {
+    let mut params = BTreeMap::new();
+    params.insert("schema_version".to_string(), expected.to_string().into());
+    let query = format!(
+        r#"
+?[campaign_id, node_id, actual_schema_version] :=
+  *{relation} {{ campaign_id: campaign_id, node_id: node_id, {field}: actual_schema_version }},
+  actual_schema_version != $schema_version
+:limit 1
+"#
+    );
+    let result = db
+        .eval_query_params(&query, params)
+        .map_err(|source| EvalStoreError::Db { phase, source })?;
+    if result.rows.is_empty() {
+        return Ok(());
+    }
+    let details = result
+        .rows
+        .first()
+        .map(|row| format!("row={row:?}"))
+        .unwrap_or_else(|| "row=<unavailable>".to_string());
+    Err(EvalStoreError::DbSetup {
+        phase,
+        detail: format!(
+            "existing eval DB contains {relation} rows with an unsupported {field}; expected {expected}; regenerate the owner eval DB instead of reusing this backup ({details})"
         ),
     })
 }

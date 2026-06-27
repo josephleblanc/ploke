@@ -19,6 +19,7 @@ mod evaluation;
 mod evidence;
 mod observation;
 mod operation;
+mod runner_io;
 mod scheduler_node;
 mod schema;
 mod selection;
@@ -87,6 +88,14 @@ pub(crate) use operation::{APPLY_EVENT_REL, OPERATION_REL, PATCH_REL};
 pub(crate) use operation::{
     ApplyEventEvidence, OperationEvidence, OperationProvenanceEvidence, PatchEvidence,
     content_sha256, write_operation_provenance_to_owner_db,
+};
+#[cfg(test)]
+pub(crate) use runner_io::{
+    RUNNER_REQUEST_ARG_REL, RUNNER_REQUEST_REL, RUNNER_REQUEST_SCHEMA_VERSION,
+    RUNNER_REQUEST_TARGET_REL, RUNNER_RESULT_REL, RUNNER_RESULT_SCHEMA_VERSION,
+};
+pub(crate) use runner_io::{
+    write_runner_request_if_owner_db_exists, write_runner_result_if_owner_db_exists,
 };
 pub(crate) use scheduler_node::write_scheduler_node_if_owner_db_exists;
 #[cfg(test)]

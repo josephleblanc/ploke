@@ -3,7 +3,10 @@ use crate::prelude::*;
 use sha2::{Digest, Sha256};
 
 use super::ResolvedTreatmentBranch;
-use crate::cli::prototype1_state::eval_store::write_scheduler_node_if_owner_db_exists;
+use crate::cli::prototype1_state::eval_store::{
+    write_runner_request_if_owner_db_exists, write_runner_result_if_owner_db_exists,
+    write_scheduler_node_if_owner_db_exists,
+};
 use crate::loop_graph::{ArtifactId, OperationTarget, PatchId};
 use crate::operational_metrics::OperationalRunMetrics;
 use crate::projection::OperatorProjectionRead;
@@ -787,7 +790,16 @@ fn save_runner_request(request: &Prototype1RunnerRequest, path: &Path) -> Result
     })?;
     let passive = passive_runner_request_record(request);
     let receipt = JsonRecordFile::new(path).emit(&passive)?;
-    emit_eval_record_ref_if_owner_db_exists(&receipt, &request.campaign_id, &request.node_id)
+    emit_eval_record_ref_if_owner_db_exists(&receipt, &request.campaign_id, &request.node_id)?;
+    write_runner_request_if_owner_db_exists(path, request).map_err(|source| {
+        PrepareError::DatabaseSetup {
+            phase: "eval_runner_request_put",
+            detail: format!(
+                "failed to persist normalized runner request for '{}': {source}",
+                path.display()
+            ),
+        }
+    })
 }
 
 pub fn write_node_projection(record: &Prototype1NodeRecord) -> Result<(), PrepareError> {
@@ -879,7 +891,16 @@ fn save_runner_result(result: &Prototype1RunnerResult, path: &Path) -> Result<()
         &receipt,
         &result.campaign_id,
         &result.node_id,
-    )
+    )?;
+    write_runner_result_if_owner_db_exists(path, result).map_err(|source| {
+        PrepareError::DatabaseSetup {
+            phase: "eval_runner_result_put",
+            detail: format!(
+                "failed to persist normalized runner result for '{}': {source}",
+                path.display()
+            ),
+        }
+    })
 }
 
 pub fn write_runner_result_at(
@@ -1945,6 +1966,87 @@ mod tests {
                 .contains("\"runner_args\""),
             "payload remains a compatibility ref for the runner request JSON"
         );
+
+        let mut params = BTreeMap::new();
+        params.insert(
+            "campaign_id".to_string(),
+            cozo::DataValue::from("test-campaign".to_string()),
+        );
+        params.insert(
+            "node_id".to_string(),
+            cozo::DataValue::from(node.node_id.clone()),
+        );
+        let request_rows = db
+            .raw_query_params(
+                r#"
+?[projection_schema_version, request_schema_version, generation, branch_id, stop_on_error, runner_arg_count, content_sha256] :=
+    *eval_runner_request {
+        campaign_id,
+        node_id,
+        projection_schema_version,
+        request_schema_version,
+        generation,
+        branch_id,
+        stop_on_error,
+        runner_arg_count,
+        content_sha256
+    },
+    campaign_id = $campaign_id,
+    node_id = $node_id
+"#,
+                params.clone(),
+            )
+            .expect("query normalized runner request");
+        assert_eq!(request_rows.rows.len(), 1);
+        let request_row = request_rows.row_refs().next().expect("runner request row");
+        assert_eq!(
+            request_row
+                .get::<String>("projection_schema_version")
+                .expect("projection schema"),
+            eval_store::RUNNER_REQUEST_SCHEMA_VERSION
+        );
+        assert_eq!(
+            request_row
+                .get::<String>("request_schema_version")
+                .expect("request schema"),
+            PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION
+        );
+        assert_eq!(request_row.get::<i64>("generation").expect("generation"), 2);
+        assert_eq!(
+            request_row.get::<String>("branch_id").expect("branch"),
+            node.branch_id
+        );
+        assert!(!request_row.get::<bool>("stop_on_error").expect("stop"));
+        assert!(
+            request_row
+                .get::<i64>("runner_arg_count")
+                .expect("arg count")
+                > 0
+        );
+        assert!(
+            !request_row
+                .get::<String>("content_sha256")
+                .expect("hash")
+                .is_empty()
+        );
+
+        let arg_rows = db
+            .raw_query_params(
+                r#"
+?[arg_value] :=
+    *eval_runner_request_arg { campaign_id, node_id, arg_value },
+    campaign_id = $campaign_id,
+    node_id = $node_id
+"#,
+                params,
+            )
+            .expect("query normalized runner request args");
+        let args: BTreeSet<_> = arg_rows
+            .row_refs()
+            .map(|row| row.get::<String>("arg_value").expect("arg"))
+            .collect();
+        assert!(args.contains("prototype1-runner"));
+        assert!(args.contains(&node.node_id));
     }
 
     #[test]
@@ -2320,6 +2422,61 @@ mod tests {
             source_refs
                 .iter()
                 .any(|source| source.contains("runner-result.json:L1"))
+        );
+
+        let mut params = BTreeMap::new();
+        params.insert(
+            "campaign_id".to_string(),
+            cozo::DataValue::from("test-campaign".to_string()),
+        );
+        params.insert(
+            "node_id".to_string(),
+            cozo::DataValue::from(node.node_id.clone()),
+        );
+        let result_rows = db
+            .raw_query_params(
+                r#"
+?[projection_schema_version, result_schema_version, status, disposition, path_kind, exit_code] :=
+    *eval_runner_result {
+        campaign_id,
+        node_id,
+        projection_schema_version,
+        result_schema_version,
+        status,
+        disposition,
+        path_kind,
+        exit_code
+    },
+    campaign_id = $campaign_id,
+    node_id = $node_id
+"#,
+                params,
+            )
+            .expect("query normalized runner results");
+        assert_eq!(result_rows.rows.len(), 2);
+        let mut path_kinds = BTreeSet::new();
+        for row in result_rows.row_refs() {
+            assert_eq!(
+                row.get::<String>("projection_schema_version")
+                    .expect("projection schema"),
+                eval_store::RUNNER_RESULT_SCHEMA_VERSION
+            );
+            assert_eq!(
+                row.get::<String>("result_schema_version")
+                    .expect("result schema"),
+                PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION
+            );
+            assert_eq!(row.get::<String>("status").expect("status"), "failed");
+            assert_eq!(
+                row.get::<String>("disposition").expect("disposition"),
+                "compile_failed"
+            );
+            assert_eq!(row.get::<i64>("exit_code").expect("exit"), 101);
+            path_kinds.insert(row.get::<String>("path_kind").expect("path kind"));
+        }
+        assert_eq!(
+            path_kinds,
+            BTreeSet::from(["attempt".to_string(), "node_latest".to_string()])
         );
     }
 
