@@ -1,6 +1,6 @@
 # 2026-06-27 Prototype 1 normalized DB persistence pass
 
-**Status:** active plan + audit log; child-plan normalized slice has fresh DB proof; scheduler-node normalized slice implemented, fresh-run DB proof pending
+**Status:** active plan + audit log; child-plan normalized slice has fresh DB proof; scheduler-node setup rows have fresh DB proof; child scheduler rows still need a successful admitted broad-harness child
 **Purpose:** restart spine for a fresh pass over `ploke-eval loop walk` persistence with normalized Cozo relations as the required target.
 **Related:**
 - `docs/active/agents/2026-06-22_prototype1-eval-store-data-model/README.md`
@@ -416,7 +416,97 @@ cargo build -p ploke-eval
 git diff --check
 ```
 
-Fresh DB proof is still pending; use a fresh `dual-strict` campaign after this code is committed. Do not use older DB-backed campaigns as scheduler-node proof because schema install now rejects old owner DBs missing the scheduler-node relations.
+Fresh DB proof after commit `1be870f7e Mirror scheduler nodes into normalized eval DB`:
+
+- Campaign: `p1-sched-db-20260627-114548`
+- Worktree: `/home/brasides/.ploke-eval/worktrees/p1-sched-db-20260627-114548`
+- Profile: `p1-broad-db-1x1-20260627-111548`
+- Storage: `dual-strict`
+- Parent: `node-32f9189844650290`
+- Setup branch: `prototype1-parent-p1-sched-db-20260627-114548-gen0`
+
+DB proof immediately after setup via `walk db_query`:
+
+```text
+eval_scheduler_node              present
+eval_scheduler_node_status_event present
+eval_scheduler_node_target_part  present
+eval_child_plan*                 present
+```
+
+Normalized scheduler node row:
+
+```json
+{
+  "campaign_id": "p1-sched-db-20260627-114548",
+  "node_id": "node-32f9189844650290",
+  "projection_schema_version": "prototype1-scheduler-node.v1",
+  "node_schema_version": "prototype1-treatment-node.v1",
+  "generation": 0,
+  "status": "planned",
+  "branch_id": "prototype1-parent-p1-sched-db-20260627-114548-gen0",
+  "candidate_id": "root-parent",
+  "target_relpath": ".ploke/prototype1/parent_identity.json"
+}
+```
+
+Normalized status row:
+
+```json
+{
+  "node_id": "node-32f9189844650290",
+  "status": "planned",
+  "recorded_at": "2026-06-27T11:46:35.188786400+00:00",
+  "content_sha256": "7c7b01a8cbc941e165094468c30565c1c846b84c05644f224520e29f32f73412"
+}
+```
+
+Additional setup checks:
+
+```text
+eval_scheduler_node_target_part count = 0
+invalid scheduler-node projection schema rows = 0
+eval_record_ref.family=scheduler_node = 1
+eval_record_ref.family=runner_request = 1
+```
+
+Interpretation: setup-time parent scheduler-node projection is now queryable from normalized DB rows. The legacy `scheduler_node` record-ref remains only as a citation/payload mirror.
+
+Broad-harness R8 attempt on the same fresh campaign:
+
+- `walk start --until r7` timed out after 900s but reconstruction reached `r7 - policy and child budget ready`.
+- `walk step --until r8 --watch` failed at R7 with:
+
+```text
+child plan has 0 runnable child candidate(s), fewer than required minimum 1
+```
+
+The failed broad-harness attempt still proved live trace persistence and rejected-attempt child-plan persistence:
+
+```text
+eval_child_plan                  1
+eval_child_plan_child            0
+eval_child_plan_rejected_attempt 1
+eval_agent_turn                  1
+eval_tool_event                  37
+eval_model_exchange              0
+eval_message_event               0
+eval_trace_event                 0
+```
+
+Rejected attempt row summary:
+
+```text
+producer_id=prototype1:broad-headless-tui-adapter-v1
+policy=workspace_except_ploke_eval
+outcome=rejected
+target_relpath=.
+reason=broad headless-tui slot ... has no admitted changes
+```
+
+Tool-event status counts included requested/completed `list_dir`, `read_file`, `request_code_context`, `cargo`, and requested/completed/failed `non_semantic_patch` events.
+
+Remaining scheduler proof gap: this failed R8 did not admit a runnable child, so it did not produce child scheduler-node rows. A fresh successful broad-harness child admission is still needed to prove normalized scheduler-node rows for generation-1 children.
 
 ## Initial persistence matrix
 
@@ -433,7 +523,7 @@ Legend:
 | Closure state | `eval_closure_ref`, `eval_closure_instance`, artifact/procedure/count relations | Mostly normalized | Counts relation exists but may be empty; verify semantics before marking complete. |
 | Baseline | `eval_baseline`, instance, metrics relations | Normalized | Current run has two baselines after successor. |
 | Parent-start journal evidence | `eval_transition_event` + some refs | Partially normalized | Later journal events are not comprehensively normalized. |
-| Scheduler node projection `nodes/<node>/node.json` | `eval_scheduler_node`, `eval_scheduler_node_status_event`, `eval_scheduler_node_target_part`; legacy `eval_record_ref.family=scheduler_node` may remain as citation | Implemented, fresh-run DB proof pending | Additive mirror writes normalized current node/status/target-part rows; prove with fresh `dual-strict` campaign via `walk db_query`. |
+| Scheduler node projection `nodes/<node>/node.json` | `eval_scheduler_node`, `eval_scheduler_node_status_event`, `eval_scheduler_node_target_part`; legacy `eval_record_ref.family=scheduler_node` may remain as citation | Implemented; setup/root proof complete, generation-1 child proof pending | Fresh campaign `p1-sched-db-20260627-114548` proves the root parent row and status row. A successful admitted broad-harness child is still needed to prove child scheduler rows. |
 | Runner request `runner-request.json` | `eval_record_ref.family=runner_request` | Payload-ref only | Needs normalized runner-request relation with args/list fields. |
 | Child plan MessageBox | `eval_child_plan`, `eval_child_plan_child`, `eval_child_plan_rejected_attempt` | Normalized for R8 child-plan authority | Fresh DB-backed proof: `p1-normchild-db-20260627-100712` at R8 has 1 plan row, 3 child rows, 0 rejected rows, and 0 `eval_record_ref.family=child_plan_file` rows. |
 | Invocation JSON | `eval_invocation`, `eval_attempt` | Normalized metadata; body not normalized | Need decide which embedded invocation payload facts must be normalized for cross-machine Parent/Child. |
@@ -458,10 +548,11 @@ Do not continue live fanout as proof work until these are handled in a structure
    - Writer no longer emits `child_plan_file` as the child-plan persistence surface.
    - Fresh proof campaign `p1-normchild-db-20260627-100712` confirms normalized rows via `walk db_query`.
 
-2. **Create normalized scheduler-node schema** — implemented, fresh proof pending.
+2. **Create normalized scheduler-node schema** — implemented; setup/root DB proof complete, child-row proof pending.
    - Relations: `eval_scheduler_node`, `eval_scheduler_node_status_event`, `eval_scheduler_node_target_part`.
    - Current node projection and status history are normalized; target parts are keyed by node projection content hash.
-   - Fresh `walk db_query` proof still required on a new owner DB.
+   - Fresh `walk db_query` proof: `p1-sched-db-20260627-114548` setup has one root parent scheduler row and one planned status row.
+   - Remaining proof gap: generation-1 child scheduler rows need a successful admitted broad-harness child; first fresh broad attempt rejected because no admitted changes were produced.
 
 3. **Create normalized runner request/result schemas**
    - Runner request: identity, target paths, operation/patch/artifact ids, runner args list.
