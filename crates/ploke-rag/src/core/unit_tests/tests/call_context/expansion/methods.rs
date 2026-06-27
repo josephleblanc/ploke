@@ -13,10 +13,21 @@ async fn call_context_expansion_adds_incoming_fixture_method_callers() -> Result
         &db,
         &function_in_module_query(&["crate"], "call_typed_local_instance_method"),
     )?;
+    let nested_ref_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_typed_double_reference_local_instance_method",
+        ),
+    )?;
     let assoc_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_method_as_associated_function"),
     )?;
+    let method_callers = [
+        (method_owner, "method-call owner"),
+        (nested_ref_owner, "nested-reference method owner"),
+    ];
 
     let mut rag = init_test_rag_mock(Arc::clone(&db));
     rag.cfg.call_context.max_owner_hits = 64;
@@ -33,8 +44,10 @@ async fn call_context_expansion_adds_incoming_fixture_method_callers() -> Result
         "incoming method caller expansion must preserve the seed target; expanded: {expanded:#?}"
     );
     assert!(
-        expanded_ids.contains(&method_owner),
-        "method target expansion should materialize the method-call owner; expanded: {expanded:#?}"
+        method_callers
+            .iter()
+            .all(|(owner, _label)| expanded_ids.contains(owner)),
+        "method target expansion should materialize all method callers; expanded: {expanded:#?}"
     );
     assert!(
         expanded_ids.contains(&assoc_owner),
@@ -42,28 +55,32 @@ async fn call_context_expansion_adds_incoming_fixture_method_callers() -> Result
     );
 
     let call_context = rag.collect_call_context(&expanded)?;
-    let method_context = call_context
-        .get(&method_owner)
-        .expect("method-call owner should receive outgoing call context");
-    let method_call = method_context
-        .iter()
-        .find(|call| {
-            call.kind == CallSiteKind::Method
-                && call.callee
-                    == CallCalleeInfo::Method {
-                        name: "instance_value".to_string(),
-                        receiver: Some(CallReceiverInfo::TypedLocalBinding {
-                            name: "value".to_string(),
-                            type_path: vec!["LocalAssoc".to_string()],
-                        }),
-                    }
-        })
-        .expect("caller should preserve the method call edge to LocalAssoc::instance_value");
-    assert_eq!(method_call.status, CallStatusKind::Resolved);
-    assert_eq!(method_call.resolution, Some(CallResolutionKind::LocalExact));
-    assert_eq!(method_call.targets.len(), 1);
-    assert_eq!(method_call.targets[0].target_id, target);
-    assert_eq!(method_call.targets[0].relation, CallTargetKind::Method);
+    for (owner, label) in method_callers {
+        let context = call_context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("{label} should receive outgoing call context"));
+        let call = context
+            .iter()
+            .find(|call| {
+                call.kind == CallSiteKind::Method
+                    && call.callee
+                        == CallCalleeInfo::Method {
+                            name: "instance_value".to_string(),
+                            receiver: Some(CallReceiverInfo::TypedLocalBinding {
+                                name: "value".to_string(),
+                                type_path: vec!["LocalAssoc".to_string()],
+                            }),
+                        }
+            })
+            .unwrap_or_else(|| {
+                panic!("{label} should preserve the method call edge to LocalAssoc::instance_value")
+            });
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(call.targets.len(), 1);
+        assert_eq!(call.targets[0].target_id, target);
+        assert_eq!(call.targets[0].relation, CallTargetKind::Method);
+    }
 
     let assoc_context = call_context
         .get(&assoc_owner)

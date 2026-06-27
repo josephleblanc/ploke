@@ -8,6 +8,7 @@ use ploke_core::rag_types::RequestCodeContextResult;
 use ploke_db::Database;
 use ploke_db::bm25_index::bm25_service::Bm25Status;
 use ploke_embed::indexer::EmbeddingProcessor;
+use ploke_rag::RagConfig;
 use std::borrow::Cow;
 use std::sync::Arc;
 use tokio::time::{Duration, sleep};
@@ -29,7 +30,14 @@ pub(in super::super) async fn execute_fixture_tool_request(
     top_k: usize,
     call_id: &'static str,
 ) -> color_eyre::Result<ToolResult> {
-    let rt = TestRuntime::new_with_embedding_processor(db, EmbeddingProcessor::new_mock());
+    let mut rag_config = RagConfig::default();
+    rag_config.call_context.max_owner_hits = 64;
+    rag_config.call_context.max_caller_hits = 64;
+    let rt = TestRuntime::new_with_embedding_processor_and_rag_config(
+        db,
+        EmbeddingProcessor::new_mock(),
+        rag_config,
+    );
     rt.setup_loaded_standalone_crate(ploke_test_utils::workspace_root())
         .await;
     let state = rt.state_arc();
@@ -38,6 +46,8 @@ pub(in super::super) async fn execute_fixture_tool_request(
         cfg.rag.strategy = RetrievalStrategyUser::Sparse { strict: true };
         cfg.rag.top_k = top_k;
         cfg.rag.per_part_max_tokens = 4096;
+        cfg.rag.call_context.max_owner_hits = 64;
+        cfg.rag.call_context.max_caller_hits = 64;
         cfg.token_limit = 65_536;
     }
     let rag = state

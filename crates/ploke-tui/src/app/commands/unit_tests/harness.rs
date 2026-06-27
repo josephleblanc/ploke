@@ -1176,7 +1176,7 @@ impl TestRuntime<NotSpawned, NotSpawned, NotSpawned, NotSpawned, NotSpawned> {
     }
 
     /// Create a lightweight runtime with caller-supplied embedding and RAG settings.
-    fn new_with_embedding_processor_and_rag_config(
+    pub fn new_with_embedding_processor_and_rag_config(
         fixture_db: &Arc<ploke_db::Database>,
         processor: EmbeddingProcessor,
         rag_config: RagConfig,
