@@ -20,7 +20,6 @@ mod tests {
     use itertools::Itertools;
     use lazy_static::lazy_static;
     use ploke_core::rag_types::TypeContextKind;
-    #[cfg(feature = "call_graph")]
     use ploke_core::rag_types::{
         CallCalleeInfo, CallContextInfo, CallExpansionKind, CallReceiverInfo, CallResolutionKind,
         CallSiteKind, CallStatusKind, CallTargetKind, ContextPart, ProofContextInfo,
@@ -543,8 +542,6 @@ mod tests {
     fn struct_in_file_query(name: &str) -> String {
         item_in_file_query("struct", name)
     }
-
-    #[cfg(feature = "call_graph")]
     fn variant_by_enum_query(enum_name: &str, variant_name: &str) -> String {
         format!(
             r#"?[id] :=
@@ -570,8 +567,6 @@ mod tests {
     fn trait_in_file_query(name: &str) -> String {
         item_in_file_query("trait", name)
     }
-
-    #[cfg(feature = "call_graph")]
     fn trait_method_query(trait_name: &str, method: &str) -> String {
         format!(
             r#"?[method_id] :=
@@ -1598,13 +1593,8 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
 
         Ok(())
     }
-
-    #[cfg(feature = "call_graph")]
     mod call_context;
-    #[cfg(feature = "call_graph")]
     mod proof_context;
-
-    #[cfg(feature = "call_graph")]
     fn assert_incoming_expansion(part: &ContextPart, call: &CallContextInfo, target_id: Uuid) {
         assert_call_expansion(
             part,
@@ -1614,8 +1604,6 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
             target_id,
         );
     }
-
-    #[cfg(feature = "call_graph")]
     fn assert_outgoing_expansion(
         part: &ContextPart,
         call: &CallContextInfo,
@@ -1630,8 +1618,6 @@ is_file_module[id] := *file_mod{owner_id: id @ 'NOW'}
             target_id,
         );
     }
-
-    #[cfg(feature = "call_graph")]
     fn assert_call_expansion(
         part: &ContextPart,
         call: &CallContextInfo,

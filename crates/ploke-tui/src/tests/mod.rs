@@ -14,8 +14,6 @@ pub mod ui_approvals_simple;
 pub mod ui_approvals_truncation;
 #[cfg(feature = "long_test")]
 pub mod ui_performance_comprehensive;
-
-#[cfg(feature = "call_graph")]
 #[test]
 fn build_rag_config_applies_call_graph_context_user_config() {
     let rag = crate::user_config::RagUserConfig {

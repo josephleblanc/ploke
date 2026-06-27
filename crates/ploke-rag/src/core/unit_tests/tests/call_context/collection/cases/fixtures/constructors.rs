@@ -1,7 +1,5 @@
 use super::super::super::super::super::*;
 use super::super::super::helpers::*;
-
-#[cfg(feature = "call_graph")]
 #[tokio::test]
 async fn call_context_collection_reads_real_fixture_constructor_rows() -> Result<(), Error> {
     init_tracing_once();

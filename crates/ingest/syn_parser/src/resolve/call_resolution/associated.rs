@@ -74,7 +74,9 @@ impl CallRelationResolver<'_> {
         };
 
         if let Some(impl_id) = self.impl_for_owner_method(owner_method_id)? {
-            let impl_node = self.impl_node(impl_id)?;
+            let Some(impl_node) = self.maybe_impl_node(impl_id) else {
+                return Ok(AssocPathResolution::Unsupported);
+            };
             if impl_node.trait_type.is_some() {
                 return Ok(AssocPathResolution::Unsupported);
             }

@@ -709,6 +709,29 @@ mod tests {
     }
 
     #[test]
+    fn graph_resolve_exact_matches_local_embedding_backup_struct() -> Result<(), DbError> {
+        let fixture = &ploke_test_utils::FIXTURE_NODES_LOCAL_EMBEDDINGS;
+        let db = Database::init_with_schema().map_err(|e| DbError::Cozo(e.to_string()))?;
+        let fixture_path = fixture
+            .checked_path()
+            .map_err(|e| DbError::Cozo(e.to_string()))?
+            .into_path();
+        db.import_plain_fixture_backup_with_embeddings(&fixture_path)?;
+
+        let fixture_root = fixtures_crates_dir().join("fixture_nodes");
+        let file_path = fixture_root.join("src/structs.rs");
+        let module_path = vec!["crate".to_string(), "structs".to_string()];
+        let rows =
+            super::graph_resolve_exact(&db, "struct", &file_path, &module_path, "SampleStruct")?;
+
+        assert_eq!(rows.len(), 1, "expected a single struct result");
+        assert_eq!(rows[0].name, "SampleStruct");
+        assert_eq!(rows[0].file_path, file_path);
+
+        Ok(())
+    }
+
+    #[test]
     fn graph_resolve_exact_matches_fixture_nodes_method() -> Result<(), DbError> {
         let cozo_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")
             .expect("database must be set up correctly");

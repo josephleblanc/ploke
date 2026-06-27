@@ -27,7 +27,8 @@ use syn_parser::{
     discovery::workspace::try_parse_manifest,
     error::SynParserError,
     parser::{
-        nodes::{AnyNodeId, AsAnyNodeId as _, ModuleNodeId, PrimaryNodeId},
+        graph::GraphAccess as _,
+        nodes::{AnyNodeId, AsAnyNodeId as _, ModuleNodeId, PrimaryNodeId, ToCozoUuid as _},
         relations::SyntacticRelation,
     },
     resolve::{RelationIndexer, TreeRelation},
@@ -1534,17 +1535,35 @@ module tree process or run_parse_no_transform"
         // WARN: Half-assed implementation, this should be a recursive function instead of simple
         // collection.
         //  - coercing into ModuleNodeId with the test method escape hatch, do properly
-        let module_uuids = vec_ok
+        let mut module_uuids = vec_ok
             .into_iter()
             .filter_map(|f| f.map(|i| i.id))
             .collect::<BTreeSet<_>>();
-        let module_ids = module_uuids
+        let changed_filename_set = changed_filenames.iter().collect::<BTreeSet<_>>();
+        let fresh_module_ids = merged
+            .modules()
+            .iter()
+            .filter_map(|module| {
+                module
+                    .file_path()
+                    .filter(|path| changed_filename_set.contains(path))
+                    .map(|_| module.id)
+            })
+            .collect::<HashSet<_>>();
+        module_uuids.extend(fresh_module_ids.iter().filter_map(|module_id| {
+            match module_id.as_any().to_cozo_uuid() {
+                DataValue::Uuid(cozo::UuidWrapper(uuid)) => Some(uuid),
+                _ => None,
+            }
+        }));
+        let mut module_set = module_uuids
             .iter()
             .copied()
-            .map(|uid| ModuleNodeId::new_test(NodeId::Synthetic(uid)));
+            .map(|uid| ModuleNodeId::new_test(NodeId::Synthetic(uid)))
+            .collect::<HashSet<_>>();
+        module_set.extend(fresh_module_ids);
         // let module_ids = vec_ok.into_iter().filter_map(|f| f.map(|id|
         //     ModuleNodeId::new_test(NodeId::Synthetic(id.id))));
-        let module_set: HashSet<ModuleNodeId> = module_ids.collect();
 
         let any_node_mod_set: Vec<AnyNodeId> =
             module_set.iter().map(|m_id| m_id.as_any()).collect();

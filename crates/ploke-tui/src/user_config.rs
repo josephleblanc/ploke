@@ -727,10 +727,8 @@ pub struct RagUserConfig {
     pub rrf: RrfConfig,
     #[serde(default)]
     pub mmr: Option<MmrConfig>,
-    #[cfg(feature = "call_graph")]
     #[serde(default)]
     pub call_context: CallContextUserConfig,
-    #[cfg(feature = "call_graph")]
     #[serde(default)]
     pub proof_context: ProofContextUserConfig,
 }
@@ -746,15 +744,11 @@ impl Default for RagUserConfig {
             strict_bm25_by_default: false,
             rrf: RrfConfig::default(),
             mmr: None,
-            #[cfg(feature = "call_graph")]
             call_context: CallContextUserConfig::default(),
-            #[cfg(feature = "call_graph")]
             proof_context: ProofContextUserConfig::default(),
         }
     }
 }
-
-#[cfg(feature = "call_graph")]
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 pub struct CallContextUserConfig {
     #[serde(default = "default_call_context_enabled")]
@@ -770,8 +764,6 @@ pub struct CallContextUserConfig {
     #[serde(default = "default_call_context_caller_factor")]
     pub caller_factor: f32,
 }
-
-#[cfg(feature = "call_graph")]
 impl Default for CallContextUserConfig {
     fn default() -> Self {
         let defaults = ploke_rag::CallContextConfig::default();
@@ -785,8 +777,6 @@ impl Default for CallContextUserConfig {
         }
     }
 }
-
-#[cfg(feature = "call_graph")]
 impl CallContextUserConfig {
     pub fn validated(self) -> Self {
         Self {
@@ -811,8 +801,6 @@ impl CallContextUserConfig {
         }
     }
 }
-
-#[cfg(feature = "call_graph")]
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
 pub struct ProofContextUserConfig {
     #[serde(default = "default_proof_context_enabled")]
@@ -822,8 +810,6 @@ pub struct ProofContextUserConfig {
     #[serde(default = "default_proof_context_max_rows_per_part")]
     pub max_rows_per_part: usize,
 }
-
-#[cfg(feature = "call_graph")]
 impl Default for ProofContextUserConfig {
     fn default() -> Self {
         let defaults = ploke_rag::ProofContextConfig::default();
@@ -834,8 +820,6 @@ impl Default for ProofContextUserConfig {
         }
     }
 }
-
-#[cfg(feature = "call_graph")]
 impl ProofContextUserConfig {
     pub fn validated(self) -> Self {
         Self {
@@ -884,9 +868,7 @@ impl RagUserConfig {
             strict_bm25_by_default: self.strict_bm25_by_default,
             rrf,
             mmr,
-            #[cfg(feature = "call_graph")]
             call_context: self.call_context.validated(),
-            #[cfg(feature = "call_graph")]
             proof_context: self.proof_context.validated(),
         }
     }
@@ -1089,48 +1071,30 @@ fn default_bm25_timeout_ms() -> u64 {
 fn default_bm25_retry_backoff_ms() -> Vec<u64> {
     vec![50, 100]
 }
-
-#[cfg(feature = "call_graph")]
 fn default_call_context_enabled() -> bool {
     ploke_rag::CallContextConfig::default().enabled
 }
-
-#[cfg(feature = "call_graph")]
 fn default_call_context_max_owner_hits() -> usize {
     ploke_rag::CallContextConfig::default().max_owner_hits
 }
-
-#[cfg(feature = "call_graph")]
 fn default_call_context_max_sites_per_owner() -> usize {
     ploke_rag::CallContextConfig::default().max_sites_per_owner
 }
-
-#[cfg(feature = "call_graph")]
 fn default_call_context_max_targets_per_site() -> usize {
     ploke_rag::CallContextConfig::default().max_targets_per_site
 }
-
-#[cfg(feature = "call_graph")]
 fn default_call_context_max_caller_hits() -> usize {
     ploke_rag::CallContextConfig::default().max_caller_hits
 }
-
-#[cfg(feature = "call_graph")]
 fn default_call_context_caller_factor() -> f32 {
     ploke_rag::CallContextConfig::default().caller_factor
 }
-
-#[cfg(feature = "call_graph")]
 fn default_proof_context_enabled() -> bool {
     ploke_rag::ProofContextConfig::default().enabled
 }
-
-#[cfg(feature = "call_graph")]
 fn default_proof_context_max_seed_hits() -> usize {
     ploke_rag::ProofContextConfig::default().max_seed_hits
 }
-
-#[cfg(feature = "call_graph")]
 fn default_proof_context_max_rows_per_part() -> usize {
     ploke_rag::ProofContextConfig::default().max_rows_per_part
 }
@@ -1223,8 +1187,6 @@ mod tests {
         let runtime_cfg: RuntimeConfig = UserConfig::default().into();
         assert_eq!(runtime_cfg.llm_timeout_secs, ploke_llm::LLM_TIMEOUT_SECS);
     }
-
-    #[cfg(feature = "call_graph")]
     #[test]
     fn rag_call_graph_context_config_round_trips_and_validates() {
         let toml = r#"

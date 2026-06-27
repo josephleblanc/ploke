@@ -1,7 +1,5 @@
 use super::super::super::super::*;
 use super::super::helpers::*;
-
-#[cfg(feature = "call_graph")]
 struct SyntheticCallCase<'a> {
     label: &'a str,
     site: Uuid,
@@ -19,8 +17,6 @@ struct SyntheticCallCase<'a> {
     expected_callee: ExpectedCallee<'a>,
     expected_target_relation: CallTargetKind,
 }
-
-#[cfg(feature = "call_graph")]
 enum ExpectedCallee<'a> {
     Path(&'a [&'a str]),
     MethodLocal {
@@ -38,8 +34,6 @@ enum ExpectedCallee<'a> {
     },
     Dynamic,
 }
-
-#[cfg(feature = "call_graph")]
 impl ExpectedCallee<'_> {
     fn to_info(&self) -> CallCalleeInfo {
         match self {
@@ -73,13 +67,9 @@ impl ExpectedCallee<'_> {
         }
     }
 }
-
-#[cfg(feature = "call_graph")]
 fn strings(items: &[&str]) -> Vec<String> {
     items.iter().map(|item| (*item).to_string()).collect()
 }
-
-#[cfg(feature = "call_graph")]
 fn insert_synthetic_call(
     db: &Database,
     owner: Uuid,
@@ -117,8 +107,6 @@ fn insert_synthetic_call(
         Some("LocalExact"),
     )
 }
-
-#[cfg(feature = "call_graph")]
 #[tokio::test]
 async fn call_context_collection_attaches_outgoing_call_payloads() -> Result<(), Error> {
     init_tracing_once();

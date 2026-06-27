@@ -1,6 +1,4 @@
 use super::*;
-
-#[cfg(feature = "call_graph")]
 pub(in super::super) fn insert_call_edge(
     db: &Database,
     owner: Uuid,

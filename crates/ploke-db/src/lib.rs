@@ -4,7 +4,6 @@
 extern crate self as ploke_db;
 
 pub mod bm25_index;
-#[cfg(feature = "call_graph")]
 pub mod call_graph;
 mod database;
 mod error;
@@ -21,8 +20,6 @@ pub mod tool_query;
 pub mod type_graph;
 
 pub mod multi_embedding;
-
-#[cfg(feature = "call_graph")]
 pub use call_graph::{
     CallCallerRow, CallContextCandidate, CallContextOptions, CallContextRelation, CallContextRow,
     CallContextSeed, CallReceiver, CallRelationKind, CallResolutionKind, CallResolutionRow,

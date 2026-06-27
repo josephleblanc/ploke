@@ -1,6 +1,4 @@
 use super::super::super::*;
-
-#[cfg(feature = "call_graph")]
 #[tokio::test]
 async fn call_context_sparse_get_context_expands_associated_function_target_hits_to_fixture_callers()
 -> Result<(), Error> {
@@ -88,8 +86,6 @@ async fn call_context_sparse_get_context_expands_associated_function_target_hits
 
     Ok(())
 }
-
-#[cfg(feature = "call_graph")]
 #[tokio::test]
 async fn call_context_sparse_get_context_expands_imported_trait_associated_function_target_hits_to_fixture_callers()
 -> Result<(), Error> {

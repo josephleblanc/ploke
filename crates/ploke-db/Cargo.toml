@@ -52,6 +52,5 @@ ploke-common = { path = "../common" }
 [features]
 default = []
 type_bearing_ids = []
-# CALL_GRAPH_GATE:db-projection - historical feature name; currently gates DB projection
-# and consumers while backup fixtures are reviewed/regenerated.
-call_graph = ["syn_parser/call_graph", "ploke-transform/call_graph"]
+# Compatibility alias; call graph DB helpers are baseline.
+call_graph = []

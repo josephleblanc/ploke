@@ -1,6 +1,4 @@
 use super::*;
-
-#[cfg(feature = "call_graph")]
 pub(super) fn ensure_function_owner(db: &Database, owner: Uuid) -> Result<(), Error> {
     let mut params = BTreeMap::new();
     params.insert("id".to_string(), uuid(owner));

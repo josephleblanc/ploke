@@ -928,7 +928,14 @@ impl<'a> CallRelationResolver<'a> {
             return Ok(false);
         };
         let module_id = self.import_scope_module(module_id)?;
-        let module_node = self.graph.get_module_checked(module_id)?;
+        let Some(module_node) = self
+            .graph
+            .modules()
+            .iter()
+            .find(|module| module.id == module_id)
+        else {
+            return Ok(false);
+        };
 
         let mut saw_external = false;
         let mut saw_non_external = false;
@@ -1434,7 +1441,9 @@ impl<'a> CallRelationResolver<'a> {
         let Some(impl_id) = self.impl_for_owner_method(owner_method_id)? else {
             return Ok(None);
         };
-        let impl_node = self.impl_node(impl_id)?;
+        let Some(impl_node) = self.maybe_impl_node(impl_id) else {
+            return Ok(None);
+        };
         let Some(self_target) = self.impl_self_target(impl_node, type_relations)? else {
             return Ok(None);
         };
@@ -1543,7 +1552,9 @@ impl<'a> CallRelationResolver<'a> {
         };
 
         if let Some(impl_id) = self.impl_for_owner_method(owner_method_id)? {
-            let impl_node = self.impl_node(impl_id)?;
+            let Some(impl_node) = self.maybe_impl_node(impl_id) else {
+                return Ok(AssocPathResolution::Unsupported);
+            };
             return Ok(self.resolve_method_in_impl(impl_node, &call.method_name));
         }
 
@@ -2248,7 +2259,9 @@ impl<'a> CallRelationResolver<'a> {
         let Some(impl_id) = self.impl_for_owner_method(method_id)? else {
             return Ok(None);
         };
-        let impl_node = self.impl_node(impl_id)?;
+        let Some(impl_node) = self.maybe_impl_node(impl_id) else {
+            return Ok(None);
+        };
         self.impl_self_target(impl_node, type_relations)
     }
 
@@ -2770,16 +2783,8 @@ impl<'a> CallRelationResolver<'a> {
         Ok(owner_trait)
     }
 
-    fn impl_node(&self, impl_id: ImplNodeId) -> Result<&ImplNode, SynParserError> {
-        self.graph
-            .impls()
-            .iter()
-            .find(|node| node.id == impl_id)
-            .ok_or_else(|| {
-                SynParserError::InternalState(format!(
-                    "call resolution found owner impl relation to missing impl {impl_id}"
-                ))
-            })
+    fn maybe_impl_node(&self, impl_id: ImplNodeId) -> Option<&ImplNode> {
+        self.graph.impls().iter().find(|node| node.id == impl_id)
     }
 
     fn function_return_type(

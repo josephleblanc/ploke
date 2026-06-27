@@ -1,6 +1,4 @@
 use super::*;
-
-#[cfg(feature = "call_graph")]
 pub(in super::super) struct CallSeed<'a> {
     pub(in super::super) id: Uuid,
     pub(in super::super) owner: Uuid,
@@ -13,8 +11,6 @@ pub(in super::super) struct CallSeed<'a> {
     pub(in super::super) arg_count: Option<i64>,
     pub(in super::super) generic_arg_count: Option<i64>,
 }
-
-#[cfg(feature = "call_graph")]
 pub(in super::super) fn insert_call_site(db: &Database, seed: CallSeed<'_>) -> Result<(), Error> {
     let mut params = BTreeMap::new();
     params.insert("id".to_string(), uuid(seed.id));

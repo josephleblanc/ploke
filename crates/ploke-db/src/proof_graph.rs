@@ -1,8 +1,6 @@
 use serde_json::Value;
 
 use crate::{Database, DbError};
-
-#[cfg(feature = "call_graph")]
 mod call_projection;
 mod invariants;
 mod projection;

@@ -129,14 +129,8 @@ ploke-llm-refactor = []
 llm_refactor = []
 live_api_tests = []
 test_harness = []
-# CALL_GRAPH_GATE:db-projection - historical feature name; currently gates DB projection
-# consumers while backup fixtures are reviewed/regenerated.
-call_graph = [
-    "syn_parser/call_graph",
-    "ploke-transform/call_graph",
-    "ploke-db/call_graph",
-    "ploke-rag/call_graph",
-]
+# Compatibility alias; call graph context is baseline.
+call_graph = []
 demo = []
 json_visitor = []
 convert_keyword_2015 = ["syn_parser/convert_keyword_2015"]

@@ -71,6 +71,13 @@ fn is_typed_type_graph_relation(relation: &str) -> bool {
     )
 }
 
+fn is_call_graph_relation(relation: &str) -> bool {
+    matches!(
+        relation,
+        "call_site" | "call_site_edge" | "call_relation" | "call_resolution_status"
+    )
+}
+
 fn snippet_context_nodes(
     query_result: QueryResult,
 ) -> Result<Vec<(EmbeddingData, NodePaths)>, PlokeError> {
@@ -1553,7 +1560,9 @@ desc[id] := parent_of[id, parent], desc[parent], not file_root[id]
 
     /// Relation names for source-pinned typed type graph backup fixtures.
     pub fn prior_rels_for_typed_type_graph_backup_import(&self) -> Result<Vec<String>, PlokeError> {
-        self.prior_rels_for_current_schema_backup_import()
+        let mut relations = self.prior_rels_for_current_schema_backup_import()?;
+        relations.retain(|r| !is_call_graph_relation(r));
+        Ok(relations)
     }
 
     // Gets all the file data in the same namespace as the crate name given as argument.
@@ -3736,6 +3745,30 @@ mod tests {
             !has_typed_graph,
             "fresh schema may register typed graph relations, but empty relations should not enable type-context expansion"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn typed_type_graph_backup_import_excludes_call_graph_relations() -> Result<(), PlokeError> {
+        let db = Database::init_with_schema()?;
+
+        let relations = db.prior_rels_for_typed_type_graph_backup_import()?;
+
+        assert!(
+            relations.contains(&"type_relation".to_string()),
+            "typed type graph fixtures should keep typed graph relations in their import set"
+        );
+        for relation in [
+            "call_site",
+            "call_site_edge",
+            "call_relation",
+            "call_resolution_status",
+        ] {
+            assert!(
+                !relations.contains(&relation.to_string()),
+                "typed type graph fixture import set should not request call graph relation {relation}"
+            );
+        }
         Ok(())
     }
 

@@ -1,6 +1,4 @@
 use super::super::super::*;
-
-#[cfg(feature = "call_graph")]
 #[tokio::test]
 async fn call_context_sparse_get_context_excludes_closure_async_outer_owners_for_local_target()
 -> Result<(), Error> {

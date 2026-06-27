@@ -696,15 +696,15 @@ placeholder test.
 ## Gate/triage marker convention
 
 Use the searchable marker `CALL_GRAPH_GATE:<id>` in source comments and planning
-rows for every temporary `call_graph` gate. The marker must say which slice is
-expected to remove or update the gate, and tests behind the gate must keep strict
-assertions when the feature is enabled.
+rows for any future temporary gate. The marker must say which slice is expected
+to remove or update the gate, and tests behind the gate must keep strict
+assertions when the gate is enabled.
 
 Current workspace audit rows:
 
 | Marker | Classification | Evidence | Gate or owner | Expected pass/update point |
 | --- | --- | --- | --- | --- |
-| `CALL_GRAPH_GATE:db-projection` | Recent call-graph DB projection changed default schema/import expectations. The Cargo feature is still named `call_graph`, but the active rollout gate is DB projection plus downstream consumers, not parser-side structural modeling. | `ploke-db --test mod` and `ploke-rag --lib` fail on stale backups with `Cannot find requested stored relation 'call_relation'`; `git log` points at `a07c4b4e Project call graph facts into Cozo`. | Gate DB schema/projection and consuming tests behind Cargo feature `call_graph`; regenerate fixtures before ungating. | DB projection integration slice is complete, registered active + typed corpus fixtures have current call-graph relations, and default `cargo test --workspace --no-fail-fast` is green without the feature. |
+| `CALL_GRAPH_GATE:db-projection` | Closed. Call-graph DB projection changed default schema/import expectations, so it was gated until active fixtures were reviewed/regenerated. | Active checkout-local fixtures were reviewed/regenerated on 2026-06-27 and focused default transform/DB/RAG/TUI call-graph checks pass without `--features call_graph`. | No active gate. Cargo `call_graph` entries remain only as no-op compatibility aliases for old commands. | Keep call graph projection baseline; do not reintroduce a gate unless a new schema/fixture blocker is documented. |
 | `CALL_GRAPH_GATE:fixture-regeneration` | Fixture maintenance required by schema-affecting work, not a reason to weaken import validation. | Typed corpus backups predate `call_relation`; active checkout-local snapshots may need `cargo xtask fixtures ensure --snapshots`; typed shared snapshots may need `cargo xtask fixtures regenerate --typed`. | Fixture registry/docs owner; see `docs/testing/BACKUP_DB_FIXTURES.md` and `docs/how-to/recreate-backup-db-fixtures.md`. | Fixture regeneration/review slice updates registry/docs/seeds or records a credential/provider blocker. |
 | `CALL_GRAPH_GATE:non-callgraph-reds` | Broad-run failures not explained by call-graph DB projection. | Current examples: `ploke-eval` traversal/history failures, `ploke-tree` `todo!()`, `ploke-tui` `SampleStruct` edit-apply resolution failures, and `ploke-tui --test integration` workspace subset interference. | Do not hide these under `call_graph`; route to their owning plans or fix separately. | Each owning plan either makes the test green or records a separate strict feature gate/fixture contract without weakening assertions. |
 
@@ -1299,11 +1299,11 @@ Before implementing new call-graph work, verify:
 Commands run after structural extraction, resolver slices, path-call extraction, and macro-call extraction landed:
 
 ```bash
-cargo test -p syn_parser --features call_graph call_sites -- --nocapture
-cargo test -p ploke-transform --features call_graph transform::tests -- --nocapture
-cargo test -p ploke-db --features call_graph call_graph_queries -- --nocapture
-cargo test -p ploke-rag --features call_graph call_context_collection_attaches_outgoing_call_payloads -- --nocapture
-cargo check -p ploke-tui --features call_graph
+cargo test -p syn_parser call_sites -- --nocapture
+cargo test -p ploke-transform transform::tests -- --nocapture
+cargo test -p ploke-db call_graph_queries -- --nocapture
+cargo test -p ploke-rag call_context_collection_attaches_outgoing_call_payloads -- --nocapture
+cargo check -p ploke-tui
 ```
 
 Result: parser, transform, DB helper, and RAG checks passed. The latest

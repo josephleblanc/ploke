@@ -1,6 +1,4 @@
 use super::*;
-
-#[cfg(feature = "call_graph")]
 pub(in super::super) fn insert_call_status(
     db: &Database,
     site: Uuid,

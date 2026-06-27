@@ -9,8 +9,6 @@ mod lookup;
 use assertions::*;
 use cases::*;
 
-// CALL_GRAPH_GATE:db-projection - dynamic function edges must not be flattened to path functions.
-#[cfg(feature = "call_graph")]
 #[test]
 fn test_call_graph_projection_for_dynamic_function_call() -> Result<(), Box<dyn std::error::Error>>
 {

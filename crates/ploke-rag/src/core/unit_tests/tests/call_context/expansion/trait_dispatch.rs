@@ -1,6 +1,4 @@
 use super::super::super::*;
-
-#[cfg(feature = "call_graph")]
 #[tokio::test]
 async fn call_context_expansion_adds_incoming_fixture_trait_dispatch_callers() -> Result<(), Error>
 {

@@ -34,7 +34,7 @@ harness = false
 default = ["type_bearing_ids"]
 debug = []
 type_bearing_ids = []
-# CALL_GRAPH_GATE:db-projection - keep call graph DB relations out of the default schema until fixtures are regenerated.
-call_graph = ["syn_parser/call_graph"]
+# Compatibility alias; call graph projection is baseline.
+call_graph = []
 # get relations to have a mapping to higher level abstractions.
 level_up_relations = []

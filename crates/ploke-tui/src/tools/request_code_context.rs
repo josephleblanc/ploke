@@ -79,14 +79,10 @@ fn type_context_degraded_note() -> String {
     "Type-context expansion is unavailable for this workspace index; results reflect BM25/dense retrieval only (no typed-graph neighbors)."
         .to_string()
 }
-
-#[cfg(feature = "call_graph")]
 fn call_context_degraded_note() -> String {
     "Call-context expansion is unavailable for this workspace index; results omit call graph payloads and incoming caller expansion."
         .to_string()
 }
-
-#[cfg(feature = "call_graph")]
 fn proof_context_degraded_note() -> String {
     "Proof-context expansion is unavailable for this workspace index; results omit proof graph payloads and proof blockers."
         .to_string()
@@ -100,8 +96,6 @@ fn type_context_degraded_next_steps() -> Vec<String> {
             .to_string(),
     ]
 }
-
-#[cfg(feature = "call_graph")]
 fn call_context_degraded_next_steps() -> Vec<String> {
     vec![
         "Re-index the workspace with call-graph projection enabled if call payloads or caller expansion are required."
@@ -110,8 +104,6 @@ fn call_context_degraded_next_steps() -> Vec<String> {
             .to_string(),
     ]
 }
-
-#[cfg(feature = "call_graph")]
 fn proof_context_degraded_next_steps() -> Vec<String> {
     vec![
         "Project proof facts for the active workspace if proof blockers or proof context are required."
@@ -132,8 +124,6 @@ fn apply_type_context_degraded_note(result: &mut RequestCodeContextResult) {
     }
     result.next_steps.extend(type_context_degraded_next_steps());
 }
-
-#[cfg(feature = "call_graph")]
 fn apply_call_context_degraded_note(result: &mut RequestCodeContextResult) {
     let note = call_context_degraded_note();
     match result.note.as_mut() {
@@ -145,8 +135,6 @@ fn apply_call_context_degraded_note(result: &mut RequestCodeContextResult) {
     }
     result.next_steps.extend(call_context_degraded_next_steps());
 }
-
-#[cfg(feature = "call_graph")]
 fn apply_proof_context_degraded_note(result: &mut RequestCodeContextResult) {
     let note = proof_context_degraded_note();
     match result.note.as_mut() {
@@ -400,11 +388,9 @@ impl super::Tool for RequestCodeContextGat {
         if rag.type_context_degraded() {
             apply_type_context_degraded_note(&mut result);
         }
-        #[cfg(feature = "call_graph")]
         if rag.call_context_degraded() {
             apply_call_context_degraded_note(&mut result);
         }
-        #[cfg(feature = "call_graph")]
         if rag.proof_context_degraded() {
             apply_proof_context_degraded_note(&mut result);
         }
@@ -580,11 +566,11 @@ mod gat_tests {
         Ok(())
     }
 
-    #[cfg(all(feature = "call_graph", feature = "test_harness"))]
+    #[cfg(feature = "test_harness")]
     mod call_context_tests;
-    #[cfg(all(feature = "call_graph", feature = "test_harness"))]
+    #[cfg(feature = "test_harness")]
     mod helpers;
-    #[cfg(all(feature = "call_graph", feature = "test_harness"))]
+    #[cfg(feature = "test_harness")]
     mod proof_context_tests;
 
     #[test]
@@ -622,8 +608,6 @@ mod gat_tests {
                 .any(|step| step.contains("Refresh or re-resolve"))
         );
     }
-
-    #[cfg(feature = "call_graph")]
     #[test]
     fn call_context_degradation_is_model_visible() {
         let mut result = RequestCodeContextResult::from_assembled(
@@ -654,8 +638,6 @@ mod gat_tests {
             result.next_steps
         );
     }
-
-    #[cfg(feature = "call_graph")]
     #[test]
     fn proof_context_degradation_is_model_visible() {
         let mut result = RequestCodeContextResult::from_assembled(

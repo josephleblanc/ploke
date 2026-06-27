@@ -1,6 +1,4 @@
 use super::super::super::*;
-
-#[cfg(feature = "call_graph")]
 #[tokio::test]
 async fn call_context_expansion_adds_outgoing_fixture_targets() -> Result<(), Error> {
     init_tracing_once();
@@ -59,8 +57,6 @@ async fn call_context_expansion_adds_outgoing_fixture_targets() -> Result<(), Er
 
     Ok(())
 }
-
-#[cfg(feature = "call_graph")]
 #[tokio::test]
 async fn call_context_expansion_adds_incoming_fixture_callers() -> Result<(), Error> {
     init_tracing_once();
@@ -112,8 +108,6 @@ async fn call_context_expansion_adds_incoming_fixture_callers() -> Result<(), Er
 
     Ok(())
 }
-
-#[cfg(feature = "call_graph")]
 #[tokio::test]
 async fn call_context_expansion_respects_max_caller_hits_by_score() -> Result<(), Error> {
     init_tracing_once();

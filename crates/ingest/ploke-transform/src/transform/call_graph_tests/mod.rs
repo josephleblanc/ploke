@@ -14,8 +14,6 @@ use crate::schema::create_schema_all;
 
 use super::transform_parsed_graph;
 
-// CALL_GRAPH_GATE:db-projection - const initializer owners must persist with their owner kind.
-#[cfg(feature = "call_graph")]
 #[test]
 fn test_call_graph_projection_for_const_initializer_call() -> Result<(), Box<dyn std::error::Error>>
 {
@@ -133,8 +131,6 @@ fn test_call_graph_projection_for_const_initializer_call() -> Result<(), Box<dyn
     Ok(())
 }
 
-// CALL_GRAPH_GATE:db-projection - strict projection assertion for the feature-enabled DB slice.
-#[cfg(feature = "call_graph")]
 #[test]
 fn test_call_graph_projection_for_resolved_path_call() -> Result<(), Box<dyn std::error::Error>> {
     let db = Db::new(MemStorage::default()).expect("Failed to create database");
@@ -304,8 +300,6 @@ fn test_call_graph_projection_for_resolved_path_call() -> Result<(), Box<dyn std
 
 mod dynamic;
 
-// CALL_GRAPH_GATE:db-projection - strict projection assertion for the feature-enabled DB slice.
-#[cfg(feature = "call_graph")]
 #[test]
 fn test_call_graph_projection_for_method_edge_and_external_path_call()
 -> Result<(), Box<dyn std::error::Error>> {

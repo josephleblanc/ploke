@@ -93,7 +93,7 @@ verbose_debug = []
 temp_target = []
 not_wip_marker = []
 type_bearing_ids = []
-# CALL_GRAPH_GATE:db-projection - rollout feature for parser-owned call graph facts.
+# Compatibility alias; call graph facts are baseline.
 call_graph = []
 ghost_data_graphs = []
 validate = []

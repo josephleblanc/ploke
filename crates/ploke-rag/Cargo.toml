@@ -29,6 +29,5 @@ serde_json = { workspace = true }
 
 [features]
 default = []
-# CALL_GRAPH_GATE:db-projection - historical feature name; currently gates DB projection
-# consumers while backup fixtures are reviewed/regenerated.
-call_graph = ["ploke-db/call_graph"]
+# Compatibility alias; call graph context is baseline.
+call_graph = []

@@ -123,16 +123,10 @@ pub fn create_schema_all(db: &Db<MemStorage>) -> Result<(), crate::error::Transf
     TypeRelationSchema::create_and_insert_schema(db)?;
     TypeUseSchema::create_and_insert_schema(db)?;
     TypeContainsSchema::create_and_insert_schema(db)?;
-    // CALL_GRAPH_GATE:db-projection - default backups do not yet carry call graph relations.
-    // Remove this cfg when the DB projection slice has regenerated registered fixtures and the
-    // default workspace suite is green without the rollout feature.
-    #[cfg(feature = "call_graph")]
-    {
-        edges::CallSiteSchema::create_and_insert_schema(db)?;
-        edges::CallSiteRelationSchema::create_and_insert_schema(db)?;
-        edges::CallRelationSchema::create_and_insert_schema(db)?;
-        edges::CallResolutionStatusSchema::create_and_insert_schema(db)?;
-    }
+    edges::CallSiteSchema::create_and_insert_schema(db)?;
+    edges::CallSiteRelationSchema::create_and_insert_schema(db)?;
+    edges::CallRelationSchema::create_and_insert_schema(db)?;
+    edges::CallResolutionStatusSchema::create_and_insert_schema(db)?;
 
     // -- crate_context --
     CrateContextSchema::create_and_insert_schema(db)?;

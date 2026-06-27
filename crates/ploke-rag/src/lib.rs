@@ -149,7 +149,6 @@ pub use context::{
     assemble_context_with_type_context,
 };
 pub mod core;
-#[cfg(feature = "call_graph")]
 pub use core::{CallContextConfig, ProofContextConfig};
 pub use core::{
     NoopReranker, RagConfig, RagService, Reranker, RetrievalStrategy, TypeContextConfig,

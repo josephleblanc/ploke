@@ -822,8 +822,9 @@ are not acceptable as a continuing implementation style.
 - Do not keep growing already oversized files when a nearby module/common-helper
   split is available.
 - Update docs once per consolidated chunk, not after every micro-slice.
-- Keep `CALL_GRAPH_GATE:db-projection` active. Do not relax backup fixture
-  imports or schema invariants without explicit user approval.
+- `CALL_GRAPH_GATE:db-projection` has been removed after fixture review and
+  focused default verification. Do not relax backup fixture imports or schema
+  invariants without explicit user approval.
 - Run GitNexus impact before editing indexed symbols and
   `npx gitnexus detect-changes` before committing.
 - Use subagents for test execution, per repo instructions.
@@ -842,7 +843,7 @@ are not acceptable as a continuing implementation style.
 | CGQ-7 | P2 | Done 2026-06-25 | The "exactly one status per call site" invariant could be hidden by post-hoc sort/dedup. | `CallRelationResolver` now rejects duplicate status sources before dedup, including identical duplicates. |
 | CGQ-8 | P2 | Partial 2026-06-26 | `call_resolution.rs` and `call_extraction.rs` are monolithic. | Dynamic-call resolver logic now lives in `resolve/call_resolution/dynamic.rs` without adding resolver breadth. Remaining work: split path/method/constructor/lookup resolver concerns and `call_extraction.rs` before adding breadth there. |
 | CGQ-9 | P2 | Done 2026-06-25 | Call-graph docs were serving as a long running diary rather than a stable coverage inventory. | Added `2026-06-25_call-graph-coverage-inventory.md` as the compact layer-by-layer restart inventory and linked it from the call-graph restart spine. |
-| CGQ-10 | P3 | Done 2026-06-25 | `call_graph` feature name is broader than the actual gate: parser facts exist baseline, DB projection is gated. | Cargo feature comments and active gate docs now state that `call_graph` is a historical feature name whose active rollout gate is DB projection plus downstream consumers while backup fixtures are reviewed/regenerated. |
+| CGQ-10 | P3 | Done 2026-06-27 | `call_graph` feature name was broader than the actual gate: parser facts existed baseline while DB projection was gated. | DB projection and downstream consumers are now baseline. The Cargo feature remains only as a no-op compatibility alias for old commands; active gate docs now record that `CALL_GRAPH_GATE:db-projection` is closed. |
 | CGQ-11 | P1 | Done 2026-06-25 | `CodeGraph` carried dormant semantic call-target/status storage even though transform consumes `CallResolutionReport` directly. | `CodeGraph`/`ParsedCodeGraph` now keep only structural call occurrence facts; semantic call relations/statuses are report-owned at the resolver/transform boundary. |
 
 ## Pattern matches to preserve
@@ -870,6 +871,13 @@ next likely slices are:
    the next DB/proof/RAG/TUI batch before parser breadth.
 3. Keep splitting/table-driving any large helper or projection test touched by
    that batch before adding cases.
+
+Rollout note, 2026-06-27:
+
+- The DB projection rollout gate has been removed from production/test code.
+- `call_graph` remains in Cargo manifests only as a no-op compatibility alias.
+- Focused default checks now pass without `--features call_graph` for transform,
+  DB, RAG, and TUI call-context surfaces.
 
 ## Latest verification
 

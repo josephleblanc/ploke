@@ -1,7 +1,5 @@
 use super::super::super::super::*;
 use super::super::helpers::*;
-
-#[cfg(feature = "call_graph")]
 #[tokio::test]
 async fn call_context_disabled_safely_when_relations_absent() -> Result<(), Error> {
     init_tracing_once();

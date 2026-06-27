@@ -124,7 +124,6 @@ fn build_rag_config(rag: &crate::user_config::RagUserConfig) -> RagConfig {
     cfg.strict_bm25_by_default = rag.strict_bm25_by_default;
     cfg.rrf_default = rag.rrf;
     cfg.mmr_default = rag.mmr;
-    #[cfg(feature = "call_graph")]
     {
         cfg.call_context = rag.call_context.to_rag_config();
         cfg.proof_context = rag.proof_context.to_rag_config();

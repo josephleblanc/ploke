@@ -1,6 +1,4 @@
 use super::super::super::*;
-
-#[cfg(feature = "call_graph")]
 #[tokio::test]
 async fn call_context_sparse_get_context_expands_method_target_hits_to_fixture_callers()
 -> Result<(), Error> {

@@ -1,6 +1,4 @@
 use super::*;
-
-#[cfg(feature = "call_graph")]
 pub(in super::super) fn insert_call_target(
     db: &Database,
     site: Uuid,
@@ -32,8 +30,6 @@ pub(in super::super) fn insert_call_target(
         .map_err(Error::from)?;
     Ok(())
 }
-
-#[cfg(feature = "call_graph")]
 fn ensure_call_target(db: &Database, target: Uuid, kind: &str) -> Result<(), Error> {
     match kind {
         "Function" => ensure_function_owner(db, target),
@@ -43,8 +39,6 @@ fn ensure_call_target(db: &Database, target: Uuid, kind: &str) -> Result<(), Err
         other => panic!("unexpected synthetic call target kind {other}"),
     }
 }
-
-#[cfg(feature = "call_graph")]
 fn ensure_method_target(db: &Database, target: Uuid) -> Result<(), Error> {
     if relation_has_id(db, "method", target)? {
         return Ok(());
@@ -81,8 +75,6 @@ fn ensure_method_target(db: &Database, target: Uuid) -> Result<(), Error> {
         .map_err(Error::from)?;
     Ok(())
 }
-
-#[cfg(feature = "call_graph")]
 fn ensure_struct_target(db: &Database, target: Uuid) -> Result<(), Error> {
     if relation_has_id(db, "struct", target)? {
         return Ok(());
@@ -115,8 +107,6 @@ fn ensure_struct_target(db: &Database, target: Uuid) -> Result<(), Error> {
         .map_err(Error::from)?;
     Ok(())
 }
-
-#[cfg(feature = "call_graph")]
 fn ensure_variant_target(db: &Database, target: Uuid) -> Result<(), Error> {
     if relation_has_id(db, "variant", target)? {
         return Ok(());
@@ -145,8 +135,6 @@ fn ensure_variant_target(db: &Database, target: Uuid) -> Result<(), Error> {
     .map_err(Error::from)?;
     Ok(())
 }
-
-#[cfg(feature = "call_graph")]
 fn relation_has_id(db: &Database, relation: &str, id: Uuid) -> Result<bool, Error> {
     let mut params = BTreeMap::new();
     params.insert("id".to_string(), uuid(id));
