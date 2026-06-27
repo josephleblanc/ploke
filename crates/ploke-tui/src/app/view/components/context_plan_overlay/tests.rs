@@ -16,7 +16,7 @@ fn line_text(line: &Line<'_>) -> String {
 #[test]
 fn expanded_rag_part_displays_call_context_details() {
     let part_id = Uuid::from_u128(0x701);
-    let target = Uuid::from_u128(0x501);
+    let target = part_id;
     let method_target = Uuid::from_u128(0x502);
     let assoc_target = Uuid::from_u128(0x503);
     let dynamic_target = Uuid::from_u128(0x504);
@@ -269,6 +269,7 @@ fn expanded_rag_part_displays_call_context_details() {
         .join("\n");
     assert!(details.contains("call_context: 9 call site(s)"));
     assert!(details.contains("call_expansion: IncomingCaller"));
+    assert!(details.contains("incoming Path @ 13..28: path try_local_assoc"));
     assert!(details.contains("proof_context: 1 proof fact(s)"));
     assert!(details.contains("call_edge"));
     assert!(details.contains("site=call:site"));

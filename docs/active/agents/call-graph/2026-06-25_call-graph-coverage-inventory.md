@@ -50,6 +50,10 @@ future work can choose the next batch without rereading the diary-style notes.
   `code_item_edges_returns_incoming_callers_for_call_graph_target` prove exact
   lookup for `local_target` returns incoming caller context and target-centered
   proof rows through both explicit item tools.
+- 2026-06-27: Prompt and context-plan overlay formatting now infer call-context
+  direction from the current context part: rows owned by the part render as
+  `outgoing`, and rows targeting the part render as `incoming`. The serialized
+  call-context carrier shape is unchanged.
 
 ## Next implementation batches
 

@@ -20,6 +20,7 @@ use ploke_core::{
     },
 };
 use tokio::sync::oneshot;
+use uuid::Uuid;
 
 use crate::{
     app_state::handlers::{chat, embedding::wait_on_oneshot},
@@ -334,7 +335,7 @@ fn reformat_context_to_system(ctx_part: ContextPart) -> String {
     } else {
         format!(
             "\n{}",
-            format_call_context_block(&ctx_part.call_context, "  ", 8)
+            format_call_context_block_for_part(ctx_part.id, &ctx_part.call_context, "  ", 8)
         )
     };
     let proof_context = if ctx_part.proof_context.is_empty() {
@@ -375,6 +376,24 @@ pub(crate) fn format_call_context_block(
     indent: &str,
     limit: usize,
 ) -> String {
+    format_call_context_block_inner(calls, None, indent, limit)
+}
+
+pub(crate) fn format_call_context_block_for_part(
+    part_id: Uuid,
+    calls: &[CallContextInfo],
+    indent: &str,
+    limit: usize,
+) -> String {
+    format_call_context_block_inner(calls, Some(part_id), indent, limit)
+}
+
+fn format_call_context_block_inner(
+    calls: &[CallContextInfo],
+    part_id: Option<Uuid>,
+    indent: &str,
+    limit: usize,
+) -> String {
     if calls.is_empty() {
         return String::new();
     }
@@ -385,7 +404,7 @@ pub(crate) fn format_call_context_block(
         out.push('\n');
         out.push_str(indent);
         out.push_str("- ");
-        out.push_str(&format_call_context(call));
+        out.push_str(&format_call_context(call, part_id));
     }
     let hidden = calls.len().saturating_sub(limit);
     if hidden > 0 {
@@ -398,9 +417,14 @@ pub(crate) fn format_call_context_block(
     out
 }
 
-fn format_call_context(call: &CallContextInfo) -> String {
+fn format_call_context(call: &CallContextInfo, part_id: Option<Uuid>) -> String {
+    let direction = part_id
+        .and_then(|part_id| call_context_direction(call, part_id))
+        .map(|direction| format!("{direction} "))
+        .unwrap_or_default();
     format!(
-        "{} @ {}..{}: {} => {}, {}, owner {}",
+        "{}{} @ {}..{}: {} => {}, {}, owner {}",
+        direction,
         call.kind.to_static_str(),
         call.span.0,
         call.span.1,
@@ -409,6 +433,16 @@ fn format_call_context(call: &CallContextInfo) -> String {
         format_targets(&call.targets),
         call.owner_id
     )
+}
+
+fn call_context_direction(call: &CallContextInfo, part_id: Uuid) -> Option<&'static str> {
+    if call.owner_id == part_id {
+        return Some("outgoing");
+    }
+    call.targets
+        .iter()
+        .any(|target| target.target_id == part_id)
+        .then_some("incoming")
 }
 
 fn format_status(call: &CallContextInfo) -> String {

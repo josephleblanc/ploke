@@ -21,7 +21,7 @@ use crate::chat_history::{ContextTokens, Message, MessageKind, TokenKind};
 use crate::context_plan::{ContextPlanHistory, ContextPlanSnapshot};
 use crate::llm::manager::events::{ContextExclusionReason, ContextPlanMessage, ContextPlanRagPart};
 use crate::rag::context::{
-    format_call_context_block, format_call_expansion, format_proof_context_block,
+    format_call_context_block_for_part, format_call_expansion, format_proof_context_block,
 };
 use crate::ui_theme::UiTheme;
 use unicode_width::UnicodeWidthChar;
@@ -1010,7 +1010,12 @@ fn build_display_items(
                         )));
                     }
                     if !part.call_context.is_empty() {
-                        let call_context = format_call_context_block(&part.call_context, "  ", 8);
+                        let call_context = format_call_context_block_for_part(
+                            part.part_id,
+                            &part.call_context,
+                            "  ",
+                            8,
+                        );
                         details.extend(
                             call_context
                                 .lines()

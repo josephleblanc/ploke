@@ -139,7 +139,7 @@ fn reformat_context_to_system_includes_call_context_details() {
         }),
         call_context: vec![CallContextInfo {
             site_id: Uuid::from_u128(42),
-            owner_id: Uuid::from_u128(42),
+            owner_id: Uuid::from_u128(40),
             kind: CallSiteKind::Dynamic,
             span: (20, 29),
             callee: CallCalleeInfo::Dynamic,
@@ -157,6 +157,7 @@ fn reformat_context_to_system_includes_call_context_details() {
 
     assert!(rendered.contains("call_expansion: OutgoingTarget"));
     assert!(rendered.contains("call_context: 1 call site(s)"));
+    assert!(rendered.contains("outgoing Dynamic @ 20..29: dynamic"));
     assert!(rendered.contains("Dynamic @ 20..29: dynamic"));
     assert!(rendered.contains("Resolved(LocalExact)"));
     assert!(rendered.contains(&format!("DynamicFunction:{target}")));
