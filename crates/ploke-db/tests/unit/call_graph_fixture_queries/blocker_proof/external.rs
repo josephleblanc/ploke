@@ -13,6 +13,21 @@ fn fixture_projection_marks_real_external_call_without_edges() -> Result<(), DbE
 }
 
 #[test]
+fn fixture_projection_marks_real_extern_c_call_without_edges() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let expected = extern_c_abs_blockers(&db)?;
+
+    assert_targetless_blocker_proofs(
+        &db,
+        "extern C external",
+        &expected,
+        "fixture_call_graph/src/lib.rs",
+    )?;
+
+    Ok(())
+}
+
+#[test]
 fn fixture_projected_external_call_blocker_feeds_proof_invariants() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let expected = string_new_blockers(&db)?;
@@ -61,6 +76,20 @@ fn string_new_blockers(db: &Database) -> Result<Vec<BlockerProofSite>, DbError> 
                 CallStatusKind::External,
                 "String::new external",
             ),
+            blocker_reason: "external_dependency_summary_missing",
+        }],
+    )?;
+    Ok(expected)
+}
+
+fn extern_c_abs_blockers(db: &Database) -> Result<Vec<BlockerProofSite>, DbError> {
+    let mut expected = Vec::new();
+    assert_projected_blockers(
+        db,
+        &mut expected,
+        "call_extern_c_function",
+        &[TargetlessBlockerCase {
+            row: TargetlessRowCase::path(&["abs"], 1, CallStatusKind::External, "extern C abs"),
             blocker_reason: "external_dependency_summary_missing",
         }],
     )?;
