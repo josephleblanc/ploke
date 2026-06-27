@@ -32,6 +32,10 @@ enum ExpectedCallee<'a> {
         name: &'a str,
         path: &'a [&'a str],
     },
+    MethodSelfField {
+        name: &'a str,
+        field_path: &'a [&'a str],
+    },
     Dynamic,
 }
 impl ExpectedCallee<'_> {
@@ -61,6 +65,12 @@ impl ExpectedCallee<'_> {
                 name: (*name).to_string(),
                 receiver: Some(CallReceiverInfo::TryPathCallResult {
                     path: strings(path),
+                }),
+            },
+            ExpectedCallee::MethodSelfField { name, field_path } => CallCalleeInfo::Method {
+                name: (*name).to_string(),
+                receiver: Some(CallReceiverInfo::SelfField {
+                    path: strings(field_path),
                 }),
             },
             ExpectedCallee::Dynamic => CallCalleeInfo::Dynamic,
@@ -258,6 +268,26 @@ async fn call_context_collection_attaches_outgoing_call_payloads() -> Result<(),
             expected_kind: CallSiteKind::Dynamic,
             expected_callee: ExpectedCallee::Dynamic,
             expected_target_relation: CallTargetKind::DynamicFunction,
+        },
+        SyntheticCallCase {
+            label: "self-field receiver method",
+            site: Uuid::from_u128(0x112),
+            target: Uuid::from_u128(0x113),
+            call_kind: "Method",
+            span: (204, 231),
+            path: None,
+            method: Some("instance_value"),
+            receiver: Some(("SelfField", &["value"])),
+            arg_count: Some(0),
+            generic_arg_count: Some(0),
+            target_relation: "Method",
+            target_kind: "Method",
+            expected_kind: CallSiteKind::Method,
+            expected_callee: ExpectedCallee::MethodSelfField {
+                name: "instance_value",
+                field_path: &["value"],
+            },
+            expected_target_relation: CallTargetKind::Method,
         },
     ];
 

@@ -78,3 +78,55 @@ async fn call_context_collection_reads_real_fixture_rows() -> Result<(), Error> 
 
     Ok(())
 }
+
+#[tokio::test]
+async fn call_context_collection_reads_real_self_field_method_owner() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let owner = one_uuid(
+        &db,
+        &method_by_impl_self_query("SelfFieldAssocOwner", "call_self_field_instance_method"),
+    )?;
+    let target = one_uuid(
+        &db,
+        &method_by_impl_self_query("LocalAssoc", "instance_value"),
+    )?;
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.call_context_degraded(),
+        "fresh fixture call_graph schema should enable call context collection"
+    );
+
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let owner_context = call_context
+        .get(&owner)
+        .expect("self-field method owner should receive outgoing call context");
+    assert_eq!(
+        owner_context.len(),
+        1,
+        "self-field method owner context: {owner_context:#?}"
+    );
+
+    let call = owner_context
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Method
+                && call.callee
+                    == CallCalleeInfo::Method {
+                        name: "instance_value".to_string(),
+                        receiver: Some(CallReceiverInfo::SelfField {
+                            path: vec!["value".to_string()],
+                        }),
+                    }
+        })
+        .expect("self-field method call should be present");
+    assert_eq!(call.status, CallStatusKind::Resolved);
+    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(call.targets.len(), 1);
+    assert_eq!(call.targets[0].target_id, target);
+    assert_eq!(call.targets[0].relation, CallTargetKind::Method);
+
+    Ok(())
+}

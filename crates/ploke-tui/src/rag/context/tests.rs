@@ -826,6 +826,39 @@ call_context: 9 outgoing call site(s)
 }
 
 #[test]
+fn format_call_context_block_renders_self_field_receiver() {
+    let target = Uuid::from_u128(0x510);
+    let calls = vec![CallContextInfo {
+        site_id: Uuid::from_u128(0x610),
+        kind: CallSiteKind::Method,
+        span: (204, 231),
+        callee: CallCalleeInfo::Method {
+            name: "instance_value".to_string(),
+            receiver: Some(CallReceiverInfo::SelfField {
+                path: vec!["value".to_string()],
+            }),
+        },
+        status: CallStatusKind::Resolved,
+        resolution: Some(CallResolutionKind::LocalExact),
+        targets: vec![CallTargetInfo {
+            target_id: target,
+            relation: CallTargetKind::Method,
+        }],
+    }];
+
+    let rendered = format_call_context_block(&calls, "  ", 8);
+
+    assert_eq!(
+        rendered,
+        format!(
+            "\
+call_context: 1 outgoing call site(s)
+  - Method @ 204..231: method instance_value on self.value => Resolved(LocalExact), targets [Method:{target}]"
+        )
+    );
+}
+
+#[test]
 fn format_call_context_block_renders_external_rows() {
     let calls = vec![
         CallContextInfo {
