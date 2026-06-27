@@ -38,6 +38,18 @@ future work can choose the next batch without rereading the diary-style notes.
 | Proof facts | Partial | Proof graph projection covers resolved call edges, node-scoped proof projection, blockers, source provenance, candidate preservation, external summary artifact storage, authority terms, and invariant checks for the current DB surfaces. Proof context lookups match candidate IDs, external summary IDs, authority terms, external-summary artifact metadata, expansion-boundary IDs/kinds, expanded-item linkage metadata, selected build-domain target/policy metadata, cfg-domain hashes, rustc-invocation evidence metadata, and effect-seed IDs/confidence/unresolved-blocker metadata from stored proof-fact JSON without changing the `proof_fact` relation shape; every known stored proof fact kind now requires explicit `evidence_use`, and projection no longer silently defaults missing evidence to `proof_only`. `externally_summarized` call-resolution and expansion-boundary facts now require `external_summary_id`, and `external_summary` artifacts require scoped summary metadata. Incoherent admitted opaque summaries are rejected before storage, and admitted linked external summaries discharge derived external-dependency missing-summary blockers only when they authorize `external_summary_boundary` and match the direct or call-site build-domain scope; call-site scoped resolutions without a linked `call_site` domain fact fail closed. Proof blockers now also fail closed when proof facts reference a missing `build_domain`, and when a stored `build_domain` lacks admitted matching cfg-domain and rustc-invocation evidence. Proc-macro and build-script summary gaps fail closed until their summary semantics are modeled. `proof_blockers()`, `proof_checker_edges()`, and DB/RAG/TUI proof-context surfaces expose invariant-derived blocker reasons, including multiple derived blockers for one proof fact. | Macro/build-domain summary semantics and proof-authoritative artifacts remain open. |
 | Rollout gate | Green | `CALL_GRAPH_GATE:db-projection` has been removed from production code. Call graph projection and downstream DB/RAG/TUI consumers are baseline. The Cargo feature name remains only as a no-op compatibility alias for old commands. Default fixture imports are not loosened. Active checkout-local backup fixtures were reviewed/regenerated on 2026-06-27, and focused default transform/DB/RAG/TUI call-graph checks are green without the feature flag. | Keep backup fixture behavior strict; regenerate/review fixtures rather than adding permissive import behavior if future schema changes land. |
 
+## Recent downstream slice
+
+- 2026-06-27: `code_item_lookup` and `code_item_edges` now collect exact
+  node-scoped call/proof context through `RagService::exact_call_context` and
+  `RagService::exact_proof_context`, so explicit tool lookups do not inherit
+  prompt-assembly row caps. The capped `call_context_for_node` and
+  `proof_context_for_node` paths remain the RAG prompt collection contract.
+  Regression coverage:
+  `code_item_lookup_returns_incoming_callers_for_call_graph_target` proves
+  exact lookup for `local_target` returns incoming caller context and
+  target-centered proof rows.
+
 ## Next implementation batches
 
 1. Use this inventory plus the detailed call-site matrix to choose the next DB
