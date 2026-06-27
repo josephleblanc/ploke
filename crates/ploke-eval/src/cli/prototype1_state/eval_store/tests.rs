@@ -3,6 +3,8 @@ use std::{collections::BTreeMap, fs, path::PathBuf};
 use cozo::DataValue;
 use ploke_db::{Database, QueryResult};
 
+use ploke_llm::request::models::ModelRouteSource;
+use ploke_protocol::ProtocolReasoningPolicy;
 use ploke_records::{
     agent_turn::{
         AgentTurnArtifactRecord, AgentTurnSummaryRecord, AgentTurnTraceRecord,
@@ -20,7 +22,11 @@ use sha2::{Digest, Sha256};
 use super::*;
 use super::{
     AGENT_TURN_EVENT_REL, AGENT_TURN_REL, APPLY_EVENT_REL, ARTIFACT_REF_REL, ARTIFACT_REL,
-    ARTIFACT_SURFACE_REL, BASELINE_REL, BINARY_REF_REL, BUILD_EVENT_REL, CAMPAIGN_REL,
+    ARTIFACT_SURFACE_REL, BASELINE_INSTANCE_METRICS_REL, BASELINE_INSTANCE_REL, BASELINE_REL,
+    BINARY_REF_REL, BUILD_EVENT_REL, CAMPAIGN_EVAL_BUDGET_REL, CAMPAIGN_EVAL_LABEL_REL,
+    CAMPAIGN_EVAL_POLICY_REL, CAMPAIGN_FRAMEWORK_TOOL_REL, CAMPAIGN_PROCEDURE_REL,
+    CAMPAIGN_PROTOCOL_POLICY_REL, CAMPAIGN_REL, CAMPAIGN_SOURCE_REL, CLOSURE_ARTIFACT_REF_REL,
+    CLOSURE_INSTANCE_REL, CLOSURE_PROTOCOL_COUNTS_REL, CLOSURE_PROTOCOL_PROCEDURE_REL,
     CLOSURE_REF_REL, CONTINUATION_DECISION_REL, EVALUATION_INSTANCE_REL, EVALUATION_REL,
     MESSAGE_EVENT_REL, MODEL_EXCHANGE_REL, OPERATION_REL, PATCH_REL, PROFILE_COMMITMENT_REL,
     SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL, SELECTION_FINDING_REL, SELECTION_SCORE_REL,
@@ -45,7 +51,10 @@ use crate::cli::prototype1_state::{
 use crate::intervention::{BaselineInstance, CompleteBaseline, RecordStore};
 use crate::{
     BenchmarkFamily, CampaignManifest, ClosureClass, EvalCampaignPolicy, OperationalRunMetrics,
-    PatchApplyState, ProtocolCampaignPolicy, record::SubmissionArtifactState,
+    PatchApplyState, ProtocolCampaignPolicy,
+    record::SubmissionArtifactState,
+    spec::{EvalBudget, FrameworkConfig, FrameworkToolConfig},
+    target_registry::RegistryDatasetSource,
 };
 
 #[test]
@@ -105,6 +114,62 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
             )
         },
         {
+            let schema = &super::setup::CampaignDatasetSourceSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::setup::CampaignRequiredProcedureSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::setup::CampaignEvalPolicySchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::setup::CampaignEvalBudgetSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::setup::CampaignEvalLabelSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::setup::CampaignProtocolPolicySchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::setup::CampaignFrameworkToolSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
             let schema = &super::setup::ProfileCommitmentSchema::SCHEMA;
             (
                 schema.relation(),
@@ -121,7 +186,55 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
             )
         },
         {
+            let schema = &super::setup::ClosureInstanceSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::setup::ClosureArtifactRefSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::setup::ClosureProtocolProcedureSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::setup::ClosureProtocolCountsSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
             let schema = &super::setup::BaselineSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::setup::BaselineInstanceSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::setup::BaselineInstanceMetricsSchema::SCHEMA;
             (
                 schema.relation(),
                 schema.script_create(),
@@ -329,8 +442,43 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
     let expected = vec![
         (
             "eval_campaign",
-            r#":create eval_campaign { campaign_id: String => schema_version: String, manifest_ref: String, prototype_root: String, manifest_sha256: String, profile_ref_id: String?, storage_backend: String?, ingested_at: String }"#,
-            r#"?[campaign_id, schema_version, manifest_ref, prototype_root, manifest_sha256, profile_ref_id, storage_backend, ingested_at] <- [[$campaign_id, $schema_version, $manifest_ref, $prototype_root, $manifest_sha256, $profile_ref_id, $storage_backend, $ingested_at]] :put eval_campaign { campaign_id => schema_version, manifest_ref, prototype_root, manifest_sha256, profile_ref_id, storage_backend, ingested_at }"#,
+            r#":create eval_campaign { campaign_id: String => schema_version: String, manifest_ref: String, prototype_root: String, manifest_sha256: String, profile_ref_id: String?, storage_backend: String?, benchmark_family: String, model_id: String?, provider_slug: String?, route_source: String?, instances_root: String?, batches_root: String?, ingested_at: String }"#,
+            r#"?[campaign_id, schema_version, manifest_ref, prototype_root, manifest_sha256, profile_ref_id, storage_backend, benchmark_family, model_id, provider_slug, route_source, instances_root, batches_root, ingested_at] <- [[$campaign_id, $schema_version, $manifest_ref, $prototype_root, $manifest_sha256, $profile_ref_id, $storage_backend, $benchmark_family, $model_id, $provider_slug, $route_source, $instances_root, $batches_root, $ingested_at]] :put eval_campaign { campaign_id => schema_version, manifest_ref, prototype_root, manifest_sha256, profile_ref_id, storage_backend, benchmark_family, model_id, provider_slug, route_source, instances_root, batches_root, ingested_at }"#,
+        ),
+        (
+            "eval_campaign_dataset_source",
+            r#":create eval_campaign_dataset_source { campaign_id: String, source_index: Int => source_key: String?, path: String, label: String, url: String?, ingested_at: String }"#,
+            r#"?[campaign_id, source_index, source_key, path, label, url, ingested_at] <- [[$campaign_id, $source_index, $source_key, $path, $label, $url, $ingested_at]] :put eval_campaign_dataset_source { campaign_id, source_index => source_key, path, label, url, ingested_at }"#,
+        ),
+        (
+            "eval_campaign_required_procedure",
+            r#":create eval_campaign_required_procedure { campaign_id: String, procedure_index: Int => procedure: String, ingested_at: String }"#,
+            r#"?[campaign_id, procedure_index, procedure, ingested_at] <- [[$campaign_id, $procedure_index, $procedure, $ingested_at]] :put eval_campaign_required_procedure { campaign_id, procedure_index => procedure, ingested_at }"#,
+        ),
+        (
+            "eval_campaign_eval_policy",
+            r#":create eval_campaign_eval_policy { campaign_id: String => include_partial: Bool, stop_on_error: Bool, limit_count: Int?, batch_prefix: String?, embedding_model_id: String?, embedding_provider_slug: String?, ingested_at: String }"#,
+            r#"?[campaign_id, include_partial, stop_on_error, limit_count, batch_prefix, embedding_model_id, embedding_provider_slug, ingested_at] <- [[$campaign_id, $include_partial, $stop_on_error, $limit_count, $batch_prefix, $embedding_model_id, $embedding_provider_slug, $ingested_at]] :put eval_campaign_eval_policy { campaign_id => include_partial, stop_on_error, limit_count, batch_prefix, embedding_model_id, embedding_provider_slug, ingested_at }"#,
+        ),
+        (
+            "eval_campaign_eval_budget",
+            r#":create eval_campaign_eval_budget { campaign_id: String => max_turns: Int, max_tool_calls: Int, wall_clock_secs: Int, ingested_at: String }"#,
+            r#"?[campaign_id, max_turns, max_tool_calls, wall_clock_secs, ingested_at] <- [[$campaign_id, $max_turns, $max_tool_calls, $wall_clock_secs, $ingested_at]] :put eval_campaign_eval_budget { campaign_id => max_turns, max_tool_calls, wall_clock_secs, ingested_at }"#,
+        ),
+        (
+            "eval_campaign_eval_label",
+            r#":create eval_campaign_eval_label { campaign_id: String, filter_kind: String, label_index: Int => label: String, ingested_at: String }"#,
+            r#"?[campaign_id, filter_kind, label_index, label, ingested_at] <- [[$campaign_id, $filter_kind, $label_index, $label, $ingested_at]] :put eval_campaign_eval_label { campaign_id, filter_kind, label_index => label, ingested_at }"#,
+        ),
+        (
+            "eval_campaign_protocol_policy",
+            r#":create eval_campaign_protocol_policy { campaign_id: String => model_id: String?, provider_slug: String?, route_source: String?, include_partial: Bool, include_incompatible: Bool, include_failed: Bool, stop_on_error: Bool, limit_count: Int?, max_concurrency: Int, tool_review_parallelism: Int, max_tokens: Int, reasoning_mode: String, reasoning_effort: String?, ingested_at: String }"#,
+            r#"?[campaign_id, model_id, provider_slug, route_source, include_partial, include_incompatible, include_failed, stop_on_error, limit_count, max_concurrency, tool_review_parallelism, max_tokens, reasoning_mode, reasoning_effort, ingested_at] <- [[$campaign_id, $model_id, $provider_slug, $route_source, $include_partial, $include_incompatible, $include_failed, $stop_on_error, $limit_count, $max_concurrency, $tool_review_parallelism, $max_tokens, $reasoning_mode, $reasoning_effort, $ingested_at]] :put eval_campaign_protocol_policy { campaign_id => model_id, provider_slug, route_source, include_partial, include_incompatible, include_failed, stop_on_error, limit_count, max_concurrency, tool_review_parallelism, max_tokens, reasoning_mode, reasoning_effort, ingested_at }"#,
+        ),
+        (
+            "eval_campaign_framework_tool",
+            r#":create eval_campaign_framework_tool { campaign_id: String, tool_name: String => version: String?, ingested_at: String }"#,
+            r#"?[campaign_id, tool_name, version, ingested_at] <- [[$campaign_id, $tool_name, $version, $ingested_at]] :put eval_campaign_framework_tool { campaign_id, tool_name => version, ingested_at }"#,
         ),
         (
             "eval_profile_commitment",
@@ -339,13 +487,43 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
         ),
         (
             "eval_closure_ref",
-            r#":create eval_closure_ref { closure_ref_id: String => campaign_id: String, run_id: String?, store_scope: String, source_ref: String, content_sha256: String, summary_json: String, recorded_at: String, ingested_at: String }"#,
-            r#"?[closure_ref_id, campaign_id, run_id, store_scope, source_ref, content_sha256, summary_json, recorded_at, ingested_at] <- [[$closure_ref_id, $campaign_id, $run_id, $store_scope, $source_ref, $content_sha256, $summary_json, $recorded_at, $ingested_at]] :put eval_closure_ref { closure_ref_id => campaign_id, run_id, store_scope, source_ref, content_sha256, summary_json, recorded_at, ingested_at }"#,
+            r#":create eval_closure_ref { closure_ref_id: String => campaign_id: String, run_id: String?, store_scope: String, source_ref: String, content_sha256: String, schema_version: String, recorded_at: String, ingested_at: String }"#,
+            r#"?[closure_ref_id, campaign_id, run_id, store_scope, source_ref, content_sha256, schema_version, recorded_at, ingested_at] <- [[$closure_ref_id, $campaign_id, $run_id, $store_scope, $source_ref, $content_sha256, $schema_version, $recorded_at, $ingested_at]] :put eval_closure_ref { closure_ref_id => campaign_id, run_id, store_scope, source_ref, content_sha256, schema_version, recorded_at, ingested_at }"#,
+        ),
+        (
+            "eval_closure_instance",
+            r#":create eval_closure_instance { closure_ref_id: String, instance_id: String => campaign_id: String, dataset_label: String, repo_family: String, registry_status: String, eval_status: String, protocol_status: String, eval_failure: String?, protocol_failure: String?, last_event_at: String?, recorded_at: String, ingested_at: String }"#,
+            r#"?[closure_ref_id, instance_id, campaign_id, dataset_label, repo_family, registry_status, eval_status, protocol_status, eval_failure, protocol_failure, last_event_at, recorded_at, ingested_at] <- [[$closure_ref_id, $instance_id, $campaign_id, $dataset_label, $repo_family, $registry_status, $eval_status, $protocol_status, $eval_failure, $protocol_failure, $last_event_at, $recorded_at, $ingested_at]] :put eval_closure_instance { closure_ref_id, instance_id => campaign_id, dataset_label, repo_family, registry_status, eval_status, protocol_status, eval_failure, protocol_failure, last_event_at, recorded_at, ingested_at }"#,
+        ),
+        (
+            "eval_closure_artifact_ref",
+            r#":create eval_closure_artifact_ref { closure_ref_id: String, instance_id: String, artifact_kind: String, artifact_index: Int => campaign_id: String, path: String, recorded_at: String, ingested_at: String }"#,
+            r#"?[closure_ref_id, instance_id, artifact_kind, artifact_index, campaign_id, path, recorded_at, ingested_at] <- [[$closure_ref_id, $instance_id, $artifact_kind, $artifact_index, $campaign_id, $path, $recorded_at, $ingested_at]] :put eval_closure_artifact_ref { closure_ref_id, instance_id, artifact_kind, artifact_index => campaign_id, path, recorded_at, ingested_at }"#,
+        ),
+        (
+            "eval_closure_protocol_procedure",
+            r#":create eval_closure_protocol_procedure { closure_ref_id: String, instance_id: String, procedure: String => campaign_id: String, status: String, recorded_at: String, ingested_at: String }"#,
+            r#"?[closure_ref_id, instance_id, procedure, campaign_id, status, recorded_at, ingested_at] <- [[$closure_ref_id, $instance_id, $procedure, $campaign_id, $status, $recorded_at, $ingested_at]] :put eval_closure_protocol_procedure { closure_ref_id, instance_id, procedure => campaign_id, status, recorded_at, ingested_at }"#,
+        ),
+        (
+            "eval_closure_protocol_counts",
+            r#":create eval_closure_protocol_counts { closure_ref_id: String, instance_id: String => campaign_id: String, total_calls: Int, reviewed_calls: Int, total_segments: Int, usable_segments: Int, mismatched_segments: Int, missing_segments: Int, recorded_at: String, ingested_at: String }"#,
+            r#"?[closure_ref_id, instance_id, campaign_id, total_calls, reviewed_calls, total_segments, usable_segments, mismatched_segments, missing_segments, recorded_at, ingested_at] <- [[$closure_ref_id, $instance_id, $campaign_id, $total_calls, $reviewed_calls, $total_segments, $usable_segments, $mismatched_segments, $missing_segments, $recorded_at, $ingested_at]] :put eval_closure_protocol_counts { closure_ref_id, instance_id => campaign_id, total_calls, reviewed_calls, total_segments, usable_segments, mismatched_segments, missing_segments, recorded_at, ingested_at }"#,
         ),
         (
             "eval_baseline",
-            r#":create eval_baseline { baseline_id: String => campaign_id: String, parent_id: String, parent_node_id: String, parent_branch_id: String, source_kind: String, closure_ref_id: String?, evaluation_id: String?, record_ref: String?, eval_set_id: String, status: String, instance_count: Int, summary_json: String, recorded_at: String, ingested_at: String }"#,
-            r#"?[baseline_id, campaign_id, parent_id, parent_node_id, parent_branch_id, source_kind, closure_ref_id, evaluation_id, record_ref, eval_set_id, status, instance_count, summary_json, recorded_at, ingested_at] <- [[$baseline_id, $campaign_id, $parent_id, $parent_node_id, $parent_branch_id, $source_kind, $closure_ref_id, $evaluation_id, $record_ref, $eval_set_id, $status, $instance_count, $summary_json, $recorded_at, $ingested_at]] :put eval_baseline { baseline_id => campaign_id, parent_id, parent_node_id, parent_branch_id, source_kind, closure_ref_id, evaluation_id, record_ref, eval_set_id, status, instance_count, summary_json, recorded_at, ingested_at }"#,
+            r#":create eval_baseline { baseline_id: String => campaign_id: String, parent_id: String, parent_node_id: String, parent_branch_id: String, source_kind: String, closure_ref_id: String?, evaluation_id: String?, record_ref: String?, eval_set_id: String, status: String, recorded_at: String, ingested_at: String }"#,
+            r#"?[baseline_id, campaign_id, parent_id, parent_node_id, parent_branch_id, source_kind, closure_ref_id, evaluation_id, record_ref, eval_set_id, status, recorded_at, ingested_at] <- [[$baseline_id, $campaign_id, $parent_id, $parent_node_id, $parent_branch_id, $source_kind, $closure_ref_id, $evaluation_id, $record_ref, $eval_set_id, $status, $recorded_at, $ingested_at]] :put eval_baseline { baseline_id => campaign_id, parent_id, parent_node_id, parent_branch_id, source_kind, closure_ref_id, evaluation_id, record_ref, eval_set_id, status, recorded_at, ingested_at }"#,
+        ),
+        (
+            "eval_baseline_instance",
+            r#":create eval_baseline_instance { baseline_id: String, instance_id: String => campaign_id: String, parent_node_id: String, parent_branch_id: String, eval_set_id: String, registration_path: String?, record_path: String, recorded_at: String, ingested_at: String }"#,
+            r#"?[baseline_id, instance_id, campaign_id, parent_node_id, parent_branch_id, eval_set_id, registration_path, record_path, recorded_at, ingested_at] <- [[$baseline_id, $instance_id, $campaign_id, $parent_node_id, $parent_branch_id, $eval_set_id, $registration_path, $record_path, $recorded_at, $ingested_at]] :put eval_baseline_instance { baseline_id, instance_id => campaign_id, parent_node_id, parent_branch_id, eval_set_id, registration_path, record_path, recorded_at, ingested_at }"#,
+        ),
+        (
+            "eval_baseline_instance_metrics",
+            r#":create eval_baseline_instance_metrics { baseline_id: String, instance_id: String => campaign_id: String, tool_calls_total: Int, tool_calls_failed: Int, patch_attempted: Bool, apply_state: String, submission_state: String, projection_state: String, patch_failures: Int, same_file_retries: Int, same_file_streak: Int, aborted: Bool, repair_aborted: Bool, valid_patch: Bool, convergence: Bool, oracle_eligible: Bool, recorded_at: String, ingested_at: String }"#,
+            r#"?[baseline_id, instance_id, campaign_id, tool_calls_total, tool_calls_failed, patch_attempted, apply_state, submission_state, projection_state, patch_failures, same_file_retries, same_file_streak, aborted, repair_aborted, valid_patch, convergence, oracle_eligible, recorded_at, ingested_at] <- [[$baseline_id, $instance_id, $campaign_id, $tool_calls_total, $tool_calls_failed, $patch_attempted, $apply_state, $submission_state, $projection_state, $patch_failures, $same_file_retries, $same_file_streak, $aborted, $repair_aborted, $valid_patch, $convergence, $oracle_eligible, $recorded_at, $ingested_at]] :put eval_baseline_instance_metrics { baseline_id, instance_id => campaign_id, tool_calls_total, tool_calls_failed, patch_attempted, apply_state, submission_state, projection_state, patch_failures, same_file_retries, same_file_streak, aborted, repair_aborted, valid_patch, convergence, oracle_eligible, recorded_at, ingested_at }"#,
         ),
         (
             "eval_transition_event",
@@ -561,11 +739,53 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
         .expect("schema install is idempotent");
 
     assert!(eval_relation_exists(&db, CAMPAIGN_REL).expect("campaign rel exists"));
+    assert!(eval_relation_exists(&db, CAMPAIGN_SOURCE_REL).expect("campaign source rel exists"));
+    assert!(
+        eval_relation_exists(&db, CAMPAIGN_PROCEDURE_REL).expect("campaign procedure rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, CAMPAIGN_EVAL_POLICY_REL)
+            .expect("campaign eval policy rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, CAMPAIGN_EVAL_BUDGET_REL)
+            .expect("campaign eval budget rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, CAMPAIGN_EVAL_LABEL_REL).expect("campaign eval label rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, CAMPAIGN_PROTOCOL_POLICY_REL)
+            .expect("campaign protocol policy rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, CAMPAIGN_FRAMEWORK_TOOL_REL)
+            .expect("campaign framework tool rel exists")
+    );
     assert!(
         eval_relation_exists(&db, PROFILE_COMMITMENT_REL).expect("profile commitment rel exists")
     );
     assert!(eval_relation_exists(&db, CLOSURE_REF_REL).expect("closure ref rel exists"));
+    assert!(eval_relation_exists(&db, CLOSURE_INSTANCE_REL).expect("closure instance rel exists"));
+    assert!(
+        eval_relation_exists(&db, CLOSURE_ARTIFACT_REF_REL).expect("closure artifact rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, CLOSURE_PROTOCOL_PROCEDURE_REL)
+            .expect("closure protocol procedure rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, CLOSURE_PROTOCOL_COUNTS_REL)
+            .expect("closure protocol counts rel exists")
+    );
     assert!(eval_relation_exists(&db, BASELINE_REL).expect("baseline rel exists"));
+    assert!(
+        eval_relation_exists(&db, BASELINE_INSTANCE_REL).expect("baseline instance rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, BASELINE_INSTANCE_METRICS_REL)
+            .expect("baseline instance metrics rel exists")
+    );
     assert!(eval_relation_exists(&db, EVENT_REL).expect("event rel exists"));
     assert!(eval_relation_exists(&db, ATTEMPT_REL).expect("attempt rel exists"));
     assert!(eval_relation_exists(&db, INVOCATION_REL).expect("invocation rel exists"));
@@ -819,6 +1039,159 @@ fn prototype1_eval_store_setup_relations_round_trip_actual_loop_types() {
             .expect("profile ref")
             .is_empty()
     );
+    assert_eq!(
+        row.get::<String>("benchmark_family")
+            .expect("benchmark family"),
+        "multi_swe_bench_rust"
+    );
+    assert_eq!(
+        row.get::<String>("model_id").expect("model id"),
+        "google/gemini-2.5-pro"
+    );
+    assert_eq!(
+        row.get::<String>("route_source").expect("route source"),
+        "direct_google"
+    );
+    assert_eq!(
+        row.get::<String>("instances_root").expect("instances root"),
+        "/tmp/instances"
+    );
+    assert_eq!(
+        row.get::<String>("batches_root").expect("batches root"),
+        "/tmp/batches"
+    );
+
+    let sources = query_campaign_sources(&db, &campaign_id);
+    assert_eq!(sources.rows.len(), 1);
+    let source_row = sources.row_refs().next().expect("campaign source row");
+    assert_eq!(source_row.get::<i64>("source_index").expect("index"), 0);
+    assert_eq!(
+        source_row.get::<String>("source_key").expect("source key"),
+        "ripgrep"
+    );
+    assert_eq!(
+        source_row.get::<String>("label").expect("source label"),
+        "prototype1/ripgrep"
+    );
+
+    let procedures = query_campaign_procedures(&db, &campaign_id);
+    assert_eq!(procedures.rows.len(), 1);
+    let procedure_row = procedures
+        .row_refs()
+        .next()
+        .expect("campaign procedure row");
+    assert_eq!(
+        procedure_row.get::<String>("procedure").expect("procedure"),
+        "tool-call-review"
+    );
+
+    let eval = query_campaign_eval(&db, &campaign_id);
+    assert_eq!(eval.rows.len(), 1);
+    let eval_row = eval.row_refs().next().expect("campaign eval row");
+    assert!(eval_row.get::<bool>("include_partial").expect("partial"));
+    assert!(eval_row.get::<bool>("stop_on_error").expect("stop"));
+    assert_eq!(eval_row.get::<i64>("limit_count").expect("limit"), 3);
+    assert_eq!(
+        eval_row
+            .get::<String>("batch_prefix")
+            .expect("batch prefix"),
+        "ripgrep"
+    );
+    assert_eq!(
+        eval_row
+            .get::<String>("embedding_model_id")
+            .expect("embedding model"),
+        "text-embedding-3-small"
+    );
+
+    let budget = query_campaign_budget(&db, &campaign_id);
+    assert_eq!(budget.rows.len(), 1);
+    let budget_row = budget.row_refs().next().expect("campaign budget row");
+    assert_eq!(budget_row.get::<i64>("max_turns").expect("turns"), 7);
+    assert_eq!(budget_row.get::<i64>("max_tool_calls").expect("calls"), 11);
+    assert_eq!(budget_row.get::<i64>("wall_clock_secs").expect("wall"), 13);
+
+    let labels = query_campaign_labels(&db, &campaign_id);
+    assert_eq!(labels.rows.len(), 2);
+    let mut label_rows = BTreeMap::new();
+    for label_row in labels.row_refs() {
+        label_rows.insert(
+            label_row.get::<String>("filter_kind").expect("kind"),
+            label_row.get::<String>("label").expect("label"),
+        );
+    }
+    assert_eq!(
+        label_rows.get("include_dataset_labels").map(String::as_str),
+        Some("prototype1/ripgrep")
+    );
+    assert_eq!(
+        label_rows.get("exclude_dataset_labels").map(String::as_str),
+        Some("prototype1/skip")
+    );
+
+    let protocol = query_campaign_protocol(&db, &campaign_id);
+    assert_eq!(protocol.rows.len(), 1);
+    let protocol_row = protocol.row_refs().next().expect("campaign protocol row");
+    assert_eq!(
+        protocol_row
+            .get::<String>("model_id")
+            .expect("protocol model"),
+        "google/gemini-2.5-flash"
+    );
+    assert_eq!(
+        protocol_row
+            .get::<String>("route_source")
+            .expect("protocol route"),
+        "direct_google"
+    );
+    assert!(
+        !protocol_row
+            .get::<bool>("include_partial")
+            .expect("partial")
+    );
+    assert!(
+        protocol_row
+            .get::<bool>("include_incompatible")
+            .expect("incompatible")
+    );
+    assert!(protocol_row.get::<bool>("include_failed").expect("failed"));
+    assert!(protocol_row.get::<bool>("stop_on_error").expect("stop"));
+    assert_eq!(protocol_row.get::<i64>("limit_count").expect("limit"), 5);
+    assert_eq!(
+        protocol_row
+            .get::<i64>("max_concurrency")
+            .expect("concurrency"),
+        6
+    );
+    assert_eq!(
+        protocol_row
+            .get::<i64>("tool_review_parallelism")
+            .expect("parallelism"),
+        2
+    );
+    assert_eq!(protocol_row.get::<i64>("max_tokens").expect("tokens"), 4096);
+    assert_eq!(
+        protocol_row
+            .get::<String>("reasoning_mode")
+            .expect("reasoning"),
+        "omit"
+    );
+
+    let tools = query_campaign_tools(&db, &campaign_id);
+    assert_eq!(tools.rows.len(), 1);
+    let tool_row = tools.row_refs().next().expect("campaign tool row");
+    assert_eq!(tool_row.get::<String>("tool_name").expect("tool"), "cargo");
+    assert_eq!(
+        tool_row.get::<String>("version").expect("tool version"),
+        "1.85"
+    );
+
+    let loaded = CampaignManifest::read_from_eval_db(&db, &campaign_id)
+        .expect("campaign manifest reads from eval db");
+    assert_eq!(
+        serde_json::to_value(&loaded).expect("loaded manifest json"),
+        serde_json::to_value(&manifest).expect("source manifest json")
+    );
 
     let profiles = query_profile_commitments(&db, &campaign_id);
     assert_eq!(profiles.rows.len(), 1);
@@ -839,6 +1212,28 @@ fn prototype1_eval_store_setup_relations_round_trip_actual_loop_types() {
             .expect("recorded at"),
         closure.updated_at
     );
+    assert_eq!(
+        closure_row
+            .get::<String>("schema_version")
+            .expect("schema version"),
+        closure.schema_version
+    );
+
+    let closure_instances = query_closure_instances(&db, &campaign_id);
+    assert_eq!(closure_instances.rows.len(), 1);
+    let closure_instance = closure_instances
+        .row_refs()
+        .next()
+        .expect("closure instance row");
+    assert_eq!(
+        closure_instance
+            .get::<String>("eval_status")
+            .expect("eval status"),
+        "complete"
+    );
+
+    let closure_artifacts = query_closure_artifacts(&db, &campaign_id);
+    assert_eq!(closure_artifacts.rows.len(), 2);
 
     let baselines = query_baselines(&db, &campaign_id);
     assert_eq!(baselines.rows.len(), 1);
@@ -855,12 +1250,29 @@ fn prototype1_eval_store_setup_relations_round_trip_actual_loop_types() {
             .expect("source kind"),
         "generation0_closure"
     );
+    let baseline_instances = query_baseline_instances(&db, &baseline_id);
+    assert_eq!(baseline_instances.rows.len(), 1);
+    let instance_row = baseline_instances
+        .row_refs()
+        .next()
+        .expect("baseline instance row");
     assert_eq!(
-        baseline_row
-            .get::<i64>("instance_count")
-            .expect("instance count"),
-        1
+        instance_row
+            .get::<String>("record_path")
+            .expect("record path"),
+        "/tmp/baseline/record.json.gz"
     );
+
+    let metrics = query_baseline_metrics(&db, &baseline_id);
+    assert_eq!(metrics.rows.len(), 1);
+    let metrics_row = metrics.row_refs().next().expect("baseline metrics row");
+    assert_eq!(
+        metrics_row
+            .get::<String>("apply_state")
+            .expect("apply state"),
+        "applied"
+    );
+    assert!(metrics_row.get::<bool>("valid_patch").expect("valid patch"));
 }
 
 #[test]
@@ -1388,16 +1800,55 @@ fn sample_campaign_manifest(campaign_id: CampaignId) -> CampaignManifest {
         schema_version: crate::campaign::CAMPAIGN_MANIFEST_SCHEMA_VERSION.to_string(),
         campaign_id,
         benchmark_family: BenchmarkFamily::MultiSweBenchRust,
-        dataset_sources: Vec::new(),
-        model_id: None,
+        dataset_sources: vec![RegistryDatasetSource {
+            key: Some("ripgrep".to_string()),
+            path: PathBuf::from("/tmp/datasets/ripgrep.jsonl"),
+            label: "prototype1/ripgrep".to_string(),
+            url: Some("https://example.invalid/ripgrep.jsonl".to_string()),
+        }],
+        model_id: Some("google/gemini-2.5-pro".to_string()),
         provider_slug: None,
-        route_source: None,
-        required_procedures: Vec::new(),
-        instances_root: None,
-        batches_root: None,
-        eval: EvalCampaignPolicy::default(),
-        protocol: ProtocolCampaignPolicy::default(),
-        framework: crate::spec::FrameworkConfig::default(),
+        route_source: Some(ModelRouteSource::DirectGoogle),
+        required_procedures: vec!["tool-call-review".to_string()],
+        instances_root: Some(PathBuf::from("/tmp/instances")),
+        batches_root: Some(PathBuf::from("/tmp/batches")),
+        eval: EvalCampaignPolicy {
+            include_partial: true,
+            stop_on_error: true,
+            limit: Some(3),
+            include_dataset_labels: vec!["prototype1/ripgrep".to_string()],
+            exclude_dataset_labels: vec!["prototype1/skip".to_string()],
+            budget: EvalBudget {
+                max_turns: 7,
+                max_tool_calls: 11,
+                wall_clock_secs: 13,
+            },
+            batch_prefix: Some("ripgrep".to_string()),
+            embedding_model_id: Some("text-embedding-3-small".to_string()),
+            embedding_provider_slug: Some("openai".to_string()),
+        },
+        protocol: ProtocolCampaignPolicy {
+            model_id: Some("google/gemini-2.5-flash".to_string()),
+            provider_slug: None,
+            route_source: Some(ModelRouteSource::DirectGoogle),
+            include_partial: false,
+            include_incompatible: true,
+            include_failed: true,
+            stop_on_error: true,
+            limit_runs: Some(5),
+            max_concurrency: 6,
+            tool_review_parallelism: 2,
+            max_tokens: 4096,
+            reasoning: ProtocolReasoningPolicy::omit(),
+        },
+        framework: FrameworkConfig {
+            tools: BTreeMap::from([(
+                "cargo".to_string(),
+                FrameworkToolConfig {
+                    version: Some("1.85".to_string()),
+                },
+            )]),
+        },
     }
 }
 
@@ -1605,13 +2056,111 @@ fn query_campaign(db: &Database, campaign_id: &CampaignId) -> QueryResult {
     params.insert("campaign_id".to_string(), campaign_id.to_string().into());
     db.raw_query_params(
         r#"
-?[campaign_id, storage_backend, profile_ref_id] :=
-    *eval_campaign { campaign_id, storage_backend, profile_ref_id },
+?[campaign_id, storage_backend, profile_ref_id, benchmark_family, model_id, route_source, instances_root, batches_root] :=
+    *eval_campaign { campaign_id, storage_backend, profile_ref_id, benchmark_family, model_id, route_source, instances_root, batches_root },
     campaign_id = $campaign_id
 "#,
         params,
     )
     .expect("query campaign")
+}
+
+fn query_campaign_sources(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[source_index, source_key, path, label, url] :=
+    *eval_campaign_dataset_source { campaign_id, source_index, source_key, path, label, url },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query campaign sources")
+}
+
+fn query_campaign_procedures(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[procedure_index, procedure] :=
+    *eval_campaign_required_procedure { campaign_id, procedure_index, procedure },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query campaign procedures")
+}
+
+fn query_campaign_eval(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[include_partial, stop_on_error, limit_count, batch_prefix, embedding_model_id, embedding_provider_slug] :=
+    *eval_campaign_eval_policy { campaign_id, include_partial, stop_on_error, limit_count, batch_prefix, embedding_model_id, embedding_provider_slug },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query campaign eval policy")
+}
+
+fn query_campaign_budget(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[max_turns, max_tool_calls, wall_clock_secs] :=
+    *eval_campaign_eval_budget { campaign_id, max_turns, max_tool_calls, wall_clock_secs },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query campaign eval budget")
+}
+
+fn query_campaign_labels(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[filter_kind, label_index, label] :=
+    *eval_campaign_eval_label { campaign_id, filter_kind, label_index, label },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query campaign labels")
+}
+
+fn query_campaign_protocol(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[model_id, route_source, include_partial, include_incompatible, include_failed, stop_on_error, limit_count, max_concurrency, tool_review_parallelism, max_tokens, reasoning_mode] :=
+    *eval_campaign_protocol_policy { campaign_id, model_id, route_source, include_partial, include_incompatible, include_failed, stop_on_error, limit_count, max_concurrency, tool_review_parallelism, max_tokens, reasoning_mode },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query campaign protocol")
+}
+
+fn query_campaign_tools(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[tool_name, version] :=
+    *eval_campaign_framework_tool { campaign_id, tool_name, version },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query campaign tools")
 }
 
 fn query_profile_commitments(db: &Database, campaign_id: &CampaignId) -> QueryResult {
@@ -1633,8 +2182,8 @@ fn query_closure_refs(db: &Database, campaign_id: &CampaignId) -> QueryResult {
     params.insert("campaign_id".to_string(), campaign_id.to_string().into());
     db.raw_query_params(
         r#"
-?[closure_ref_id, recorded_at, summary_json] :=
-    *eval_closure_ref { closure_ref_id, campaign_id, recorded_at, summary_json },
+?[closure_ref_id, recorded_at, schema_version] :=
+    *eval_closure_ref { closure_ref_id, campaign_id, recorded_at, schema_version },
     campaign_id = $campaign_id
 "#,
         params,
@@ -1642,18 +2191,74 @@ fn query_closure_refs(db: &Database, campaign_id: &CampaignId) -> QueryResult {
     .expect("query closure refs")
 }
 
+fn query_closure_instances(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[closure_ref_id, instance_id, eval_status, protocol_status] :=
+    *eval_closure_instance { closure_ref_id, instance_id, campaign_id, eval_status, protocol_status },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query closure instances")
+}
+
+fn query_closure_artifacts(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[closure_ref_id, instance_id, artifact_kind, path] :=
+    *eval_closure_artifact_ref { closure_ref_id, instance_id, artifact_kind, campaign_id, path },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query closure artifacts")
+}
+
 fn query_baselines(db: &Database, campaign_id: &CampaignId) -> QueryResult {
     let mut params = BTreeMap::new();
     params.insert("campaign_id".to_string(), campaign_id.to_string().into());
     db.raw_query_params(
         r#"
-?[baseline_id, source_kind, instance_count, closure_ref_id] :=
-    *eval_baseline { baseline_id, campaign_id, source_kind, instance_count, closure_ref_id },
+?[baseline_id, source_kind, closure_ref_id] :=
+    *eval_baseline { baseline_id, campaign_id, source_kind, closure_ref_id },
     campaign_id = $campaign_id
 "#,
         params,
     )
     .expect("query baselines")
+}
+
+fn query_baseline_instances(db: &Database, baseline_id: &str) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("baseline_id".to_string(), baseline_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[baseline_id, instance_id, record_path, registration_path] :=
+    *eval_baseline_instance { baseline_id, instance_id, record_path, registration_path },
+    baseline_id = $baseline_id
+"#,
+        params,
+    )
+    .expect("query baseline instances")
+}
+
+fn query_baseline_metrics(db: &Database, baseline_id: &str) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("baseline_id".to_string(), baseline_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[baseline_id, instance_id, apply_state, valid_patch] :=
+    *eval_baseline_instance_metrics { baseline_id, instance_id, apply_state, valid_patch },
+    baseline_id = $baseline_id
+"#,
+        params,
+    )
+    .expect("query baseline metrics")
 }
 
 fn query_transition_event(db: &Database, event_id: &str) -> QueryResult {
