@@ -80,6 +80,58 @@ async fn call_context_collection_reads_real_fixture_rows() -> Result<(), Error> 
 }
 
 #[tokio::test]
+async fn call_context_collection_reads_incoming_rows_for_target_seed() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let target = unique_id_by_name(&db, "function", "try_local_assoc")?;
+    let caller = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_try_result_instance_method"),
+    )?;
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.call_context_degraded(),
+        "fresh fixture call_graph schema should enable call context collection"
+    );
+
+    let call_context = rag.collect_call_context(&[(target, 1.0)])?;
+    let target_context = call_context
+        .get(&target)
+        .expect("target seed should receive incoming caller context");
+    let call = target_context
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["try_local_assoc".to_string()],
+                    }
+                && call
+                    .targets
+                    .iter()
+                    .any(|candidate| candidate.target_id == target)
+        })
+        .expect(
+            "target seed should retain incoming call context from call_try_result_instance_method",
+        );
+    assert_eq!(call.status, CallStatusKind::Resolved);
+    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(call.targets.len(), 1);
+    assert_eq!(call.targets[0].target_id, target);
+    assert_eq!(call.targets[0].relation, CallTargetKind::Function);
+
+    let caller_context = db.call_context_for_owner(caller)?;
+    assert!(
+        caller_context.iter().any(|row| row.site.id == call.site_id),
+        "incoming target context should point at the real caller site"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_collection_reads_real_self_field_method_owner() -> Result<(), Error> {
     init_tracing_once();
     let db = Arc::new(Database::new(setup_db_full_multi_embedding(

@@ -1021,35 +1021,39 @@ impl RagService {
 
         let hit_ids = hits.iter().map(|(id, _)| *id).collect::<HashSet<_>>();
         let mut seen = HashSet::new();
-        let mut owners = Vec::new();
-        for &(owner_id, _) in hits.iter().take(cfg.max_owner_hits) {
-            if seen.insert(owner_id) {
-                owners.push(owner_id);
+        let mut nodes = Vec::new();
+        for &(node_id, _) in hits.iter().take(cfg.max_owner_hits) {
+            if seen.insert(node_id) {
+                nodes.push(node_id);
             }
         }
-        for owner_id in required
+        for node_id in required
             .iter()
             .copied()
-            .filter(|owner_id| hit_ids.contains(owner_id))
+            .filter(|node_id| hit_ids.contains(node_id))
         {
-            if seen.insert(owner_id) {
-                owners.push(owner_id);
+            if seen.insert(node_id) {
+                nodes.push(node_id);
             }
         }
 
         let mut out = HashMap::new();
-        for owner_id in owners {
-            let rows = self.db.call_context_for_owner(owner_id)?;
-            if rows.is_empty() {
+        for node_id in nodes {
+            let node = self.db.call_context_for_node(node_id)?;
+            if node.outgoing.is_empty() && node.incoming.is_empty() {
                 continue;
             }
-            let context = rows
+            let mut seen_sites = HashSet::new();
+            let context = node
+                .outgoing
                 .into_iter()
+                .chain(node.incoming.into_iter())
+                .filter(|row| seen_sites.insert(row.site.id))
                 .take(cfg.max_sites_per_owner)
                 .map(|row| row_to_call_context(row, cfg.max_targets_per_site))
                 .collect::<Result<Vec<_>, _>>()?;
             if !context.is_empty() {
-                out.insert(owner_id, context);
+                out.insert(node_id, context);
             }
         }
         Ok(out)
