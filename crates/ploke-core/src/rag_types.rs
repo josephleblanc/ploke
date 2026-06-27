@@ -315,6 +315,7 @@ impl CallResolutionKind {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct CallContextInfo {
     pub site_id: Uuid,
+    pub owner_id: Uuid,
     pub kind: CallSiteKind,
     pub span: (u32, u32),
     pub callee: CallCalleeInfo,

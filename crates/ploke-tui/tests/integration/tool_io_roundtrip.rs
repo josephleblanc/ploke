@@ -44,6 +44,7 @@ fn serde_roundtrip_request_code_context() {
     let call_context = vec![
         CallContextInfo {
             site_id: Uuid::from_u128(4),
+            owner_id: Uuid::from_u128(4),
             kind: CallSiteKind::Method,
             span: (11, 32),
             callee: CallCalleeInfo::Method {
@@ -61,6 +62,7 @@ fn serde_roundtrip_request_code_context() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(14),
+            owner_id: Uuid::from_u128(14),
             kind: CallSiteKind::Method,
             span: (34, 53),
             callee: CallCalleeInfo::Method {
@@ -79,6 +81,7 @@ fn serde_roundtrip_request_code_context() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(16),
+            owner_id: Uuid::from_u128(16),
             kind: CallSiteKind::Path,
             span: (54, 92),
             callee: CallCalleeInfo::Path {
@@ -96,6 +99,7 @@ fn serde_roundtrip_request_code_context() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(18),
+            owner_id: Uuid::from_u128(18),
             kind: CallSiteKind::Path,
             span: (94, 142),
             callee: CallCalleeInfo::Path {
@@ -113,6 +117,7 @@ fn serde_roundtrip_request_code_context() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(6),
+            owner_id: Uuid::from_u128(6),
             kind: CallSiteKind::Dynamic,
             span: (40, 57),
             callee: CallCalleeInfo::Dynamic,
@@ -125,6 +130,7 @@ fn serde_roundtrip_request_code_context() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(8),
+            owner_id: Uuid::from_u128(8),
             kind: CallSiteKind::Path,
             span: (60, 72),
             callee: CallCalleeInfo::Path {
@@ -139,6 +145,7 @@ fn serde_roundtrip_request_code_context() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(10),
+            owner_id: Uuid::from_u128(10),
             kind: CallSiteKind::Path,
             span: (74, 98),
             callee: CallCalleeInfo::Path {
@@ -153,6 +160,7 @@ fn serde_roundtrip_request_code_context() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(11),
+            owner_id: Uuid::from_u128(11),
             kind: CallSiteKind::Macro,
             span: (100, 124),
             callee: CallCalleeInfo::Macro {
@@ -164,6 +172,7 @@ fn serde_roundtrip_request_code_context() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(12),
+            owner_id: Uuid::from_u128(12),
             kind: CallSiteKind::Method,
             span: (126, 140),
             callee: CallCalleeInfo::Method {
@@ -178,6 +187,7 @@ fn serde_roundtrip_request_code_context() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(13),
+            owner_id: Uuid::from_u128(13),
             kind: CallSiteKind::Method,
             span: (142, 153),
             callee: CallCalleeInfo::Method {
@@ -273,6 +283,7 @@ fn serde_roundtrip_request_code_context() {
     let path_site = Uuid::from_u128(19);
     let path_call = CallContextInfo {
         site_id: path_site,
+        owner_id: path_site,
         kind: CallSiteKind::Path,
         span: (160, 181),
         callee: CallCalleeInfo::Path {

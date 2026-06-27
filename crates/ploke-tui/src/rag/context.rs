@@ -379,7 +379,7 @@ pub(crate) fn format_call_context_block(
         return String::new();
     }
 
-    let mut out = format!("call_context: {} outgoing call site(s)", calls.len());
+    let mut out = format!("call_context: {} call site(s)", calls.len());
     let limit = limit.max(1);
     for call in calls.iter().take(limit) {
         out.push('\n');
@@ -400,13 +400,14 @@ pub(crate) fn format_call_context_block(
 
 fn format_call_context(call: &CallContextInfo) -> String {
     format!(
-        "{} @ {}..{}: {} => {}, {}",
+        "{} @ {}..{}: {} => {}, {}, owner {}",
         call.kind.to_static_str(),
         call.span.0,
         call.span.1,
         format_callee(&call.callee),
         format_status(call),
-        format_targets(&call.targets)
+        format_targets(&call.targets),
+        call.owner_id
     )
 }
 

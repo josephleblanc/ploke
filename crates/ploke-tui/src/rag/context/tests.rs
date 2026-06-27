@@ -139,6 +139,7 @@ fn reformat_context_to_system_includes_call_context_details() {
         }),
         call_context: vec![CallContextInfo {
             site_id: Uuid::from_u128(42),
+            owner_id: Uuid::from_u128(42),
             kind: CallSiteKind::Dynamic,
             span: (20, 29),
             callee: CallCalleeInfo::Dynamic,
@@ -155,7 +156,7 @@ fn reformat_context_to_system_includes_call_context_details() {
     let rendered = reformat_context_to_system(part);
 
     assert!(rendered.contains("call_expansion: OutgoingTarget"));
-    assert!(rendered.contains("call_context: 1 outgoing call site(s)"));
+    assert!(rendered.contains("call_context: 1 call site(s)"));
     assert!(rendered.contains("Dynamic @ 20..29: dynamic"));
     assert!(rendered.contains("Resolved(LocalExact)"));
     assert!(rendered.contains(&format!("DynamicFunction:{target}")));
@@ -682,6 +683,7 @@ fn format_call_context_block_renders_fixture_derived_rows() {
     let calls = vec![
         CallContextInfo {
             site_id: Uuid::from_u128(0x601),
+            owner_id: Uuid::from_u128(0x601),
             kind: CallSiteKind::Path,
             span: (10, 12),
             callee: CallCalleeInfo::Path {
@@ -693,6 +695,7 @@ fn format_call_context_block_renders_fixture_derived_rows() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(0x602),
+            owner_id: Uuid::from_u128(0x602),
             kind: CallSiteKind::Path,
             span: (13, 28),
             callee: CallCalleeInfo::Path {
@@ -707,6 +710,7 @@ fn format_call_context_block_renders_fixture_derived_rows() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(0x603),
+            owner_id: Uuid::from_u128(0x603),
             kind: CallSiteKind::Method,
             span: (13, 46),
             callee: CallCalleeInfo::Method {
@@ -724,6 +728,7 @@ fn format_call_context_block_renders_fixture_derived_rows() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(0x604),
+            owner_id: Uuid::from_u128(0x604),
             kind: CallSiteKind::Path,
             span: (50, 62),
             callee: CallCalleeInfo::Path {
@@ -738,6 +743,7 @@ fn format_call_context_block_renders_fixture_derived_rows() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(0x606),
+            owner_id: Uuid::from_u128(0x606),
             kind: CallSiteKind::Path,
             span: (64, 74),
             callee: CallCalleeInfo::Path {
@@ -752,6 +758,7 @@ fn format_call_context_block_renders_fixture_derived_rows() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(0x607),
+            owner_id: Uuid::from_u128(0x607),
             kind: CallSiteKind::Path,
             span: (75, 99),
             callee: CallCalleeInfo::Path {
@@ -766,6 +773,7 @@ fn format_call_context_block_renders_fixture_derived_rows() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(0x608),
+            owner_id: Uuid::from_u128(0x608),
             kind: CallSiteKind::Macro,
             span: (120, 144),
             callee: CallCalleeInfo::Macro {
@@ -777,6 +785,7 @@ fn format_call_context_block_renders_fixture_derived_rows() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(0x609),
+            owner_id: Uuid::from_u128(0x609),
             kind: CallSiteKind::Method,
             span: (145, 160),
             callee: CallCalleeInfo::Method {
@@ -791,6 +800,7 @@ fn format_call_context_block_renders_fixture_derived_rows() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(0x605),
+            owner_id: Uuid::from_u128(0x605),
             kind: CallSiteKind::Dynamic,
             span: (100, 119),
             callee: CallCalleeInfo::Dynamic,
@@ -806,15 +816,15 @@ fn format_call_context_block_renders_fixture_derived_rows() {
     let rendered = format_call_context_block(&calls, "  ", 8);
     let expected = format!(
             "\
-call_context: 9 outgoing call site(s)
-  - Path @ 10..12: path Ok => Unsupported, targets []
-  - Path @ 13..28: path try_local_assoc => Resolved(LocalExact), targets [Function:{target}]
-  - Method @ 13..46: method instance_value on try_local_assoc()? => Resolved(LocalExact), targets [Method:{method_target}]
-  - Path @ 50..62: path Self::make => Resolved(LocalExact), targets [AssociatedFunction:{assoc_target}]
-  - Path @ 64..74: path NewType => Resolved(LocalExact), targets [TupleStructConstructor:{tuple_target}]
-  - Path @ 75..99: path EnumWithData::Variant1 => Resolved(LocalExact), targets [EnumVariantConstructor:{variant_target}]
-  - Macro @ 120..144: macro crate::crate_scoped_macro => Unsupported, targets []
-  - Method @ 145..160: method overlap on value => Ambiguous, targets []
+call_context: 9 call site(s)
+  - Path @ 10..12: path Ok => Unsupported, targets [], owner 00000000-0000-0000-0000-000000000601
+  - Path @ 13..28: path try_local_assoc => Resolved(LocalExact), targets [Function:{target}], owner 00000000-0000-0000-0000-000000000602
+  - Method @ 13..46: method instance_value on try_local_assoc()? => Resolved(LocalExact), targets [Method:{method_target}], owner 00000000-0000-0000-0000-000000000603
+  - Path @ 50..62: path Self::make => Resolved(LocalExact), targets [AssociatedFunction:{assoc_target}], owner 00000000-0000-0000-0000-000000000604
+  - Path @ 64..74: path NewType => Resolved(LocalExact), targets [TupleStructConstructor:{tuple_target}], owner 00000000-0000-0000-0000-000000000606
+  - Path @ 75..99: path EnumWithData::Variant1 => Resolved(LocalExact), targets [EnumVariantConstructor:{variant_target}], owner 00000000-0000-0000-0000-000000000607
+  - Macro @ 120..144: macro crate::crate_scoped_macro => Unsupported, targets [], owner 00000000-0000-0000-0000-000000000608
+  - Method @ 145..160: method overlap on value => Ambiguous, targets [], owner 00000000-0000-0000-0000-000000000609
   - ... 1 more call site(s)"
         );
 
@@ -830,6 +840,7 @@ fn format_call_context_block_renders_self_field_receiver() {
     let target = Uuid::from_u128(0x510);
     let calls = vec![CallContextInfo {
         site_id: Uuid::from_u128(0x610),
+        owner_id: Uuid::from_u128(0x610),
         kind: CallSiteKind::Method,
         span: (204, 231),
         callee: CallCalleeInfo::Method {
@@ -852,8 +863,8 @@ fn format_call_context_block_renders_self_field_receiver() {
         rendered,
         format!(
             "\
-call_context: 1 outgoing call site(s)
-  - Method @ 204..231: method instance_value on self.value => Resolved(LocalExact), targets [Method:{target}]"
+call_context: 1 call site(s)
+  - Method @ 204..231: method instance_value on self.value => Resolved(LocalExact), targets [Method:{target}], owner 00000000-0000-0000-0000-000000000610"
         )
     );
 }
@@ -863,6 +874,7 @@ fn format_call_context_block_renders_external_rows() {
     let calls = vec![
         CallContextInfo {
             site_id: Uuid::from_u128(0x701),
+            owner_id: Uuid::from_u128(0x701),
             kind: CallSiteKind::Path,
             span: (10, 23),
             callee: CallCalleeInfo::Path {
@@ -874,6 +886,7 @@ fn format_call_context_block_renders_external_rows() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(0x702),
+            owner_id: Uuid::from_u128(0x702),
             kind: CallSiteKind::Method,
             span: (24, 45),
             callee: CallCalleeInfo::Method {
@@ -886,6 +899,7 @@ fn format_call_context_block_renders_external_rows() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(0x703),
+            owner_id: Uuid::from_u128(0x703),
             kind: CallSiteKind::Method,
             span: (46, 57),
             callee: CallCalleeInfo::Method {
@@ -903,10 +917,10 @@ fn format_call_context_block_renders_external_rows() {
 
     let rendered = format_call_context_block(&calls, "  ", 8);
     let expected = "\
-call_context: 3 outgoing call site(s)
-  - Path @ 10..23: path String::new => External, targets []
-  - Method @ 24..45: method to_string on literal => External, targets []
-  - Method @ 46..57: method len on value: Vec => External, targets []";
+call_context: 3 call site(s)
+  - Path @ 10..23: path String::new => External, targets [], owner 00000000-0000-0000-0000-000000000701
+  - Method @ 24..45: method to_string on literal => External, targets [], owner 00000000-0000-0000-0000-000000000702
+  - Method @ 46..57: method len on value: Vec => External, targets [], owner 00000000-0000-0000-0000-000000000703";
 
     assert_eq!(rendered, expected);
 }
@@ -917,6 +931,7 @@ fn format_call_context_block_renders_callable_path_rows() {
     let calls = vec![
         CallContextInfo {
             site_id: Uuid::from_u128(0x801),
+            owner_id: Uuid::from_u128(0x801),
             kind: CallSiteKind::Path,
             span: (10, 19),
             callee: CallCalleeInfo::Path {
@@ -931,6 +946,7 @@ fn format_call_context_block_renders_callable_path_rows() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(0x802),
+            owner_id: Uuid::from_u128(0x802),
             kind: CallSiteKind::Dynamic,
             span: (10, 21),
             callee: CallCalleeInfo::Dynamic,
@@ -940,6 +956,7 @@ fn format_call_context_block_renders_callable_path_rows() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(0x803),
+            owner_id: Uuid::from_u128(0x803),
             kind: CallSiteKind::Path,
             span: (30, 33),
             callee: CallCalleeInfo::Path {
@@ -951,6 +968,7 @@ fn format_call_context_block_renders_callable_path_rows() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(0x804),
+            owner_id: Uuid::from_u128(0x804),
             kind: CallSiteKind::Path,
             span: (40, 51),
             callee: CallCalleeInfo::Path {
@@ -962,6 +980,7 @@ fn format_call_context_block_renders_callable_path_rows() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(0x805),
+            owner_id: Uuid::from_u128(0x805),
             kind: CallSiteKind::Path,
             span: (60, 68),
             callee: CallCalleeInfo::Path {
@@ -973,6 +992,7 @@ fn format_call_context_block_renders_callable_path_rows() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(0x806),
+            owner_id: Uuid::from_u128(0x806),
             kind: CallSiteKind::Path,
             span: (70, 85),
             callee: CallCalleeInfo::Path {
@@ -984,6 +1004,7 @@ fn format_call_context_block_renders_callable_path_rows() {
         },
         CallContextInfo {
             site_id: Uuid::from_u128(0x807),
+            owner_id: Uuid::from_u128(0x807),
             kind: CallSiteKind::Path,
             span: (90, 100),
             callee: CallCalleeInfo::Path {
@@ -998,14 +1019,14 @@ fn format_call_context_block_renders_callable_path_rows() {
     let rendered = format_call_context_block(&calls, "  ", 8);
     let expected = format!(
         "\
-call_context: 7 outgoing call site(s)
-  - Path @ 10..19: path make_fn => Resolved(LocalExact), targets [Function:{target}]
-  - Dynamic @ 10..21: dynamic => Unsupported, targets []
-  - Path @ 30..33: path f => Unsupported, targets []
-  - Path @ 40..51: path generic_f => Unsupported, targets []
-  - Path @ 60..68: path boxed_fn => Unsupported, targets []
-  - Path @ 70..85: path Box::new => External, targets []
-  - Path @ 90..100: path Vec::new => External, targets []"
+call_context: 7 call site(s)
+  - Path @ 10..19: path make_fn => Resolved(LocalExact), targets [Function:{target}], owner 00000000-0000-0000-0000-000000000801
+  - Dynamic @ 10..21: dynamic => Unsupported, targets [], owner 00000000-0000-0000-0000-000000000802
+  - Path @ 30..33: path f => Unsupported, targets [], owner 00000000-0000-0000-0000-000000000803
+  - Path @ 40..51: path generic_f => Unsupported, targets [], owner 00000000-0000-0000-0000-000000000804
+  - Path @ 60..68: path boxed_fn => Unsupported, targets [], owner 00000000-0000-0000-0000-000000000805
+  - Path @ 70..85: path Box::new => External, targets [], owner 00000000-0000-0000-0000-000000000806
+  - Path @ 90..100: path Vec::new => External, targets [], owner 00000000-0000-0000-0000-000000000807"
     );
 
     assert_eq!(rendered, expected);
@@ -1016,6 +1037,7 @@ fn format_call_context_block_renders_trait_dispatch_initialized_local_receiver()
     let target = Uuid::from_u128(0xa01);
     let calls = vec![CallContextInfo {
         site_id: Uuid::from_u128(0xa02),
+        owner_id: Uuid::from_u128(0xa02),
         kind: CallSiteKind::Method,
         span: (20, 39),
         callee: CallCalleeInfo::Method {
@@ -1036,8 +1058,8 @@ fn format_call_context_block_renders_trait_dispatch_initialized_local_receiver()
     let rendered = format_call_context_block(&calls, "  ", 8);
     let expected = format!(
             "\
-call_context: 1 outgoing call site(s)
-  - Method @ 20..39: method trait_value on value = TraitDispatchTarget => Resolved(LocalExact), targets [Method:{target}]"
+call_context: 1 call site(s)
+  - Method @ 20..39: method trait_value on value = TraitDispatchTarget => Resolved(LocalExact), targets [Method:{target}], owner 00000000-0000-0000-0000-000000000a02"
         );
 
     assert_eq!(rendered, expected);

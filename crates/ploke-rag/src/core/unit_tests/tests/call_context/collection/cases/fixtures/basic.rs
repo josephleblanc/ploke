@@ -121,6 +121,10 @@ async fn call_context_collection_reads_incoming_rows_for_target_seed() -> Result
     assert_eq!(call.targets.len(), 1);
     assert_eq!(call.targets[0].target_id, target);
     assert_eq!(call.targets[0].relation, CallTargetKind::Function);
+    assert_eq!(
+        call.owner_id, caller,
+        "target-seed incoming call context should expose the caller owner id"
+    );
 
     let caller_context = db.call_context_for_owner(caller)?;
     assert!(

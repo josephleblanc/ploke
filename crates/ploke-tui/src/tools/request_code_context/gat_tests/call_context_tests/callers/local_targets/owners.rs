@@ -150,6 +150,10 @@ async fn request_code_context_attaches_incoming_context_to_target_seed() -> colo
         })
         .expect("target seed should retain incoming call context from its caller");
     assert_resolved_target(call, target, CallTargetKind::Function);
+    assert_eq!(
+        call.owner_id, caller,
+        "target-seed incoming call context should expose the caller owner id"
+    );
 
     let caller_part = result
         .context

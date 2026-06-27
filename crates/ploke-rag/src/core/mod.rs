@@ -246,6 +246,7 @@ fn row_to_call_context(
 
     Ok(CallContextInfo {
         site_id: row.site.id,
+        owner_id: row.site.owner_id,
         kind: site_kind(row.site.kind),
         span: row.site.span,
         callee,
