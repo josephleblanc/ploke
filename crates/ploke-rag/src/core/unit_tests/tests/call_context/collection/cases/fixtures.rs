@@ -3,6 +3,7 @@ mod blockers;
 mod callable_paths;
 mod constructors;
 mod dynamic;
+mod expected;
 mod external;
 mod field_dynamic;
 mod initializers;

@@ -1,18 +1,6 @@
 use super::super::super::super::super::*;
 use super::super::super::helpers::*;
-
-struct ExpectedCall {
-    kind: CallSiteKind,
-    callee: CallCalleeInfo,
-    target: Uuid,
-    relation: CallTargetKind,
-}
-
-struct Case {
-    label: &'static str,
-    owner: Uuid,
-    calls: Vec<ExpectedCall>,
-}
+use super::expected::{CallCase, ExpectedCall, assert_expected_call, method_call, path, path_call};
 
 #[tokio::test]
 async fn call_context_collection_reads_real_result_field_receiver_rows() -> Result<(), Error> {
@@ -38,7 +26,7 @@ async fn call_context_collection_reads_real_result_field_receiver_rows() -> Resu
         &struct_in_module_query(&["crate"], "TupleFieldMethodReceiver"),
     )?;
     let cases = vec![
-        Case {
+        CallCase {
             label: "path-call result receiver",
             owner: one_uuid(
                 &db,
@@ -64,7 +52,7 @@ async fn call_context_collection_reads_real_result_field_receiver_rows() -> Resu
                 },
             ],
         },
-        Case {
+        CallCase {
             label: "method-call result receiver",
             owner: one_uuid(
                 &db,
@@ -96,7 +84,7 @@ async fn call_context_collection_reads_real_result_field_receiver_rows() -> Resu
                 },
             ],
         },
-        Case {
+        CallCase {
             label: "await path-call result receiver",
             owner: one_uuid(
                 &db,
@@ -122,7 +110,7 @@ async fn call_context_collection_reads_real_result_field_receiver_rows() -> Resu
                 },
             ],
         },
-        Case {
+        CallCase {
             label: "tuple-field method receiver",
             owner: one_uuid(
                 &db,
@@ -179,43 +167,4 @@ async fn call_context_collection_reads_real_result_field_receiver_rows() -> Resu
     }
 
     Ok(())
-}
-
-fn assert_expected_call(context: &[CallContextInfo], expected: &ExpectedCall, label: &str) {
-    let call = context
-        .iter()
-        .find(|call| {
-            call.kind == expected.kind
-                && call.callee == expected.callee
-                && call
-                    .targets
-                    .iter()
-                    .any(|target| target.target_id == expected.target)
-        })
-        .unwrap_or_else(|| panic!("{label} should retain expected call context: {context:#?}"));
-    assert_eq!(call.status, CallStatusKind::Resolved);
-    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
-    assert_eq!(call.targets.len(), 1);
-    assert_eq!(call.targets[0].target_id, expected.target);
-    assert_eq!(call.targets[0].relation, expected.relation);
-}
-
-fn path_call(segments: &[&str]) -> CallCalleeInfo {
-    CallCalleeInfo::Path {
-        path: path(segments),
-    }
-}
-
-fn method_call(name: &str, receiver: CallReceiverInfo) -> CallCalleeInfo {
-    CallCalleeInfo::Method {
-        name: name.to_string(),
-        receiver: Some(receiver),
-    }
-}
-
-fn path(segments: &[&str]) -> Vec<String> {
-    segments
-        .iter()
-        .map(|segment| (*segment).to_string())
-        .collect()
 }

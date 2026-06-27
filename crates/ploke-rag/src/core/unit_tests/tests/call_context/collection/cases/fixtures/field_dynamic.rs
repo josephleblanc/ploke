@@ -1,18 +1,6 @@
 use super::super::super::super::super::*;
 use super::super::super::helpers::*;
-
-struct ExpectedCall {
-    kind: CallSiteKind,
-    callee: CallCalleeInfo,
-    target: Uuid,
-    relation: CallTargetKind,
-}
-
-struct Case {
-    label: &'static str,
-    owner: Uuid,
-    calls: Vec<ExpectedCall>,
-}
+use super::expected::{CallCase, ExpectedCall, assert_expected_call, path_call};
 
 #[tokio::test]
 async fn call_context_collection_reads_real_field_dynamic_rows() -> Result<(), Error> {
@@ -113,8 +101,8 @@ fn dynamic_case(
     label: &'static str,
     owner: &'static str,
     target: Uuid,
-) -> Result<Case, Error> {
-    Ok(Case {
+) -> Result<CallCase, Error> {
+    Ok(CallCase {
         label,
         owner: one_uuid(db, &function_in_module_query(&["crate"], owner))?,
         calls: vec![dynamic_call(target)],
@@ -127,8 +115,8 @@ fn tuple_case(
     owner: &'static str,
     tuple_target: Uuid,
     dynamic_target: Uuid,
-) -> Result<Case, Error> {
-    Ok(Case {
+) -> Result<CallCase, Error> {
+    Ok(CallCase {
         label,
         owner: one_uuid(db, &function_in_module_query(&["crate"], owner))?,
         calls: vec![
@@ -150,38 +138,4 @@ fn dynamic_call(target: Uuid) -> ExpectedCall {
         target,
         relation: CallTargetKind::DynamicFunction,
     }
-}
-
-fn assert_expected_call(context: &[CallContextInfo], expected: &ExpectedCall, label: &str) {
-    let call = context
-        .iter()
-        .find(|call| {
-            call.kind == expected.kind
-                && call.callee == expected.callee
-                && call
-                    .targets
-                    .iter()
-                    .any(|target| target.target_id == expected.target)
-        })
-        .unwrap_or_else(|| {
-            panic!("{label} should retain expected field-dynamic context: {context:#?}")
-        });
-    assert_eq!(call.status, CallStatusKind::Resolved);
-    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
-    assert_eq!(call.targets.len(), 1);
-    assert_eq!(call.targets[0].target_id, expected.target);
-    assert_eq!(call.targets[0].relation, expected.relation);
-}
-
-fn path_call(segments: &[&str]) -> CallCalleeInfo {
-    CallCalleeInfo::Path {
-        path: path(segments),
-    }
-}
-
-fn path(segments: &[&str]) -> Vec<String> {
-    segments
-        .iter()
-        .map(|segment| (*segment).to_string())
-        .collect()
 }
