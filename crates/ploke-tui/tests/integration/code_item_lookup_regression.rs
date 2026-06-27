@@ -6,7 +6,7 @@ use ploke_tui::tools::{
 };
 
 use crate::call_graph_tool_support::{
-    CallGraphToolFixture, assert_incoming_context, assert_target_proof,
+    CallGraphToolFixture, assert_incoming_context, assert_target_proof, ui_field,
 };
 
 #[tokio::test]
@@ -59,19 +59,14 @@ async fn code_item_lookup_returns_call_and_proof_context_for_call_graph_item() {
     let ui = result.ui_payload.as_ref().expect("ui payload");
     let call_count = call_context.len().to_string();
     let proof_count = proof_context.len().to_string();
-    assert_eq!(
-        ui.fields
-            .iter()
-            .find(|field| field.name.as_ref() == "call_context")
-            .map(|field| field.value.as_ref()),
-        Some(call_count.as_str())
-    );
-    assert_eq!(
-        ui.fields
-            .iter()
-            .find(|field| field.name.as_ref() == "proof_context")
-            .map(|field| field.value.as_ref()),
-        Some(proof_count.as_str())
+    assert_eq!(ui_field(ui, "call_context"), call_count.as_str());
+    assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
+    assert!(
+        ui_field(ui, "call_context_outgoing")
+            .parse::<usize>()
+            .expect("outgoing count")
+            >= 1,
+        "code_item_lookup should surface outgoing call-context count for owner lookups"
     );
 }
 
@@ -114,18 +109,13 @@ async fn code_item_lookup_returns_incoming_callers_for_call_graph_target() {
     let ui = result.ui_payload.as_ref().expect("ui payload");
     let call_count = call_context.len().to_string();
     let proof_count = proof_context.len().to_string();
-    assert_eq!(
-        ui.fields
-            .iter()
-            .find(|field| field.name.as_ref() == "call_context")
-            .map(|field| field.value.as_ref()),
-        Some(call_count.as_str())
-    );
-    assert_eq!(
-        ui.fields
-            .iter()
-            .find(|field| field.name.as_ref() == "proof_context")
-            .map(|field| field.value.as_ref()),
-        Some(proof_count.as_str())
+    assert_eq!(ui_field(ui, "call_context"), call_count.as_str());
+    assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
+    assert!(
+        ui_field(ui, "call_context_incoming")
+            .parse::<usize>()
+            .expect("incoming count")
+            >= 1,
+        "code_item_lookup should surface incoming caller count for target lookups"
     );
 }

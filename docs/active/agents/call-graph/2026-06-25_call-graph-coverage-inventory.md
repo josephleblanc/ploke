@@ -58,6 +58,10 @@ future work can choose the next batch without rereading the diary-style notes.
   wrapper over target-centered full context. Existing target-family fixture
   cases verify it preserves the same caller-site cardinality and identities as
   `callers_for_target`.
+- 2026-06-27: `code_item_lookup` and `code_item_edges` UI payloads now expose
+  exact node-scoped call-context counts split as `call_context_outgoing` and
+  `call_context_incoming`. The model-facing JSON call-context carrier remains
+  unchanged.
 
 ## Next implementation batches
 

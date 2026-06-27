@@ -24,7 +24,7 @@ use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
 use crate::call_graph_tool_support::{
-    CallGraphToolFixture, assert_incoming_context, assert_target_proof,
+    CallGraphToolFixture, assert_incoming_context, assert_target_proof, ui_field,
 };
 
 #[tokio::test]
@@ -426,27 +426,15 @@ async fn code_item_edges_returns_call_context_for_call_graph_item() {
     );
     let call_count = call_context.len().to_string();
     let proof_count = proof_context.len().to_string();
-    assert_eq!(
-        result
-            .ui_payload
-            .as_ref()
-            .and_then(|payload| payload
-                .fields
-                .iter()
-                .find(|field| field.name.as_ref() == "call_context"))
-            .map(|field| field.value.as_ref()),
-        Some(call_count.as_str())
-    );
-    assert_eq!(
-        result
-            .ui_payload
-            .as_ref()
-            .and_then(|payload| payload
-                .fields
-                .iter()
-                .find(|field| field.name.as_ref() == "proof_context"))
-            .map(|field| field.value.as_ref()),
-        Some(proof_count.as_str())
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "call_context"), call_count.as_str());
+    assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
+    assert!(
+        ui_field(ui, "call_context_outgoing")
+            .parse::<usize>()
+            .expect("outgoing count")
+            >= 1,
+        "code_item_edges should surface outgoing call-context count for owner lookups"
     );
 }
 
@@ -492,27 +480,15 @@ async fn code_item_edges_returns_incoming_callers_for_call_graph_target() {
 
     let call_count = call_context.len().to_string();
     let proof_count = proof_context.len().to_string();
-    assert_eq!(
-        result
-            .ui_payload
-            .as_ref()
-            .and_then(|payload| payload
-                .fields
-                .iter()
-                .find(|field| field.name.as_ref() == "call_context"))
-            .map(|field| field.value.as_ref()),
-        Some(call_count.as_str())
-    );
-    assert_eq!(
-        result
-            .ui_payload
-            .as_ref()
-            .and_then(|payload| payload
-                .fields
-                .iter()
-                .find(|field| field.name.as_ref() == "proof_context"))
-            .map(|field| field.value.as_ref()),
-        Some(proof_count.as_str())
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "call_context"), call_count.as_str());
+    assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
+    assert!(
+        ui_field(ui, "call_context_incoming")
+            .parse::<usize>()
+            .expect("incoming count")
+            >= 1,
+        "code_item_edges should surface incoming caller count for target lookups"
     );
 }
 

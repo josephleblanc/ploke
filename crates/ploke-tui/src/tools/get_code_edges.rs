@@ -314,16 +314,19 @@ for a more fuzzy search."#
             node_info: concise_context,
             edge_info: resolved_edges,
         };
+        let call_counts = lookup_support::call_context_counts(
+            resolved_item_id,
+            &node_edge_info.node_info.call_context,
+        );
 
         let summary = format!("Resolved {} edges", node_edge_info.edge_info.len());
         let ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
             .with_field("file_path", node_edge_info.node_info.file_path.as_ref())
             .with_field("canon_path", node_edge_info.node_info.canon_path.as_ref())
             .with_field("edges", node_edge_info.edge_info.len().to_string())
-            .with_field(
-                "call_context",
-                node_edge_info.node_info.call_context.len().to_string(),
-            )
+            .with_field("call_context", call_counts.total.to_string())
+            .with_field("call_context_outgoing", call_counts.outgoing.to_string())
+            .with_field("call_context_incoming", call_counts.incoming.to_string())
             .with_field(
                 "proof_context",
                 node_edge_info.node_info.proof_context.len().to_string(),

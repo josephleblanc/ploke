@@ -14,7 +14,7 @@ use ploke_tui::{
     },
     chat_history::ChatHistory,
     event_bus::EventBusCaps,
-    tools::Ctx,
+    tools::{Ctx, ToolUiPayload},
     user_config::UserConfig,
 };
 use tokio::sync::{Mutex, RwLock};
@@ -186,4 +186,14 @@ pub(crate) fn assert_target_proof(
         }),
         "{label} should return target-centered proof rows for local_target callers: {proofs:#?}"
     );
+}
+
+pub(crate) fn ui_field<'a>(payload: &'a ToolUiPayload, name: &str) -> &'a str {
+    payload
+        .fields
+        .iter()
+        .find(|field| field.name.as_ref() == name)
+        .unwrap_or_else(|| panic!("missing UI field {name}: {payload:#?}"))
+        .value
+        .as_ref()
 }

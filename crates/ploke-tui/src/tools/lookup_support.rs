@@ -82,6 +82,36 @@ pub(super) struct ContextCarriers {
     pub(super) proof_context: Vec<ProofContextInfo>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct CallContextCounts {
+    pub(super) total: usize,
+    pub(super) outgoing: usize,
+    pub(super) incoming: usize,
+}
+
+pub(super) fn call_context_counts(node_id: Uuid, calls: &[CallContextInfo]) -> CallContextCounts {
+    let mut outgoing = 0usize;
+    let mut incoming = 0usize;
+    for call in calls {
+        if call.owner_id == node_id {
+            outgoing += 1;
+        }
+        if call
+            .targets
+            .iter()
+            .any(|target| target.target_id == node_id)
+        {
+            incoming += 1;
+        }
+    }
+
+    CallContextCounts {
+        total: calls.len(),
+        outgoing,
+        incoming,
+    }
+}
+
 pub(super) fn context_carriers_for_node(
     ctx: &super::Ctx,
     node_id: Uuid,

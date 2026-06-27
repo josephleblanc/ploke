@@ -294,15 +294,16 @@ for a more fuzzy search."#
             call_context: carriers.call_context,
             proof_context: carriers.proof_context,
         };
+        let call_counts =
+            lookup_support::call_context_counts(resolved_item_id, &concise_context.call_context);
 
         let summary = format!("Resolved item in {}", concise_context.file_path.as_ref());
         let ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
             .with_field("file_path", concise_context.file_path.as_ref())
             .with_field("canon_path", concise_context.canon_path.as_ref())
-            .with_field(
-                "call_context",
-                concise_context.call_context.len().to_string(),
-            )
+            .with_field("call_context", call_counts.total.to_string())
+            .with_field("call_context_outgoing", call_counts.outgoing.to_string())
+            .with_field("call_context_incoming", call_counts.incoming.to_string())
             .with_field(
                 "proof_context",
                 concise_context.proof_context.len().to_string(),
