@@ -2,6 +2,7 @@ mod blockers;
 mod constructors;
 mod field_dynamic;
 mod helpers;
+mod initializers;
 mod projected;
 mod result_field_receivers;
 mod targetless_special_forms;

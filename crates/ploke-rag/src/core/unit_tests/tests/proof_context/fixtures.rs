@@ -2,6 +2,7 @@ mod ambiguous;
 mod constructors;
 mod expanded;
 mod field_dynamic;
+mod initializers;
 mod projected;
 mod raw_identifiers;
 mod result_field_receivers;
