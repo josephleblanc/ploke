@@ -919,6 +919,53 @@ fn proof_invariant_checker_discharges_macro_and_build_summaries_with_dedicated_a
 }
 
 #[test]
+fn proof_invariant_checker_requires_matching_macro_or_build_summary_authority() {
+    for (boundary_kind, effect, expected_reason) in [
+        (
+            "proc_macro_function",
+            "build_script_summary_boundary",
+            "proc_macro_summary_missing",
+        ),
+        (
+            "build_script",
+            "proc_macro_summary_boundary",
+            "build_script_summary_missing",
+        ),
+    ] {
+        let mut records = legal_handoff_records();
+        records.push(expansion_boundary(
+            "boundary:external-summary",
+            "bd:checker",
+            boundary_kind,
+            "externally_summarized",
+            None,
+            63,
+        ));
+        let mut summary = external_summary("admitted", "audited_no_process_effects");
+        summary["external_summary_id"] = json!("external-summary:test");
+        summary["allowed_effects"] = json!([effect]);
+        records.push(summary);
+        let db = db_with(records);
+
+        let findings = db
+            .proof_invariant_findings()
+            .expect("proof invariant findings");
+        let finding = finding_for(&findings, DETACHED_INVARIANT, "call:handoff-spawn");
+
+        assert_eq!(
+            finding.status,
+            ProofInvariantStatus::Blocked,
+            "{boundary_kind} should block when summary authority is {effect}: {finding:#?}"
+        );
+        assert!(
+            finding.reason.contains(expected_reason),
+            "{boundary_kind} should report {expected_reason}: {}",
+            finding.reason
+        );
+    }
+}
+
+#[test]
 fn proof_invariant_checker_requires_allowed_effect_for_external_summary_discharge() {
     let mut records = legal_handoff_records();
     records.push(call_resolution_for(

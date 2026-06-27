@@ -843,6 +843,8 @@ fn proof_graph_store_accepts_all_stable_effect_class_values() {
         "durable_evidence_write",
         "durable_evidence_read",
         "external_summary_boundary",
+        "proc_macro_summary_boundary",
+        "build_script_summary_boundary",
     ] {
         let db = Database::new_init().expect("create db");
         db.ensure_proof_graph_schema().expect("proof graph schema");

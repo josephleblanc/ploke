@@ -573,3 +573,45 @@ fn proof_blockers_discharge_macro_and_build_summaries_with_dedicated_authority()
         );
     }
 }
+
+#[test]
+fn proof_blockers_require_matching_macro_or_build_summary_authority() {
+    for (boundary_kind, effect, expected_reason) in [
+        (
+            "proc_macro_function",
+            "build_script_summary_boundary",
+            "proc_macro_summary_missing",
+        ),
+        (
+            "build_script",
+            "proc_macro_summary_boundary",
+            "build_script_summary_missing",
+        ),
+    ] {
+        let db = Database::new_init().expect("create db");
+        db.ensure_proof_graph_schema().expect("proof graph schema");
+        let mut boundary = externally_summarized_boundary(Some("external-summary:dep:serde"));
+        boundary["boundary_kind"] = json!(boundary_kind);
+        boundary
+            .as_object_mut()
+            .expect("boundary object")
+            .remove("blocking_reason");
+        let mut summary = external_summary_record();
+        summary["summary_class"] = json!("audited_no_process_effects");
+        summary["status"] = json!("admitted");
+        summary["allowed_effects"] = json!([effect]);
+        let mut records = main_domain_records();
+        records.extend([boundary, summary]);
+        db.upsert_proof_fact_values(&records)
+            .expect("import mismatched macro/build summary proof facts");
+
+        let blockers = db.proof_blockers().expect("blocker inspection");
+        assert_eq!(
+            blockers.len(),
+            1,
+            "{boundary_kind} should fail closed when summary authority is {effect}: {blockers:#?}"
+        );
+        assert_eq!(blockers[0].blocker_id, "boundary:external-summary");
+        assert_eq!(blockers[0].reason, expected_reason);
+    }
+}
