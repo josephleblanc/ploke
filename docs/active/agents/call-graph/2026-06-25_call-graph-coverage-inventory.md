@@ -66,7 +66,8 @@ future work can choose the next batch without rereading the diary-style notes.
   `proc_macro_summary_boundary` and `build_script_summary_boundary` authority
   effects for admitted linked macro/build summaries. Generic
   `external_summary_boundary` summaries still fail closed for those boundary
-  kinds.
+  kinds. RAG and TUI proof-context artifact tests cover these effect terms in
+  downstream payloads.
 
 ## Next implementation batches
 

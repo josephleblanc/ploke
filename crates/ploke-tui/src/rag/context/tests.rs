@@ -642,7 +642,11 @@ fn reformat_context_to_system_includes_external_summary_metadata() {
             summary_version: Some("serde 1.0.0".to_string()),
             review_method: Some("manual-review".to_string()),
             scope_of_validity: Some("dependency serde under bd:fixture-call-graph".to_string()),
-            allowed_effects: vec!["external_summary_boundary".to_string()],
+            allowed_effects: vec![
+                "external_summary_boundary".to_string(),
+                "proc_macro_summary_boundary".to_string(),
+                "build_script_summary_boundary".to_string(),
+            ],
             required_containment: Some("none".to_string()),
             invalidation_conditions: Some("artifact hash or proof policy changes".to_string()),
             evidence_use: Some("proof_only".to_string()),
@@ -668,7 +672,9 @@ fn reformat_context_to_system_includes_external_summary_metadata() {
     assert!(rendered.contains("version=serde 1.0.0"));
     assert!(rendered.contains("review=manual-review"));
     assert!(rendered.contains("scope=dependency serde under bd:fixture-call-graph"));
-    assert!(rendered.contains("allowed_effects=[external_summary_boundary]"));
+    assert!(rendered.contains(
+        "allowed_effects=[external_summary_boundary, proc_macro_summary_boundary, build_script_summary_boundary]"
+    ));
     assert!(rendered.contains("containment=none"));
     assert!(rendered.contains("invalidates=artifact hash or proof policy changes"));
 }

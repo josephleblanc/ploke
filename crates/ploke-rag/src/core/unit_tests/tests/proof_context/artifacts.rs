@@ -65,7 +65,11 @@ async fn proof_context_seed_exposes_external_summary_artifact_detail() -> Result
         "version": "external 1.0.0",
         "review_method": "manual-review",
         "scope_of_validity": "rag test fixture",
-        "allowed_effects": ["external_summary_boundary"],
+        "allowed_effects": [
+            "external_summary_boundary",
+            "proc_macro_summary_boundary",
+            "build_script_summary_boundary"
+        ],
         "required_containment": "none",
         "invalidation_conditions": "artifact hash or proof policy changes",
         "status": "blocked",
@@ -88,7 +92,12 @@ async fn proof_context_seed_exposes_external_summary_artifact_detail() -> Result
                 && row.summary_version.as_deref() == Some("external 1.0.0")
                 && row.review_method.as_deref() == Some("manual-review")
                 && row.scope_of_validity.as_deref() == Some("rag test fixture")
-                && row.allowed_effects == vec!["external_summary_boundary".to_string()]
+                && row.allowed_effects
+                    == vec![
+                        "external_summary_boundary".to_string(),
+                        "proc_macro_summary_boundary".to_string(),
+                        "build_script_summary_boundary".to_string(),
+                    ]
                 && row.required_containment.as_deref() == Some("none")
                 && row.invalidation_conditions.as_deref()
                     == Some("artifact hash or proof policy changes")
