@@ -1680,6 +1680,7 @@ async fn historical_trace_replay_marks_repeated_protected_ns_patch_before_stagin
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn recorded_replay_rejects_stale_same_file_repair_after_first_apply() {
     let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
+    let _env = crate::test_support::env_guard_os(vec![]);
     let fixture = prepare_live_canary(
         "recorded-same-file-stale-repair",
         "Replay repeated same-file non_semantic_patch repair attempts.",
@@ -1833,6 +1834,7 @@ async fn recorded_replay_rejects_stale_same_file_repair_after_first_apply() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn recorded_replay_truncating_patch_removes_stale_snippet_rows() {
     let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
+    let _env = crate::test_support::env_guard_os(vec![]);
 
     // Start from the same live-canary workspace builder used by the other
     // headless TUI replay tests, then replace its source with a two-function
@@ -2165,6 +2167,7 @@ async fn gated_replay_sends_applied_ns_patch_instead_of_staged_success() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn recorded_replay_runs_declared_validation_after_applied_edit() {
     let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
+    let _env = crate::test_support::env_guard_os(vec![]);
     let fixture = prepare_live_canary(
         "recorded-declared-validation-after-apply",
         "Use non_semantic_patch to update src/lib.rs, then stop.",

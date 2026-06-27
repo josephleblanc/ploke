@@ -82,6 +82,7 @@ use crate::{
                 },
                 tui_adapter,
             },
+            eval_store,
             event::{ContentHash, RecordedAt, RuntimeId},
             history::{
                 ArtifactSurface, CHILD_ATTEMPT_RUNNER_RESULT_RECORD,
@@ -128,7 +129,7 @@ use crate::{
         prototype1_node_id, prototype1_nodes_dir, prototype1_scheduler_path,
         register_root_parent_node, resolved_treatment_branches_from_synthesis,
         select_primary_issue, treatment_branch_id, write_node_projection,
-        write_treatment_evaluation_projection,
+        write_parent_node_projection, write_treatment_evaluation_projection,
     },
     load_campaign_manifest, load_closure_state,
     model_registry::resolve_model_for_run,
@@ -208,6 +209,25 @@ pub(crate) fn prepare_prototype1_parent_setup(
         .map(|profile| profile::admit_run_profile(&campaign.manifest_path, profile))
         .transpose()?;
     let closure_state_path = ensure_prototype1_baseline_closure_state(&campaign.resolved)?;
+    if let Some(admitted) = admitted_profile.as_ref() {
+        let backend = admitted.profile.storage.eval.backend;
+        if backend.mirrors_owner_db() {
+            let manifest = load_campaign_manifest(&campaign.campaign_id)?;
+            let closure_state = load_closure_state(&campaign.campaign_id)?;
+            eval_store::write_r0_context_to_owner_db(
+                &eval_store::prototype1_eval_store_db_path(&campaign.manifest_path),
+                &campaign.manifest_path,
+                &manifest,
+                backend,
+                Some(admitted),
+                &closure_state_path,
+                &closure_state,
+            )
+            .map_err(|err| {
+                prototype1_state_transition_error("prototype1_setup_r0_context", err.to_string())
+            })?;
+        }
+    }
     let repo_root = std::env::current_dir().map_err(|source| PrepareError::ReadManifest {
         path: PathBuf::from("."),
         source,
@@ -411,16 +431,7 @@ pub(crate) async fn establish_parent_baseline(
     Ok(baseline)
 }
 
-pub(crate) async fn establish_parent_baseline_for_id(
-    campaign_id: &CampaignId,
-    config: &ResolvedCampaignConfig,
-    manifest_path: &Path,
-    parent: &ParentIdentity,
-) -> Result<CompleteBaseline, PrepareError> {
-    establish_parent_baseline(campaign_id, config, manifest_path, parent).await
-}
-
-pub(crate) fn load_parent_baseline_for_id(
+pub(crate) fn load_parent_baseline(
     campaign_id: &CampaignId,
     config: &ResolvedCampaignConfig,
     manifest_path: &Path,
@@ -432,6 +443,7 @@ pub(crate) fn load_parent_baseline_for_id(
             return Ok(None);
         }
         let closure = load_closure_state(campaign_id)?;
+        mirror_closure_state_if_owner_db_exists(manifest_path, &path, &closure)?;
         complete_baseline_from_closure(parent, &closure, &config.eval)?
     } else {
         let report_path = prototype1_branch_evaluation_path(manifest_path, parent.branch_id());
@@ -444,19 +456,39 @@ pub(crate) fn load_parent_baseline_for_id(
     Ok(Some(baseline))
 }
 
+fn mirror_closure_state_if_owner_db_exists(
+    manifest_path: &Path,
+    closure_path: &Path,
+    closure: &crate::closure::ClosureState,
+) -> Result<(), PrepareError> {
+    let db_path = eval_store::prototype1_eval_store_db_path(manifest_path);
+    if !db_path.exists() {
+        return Ok(());
+    }
+    eval_store::write_closure_state_to_owner_db(&db_path, closure_path, closure)
+        .map(|_| ())
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "prototype1_closure_state_db_mirror",
+            detail: source.to_string(),
+        })
+}
+
 async fn establish_initial_parent_baseline(
     config: &ResolvedCampaignConfig,
     parent: &ParentIdentity,
 ) -> Result<CompleteBaseline, PrepareError> {
     let mut eval_policy = config.eval.clone();
     eval_policy.stop_on_error = false;
+    // TODO:loop-db Make sure this report is persisted in the db either in whole or by its parts.
     advance_eval_closure(config, &eval_policy, false, None).await?;
 
     let mut protocol_policy = config.protocol.clone();
     protocol_policy.stop_on_error = false;
+    // TODO:loop-db Make sure this report is persisted in the db either in whole or by its parts.
     advance_protocol_closure(config, &protocol_policy, false).await?;
 
     let closure = load_closure_state(&config.campaign_id)?;
+    // TODO:loop-db Make sure this report is persisted in the db either in whole or by its parts.
     complete_baseline_from_closure(parent, &closure, &config.eval)
 }
 
@@ -694,7 +726,7 @@ struct ChildPlanEnv<'a> {
     manifest_path: &'a Path,
     repo_root: &'a Path,
     broad_tui: profile::BroadTui,
-    anti_attractor_policy: profile::AntiAttractorPolicy,
+    eval_storage_backend: profile::EvalStorageBackend,
     /// Active run-level model route for this campaign. A broad-batch
     /// provider-unavailable abort only permanently fails the parent when this
     /// is `DirectGoogle`; other routers keep the parent resumable. This is the
@@ -848,6 +880,7 @@ struct DeterministicTuiToolsCandidates {
     rejected_attempts: Vec<surface_attempt::Evidence>,
 }
 
+#[derive(Clone)]
 pub(crate) struct SelectionSealMaterial {
     procedure: ProcedureRef,
     scope: SelectionScope,
@@ -1027,7 +1060,6 @@ pub(crate) struct Prototype1StateRunShape {
     pub(crate) stop_after: Prototype1StateStopAfter,
     pub(crate) observe_child_stale_after: Duration,
     pub(crate) broad_tui: profile::BroadTui,
-    pub(crate) anti_attractor_policy: profile::AntiAttractorPolicy,
     pub(crate) candidate_generation: CandidateGenerationConfig,
     pub(crate) successor_selection: Prototype1SuccessorSelection,
     pub(crate) successor_selection_seed: u64,
@@ -1044,7 +1076,6 @@ impl Prototype1StateRunShape {
             stop_after: command.stop_after,
             observe_child_stale_after: profile::Execution::default().observe_child_stale_after(),
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
             candidate_generation: CandidateGenerationConfig::from_command(command),
             successor_selection: command.successor_selection,
             successor_selection_seed: command.successor_selection_seed,
@@ -1061,7 +1092,6 @@ impl Prototype1StateRunShape {
             stop_after: profile.execution.state_stop_after(),
             observe_child_stale_after: profile.execution.observe_child_stale_after(),
             broad_tui: profile.execution.broad_tui,
-            anti_attractor_policy: profile.anti_attractor_policy(),
             candidate_generation: CandidateGenerationConfig::from_profile_generation(
                 profile.generation,
             ),
@@ -1218,7 +1248,6 @@ async fn run_parent_target_selection(
                 parent,
                 child_budget,
                 env.broad_tui,
-                env.anti_attractor_policy,
             )?;
             run_pre_child_planning_review(env, &batch).await?;
             Ok(ParentTargetSelection::AwaitingHarnessBatch(batch))
@@ -1321,7 +1350,7 @@ async fn run_legacy_parent_target_selection(
         .try_commit(|| {
             open.lock(at, |at, body| {
                 validate_child_plan(&parent_identity, &report, body)?;
-                write_child_plan_file(at.path(), body)
+                write_child_plan_file(env.campaign_id, at.path(), body)
             })
         })
         .map_err(|err| {
@@ -1337,7 +1366,6 @@ fn publish_broad_harness_child_plan_request(
     parent: Parent<Ready>,
     child_budget: Prototype1ChildBudget,
     broad_tui: profile::BroadTui,
-    anti_attractor_policy: profile::AntiAttractorPolicy,
 ) -> Result<HarnessRequestBatch, PrepareError> {
     let parent_identity = parent.identity().clone();
     let root_node = parent.node().clone();
@@ -1371,7 +1399,6 @@ fn publish_broad_harness_child_plan_request(
             broad_tui
                 .graph_nearest
                 .unwrap_or(DEFAULT_GRAPH_NEAREST_ITEMS),
-            anti_attractor_policy,
         )?;
         slots.push(HarnessRequestSlot {
             request_path: publication.request_path,
@@ -1857,6 +1884,8 @@ fn try_admit_request_result(
 async fn run_broad_headless_tui_attempt(
     slot: &HarnessRequestSlot,
     broad_tui: profile::BroadTui,
+    campaign_id: &CampaignId,
+    eval_storage_backend: profile::EvalStorageBackend,
 ) -> Result<Option<transaction::Executor>, tui_adapter::BroadAttemptError> {
     #[cfg(test)]
     if let Some(result) = broad_headless_tui_database_setup_fixture() {
@@ -1870,7 +1899,13 @@ async fn run_broad_headless_tui_attempt(
             max_attempts: Some(1),
             timeout_secs: Some(60),
         };
-        return run_broad_headless_tui_attempt_with_options(slot, &options).await;
+        return run_broad_headless_tui_attempt_with_options(
+            slot,
+            &options,
+            Some(campaign_id),
+            eval_storage_backend,
+        )
+        .await;
     }
 
     let max_attempts = broad_tui.max_attempts.or(broad_headless_tui_env_u32(
@@ -1880,7 +1915,13 @@ async fn run_broad_headless_tui_attempt(
         "PLOKE_EVAL_BROAD_TUI_TIMEOUT_SECS",
     )?);
     let options = BroadTuiAttemptOptions::for_parent_patcher_defaults(max_attempts, timeout_secs)?;
-    run_broad_headless_tui_attempt_with_options(slot, &options).await
+    run_broad_headless_tui_attempt_with_options(
+        slot,
+        &options,
+        Some(campaign_id),
+        eval_storage_backend,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -1984,11 +2025,9 @@ fn effective_broad_tui_timeout_secs(
 async fn run_broad_headless_tui_attempt_with_options(
     slot: &HarnessRequestSlot,
     options: &BroadTuiAttemptOptions,
+    campaign_id: Option<&CampaignId>,
+    eval_storage_backend: profile::EvalStorageBackend,
 ) -> Result<Option<transaction::Executor>, tui_adapter::BroadAttemptError> {
-    let telemetry =
-        RuntimeTelemetry::broad_harness_parent(&slot.published, "broad_headless_tui_attempt");
-    telemetry.install_for_chat_requests();
-
     #[cfg(test)]
     if let Some(result) = tui_adapter::harness::fixture::broad_attempt_from_summary_fixture(slot) {
         return result
@@ -2064,7 +2103,6 @@ async fn run_broad_headless_tui_attempt_with_options(
             policy_suffix: None,
         }
         .run()
-        .instrument(telemetry.span())
         .await
     } {
         Ok(outcome) => outcome,
@@ -2085,8 +2123,15 @@ async fn run_broad_headless_tui_attempt_with_options(
 
     write_broad_headless_tui_diagnostics(slot, &run)
         .map_err(tui_adapter::BroadAttemptError::from)?;
-    write_broad_headless_tui_turn_live_bundle(slot, &run, &prompt, &selected_model)
-        .map_err(tui_adapter::BroadAttemptError::from)?;
+    write_broad_headless_tui_turn_live_bundle(
+        slot,
+        &run,
+        &prompt,
+        &selected_model,
+        campaign_id,
+        eval_storage_backend,
+    )
+    .map_err(tui_adapter::BroadAttemptError::from)?;
     finish_broad_headless_tui_attempt(
         &backend,
         slot,
@@ -2357,9 +2402,14 @@ async fn run_broad_harness_attempt_slot(
     let max_attempts = effective_broad_tui_max_attempts(contract, options);
     let timeout_secs = effective_broad_tui_timeout_secs(contract, options);
     let started = Instant::now();
-    let executor = run_broad_headless_tui_attempt_with_options(slot, options)
-        .await
-        .map_err(PrepareError::from)?;
+    let executor = run_broad_headless_tui_attempt_with_options(
+        slot,
+        options,
+        None,
+        profile::EvalStorageBackend::Fs,
+    )
+    .await
+    .map_err(PrepareError::from)?;
     let elapsed_ms = started.elapsed().as_millis();
     let outcome = GitWorktreeBackend
         .validate_tui_attempt(
@@ -2526,30 +2576,42 @@ fn write_broad_headless_tui_turn_live_bundle(
     run: &tui_adapter::HeadlessRun,
     prompt: &str,
     selected_model: &str,
+    campaign_id: Option<&CampaignId>,
+    eval_storage_backend: profile::EvalStorageBackend,
 ) -> Result<(), PrepareError> {
     let dir = broad_headless_tui_turn_live_dir(slot.published.submitted_result_path());
-    fs::create_dir_all(&dir).map_err(|source| PrepareError::CreateOutputDir {
-        path: dir.clone(),
-        source,
-    })?;
     let artifact =
         run.agent_turn_artifact_record(slot.published.request_id(), selected_model, prompt);
-    write_json_file_pretty(
-        &dir.join("agent-turn-trace.json"),
-        &AgentTurnTraceRecord(artifact.clone()),
-    )?;
-    write_json_file_pretty(
-        &dir.join("agent-turn-summary.json"),
-        &AgentTurnSummaryRecord(artifact),
-    )?;
+    let trace_path = dir.join("agent-turn-trace.json");
+    let summary_path = dir.join("agent-turn-summary.json");
+    let full_response_path = dir.join(FULL_RESPONSE_TRACE_FILE);
+    let evidence = eval_store::AgentTurnBundleEvidence {
+        campaign_id: campaign_id.cloned(),
+        trace_path: trace_path.clone(),
+        summary_path,
+        full_response_path,
+        trace_record: AgentTurnTraceRecord(artifact.clone()),
+        summary_record: AgentTurnSummaryRecord(artifact),
+        full_responses: run.full_response_records().to_vec(),
+        recorded_at: Utc::now().to_rfc3339(),
+    };
+    let mut store =
+        eval_store::ConfiguredEvalStore::for_record_backend(eval_storage_backend, &trace_path)
+            .map_err(|source| PrepareError::DatabaseSetup {
+                phase: "eval_agent_turn_store",
+                detail: source.to_string(),
+            })?;
+    eval_store::EvalStore::put_agent_turn_bundle(&mut store, evidence).map_err(|source| {
+        PrepareError::DatabaseSetup {
+            phase: "eval_agent_turn_put",
+            detail: format!(
+                "failed to persist agent-turn bundle for '{}': {source}",
+                trace_path.display()
+            ),
+        }
+    })?;
 
-    let mut jsonl = String::new();
-    for record in run.full_response_records() {
-        jsonl.push_str(&serde_json::to_string(record).map_err(PrepareError::Serialize)?);
-        jsonl.push('\n');
-    }
-    let path = dir.join(FULL_RESPONSE_TRACE_FILE);
-    fs::write(&path, jsonl).map_err(|source| PrepareError::WriteManifest { path, source })
+    Ok(())
 }
 
 fn broad_headless_tui_turn_live_dir(submitted_result_path: &Path) -> PathBuf {
@@ -2712,7 +2774,6 @@ fn publish_broad_harness_child_plan_from_admitted_batch(
         admitted,
         &attempted,
         &BTreeMap::new(),
-        false,
     )
 }
 
@@ -2722,59 +2783,37 @@ fn publish_broad_harness_child_plan_from_attempts(
     admitted: Vec<AdmittedBroadHarnessResult>,
     attempted: &BTreeSet<usize>,
     rejections: &BTreeMap<usize, String>,
-    fail_parent_on_below_minimum: bool,
 ) -> Result<ChildPlanReceipt, PrepareError> {
-    let admitted_count = admitted.len();
-    let mut materialized_admitted = Vec::new();
-    let mut materialization_attempted = attempted.clone();
-    let mut materialization_rejections = rejections.clone();
+    let accepted_results = admitted.len();
+    let mut usable_results = Vec::new();
+    let mut attempted_slots = attempted.clone();
+    let mut slot_rejections = rejections.clone();
     for admitted_result in admitted {
         if let Some(reason) = broad_harness_materialization_rejection(env, &admitted_result) {
             let slot_index = broad_harness_admitted_slot_index(&batch, &admitted_result)?;
-            materialization_attempted.insert(slot_index);
-            materialization_rejections.insert(slot_index, reason);
+            attempted_slots.insert(slot_index);
+            slot_rejections.insert(slot_index, reason);
         } else {
-            materialized_admitted.push(admitted_result);
+            usable_results.push(admitted_result);
         }
     }
 
     // ANCHOR: prototype1_broad_harness_below_min_persist_rejected_plan
-    if materialized_admitted.len() < batch.child_budget.min as usize {
+    if usable_results.len() < batch.child_budget.min as usize {
+        let failed_parent = project_node_status(batch.parent.node(), Prototype1NodeStatus::Failed);
+        let parent_identity = batch.parent.identity().clone();
+        let child_plan_path =
+            ChildPlanFiles::for_parent(env.manifest_path, &parent_identity, Vec::new())
+                .message_at()
+                .path()
+                .to_path_buf();
         let rejected_attempts = batch_attempt_evidence(
             &batch,
-            &materialized_admitted,
-            &materialization_attempted,
-            &materialization_rejections,
+            &usable_results,
+            &attempted_slots,
+            &slot_rejections,
             true,
         );
-        if admitted_count == 0 && !rejected_attempts.is_empty() && !fail_parent_on_below_minimum {
-            let parent_identity = batch.parent.identity().clone();
-            let files = ChildPlanFiles::for_parent(env.manifest_path, &parent_identity, Vec::new())
-                .with_rejected_surface_attempts(rejected_attempts);
-            let at = files.message_at();
-            let observed_at = at.clone();
-            let ready_parent = batch.parent.accept_harness_plan();
-            let open = Open::<ChildPlan>::from_sender(ready_parent, files);
-            let (planned, locked) = observe::transition::<LockChildPlan>(&parent_identity)
-                .stage(observe::Stage::BatchAdmission)
-                .writes(observe::RecordRef::ChildPlanFile(&observed_at))
-                .try_commit(|| {
-                    open.lock(at, |at, body| {
-                        validate_and_write_broad_harness_child_plan(
-                            &parent_identity,
-                            at.path(),
-                            body,
-                        )
-                    })
-                })
-                .map_err(|err| {
-                    let (_parent, source) = err.into_parts();
-                    source
-                })?;
-            return receive_child_plan(env, &parent_identity, planned, locked);
-        }
-
-        let failed_parent = project_node_status(batch.parent.node(), Prototype1NodeStatus::Failed);
         let ready_parent = batch.parent.accept_harness_plan();
         // Task C2: error precedence edge case. If persisting the failed plan
         // itself errors here, that persistence error is surfaced via `?` and
@@ -2782,20 +2821,25 @@ fn publish_broad_harness_child_plan_from_attempts(
         // the fatal-abort caller would otherwise re-raise. The failed plan is
         // the durable record, so a persistence failure is the more urgent
         // signal to propagate.
-        persist_rejected_plan(env.manifest_path, ready_parent, rejected_attempts)?;
+        persist_rejected_plan(
+            env.campaign_id,
+            env.manifest_path,
+            ready_parent,
+            rejected_attempts,
+        )?;
         write_node_projection(&failed_parent)?;
-        return Err(PrepareError::InvalidBatchSelection {
-            detail: format!(
-                "broad harness materialized {} child transaction(s), fewer than required minimum {}",
-                materialized_admitted.len(),
-                batch.child_budget.min
-            ),
+        return Err(PrepareError::ChildPlanBelowMinimum {
+            runnable_children: usable_results.len(),
+            required_min: batch.child_budget.min as usize,
+            attempted_slots: attempted_slots.len(),
+            accepted_results,
+            child_plan_path,
         });
     }
     // ANCHOR_END: prototype1_broad_harness_below_min_persist_rejected_plan
     let parent_identity = batch.parent.identity().clone();
     let parent_runtime_id = *batch.parent.runtime_id();
-    let children = materialized_admitted
+    let children = usable_results
         .iter()
         .enumerate()
         .map(|(index, admitted)| {
@@ -2810,9 +2854,9 @@ fn publish_broad_harness_child_plan_from_attempts(
         .collect::<Result<Vec<_>, PrepareError>>()?;
     let attempts = batch_attempt_evidence(
         &batch,
-        &materialized_admitted,
-        &materialization_attempted,
-        &materialization_rejections,
+        &usable_results,
+        &attempted_slots,
+        &slot_rejections,
         false,
     );
     let files = ChildPlanFiles::for_parent(env.manifest_path, &parent_identity, children)
@@ -2826,7 +2870,12 @@ fn publish_broad_harness_child_plan_from_attempts(
         .writes(observe::RecordRef::ChildPlanFile(&observed_at))
         .try_commit(|| {
             open.lock(at, |at, body| {
-                validate_and_write_broad_harness_child_plan(&parent_identity, at.path(), body)
+                validate_and_write_broad_harness_child_plan(
+                    env.campaign_id,
+                    &parent_identity,
+                    at.path(),
+                    body,
+                )
             })
         })
         .map_err(|err| {
@@ -2838,6 +2887,7 @@ fn publish_broad_harness_child_plan_from_attempts(
 
 // ANCHOR: prototype1_persist_rejected_child_plan
 fn persist_rejected_plan(
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     parent: Parent<Ready>,
     rejected_surface_attempts: Vec<surface_attempt::Evidence>,
@@ -2853,7 +2903,12 @@ fn persist_rejected_plan(
         .writes(observe::RecordRef::ChildPlanFile(&observed_at))
         .try_commit(|| {
             open.lock(at, |at, body| {
-                validate_and_write_broad_harness_child_plan(&parent_identity, at.path(), body)
+                validate_and_write_broad_harness_child_plan(
+                    campaign_id,
+                    &parent_identity,
+                    at.path(),
+                    body,
+                )
             })
         })
         .map_err(|err| {
@@ -3072,7 +3127,7 @@ fn publish_deterministic_tui_tools_child_plan(
     let parent_identity = parent.identity().clone();
     let root_node = parent.node().clone();
     let running_parent = project_node_status(&root_node, Prototype1NodeStatus::Running);
-    write_node_projection(&running_parent)?;
+    write_parent_node_projection(env.campaign_id, &running_parent)?;
 
     let generated =
         produce_deterministic_tui_tools_candidates(env.repo_root, &parent, child_budget)?;
@@ -3128,12 +3183,13 @@ fn publish_deterministic_tui_tools_child_plan(
 
     if children.len() < child_budget.min as usize {
         persist_rejected_surface_attempt_child_plan(
+            env.campaign_id,
             env.manifest_path,
             parent,
             generated.rejected_attempts.clone(),
         )?;
         let failed_parent = project_node_status(&root_node, Prototype1NodeStatus::Failed);
-        write_node_projection(&failed_parent)?;
+        write_parent_node_projection(env.campaign_id, &failed_parent)?;
         return Err(CandidateGenerationError::InsufficientUniqueProposals {
             surface: edit_surface,
             min: child_budget.min as usize,
@@ -3148,7 +3204,7 @@ fn publish_deterministic_tui_tools_child_plan(
     let open = Open::<ChildPlan>::from_sender(parent, files);
     let (planned, locked) = open
         .lock(at, |at, body| {
-            validate_and_write_tui_child_plan(&parent_identity, at.path(), body)
+            validate_and_write_tui_child_plan(env.campaign_id, &parent_identity, at.path(), body)
         })
         .map_err(|err| {
             let (_parent, source) = err.into_parts();
@@ -3171,7 +3227,6 @@ fn publish_broad_edit_harness_request_with_graph_limit(
     child_budget: Prototype1ChildBudget,
     admission_binding: harness_request::RequestAdmissionBinding,
     nearest_items: usize,
-    anti_attractor_policy: profile::AntiAttractorPolicy,
 ) -> Result<BroadHarnessRequestPublication, PrepareError> {
     let prototype_root = prototype1_campaign_root(manifest_path);
     let request_dir = prototype_root.join("messages/edit-harness-request");
@@ -3198,11 +3253,6 @@ fn publish_broad_edit_harness_request_with_graph_limit(
     let planning_artifact_path =
         pre_child_planning_artifact_path(&prototype_root, parent.node_id());
     let published = published.with_planning_artifact_path(planning_artifact_path);
-    let published = if let Some(suffix) = profile::prompt_suffix_for(&[], anti_attractor_policy) {
-        published.with_prompt_suffix(suffix)
-    } else {
-        published
-    };
     let request_path = published.request_path().to_path_buf();
     if let Some(parent) = request_path.parent() {
         fs::create_dir_all(parent).map_err(|source| PrepareError::CreateOutputDir {
@@ -3244,6 +3294,7 @@ fn broad_harness_request_admission_binding(
 }
 
 fn persist_rejected_surface_attempt_child_plan(
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     parent: Parent<Ready>,
     rejected_surface_attempts: Vec<surface_attempt::Evidence>,
@@ -3255,7 +3306,7 @@ fn persist_rejected_surface_attempt_child_plan(
     let open = Open::<ChildPlan>::from_sender(parent, files);
     let _ = open
         .lock(at, |at, body| {
-            validate_and_write_tui_child_plan(&parent_identity, at.path(), body)
+            validate_and_write_tui_child_plan(campaign_id, &parent_identity, at.path(), body)
         })
         .map_err(|err| {
             let (_parent, source) = err.into_parts();
@@ -3265,6 +3316,7 @@ fn persist_rejected_surface_attempt_child_plan(
 }
 
 fn validate_and_write_tui_child_plan(
+    campaign_id: &CampaignId,
     parent: &ParentIdentity,
     path: &Path,
     body: &ChildPlanFiles,
@@ -3318,10 +3370,11 @@ fn validate_and_write_tui_child_plan(
         validate_deterministic_surface_evidence(child)?;
     }
 
-    write_child_plan_file(path, body)
+    write_child_plan_file(campaign_id, path, body)
 }
 
 fn validate_and_write_broad_harness_child_plan(
+    campaign_id: &CampaignId,
     parent: &ParentIdentity,
     path: &Path,
     body: &ChildPlanFiles,
@@ -3354,7 +3407,7 @@ fn validate_and_write_broad_harness_child_plan(
     for child in body.children() {
         validate_requested_broad_harness_child(child)?;
     }
-    write_child_plan_file(path, body)
+    write_child_plan_file(campaign_id, path, body)
 }
 
 fn validate_requested_broad_harness_child(child: &ChildFiles) -> Result<(), PrepareError> {
@@ -4002,6 +4055,7 @@ pub(crate) fn validate_existing_child_plan_for_id(
 }
 
 pub(crate) fn load_existing_child_plan_for_id(
+    campaign_id: &CampaignId,
     manifest_path: &Path,
     parent: Parent<Ready>,
 ) -> Result<PlannedChildren, PrepareError> {
@@ -4031,6 +4085,7 @@ pub(crate) fn load_existing_child_plan_for_id(
                 detail: source.to_string(),
             }
         })?;
+    emit_child_plan_replay_refs(campaign_id, observed_at.path(), plan.body())?;
     let children = plan.body().children().to_vec();
     let rejected_surface_attempts = plan.body().rejected_surface_attempts().to_vec();
     Ok(PlannedChildren {
@@ -4064,7 +4119,7 @@ fn receive_existing_child_plan(
 }
 
 fn receive_child_plan(
-    _env: ChildPlanEnv<'_>,
+    env: ChildPlanEnv<'_>,
     parent_identity: &ParentIdentity,
     planned: Parent<Planned>,
     locked: Locked<ChildPlan>,
@@ -4089,6 +4144,7 @@ fn receive_child_plan(
                 detail: source.to_string(),
             }
         })?;
+    emit_child_plan_replay_refs(env.campaign_id, observed_at.path(), plan.body())?;
     let rejected_surface_attempts = plan.body().rejected_surface_attempts().to_vec();
     Ok(ChildPlanReceipt {
         parent,
@@ -4097,14 +4153,78 @@ fn receive_child_plan(
     })
 }
 
-fn write_child_plan_file(path: &Path, body: &ChildPlanFiles) -> Result<(), PrepareError> {
+fn write_child_plan_file(
+    campaign_id: &CampaignId,
+    path: &Path,
+    body: &ChildPlanFiles,
+) -> Result<(), PrepareError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|source| PrepareError::CreateOutputDir {
             path: parent.to_path_buf(),
             source,
         })?;
     }
-    write_json_file_pretty(path, body)
+    write_json_file_pretty(path, body)?;
+    emit_child_plan_db_projection(campaign_id, path, body)
+}
+
+fn emit_child_plan_db_projection(
+    campaign_id: &CampaignId,
+    path: &Path,
+    body: &ChildPlanFiles,
+) -> Result<(), PrepareError> {
+    let db_path = eval_store::owner_eval_db_file_for_record_path(path).map_err(|source| {
+        PrepareError::DatabaseSetup {
+            phase: "eval_child_plan_path",
+            detail: source.to_string(),
+        }
+    })?;
+    if !db_path.is_file() {
+        return Ok(());
+    }
+    eval_store::write_child_plan_to_owner_db(
+        &db_path,
+        eval_store::ChildPlanEvidence {
+            campaign_id: campaign_id.clone(),
+            schema_version: eval_store::CHILD_PLAN_SCHEMA_VERSION.to_string(),
+            message_path: path.to_path_buf(),
+            body: body.clone(),
+            recorded_at: Utc::now().to_rfc3339(),
+        },
+    )
+    .map_err(|source| PrepareError::DatabaseSetup {
+        phase: "eval_child_plan_put",
+        detail: source.to_string(),
+    })?;
+    Ok(())
+}
+
+fn emit_child_plan_replay_refs(
+    campaign_id: &CampaignId,
+    path: &Path,
+    body: &ChildPlanFiles,
+) -> Result<(), PrepareError> {
+    emit_child_plan_db_projection(campaign_id, path, body)?;
+    for child in body.children() {
+        let node = child.node_record();
+        let path = node.node_dir.join("node.json");
+        if path.is_file() {
+            crate::record_emission::emit_parent_eval_record_ref_for_json_file_if_owner_db_exists(
+                &path,
+                campaign_id,
+                "scheduler_node",
+                &node.schema_version,
+                &node.node_id,
+            )?;
+        } else {
+            warn!(
+                node_id = %node.node_id,
+                path = %path.display(),
+                "skipping replay eval_record_ref mirror for missing child node projection"
+            );
+        }
+    }
+    Ok(())
 }
 
 fn read_child_plan_message(
@@ -4825,19 +4945,6 @@ pub(crate) fn record_active_prototype1_monitor_target(campaign_id: &CampaignId, 
     }
 }
 
-pub(crate) fn campaign_manifest_path_for_id(
-    campaign_id: &CampaignId,
-) -> Result<PathBuf, PrepareError> {
-    campaign_manifest_path(campaign_id)
-}
-
-pub(crate) fn resolve_campaign_config_for_id(
-    campaign_id: &CampaignId,
-    overrides: &CampaignOverrides,
-) -> Result<ResolvedCampaignConfig, PrepareError> {
-    resolve_campaign_config(campaign_id, overrides)
-}
-
 pub(crate) fn resolve_prototype1_state_campaign(
     command: &Prototype1StateCommand,
     repo_root: &Path,
@@ -4969,7 +5076,7 @@ async fn resolve_child_plan(
     selected_node_id: Option<&str>,
     child_budget: Prototype1ChildBudget,
     broad_tui: profile::BroadTui,
-    anti_attractor_policy: profile::AntiAttractorPolicy,
+    eval_storage_backend: profile::EvalStorageBackend,
     route_source: ModelRouteSource,
 ) -> Result<PlannedChildren, PrepareError> {
     let parent_identity = parent.identity().clone();
@@ -4978,7 +5085,7 @@ async fn resolve_child_plan(
         manifest_path,
         repo_root,
         broad_tui,
-        anti_attractor_policy,
+        eval_storage_backend,
         route_source,
     };
     info!(
@@ -5082,7 +5189,7 @@ pub(crate) async fn resolve_child_plan_for_id(
     selected_node_id: Option<&str>,
     child_budget: Prototype1ChildBudget,
     broad_tui: profile::BroadTui,
-    anti_attractor_policy: profile::AntiAttractorPolicy,
+    eval_storage_backend: profile::EvalStorageBackend,
     route_source: ModelRouteSource,
 ) -> Result<PlannedChildren, PrepareError> {
     resolve_child_plan(
@@ -5094,7 +5201,7 @@ pub(crate) async fn resolve_child_plan_for_id(
         selected_node_id,
         child_budget,
         broad_tui,
-        anti_attractor_policy,
+        eval_storage_backend,
         route_source,
     )
     .await
@@ -5134,6 +5241,8 @@ async fn admit_broad_harness_batch(
                 slot_index,
                 slot,
                 batch.broad_tui,
+                env.campaign_id.clone(),
+                env.eval_storage_backend,
             ));
         }
 
@@ -5227,10 +5336,9 @@ async fn admit_broad_harness_batch(
                     admitted,
                     &ledger.attempted,
                     &ledger.rejections,
-                    true,
                 );
                 return match result {
-                    Err(PrepareError::InvalidBatchSelection { .. }) if below_min => Err(source),
+                    Err(PrepareError::ChildPlanBelowMinimum { .. }) if below_min => Err(source),
                     // Task B: at or above the child minimum the batch published
                     // children and the fatal slot error is intentionally not
                     // propagated. Log the dropped blocker (e.g. a swallowed
@@ -5302,7 +5410,6 @@ async fn admit_broad_harness_batch(
         admitted,
         &ledger.attempted,
         &ledger.rejections,
-        false,
     )
 }
 
@@ -5316,6 +5423,8 @@ async fn run_broad_slot_for_admission(
     slot_index: usize,
     slot: HarnessRequestSlot,
     broad_tui: profile::BroadTui,
+    campaign_id: CampaignId,
+    eval_storage_backend: profile::EvalStorageBackend,
 ) -> BroadSlotAttempt {
     let result = if slot.published.submitted_result_path().exists() {
         Ok(None)
@@ -5328,7 +5437,7 @@ async fn run_broad_slot_for_admission(
                 result: Err(source),
             };
         }
-        run_broad_headless_tui_attempt(&slot, broad_tui)
+        run_broad_headless_tui_attempt(&slot, broad_tui, &campaign_id, eval_storage_backend)
             .await
             .map_err(PrepareError::from)
     };
@@ -5555,7 +5664,7 @@ pub(crate) async fn resolve_profile_child_plan(
         None,
         child_budget,
         run_profile.execution.broad_tui,
-        run_profile.anti_attractor_policy(),
+        run_profile.storage.eval.backend,
         route_source,
     )
     .await
@@ -5614,8 +5723,103 @@ pub(crate) fn compare_observed_child_treatment(
             detail: "parent branch comparison log lock was poisoned".to_string(),
         })?;
     branch_log::record_parent_comparison(campaign_id, manifest_path, resolved, summary)?;
+    emit_parent_evaluation_if_owner_db_exists(campaign_id, parent_baseline, &report)?;
 
     Ok(report)
+}
+
+fn emit_parent_evaluation_if_owner_db_exists(
+    campaign_id: &CampaignId,
+    parent_baseline: &CompleteBaseline,
+    report: &Prototype1BranchEvaluationReport,
+) -> Result<(), PrepareError> {
+    let db_path = eval_store::owner_eval_db_file_for_record_path(&report.evaluation_artifact_path)
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "eval_evaluation_path",
+            detail: source.to_string(),
+        })?;
+    if !db_path.is_file() {
+        return Ok(());
+    }
+    let bytes = fs::read(&report.evaluation_artifact_path).map_err(|source| {
+        PrepareError::ReadManifest {
+            path: report.evaluation_artifact_path.clone(),
+            source,
+        }
+    })?;
+    let content_sha256 = format!("{:x}", Sha256::digest(&bytes));
+    let record_ref = format!(
+        "path:{}#sha256:{}",
+        report.evaluation_artifact_path.display(),
+        content_sha256
+    );
+    let eval_set_id = report
+        .eval_set_identity
+        .as_ref()
+        .map(|identity| identity.id.clone());
+    let policy_ref = eval_set_id
+        .as_ref()
+        .map(|eval_set_id| format!("eval_set:{eval_set_id}:policy"));
+    let evidence = eval_store::EvaluationEvidence {
+        campaign_id: campaign_id.clone(),
+        parent_id: None,
+        branch_id: report.branch_id.clone(),
+        baseline_id: Some(parent_baseline.campaign_id().to_string()),
+        treatment_id: Some(report.treatment_campaign_id.to_string()),
+        procedure_id: report.evaluation_procedure_id.clone(),
+        evaluator_id: report
+            .evaluator_identity
+            .as_ref()
+            .map(|identity| identity.id.clone()),
+        eval_set_id,
+        policy_ref,
+        disposition: serde_name(&report.overall_disposition).to_string(),
+        record_ref: Some(record_ref),
+        recorded_at: Some(Utc::now().to_rfc3339()),
+        content_sha256,
+        instances: report
+            .compared_instances
+            .iter()
+            .map(evaluation_instance_evidence)
+            .collect(),
+    };
+    eval_store::write_evaluation_to_owner_db(&db_path, evidence).map_err(|source| {
+        PrepareError::DatabaseSetup {
+            phase: "eval_evaluation_put",
+            detail: format!(
+                "failed to persist evaluation rows for '{}': {source}",
+                report.evaluation_artifact_path.display()
+            ),
+        }
+    })?;
+    Ok(())
+}
+
+fn evaluation_instance_evidence(
+    row: &Prototype1ComparedInstanceReport,
+) -> eval_store::EvaluationInstanceEvidence {
+    eval_store::EvaluationInstanceEvidence {
+        instance_id: row.instance_id.clone(),
+        baseline_run_id: None,
+        treatment_run_id: None,
+        baseline_ref: row
+            .baseline_record_path
+            .as_ref()
+            .map(|path| format!("path:{}", path.display())),
+        treatment_ref: row
+            .treatment_record_path
+            .as_ref()
+            .map(|path| format!("path:{}", path.display())),
+        status: row.status.clone(),
+        outcome: row
+            .evaluation
+            .as_ref()
+            .map(|evaluation| serde_name(&evaluation.disposition).to_string()),
+        oracle_ref: row
+            .oracle_evaluation
+            .as_ref()
+            .map(|_| format!("oracle-evaluation:{}", row.instance_id)),
+    }
 }
 
 // ANCHOR: prototype1_run_planned_child
@@ -7016,7 +7220,7 @@ pub(crate) fn live_successor_continuation_decision(
         Prototype1ContinuationDisposition::ContinueReady
     };
 
-    Ok(Prototype1ContinuationDecision {
+    let continuation = Prototype1ContinuationDecision {
         disposition,
         selected_next_branch_id: decision.selected_branch_id.clone(),
         selected_branch_disposition: decision
@@ -7024,7 +7228,44 @@ pub(crate) fn live_successor_continuation_decision(
             .map(ToOwned::to_owned),
         next_generation: selected_node.generation,
         total_nodes_after_continue,
-    })
+    };
+    emit_continuation_decision_if_owner_db_exists(
+        campaign_manifest_path,
+        parent_identity,
+        &continuation,
+    )?;
+    Ok(continuation)
+}
+
+fn emit_continuation_decision_if_owner_db_exists(
+    campaign_manifest_path: &Path,
+    parent_identity: &ParentIdentity,
+    decision: &Prototype1ContinuationDecision,
+) -> Result<(), PrepareError> {
+    let db_path = eval_store::prototype1_eval_store_db_path(campaign_manifest_path);
+    if !db_path.is_file() {
+        return Ok(());
+    }
+    let evidence = eval_store::ContinuationDecisionEvidence {
+        campaign_id: parent_identity.campaign_id().clone(),
+        parent_id: parent_identity.parent_id().to_string(),
+        disposition: serde_name(&decision.disposition).to_string(),
+        selected_branch_id: decision.selected_next_branch_id.clone(),
+        next_generation: decision.next_generation,
+        total_nodes: decision.total_nodes_after_continue,
+        policy_ref: Some("prototype1.search_policy".to_string()),
+        recorded_at: Some(Utc::now().to_rfc3339()),
+    };
+    eval_store::write_continuation_decision_to_owner_db(&db_path, evidence).map_err(|source| {
+        PrepareError::DatabaseSetup {
+            phase: "eval_continuation_decision_put",
+            detail: format!(
+                "failed to persist continuation decision row for '{}': {source}",
+                db_path.display()
+            ),
+        }
+    })?;
+    Ok(())
 }
 
 struct HistoricalTraversalGuard {
@@ -7248,13 +7489,102 @@ pub(crate) fn select_successor_for_profile(
         run_profile.selection.oracle_require_evidence(),
         run_profile.selection.metrics_policy(),
     );
-    ParentSelection::new(
+    let selection = ParentSelection::new(
         manifest_path,
         parent_identity,
         child_outcomes,
         rejected_surface_attempts,
     )
-    .select_successor(run_profile.selection.seed, strategy)
+    .select_successor(run_profile.selection.seed, strategy)?;
+    if let Some((decision, material)) = selection.as_ref() {
+        emit_selection_decision_if_owner_db_exists(
+            manifest_path,
+            parent_identity,
+            decision,
+            material,
+        )?;
+    }
+    Ok(selection)
+}
+
+pub(crate) fn emit_selection_decision_for_backend(
+    manifest_path: &Path,
+    parent_identity: &ParentIdentity,
+    decision: &SuccessorDecision,
+    material: &SelectionSealMaterial,
+    backend: profile::EvalStorageBackend,
+) -> Result<(), PrepareError> {
+    let db_path = eval_store::prototype1_eval_store_db_path(manifest_path);
+    match backend {
+        profile::EvalStorageBackend::Fs => Ok(()),
+        profile::EvalStorageBackend::DbMirror | profile::EvalStorageBackend::Database => {
+            if db_path.is_file() {
+                persist_selection_decision_to_owner_db(
+                    &db_path,
+                    parent_identity,
+                    decision,
+                    material,
+                )
+            } else {
+                Ok(())
+            }
+        }
+        profile::EvalStorageBackend::DualStrict => {
+            if !db_path.is_file() {
+                return Err(PrepareError::DatabaseSetup {
+                    phase: "eval_selection_decision_db_missing",
+                    detail: format!(
+                        "dual-strict selection persistence requires owner eval DB at '{}'",
+                        db_path.display()
+                    ),
+                });
+            }
+            persist_selection_decision_to_owner_db(&db_path, parent_identity, decision, material)
+        }
+    }
+}
+
+fn emit_selection_decision_if_owner_db_exists(
+    manifest_path: &Path,
+    parent_identity: &ParentIdentity,
+    decision: &SuccessorDecision,
+    material: &SelectionSealMaterial,
+) -> Result<(), PrepareError> {
+    let db_path = eval_store::prototype1_eval_store_db_path(manifest_path);
+    if !db_path.is_file() {
+        return Ok(());
+    }
+    persist_selection_decision_to_owner_db(&db_path, parent_identity, decision, material)
+}
+
+fn persist_selection_decision_to_owner_db(
+    db_path: &Path,
+    parent_identity: &ParentIdentity,
+    decision: &SuccessorDecision,
+    material: &SelectionSealMaterial,
+) -> Result<(), PrepareError> {
+    let entry = material.clone().into_entry(decision.clone())?;
+    let evidence = eval_store::SelectionDecisionEvidence {
+        campaign_id: parent_identity.campaign_id().clone(),
+        parent_id: parent_identity.parent_id().to_string(),
+        decision_ref: Some(format!(
+            "selection:{}:{}",
+            parent_identity.parent_id(),
+            entry.decision.candidate_node_id
+        )),
+        entry,
+        recorded_at: Some(Utc::now().to_rfc3339()),
+    };
+    eval_store::write_selection_decision_to_owner_db(db_path, evidence).map_err(|source| {
+        PrepareError::DatabaseSetup {
+            phase: "eval_selection_decision_put",
+            detail: format!(
+                "failed to persist selection decision rows for '{}': {source}",
+                db_path.display()
+            ),
+        }
+    })?;
+    Ok(())
 }
 
 #[instrument(

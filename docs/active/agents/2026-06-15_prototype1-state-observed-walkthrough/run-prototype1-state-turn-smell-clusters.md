@@ -19,7 +19,7 @@ Current high-argument call sites inside the function:
 | 7232-7237 | `initialize_prototype1_parent_identity` | 5 | command + turn coordinate |
 | 7327-7333 | `acknowledge_prototype1_state_handoff` | 6 | command + turn coordinate + parent |
 | 7362-7371 | `append_parent_target_sample` | 7 | journal/evidence + parent context + phase |
-| 7382-7387 | `establish_parent_baseline_for_id` | 5 | campaign/config + parent identity |
+| 7382-7387 | `establish_parent_baseline` | 5 | campaign/config + parent identity |
 | 7420-7430 | `resolve_child_plan_for_id` | 10 | campaign/checkout + parent + run-policy child planning inputs |
 | 7459-7464 | `active_strategy` | 5 | successor-selection policy pieces |
 | 7469-7474 | `ParentSelection::new` | 5 | selection context over parent + outcomes/rejections |

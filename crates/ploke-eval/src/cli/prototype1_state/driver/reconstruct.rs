@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use ploke_records::ids::CampaignId;
 
 use crate::{
-    CampaignOverrides, ResolvedCampaignConfig,
+    CampaignOverrides, ResolvedCampaignConfig, campaign_manifest_path,
     cli::{
         InspectOutputFormat, Prototype1CandidateGenerator, Prototype1StateCommand,
         Prototype1StateStopAfter, Prototype1SuccessorSelection, Prototype1TraversalMetrics,
@@ -25,10 +25,9 @@ use crate::{
         prototype1_state::{
             backend::GitWorktreeBackend,
             cli_facing::{
-                ParentSelection, Prototype1StateRunShape, campaign_manifest_path_for_id,
-                child_plan_message_path_for_parent, load_existing_child_plan_for_id,
-                load_parent_baseline_for_id, prototype1_state_transition_error,
-                reconstruct_child_outcomes_from_store, resolve_campaign_config_for_id,
+                ParentSelection, Prototype1StateRunShape, child_plan_message_path_for_parent,
+                load_existing_child_plan_for_id, load_parent_baseline,
+                prototype1_state_transition_error, reconstruct_child_outcomes_from_store,
                 resolve_parent_policy_budget, same_existing_path,
                 validate_existing_child_plan_for_id,
             },
@@ -44,6 +43,7 @@ use crate::{
             typestate::{self, StepInput},
         },
     },
+    resolve_campaign_config,
     spec::PrepareError,
 };
 
@@ -244,7 +244,7 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
     if parent_start_recorded(repo_root, &campaign_id, parent.identity())? {
         notes.push("reconstructed R5 from matching parent-start journal evidence".into());
         let mut parts = collected.into_parts();
-        if let Some(baseline) = load_parent_baseline_for_id(
+        if let Some(baseline) = load_parent_baseline(
             &parts.campaign_id,
             &parts.campaign_config,
             &parts.manifest_path,
@@ -269,8 +269,11 @@ pub(crate) fn reconstruct_early(repo_root: &Path) -> Result<EarlySnapshot, Prepa
                             parent.identity(),
                         ) {
                             Ok(()) => {
-                                let planned =
-                                    load_existing_child_plan_for_id(&parts.manifest_path, parent)?;
+                                let planned = load_existing_child_plan_for_id(
+                                    &parts.campaign_id,
+                                    &parts.manifest_path,
+                                    parent,
+                                )?;
                                 let parent = planned.parent;
                                 parts.facts.child_plan = Some(typestate::context::ChildPlanFacts {
                                     plan: planned.plan,
@@ -618,7 +621,7 @@ fn infer_successor_handoff_invocation(
     if identity.generation() == 0 {
         return Ok(None);
     }
-    let manifest_path = campaign_manifest_path_for_id(campaign_id)?;
+    let manifest_path = campaign_manifest_path(campaign_id)?;
     let journal = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path));
     let entries = journal.load_entries().map_err(|error| {
         prototype1_state_transition_error("prototype1_reconstruct_journal", error.to_string())
@@ -770,9 +773,9 @@ fn reconstruct_r1(
     handoff_invocation: Option<PathBuf>,
 ) -> Result<typestate::R1<Prototype1StateRunShape, ResolvedCampaignConfig>, PrepareError> {
     let command = default_command(repo_root.clone(), campaign_id.clone(), handoff_invocation);
-    let manifest_path = campaign_manifest_path_for_id(campaign_id)?;
+    let manifest_path = campaign_manifest_path(campaign_id)?;
     let run_shape = Prototype1StateRunShape::resolve(&command, &manifest_path)?;
-    let config = resolve_campaign_config_for_id(campaign_id, &CampaignOverrides::default())?;
+    let config = resolve_campaign_config(campaign_id, &CampaignOverrides::default())?;
     let journal_path = prototype1_transition_journal_path(&manifest_path);
     let journal = PrototypeJournal::new(journal_path.clone());
 
@@ -949,7 +952,7 @@ fn successor_stopped_recorded(
 }
 
 fn journal_entries(campaign_id: &CampaignId) -> Result<Vec<JournalEntry>, PrepareError> {
-    let manifest_path = campaign_manifest_path_for_id(campaign_id)?;
+    let manifest_path = campaign_manifest_path(campaign_id)?;
     let journal = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path));
     journal.load_entries().map_err(|error| {
         prototype1_state_transition_error("prototype1_reconstruct_journal", error.to_string())
@@ -961,7 +964,7 @@ fn parent_complete_recorded(
     campaign_id: &CampaignId,
     identity: &ParentIdentity,
 ) -> Result<bool, PrepareError> {
-    let manifest_path = campaign_manifest_path_for_id(campaign_id)?;
+    let manifest_path = campaign_manifest_path(campaign_id)?;
     let journal = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path));
     let entries = journal.load_entries().map_err(|error| {
         prototype1_state_transition_error("prototype1_reconstruct_journal", error.to_string())
@@ -985,7 +988,7 @@ fn parent_start_recorded(
     campaign_id: &CampaignId,
     identity: &ParentIdentity,
 ) -> Result<bool, PrepareError> {
-    let manifest_path = campaign_manifest_path_for_id(campaign_id)?;
+    let manifest_path = campaign_manifest_path(campaign_id)?;
     let journal = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path));
     let entries = journal.load_entries().map_err(|error| {
         prototype1_state_transition_error("prototype1_reconstruct_journal", error.to_string())

@@ -136,6 +136,7 @@ use crate::cli::prototype1_state::cli_facing::{
     Prototype1TreatmentEvidence, build_prototype1_treatment_evidence,
     ensure_treatment_branch_materialized, prepare_prototype1_treatment_campaign,
 };
+use crate::cli::prototype1_state::eval_store;
 use crate::cli::prototype1_state::event::RecordedAt;
 use crate::cli::prototype1_state::event::{Paths, Refs};
 use crate::cli::prototype1_state::history::{
@@ -1315,6 +1316,14 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
             selected_parent_identity,
         ) = setup_successor_install_case(&campaign_id);
         let selected = selection_for_artifact(node, resolved.clone(), artifact_surface);
+        let manifest_path = campaign_manifest_path(&campaign_id).expect("campaign manifest path");
+        let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+        fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+        ploke_db::Database::new_init()
+            .expect("empty eval db")
+            .write_backup_to_path(&db_path)
+            .expect("seed owner eval db");
+        let selected_artifact_id = selected.selected().artifact_ref().as_str().to_string();
 
         let installed = install_committed_successor_artifact(
             &campaign_id,
@@ -1361,6 +1370,117 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
         assert_eq!(
             fs::read_to_string(repo_root.join(&resolved.target_relpath)).expect("target content"),
             resolved.branch.proposed_content
+        );
+
+        let installed_commit = git_output(&repo_root, &["rev-parse", "HEAD"])
+            .trim()
+            .to_string();
+        let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(
+            "artifact_id".to_string(),
+            cozo::DataValue::from(selected_artifact_id.clone()),
+        );
+        let artifacts = db
+            .raw_query_params(
+                r#"
+?[
+    artifact_id,
+    source,
+    store_scope,
+    created_by,
+    git_branch,
+    git_commit,
+    tree_hash
+] :=
+    *eval_artifact {
+        artifact_id,
+        source,
+        store_scope,
+        created_by,
+        git_branch,
+        git_commit,
+        tree_hash
+    },
+    artifact_id = $artifact_id
+"#,
+                params.clone(),
+            )
+            .expect("query installed successor artifact");
+        assert_eq!(artifacts.rows.len(), 1);
+        let artifact_row = artifacts.row_refs().next().expect("artifact row");
+        assert_eq!(
+            artifact_row.get::<String>("source").expect("source"),
+            "successor_handoff"
+        );
+        assert_eq!(
+            artifact_row
+                .get::<String>("store_scope")
+                .expect("store scope"),
+            "active_checkout"
+        );
+        assert_eq!(
+            artifact_row
+                .get::<String>("created_by")
+                .expect("created by"),
+            installed.parent_identity.node_id()
+        );
+        assert_eq!(
+            artifact_row
+                .get::<String>("git_branch")
+                .expect("git branch"),
+            artifact_branch.0
+        );
+        assert_eq!(
+            artifact_row
+                .get::<String>("git_commit")
+                .expect("git commit"),
+            installed_commit
+        );
+        assert!(
+            !artifact_row
+                .get::<String>("tree_hash")
+                .expect("tree hash")
+                .is_empty()
+        );
+
+        let refs = db
+            .raw_query_params(
+                r#"
+?[
+    artifact_id,
+    kind,
+    source_ref,
+    content_sha256
+] :=
+    *eval_artifact_ref {
+        artifact_id,
+        kind,
+        source_ref,
+        content_sha256
+    },
+    artifact_id = $artifact_id
+"#,
+                params,
+            )
+            .expect("query installed successor artifact ref");
+        assert_eq!(refs.rows.len(), 1);
+        let ref_row = refs.row_refs().next().expect("artifact ref row");
+        assert_eq!(
+            ref_row.get::<String>("kind").expect("kind"),
+            "selected_successor_active_checkout"
+        );
+        assert!(
+            ref_row
+                .get::<String>("source_ref")
+                .expect("source ref")
+                .contains(&repo_root.display().to_string())
+        );
+        assert!(
+            !ref_row
+                .get::<String>("content_sha256")
+                .expect("content hash")
+                .is_empty()
         );
     }
 
@@ -1415,6 +1535,100 @@ After editing, use the cargo tool to run `cargo test`, then finish with the patc
             git_output(&repo_root, &["branch", "--show-current"]).trim(),
             parent_branch
         );
+    }
+
+    #[test]
+    fn successor_install_rows_do_not_replace_missing_active_checkout() {
+        let campaign_id = CampaignId::from("successor-install-missing-checkout");
+        let (
+            _tmp,
+            _env,
+            repo_root,
+            node,
+            resolved,
+            artifact_branch,
+            artifact_surface,
+            current_surface,
+            current_parent,
+            selected_parent_identity,
+        ) = setup_successor_install_case(&campaign_id);
+        let selected = selection_for_artifact(node, resolved, artifact_surface);
+        let selected_artifact_id = selected.selected().artifact_ref().as_str().to_string();
+        let manifest_path = campaign_manifest_path(&campaign_id).expect("campaign manifest path");
+        let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+        fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+        ploke_db::Database::new_init()
+            .expect("empty eval db")
+            .write_backup_to_path(&db_path)
+            .expect("seed owner eval db");
+        eval_store::write_artifact_provenance_to_owner_db(
+            &db_path,
+            eval_store::ArtifactProvenanceEvidence {
+                artifact: eval_store::ArtifactEvidence {
+                    campaign_id: campaign_id.clone(),
+                    artifact_id: selected_artifact_id.clone(),
+                    tree_hash: Some(format!(
+                        "{:?}",
+                        selected.selected().artifact_surface().tree_key()
+                    )),
+                    git_branch: Some(artifact_branch.0.clone()),
+                    git_commit: Some("seeded-install-commit".to_string()),
+                    source: "successor_handoff".to_string(),
+                    store_scope: "active_checkout".to_string(),
+                    created_by: Some(selected.selected().node().node_id.clone()),
+                    parent_artifact_id: None,
+                },
+                surface: None,
+                refs: vec![eval_store::ArtifactRefEvidence {
+                    campaign_id: campaign_id.clone(),
+                    artifact_id: Some(selected_artifact_id.clone()),
+                    kind: "selected_successor_active_checkout".to_string(),
+                    source_ref: format!(
+                        "active_checkout:{}@seeded-install-commit",
+                        repo_root.display()
+                    ),
+                    content_sha256: Some("seeded-install-surface-hash".to_string()),
+                    recorded_at: Some("2026-06-23T00:00:00Z".to_string()),
+                }],
+            },
+        )
+        .expect("seed selected install provenance rows");
+        fs::remove_dir_all(&repo_root).expect("remove active checkout");
+
+        let err = install_committed_successor_artifact(
+            &campaign_id,
+            &repo_root,
+            &selected,
+            artifact_branch,
+            current_surface,
+            selected_parent_identity,
+            Some(current_parent),
+        )
+        .expect_err("DB install rows cannot replace missing active checkout");
+
+        match err {
+            PrepareError::DatabaseSetup { phase, .. } => {
+                assert_eq!(phase, "prototype1_successor_artifact_tree_key");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+        let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(
+            "artifact_id".to_string(),
+            cozo::DataValue::from(selected_artifact_id),
+        );
+        let refs = db
+            .raw_query_params(
+                r#"
+?[artifact_id, kind] :=
+    *eval_artifact_ref { artifact_id, kind },
+    artifact_id = $artifact_id
+"#,
+                params,
+            )
+            .expect("query seeded install ref row");
+        assert_eq!(refs.rows.len(), 1);
     }
 
     #[test]
@@ -2072,6 +2286,19 @@ fn install_committed_successor_artifact(
     let _identity_transition =
         SurfaceCommitment::from_artifact_surfaces(&installed_surface, &selected_surface)
             .map_err(history_prepare_error)?;
+    mirror_selected_successor_install_provenance(
+        campaign_id,
+        &manifest_path,
+        active_parent_root,
+        &artifact_branch,
+        artifact,
+        &selected_surface,
+        &installed_commit.0,
+    )
+    .map_err(|source| PrepareError::DatabaseSetup {
+        phase: "prototype1_successor_install_eval_store",
+        detail: source.to_string(),
+    })?;
     let surface = SurfaceCommitment::from_artifact_surfaces(&current_surface, &selected_surface)
         .map_err(history_prepare_error)?;
     Ok(InstalledSuccessorArtifact {
@@ -2080,6 +2307,66 @@ fn install_committed_successor_artifact(
         surface,
         parent_identity: selected_parent_identity,
     })
+}
+
+fn mirror_selected_successor_install_provenance(
+    campaign_id: &CampaignId,
+    manifest_path: &Path,
+    active_parent_root: &Path,
+    artifact_branch: &GitBranch,
+    artifact: &selection::Artifact,
+    selected_surface: &ArtifactSurface,
+    installed_commit: &str,
+) -> Result<(), eval_store::EvalStoreError> {
+    let db_path = eval_store::prototype1_eval_store_db_path(manifest_path);
+    if !db_path.exists() {
+        return Ok(());
+    }
+
+    let node = artifact.node();
+    let artifact_id = artifact.artifact_ref().as_str().to_string();
+    let surface_hash = eval_store::artifact_surface_hash(selected_surface)?;
+    let recorded_at = Utc::now().to_rfc3339();
+    let source_ref = format!(
+        "active_checkout:{}@{}",
+        active_parent_root.display(),
+        installed_commit
+    );
+    eval_store::write_artifact_provenance_to_owner_db(
+        &db_path,
+        eval_store::ArtifactProvenanceEvidence {
+            artifact: eval_store::ArtifactEvidence {
+                campaign_id: campaign_id.clone(),
+                artifact_id: artifact_id.clone(),
+                tree_hash: Some(format!("{:?}", selected_surface.tree_key())),
+                git_branch: Some(artifact_branch.0.clone()),
+                git_commit: Some(installed_commit.to_string()),
+                source: "successor_handoff".to_string(),
+                store_scope: "active_checkout".to_string(),
+                created_by: Some(node.node_id.clone()),
+                parent_artifact_id: None,
+            },
+            surface: Some(eval_store::ArtifactSurfaceEvidence {
+                campaign_id: campaign_id.clone(),
+                artifact_id: artifact_id.clone(),
+                immutable_root: None,
+                mutated_root: None,
+                ambient_root: None,
+                surface_hash: Some(surface_hash.clone()),
+                source_ref: Some(source_ref.clone()),
+                recorded_at: Some(recorded_at.clone()),
+            }),
+            refs: vec![eval_store::ArtifactRefEvidence {
+                campaign_id: campaign_id.clone(),
+                artifact_id: Some(artifact_id),
+                kind: "selected_successor_active_checkout".to_string(),
+                source_ref,
+                content_sha256: Some(surface_hash),
+                recorded_at: Some(recorded_at),
+            }],
+        },
+    )?;
+    Ok(())
 }
 
 fn ensure_artifact_tree(

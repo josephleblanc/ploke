@@ -7,18 +7,84 @@ use std::fmt;
 use std::future::Future;
 use std::io;
 use std::marker::PhantomData;
+use std::path::PathBuf;
 use std::process::Output;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
+
+use ploke_records::ids::CampaignId;
 
 use tracing::{Instrument, Level, Span, event};
 
 use super::{
+    eval_store::{TraceEventEvidence, write_trace_event_to_owner_db},
     identity::ParentIdentity,
     inner::{At, Transition},
     parent::ChildPlanFile,
 };
 
 pub(crate) const TARGET: &str = ploke_core::EXECUTION_DEBUG_TARGET;
+
+#[derive(Debug, Clone)]
+pub(crate) struct EvalTraceSinkConfig {
+    pub(crate) campaign_id: CampaignId,
+    pub(crate) db_path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+struct ActiveEvalTraceSink {
+    config: EvalTraceSinkConfig,
+    next_index: i64,
+}
+
+#[derive(Debug)]
+pub(crate) struct EvalTraceSinkGuard {
+    previous: Option<ActiveEvalTraceSink>,
+}
+
+impl Drop for EvalTraceSinkGuard {
+    fn drop(&mut self) {
+        let mut slot = eval_trace_sink().lock().expect("eval trace sink mutex");
+        *slot = self.previous.take();
+    }
+}
+
+pub(crate) fn scoped_eval_trace_sink(config: Option<EvalTraceSinkConfig>) -> EvalTraceSinkGuard {
+    let mut slot = eval_trace_sink().lock().expect("eval trace sink mutex");
+    let previous = slot.take();
+    *slot = config.map(|config| ActiveEvalTraceSink {
+        config,
+        next_index: 0,
+    });
+    EvalTraceSinkGuard { previous }
+}
+
+fn eval_trace_sink() -> &'static Mutex<Option<ActiveEvalTraceSink>> {
+    static SINK: OnceLock<Mutex<Option<ActiveEvalTraceSink>>> = OnceLock::new();
+    SINK.get_or_init(|| Mutex::new(None))
+}
+
+fn mirror_trace_event(mut evidence: TraceEventEvidence) {
+    let mut slot = eval_trace_sink().lock().expect("eval trace sink mutex");
+    let Some(sink) = slot.as_mut() else {
+        return;
+    };
+    if evidence.campaign_id.is_none() {
+        evidence.campaign_id = Some(sink.config.campaign_id.clone());
+    }
+    if evidence.source_event_index.is_none() {
+        evidence.source_event_index = Some(sink.next_index);
+        sink.next_index = sink.next_index.checked_add(1).unwrap_or(i64::MAX);
+    }
+    if let Err(error) = write_trace_event_to_owner_db(&sink.config.db_path, evidence) {
+        tracing::warn!(
+            target: TARGET,
+            db_path = %sink.config.db_path.display(),
+            error = %error,
+            "prototype1 eval trace mirror failed"
+        );
+    }
+}
 
 macro_rules! span {
     ($name:literal) => {
@@ -309,6 +375,7 @@ impl<'a, T: ObservedTransition> TransitionBuilder<'a, T> {
         let duration_ms = duration_ms(duration);
         let record_count = self.records.len();
         let parent = self.parent;
+        let error_text = error.map(|error| error.to_string());
         match (record, error) {
             (Some(record), Some(error)) => event!(
                 target: TARGET,
@@ -397,6 +464,57 @@ impl<'a, T: ObservedTransition> TransitionBuilder<'a, T> {
                 "prototype1 typestate transition committed"
             ),
         }
+        self.emit_eval_trace(outcome, duration_ms, error_text, record, record_index);
+    }
+
+    fn emit_eval_trace(
+        &self,
+        outcome: &'static str,
+        duration_ms: u64,
+        error: Option<String>,
+        record: Option<RecordSlot<'_>>,
+        record_index: usize,
+    ) {
+        let parent = self.parent;
+        let level = if error.is_some() { "WARN" } else { "INFO" };
+        let (record_access, record_kind, record_path) = match record {
+            Some(record) => (
+                Some(record.access.to_string()),
+                Some(record.record.kind().to_string()),
+                Some(record.record.path().display().to_string()),
+            ),
+            None => (None, None, None),
+        };
+        mirror_trace_event(TraceEventEvidence {
+            campaign_id: Some(parent.campaign_id().clone()),
+            parent_id: Some(parent.parent_id().to_string()),
+            runtime_id: None,
+            node_id: Some(parent.node_id().to_string()),
+            generation: Some(i64::from(parent.generation())),
+            branch_id: Some(parent.branch_id().to_string()),
+            role: Some(T::ROLE.to_string()),
+            pipeline: Some(T::PIPELINE.to_string()),
+            stage: Some(self.stage.to_string()),
+            authority: Some(T::AUTHORITY.to_string()),
+            transition: Some(T::LABEL.to_string()),
+            event_name: Some("typestate_transition".to_string()),
+            span_name: None,
+            target: TARGET.to_string(),
+            level: level.to_string(),
+            outcome: Some(outcome.to_string()),
+            duration_ms: Some(u64_to_i64(duration_ms)),
+            record_access,
+            record_kind,
+            record_path,
+            record_index: record.map(|_| usize_to_i64(record_index)),
+            record_count: Some(usize_to_i64(self.records.len())),
+            program: None,
+            exit_code: None,
+            error,
+            source_log_ref: None,
+            source_event_index: None,
+            recorded_at: Some(chrono::Utc::now().to_rfc3339()),
+        });
     }
 }
 
@@ -440,6 +558,7 @@ impl Step {
 
     pub(crate) fn fail(self, phase: &'static str, error: impl fmt::Display) {
         let duration_ms = duration_ms(self.started.elapsed());
+        let error = error.to_string();
         event!(
             target: TARGET,
             parent: &self.span,
@@ -450,6 +569,7 @@ impl Step {
             error = %error,
             "prototype1 step failed"
         );
+        self.emit_eval_trace("failed", "WARN", duration_ms, Some(phase), Some(error));
     }
 
     fn finish(self, outcome: &'static str) {
@@ -462,6 +582,47 @@ impl Step {
             duration_ms,
             "prototype1 step finished"
         );
+        self.emit_eval_trace(outcome, "INFO", duration_ms, None, None);
+    }
+
+    fn emit_eval_trace(
+        &self,
+        outcome: &'static str,
+        level: &'static str,
+        duration_ms: u64,
+        phase: Option<&'static str>,
+        error: Option<String>,
+    ) {
+        mirror_trace_event(TraceEventEvidence {
+            campaign_id: None,
+            parent_id: None,
+            runtime_id: None,
+            node_id: None,
+            generation: None,
+            branch_id: None,
+            role: None,
+            pipeline: None,
+            stage: phase.map(str::to_string),
+            authority: None,
+            transition: None,
+            event_name: Some("prototype1_step".to_string()),
+            span_name: None,
+            target: TARGET.to_string(),
+            level: level.to_string(),
+            outcome: Some(outcome.to_string()),
+            duration_ms: Some(u64_to_i64(duration_ms)),
+            record_access: None,
+            record_kind: None,
+            record_path: None,
+            record_index: None,
+            record_count: None,
+            program: None,
+            exit_code: None,
+            error,
+            source_log_ref: None,
+            source_event_index: None,
+            recorded_at: Some(chrono::Utc::now().to_rfc3339()),
+        });
     }
 }
 
@@ -609,6 +770,14 @@ fn duration_ms(duration: Duration) -> u64 {
     duration.as_millis().try_into().unwrap_or(u64::MAX)
 }
 
+fn u64_to_i64(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
+}
+
+fn usize_to_i64(value: usize) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
+}
+
 fn excerpt(bytes: &[u8]) -> Option<String> {
     if bytes.is_empty() {
         return None;
@@ -623,4 +792,133 @@ fn excerpt(bytes: &[u8]) -> Option<String> {
         excerpt.push_str("...");
     }
     Some(excerpt)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::path::Path;
+    use std::sync::Mutex as TestMutex;
+
+    use ploke_records::identity::ParentIdentityRecord;
+
+    use super::*;
+    use crate::cli::prototype1_state::eval_store::load_owner_eval_database;
+    use crate::cli::prototype1_state::identity::PARENT_IDENTITY_SCHEMA_VERSION;
+
+    static OBSERVE_TEST_LOCK: TestMutex<()> = TestMutex::new(());
+
+    struct TestObservedTransition;
+
+    impl Transition for TestObservedTransition {
+        type From = ();
+        type To = ();
+    }
+
+    impl ObservedTransition for TestObservedTransition {
+        const ROLE: Role = Role::Parent;
+        const PIPELINE: Pipeline = Pipeline::ChildPlanAuthority;
+        const STAGE: Stage = Stage::TypestateTransition;
+        const AUTHORITY: Authority = Authority::ParentBroadcastChannel;
+        const LABEL: &'static str = "test_transition";
+    }
+
+    #[test]
+    fn prototype1_observe_transition_builder_mirrors_trace_row_to_eval_db() {
+        let _lock = OBSERVE_TEST_LOCK.lock().expect("observe test lock");
+        let tmp = tempfile::tempdir().expect("tmp");
+        let db_path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+        let parent = parent_identity();
+        let _guard = scoped_eval_trace_sink(Some(EvalTraceSinkConfig {
+            campaign_id: CampaignId::from("campaign"),
+            db_path: db_path.clone(),
+        }));
+
+        transition::<TestObservedTransition>(&parent).commit(|| ());
+
+        let rows = query_trace_rows(&db_path);
+        assert_eq!(rows.rows.len(), 1);
+        let row = rows.row_refs().next().expect("trace row");
+        assert_eq!(
+            row.get::<String>("event_name").expect("event"),
+            "typestate_transition"
+        );
+        assert_eq!(row.get::<String>("outcome").expect("outcome"), "committed");
+        assert_eq!(
+            row.get::<String>("campaign_id").expect("campaign"),
+            "campaign"
+        );
+        assert_eq!(row.get::<String>("parent_id").expect("parent"), "parent");
+        assert_eq!(row.get::<String>("node_id").expect("node"), "parent");
+        assert_eq!(row.get::<String>("role").expect("role"), "parent");
+        assert_eq!(
+            row.get::<String>("transition").expect("transition"),
+            "test_transition"
+        );
+        assert_eq!(row.get::<i64>("source_event_index").expect("index"), 0);
+    }
+
+    #[test]
+    fn prototype1_observe_step_mirrors_trace_row_to_eval_db() {
+        let _lock = OBSERVE_TEST_LOCK.lock().expect("observe test lock");
+        let tmp = tempfile::tempdir().expect("tmp");
+        let db_path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+        let _guard = scoped_eval_trace_sink(Some(EvalTraceSinkConfig {
+            campaign_id: CampaignId::from("campaign"),
+            db_path: db_path.clone(),
+        }));
+
+        Step::start(span!("prototype1.test.step")).success();
+
+        let rows = query_trace_rows(&db_path);
+        assert_eq!(rows.rows.len(), 1);
+        let row = rows.row_refs().next().expect("trace row");
+        assert_eq!(
+            row.get::<String>("event_name").expect("event"),
+            "prototype1_step"
+        );
+        assert_eq!(row.get::<String>("outcome").expect("outcome"), "succeeded");
+        assert_eq!(
+            row.get::<String>("campaign_id").expect("campaign"),
+            "campaign"
+        );
+        assert_eq!(row.get::<i64>("source_event_index").expect("index"), 0);
+    }
+
+    fn query_trace_rows(db_path: &Path) -> ploke_db::QueryResult {
+        let db = load_owner_eval_database(db_path).expect("load owner db");
+        db.raw_query_params(
+            r#"
+?[event_name, outcome, campaign_id, parent_id, node_id, role, transition, source_event_index] :=
+    *eval_trace_event {
+        event_name,
+        outcome,
+        campaign_id,
+        parent_id,
+        node_id,
+        role,
+        transition,
+        source_event_index
+    }
+"#,
+            BTreeMap::new(),
+        )
+        .expect("query trace rows")
+    }
+
+    fn parent_identity() -> ParentIdentity {
+        ParentIdentity::from_record_for_test(ParentIdentityRecord {
+            schema_version: PARENT_IDENTITY_SCHEMA_VERSION.to_string(),
+            campaign_id: CampaignId::from("campaign"),
+            parent_id: "parent".to_string(),
+            node_id: "parent".to_string(),
+            generation: 0,
+            instance_id: Some("instance".to_string()),
+            previous_parent_id: None,
+            parent_node_id: None,
+            branch_id: "branch-parent".to_string(),
+            artifact_branch: Some("artifact-parent".to_string()),
+            created_at: "2026-06-22T00:00:00Z".to_string(),
+        })
+    }
 }

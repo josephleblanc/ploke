@@ -85,6 +85,8 @@ Provider-facing producer transitions use real provider calls. Checkpointed outpu
 
 Live-call intent rule: when the operator says to “go ahead”, “proceed”, or otherwise authorizes implementation, and the live opt-in variables/credentials are present, autonomous implementation should run the required live producer gates for provider-facing slices. Do not substitute deterministic checkpoints for `F3_child_plan_received` or `F5_child_terminal_result` provider confidence. If credentials or opt-in variables are missing, report the live gate as blocked rather than silently treating a skipped test as success.
 
+Transition-contract rule: each storage migration slice must add or preserve a focused test for the exact typestate edge being changed. Checkpoints accelerate setup and downstream consumer coverage; they do not replace per-edge contract tests. A transition-contract test should prove preconditions, output typestate, expected writes, no unrelated authority mutation, and loud failure for unsupported backends or missing authority.
+
 ## Validation-critical details for autonomous implementation
 
 ### Transition inventory artifact
@@ -200,6 +202,7 @@ Use stable test name prefixes so autonomous runs can target a slice without grep
 
 ```text
 prototype1_transition_inventory_*
+prototype1_transition_contract_*
 prototype1_checkpoint_*
 prototype1_eval_store_parent_start_fs_*
 prototype1_eval_store_parent_start_db_*
@@ -212,6 +215,7 @@ Expected command families:
 
 ```text
 cargo test -p ploke-eval prototype1_transition_inventory
+cargo test -p ploke-eval prototype1_transition_contract
 cargo test -p ploke-eval prototype1_checkpoint
 cargo test -p ploke-eval prototype1_eval_store_parent_start_fs
 cargo test -p ploke-eval prototype1_eval_store_parent_start_db
@@ -460,7 +464,7 @@ Tests and live/API matrix gates:
 - **Checkpoint:** restore `F1_ready_parent`, execute exactly `R4c -> R5`, and retain the post-R5 campaign tree for replay/metrics checks.
 - **Downstream consumers:** walk/replay/metrics/final-review consumers of `ParentStarted` and parent-start resource evidence; no downstream provider work should run.
 - **Authority-negative:** parent readiness must already be decided by startup/History/artifact validation before the writer; a parent-start record alone must not let a bad `R4a/R4b` fixture enter `R5`.
-- **Focused tests:** `fs` mode asserts `ParentStarted` and `Resource(parent_start)` entries exist and match current schemas; walk/controller step from `R4c` to `R5` advances exactly one edge; `driver/replay.rs`, `driver/reconstruct.rs`, and `history_preview.rs` consumers still pass.
+- **Focused tests:** `prototype1_transition_contract_r4c_to_r5_fs_records_parent_start` asserts the exact `R4c -> R5` output typestate and `ParentStarted`/`Resource(parent_start)` journal writes; `prototype1_transition_contract_r4c_to_r5_db_backends_fail_loudly_without_writes` asserts unsupported production DB backends fail before writing; walk/controller step from `R4c` to `R5` advances exactly one edge; `driver/replay.rs`, `driver/reconstruct.rs`, and `history_preview.rs` consumers still pass.
 - **Canary:** no full live loop.
 
 Exit criteria:

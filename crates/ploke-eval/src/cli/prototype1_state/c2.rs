@@ -29,12 +29,13 @@ use tracing::{debug, instrument, warn};
 
 use crate::intervention::{
     CommitError, CommitPhase, Intervention, Outcome, Prototype1NodeStatus, RecordStore, Surface,
-    project_node_status, write_node_projection,
+    project_node_status, write_parent_node_projection,
 };
 
 use super::c1::{
     Binary, C2, Child, ChildAckState, ChildBinaryState, Parent, Present, Prototype, Unacknowledged,
 };
+use super::eval_store;
 use super::event::{ContentHash, Hashes, Paths, RecordedAt, Refs, TransitionId, World};
 use super::journal::{BuildEntry, BuildResult, FailureInfo, JournalEntry, PrototypeJournal};
 use super::observe;
@@ -224,6 +225,12 @@ pub(crate) enum BuildChildError {
         #[source]
         source: PrepareError,
     },
+    #[error("failed to mirror child '{node_id}' build provenance to eval-store")]
+    EvalStoreBuildProvenance {
+        node_id: String,
+        #[source]
+        source: eval_store::EvalStoreError,
+    },
 }
 
 /// Committed non-success result for the `C2 -> C3` build transition.
@@ -380,7 +387,7 @@ impl Intervention<C2, C3> for BuildChild {
                 "cargo check rejected child build"
             );
             let node = project_node_status(&from.node, Prototype1NodeStatus::Failed);
-            write_node_projection(&node).map_err(|source| {
+            write_parent_node_projection(&from.campaign_id, &node).map_err(|source| {
                 CommitError::Transition(BuildChildError::UpdateNodeStatus {
                     node_id: from.node.node_id.clone(),
                     source,
@@ -444,7 +451,7 @@ impl Intervention<C2, C3> for BuildChild {
                 "cargo build rejected child build"
             );
             let node = project_node_status(&from.node, Prototype1NodeStatus::Failed);
-            write_node_projection(&node).map_err(|source| {
+            write_parent_node_projection(&from.campaign_id, &node).map_err(|source| {
                 CommitError::Transition(BuildChildError::UpdateNodeStatus {
                     node_id: from.node.node_id.clone(),
                     source,
@@ -500,7 +507,7 @@ impl Intervention<C2, C3> for BuildChild {
         })?;
         cleanup_scratch_dir(&scratch_dir);
         let node = project_node_status(&from.node, Prototype1NodeStatus::BinaryBuilt);
-        write_node_projection(&node).map_err(|source| {
+        write_parent_node_projection(&from.campaign_id, &node).map_err(|source| {
             CommitError::Transition(BuildChildError::UpdateNodeStatus {
                 node_id: from.node.node_id.clone(),
                 source,
@@ -542,7 +549,55 @@ impl Intervention<C2, C3> for BuildChild {
             binary_path = %next.binary.child_path.display(),
             "recorded build after entry"
         );
+        mirror_child_build_provenance(&next).map_err(|source| {
+            CommitError::Transition(BuildChildError::EvalStoreBuildProvenance {
+                node_id: next.node.node_id.clone(),
+                source,
+            })
+        })?;
 
         Ok(Outcome::Advanced(next))
     }
+}
+
+fn mirror_child_build_provenance(next: &C3) -> Result<(), eval_store::EvalStoreError> {
+    let db_path = eval_store::prototype1_eval_store_db_path(&next.campaign_manifest_path);
+    if !db_path.exists() {
+        return Ok(());
+    }
+
+    let artifact_id = next
+        .node
+        .derived_artifact_id
+        .as_ref()
+        .map(|id| id.to_string());
+    let binary_path = next.binary.child_path.clone();
+    let binary_hash = eval_store::file_sha256(&binary_path)?;
+    let recorded_at = chrono::Utc::now().to_rfc3339();
+    eval_store::write_build_provenance_to_owner_db(
+        &db_path,
+        eval_store::BuildProvenanceEvidence {
+            binary_ref: eval_store::BinaryRefEvidence {
+                campaign_id: next.campaign_id.clone(),
+                artifact_id: artifact_id.clone(),
+                built_by: None,
+                source_ref: binary_path.display().to_string(),
+                content_sha256: Some(binary_hash),
+                protocol_digest: None,
+                recorded_at: Some(recorded_at.clone()),
+            },
+            build_event: eval_store::BuildEventEvidence {
+                campaign_id: next.campaign_id.clone(),
+                node_id: next.node.node_id.clone(),
+                runtime_id: None,
+                artifact_id,
+                phase: "promote".to_string(),
+                outcome: "built".to_string(),
+                binary_ref: None,
+                log_ref: None,
+                recorded_at,
+            },
+        },
+    )?;
+    Ok(())
 }

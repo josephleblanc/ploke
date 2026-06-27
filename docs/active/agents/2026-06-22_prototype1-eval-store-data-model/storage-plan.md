@@ -253,7 +253,7 @@ Possible TOML shape:
 
 ```toml
 [storage.eval]
-backend = "fs" # fs | database | dual-strict
+backend = "fs" # fs | db-mirror | database (legacy mirror spelling) | dual-strict
 
 [storage.eval.database]
 target = "code-graph"
@@ -262,7 +262,8 @@ target = "code-graph"
 Possible backend modes:
 
 - `fs`: current file layout remains authoritative for Domain C.
-- `database`: Domain C records are written to the configured owner-scoped `Database` for that store.
+- `db-mirror`: filesystem remains authoritative; Domain C rows are mirrored into the owner-scoped eval DB for query/audit evidence.
+- `database`: legacy compatibility spelling for current mirror behavior until DB-backed read paths are implemented and tested; see the cleanup decision note.
 - `dual-strict`: write both filesystem and database forms and fail on mismatch or DB write failure.
 
 Default should remain `fs` until parity is proven.

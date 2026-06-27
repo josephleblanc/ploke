@@ -16,7 +16,8 @@ use std::{
     str::FromStr,
 };
 
-use ploke_llm::{ModelId, ProviderKey, manager::Role};
+use ploke_llm::{ModelId, ProviderKey, manager::Role, response::ResponseMessage};
+use ploke_protocol::{LocalAnalysisAssessment, SegmentedToolCallSequence, ToolCallNeighborhood};
 use ploke_records::{
     agent_turn::{ToolCompletedRecord, ToolFailedRecord, ToolRequestRecord},
     ids::CampaignId,
@@ -34,34 +35,35 @@ use ploke_tui::tools::{
 };
 
 use crate::{
-    ResolvedCampaignConfig,
-    cli::prototype1_state::{
-        cli_facing::{Prototype1StateRunShape, campaign_manifest_path_for_id},
-        driver::{
-            reconstruct::{self, EarlyState},
-            replay::ReplayCursor,
-        },
-        edit_surface::{
-            harness_request::{
-                EvidenceRootKind, EvidenceRootLocation, PublishedBroadHarnessRequest,
-            },
-            tui_adapter::{self, ModelSelection},
-        },
-        identity::{load_parent_identity_optional, parent_identity_path},
-        journal::prototype1_transition_journal_path,
-        live_edges::{
-            r0_to_r1, r1_to_r2a_or_r3, r3_to_r4a, r4a_to_r4b_or_r4c, r4b_to_r4c_genesis, r4c_to_r5,
-            r5_to_r6, r6_to_r7, r7_to_r8, r8_to_r9, r9_to_r10, r10_to_r11, r11_to_r12, r12_to_r13,
-            r13_to_r14,
-        },
-        typestate::{
-            self, AsyncStepInput, R0, R1, R2a, R3, R4a, R4bGenesisChecked, R4cReady, R5, R6, R7,
-            R8, R9, R10, R11FanoutComplete, R11aRejectedOnly, R12, R13aStopped,
-            R13bHandoffCommitted, R14aFinalStopped, R14bFinalHandoff, StepInput,
-        },
-    },
+    ResolvedCampaignConfig, campaign_manifest_path,
     cli::{
+        Prototype1StateWalkAuditScope, Prototype1StateWalkAuditTransition,
         Prototype1StateWalkLlmStepSource,
+        prototype1_state::{
+            cli_facing::Prototype1StateRunShape,
+            driver::{
+                reconstruct::{self, EarlyState},
+                replay::ReplayCursor,
+            },
+            edit_surface::{
+                harness_request::{
+                    EvidenceRootKind, EvidenceRootLocation, PublishedBroadHarnessRequest,
+                },
+                tui_adapter::{self, ModelSelection},
+            },
+            identity::{load_parent_identity_optional, parent_identity_path},
+            journal::prototype1_transition_journal_path,
+            live_edges::{
+                r0_to_r1, r1_to_r2a_or_r3, r3_to_r4a, r4a_to_r4b_or_r4c, r4b_to_r4c_genesis,
+                r4c_to_r5, r5_to_r6, r6_to_r7, r7_to_r8, r8_to_r9, r9_to_r10, r10_to_r11,
+                r11_to_r12, r12_to_r13, r13_to_r14,
+            },
+            typestate::{
+                self, AsyncStepInput, R0, R1, R2a, R3, R4a, R4bGenesisChecked, R4cReady, R5, R6,
+                R7, R8, R9, R10, R11FanoutComplete, R11aRejectedOnly, R12, R13aStopped,
+                R13bHandoffCommitted, R14aFinalStopped, R14bFinalHandoff, StepInput,
+            },
+        },
         provider::{headless_model_selection, load_parent_patcher_model_selection},
     },
     layout::prototype1_monitor_target_file,
@@ -75,7 +77,12 @@ use crate::{
     spec::PrepareError,
 };
 
-use super::{paths, phase::WalkPhase, protocol::WalkStartConfig};
+use super::{
+    audit::{self, WalkAuditReport},
+    paths,
+    phase::WalkPhase,
+    protocol::WalkStartConfig,
+};
 
 const MAX_HISTORY: usize = 80;
 const MAX_FILE_BYTES: usize = 128 * 1024;
@@ -306,6 +313,20 @@ impl WalkController {
     /// Render tracked output files for the current walk.
     pub(crate) fn files_report(&self) -> String {
         self.files.render()
+    }
+
+    /// Build a read-only file/database persistence audit for a walk transition.
+    pub(crate) fn audit(
+        &self,
+        scope: Prototype1StateWalkAuditScope,
+        campaign: Option<CampaignId>,
+        transition: Option<Prototype1StateWalkAuditTransition>,
+    ) -> WalkAuditReport {
+        match scope {
+            Prototype1StateWalkAuditScope::R0ToR1 => {
+                audit::audit_r0_to_r1(self.repo_root.clone(), self.phase(), campaign, transition)
+            }
+        }
     }
 
     /// Render known nested LLM/tool-loop fanout lanes without mutating the walk.
@@ -912,7 +933,7 @@ impl WalkController {
                 ),
             }
         })?;
-        let manifest = campaign_manifest_path_for_id(identity.campaign_id())?;
+        let manifest = campaign_manifest_path(identity.campaign_id())?;
         let campaign_dir = manifest
             .parent()
             .ok_or_else(|| PrepareError::DatabaseSetup {
@@ -937,7 +958,7 @@ impl WalkController {
                 ),
             }
         })?;
-        let manifest = campaign_manifest_path_for_id(identity.campaign_id())?;
+        let manifest = campaign_manifest_path(identity.campaign_id())?;
         let campaign_dir = manifest
             .parent()
             .ok_or_else(|| PrepareError::DatabaseSetup {
@@ -2526,7 +2547,7 @@ fn failed_timeline_result(record: &ToolFailedRecord) -> String {
 
 fn assistant_timeline_preview(step: &crate::replay::tool_loop::ToolLoopStep) -> Option<String> {
     let message = first_response_message(step)?;
-    let content = message.get("content")?.as_str()?.trim();
+    let content = message.content.as_deref()?.trim();
     if content.is_empty() || content == "Calling tools..." {
         None
     } else {
@@ -2680,37 +2701,12 @@ impl LlmProtocolReport {
                 .or_insert(0) += 1;
             match artifact.stored.procedure_name.as_str() {
                 "tool_call_intent_segmentation" => {
-                    segmentation_segments = artifact
-                        .stored
-                        .output
-                        .get("segments")
-                        .and_then(serde_json::Value::as_array)
-                        .map(Vec::len)
-                        .or(segmentation_segments);
-                    segmentation_uncovered = artifact
-                        .stored
-                        .output
-                        .get("uncovered_call_indices")
-                        .and_then(serde_json::Value::as_array)
-                        .map(Vec::len)
-                        .or(segmentation_uncovered);
-                    if let Some(value) = artifact
-                        .stored
-                        .output
-                        .get("sequence")
-                        .and_then(|value| value.get("total_calls_in_run"))
-                        .and_then(serde_json::Value::as_u64)
-                    {
-                        total_calls = total_calls.max(value as usize);
-                    }
-                    if let Some(value) = artifact
-                        .stored
-                        .output
-                        .get("coverage")
-                        .and_then(|value| value.get("total_calls"))
-                        .and_then(serde_json::Value::as_u64)
-                    {
-                        total_calls = total_calls.max(value as usize);
+                    if let Some(output) = protocol_output::<SegmentedToolCallSequence>(artifact) {
+                        segmentation_segments = Some(output.segments.len());
+                        segmentation_uncovered = Some(output.uncovered_call_indices.len());
+                        total_calls = total_calls
+                            .max(output.sequence.total_calls_in_run)
+                            .max(output.coverage.total_calls);
                     }
                 }
                 "tool_call_review" => {
@@ -2725,9 +2721,10 @@ impl LlmProtocolReport {
                     }
                 }
                 "tool_call_segment_review" => {
-                    let overall = protocol_json_string(&artifact.stored.output, &["overall"])
-                        .unwrap_or_else(|| "unknown".to_string());
-                    *segment_review_counts.entry(overall).or_insert(0) += 1;
+                    if let Some(output) = protocol_output::<LocalAnalysisAssessment>(artifact) {
+                        let overall = serde_label(&output.overall);
+                        *segment_review_counts.entry(overall).or_insert(0) += 1;
+                    }
                 }
                 _ => {}
             }
@@ -2872,62 +2869,66 @@ fn collect_session_tool_calls(
 fn protocol_call_review_from_artifact(
     artifact: &StoredProtocolArtifactFile,
 ) -> Option<LlmProtocolCallReview> {
-    let output = &artifact.stored.output;
+    let output = protocol_output::<LocalAnalysisAssessment>(artifact)?;
     let focal = output
-        .get("packet")
-        .and_then(|value| value.get("focal_call_index"))
-        .and_then(serde_json::Value::as_u64)
-        .or_else(|| {
-            output
-                .get("neighborhood")
-                .and_then(|value| value.get("focal"))
-                .and_then(|value| value.get("index"))
-                .and_then(serde_json::Value::as_u64)
-        })? as usize;
+        .packet
+        .focal_call_index
+        .or_else(|| protocol_input::<ToolCallNeighborhood>(artifact).map(|input| input.focal.index))
+        .unwrap_or(0);
     let concerns = output
-        .get("signals")
-        .and_then(|value| value.get("candidate_concerns"))
-        .and_then(serde_json::Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(serde_json::Value::as_str)
-                .map(ToOwned::to_owned)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+        .signals
+        .candidate_concerns
+        .iter()
+        .map(|concern| format!("{concern:?}"))
+        .collect::<Vec<_>>();
     Some(LlmProtocolCallReview {
         focal_call_index: focal,
         artifact_path: artifact.path.clone(),
         created_at_ms: artifact.stored.created_at_ms,
-        overall: protocol_json_string(output, &["overall"]),
-        confidence: protocol_json_string(output, &["overall_confidence"]),
-        usefulness: protocol_branch_summary(output, "usefulness"),
-        redundancy: protocol_branch_summary(output, "redundancy"),
-        recoverability: protocol_branch_summary(output, "recoverability"),
+        overall: Some(serde_label(&output.overall)),
+        confidence: Some(serde_label(&output.overall_confidence)),
+        usefulness: Some(ProtocolBranchSummary {
+            verdict: Some(serde_label(&output.usefulness.verdict)),
+            confidence: Some(serde_label(&output.usefulness.confidence)),
+            rationale: Some(output.usefulness.rationale.clone()),
+        }),
+        redundancy: Some(ProtocolBranchSummary {
+            verdict: Some(serde_label(&output.redundancy.verdict)),
+            confidence: Some(serde_label(&output.redundancy.confidence)),
+            rationale: Some(output.redundancy.rationale.clone()),
+        }),
+        recoverability: Some(ProtocolBranchSummary {
+            verdict: Some(serde_label(&output.recoverability.verdict)),
+            confidence: Some(serde_label(&output.recoverability.confidence)),
+            rationale: Some(output.recoverability.rationale.clone()),
+        }),
         concerns,
-        scope_summary: protocol_json_string(output, &["packet", "scope_summary"]),
+        scope_summary: Some(output.packet.scope_summary.clone()),
     })
 }
 
-fn protocol_branch_summary(
-    value: &serde_json::Value,
-    branch: &str,
-) -> Option<ProtocolBranchSummary> {
-    let node = value.get(branch)?;
-    Some(ProtocolBranchSummary {
-        verdict: protocol_json_string(node, &["verdict"]),
-        confidence: protocol_json_string(node, &["confidence"]),
-        rationale: protocol_json_string(node, &["rationale"]),
-    })
+fn protocol_output<T: for<'de> serde::Deserialize<'de>>(
+    artifact: &StoredProtocolArtifactFile,
+) -> Option<T> {
+    serde_json::from_value(artifact.stored.output.clone()).ok()
 }
 
-fn protocol_json_string(value: &serde_json::Value, path: &[&str]) -> Option<String> {
-    let mut current = value;
-    for key in path {
-        current = current.get(*key)?;
-    }
-    current.as_str().map(ToOwned::to_owned)
+fn protocol_input<T: for<'de> serde::Deserialize<'de>>(
+    artifact: &StoredProtocolArtifactFile,
+) -> Option<T> {
+    serde_json::from_value(artifact.stored.input.clone()).ok()
+}
+
+fn serde_label<T: serde::Serialize>(value: &T) -> String {
+    serde_json::to_string(value)
+        .ok()
+        .and_then(|encoded| {
+            encoded
+                .strip_prefix('"')
+                .and_then(|value| value.strip_suffix('"'))
+                .map(ToOwned::to_owned)
+        })
+        .unwrap_or_else(|| "<unknown>".to_string())
 }
 
 fn render_protocol_summary_lines(report: &LlmProtocolReport, label: &str) -> Vec<String> {
@@ -3206,14 +3207,8 @@ fn protocol_branch_json(summary: Option<&ProtocolBranchSummary>) -> serde_json::
 fn render_assistant_response(record: &crate::replay::tool_loop::ToolLoopStep) -> String {
     let mut lines = vec!["assistant_response:".to_string()];
     if let Some(message) = first_response_message(record) {
-        let content = message
-            .get("content")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("");
-        let reasoning = message
-            .get("reasoning")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("");
+        let content = message.content.as_deref().unwrap_or("");
+        let reasoning = message.reasoning.as_deref().unwrap_or("");
         if !content.trim().is_empty() {
             lines.extend(indent_lines(&text_block("content", content, 1_600), 2));
         }
@@ -3231,14 +3226,13 @@ fn render_assistant_response(record: &crate::replay::tool_loop::ToolLoopStep) ->
 
 fn first_response_message(
     record: &crate::replay::tool_loop::ToolLoopStep,
-) -> Option<serde_json::Value> {
-    let value = serde_json::to_value(record.response.response()).ok()?;
-    value
-        .get("choices")?
-        .as_array()?
-        .first()?
-        .get("message")
-        .cloned()
+) -> Option<&ResponseMessage> {
+    record
+        .response
+        .response()
+        .choices
+        .first()
+        .and_then(|choice| choice.message.as_ref())
 }
 
 fn parse_prompt_role(role: &str) -> Result<Role, PrepareError> {
@@ -4138,7 +4132,7 @@ impl WalkFiles {
     }
 
     fn remember_campaign(&mut self, campaign_id: &CampaignId) {
-        let Ok(manifest) = campaign_manifest_path_for_id(campaign_id) else {
+        let Ok(manifest) = campaign_manifest_path(campaign_id) else {
             return;
         };
         self.push("campaign_manifest", manifest.clone());
@@ -4794,11 +4788,30 @@ mod tests {
                 output: serde_json::json!({
                     "overall": "focused_progress",
                     "overall_confidence": "high",
+                    "synthesis_rationale": "the read located the relevant file",
                     "packet": {
+                        "subject_id": "subject",
+                        "target_kind": "focal_call",
+                        "target_id": "call:0",
                         "focal_call_index": 0,
-                        "scope_summary": "read target file"
+                        "scope_summary": "read target file",
+                        "total_calls_in_scope": 1,
+                        "total_calls_in_run": 1,
+                        "turn_span": [1],
+                        "calls": []
                     },
                     "signals": {
+                        "scope_turn_count": 1,
+                        "repeated_tool_name_count": 0,
+                        "distinct_tool_count": 1,
+                        "search_calls_in_scope": 0,
+                        "read_calls_in_scope": 1,
+                        "browse_calls_in_scope": 0,
+                        "edit_calls_in_scope": 0,
+                        "execute_calls_in_scope": 0,
+                        "failed_calls_in_scope": 0,
+                        "similar_search_neighbors": 0,
+                        "directory_pivots": 0,
                         "candidate_concerns": ["RecoveryOpportunity"]
                     },
                     "usefulness": {

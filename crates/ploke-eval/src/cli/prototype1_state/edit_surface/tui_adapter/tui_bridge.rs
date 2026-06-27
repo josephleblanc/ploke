@@ -1397,8 +1397,6 @@ pub(super) async fn wait_for_refresh(
     timeouts: &harness::Timeouts,
     changed_paths: &[PathBuf],
 ) -> Result<(), Error> {
-    use ploke_tui::app_state::StateCommand;
-
     if changed_paths.is_empty() {
         return Err(Error::HeadlessEvent(
             "post-apply refresh requires at least one changed path".to_string(),
@@ -1406,14 +1404,14 @@ pub(super) async fn wait_for_refresh(
     }
 
     let (scan_tx, scan_rx) = oneshot::channel();
-    send_state(
-        &runtime.app.state_cmd_tx(),
-        StateCommand::ScanPathsForChange {
-            paths: changed_paths.to_vec(),
-            scan_tx,
-        },
+    ploke_tui::app_state::scan_paths_for_change_for_test(
+        &runtime.state,
+        &runtime.event_bus,
+        changed_paths.to_vec(),
+        scan_tx,
     )
-    .await?;
+    .await
+    .map_err(|source| Error::HeadlessEvent(format!("targeted scan failed: {source}")))?;
     let changed = scan_rx
         .await
         .map_err(|source| Error::HeadlessEvent(format!("scan barrier failed: {source}")))?;

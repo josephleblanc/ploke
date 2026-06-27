@@ -128,7 +128,7 @@ Result: both commands preserved the hard R4a stop and printed active branch, exp
 Implemented the next coarse driver edge:
 
 - converted the R6 alias to `runtime_alias!` and exported `R6_SHAPE`;
-- added read-only `load_parent_baseline_for_id(...)` beside the live baseline-establishment helpers;
+- added read-only `load_parent_baseline(...)` beside the live baseline-establishment helpers;
 - reconstruction now promotes R5 to R6 when matching parent-start journal evidence and durable parent baseline evidence exist;
 - live `walk step` now admits the canonical async `r5_to_r6` direct edge;
 - walk output/deltas now include R6 and the R5 -> R6 side-effect note.

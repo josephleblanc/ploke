@@ -29,11 +29,12 @@ use tracing::{debug, instrument};
 
 use crate::intervention::{
     CommitError, Intervention, Outcome, Prototype1NodeStatus, RecordStore, Surface,
-    project_node_status, write_node_projection,
+    project_node_status, write_parent_node_projection,
 };
 
 use super::c1::{Acknowledged, Binary, Child, ChildAckState, Parent, Present, Prototype};
 use super::channel::{Channel, Cursor, FileTransport, ToParent};
+use super::eval_store;
 use super::event::{ChildRuntimeLifecycle, ContentHash, Paths, RecordedAt, Refs, RuntimeId};
 use super::invocation::{ChildInvocation, channel_root, invocation_path, write_child_invocation};
 use super::journal::{
@@ -132,7 +133,13 @@ where
     }
 }
 
-fn streams(config: &C3, runtime_id: RuntimeId) -> Streams {
+fn streams<AckState>(
+    config: &Prototype<Parent, Child, Present, AckState>,
+    runtime_id: RuntimeId,
+) -> Streams
+where
+    AckState: ChildAckState,
+{
     let dir = config
         .node
         .node_dir
@@ -319,6 +326,12 @@ pub(crate) enum SpawnChildError {
         #[source]
         source: PrepareError,
     },
+    #[error("failed to mirror child spawn '{node_id}' binary provenance to eval-store")]
+    EvalStoreSpawnProvenance {
+        node_id: String,
+        #[source]
+        source: eval_store::EvalStoreError,
+    },
     #[error("invalid invocation bootstrap for node '{node_id}'")]
     InvalidInvocationBootstrap {
         node_id: String,
@@ -444,6 +457,11 @@ impl Intervention<C3, C4> for SpawnChild {
                 },
             ));
         }
+        if !binary_path.is_file() {
+            return Err(CommitError::Transition(
+                SpawnChildError::MissingChildBinary { path: binary_path },
+            ));
+        }
         let invocation_path = invocation_path(&from.node.node_dir, self.runtime_id);
         let channel_root = channel_root(&from.node.node_dir, self.runtime_id);
         let invocation = ChildInvocation::with_bootstrap(
@@ -548,7 +566,7 @@ impl Intervention<C3, C4> for SpawnChild {
         match outcome {
             WaitOutcome::ReadyFromChannel => {
                 let node = project_node_status(&from.node, Prototype1NodeStatus::Running);
-                write_node_projection(&node).map_err(|source| {
+                write_parent_node_projection(&from.campaign_id, &node).map_err(|source| {
                     CommitError::Transition(SpawnChildError::UpdateNodeStatus {
                         node_id: from.node.node_id.clone(),
                         source,
@@ -597,6 +615,12 @@ impl Intervention<C3, C4> for SpawnChild {
                     child_pid,
                     "recorded spawn observed entry"
                 );
+                mirror_child_spawn_provenance(&next).map_err(|source| {
+                    CommitError::Transition(SpawnChildError::EvalStoreSpawnProvenance {
+                        node_id: next.node.node_id.clone(),
+                        source,
+                    })
+                })?;
 
                 Ok(Outcome::Advanced(next))
             }
@@ -610,12 +634,14 @@ impl Intervention<C3, C4> for SpawnChild {
                     "spawn handshake rejected"
                 );
                 let failed_node = project_node_status(&from.node, Prototype1NodeStatus::Failed);
-                write_node_projection(&failed_node).map_err(|source| {
-                    CommitError::Transition(SpawnChildError::UpdateNodeStatus {
-                        node_id: from.node.node_id.clone(),
-                        source,
-                    })
-                })?;
+                write_parent_node_projection(&from.campaign_id, &failed_node).map_err(
+                    |source| {
+                        CommitError::Transition(SpawnChildError::UpdateNodeStatus {
+                            node_id: from.node.node_id.clone(),
+                            source,
+                        })
+                    },
+                )?;
                 let failed = Prototype {
                     campaign_id: from.campaign_id,
                     campaign_manifest_path: from.campaign_manifest_path,
@@ -648,6 +674,92 @@ impl Intervention<C3, C4> for SpawnChild {
             }
         }
     }
+}
+
+fn mirror_child_spawn_provenance(next: &C4) -> Result<(), eval_store::EvalStoreError> {
+    let db_path = eval_store::prototype1_eval_store_db_path(&next.campaign_manifest_path);
+    if !db_path.exists() {
+        return Ok(());
+    }
+
+    let runtime_id = *next
+        .binary
+        .child_runtime
+        .as_ref()
+        .expect("C4 carries acknowledged child runtime");
+    let runtime_id_ref = runtime_id.to_string();
+    let stream_paths = streams(next, runtime_id);
+    let recorded_at = chrono::Utc::now().to_rfc3339();
+    mirror_runtime_stream_log_refs(
+        &db_path,
+        &next.campaign_id,
+        runtime_id,
+        &stream_paths,
+        &recorded_at,
+    )?;
+    let artifact_id = next
+        .node
+        .derived_artifact_id
+        .as_ref()
+        .map(|id| id.to_string());
+    let binary_path = next.binary.child_path.clone();
+    let binary_hash = eval_store::file_sha256(&binary_path)?;
+    eval_store::write_build_provenance_to_owner_db(
+        &db_path,
+        eval_store::BuildProvenanceEvidence {
+            binary_ref: eval_store::BinaryRefEvidence {
+                campaign_id: next.campaign_id.clone(),
+                artifact_id: artifact_id.clone(),
+                built_by: Some(runtime_id_ref.clone()),
+                source_ref: binary_path.display().to_string(),
+                content_sha256: Some(binary_hash),
+                protocol_digest: None,
+                recorded_at: Some(recorded_at.clone()),
+            },
+            build_event: eval_store::BuildEventEvidence {
+                campaign_id: next.campaign_id.clone(),
+                node_id: next.node.node_id.clone(),
+                runtime_id: Some(runtime_id_ref),
+                artifact_id,
+                phase: "spawn".to_string(),
+                outcome: "acknowledged".to_string(),
+                binary_ref: None,
+                log_ref: None,
+                recorded_at,
+            },
+        },
+    )?;
+    Ok(())
+}
+
+fn mirror_runtime_stream_log_refs(
+    db_path: &std::path::Path,
+    campaign_id: &ploke_records::ids::CampaignId,
+    runtime_id: RuntimeId,
+    streams: &Streams,
+    recorded_at: &str,
+) -> Result<(), eval_store::EvalStoreError> {
+    for (log_kind, source_ref) in [
+        ("runtime_stdout", streams.stdout.display().to_string()),
+        ("runtime_stderr", streams.stderr.display().to_string()),
+    ] {
+        eval_store::write_log_ref_to_owner_db(
+            db_path,
+            eval_store::LogRefEvidence {
+                campaign_id: Some(campaign_id.clone()),
+                runtime_id: Some(runtime_id),
+                store_scope: "runtime".to_string(),
+                log_kind: log_kind.to_string(),
+                source_ref,
+                byte_start: None,
+                byte_len: None,
+                content_sha256: None,
+                sensitivity: Some("runtime_log".to_string()),
+                recorded_at: Some(recorded_at.to_string()),
+            },
+        )?;
+    }
+    Ok(())
 }
 
 enum WaitOutcome {
@@ -733,5 +845,76 @@ mod tests {
         let pid = parts.next().expect("pid");
         let pgid = parts.next().expect("pgid");
         assert_eq!(pid, pgid);
+    }
+
+    #[test]
+    fn prototype1_eval_store_runtime_streams_write_log_refs() {
+        let temp = tempfile::tempdir().expect("tmp");
+        let prototype_root = temp.path().join("prototype1");
+        let db_path = prototype_root.join("eval-store.cozo.sqlite");
+        let stream_root = prototype_root.join("nodes/node-1/streams/runtime-1");
+        let streams = Streams {
+            stdout: stream_root.join("stdout.log"),
+            stderr: stream_root.join("stderr.log"),
+        };
+        let campaign_id = ploke_records::ids::CampaignId::from("campaign");
+        let runtime_id = RuntimeId::new();
+
+        mirror_runtime_stream_log_refs(
+            &db_path,
+            &campaign_id,
+            runtime_id,
+            &streams,
+            "2026-06-25T00:00:00Z",
+        )
+        .expect("mirror runtime stream log refs");
+
+        let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(
+            "runtime_id".to_string(),
+            cozo::DataValue::from(runtime_id.to_string()),
+        );
+        let rows = db
+            .raw_query_params(
+                r#"
+?[log_kind, source_ref, store_scope, sensitivity, recorded_at] :=
+    *eval_log_ref { log_kind, source_ref, store_scope, sensitivity, recorded_at, runtime_id },
+    runtime_id = $runtime_id
+"#,
+                params,
+            )
+            .expect("query runtime log refs");
+
+        assert_eq!(rows.rows.len(), 2);
+        let observed: std::collections::BTreeSet<_> = rows
+            .row_refs()
+            .map(|row| {
+                (
+                    row.get::<String>("log_kind").expect("kind"),
+                    row.get::<String>("source_ref").expect("source"),
+                    row.get::<String>("store_scope").expect("scope"),
+                    row.get::<String>("sensitivity").expect("sensitivity"),
+                    row.get::<String>("recorded_at").expect("recorded_at"),
+                )
+            })
+            .collect();
+        let expected = std::collections::BTreeSet::from([
+            (
+                "runtime_stdout".to_string(),
+                streams.stdout.display().to_string(),
+                "runtime".to_string(),
+                "runtime_log".to_string(),
+                "2026-06-25T00:00:00Z".to_string(),
+            ),
+            (
+                "runtime_stderr".to_string(),
+                streams.stderr.display().to_string(),
+                "runtime".to_string(),
+                "runtime_log".to_string(),
+                "2026-06-25T00:00:00Z".to_string(),
+            ),
+        ]);
+        assert_eq!(observed, expected);
     }
 }

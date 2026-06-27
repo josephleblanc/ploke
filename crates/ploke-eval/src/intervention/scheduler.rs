@@ -6,7 +6,11 @@ use super::ResolvedTreatmentBranch;
 use crate::loop_graph::{ArtifactId, OperationTarget, PatchId};
 use crate::operational_metrics::OperationalRunMetrics;
 use crate::projection::OperatorProjectionRead;
-use crate::record_emission::{EmitRecord, JsonRecordFile};
+use crate::record_emission::{
+    EmitRecord, JsonRecordFile, emit_child_runtime_eval_record_ref_if_owner_db_exists,
+    emit_eval_record_ref_if_owner_db_exists,
+    emit_parent_eval_record_ref_for_json_file_if_owner_db_exists,
+};
 
 pub const PROTOTYPE1_SCHEDULER_SCHEMA_VERSION: &str = "prototype1-scheduler.v1";
 pub const PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION: &str = "prototype1-treatment-node.v1";
@@ -506,7 +510,7 @@ pub fn register_root_parent_node(
         path: node_dir.join("bin"),
         source,
     })?;
-    save_node_record(&record)?;
+    write_parent_node_projection(campaign_id, &record)?;
     save_runner_request(&request, &runner_request_path)?;
 
     match scheduler
@@ -772,11 +776,26 @@ fn save_runner_request(request: &Prototype1RunnerRequest, path: &Path) -> Result
         source,
     })?;
     let passive = passive_runner_request_record(request);
-    JsonRecordFile::new(path).emit(&passive).map(|_| ())
+    let receipt = JsonRecordFile::new(path).emit(&passive)?;
+    emit_eval_record_ref_if_owner_db_exists(&receipt, &request.campaign_id, &request.node_id)
 }
 
 pub fn write_node_projection(record: &Prototype1NodeRecord) -> Result<(), PrepareError> {
     save_node_record(record)
+}
+
+pub fn write_parent_node_projection(
+    campaign_id: &CampaignId,
+    record: &Prototype1NodeRecord,
+) -> Result<(), PrepareError> {
+    save_node_record(record)?;
+    emit_parent_eval_record_ref_for_json_file_if_owner_db_exists(
+        &record.node_dir.join("node.json"),
+        campaign_id,
+        "scheduler_node",
+        &record.schema_version,
+        &record.node_id,
+    )
 }
 
 pub fn write_runner_request_projection(
@@ -845,7 +864,12 @@ pub fn runner_request_from_node(
 
 fn save_runner_result(result: &Prototype1RunnerResult, path: &Path) -> Result<(), PrepareError> {
     let passive = passive_runner_result_record(result);
-    JsonRecordFile::new(path).emit(&passive).map(|_| ())
+    let receipt = JsonRecordFile::new(path).emit(&passive)?;
+    emit_child_runtime_eval_record_ref_if_owner_db_exists(
+        &receipt,
+        &result.campaign_id,
+        &result.node_id,
+    )
 }
 
 pub fn write_runner_result_at(
@@ -1341,6 +1365,13 @@ pub fn write_treatment_evaluation_projection(
         source,
     })?;
     write_node_projection(&record)?;
+    emit_parent_eval_record_ref_for_json_file_if_owner_db_exists(
+        &record.node_dir.join("node.json"),
+        campaign_id,
+        "scheduler_node",
+        &record.schema_version,
+        &record.node_id,
+    )?;
     write_runner_request_projection(&request, &runner_request_path)?;
 
     Ok((record, request))
@@ -1451,6 +1482,7 @@ mod tests {
 
     use super::super::{TreatmentBranchNode, TreatmentBranchStatus};
     use super::*;
+    use crate::cli::prototype1_state::eval_store;
 
     fn campaign_manifest_path(tmp: &Path) -> PathBuf {
         let campaign_dir = tmp.join("campaigns/test-campaign");
@@ -1561,6 +1593,674 @@ mod tests {
             <ploke_records::scheduler::RunnerRequestRecord as ploke_records::record::Record>::FAMILY,
             ploke_records::record::RecordFamily::RunnerRequest
         );
+    }
+
+    #[test]
+    fn prototype1_eval_store_record_ref_root_parent_node_registration_writes_owner_db_row() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+        let db_path = eval_store::prototype1_eval_store_db_path(&manifest);
+        fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+        ploke_db::Database::new_init()
+            .expect("empty eval db")
+            .write_backup_to_path(&db_path)
+            .expect("seed owner eval db");
+
+        let node = register_root_parent_node(
+            &CampaignId::from("test-campaign"),
+            &manifest,
+            "root-instance",
+            "main",
+            tmp.path(),
+            Prototype1SearchPolicy::default(),
+        )
+        .expect("register root parent node");
+
+        let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+        let mut params = BTreeMap::new();
+        params.insert(
+            "campaign_id".to_string(),
+            cozo::DataValue::from("test-campaign".to_string()),
+        );
+        params.insert(
+            "producer_id".to_string(),
+            cozo::DataValue::from(node.node_id.clone()),
+        );
+        let rows = db
+            .raw_query_params(
+                r#"
+?[
+    family,
+    schema_version,
+    store_scope,
+    producer_role,
+    producer_id,
+    source_class,
+    evidence_class,
+    visibility_scope,
+    validation_status,
+    source_ref,
+    content_sha256,
+    payload_json
+] :=
+    *eval_record_ref {
+        campaign_id,
+        family,
+        schema_version,
+        store_scope,
+        producer_role,
+        producer_id,
+        source_class,
+        evidence_class,
+        visibility_scope,
+        validation_status,
+        source_ref,
+        content_sha256,
+        payload_json
+    },
+    campaign_id = $campaign_id,
+    producer_id = $producer_id,
+    family = "scheduler_node"
+"#,
+                params,
+            )
+            .expect("query root scheduler node record refs");
+
+        assert_eq!(rows.rows.len(), 1);
+        let row = rows.row_refs().next().expect("record ref row");
+        assert_eq!(
+            row.get::<String>("family").expect("family"),
+            "scheduler_node"
+        );
+        assert_eq!(
+            row.get::<String>("schema_version").expect("schema"),
+            PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION
+        );
+        assert_eq!(row.get::<String>("store_scope").expect("scope"), "parent");
+        assert_eq!(row.get::<String>("producer_role").expect("role"), "parent");
+        assert_eq!(
+            row.get::<String>("source_class").expect("source"),
+            "compatibility_import"
+        );
+        assert_eq!(
+            row.get::<String>("evidence_class").expect("evidence"),
+            "compatibility"
+        );
+        assert_eq!(
+            row.get::<String>("visibility_scope").expect("visibility"),
+            "parent_visible"
+        );
+        assert_eq!(
+            row.get::<String>("validation_status").expect("status"),
+            "valid"
+        );
+        assert!(
+            row.get::<String>("source_ref")
+                .expect("source ref")
+                .contains("node.json:L1")
+        );
+        assert!(
+            !row.get::<String>("content_sha256")
+                .expect("hash")
+                .is_empty(),
+            "record ref carries payload hash"
+        );
+        let payload = row.get::<String>("payload_json").expect("payload");
+        assert!(
+            payload.contains("\"root-parent\""),
+            "payload remains a compatibility ref for the root node projection JSON"
+        );
+        assert!(
+            payload.contains("\"planned\""),
+            "root registration keeps planned scheduler-node status"
+        );
+    }
+
+    #[test]
+    fn prototype1_eval_store_record_ref_runner_request_projection_writes_owner_db_row() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+        let db_path = eval_store::prototype1_eval_store_db_path(&manifest);
+        fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+        ploke_db::Database::new_init()
+            .expect("empty eval db")
+            .write_backup_to_path(&db_path)
+            .expect("seed owner eval db");
+
+        let (_scheduler, node, _request) = register_treatment_evaluation_node(
+            &CampaignId::from("test-campaign"),
+            &manifest,
+            &resolved_branch(),
+            2,
+            None,
+            tmp.path(),
+            false,
+        )
+        .expect("register node");
+
+        let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+        let mut params = BTreeMap::new();
+        params.insert(
+            "campaign_id".to_string(),
+            cozo::DataValue::from("test-campaign".to_string()),
+        );
+        params.insert(
+            "producer_id".to_string(),
+            cozo::DataValue::from(node.node_id.clone()),
+        );
+        let rows = db
+            .raw_query_params(
+                r#"
+?[
+    family,
+    schema_version,
+    store_scope,
+    producer_role,
+    producer_id,
+    source_class,
+    evidence_class,
+    visibility_scope,
+    validation_status,
+    source_ref,
+    content_sha256,
+    payload_json
+] :=
+    *eval_record_ref {
+        campaign_id,
+        family,
+        schema_version,
+        store_scope,
+        producer_role,
+        producer_id,
+        source_class,
+        evidence_class,
+        visibility_scope,
+        validation_status,
+        source_ref,
+        content_sha256,
+        payload_json
+    },
+    campaign_id = $campaign_id,
+    producer_id = $producer_id,
+    family = "runner_request"
+"#,
+                params,
+            )
+            .expect("query runner request record refs");
+
+        assert_eq!(rows.rows.len(), 1);
+        let row = rows.row_refs().next().expect("record ref row");
+        assert_eq!(
+            row.get::<String>("family").expect("family"),
+            "runner_request"
+        );
+        assert_eq!(
+            row.get::<String>("schema_version").expect("schema"),
+            PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION
+        );
+        assert_eq!(row.get::<String>("store_scope").expect("scope"), "parent");
+        assert_eq!(row.get::<String>("producer_role").expect("role"), "parent");
+        assert_eq!(
+            row.get::<String>("source_class").expect("source"),
+            "compatibility_import"
+        );
+        assert_eq!(
+            row.get::<String>("evidence_class").expect("evidence"),
+            "compatibility"
+        );
+        assert_eq!(
+            row.get::<String>("visibility_scope").expect("visibility"),
+            "parent_visible"
+        );
+        assert_eq!(
+            row.get::<String>("validation_status").expect("status"),
+            "valid"
+        );
+        assert!(
+            row.get::<String>("source_ref")
+                .expect("source ref")
+                .contains("runner-request.json:L1")
+        );
+        assert!(
+            !row.get::<String>("content_sha256")
+                .expect("hash")
+                .is_empty(),
+            "record ref carries payload hash"
+        );
+        assert!(
+            row.get::<String>("payload_json")
+                .expect("payload")
+                .contains("\"runner_args\""),
+            "payload remains a compatibility ref for the runner request JSON"
+        );
+    }
+
+    #[test]
+    fn prototype1_storage_authority_negative_runner_request_ref_cannot_replace_file() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+        let node_id = "node-without-request";
+        let db_path = eval_store::prototype1_eval_store_db_path(&manifest);
+        eval_store::write_record_ref_to_owner_db(
+            &db_path,
+            eval_store::RecordRefEvidence::compatibility_import(
+                CampaignId::from("test-campaign"),
+                "runner_request",
+                PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION,
+                node_id,
+                "prototype1-record:test-campaign:missing-runner-request",
+                0,
+                1,
+                format!(
+                    "{}:L1",
+                    prototype1_runner_request_path(&manifest, node_id).display()
+                ),
+                serde_json::json!({
+                    "schema_version": PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION,
+                    "campaign_id": "test-campaign",
+                    "node_id": node_id,
+                    "runner_args": []
+                })
+                .to_string(),
+                1000,
+            ),
+        )
+        .expect("write eval DB record ref");
+
+        let err = load_runner_request(
+            &manifest,
+            node_id,
+            OperatorProjectionRead::projection_module(),
+        )
+        .expect_err("DB record ref must not replace runner-request.json");
+
+        let PrepareError::ReadManifest { path, source } = err else {
+            panic!("unexpected error variant");
+        };
+        assert_eq!(path, prototype1_runner_request_path(&manifest, node_id));
+        assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+        assert!(db_path.is_file());
+    }
+
+    #[test]
+    fn prototype1_eval_store_record_ref_parent_node_projection_writes_owner_db_row() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+        let db_path = eval_store::prototype1_eval_store_db_path(&manifest);
+        fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+        ploke_db::Database::new_init()
+            .expect("empty eval db")
+            .write_backup_to_path(&db_path)
+            .expect("seed owner eval db");
+
+        let (_scheduler, node, _request) = register_treatment_evaluation_node(
+            &CampaignId::from("test-campaign"),
+            &manifest,
+            &resolved_branch(),
+            2,
+            None,
+            tmp.path(),
+            false,
+        )
+        .expect("register node");
+        let projected = project_node_status(&node, Prototype1NodeStatus::WorkspaceStaged);
+
+        write_parent_node_projection(&CampaignId::from("test-campaign"), &projected)
+            .expect("write parent node projection");
+
+        let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+        let mut params = BTreeMap::new();
+        params.insert(
+            "campaign_id".to_string(),
+            cozo::DataValue::from("test-campaign".to_string()),
+        );
+        params.insert(
+            "producer_id".to_string(),
+            cozo::DataValue::from(node.node_id.clone()),
+        );
+        let rows = db
+            .raw_query_params(
+                r#"
+?[
+    family,
+    schema_version,
+    store_scope,
+    producer_role,
+    producer_id,
+    source_class,
+    evidence_class,
+    visibility_scope,
+    validation_status,
+    source_ref,
+    content_sha256,
+    payload_json
+] :=
+    *eval_record_ref {
+        campaign_id,
+        family,
+        schema_version,
+        store_scope,
+        producer_role,
+        producer_id,
+        source_class,
+        evidence_class,
+        visibility_scope,
+        validation_status,
+        source_ref,
+        content_sha256,
+        payload_json
+    },
+    campaign_id = $campaign_id,
+    producer_id = $producer_id,
+    family = "scheduler_node"
+"#,
+                params,
+            )
+            .expect("query scheduler node record refs");
+
+        assert_eq!(rows.rows.len(), 1);
+        let row = rows.row_refs().next().expect("record ref row");
+        assert_eq!(
+            row.get::<String>("family").expect("family"),
+            "scheduler_node"
+        );
+        assert_eq!(
+            row.get::<String>("schema_version").expect("schema"),
+            PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION
+        );
+        assert_eq!(row.get::<String>("store_scope").expect("scope"), "parent");
+        assert_eq!(row.get::<String>("producer_role").expect("role"), "parent");
+        assert_eq!(
+            row.get::<String>("source_class").expect("source"),
+            "compatibility_import"
+        );
+        assert_eq!(
+            row.get::<String>("evidence_class").expect("evidence"),
+            "compatibility"
+        );
+        assert_eq!(
+            row.get::<String>("visibility_scope").expect("visibility"),
+            "parent_visible"
+        );
+        assert_eq!(
+            row.get::<String>("validation_status").expect("status"),
+            "valid"
+        );
+        assert!(
+            row.get::<String>("source_ref")
+                .expect("source ref")
+                .contains("node.json:L1")
+        );
+        assert!(
+            !row.get::<String>("content_sha256")
+                .expect("hash")
+                .is_empty(),
+            "record ref carries payload hash"
+        );
+        assert!(
+            row.get::<String>("payload_json")
+                .expect("payload")
+                .contains("\"workspace_staged\""),
+            "payload remains a compatibility ref for the node projection JSON"
+        );
+    }
+
+    #[test]
+    fn prototype1_storage_authority_negative_node_ref_cannot_replace_file() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+        let node_id = "node-without-record";
+        let node_path = prototype1_node_record_path(&manifest, node_id);
+        let db_path = eval_store::prototype1_eval_store_db_path(&manifest);
+        eval_store::write_record_ref_to_owner_db(
+            &db_path,
+            eval_store::RecordRefEvidence::compatibility_import(
+                CampaignId::from("test-campaign"),
+                "scheduler_node",
+                PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION,
+                node_id,
+                "prototype1-record:test-campaign:missing-node",
+                0,
+                1,
+                format!("{}:L1", node_path.display()),
+                serde_json::json!({
+                    "schema_version": PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION,
+                    "node_id": node_id,
+                    "generation": 0,
+                    "instance_id": "instance-1",
+                    "source_state_id": "source-1",
+                    "branch_id": "branch-1",
+                    "candidate_id": "candidate-1",
+                    "target_relpath": "target.rs",
+                    "node_dir": node_path.parent().expect("node dir"),
+                    "workspace_root": tmp.path(),
+                    "binary_path": tmp.path().join("bin/ploke-eval"),
+                    "runner_request_path": tmp.path().join("runner-request.json"),
+                    "runner_result_path": tmp.path().join("runner-result.json"),
+                    "status": "workspace_staged",
+                    "created_at": "2026-05-09T00:00:00Z",
+                    "updated_at": "2026-05-09T00:00:00Z"
+                })
+                .to_string(),
+                1000,
+            ),
+        )
+        .expect("write eval DB record ref");
+
+        let err = load_node_record(
+            &manifest,
+            node_id,
+            OperatorProjectionRead::projection_module(),
+        )
+        .expect_err("DB node ref must not replace node.json");
+
+        let PrepareError::ReadManifest { path, source } = err else {
+            panic!("unexpected error variant");
+        };
+        assert_eq!(path, node_path);
+        assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+        assert!(db_path.is_file());
+    }
+
+    #[test]
+    fn prototype1_eval_store_record_ref_runner_result_writes_child_local_rows() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+        let db_path = eval_store::prototype1_eval_store_db_path(&manifest);
+        fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+        ploke_db::Database::new_init()
+            .expect("empty eval db")
+            .write_backup_to_path(&db_path)
+            .expect("seed owner eval db");
+
+        let (_scheduler, node, _request) = register_treatment_evaluation_node(
+            &CampaignId::from("test-campaign"),
+            &manifest,
+            &resolved_branch(),
+            2,
+            None,
+            tmp.path(),
+            false,
+        )
+        .expect("register node");
+        let result = Prototype1RunnerResult {
+            schema_version: PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION.to_string(),
+            campaign_id: CampaignId::from("test-campaign"),
+            node_id: node.node_id.clone(),
+            generation: node.generation,
+            branch_id: node.branch_id.clone(),
+            status: Prototype1NodeStatus::Failed,
+            disposition: Prototype1RunnerDisposition::CompileFailed,
+            treatment_campaign_id: Some(CampaignId::from("treatment-1")),
+            evaluation_artifact_path: Some(tmp.path().join("evaluation.json")),
+            detail: Some("compile failed".to_string()),
+            exit_code: Some(101),
+            stdout_excerpt: Some(String::new()),
+            stderr_excerpt: Some("error[E0425]".to_string()),
+            recorded_at: "2026-05-09T00:00:00Z".to_string(),
+        };
+        let runtime_id = crate::loop_graph::RuntimeId::new();
+        let attempt_path =
+            crate::cli::prototype1_state::invocation::result_path(&node.node_dir, runtime_id);
+
+        write_runner_result_at(&attempt_path, &result).expect("write attempt runner result");
+        write_runner_result_at(&node.runner_result_path, &result)
+            .expect("write latest runner result");
+
+        let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+        let mut params = BTreeMap::new();
+        params.insert(
+            "campaign_id".to_string(),
+            cozo::DataValue::from("test-campaign".to_string()),
+        );
+        params.insert(
+            "producer_id".to_string(),
+            cozo::DataValue::from(node.node_id.clone()),
+        );
+        let rows = db
+            .raw_query_params(
+                r#"
+?[
+    family,
+    schema_version,
+    store_scope,
+    producer_role,
+    producer_id,
+    source_class,
+    evidence_class,
+    visibility_scope,
+    validation_status,
+    source_ref,
+    content_sha256,
+    payload_json
+] :=
+    *eval_record_ref {
+        campaign_id,
+        family,
+        schema_version,
+        store_scope,
+        producer_role,
+        producer_id,
+        source_class,
+        evidence_class,
+        visibility_scope,
+        validation_status,
+        source_ref,
+        content_sha256,
+        payload_json
+    },
+    campaign_id = $campaign_id,
+    producer_id = $producer_id,
+    family = "runner_result"
+"#,
+                params,
+            )
+            .expect("query runner result record refs");
+
+        assert_eq!(rows.rows.len(), 2);
+        let mut source_refs = BTreeSet::new();
+        for row in rows.row_refs() {
+            assert_eq!(
+                row.get::<String>("family").expect("family"),
+                "runner_result"
+            );
+            assert_eq!(
+                row.get::<String>("schema_version").expect("schema"),
+                PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION
+            );
+            assert_eq!(
+                row.get::<String>("store_scope").expect("scope"),
+                "child_runtime"
+            );
+            assert_eq!(row.get::<String>("producer_role").expect("role"), "child");
+            assert_eq!(
+                row.get::<String>("source_class").expect("source"),
+                "compatibility_import"
+            );
+            assert_eq!(
+                row.get::<String>("evidence_class").expect("evidence"),
+                "compatibility"
+            );
+            assert_eq!(
+                row.get::<String>("visibility_scope").expect("visibility"),
+                "local"
+            );
+            assert_eq!(
+                row.get::<String>("validation_status").expect("status"),
+                "valid"
+            );
+            assert!(
+                !row.get::<String>("content_sha256")
+                    .expect("hash")
+                    .is_empty(),
+                "record ref carries payload hash"
+            );
+            assert!(
+                row.get::<String>("payload_json")
+                    .expect("payload")
+                    .contains("\"compile_failed\""),
+                "payload remains a compatibility ref for the runner result JSON"
+            );
+            source_refs.insert(row.get::<String>("source_ref").expect("source ref"));
+        }
+        assert!(source_refs.iter().any(|source| source.contains("results/")));
+        assert!(
+            source_refs
+                .iter()
+                .any(|source| source.contains("runner-result.json:L1"))
+        );
+    }
+
+    #[test]
+    fn prototype1_storage_authority_negative_runner_result_ref_cannot_replace_file() {
+        let tmp = tempdir().expect("tmp");
+        let manifest = campaign_manifest_path(tmp.path());
+        let node_id = "node-without-result";
+        let result_path = prototype1_runner_result_path(&manifest, node_id);
+        let db_path = eval_store::prototype1_eval_store_db_path(&manifest);
+        eval_store::write_record_ref_to_owner_db(
+            &db_path,
+            eval_store::RecordRefEvidence::compatibility_import_with_axes(
+                CampaignId::from("test-campaign"),
+                "runner_result",
+                PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION,
+                "child_runtime",
+                "child",
+                node_id,
+                "local",
+                "prototype1-record:test-campaign:missing-runner-result",
+                0,
+                1,
+                format!("{}:L1", result_path.display()),
+                serde_json::json!({
+                    "schema_version": PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION,
+                    "campaign_id": "test-campaign",
+                    "node_id": node_id,
+                    "generation": 0,
+                    "branch_id": "branch-1",
+                    "status": "failed",
+                    "disposition": "compile_failed",
+                    "recorded_at": "2026-05-09T00:00:00Z"
+                })
+                .to_string(),
+                1000,
+            ),
+        )
+        .expect("write eval DB record ref");
+
+        let err = load_runner_result(
+            &manifest,
+            node_id,
+            OperatorProjectionRead::projection_module(),
+        )
+        .expect_err("DB runner-result ref must not replace runner-result.json");
+
+        let PrepareError::ReadManifest { path, source } = err else {
+            panic!("unexpected error variant");
+        };
+        assert_eq!(path, result_path);
+        assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+        assert!(db_path.is_file());
     }
 
     #[test]

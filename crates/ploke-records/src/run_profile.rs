@@ -81,6 +81,9 @@ impl Default for EvalStorage {
 #[serde(rename_all = "kebab-case")]
 pub enum EvalStorageBackend {
     Fs,
+    /// Files remain authority; owner eval DB rows are a mirror/query surface.
+    DbMirror,
+    /// Compatibility spelling for the current mirror mode until DB-backed reads exist.
     Database,
     DualStrict,
 }
@@ -604,14 +607,25 @@ graph_nearest = 13
     fn run_profile_toml_roundtrips_eval_storage_backend() {
         let profile = PROFILE.replace(
             "[target]",
-            "[storage.eval]\nbackend = \"database\"\n\n[target]",
+            "[storage.eval]\nbackend = \"db-mirror\"\n\n[target]",
         );
         let parsed: RunProfileRecord = toml::from_str(&profile).expect("profile parses");
         let encoded = toml::to_string(&parsed).expect("profile serializes");
         let decoded: RunProfileRecord = toml::from_str(&encoded).expect("roundtrip parses");
 
-        assert_eq!(decoded.storage.eval.backend, EvalStorageBackend::Database);
-        assert!(encoded.contains("backend = \"database\""));
+        assert_eq!(decoded.storage.eval.backend, EvalStorageBackend::DbMirror);
+        assert!(encoded.contains("backend = \"db-mirror\""));
+    }
+
+    #[test]
+    fn run_profile_toml_accepts_legacy_database_backend() {
+        let profile = PROFILE.replace(
+            "[target]",
+            "[storage.eval]\nbackend = \"database\"\n\n[target]",
+        );
+        let parsed: RunProfileRecord = toml::from_str(&profile).expect("profile parses");
+
+        assert_eq!(parsed.storage.eval.backend, EvalStorageBackend::Database);
     }
 
     #[test]

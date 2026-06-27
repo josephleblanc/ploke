@@ -58,6 +58,7 @@ use crate::cli::prototype1_state::{
         BroadHarnessRequest, EvidenceRootKind, EvidenceRootLocation, HarnessChildBudget,
         ProtectedCoreAnchor, PublishedBroadHarnessRequest,
     },
+    eval_store::prototype1_eval_store_db_path,
     event::{ContentHash, RuntimeId, TransitionId},
     history::{ArtifactSurface, surface_attempt},
     identity::{ParentIdentity, load_parent_identity_optional, parent_identity_relpath},
@@ -66,6 +67,7 @@ use crate::cli::prototype1_state::{
         CompletionEntry, JournalEntry, PrototypeJournal, SpawnEntry, SpawnObservation, SpawnPhase,
         prototype1_transition_journal_path,
     },
+    observe,
     parent::{
         Check, ChildFiles, ChildPlanFile, ChildPlanFiles, Genesis, Parent, Predecessor, Ready,
         Startup, Unchecked,
@@ -597,7 +599,7 @@ fn broad_request_for_current_parent(context: &RuntimeContext) -> BroadHarnessReq
     let submitted_result_path = prototype_root
         .join("messages/edit-harness-result")
         .join(format!("{parent_node_id}.json"));
-    let request = BroadHarnessRequest::prototype1_workspace(
+    BroadHarnessRequest::prototype1_workspace(
         parent_node_id,
         context.repo_root.clone(),
         HarnessChildBudget {
@@ -607,15 +609,7 @@ fn broad_request_for_current_parent(context: &RuntimeContext) -> BroadHarnessReq
         candidate_workspace,
         &prototype_root,
         &submitted_result_path,
-    );
-    if let Some(suffix) = profile::prompt_suffix_for(
-        &[],
-        context.admitted_profile.profile.anti_attractor_policy(),
-    ) {
-        request.with_prompt_suffix(suffix)
-    } else {
-        request
-    }
+    )
 }
 
 fn into_status(diagnosis: Diagnosis) -> ActiveParentStatus {
@@ -1428,6 +1422,7 @@ fn extend_prompt_preflight_blockers(preflight: &PromptPreflight, blockers: &mut 
     }
 }
 
+#[cfg(feature = "typed_type_graph")]
 async fn attach_typed_graph_starting_db_check(repo_root: &Path, status: &mut ActiveParentStatus) {
     if let Some(blocker) = typed_graph_starting_db_cache_blocker(repo_root).await {
         status.blockers.push(blocker);
@@ -1437,12 +1432,18 @@ async fn attach_typed_graph_starting_db_check(repo_root: &Path, status: &mut Act
     }
 }
 
+#[cfg(not(feature = "typed_type_graph"))]
+async fn attach_typed_graph_starting_db_check(_repo_root: &Path, _status: &mut ActiveParentStatus) {
+}
+
+#[cfg(feature = "typed_type_graph")]
 async fn typed_graph_starting_db_cache_blocker(repo_root: &Path) -> Option<String> {
     use crate::layout::starting_db_cache_dir;
     let cache_dir = starting_db_cache_dir().ok()?;
     typed_graph_starting_db_cache_blocker_at(&cache_dir, repo_root).await
 }
 
+#[cfg(feature = "typed_type_graph")]
 async fn typed_graph_starting_db_cache_blocker_at(
     cache_dir: &Path,
     repo_root: &Path,
@@ -2213,6 +2214,7 @@ fn needs_terminal_observe(snapshot: &ChildSnapshot) -> bool {
 }
 
 async fn advance(diagnosis: Diagnosis, mode: ExecuteMode) -> Result<(), PrepareError> {
+    let _trace_guard = scoped_eval_trace_sink_for_context(&diagnosis.context);
     match diagnosis.phase {
         DiagnosedPhase::BaselineEval => advance_baseline_eval(&diagnosis.context).await,
         DiagnosedPhase::BaselineProtocol => advance_baseline_protocol(&diagnosis.context).await,
@@ -2225,6 +2227,21 @@ async fn advance(diagnosis: Diagnosis, mode: ExecuteMode) -> Result<(), PrepareE
         DiagnosedPhase::Handoff => advance_handoff(diagnosis).await,
         DiagnosedPhase::Complete | DiagnosedPhase::Blocked => Ok(()),
     }
+}
+
+fn scoped_eval_trace_sink_for_context(context: &RuntimeContext) -> observe::EvalTraceSinkGuard {
+    let config = context
+        .admitted_profile
+        .profile
+        .storage
+        .eval
+        .backend
+        .mirrors_owner_db()
+        .then(|| observe::EvalTraceSinkConfig {
+            campaign_id: context.campaign_id.clone(),
+            db_path: prototype1_eval_store_db_path(&context.manifest_path),
+        });
+    observe::scoped_eval_trace_sink(config)
 }
 
 async fn advance_baseline_eval(context: &RuntimeContext) -> Result<(), PrepareError> {
@@ -2689,25 +2706,34 @@ fn advance_select(diagnosis: Diagnosis) -> Result<(), PrepareError> {
     )?;
     if let Some((decision, material)) = selection {
         let selected = material.selected_artifact()?;
+        let continuation = live_successor_continuation_decision(
+            &diagnosis.context.manifest_path,
+            &diagnosis.context.parent_identity,
+            &diagnosis.context.admitted_profile.profile.search_policy(),
+            &decision,
+            &material,
+            selected.node(),
+        )?;
+        let record = if continuation.disposition.allows_successor() {
+            successor::Record::selected_with_decision(
+                diagnosis.context.campaign_id.clone(),
+                selected.node().node_id.clone(),
+                continuation,
+                decision,
+            )
+        } else {
+            successor::Record::stopped(
+                diagnosis.context.campaign_id.clone(),
+                selected.node().node_id.clone(),
+                continuation,
+                decision,
+            )
+        };
         let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(
             &diagnosis.context.manifest_path,
         ));
         journal
-            .append(JournalEntry::Successor(
-                successor::Record::selected_with_decision(
-                    diagnosis.context.campaign_id.clone(),
-                    selected.node().node_id.clone(),
-                    live_successor_continuation_decision(
-                        &diagnosis.context.manifest_path,
-                        &diagnosis.context.parent_identity,
-                        &diagnosis.context.admitted_profile.profile.search_policy(),
-                        &decision,
-                        &material,
-                        selected.node(),
-                    )?,
-                    decision,
-                ),
-            ))
+            .append(JournalEntry::Successor(record))
             .map_err(|err| PrepareError::InvalidBatchSelection {
                 detail: format!("failed to append successor selection record: {err}"),
             })?;
@@ -2996,6 +3022,54 @@ mod tests {
     }
 
     #[test]
+    fn evaluation_db_rows_do_not_replace_file_backed_report() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let db_path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+        crate::cli::prototype1_state::eval_store::write_evaluation_to_owner_db(
+            &db_path,
+            crate::cli::prototype1_state::eval_store::EvaluationEvidence {
+                campaign_id: CampaignId::from("campaign"),
+                parent_id: None,
+                branch_id: "branch-child".to_string(),
+                baseline_id: Some("campaign".to_string()),
+                treatment_id: Some("treatment".to_string()),
+                procedure_id: Some("procedure".to_string()),
+                evaluator_id: Some("evaluator".to_string()),
+                eval_set_id: Some("eval-set".to_string()),
+                policy_ref: Some("eval_set:eval-set:policy".to_string()),
+                disposition: "keep".to_string(),
+                record_ref: Some("path:/tmp/prototype1/evaluations/branch-child.json".to_string()),
+                recorded_at: Some("2026-06-23T00:00:00Z".to_string()),
+                content_sha256: "evaluation-row-hash".to_string(),
+                instances: vec![
+                    crate::cli::prototype1_state::eval_store::EvaluationInstanceEvidence {
+                        instance_id: "clap-rs__clap-3670".to_string(),
+                        baseline_run_id: None,
+                        treatment_run_id: None,
+                        baseline_ref: Some("path:/tmp/baseline/record.json.gz".to_string()),
+                        treatment_ref: Some("path:/tmp/treatment/record.json.gz".to_string()),
+                        status: "compared".to_string(),
+                        outcome: Some("keep".to_string()),
+                        oracle_ref: None,
+                    },
+                ],
+            },
+        )
+        .expect("write passive evaluation rows");
+
+        let snapshot = phase_test_snapshot(Prototype1NodeStatus::Succeeded, None);
+        let err = reconstruct_terminal_outcomes(&[snapshot])
+            .expect_err("DB evaluation rows must not replace file-backed evaluation report");
+        match err {
+            PrepareError::InvalidBatchSelection { detail } => {
+                assert!(detail.contains("missing branch evaluation report"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+        assert!(db_path.is_file());
+    }
+
+    #[test]
     fn succeeded_child_with_evaluation_can_enter_selection() {
         let snapshot = phase_test_snapshot(
             Prototype1NodeStatus::Succeeded,
@@ -3024,11 +3098,6 @@ mod tests {
 
     #[tokio::test]
     async fn prototype1_doctor_headless_setup_preflight_blocks_on_rag_unavailable() {
-        // This test intentionally sets a process-global env override consumed
-        // by `wait_for_bm25_ready`. Serialize it with recorded/headless TUI
-        // tests so the forced setup failure cannot leak into parallel cases.
-        let _headless_tui_guard = crate::test_support::llm_lock().lock().await;
-
         let temp = tempfile::tempdir().expect("tempdir");
         let eval_home = temp.path().join("eval-home");
         let _env = crate::test_support::env_guard_os(vec![
@@ -3555,12 +3624,27 @@ Suggested validation after editing: run `cargo test`.
             .expect("diagnose pre-child-plan world");
         assert_eq!(diagnosis.phase, DiagnosedPhase::ChildPlan);
 
-        step(Prototype1ControlCommand {
+        let err = step(Prototype1ControlCommand {
             repo_root: Some(world.repo_root.clone()),
             format: InspectOutputFormat::Json,
         })
         .await
-        .expect("zero-admission child planning should complete with a rejected-only plan");
+        .expect_err("zero-admission child planning still returns the below-minimum error");
+
+        let PrepareError::ChildPlanBelowMinimum {
+            runnable_children,
+            required_min,
+            attempted_slots,
+            accepted_results,
+            ..
+        } = err
+        else {
+            panic!("unexpected error: {err:?}");
+        };
+        assert_eq!(runnable_children, 0);
+        assert_eq!(required_min, 2);
+        assert_eq!(attempted_slots, 9);
+        assert_eq!(accepted_results, 0);
         let plan_path = child_plan_path(&world.manifest_path, world.parent_identity.node_id());
         let bytes = fs::read(&plan_path).expect("child plan was persisted by prototype1-step");
         let plan: ChildPlanFiles =
@@ -3592,15 +3676,10 @@ Suggested validation after editing: run `cargo test`.
         assert_eq!(after_requests, before_requests + 9);
         let retry_diagnosis = diagnose(&resolve_context(Some(&world.repo_root)).expect("context"))
             .expect("diagnose after persisted child plan");
-        assert_eq!(
+        assert_ne!(
             retry_diagnosis.phase,
-            DiagnosedPhase::Complete,
-            "retry should diagnose the rejected-only child plan as a clean terminal state"
-        );
-        assert!(
-            retry_diagnosis.blockers.is_empty(),
-            "terminal rejected-only diagnosis should not carry blockers: {:?}",
-            retry_diagnosis.blockers
+            DiagnosedPhase::ChildPlan,
+            "retry must not mint fresh broad-harness slots after the rejected child plan is durable"
         );
         assert_eq!(count_broad_requests(&world.manifest_path), after_requests);
     }
@@ -3876,12 +3955,17 @@ Suggested validation after editing: run `cargo test`.
                     "successful live prototype1-step should admit at least the required minimum child"
                 );
             }
-            Err(err) => {
-                assert!(
-                    err.to_string()
-                        .contains("broad harness admitted 0 child transaction(s)"),
-                    "unexpected live prototype1-step error: {err}"
-                );
+            Err(PrepareError::ChildPlanBelowMinimum {
+                runnable_children,
+                required_min,
+                attempted_slots,
+                accepted_results,
+                ..
+            }) => {
+                assert_eq!(runnable_children, 0);
+                assert_eq!(required_min, 1);
+                assert_eq!(attempted_slots, 2);
+                assert_eq!(accepted_results, 0);
                 assert_eq!(
                     admitted_children, 0,
                     "below-minimum live prototype1-step should not persist runnable children"
@@ -3891,6 +3975,7 @@ Suggested validation after editing: run `cargo test`.
                     "below-minimum live prototype1-step should persist both rejected live slots"
                 );
             }
+            Err(err) => panic!("unexpected live prototype1-step error: {err:?}"),
         }
     }
 
@@ -4871,6 +4956,7 @@ Suggested validation after editing: run `cargo test`.
         })
     }
 
+    #[cfg(feature = "typed_type_graph")]
     #[tokio::test]
     async fn doctor_flags_stale_starting_db_missing_typed_graph_relations() {
         use crate::runner::STARTING_DB_CACHE_VERSION;

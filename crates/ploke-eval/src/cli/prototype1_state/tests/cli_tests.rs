@@ -5,6 +5,7 @@ use crate::cli::prototype1_state::edit_surface::harness_request::{
     PublishedBroadHarnessRequest, RequestAdmissionBinding,
 };
 use crate::cli::prototype1_state::edit_surface::surface::SurfacePolicyId;
+use crate::cli::prototype1_state::eval_store;
 use crate::cli::prototype1_state::typestate::{self, StepInput};
 use crate::cli::{
     InspectOutputFormat, Prototype1CandidateGenerator,
@@ -27,8 +28,10 @@ use tracing_subscriber::layer::{Context, SubscriberExt};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::{Layer, Registry};
 
+use crate::cli::prototype1_state::c1::MaterializeBranchError;
+use crate::cli::prototype1_state::c3::SpawnChildError;
 use crate::intervention::{
-    CommitPhase, PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1RunnerResult,
+    CommitError, CommitPhase, PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION, Prototype1RunnerResult,
     Prototype1SearchPolicy, RecordStore, TreatmentBranchNode, TreatmentBranchStatus,
 };
 use crate::loop_graph::{ArtifactId, Coordinate, OperationTarget, RuntimeId};
@@ -461,6 +464,108 @@ fn historical_selection_rejects_already_active_parent_cycle() {
         Prototype1ContinuationDisposition::StopHistoricalTraversalCycle
     );
     assert!(!decision.disposition.allows_successor());
+}
+
+#[test]
+fn continuation_decision_mirrors_owned_eval_store_row_without_successor_authority() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = test_manifest_path(tmp.path());
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+    ploke_db::Database::new_init()
+        .expect("empty eval db")
+        .write_backup_to_path(&db_path)
+        .expect("seed owner eval db");
+    let parent = parent_identity_for("node-current", 1);
+    append_parent_started(&manifest_path, parent.clone());
+    let mut node = test_node(tmp.path(), "node-history", "branch-history", "candidate-1");
+    node.generation = 1;
+    node.parent_node_id = Some("node-root".to_string());
+    write_test_node(&manifest_path, &node);
+    let policy = Prototype1SearchPolicy {
+        max_generations: 15,
+        max_total_nodes: 96,
+        ..Prototype1SearchPolicy::default()
+    };
+
+    let decision = live_successor_continuation_decision(
+        &manifest_path,
+        &parent,
+        &policy,
+        &successor_decision_for(&node),
+        &selection_material_from_history(),
+        &node,
+    )
+    .expect("continuation decision");
+
+    assert_eq!(
+        decision.disposition,
+        Prototype1ContinuationDisposition::ContinueHistoricalTraversal
+    );
+    let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+    let rows = db
+        .raw_query_params(
+            r#"
+?[
+    campaign_id,
+    parent_id,
+    disposition,
+    selected_branch_id,
+    next_generation,
+    total_nodes,
+    policy_ref
+] :=
+    *eval_continuation_decision {
+        campaign_id,
+        parent_id,
+        disposition,
+        selected_branch_id,
+        next_generation,
+        total_nodes,
+        policy_ref
+    }
+"#,
+            std::collections::BTreeMap::new(),
+        )
+        .expect("query continuation rows");
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("continuation row");
+    assert_eq!(
+        row.get::<String>("campaign_id").expect("campaign"),
+        parent.campaign_id().to_string()
+    );
+    assert_eq!(
+        row.get::<String>("parent_id").expect("parent"),
+        parent.parent_id()
+    );
+    assert_eq!(
+        row.get::<String>("disposition").expect("disposition"),
+        "continue_historical_traversal"
+    );
+    assert_eq!(
+        row.get::<String>("selected_branch_id")
+            .expect("selected branch"),
+        "branch-history"
+    );
+    assert_eq!(
+        row.get::<i64>("next_generation").expect("generation"),
+        i64::from(node.generation)
+    );
+    assert_eq!(row.get::<i64>("total_nodes").expect("total nodes"), 1);
+    assert_eq!(
+        row.get::<String>("policy_ref").expect("policy"),
+        "prototype1.search_policy"
+    );
+
+    let journal_entries = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path))
+        .load_entries()
+        .expect("load journal entries");
+    assert!(
+        journal_entries
+            .iter()
+            .all(|entry| !matches!(entry, JournalEntry::Successor(_))),
+        "passive eval-store continuation rows must not replace successor transition authority"
+    );
 }
 
 #[test]
@@ -1200,6 +1305,208 @@ fn ready_parent_for_test(manifest_path: &Path, repo_root: &Path) -> Parent<Ready
     checked.ready(startup).expect("ready parent")
 }
 
+struct R4cFixture {
+    r4c: typestate::R4cReady<Prototype1StateRunShape, ResolvedCampaignConfig>,
+    manifest_path: PathBuf,
+    repo_root: PathBuf,
+    journal_path: PathBuf,
+    parent: ParentIdentity,
+}
+
+fn r4c_fixture(root: &Path, backend: profile::EvalStorageBackend) -> R4cFixture {
+    let manifest_path = root.join("campaign.json");
+    let repo_root = root.join("repo");
+    fs::create_dir_all(&repo_root).expect("repo dir");
+    let parent = test_parent_identity();
+    let ready = ready_parent_for_test(&manifest_path, &repo_root);
+    let mut command = state_command_without_ids();
+    command.campaign = Some(parent.campaign_id().clone());
+    command.repo_root = Some(repo_root.clone());
+    let mut shape = Prototype1StateRunShape::from_command(&command);
+    shape.eval_storage_backend = backend;
+    let config = ResolvedCampaignConfig {
+        campaign_id: parent.campaign_id().clone(),
+        benchmark_family: BenchmarkFamily::MultiSweBenchRust,
+        dataset_sources: Vec::new(),
+        model_id: "test-model".to_string(),
+        provider_slug: None,
+        route_source: ModelRouteSource::DirectGoogle,
+        required_procedures: Vec::new(),
+        instances_root: root.join("instances"),
+        batches_root: root.join("batches"),
+        eval: EvalCampaignPolicy::default(),
+        protocol: ProtocolCampaignPolicy::default(),
+        framework: crate::FrameworkConfig::default(),
+    };
+    let journal_path = prototype1_transition_journal_path(&manifest_path);
+    let journal = PrototypeJournal::new(&journal_path);
+    let collected = typestate::context::Collected::new(
+        command,
+        repo_root.clone(),
+        parent.campaign_id().clone(),
+        manifest_path.clone(),
+        shape,
+        config,
+        journal_path.clone(),
+        journal,
+    );
+    let r4c = typestate::R4cReady::from_collected_parent(collected, ready);
+
+    R4cFixture {
+        r4c,
+        manifest_path,
+        repo_root,
+        journal_path,
+        parent,
+    }
+}
+
+#[test]
+fn prototype1_transition_contract_r4c_to_r5_fs_records_parent_start() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let fixture = r4c_fixture(tmp.path(), profile::EvalStorageBackend::Fs);
+    let parent = fixture.parent.clone();
+    let manifest_path = fixture.manifest_path.clone();
+    let repo_root = fixture.repo_root.clone();
+    let journal_path = fixture.journal_path.clone();
+
+    let r5: typestate::R5<Prototype1StateRunShape, ResolvedCampaignConfig> =
+        crate::cli::prototype1_state::live_edges::r4c_to_r5(fixture.r4c)
+            .expect("R4c -> R5 succeeds in fs mode");
+
+    let parts = r5.into_parts();
+    assert_eq!(parts.parent.identity(), &parent);
+    assert_eq!(parts.collected.into_parts().journal_path, journal_path);
+    let entries = PrototypeJournal::new(&journal_path)
+        .load_entries()
+        .expect("journal loads");
+    assert_eq!(entries.len(), 2);
+    match &entries[0] {
+        JournalEntry::ParentStarted(entry) => {
+            assert_eq!(entry.campaign_id, parent.campaign_id().clone());
+            assert_eq!(entry.parent_identity, parent);
+            assert_eq!(entry.repo_root, repo_root);
+            assert_eq!(entry.handoff_runtime_id, None);
+            assert_eq!(entry.pid, std::process::id());
+            assert!(entry.recorded_at.0 > 0);
+        }
+        other => panic!("unexpected first R4c -> R5 entry: {other:?}"),
+    }
+    match &entries[1] {
+        JournalEntry::Resource(sample) => {
+            assert_eq!(sample.campaign_id, parent.campaign_id().clone());
+            assert_eq!(sample.parent_id, parent.parent_id());
+            assert_eq!(sample.phase, journal::resource::Phase::ParentStart);
+            assert_eq!(sample.status, journal::resource::Status::Missing);
+            assert_eq!(sample.path, repo_root.join("target"));
+        }
+        other => panic!("unexpected second R4c -> R5 entry: {other:?}"),
+    }
+    let campaign_root = prototype1_campaign_root(&manifest_path);
+    assert!(!campaign_root.join("history").exists());
+    assert!(!campaign_root.join("messages").exists());
+    assert!(!repo_root.join("target").exists());
+}
+
+#[test]
+fn prototype1_transition_contract_r4c_to_r5_db_backends_record_parent_start_rows() {
+    for backend in [
+        profile::EvalStorageBackend::DbMirror,
+        profile::EvalStorageBackend::Database,
+        profile::EvalStorageBackend::DualStrict,
+    ] {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let fixture = r4c_fixture(tmp.path(), backend);
+        let parent = fixture.parent.clone();
+        let manifest_path = fixture.manifest_path.clone();
+        let journal_path = fixture.journal_path.clone();
+
+        let r5: typestate::R5<Prototype1StateRunShape, ResolvedCampaignConfig> =
+            crate::cli::prototype1_state::live_edges::r4c_to_r5(fixture.r4c)
+                .unwrap_or_else(|err| panic!("R4c -> R5 succeeds for {backend:?}: {err:?}"));
+
+        let parts = r5.into_parts();
+        assert_eq!(parts.parent.identity(), &parent);
+        assert_eq!(parts.collected.into_parts().journal_path, journal_path);
+        let entries = PrototypeJournal::new(&journal_path)
+            .load_entries()
+            .expect("journal loads");
+        assert_eq!(entries.len(), 2, "{backend:?} preserves JSONL evidence");
+        let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+        assert!(db_path.is_file(), "{backend:?} writes owner eval DB");
+        let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+        let mut params = std::collections::BTreeMap::new();
+        params.insert(
+            "campaign_id".to_string(),
+            cozo::DataValue::from(parent.campaign_id().to_string()),
+        );
+        let events = db
+            .raw_query_params(
+                r#"
+?[event_id, transition, store_scope, source_class, evidence_class, validation_status] :=
+    *eval_transition_event {
+        event_id,
+        campaign_id,
+        transition,
+        store_scope,
+        source_class,
+        evidence_class,
+        validation_status
+    },
+    campaign_id = $campaign_id
+"#,
+                params.clone(),
+            )
+            .expect("query transition rows");
+        assert_eq!(events.rows.len(), 1);
+        let event = events.row_refs().next().expect("event row");
+        assert_eq!(
+            event.get::<String>("transition").expect("transition"),
+            "r4c_to_r5"
+        );
+        assert_eq!(event.get::<String>("store_scope").expect("scope"), "parent");
+        assert_eq!(
+            event.get::<String>("source_class").expect("source"),
+            "direct_write"
+        );
+        assert_eq!(
+            event.get::<String>("evidence_class").expect("evidence"),
+            "typed_transition"
+        );
+        assert_eq!(
+            event.get::<String>("validation_status").expect("status"),
+            "valid"
+        );
+
+        let refs = db
+            .raw_query_params(
+                r#"
+?[record_ref_id, family, evidence_class] :=
+    *eval_record_ref { record_ref_id, campaign_id, family, evidence_class },
+    campaign_id = $campaign_id
+"#,
+                params,
+            )
+            .expect("query record refs");
+        assert_eq!(refs.rows.len(), 2);
+        let mut classes = std::collections::BTreeMap::new();
+        for row in refs.row_refs() {
+            classes.insert(
+                row.get::<String>("family").expect("family"),
+                row.get::<String>("evidence_class").expect("class"),
+            );
+        }
+        assert_eq!(
+            classes.get("parent_started").map(String::as_str),
+            Some("typed_transition")
+        );
+        assert_eq!(
+            classes.get("resource_parent_start").map(String::as_str),
+            Some("diagnostic")
+        );
+    }
+}
+
 fn count_broad_requests(manifest_path: &Path) -> usize {
     let request_dir = prototype1_campaign_root(manifest_path).join("messages/edit-harness-request");
     match fs::read_dir(request_dir) {
@@ -1333,7 +1640,6 @@ fn provider_unavailable_headless_tui_terminal_is_typed_prepare_error() {
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
         DEFAULT_GRAPH_NEAREST_ITEMS,
-        profile::AntiAttractorPolicy::None,
     )
     .expect("published broad harness request");
     let slot = HarnessRequestSlot {
@@ -1368,12 +1674,6 @@ fn provider_unavailable_headless_tui_terminal_is_typed_prepare_error() {
 
 #[tokio::test]
 async fn rag_unavailable_headless_tui_setup_writes_typed_diagnostics() {
-    // This test intentionally sets a process-global env override consumed by
-    // `wait_for_bm25_ready`. Hold the shared LLM/headless-TUI test lock before
-    // installing that env so parallel recorded-replay tests cannot observe the
-    // forced setup failure spuriously.
-    let _headless_tui_guard = crate::test_support::llm_lock().lock().await;
-
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
     let repo_root = tmp.path().join("repo");
@@ -1398,7 +1698,6 @@ async fn rag_unavailable_headless_tui_setup_writes_typed_diagnostics() {
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
         DEFAULT_GRAPH_NEAREST_ITEMS,
-        profile::AntiAttractorPolicy::None,
     )
     .expect("published broad harness request");
     let slot = HarnessRequestSlot {
@@ -1411,9 +1710,14 @@ async fn rag_unavailable_headless_tui_setup_writes_typed_diagnostics() {
         timeout_secs: Some(60),
     };
 
-    let err = run_broad_headless_tui_attempt_with_options(&slot, &options)
-        .await
-        .expect_err("RAG/BM25 setup failure must stop child planning");
+    let err = run_broad_headless_tui_attempt_with_options(
+        &slot,
+        &options,
+        None,
+        profile::EvalStorageBackend::Fs,
+    )
+    .await
+    .expect_err("RAG/BM25 setup failure must stop child planning");
 
     let tui_adapter::BroadAttemptError::Setup { phase, detail } = err else {
         panic!("expected typed setup blocker, got {err:?}");
@@ -1459,7 +1763,6 @@ async fn broad_tui_prep_failure_is_setup_blocker() {
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
         DEFAULT_GRAPH_NEAREST_ITEMS,
-        profile::AntiAttractorPolicy::None,
     )
     .expect("published broad harness request");
     let slot = HarnessRequestSlot {
@@ -1473,9 +1776,14 @@ async fn broad_tui_prep_failure_is_setup_blocker() {
         timeout_secs: Some(60),
     };
 
-    let err = run_broad_headless_tui_attempt_with_options(&slot, &options)
-        .await
-        .expect_err("workspace preparation failures must stop child planning");
+    let err = run_broad_headless_tui_attempt_with_options(
+        &slot,
+        &options,
+        None,
+        profile::EvalStorageBackend::Fs,
+    )
+    .await
+    .expect_err("workspace preparation failures must stop child planning");
 
     let tui_adapter::BroadAttemptError::Setup { phase, detail } = err else {
         panic!("expected setup blocker, got {err:?}");
@@ -1511,6 +1819,8 @@ async fn zero_admission_batch_is_persisted() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
     let repo_root = tmp.path().join("repo");
+    let _env =
+        crate::test_support::env_guard_os(vec![("PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT", "9".into())]);
     write_broad_surface_targets(&repo_root);
     commit_indexed_repo(&repo_root, "zero admission fixture");
     // Parent<Ready> is the last parent-only state before child-plan authority is
@@ -1528,7 +1838,6 @@ async fn zero_admission_batch_is_persisted() {
         parent,
         budget,
         profile::BroadTui::default(),
-        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     let first_diagnostics =
@@ -1537,31 +1846,43 @@ async fn zero_admission_batch_is_persisted() {
         .expect("write historical diagnostic into temp slot");
     let request_count_before = count_broad_requests(&manifest_path);
 
-    // Zero admitted children with parent-readable rejected evidence is a clean
-    // exhausted child-plan phase, not a hard parent failure. The below-min branch
-    // accepts the harness-plan state back to Parent<Ready>, locks a
-    // rejected-attempt-only ChildPlan, and returns it for the Complete-mode
-    // rejected-only terminal path.
+    // Zero admitted children is an error, but it still represents an attempted
+    // child-plan phase. The below-min branch must accept the harness-plan state
+    // back to Parent<Ready>, lock a rejected-attempt-only ChildPlan, and then
+    // return InvalidBatchSelection.
     let parent_identity = batch.parent.identity().clone();
-    let receipt = publish_broad_harness_child_plan_from_admitted_batch(
+    let result = publish_broad_harness_child_plan_from_admitted_batch(
         ChildPlanEnv {
             campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
         Vec::new(),
-    )
-    .expect("zero admitted broad harness batch should return rejected-only child plan");
-    assert!(receipt.plan.body().children().is_empty());
-    assert!(
-        !receipt.rejected_surface_attempts.is_empty(),
-        "zero admitted batch should preserve parent-readable rejected attempt evidence"
     );
+    let err = match result {
+        Ok(_) => panic!("zero accepted broad harness batch must not seal children"),
+        Err(err) => err,
+    };
+    let PrepareError::ChildPlanBelowMinimum {
+        runnable_children,
+        required_min,
+        attempted_slots,
+        accepted_results,
+        child_plan_path,
+    } = err
+    else {
+        panic!("unexpected error: {err:?}");
+    };
+    assert_eq!(runnable_children, 0);
+    assert_eq!(required_min, 2);
+    assert_eq!(attempted_slots, 9);
+    assert_eq!(accepted_results, 0);
     let files = ChildPlanFiles::for_parent(&manifest_path, &parent_identity, Vec::new());
+    assert_eq!(child_plan_path, files.message_at().path().to_path_buf());
     let bytes = fs::read(files.message_at().path())
         .expect("failed batch must persist a rejected-attempt child plan");
     let body: ChildPlanFiles = serde_json::from_slice(&bytes).expect("decode child plan");
@@ -1645,7 +1966,6 @@ fn timed_out_headless_tui_applied_attempt_blocks_submitted_result_for_admission(
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
         DEFAULT_GRAPH_NEAREST_ITEMS,
-        profile::AntiAttractorPolicy::None,
     )
     .expect("published broad harness request");
     let slot = HarnessRequestSlot {
@@ -1738,7 +2058,6 @@ fn applied_timed_out_headless_tui_blocks_submitted_result_with_typed_detail() {
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
         DEFAULT_GRAPH_NEAREST_ITEMS,
-        profile::AntiAttractorPolicy::None,
     )
     .expect("published broad harness request");
     let slot = HarnessRequestSlot {
@@ -1886,6 +2205,12 @@ fn deterministic_surface_producer_dedupes_duplicate_proposed_contents() {
 fn tui_edit_surface_parent_selection_publishes_child_plan() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+    ploke_db::Database::new_init()
+        .expect("empty eval db")
+        .write_backup_to_path(&db_path)
+        .expect("seed owner eval db");
     let repo_root = tmp.path().join("repo");
     write_broad_surface_targets(&repo_root);
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
@@ -1897,7 +2222,7 @@ fn tui_edit_surface_parent_selection_publishes_child_plan() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         parent,
@@ -1912,6 +2237,99 @@ fn tui_edit_surface_parent_selection_publishes_child_plan() {
     assert!(receipt.rejected_surface_attempts.is_empty());
     assert_eq!(body.parent_node_id(), "node-parent");
     assert!(body.message().exists());
+    let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "campaign_id".to_string(),
+        cozo::DataValue::from(CLI_TEST_CAMPAIGN.to_string()),
+    );
+    params.insert(
+        "producer_id".to_string(),
+        cozo::DataValue::from("node-parent".to_string()),
+    );
+    let rows = db
+        .raw_query_params(
+            r#"
+?[
+    family,
+    schema_version,
+    store_scope,
+    producer_role,
+    source_class,
+    evidence_class,
+    visibility_scope,
+    validation_status,
+    source_ref,
+    content_sha256,
+    payload_json
+] :=
+    *eval_record_ref {
+        campaign_id,
+        family,
+        schema_version,
+        store_scope,
+        producer_role,
+        producer_id,
+        source_class,
+        evidence_class,
+        visibility_scope,
+        validation_status,
+        source_ref,
+        content_sha256,
+        payload_json
+    },
+    campaign_id = $campaign_id,
+    producer_id = $producer_id,
+    family = "scheduler_node"
+"#,
+            params,
+        )
+        .expect("query deterministic parent scheduler-node refs");
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("record ref row");
+    assert_eq!(
+        row.get::<String>("family").expect("family"),
+        "scheduler_node"
+    );
+    assert_eq!(
+        row.get::<String>("schema_version").expect("schema"),
+        PROTOTYPE1_TREATMENT_NODE_SCHEMA_VERSION
+    );
+    assert_eq!(row.get::<String>("store_scope").expect("scope"), "parent");
+    assert_eq!(row.get::<String>("producer_role").expect("role"), "parent");
+    assert_eq!(
+        row.get::<String>("source_class").expect("source"),
+        "compatibility_import"
+    );
+    assert_eq!(
+        row.get::<String>("evidence_class").expect("evidence"),
+        "compatibility"
+    );
+    assert_eq!(
+        row.get::<String>("visibility_scope").expect("visibility"),
+        "parent_visible"
+    );
+    assert_eq!(
+        row.get::<String>("validation_status").expect("status"),
+        "valid"
+    );
+    assert!(
+        row.get::<String>("source_ref")
+            .expect("source ref")
+            .contains("node.json:L1")
+    );
+    assert!(
+        !row.get::<String>("content_sha256")
+            .expect("hash")
+            .is_empty(),
+        "record ref carries payload hash"
+    );
+    assert!(
+        row.get::<String>("payload_json")
+            .expect("payload")
+            .contains("\"running\""),
+        "payload remains a compatibility ref for deterministic parent Running projection"
+    );
     for child in body.children() {
         let node = child.node_record();
         assert_eq!(node.parent_node_id.as_deref(), Some("node-parent"));
@@ -1924,6 +2342,126 @@ fn tui_edit_surface_parent_selection_publishes_child_plan() {
         assert!(node.node_dir.join("node.json").exists());
         assert!(node.runner_request_path.exists());
     }
+
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "campaign_id".to_string(),
+        cozo::DataValue::from(CLI_TEST_CAMPAIGN.to_string()),
+    );
+    let refs = db
+        .raw_query_params(
+            r#"
+?[family, producer_id] :=
+    *eval_record_ref { campaign_id, family, producer_id },
+    campaign_id = $campaign_id
+"#,
+            params,
+        )
+        .expect("query all record refs");
+    let mut nodes = BTreeSet::new();
+    for row in refs.row_refs() {
+        let family = row.get::<String>("family").expect("family");
+        let producer = row.get::<String>("producer_id").expect("producer");
+        if family == "scheduler_node" {
+            nodes.insert(producer.clone());
+        }
+        assert_ne!(
+            family, "child_plan_file",
+            "child-plan persistence must use normalized eval_child_plan rows, not eval_record_ref payloads"
+        );
+    }
+    for child in body.children() {
+        assert!(
+            nodes.contains(child.node_id()),
+            "child scheduler node '{}' should still be mirrored until scheduler-node normalization lands",
+            child.node_id()
+        );
+    }
+
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "campaign_id".to_string(),
+        cozo::DataValue::from(CLI_TEST_CAMPAIGN.to_string()),
+    );
+    params.insert(
+        "parent_node_id".to_string(),
+        cozo::DataValue::from(body.parent_node_id().to_string()),
+    );
+    let plans = db
+        .raw_query_params(
+            r#"
+?[plan_id, child_generation, child_count, rejected_count, message_sha256] :=
+    *eval_child_plan {
+        plan_id,
+        campaign_id,
+        parent_node_id,
+        child_generation,
+        child_count,
+        rejected_count,
+        message_sha256
+    },
+    campaign_id = $campaign_id,
+    parent_node_id = $parent_node_id
+"#,
+            params,
+        )
+        .expect("query normalized child plan rows");
+    assert_eq!(
+        plans.rows.len(),
+        1,
+        "child plan should have one normalized row"
+    );
+    let plan = plans.row_refs().next().expect("child plan row");
+    let plan_id = plan.get::<String>("plan_id").expect("plan id");
+    assert_eq!(plan.get::<i64>("child_generation").expect("generation"), 1);
+    assert_eq!(plan.get::<i64>("child_count").expect("child count"), 1);
+    assert_eq!(
+        plan.get::<i64>("rejected_count").expect("rejected count"),
+        0
+    );
+    assert!(
+        !plan
+            .get::<String>("message_sha256")
+            .expect("message hash")
+            .is_empty(),
+        "child-plan row carries message content hash"
+    );
+
+    let mut params = std::collections::BTreeMap::new();
+    params.insert("plan_id".to_string(), cozo::DataValue::from(plan_id));
+    let children = db
+        .raw_query_params(
+            r#"
+?[child_node_id, branch_id, child_index, status, runner_request_path] :=
+    *eval_child_plan_child {
+        plan_id,
+        child_node_id,
+        branch_id,
+        child_index,
+        status,
+        runner_request_path
+    },
+    plan_id = $plan_id
+"#,
+            params,
+        )
+        .expect("query normalized child-plan children");
+    assert_eq!(children.rows.len(), body.children().len());
+    let child_row = children.row_refs().next().expect("child row");
+    assert_eq!(
+        child_row.get::<String>("child_node_id").expect("child id"),
+        body.children()[0].node_id()
+    );
+    assert_eq!(
+        child_row.get::<String>("status").expect("status"),
+        "planned"
+    );
+    assert!(
+        child_row
+            .get::<String>("runner_request_path")
+            .expect("request path")
+            .ends_with("runner-request.json")
+    );
 }
 
 #[test]
@@ -1943,7 +2481,6 @@ fn broad_workspace_edit_surface_republication_uses_request_scoped_family_paths()
         budget,
         admission_binding.clone(),
         DEFAULT_GRAPH_NEAREST_ITEMS,
-        profile::AntiAttractorPolicy::None,
     )
     .expect("first publication");
     let second = publish_broad_edit_harness_request_with_graph_limit(
@@ -1953,7 +2490,6 @@ fn broad_workspace_edit_surface_republication_uses_request_scoped_family_paths()
         budget,
         admission_binding,
         DEFAULT_GRAPH_NEAREST_ITEMS,
-        profile::AntiAttractorPolicy::None,
     )
     .expect("second publication");
 
@@ -2020,7 +2556,6 @@ fn broad_batch_publication_allocates_request_slots() {
         parent,
         budget,
         profile::BroadTui::default(),
-        profile::AntiAttractorPolicy::None,
     )
     .expect("broad harness should allocate request slots from active artifact head");
 
@@ -2081,7 +2616,6 @@ async fn pre_child_planning_review_writes_prompt_and_artifact_before_admission()
         parent,
         budget,
         profile::BroadTui::default(),
-        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     let first = &batch.slots[0].published;
@@ -2098,7 +2632,7 @@ async fn pre_child_planning_review_writes_prompt_and_artifact_before_admission()
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         &batch,
@@ -2140,7 +2674,6 @@ fn broad_batch_default_cap_respects_small_max() {
         parent,
         budget,
         profile::BroadTui::default(),
-        profile::AntiAttractorPolicy::None,
     )
     .expect("broad harness should allocate request slots");
 
@@ -2167,7 +2700,6 @@ fn broad_batch_uses_explicit_parallel_targets() {
         parent,
         budget,
         profile::BroadTui::default(),
-        profile::AntiAttractorPolicy::None,
     )
     .expect("broad harness should allocate request slots");
 
@@ -2208,7 +2740,6 @@ fn turn_live_bundle() {
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
         DEFAULT_GRAPH_NEAREST_ITEMS,
-        profile::AntiAttractorPolicy::None,
     )
     .expect("published broad harness request");
     let slot = HarnessRequestSlot {
@@ -2223,8 +2754,15 @@ fn turn_live_bundle() {
         }),
     );
 
-    write_broad_headless_tui_turn_live_bundle(&slot, &run, "diagnose the run", "test/model")
-        .expect("write turn-live bundle");
+    write_broad_headless_tui_turn_live_bundle(
+        &slot,
+        &run,
+        "diagnose the run",
+        "test/model",
+        Some(&CLI_TEST_CAMPAIGN),
+        profile::EvalStorageBackend::DualStrict,
+    )
+    .expect("write turn-live bundle");
 
     let dir = broad_headless_tui_turn_live_dir(slot.published.submitted_result_path());
     let trace_path = dir.join("agent-turn-trace.json");
@@ -2244,6 +2782,36 @@ fn turn_live_bundle() {
     assert_eq!(trace.0.task_id, slot.published.request_id());
     assert_eq!(trace.0.selected_model, "test/model");
     assert_eq!(trace.0.issue_prompt, "diagnose the run");
+
+    let db_path = eval_store::owner_eval_db_file_for_record_path(&trace_path)
+        .expect("turn-live owner db path");
+    assert!(db_path.is_file(), "missing {}", db_path.display());
+    let db = eval_store::load_owner_eval_database(&db_path).expect("reload turn-live owner db");
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "task_id".to_string(),
+        cozo::DataValue::from(slot.published.request_id().to_string()),
+    );
+    let rows = db
+        .raw_query_params(
+            r#"
+?[turn_id, campaign_id, task_id, selected_model] :=
+    *eval_agent_turn { turn_id, campaign_id, task_id, selected_model },
+    task_id = $task_id
+"#,
+            params,
+        )
+        .expect("query turn-live agent turn row");
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("turn-live row");
+    assert_eq!(
+        row.get::<String>("campaign_id").expect("campaign"),
+        "campaign"
+    );
+    assert_eq!(
+        row.get::<String>("selected_model").expect("model"),
+        "test/model"
+    );
 }
 
 #[test]
@@ -2295,87 +2863,6 @@ fn broad_tui_attempt_google_provider_selects_google_router() {
     assert!(model.provider().is_none());
 }
 
-#[tokio::test]
-async fn broad_tui_direct_google_attempt_installs_prototype1_chat_context() {
-    let _headless_tui_guard = crate::test_support::llm_lock().lock().await;
-    ploke_tui::llm::clear_prototype1_trace_context_for_test();
-
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let manifest_path = tmp.path().join("campaign.json");
-    let repo_root = tmp.path().join("repo");
-    init_indexed_repo(&repo_root);
-    write_surface_target(&repo_root, Path::new("src/lib.rs"), "pub fn canary() {}\n");
-    index_repo(&repo_root);
-    commit_indexed_repo(&repo_root, "prototype1 chat context fixture");
-
-    let publication = publish_broad_edit_harness_request_with_graph_limit(
-        &manifest_path,
-        &repo_root,
-        &test_parent_identity(),
-        Prototype1ChildBudget::new(1, 1),
-        test_broad_request_admission_binding(),
-        DEFAULT_GRAPH_NEAREST_ITEMS,
-        profile::AntiAttractorPolicy::None,
-    )
-    .expect("published broad harness request");
-    let slot = HarnessRequestSlot {
-        request_path: publication.request_path,
-        published: publication.published,
-    };
-    let summary_path = tmp.path().join("headless-summary.json");
-    fs::write(
-        &summary_path,
-        include_str!(
-            "../../../tests/fixtures/prototype1-zero-admission-child-plan/node-18f71c7f3b1718b8.headless-tui.json"
-        ),
-    )
-    .expect("write summary fixture");
-    let _env = crate::test_support::env_guard_os(vec![(
-        "PLOKE_EVAL_BROAD_TUI_SUMMARY_FIXTURE",
-        summary_path.into_os_string(),
-    )]);
-    let options = BroadTuiAttemptOptions::from_cli(
-        Some("google/gemini-2.5-flash".to_string()),
-        Some("google".to_string()),
-        Some(1),
-        Some(60),
-    )
-    .expect("google headless model selection");
-
-    let err = run_broad_headless_tui_attempt_with_options(&slot, &options)
-        .await
-        .expect_err("summary fixture returns a rejected broad-TUI attempt");
-    assert!(
-        err.to_string()
-            .contains("headless ploke-tui test fixture ended without an admissible edit"),
-        "unexpected fixture error: {err}"
-    );
-    let context = ploke_tui::llm::prototype1_trace_context_for_test()
-        .expect("broad direct-Google attempt must install Prototype 1 chat context");
-    assert_eq!(context.role, "parent");
-    assert_eq!(context.runtime_phase, "broad_headless_tui_attempt");
-    assert_eq!(
-        context.node_id,
-        slot.published.request().parent_node_id.as_str()
-    );
-    assert_eq!(
-        context.runtime_id.as_deref(),
-        Some(slot.published.request_id())
-    );
-}
-
-#[cfg(feature = "live_api_tests")]
-fn live_google_headless_tui_model_id() -> String {
-    let raw = std::env::var("PLOKE_EVAL_HEADLESS_TUI_GOOGLE_MODEL_ID")
-        .or_else(|_| std::env::var("PLOKE_LIVE_GOOGLE_CHAT_MODEL"))
-        .unwrap_or_else(|_| "google/gemini-2.5-flash".to_string());
-    if raw.contains('/') {
-        raw
-    } else {
-        format!("google/{raw}")
-    }
-}
-
 #[cfg(feature = "live_api_tests")]
 fn live_google_broad_headless_canary_base_dir_from_override(
     override_dir: Option<PathBuf>,
@@ -2386,13 +2873,6 @@ fn live_google_broad_headless_canary_base_dir_from_override(
             .join("probes")
             .join("live-google-broad-headless")
     })
-}
-
-#[cfg(feature = "live_api_tests")]
-fn live_google_broad_headless_canary_base_dir() -> PathBuf {
-    live_google_broad_headless_canary_base_dir_from_override(
-        std::env::var_os("PLOKE_EVAL_LIVE_TUI_CANARY_DIR").map(PathBuf::from),
-    )
 }
 
 #[cfg(feature = "live_api_tests")]
@@ -2409,191 +2889,6 @@ fn live_google_broad_headless_canary_default_root_is_durable() {
         !root.starts_with(std::env::temp_dir()),
         "default broad-headless Google preflight root should not use /tmp: {}",
         root.display()
-    );
-}
-
-#[cfg(feature = "live_api_tests")]
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "live direct-Google broad headless-TUI contract preflight; requires Google ADC/Vertex quota"]
-async fn live_google_direct_broad_headless_tui_rejects_applied_edit_missing_declared_validation() {
-    // regr:googlevertex:23-05-26_19-10 resolved 2026-06-02.
-    //
-    // This is the live contract preflight for the Prototype 1 published-request
-    // -> cli_facing runner -> tui_adapter -> vanilla ploke-tui llm_manager ->
-    // direct Google/Vertex OpenAI-compatible route. It intentionally asks for an
-    // edit without the request-declared validation commands, so the applied edit
-    // must be rejected as AppliedValidationMissing instead of being published.
-    // It is intentionally ignored because it spends live Google provider calls.
-    crate::test_support::install_default_google_route_env();
-    let model_id = live_google_headless_tui_model_id();
-    let options = BroadTuiAttemptOptions::from_cli(
-        Some(model_id.clone()),
-        Some("google".to_string()),
-        Some(1),
-        Some(240),
-    )
-    .expect("google model selection");
-    let model = options.model().expect("model selection");
-    assert!(matches!(
-        model.router(),
-        ploke_llm::router_only::RouterVariants::Google(_)
-    ));
-    assert!(model.provider().is_none());
-
-    let base = live_google_broad_headless_canary_base_dir();
-    let artifact_root = base.join(format!("run-{}", uuid::Uuid::new_v4().simple()));
-    fs::create_dir_all(&artifact_root).expect("create live artifact root");
-    println!(
-        "live Google broad headless-TUI artifacts: {}",
-        artifact_root.display()
-    );
-
-    let manifest_path = artifact_root.join("campaign.json");
-    let repo_root = artifact_root.join("repo");
-    init_indexed_repo(&repo_root);
-    fs::write(
-        repo_root.join("Cargo.toml"),
-        r#"[package]
-name = "ploke-eval-live-google-broad-headless"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-path = "src/lib.rs"
-"#,
-    )
-    .expect("write Cargo.toml");
-    write_surface_target(
-        &repo_root,
-        Path::new("src/lib.rs"),
-        r#"pub fn broad_surface_canary() -> &'static str {
-    "before"
-}
-"#,
-    );
-    index_repo(&repo_root);
-    commit_indexed_repo(&repo_root, "google broad headless fixture");
-
-    let publication = publish_broad_edit_harness_request_with_graph_limit(
-        &manifest_path,
-        &repo_root,
-        &test_parent_identity(),
-        Prototype1ChildBudget::new(1, 1),
-        test_broad_request_admission_binding(),
-        DEFAULT_GRAPH_NEAREST_ITEMS,
-        profile::AntiAttractorPolicy::None,
-    )
-    .expect("published broad harness request");
-    fs::write(
-        publication.published.prompt_path(),
-        r#"Call the apply_code_edit tool exactly once. Do not call any other tool. Do not answer in prose before the tool call.
-Use exactly this JSON payload:
-{"edits":[{"file":"src/lib.rs","canon":"crate::broad_surface_canary","node_type":"function","code":"pub fn broad_surface_canary() -> &'static str {\n    \"after\"\n}"}],"confidence":0.99}
-"#,
-    )
-    .expect("write live Google canary prompt");
-
-    let slot = HarnessRequestSlot {
-        request_path: publication.request_path.clone(),
-        published: publication.published,
-    };
-    let err = run_broad_headless_tui_attempt_with_options(&slot, &options)
-        .await
-        .expect_err("live canary must reject applied edit missing declared validation");
-    let detail = err.to_string();
-    assert!(
-        detail.contains("missing requested validation after applying proposal"),
-        "expected missing-validation rejection for '{}', got {detail}; artifacts at {}",
-        slot.request_path.display(),
-        artifact_root.display()
-    );
-    assert!(
-        detail.contains("cargo check -p ploke-eval")
-            && detail.contains("cargo test -p ploke-eval edit_surface"),
-        "expected declared validation commands in rejection, got {detail}; artifacts at {}",
-        artifact_root.display()
-    );
-    assert!(
-        !slot.published.submitted_result_path().exists(),
-        "missing-validation live run must not publish submitted result at {}; artifacts at {}",
-        slot.published.submitted_result_path().display(),
-        artifact_root.display()
-    );
-
-    let diagnostics_path =
-        broad_headless_tui_diagnostics_path(slot.published.submitted_result_path());
-    let diagnostics = fs::read(&diagnostics_path).unwrap_or_else(|err| {
-        panic!(
-            "missing headless diagnostics '{}': {err}; artifacts at {}",
-            diagnostics_path.display(),
-            artifact_root.display()
-        )
-    });
-    let diagnostics: tui_adapter::evidence::Summary = serde_json::from_slice(&diagnostics)
-        .unwrap_or_else(|err| {
-            panic!(
-                "invalid headless diagnostics '{}': {err}; artifacts at {}",
-                diagnostics_path.display(),
-                artifact_root.display()
-            )
-        });
-    let terminal = diagnostics
-        .terminal
-        .as_ref()
-        .expect("headless diagnostics should include terminal");
-    assert!(
-        matches!(
-            terminal,
-            tui_adapter::evidence::Terminal::AppliedValidationMissing { missing, changed_paths, .. }
-                if missing.iter().any(|item| item == "cargo check -p ploke-eval")
-                    && missing.iter().any(|item| item == "cargo test -p ploke-eval edit_surface")
-                    && changed_paths.iter().any(|path| path.ends_with("src/lib.rs"))
-        ),
-        "expected AppliedValidationMissing terminal in diagnostics; got {:?}; artifacts at {}",
-        terminal,
-        artifact_root.display()
-    );
-    let requested_tools = diagnostics
-        .events
-        .iter()
-        .filter_map(|event| match event {
-            tui_adapter::evidence::Event::ToolRequest { tool, .. } => Some(tool.as_str()),
-            _ => None,
-        })
-        .collect::<Vec<_>>();
-    assert!(
-        requested_tools.contains(&"apply_code_edit"),
-        "expected apply_code_edit tool request, got {requested_tools:?}; artifacts at {}",
-        artifact_root.display()
-    );
-    assert!(
-        diagnostics.events.iter().any(|event| matches!(
-            event,
-            tui_adapter::evidence::Event::Turn { outcome, .. } if outcome == "completed"
-        )),
-        "expected completed chat turn in diagnostics; artifacts at {}",
-        artifact_root.display()
-    );
-
-    let outcome = GitWorktreeBackend
-        .validate_tui_attempt(&repo_root, &slot.published)
-        .expect("validate broad headless-TUI workspace");
-    let diff = match outcome {
-        TuiAttemptOutcome::Accepted(diff) => diff,
-        TuiAttemptOutcome::Rejected(rejection) => {
-            panic!(
-                "expected accepted broad headless-TUI workspace, got {rejection:?}; artifacts at {}",
-                artifact_root.display()
-            )
-        }
-    };
-    assert_eq!(diff.changed_paths(), &[PathBuf::from("src/lib.rs")]);
-    let final_lib = fs::read_to_string(slot.published.workspace_path().join("src/lib.rs"))
-        .expect("read candidate src/lib.rs");
-    assert!(
-        final_lib.contains("\"after\"") && !final_lib.contains("\"before\""),
-        "expected Google-applied sentinel edit, got:\n{final_lib}\nartifacts at {}",
-        artifact_root.display()
     );
 }
 
@@ -2648,14 +2943,19 @@ async fn live_broad_headless_tui_attempt_from_published_request_env() {
         )
     });
 
-    let executor = run_broad_headless_tui_attempt_with_options(&slot, &options)
-        .await
-        .unwrap_or_else(|err| {
-            panic!(
-                "published broad headless-TUI attempt failed for '{}': {err}",
-                request_path.display()
-            )
-        });
+    let executor = run_broad_headless_tui_attempt_with_options(
+        &slot,
+        &options,
+        None,
+        profile::EvalStorageBackend::Fs,
+    )
+    .await
+    .unwrap_or_else(|err| {
+        panic!(
+            "published broad headless-TUI attempt failed for '{}': {err}",
+            request_path.display()
+        )
+    });
 
     let outcome = GitWorktreeBackend
         .validate_tui_attempt(
@@ -2708,7 +3008,7 @@ fn broad_harness_rejects_unbound_existing_child_plan() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         parent,
@@ -2759,6 +3059,12 @@ fn broad_harness_child_requires_request_bound_evidence() {
 fn broad_harness_multi_file_admission_mints_one_artifact_child() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+    ploke_db::Database::new_init()
+        .expect("empty eval db")
+        .write_backup_to_path(&db_path)
+        .expect("seed owner eval db");
     let repo_root = tmp.path().join("repo");
     let changed_paths = {
         let allowed = write_broad_surface_targets(&repo_root);
@@ -2773,7 +3079,6 @@ fn broad_harness_multi_file_admission_mints_one_artifact_child() {
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
         DEFAULT_GRAPH_NEAREST_ITEMS,
-        profile::AntiAttractorPolicy::None,
     )
     .expect("published request");
     let awaiting_parent = parent.awaiting_harness_plan_for_request((&publication.published).into());
@@ -2813,7 +3118,7 @@ fn broad_harness_multi_file_admission_mints_one_artifact_child() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         receipt,
@@ -2862,6 +3167,567 @@ fn broad_harness_multi_file_admission_mints_one_artifact_child() {
     assert_eq!(c2.artifact().repo_root(), candidate_root.as_path());
     assert_eq!(c2.node().workspace_root, candidate_root);
     assert_eq!(c2.request().workspace_root, c2.node().workspace_root);
+    let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "artifact_id".to_string(),
+        cozo::DataValue::from(admitted_derived.to_string()),
+    );
+    let artifacts = db
+        .raw_query_params(
+            r#"
+?[
+    artifact_id,
+    source,
+    store_scope,
+    created_by,
+    parent_artifact_id,
+    tree_hash
+] :=
+    *eval_artifact {
+        artifact_id,
+        source,
+        store_scope,
+        created_by,
+        parent_artifact_id,
+        tree_hash
+    },
+    artifact_id = $artifact_id
+"#,
+            params.clone(),
+        )
+        .expect("query artifact provenance");
+    assert_eq!(artifacts.rows.len(), 1);
+    let artifact_row = artifacts.row_refs().next().expect("artifact row");
+    assert_eq!(
+        artifact_row.get::<String>("source").expect("source"),
+        "broad_harness"
+    );
+    assert_eq!(
+        artifact_row
+            .get::<String>("store_scope")
+            .expect("store scope"),
+        "parent"
+    );
+    assert_eq!(
+        artifact_row
+            .get::<String>("created_by")
+            .expect("created by"),
+        child.node_record().node_id
+    );
+    assert_eq!(
+        artifact_row
+            .get::<String>("parent_artifact_id")
+            .expect("parent artifact"),
+        evidence
+            .artifact()
+            .expect("artifact evidence")
+            .base_artifact_id
+            .to_string()
+    );
+    assert!(
+        !artifact_row
+            .get::<String>("tree_hash")
+            .expect("tree hash")
+            .is_empty()
+    );
+    let surfaces = db
+        .raw_query_params(
+            r#"
+?[
+    artifact_id,
+    surface_hash,
+    source_ref
+] :=
+    *eval_artifact_surface {
+        artifact_id,
+        surface_hash,
+        source_ref
+    },
+    artifact_id = $artifact_id
+"#,
+            params.clone(),
+        )
+        .expect("query artifact surface");
+    assert_eq!(surfaces.rows.len(), 1);
+    let surface_row = surfaces.row_refs().next().expect("surface row");
+    assert!(
+        !surface_row
+            .get::<String>("surface_hash")
+            .expect("surface hash")
+            .is_empty()
+    );
+    assert!(
+        surface_row
+            .get::<String>("source_ref")
+            .expect("source ref")
+            .contains(&candidate_root.display().to_string())
+    );
+    let refs = db
+        .raw_query_params(
+            r#"
+?[
+    artifact_id,
+    kind,
+    source_ref,
+    content_sha256
+] :=
+    *eval_artifact_ref {
+        artifact_id,
+        kind,
+        source_ref,
+        content_sha256
+    },
+    artifact_id = $artifact_id
+"#,
+            params,
+        )
+        .expect("query artifact refs");
+    assert_eq!(refs.rows.len(), 1);
+    let ref_row = refs.row_refs().next().expect("artifact ref row");
+    assert_eq!(
+        ref_row.get::<String>("kind").expect("kind"),
+        "broad_harness_child_artifact"
+    );
+    assert!(
+        !ref_row
+            .get::<String>("content_sha256")
+            .expect("content hash")
+            .is_empty()
+    );
+
+    let patch_id = child
+        .node_record()
+        .patch_id
+        .as_ref()
+        .expect("child patch id")
+        .to_string();
+    let apply_id = child
+        .resolved()
+        .branch
+        .apply_id
+        .as_ref()
+        .expect("child apply id")
+        .clone();
+    let base_artifact = evidence
+        .artifact()
+        .expect("artifact evidence")
+        .base_artifact_id
+        .to_string();
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "patch_id".to_string(),
+        cozo::DataValue::from(patch_id.clone()),
+    );
+    let operations = db
+        .raw_query_params(
+            r#"
+?[
+    operation_id,
+    generator_id,
+    target_kind,
+    target_ref,
+    procedure_id,
+    output_artifact_id,
+    output_patch_id
+] :=
+    *eval_operation {
+        operation_id,
+        generator_id,
+        target_kind,
+        target_ref,
+        procedure_id,
+        output_artifact_id,
+        output_patch_id
+    },
+    output_patch_id = $patch_id
+"#,
+            params.clone(),
+        )
+        .expect("query operation provenance");
+    assert_eq!(operations.rows.len(), 1);
+    let operation_row = operations.row_refs().next().expect("operation row");
+    assert!(
+        !operation_row
+            .get::<String>("operation_id")
+            .expect("operation id")
+            .is_empty()
+    );
+    assert_eq!(
+        operation_row
+            .get::<String>("generator_id")
+            .expect("generator"),
+        child.node_record().instance_id
+    );
+    assert_eq!(
+        operation_row
+            .get::<String>("target_kind")
+            .expect("target kind"),
+        "artifact"
+    );
+    assert_eq!(
+        operation_row
+            .get::<String>("target_ref")
+            .expect("target ref"),
+        base_artifact
+    );
+    assert_eq!(
+        operation_row
+            .get::<String>("procedure_id")
+            .expect("procedure id"),
+        child.resolved().branch.synthesized_spec_id
+    );
+    assert_eq!(
+        operation_row
+            .get::<String>("output_artifact_id")
+            .expect("output artifact"),
+        admitted_derived.to_string()
+    );
+    assert_eq!(
+        operation_row
+            .get::<String>("output_patch_id")
+            .expect("output patch"),
+        patch_id
+    );
+
+    let patches = db
+        .raw_query_params(
+            r#"
+?[
+    patch_id,
+    base_artifact_id,
+    creator_id,
+    target_relpath,
+    patch_ref,
+    content_sha256,
+    status
+] :=
+    *eval_patch {
+        patch_id,
+        base_artifact_id,
+        creator_id,
+        target_relpath,
+        patch_ref,
+        content_sha256,
+        status
+    },
+    patch_id = $patch_id
+"#,
+            params.clone(),
+        )
+        .expect("query patch provenance");
+    assert_eq!(patches.rows.len(), 1);
+    let patch_row = patches.row_refs().next().expect("patch row");
+    assert_eq!(
+        patch_row
+            .get::<String>("base_artifact_id")
+            .expect("base artifact"),
+        base_artifact
+    );
+    assert_eq!(
+        patch_row.get::<String>("creator_id").expect("creator"),
+        child.node_record().instance_id
+    );
+    assert_eq!(
+        patch_row
+            .get::<String>("target_relpath")
+            .expect("target relpath"),
+        child.resolved().target_relpath.display().to_string()
+    );
+    assert_eq!(
+        patch_row.get::<String>("patch_ref").expect("patch ref"),
+        apply_id
+    );
+    assert_eq!(
+        patch_row
+            .get::<String>("content_sha256")
+            .expect("content hash"),
+        eval_store::content_sha256(&child.resolved().branch.proposed_content)
+    );
+    assert_eq!(
+        patch_row.get::<String>("status").expect("status"),
+        "applied"
+    );
+
+    let mut params = std::collections::BTreeMap::new();
+    params.insert("apply_id".to_string(), cozo::DataValue::from(apply_id));
+    let applies = db
+        .raw_query_params(
+            r#"
+?[
+    apply_id,
+    patch_id,
+    runtime_id,
+    artifact_id,
+    outcome,
+    output_artifact_id
+] :=
+    *eval_apply_event {
+        apply_id,
+        patch_id,
+        runtime_id,
+        artifact_id,
+        outcome,
+        output_artifact_id
+    },
+    apply_id = $apply_id
+"#,
+            params,
+        )
+        .expect("query apply event");
+    assert_eq!(applies.rows.len(), 1);
+    let apply_row = applies.row_refs().next().expect("apply event row");
+    assert_eq!(
+        apply_row.get::<String>("patch_id").expect("patch"),
+        patch_id
+    );
+    assert_eq!(
+        apply_row.get::<String>("runtime_id").expect("runtime"),
+        child.node_record().instance_id
+    );
+    assert_eq!(
+        apply_row
+            .get::<String>("artifact_id")
+            .expect("input artifact"),
+        base_artifact
+    );
+    assert_eq!(
+        apply_row.get::<String>("outcome").expect("outcome"),
+        "applied"
+    );
+    assert_eq!(
+        apply_row
+            .get::<String>("output_artifact_id")
+            .expect("output artifact"),
+        admitted_derived.to_string()
+    );
+}
+
+#[test]
+fn broad_harness_eval_store_rows_do_not_replace_missing_candidate_workspace() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let changed_paths = {
+        let allowed = write_broad_surface_targets(&repo_root);
+        commit_indexed_repo(&repo_root, "broad surface fixture");
+        vec![allowed[0].clone(), allowed[1].clone()]
+    };
+    let parent = ready_parent_for_test(&manifest_path, &repo_root);
+    let publication = publish_broad_edit_harness_request_with_graph_limit(
+        &manifest_path,
+        &repo_root,
+        parent.identity(),
+        Prototype1ChildBudget::new(1, 1),
+        test_broad_request_admission_binding(),
+        DEFAULT_GRAPH_NEAREST_ITEMS,
+    )
+    .expect("published request");
+    let awaiting_parent = parent.awaiting_harness_plan_for_request((&publication.published).into());
+    let receipt = HarnessRequestReceipt {
+        parent: awaiting_parent,
+        request_path: publication.request_path,
+        published: publication.published,
+    };
+    let candidate_root = receipt.published.workspace_path().to_path_buf();
+    GitWorktreeBackend
+        .prepare_broad_harness_workspace(&repo_root, &receipt.published)
+        .expect("prepare broad harness workspace");
+    for relpath in &changed_paths {
+        write_surface_target(
+            &candidate_root,
+            relpath,
+            &format!("candidate edit for {}\n", relpath.display()),
+        );
+    }
+    let submitted = submitted_broad_harness_result_for_paths(&receipt.published, &changed_paths);
+    let admitted = GitWorktreeBackend
+        .admit_submitted_broad_harness_result(
+            &repo_root,
+            EditSurfaceAdmission::new(
+                receipt.published.admission_binding().coordinate().clone(),
+                SurfacePolicyId::new(receipt.published.admission_binding().policy_id().as_str()),
+            ),
+            &receipt.published,
+            &submitted,
+        )
+        .expect("admit broad harness result");
+    let base_artifact = admitted.base_artifact_id().to_string();
+    let admitted_derived = admitted.derived_artifact_id().clone();
+    let surface_hash =
+        eval_store::artifact_surface_hash(admitted.artifact_surface()).expect("surface hash");
+
+    let child_plan = publish_broad_harness_child_plan_from_admitted(
+        ChildPlanEnv {
+            campaign_id: &CLI_TEST_CAMPAIGN,
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
+            route_source: ModelRouteSource::DirectGoogle,
+        },
+        receipt,
+        admitted,
+    )
+    .expect("multi-file admitted transaction should mint one child artifact");
+    let child = &child_plan.plan.body().children()[0];
+    let evidence = child.harness_evidence().expect("harness evidence");
+    let patch_id = child
+        .node_record()
+        .patch_id
+        .as_ref()
+        .expect("child patch id")
+        .to_string();
+    let apply_id = child
+        .resolved()
+        .branch
+        .apply_id
+        .as_ref()
+        .expect("child apply id")
+        .clone();
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    eval_store::write_artifact_provenance_to_owner_db(
+        &db_path,
+        eval_store::ArtifactProvenanceEvidence {
+            artifact: eval_store::ArtifactEvidence {
+                campaign_id: CLI_TEST_CAMPAIGN.clone(),
+                artifact_id: admitted_derived.to_string(),
+                tree_hash: Some(format!("{:?}", evidence.artifact_surface().tree_key())),
+                git_branch: None,
+                git_commit: None,
+                source: "broad_harness".to_string(),
+                store_scope: "parent".to_string(),
+                created_by: Some(child.node_record().node_id.clone()),
+                parent_artifact_id: Some(base_artifact.clone()),
+            },
+            surface: Some(eval_store::ArtifactSurfaceEvidence {
+                campaign_id: CLI_TEST_CAMPAIGN.clone(),
+                artifact_id: admitted_derived.to_string(),
+                immutable_root: None,
+                mutated_root: None,
+                ambient_root: None,
+                surface_hash: Some(surface_hash.clone()),
+                source_ref: Some(format!(
+                    "broad_harness:workspace:{}",
+                    candidate_root.display()
+                )),
+                recorded_at: Some("2026-06-23T00:00:00Z".to_string()),
+            }),
+            refs: vec![eval_store::ArtifactRefEvidence {
+                campaign_id: CLI_TEST_CAMPAIGN.clone(),
+                artifact_id: Some(admitted_derived.to_string()),
+                kind: "broad_harness_child_artifact".to_string(),
+                source_ref: format!("broad_harness:workspace:{}", candidate_root.display()),
+                content_sha256: Some(surface_hash),
+                recorded_at: Some("2026-06-23T00:00:00Z".to_string()),
+            }],
+        },
+    )
+    .expect("seed artifact provenance rows");
+    eval_store::write_operation_provenance_to_owner_db(
+        &db_path,
+        eval_store::OperationProvenanceEvidence {
+            operation: eval_store::OperationEvidence {
+                campaign_id: CLI_TEST_CAMPAIGN.clone(),
+                generator_id: child.node_record().instance_id.clone(),
+                target_kind: "artifact".to_string(),
+                target_ref: base_artifact.clone(),
+                procedure_id: Some(child.resolved().branch.synthesized_spec_id.clone()),
+                output_artifact_id: Some(admitted_derived.to_string()),
+                output_patch_id: Some(patch_id.clone()),
+                recorded_at: Some("2026-06-23T00:00:00Z".to_string()),
+            },
+            patch: eval_store::PatchEvidence {
+                campaign_id: CLI_TEST_CAMPAIGN.clone(),
+                patch_id: patch_id.clone(),
+                base_artifact_id: Some(base_artifact),
+                creator_id: Some(child.node_record().instance_id.clone()),
+                tool_call_id: None,
+                target_relpath: Some(child.resolved().target_relpath.display().to_string()),
+                patch_ref: Some(apply_id.clone()),
+                content_sha256: Some(eval_store::content_sha256(
+                    &child.resolved().branch.proposed_content,
+                )),
+                status: Some("applied".to_string()),
+            },
+            apply_event: eval_store::ApplyEventEvidence {
+                campaign_id: CLI_TEST_CAMPAIGN.clone(),
+                apply_id: apply_id.clone(),
+                patch_id: patch_id.clone(),
+                runtime_id: Some(child.node_record().instance_id.clone()),
+                artifact_id: child
+                    .node_record()
+                    .base_artifact_id
+                    .as_ref()
+                    .map(|id| id.to_string()),
+                outcome: "applied".to_string(),
+                output_artifact_id: Some(admitted_derived.to_string()),
+                recorded_at: "2026-06-23T00:00:00Z".to_string(),
+            },
+        },
+    )
+    .expect("seed operation provenance rows");
+    fs::remove_dir_all(&candidate_root).expect("remove candidate workspace");
+
+    let mut journal = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path));
+    let c1 = C1::from_child_plan(
+        "campaign",
+        manifest_path.clone(),
+        child.node_record().clone(),
+        child.runner_request().clone(),
+        child.resolved().clone(),
+        repo_root,
+    )
+    .expect("load c1");
+    let err = MaterializeBranch::new()
+        .transition_with_harness(c1, evidence, &mut journal)
+        .expect_err("DB artifact rows cannot replace the candidate workspace");
+
+    match err {
+        CommitError::Transition(MaterializeBranchError::HarnessWorkspaceMissing {
+            node_id,
+            path,
+        }) => {
+            assert_eq!(node_id, child.node_record().node_id);
+            assert_eq!(path, candidate_root);
+        }
+        other => panic!("unexpected materialization error: {other:?}"),
+    }
+    let entries = journal.load_entries().expect("journal entries");
+    assert!(
+        entries.is_empty(),
+        "workspace authority failure must occur before C1 journal commits"
+    );
+    let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "artifact_id".to_string(),
+        cozo::DataValue::from(admitted_derived.to_string()),
+    );
+    let rows = db
+        .raw_query_params(
+            r#"
+?[artifact_id] :=
+    *eval_artifact { artifact_id },
+    artifact_id = $artifact_id
+"#,
+            params,
+        )
+        .expect("query seeded artifact row");
+    assert_eq!(rows.rows.len(), 1);
+    let mut params = std::collections::BTreeMap::new();
+    params.insert("apply_id".to_string(), cozo::DataValue::from(apply_id));
+    let rows = db
+        .raw_query_params(
+            r#"
+?[apply_id, patch_id] :=
+    *eval_apply_event { apply_id, patch_id },
+    apply_id = $apply_id
+"#,
+            params,
+        )
+        .expect("query seeded apply event row");
+    assert_eq!(rows.rows.len(), 1);
 }
 
 #[test]
@@ -2883,7 +3749,6 @@ fn broad_harness_child_plan_skips_missing_source_admitted_result_when_min_remain
         parent,
         budget,
         broad_tui,
-        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     assert_eq!(batch.slots.len(), 3);
@@ -2906,7 +3771,7 @@ fn broad_harness_child_plan_skips_missing_source_admitted_result_when_min_remain
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui,
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -2953,7 +3818,6 @@ fn broad_harness_materialization_accepts_relative_parent_repo_root() {
         Prototype1ChildBudget::new(1, 1),
         admission_binding.clone(),
         DEFAULT_GRAPH_NEAREST_ITEMS,
-        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad request");
     let awaiting_parent = parent.awaiting_harness_plan_for_request((&publication.published).into());
@@ -2992,7 +3856,7 @@ fn broad_harness_materialization_accepts_relative_parent_repo_root() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         receipt,
@@ -3049,7 +3913,6 @@ async fn broad_harness_batch_admits_three_transactions_into_three_children() {
         parent,
         budget,
         profile::BroadTui::default(),
-        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     assert_eq!(batch.patch_generation_parallel_cap, 2);
@@ -3074,7 +3937,7 @@ async fn broad_harness_batch_admits_three_transactions_into_three_children() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -3165,7 +4028,6 @@ async fn broad_slots_run_in_parallel() {
         parent,
         budget,
         profile::BroadTui::default(),
-        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     assert_eq!(batch.patch_generation_parallel_cap, 2);
@@ -3176,27 +4038,36 @@ async fn broad_slots_run_in_parallel() {
     );
     assert_eq!(count_broad_requests(&manifest_path), 2);
 
-    let receipt = admit_broad_harness_batch(
+    let result = admit_broad_harness_batch(
         ChildPlanEnv {
             campaign_id: &CLI_TEST_CAMPAIGN,
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
     )
-    .await
-    .expect(
-        "fixture-backed parallel zero-admission slots should publish a rejected-only child plan",
-    );
-    assert!(receipt.plan.body().children().is_empty());
-    assert_eq!(
-        receipt.rejected_surface_attempts.len(),
-        2,
-        "both concurrently-started slots should be returned as rejected parent-readable evidence"
-    );
+    .await;
+    let err = match result {
+        Ok(_) => panic!("fixture-backed parallel slots should not produce runnable children"),
+        Err(err) => err,
+    };
+    let PrepareError::ChildPlanBelowMinimum {
+        runnable_children,
+        required_min,
+        attempted_slots,
+        accepted_results,
+        ..
+    } = err
+    else {
+        panic!("unexpected error: {err:?}");
+    };
+    assert_eq!(runnable_children, 0);
+    assert_eq!(required_min, 2);
+    assert_eq!(attempted_slots, 2);
+    assert_eq!(accepted_results, 0);
 
     for slot_index in [0, 1] {
         assert!(
@@ -3263,7 +4134,6 @@ async fn provider_unavailable_after_partial_admissions_persists_failed_child_pla
         parent,
         budget,
         profile::BroadTui::default(),
-        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     assert_eq!(batch.slots.len(), 5);
@@ -3283,7 +4153,7 @@ async fn provider_unavailable_after_partial_admissions_persists_failed_child_pla
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -3336,7 +4206,7 @@ async fn provider_unavailable_after_partial_admissions_persists_failed_child_pla
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         resumed_parent,
@@ -3391,7 +4261,6 @@ async fn provider_unavailable_after_min_admitted_returns_published_plan() {
         parent,
         budget,
         profile::BroadTui::default(),
-        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     assert_eq!(batch.slots.len(), 5);
@@ -3411,7 +4280,7 @@ async fn provider_unavailable_after_min_admitted_returns_published_plan() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::OpenRouter,
         },
         batch,
@@ -3469,7 +4338,6 @@ async fn database_setup_fatal_after_min_admitted_returns_published_plan() {
         parent,
         budget,
         profile::BroadTui::default(),
-        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     assert_eq!(batch.slots.len(), 5);
@@ -3489,7 +4357,7 @@ async fn database_setup_fatal_after_min_admitted_returns_published_plan() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::OpenRouter,
         },
         batch,
@@ -3562,7 +4430,6 @@ async fn provider_unavailable_with_parallel_slots_aborts_without_corrupting_plan
         parent,
         budget,
         profile::BroadTui::default(),
-        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     assert_eq!(batch.patch_generation_parallel_cap, 2);
@@ -3574,7 +4441,7 @@ async fn provider_unavailable_with_parallel_slots_aborts_without_corrupting_plan
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -3609,83 +4476,6 @@ async fn provider_unavailable_with_parallel_slots_aborts_without_corrupting_plan
         1,
         "only the observed (non-aborted) slot should appear as parent-readable evidence: {:#?}",
         body.rejected_surface_attempts()
-    );
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn completed_without_edit_zero_admission_returns_rejected_only_plan_without_failed_parent() {
-    let tmp = tempfile::tempdir().expect("tempdir");
-    let manifest_path = tmp.path().join("campaign.json");
-    let repo_root = tmp.path().join("repo");
-    let completed_fixture = tmp.path().join("completed-without-edit.headless-tui.json");
-    write_json_file_pretty(
-        &completed_fixture,
-        &serde_json::json!({
-            "attempts": [],
-            "terminal": {
-                "terminal": "completed_without_edit",
-                "outcome": "completed",
-                "summary": "Request summary: [success]"
-            }
-        }),
-    )
-    .expect("write completed-without-edit fixture");
-    let _env = crate::test_support::env_guard_os(vec![
-        ("PLOKE_EVAL_BROAD_TUI_SLOT_LIMIT", "1".into()),
-        (
-            "PLOKE_EVAL_BROAD_TUI_SUMMARY_FIXTURE",
-            completed_fixture.into_os_string(),
-        ),
-    ]);
-
-    write_broad_surface_targets(&repo_root);
-    commit_indexed_repo(&repo_root, "completed without edit fixture");
-    let parent: Parent<Ready> = ready_parent_for_test(&manifest_path, &repo_root);
-    let parent_identity = parent.identity().clone();
-    let budget = Prototype1ChildBudget::new(1, 1).with_parallel_targets(1);
-    let batch = publish_broad_harness_child_plan_request(
-        &manifest_path,
-        &repo_root,
-        parent,
-        budget,
-        profile::BroadTui::default(),
-        profile::AntiAttractorPolicy::None,
-    )
-    .expect("publish broad harness batch");
-
-    let receipt = admit_broad_harness_batch(
-        ChildPlanEnv {
-            campaign_id: &CLI_TEST_CAMPAIGN,
-            manifest_path: &manifest_path,
-            repo_root: &repo_root,
-            broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
-            route_source: ModelRouteSource::DirectGoogle,
-        },
-        batch,
-    )
-    .await
-    .expect("completed-without-edit zero admission should return a rejected-only child plan");
-
-    assert!(receipt.plan.body().children().is_empty());
-    assert_eq!(receipt.rejected_surface_attempts.len(), 1);
-    assert!(
-        receipt.rejected_surface_attempts.iter().any(|attempt| {
-            matches!(
-                &attempt.outcome,
-                surface_attempt::Outcome::Rejected { reason }
-                    if reason.contains("completed without edit")
-            )
-        }),
-        "completed-without-edit diagnostics should be preserved as rejected attempt evidence: {:?}",
-        receipt.rejected_surface_attempts
-    );
-
-    let node_record = load_test_node_record(&manifest_path, parent_identity.node_id());
-    assert_ne!(
-        node_record.status,
-        Prototype1NodeStatus::Failed,
-        "non-fatal completed-without-edit exhaustion must not permanently fail the parent"
     );
 }
 
@@ -3728,7 +4518,6 @@ async fn provider_unavailable_with_google_direct_permanently_fails_parent() {
         parent,
         budget,
         profile::BroadTui::default(),
-        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
 
@@ -3747,7 +4536,7 @@ async fn provider_unavailable_with_google_direct_permanently_fails_parent() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -3784,7 +4573,7 @@ async fn provider_unavailable_with_google_direct_permanently_fails_parent() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         resumed_parent,
@@ -3838,7 +4627,6 @@ async fn provider_unavailable_without_google_direct_keeps_parent_resumable() {
         parent,
         budget,
         profile::BroadTui::default(),
-        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
 
@@ -3859,7 +4647,7 @@ async fn provider_unavailable_without_google_direct_keeps_parent_resumable() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::OpenRouter,
         },
         batch,
@@ -3905,7 +4693,6 @@ async fn provider_unavailable_without_google_direct_keeps_parent_resumable() {
         resumed_parent,
         budget,
         profile::BroadTui::default(),
-        profile::AntiAttractorPolicy::None,
     )
     .expect("resume should re-publish a fresh broad batch");
     assert!(!resumed_batch.slots.is_empty());
@@ -3941,7 +4728,6 @@ async fn child_fanout_is_parallel() {
         parent,
         budget,
         profile::BroadTui::default(),
-        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     assert_eq!(batch.patch_generation_parallel_cap, 2);
@@ -3960,7 +4746,7 @@ async fn child_fanout_is_parallel() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -4087,6 +4873,12 @@ fn local_node(mut node: Prototype1NodeRecord, manifest_path: &Path) -> Prototype
 async fn child_build_promotes_binary_and_cleans_scratch() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+    ploke_db::Database::new_init()
+        .expect("empty eval db")
+        .write_backup_to_path(&db_path)
+        .expect("seed owner eval db");
     let repo_root = tmp.path().join("repo");
     let fake_bin = tmp.path().join("fake-bin");
     let path = install_fake_cargo(&fake_bin, "#!/bin/sh\nexit 0\n");
@@ -4103,7 +4895,6 @@ async fn child_build_promotes_binary_and_cleans_scratch() {
         parent,
         budget,
         profile::BroadTui::default(),
-        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
@@ -4113,7 +4904,7 @@ async fn child_build_promotes_binary_and_cleans_scratch() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -4160,6 +4951,278 @@ async fn child_build_promotes_binary_and_cleans_scratch() {
     assert!(
         !node.node_dir.join("target").exists(),
         "temporary child build target should be removed after a successful build"
+    );
+
+    let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "node_id".to_string(),
+        cozo::DataValue::from(node.node_id.clone()),
+    );
+    let builds = db
+        .raw_query_params(
+            r#"
+?[
+    build_id,
+    node_id,
+    artifact_id,
+    phase,
+    outcome,
+    binary_ref
+] :=
+    *eval_build_event {
+        build_id,
+        node_id,
+        artifact_id,
+        phase,
+        outcome,
+        binary_ref
+    },
+    node_id = $node_id
+"#,
+            params,
+        )
+        .expect("query build event");
+    assert_eq!(builds.rows.len(), 1);
+    let build_row = builds.row_refs().next().expect("build row");
+    assert_eq!(build_row.get::<String>("phase").expect("phase"), "promote");
+    assert_eq!(
+        build_row.get::<String>("outcome").expect("outcome"),
+        "built"
+    );
+    assert_eq!(
+        build_row.get::<String>("artifact_id").expect("artifact id"),
+        node.derived_artifact_id
+            .expect("derived artifact")
+            .to_string()
+    );
+    let binary_ref_id = build_row
+        .get::<String>("binary_ref")
+        .expect("binary ref id");
+    assert!(!binary_ref_id.is_empty());
+
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "binary_ref_id".to_string(),
+        cozo::DataValue::from(binary_ref_id),
+    );
+    let binaries = db
+        .raw_query_params(
+            r#"
+?[
+    binary_ref_id,
+    artifact_id,
+    source_ref,
+    content_sha256
+] :=
+    *eval_binary_ref {
+        binary_ref_id,
+        artifact_id,
+        source_ref,
+        content_sha256
+    },
+    binary_ref_id = $binary_ref_id
+"#,
+            params,
+        )
+        .expect("query binary ref");
+    assert_eq!(binaries.rows.len(), 1);
+    let binary_row = binaries.row_refs().next().expect("binary row");
+    assert_eq!(
+        binary_row.get::<String>("source_ref").expect("source ref"),
+        outcome.binary_path.display().to_string()
+    );
+    assert!(
+        !binary_row
+            .get::<String>("content_sha256")
+            .expect("binary hash")
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn binary_ref_rows_do_not_replace_missing_promoted_binary() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    let fake_bin = tmp.path().join("fake-bin");
+    let path = install_fake_cargo(&fake_bin, "#!/bin/sh\nexit 0\n");
+    let _env = crate::test_support::env_guard_os(vec![("PATH", path)]);
+
+    let allowed = write_broad_surface_targets(&repo_root);
+    commit_indexed_repo(&repo_root, "broad surface fixture");
+    let parent = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
+    let budget = Prototype1ChildBudget::new(1, 1);
+    let batch = publish_broad_harness_child_plan_request(
+        &manifest_path,
+        &repo_root,
+        parent,
+        budget,
+        profile::BroadTui::default(),
+    )
+    .expect("publish broad harness batch");
+    submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
+    let receipt = admit_broad_harness_batch(
+        ChildPlanEnv {
+            campaign_id: &CLI_TEST_CAMPAIGN,
+            manifest_path: &manifest_path,
+            repo_root: &repo_root,
+            broad_tui: profile::BroadTui::default(),
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
+            route_source: ModelRouteSource::DirectGoogle,
+        },
+        batch,
+    )
+    .await
+    .expect("admit one child");
+    let child = receipt.plan.body().children()[0].clone();
+    let baseline = CompleteBaseline::complete(
+        CampaignId::from("campaign"),
+        parent_identity.node_id().to_string(),
+        parent_identity.branch_id().to_string(),
+        "eval-set".to_string(),
+        vec![BaselineInstance {
+            instance_id: parent_identity
+                .instance_id()
+                .expect("test parent instance")
+                .to_string(),
+            registration_path: None,
+            record_path: tmp.path().join("baseline-record.json.gz"),
+            metrics: test_metrics(false, true, 0),
+        }],
+    )
+    .expect("complete baseline");
+
+    let outcome = run_planned_child(
+        CampaignId::from("campaign"),
+        manifest_path.clone(),
+        repo_root,
+        prototype1_transition_journal_path(&manifest_path),
+        parent_identity,
+        baseline,
+        Arc::new(Mutex::new(())),
+        Prototype1StateStopAfter::Build,
+        Duration::from_secs(30),
+        0,
+        child.clone(),
+    )
+    .expect("build child with fake cargo");
+    assert!(outcome.binary_path.is_file());
+    let binary_hash = eval_store::file_sha256(&outcome.binary_path).expect("binary hash");
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    eval_store::write_build_provenance_to_owner_db(
+        &db_path,
+        eval_store::BuildProvenanceEvidence {
+            binary_ref: eval_store::BinaryRefEvidence {
+                campaign_id: CLI_TEST_CAMPAIGN.clone(),
+                artifact_id: child
+                    .node_record()
+                    .derived_artifact_id
+                    .as_ref()
+                    .map(|id| id.to_string()),
+                built_by: None,
+                source_ref: outcome.binary_path.display().to_string(),
+                content_sha256: Some(binary_hash.clone()),
+                protocol_digest: None,
+                recorded_at: Some("2026-06-23T00:00:00Z".to_string()),
+            },
+            build_event: eval_store::BuildEventEvidence {
+                campaign_id: CLI_TEST_CAMPAIGN.clone(),
+                node_id: child.node_record().node_id.clone(),
+                runtime_id: None,
+                artifact_id: child
+                    .node_record()
+                    .derived_artifact_id
+                    .as_ref()
+                    .map(|id| id.to_string()),
+                phase: "promote".to_string(),
+                outcome: "built".to_string(),
+                binary_ref: None,
+                log_ref: None,
+                recorded_at: "2026-06-23T00:00:00Z".to_string(),
+            },
+        },
+    )
+    .expect("seed binary provenance rows");
+    eval_store::write_build_provenance_to_owner_db(
+        &db_path,
+        eval_store::BuildProvenanceEvidence {
+            binary_ref: eval_store::BinaryRefEvidence {
+                campaign_id: CLI_TEST_CAMPAIGN.clone(),
+                artifact_id: child
+                    .node_record()
+                    .derived_artifact_id
+                    .as_ref()
+                    .map(|id| id.to_string()),
+                built_by: Some("runtime-seeded-spawn".to_string()),
+                source_ref: outcome.binary_path.display().to_string(),
+                content_sha256: Some(binary_hash),
+                protocol_digest: None,
+                recorded_at: Some("2026-06-23T00:00:00Z".to_string()),
+            },
+            build_event: eval_store::BuildEventEvidence {
+                campaign_id: CLI_TEST_CAMPAIGN.clone(),
+                node_id: child.node_record().node_id.clone(),
+                runtime_id: Some("runtime-seeded-spawn".to_string()),
+                artifact_id: child
+                    .node_record()
+                    .derived_artifact_id
+                    .as_ref()
+                    .map(|id| id.to_string()),
+                phase: "spawn".to_string(),
+                outcome: "acknowledged".to_string(),
+                binary_ref: None,
+                log_ref: None,
+                recorded_at: "2026-06-23T00:00:00Z".to_string(),
+            },
+        },
+    )
+    .expect("seed spawn binary provenance rows");
+    fs::remove_file(&outcome.binary_path).expect("remove promoted binary");
+
+    let stored = load_test_node_record(&manifest_path, child.node_id());
+    let c3: crate::cli::prototype1_state::c2::C3 = Prototype {
+        campaign_id: CLI_TEST_CAMPAIGN.clone(),
+        campaign_manifest_path: manifest_path.clone(),
+        node: stored.clone(),
+        request: child.runner_request().clone(),
+        resolved: child.resolved().clone(),
+        artifact: Artifact {
+            repo_root: stored.workspace_root.clone(),
+            target_relpath: child.resolved().target_relpath.clone(),
+            source_content_hash: ContentHash(child.resolved().source_content_hash.clone()),
+            current_content_hash: ContentHash(
+                child.resolved().branch.proposed_content_hash.clone(),
+            ),
+            proposed_content_hash: ContentHash(
+                child.resolved().branch.proposed_content_hash.clone(),
+            ),
+            _lineage: std::marker::PhantomData::<ChildLineage>,
+        },
+        binary: Binary {
+            parent_running: true,
+            child_path: stored.binary_path.clone(),
+            child_runtime: None,
+            _lineage: std::marker::PhantomData::<ParentLineage>,
+            _child: std::marker::PhantomData::<Present>,
+            _ack: std::marker::PhantomData::<crate::cli::prototype1_state::c1::Unacknowledged>,
+        },
+    };
+    let mut journal = PrototypeJournal::new(tmp.path().join("spawn-negative-journal.jsonl"));
+    let err = SpawnChild::new()
+        .transition(c3, &mut journal)
+        .expect_err("DB binary refs cannot replace the promoted binary file");
+
+    match err {
+        CommitError::Transition(SpawnChildError::MissingChildBinary { path }) => {
+            assert_eq!(path, outcome.binary_path);
+        }
+        other => panic!("unexpected spawn error: {other:?}"),
+    }
+    assert!(
+        journal.load_entries().expect("spawn journal").is_empty(),
+        "missing binary must fail before spawn journal entries or invocation bootstrap writes"
     );
 }
 
@@ -4382,7 +5445,6 @@ async fn terminal_child_blocks_reentry() {
         parent,
         budget,
         profile::BroadTui::default(),
-        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
@@ -4392,7 +5454,7 @@ async fn terminal_child_blocks_reentry() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -4495,7 +5557,6 @@ async fn succeeded_child_without_evaluation_blocks_direct_reentry() {
         parent,
         budget,
         profile::BroadTui::default(),
-        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
@@ -4505,7 +5566,7 @@ async fn succeeded_child_without_evaluation_blocks_direct_reentry() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -4606,7 +5667,6 @@ async fn succeeded_child_without_evaluation_recovers_from_terminal_channel() {
         parent,
         budget,
         profile::BroadTui::default(),
-        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
@@ -4616,7 +5676,7 @@ async fn succeeded_child_without_evaluation_recovers_from_terminal_channel() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -4793,6 +5853,12 @@ async fn succeeded_child_without_evaluation_recovers_from_terminal_channel() {
 async fn child_spawn_observes_ready() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+    ploke_db::Database::new_init()
+        .expect("empty eval db")
+        .write_backup_to_path(&db_path)
+        .expect("seed owner eval db");
     let repo_root = tmp.path().join("repo");
     let fake_bin = tmp.path().join("fake-bin");
     let path = install_fake_cargo(
@@ -4837,7 +5903,6 @@ exit 0
         parent,
         budget,
         profile::BroadTui::default(),
-        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
@@ -4847,7 +5912,7 @@ exit 0
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -4915,9 +5980,105 @@ exit 0
                     && matches!(
                         spawn.result,
                         Some(crate::cli::prototype1_state::journal::SpawnObservation::Acknowledged)
-                    )
+                )
         )
     }));
+
+    let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "node_id".to_string(),
+        cozo::DataValue::from(node.node_id.clone()),
+    );
+    params.insert("phase".to_string(), cozo::DataValue::from("spawn"));
+    let builds = db
+        .raw_query_params(
+            r#"
+?[
+    build_id,
+    runtime_id,
+    artifact_id,
+    outcome,
+    binary_ref
+] :=
+    *eval_build_event {
+        build_id,
+        node_id,
+        runtime_id,
+        artifact_id,
+        phase,
+        outcome,
+        binary_ref
+    },
+    node_id = $node_id,
+    phase = $phase
+"#,
+            params,
+        )
+        .expect("query spawn build event");
+    assert_eq!(builds.rows.len(), 1);
+    let build_row = builds.row_refs().next().expect("spawn build row");
+    assert_eq!(
+        build_row.get::<String>("runtime_id").expect("runtime"),
+        runtime
+    );
+    assert_eq!(
+        build_row.get::<String>("artifact_id").expect("artifact"),
+        node.derived_artifact_id
+            .as_ref()
+            .expect("derived artifact")
+            .to_string()
+    );
+    assert_eq!(
+        build_row.get::<String>("outcome").expect("outcome"),
+        "acknowledged"
+    );
+    let binary_ref_id = build_row
+        .get::<String>("binary_ref")
+        .expect("binary ref id");
+    assert!(!binary_ref_id.is_empty());
+
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "binary_ref_id".to_string(),
+        cozo::DataValue::from(binary_ref_id),
+    );
+    let binaries = db
+        .raw_query_params(
+            r#"
+?[
+    binary_ref_id,
+    built_by,
+    source_ref,
+    content_sha256
+] :=
+    *eval_binary_ref {
+        binary_ref_id,
+        built_by,
+        source_ref,
+        content_sha256
+    },
+    binary_ref_id = $binary_ref_id
+"#,
+            params,
+        )
+        .expect("query spawn binary ref");
+    assert_eq!(binaries.rows.len(), 1);
+    let binary_row = binaries.row_refs().next().expect("spawn binary row");
+    assert_eq!(
+        binary_row.get::<String>("built_by").expect("built by"),
+        runtime
+    );
+    assert_eq!(
+        binary_row.get::<String>("source_ref").expect("source ref"),
+        outcome.binary_path.display().to_string()
+    );
+    assert!(
+        !binary_row
+            .get::<String>("content_sha256")
+            .expect("binary hash")
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -4938,7 +6099,6 @@ async fn child_spawn_observes_failed_result() {
         parent,
         budget,
         profile::BroadTui::default(),
-        profile::AntiAttractorPolicy::None,
     )
     .expect("publish broad harness batch");
     submit_broad_slot_for_test(&repo_root, &batch.slots[0], &[allowed[0].clone()], "slot-0");
@@ -4948,7 +6108,7 @@ async fn child_spawn_observes_failed_result() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -5024,6 +6184,7 @@ JSON
 cat > "$node_dir/results/$runtime_id.json" <<'RESULT'
 {result_json}
 RESULT
+cp "$node_dir/results/$runtime_id.json" "$node_dir/runner-result.json"
 cat >> "$channel_dir/child-to-parent.jsonl" <<JSON
 {{"schema_version":"prototype1-runtime-channel.v1","direction":"child_to_parent","campaign_id":"${{PLOKE_PROTOTYPE1_CAMPAIGN_ID:?missing campaign}}","node_id":"${{PLOKE_PROTOTYPE1_NODE_ID:?missing node}}","runtime_id":"$runtime_id","message_id":"00000000-0000-4000-8000-000000000003","recorded_at":0,"body_hash":"{terminal_hash}","body":{terminal_body}}}
 JSON
@@ -5091,7 +6252,6 @@ fn broad_harness_batch_rejects_below_minimum_admitted_transactions() {
             Prototype1ChildBudget::new(1, 1),
             admission_binding.clone(),
             DEFAULT_GRAPH_NEAREST_ITEMS,
-            profile::AntiAttractorPolicy::None,
         )
         .expect("publish broad slot");
         slots.push(HarnessRequestSlot {
@@ -5123,7 +6283,7 @@ fn broad_harness_batch_rejects_below_minimum_admitted_transactions() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         batch,
@@ -5134,10 +6294,20 @@ fn broad_harness_batch_rejects_below_minimum_admitted_transactions() {
         Err(err) => err,
     };
 
-    let PrepareError::InvalidBatchSelection { detail } = err else {
-        panic!("unexpected error variant");
+    let PrepareError::ChildPlanBelowMinimum {
+        runnable_children,
+        required_min,
+        attempted_slots,
+        accepted_results,
+        ..
+    } = err
+    else {
+        panic!("unexpected error variant: {err:?}");
     };
-    assert!(detail.contains("fewer than required minimum 3"));
+    assert_eq!(runnable_children, 2);
+    assert_eq!(required_min, 3);
+    assert_eq!(attempted_slots, 3);
+    assert_eq!(accepted_results, 2);
 }
 
 #[test]
@@ -5158,7 +6328,6 @@ fn broad_harness_materialization_rejects_post_admission_drift() {
         Prototype1ChildBudget::new(1, 1),
         test_broad_request_admission_binding(),
         DEFAULT_GRAPH_NEAREST_ITEMS,
-        profile::AntiAttractorPolicy::None,
     )
     .expect("published request");
     let awaiting_parent = parent.awaiting_harness_plan_for_request((&publication.published).into());
@@ -5196,7 +6365,7 @@ fn broad_harness_materialization_rejects_post_admission_drift() {
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         receipt,
@@ -5229,6 +6398,12 @@ fn broad_harness_materialization_rejects_post_admission_drift() {
 fn below_min_rejected_attempts_are_persisted_and_recoverable_from_existing_child_plan() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+    ploke_db::Database::new_init()
+        .expect("empty eval db")
+        .write_backup_to_path(&db_path)
+        .expect("seed owner eval db");
     let repo_root = tmp.path().join("repo");
     write_broad_surface_targets(&repo_root);
     let rejected = surface_attempt::Evidence::rejected(
@@ -5241,8 +6416,13 @@ fn below_min_rejected_attempts_are_persisted_and_recoverable_from_existing_child
     );
 
     let parent = ready_parent_for_test(&manifest_path, &repo_root);
-    persist_rejected_surface_attempt_child_plan(&manifest_path, parent, vec![rejected.clone()])
-        .expect("persist rejected attempt child plan");
+    persist_rejected_surface_attempt_child_plan(
+        &CLI_TEST_CAMPAIGN,
+        &manifest_path,
+        parent,
+        vec![rejected.clone()],
+    )
+    .expect("persist rejected attempt child plan");
 
     let resumed_parent = ready_parent_for_test(&manifest_path, &repo_root);
     let receipt = receive_existing_child_plan(
@@ -5251,7 +6431,7 @@ fn below_min_rejected_attempts_are_persisted_and_recoverable_from_existing_child
             manifest_path: &manifest_path,
             repo_root: &repo_root,
             broad_tui: profile::BroadTui::default(),
-            anti_attractor_policy: profile::AntiAttractorPolicy::None,
+            eval_storage_backend: profile::EvalStorageBackend::Fs,
             route_source: ModelRouteSource::DirectGoogle,
         },
         resumed_parent,
@@ -5268,8 +6448,80 @@ fn below_min_rejected_attempts_are_persisted_and_recoverable_from_existing_child
     );
     assert_eq!(
         receipt.rejected_surface_attempts,
-        vec![rejected],
+        vec![rejected.clone()],
         "rejected attempts should survive receive_existing_child_plan"
+    );
+
+    let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "campaign_id".to_string(),
+        cozo::DataValue::from(CLI_TEST_CAMPAIGN.to_string()),
+    );
+    params.insert(
+        "parent_node_id".to_string(),
+        cozo::DataValue::from(receipt.plan.body().parent_node_id().to_string()),
+    );
+    let plans = db
+        .raw_query_params(
+            r#"
+?[plan_id, child_count, rejected_count] :=
+    *eval_child_plan {
+        plan_id,
+        campaign_id,
+        parent_node_id,
+        child_count,
+        rejected_count
+    },
+    campaign_id = $campaign_id,
+    parent_node_id = $parent_node_id
+"#,
+            params,
+        )
+        .expect("query rejected-only normalized child plan");
+    assert_eq!(plans.rows.len(), 1);
+    let plan = plans.row_refs().next().expect("child plan row");
+    let plan_id = plan.get::<String>("plan_id").expect("plan id");
+    assert_eq!(plan.get::<i64>("child_count").expect("child count"), 0);
+    assert_eq!(
+        plan.get::<i64>("rejected_count").expect("rejected count"),
+        1
+    );
+
+    let mut params = std::collections::BTreeMap::new();
+    params.insert("plan_id".to_string(), cozo::DataValue::from(plan_id));
+    let attempts = db
+        .raw_query_params(
+            r#"
+?[producer_id, proposal_id, run_id, policy, target_relpath, outcome, reason] :=
+    *eval_child_plan_rejected_attempt {
+        plan_id,
+        producer_id,
+        proposal_id,
+        run_id,
+        policy,
+        target_relpath,
+        outcome,
+        reason
+    },
+    plan_id = $plan_id
+"#,
+            params,
+        )
+        .expect("query normalized rejected attempts");
+    assert_eq!(attempts.rows.len(), 1);
+    let attempt = attempts.row_refs().next().expect("attempt row");
+    assert_eq!(
+        attempt.get::<String>("proposal_id").expect("proposal id"),
+        "proposal-rejected"
+    );
+    assert_eq!(
+        attempt.get::<String>("outcome").expect("outcome"),
+        "rejected"
+    );
+    assert_eq!(
+        attempt.get::<String>("reason").expect("reason"),
+        "backend rejected deterministic proposal"
     );
 
     let parent_identity = test_parent_identity();
@@ -5328,7 +6580,7 @@ fn prototype1_storage_authority_negative_projection_cannot_replace_child_plan_bo
                 manifest_path: &manifest_path,
                 repo_root: &repo_root,
                 broad_tui: profile::BroadTui::default(),
-                anti_attractor_policy: profile::AntiAttractorPolicy::None,
+                eval_storage_backend: profile::EvalStorageBackend::Fs,
                 route_source: ModelRouteSource::DirectGoogle,
             },
             parent,
@@ -5348,6 +6600,91 @@ fn prototype1_storage_authority_negative_projection_cannot_replace_child_plan_bo
     );
     assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
     assert!(projection_path.exists());
+    assert!(trace_contains(
+        &trace,
+        &[
+            "event=typestate_transition",
+            "transition=Parent<Ready>->Parent<Planned>",
+            "phase=retry_replay",
+            "record_access=read",
+            "record_kind=child_plan_file",
+            "outcome=failed",
+        ],
+    ));
+}
+
+#[test]
+fn prototype1_storage_authority_negative_record_ref_cannot_replace_child_plan_box() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let manifest_path = tmp.path().join("campaign.json");
+    let repo_root = tmp.path().join("repo");
+    write_broad_surface_targets(&repo_root);
+    let parent: Parent<Ready> = ready_parent_for_test(&manifest_path, &repo_root);
+    let parent_identity = parent.identity().clone();
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    let payload = serde_json::json!({
+        "schema_version": "prototype1-eval-store-projection-test.v1",
+        "edge_id": "r7_to_r8",
+        "parent_id": parent_identity.parent_id(),
+        "message_box_claimed": true
+    })
+    .to_string();
+    eval_store::write_record_ref_to_owner_db(
+        &db_path,
+        eval_store::RecordRefEvidence::compatibility_import(
+            CLI_TEST_CAMPAIGN.clone(),
+            "child_plan_projection",
+            "prototype1-eval-store-projection-test.v1",
+            parent_identity.parent_id(),
+            "prototype1-eval-store:child-plan-projection",
+            0,
+            1,
+            db_path.display().to_string(),
+            payload,
+            1000,
+        ),
+    )
+    .expect("write owner eval DB record ref");
+    assert!(db_path.is_file());
+    let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+    let refs = db
+        .raw_query_params(
+            r#"
+?[record_ref_id] :=
+    *eval_record_ref { record_ref_id, family },
+    family = "child_plan_projection"
+"#,
+            std::collections::BTreeMap::new(),
+        )
+        .expect("query record refs");
+    assert_eq!(refs.rows.len(), 1);
+
+    let (result, trace) = collect_traces(|| {
+        receive_existing_child_plan(
+            ChildPlanEnv {
+                campaign_id: &CLI_TEST_CAMPAIGN,
+                manifest_path: &manifest_path,
+                repo_root: &repo_root,
+                broad_tui: profile::BroadTui::default(),
+                eval_storage_backend: profile::EvalStorageBackend::Fs,
+                route_source: ModelRouteSource::DirectGoogle,
+            },
+            parent,
+        )
+    });
+    dump_trace_if_requested(&trace);
+    let err = match result {
+        Ok(_) => panic!("eval_record_ref row must not replace child-plan MessageBox"),
+        Err(err) => err,
+    };
+    let PrepareError::ReadManifest { path, source } = err else {
+        panic!("unexpected error variant");
+    };
+    assert_eq!(
+        path,
+        child_plan_message_path_for_parent(&manifest_path, &parent_identity)
+    );
+    assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
     assert!(trace_contains(
         &trace,
         &[
@@ -5395,7 +6732,7 @@ fn child_plan_replay_rejects_wrong_parent() {
                 manifest_path: &manifest_path,
                 repo_root: &repo_root,
                 broad_tui: profile::BroadTui::default(),
-                anti_attractor_policy: profile::AntiAttractorPolicy::None,
+                eval_storage_backend: profile::EvalStorageBackend::Fs,
                 route_source: ModelRouteSource::DirectGoogle,
             },
             parent,
@@ -5460,7 +6797,7 @@ fn child_plan_replay_rejects_malformed_file() {
                 manifest_path: &manifest_path,
                 repo_root: &repo_root,
                 broad_tui: profile::BroadTui::default(),
-                anti_attractor_policy: profile::AntiAttractorPolicy::None,
+                eval_storage_backend: profile::EvalStorageBackend::Fs,
                 route_source: ModelRouteSource::DirectGoogle,
             },
             parent,
@@ -5903,13 +7240,19 @@ fn selected_child_treatment_promotes_to_parent_baseline() {
 
 #[test]
 fn parent_compares_treatment_evidence_against_owned_baseline() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let campaign_root = tmp.path().join("campaign");
+    let prototype1_root = campaign_root.join("prototype1");
+    let manifest_path = campaign_root.join("campaign.json");
+    let db_path = prototype1_root.join("eval-store.cozo.sqlite");
+    fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+    ploke_db::Database::new_init()
+        .expect("empty eval db")
+        .write_backup_to_path(&db_path)
+        .expect("seed owner eval db");
+
     let parent = test_parent_identity();
-    let node = test_node(
-        Path::new("/tmp/campaign"),
-        "node-child",
-        "branch-child",
-        "candidate-1",
-    );
+    let node = test_node(&campaign_root, "node-child", "branch-child", "candidate-1");
     let baseline = CompleteBaseline::complete(
         CampaignId::from("baseline"),
         parent.node_id().to_string(),
@@ -5925,17 +7268,29 @@ fn parent_compares_treatment_evidence_against_owned_baseline() {
     .expect("complete baseline");
     let treatment = test_treatment_evidence(&node);
 
-    let report = build_prototype1_branch_evaluation_report(
+    let branch_log_gate = Mutex::new(());
+    let report = compare_observed_child_treatment(
+        &CampaignId::from("baseline"),
+        &manifest_path,
+        &baseline,
+        &test_resolved(&node),
+        &treatment,
+        &branch_log_gate,
+    )
+    .expect("parent comparison");
+
+    let pure_report = build_prototype1_branch_evaluation_report(
         &CampaignId::from("baseline"),
         &node.branch_id,
-        Path::new("/tmp/prototype1/branches.json"),
-        Path::new("/tmp/prototype1/evaluations/branch-child.json"),
+        &prototype1_root.join("branches.json"),
+        &prototype1_root.join("evaluations/branch-child.json"),
         &baseline,
         &treatment,
     )
     .expect("parent comparison");
 
     assert_eq!(report.overall_disposition, BranchDisposition::Keep);
+    assert_eq!(report.branch_id, pure_report.branch_id);
     assert_eq!(report.compared_instances.len(), 1);
     assert_eq!(report.compared_instances[0].status, "compared");
     assert_eq!(
@@ -5946,6 +7301,130 @@ fn parent_compares_treatment_evidence_against_owned_baseline() {
         report.compared_instances[0].treatment_record_path,
         Some(PathBuf::from("/tmp/treatment/record.json.gz"))
     );
+
+    let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "branch_id".to_string(),
+        cozo::DataValue::from(node.branch_id.clone()),
+    );
+    let rows = db
+        .raw_query_params(
+            r#"
+?[
+    evaluation_id,
+    baseline_id,
+    treatment_id,
+    procedure_id,
+    evaluator_id,
+    eval_set_id,
+    disposition,
+    record_ref
+] :=
+    *eval_evaluation {
+        evaluation_id,
+        branch_id,
+        baseline_id,
+        treatment_id,
+        procedure_id,
+        evaluator_id,
+        eval_set_id,
+        disposition,
+        record_ref
+    },
+    branch_id = $branch_id
+"#,
+            params,
+        )
+        .expect("query evaluation rows");
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("evaluation row");
+    let evaluation_id = row.get::<String>("evaluation_id").expect("evaluation id");
+    assert_eq!(
+        row.get::<String>("baseline_id").expect("baseline"),
+        "baseline"
+    );
+    assert_eq!(
+        row.get::<String>("treatment_id").expect("treatment"),
+        "treatment"
+    );
+    assert_eq!(
+        row.get::<String>("procedure_id").expect("procedure"),
+        crate::cli::prototype1_state::evidence::PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID
+    );
+    assert_eq!(
+        row.get::<String>("evaluator_id").expect("evaluator"),
+        "prototype1.branch_evaluation.mechanized"
+    );
+    assert!(
+        !row.get::<String>("eval_set_id")
+            .expect("eval set")
+            .is_empty()
+    );
+    assert_eq!(
+        row.get::<String>("disposition").expect("disposition"),
+        "keep"
+    );
+    assert!(
+        row.get::<String>("record_ref")
+            .expect("record ref")
+            .contains("prototype1/evaluations/branch-child.json#sha256:")
+    );
+
+    let mut instance_params = std::collections::BTreeMap::new();
+    instance_params.insert(
+        "evaluation_id".to_string(),
+        cozo::DataValue::from(evaluation_id),
+    );
+    let instance_rows = db
+        .raw_query_params(
+            r#"
+?[
+    instance_id,
+    baseline_ref,
+    treatment_ref,
+    status,
+    outcome
+] :=
+    *eval_evaluation_instance {
+        evaluation_id,
+        instance_id,
+        baseline_ref,
+        treatment_ref,
+        status,
+        outcome
+    },
+    evaluation_id = $evaluation_id
+"#,
+            instance_params,
+        )
+        .expect("query evaluation instance rows");
+    assert_eq!(instance_rows.rows.len(), 1);
+    let instance = instance_rows
+        .row_refs()
+        .next()
+        .expect("evaluation instance");
+    assert_eq!(
+        instance.get::<String>("instance_id").expect("instance"),
+        node.instance_id
+    );
+    assert_eq!(
+        instance
+            .get::<String>("baseline_ref")
+            .expect("baseline ref"),
+        "path:/tmp/baseline/record.json.gz"
+    );
+    assert_eq!(
+        instance
+            .get::<String>("treatment_ref")
+            .expect("treatment ref"),
+        "path:/tmp/treatment/record.json.gz"
+    );
+    assert_eq!(
+        instance.get::<String>("status").expect("status"),
+        "compared"
+    );
+    assert_eq!(instance.get::<String>("outcome").expect("outcome"), "keep");
 }
 
 fn bind_test_tui_surface_fields(
@@ -6027,6 +7506,12 @@ fn historical_node_150_channel_treatment_reaches_current_generation_handoff() {
 
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+    ploke_db::Database::new_init()
+        .expect("empty eval db")
+        .write_backup_to_path(&db_path)
+        .expect("seed owner eval db");
     let parent_identity: ParentIdentity = json_fixture(include_str!(
         "../../../tests/fixtures/prototype1-node-150-handoff/parent_identity.json"
     ));
@@ -6309,7 +7794,7 @@ schema_version = "prototype1-run-profile.v1"
 name = "historical-node-150-handoff"
 
 [selection]
-strategy = "generation-local"
+strategy = "history-score-child-prop"
 evidence = "operational"
 seed = 0
 "#,
@@ -6332,6 +7817,220 @@ seed = 0
         Some(outcome.node.branch_id.as_str())
     );
     assert!(material.selected_from_generation_outcomes);
+    let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+    let decision_rows = db
+        .raw_query_params(
+            r#"
+?[
+    decision_id,
+    parent_id,
+    procedure_id,
+    selected_node_id,
+    outcome,
+    disposition,
+    decision_hash
+] :=
+    *eval_selection_decision {
+        decision_id,
+        parent_id,
+        procedure_id,
+        selected_node_id,
+        outcome,
+        disposition,
+        decision_hash
+    }
+"#,
+            std::collections::BTreeMap::new(),
+        )
+        .expect("query selection decision rows");
+    assert_eq!(decision_rows.rows.len(), 1);
+    let decision_row = decision_rows
+        .row_refs()
+        .next()
+        .expect("selection decision row");
+    let decision_id = decision_row
+        .get::<String>("decision_id")
+        .expect("decision id");
+    assert_eq!(
+        decision_row.get::<String>("parent_id").expect("parent"),
+        parent_identity.parent_id()
+    );
+    assert_eq!(
+        decision_row
+            .get::<String>("procedure_id")
+            .expect("procedure"),
+        crate::successor_selection::HISTORY_TRAVERSAL_PROCEDURE_ID
+    );
+    assert_eq!(
+        decision_row
+            .get::<String>("selected_node_id")
+            .expect("selected node"),
+        NODE_ID
+    );
+    assert_eq!(
+        decision_row.get::<String>("outcome").expect("outcome"),
+        "accepted"
+    );
+    assert_eq!(
+        decision_row
+            .get::<String>("disposition")
+            .expect("disposition"),
+        "keep"
+    );
+    assert!(
+        !decision_row
+            .get::<String>("decision_hash")
+            .expect("decision hash")
+            .is_empty()
+    );
+
+    let mut candidate_params = std::collections::BTreeMap::new();
+    candidate_params.insert(
+        "decision_id".to_string(),
+        cozo::DataValue::from(decision_id.clone()),
+    );
+    let candidate_rows = db
+        .raw_query_params(
+            r#"
+?[
+    node_id,
+    branch_id,
+    selectable,
+    selected
+] :=
+    *eval_selection_candidate {
+        decision_id,
+        node_id,
+        branch_id,
+        selectable,
+        selected
+    },
+    decision_id = $decision_id
+"#,
+            candidate_params,
+        )
+        .expect("query selection candidate rows");
+    assert_eq!(candidate_rows.rows.len(), 1);
+    let candidate_row = candidate_rows
+        .row_refs()
+        .next()
+        .expect("selection candidate row");
+    assert_eq!(
+        candidate_row.get::<String>("node_id").expect("node"),
+        NODE_ID
+    );
+    assert_eq!(
+        candidate_row.get::<String>("branch_id").expect("branch"),
+        outcome.node.branch_id
+    );
+    assert!(candidate_row.get::<bool>("selectable").expect("selectable"));
+    assert!(candidate_row.get::<bool>("selected").expect("selected"));
+    let mut finding_params = std::collections::BTreeMap::new();
+    finding_params.insert(
+        "decision_id".to_string(),
+        cozo::DataValue::from(decision_id.clone()),
+    );
+    finding_params.insert(
+        "domain".to_string(),
+        cozo::DataValue::from("operational".to_string()),
+    );
+    let finding_rows = db
+        .raw_query_params(
+            r#"
+?[
+    domain,
+    verdict,
+    confidence,
+    member_id
+] :=
+    *eval_selection_finding {
+        decision_id,
+        domain,
+        verdict,
+        confidence,
+        member_id
+    },
+    decision_id = $decision_id,
+    domain = $domain
+"#,
+            finding_params,
+        )
+        .expect("query selection finding rows");
+    assert_eq!(finding_rows.rows.len(), 1);
+    let finding_row = finding_rows
+        .row_refs()
+        .next()
+        .expect("selection finding row");
+    assert_eq!(
+        finding_row.get::<String>("domain").expect("domain"),
+        "operational"
+    );
+    assert_eq!(
+        finding_row.get::<String>("verdict").expect("verdict"),
+        "better"
+    );
+    assert_eq!(
+        finding_row.get::<String>("confidence").expect("confidence"),
+        "high"
+    );
+    assert!(
+        !finding_row
+            .get::<String>("member_id")
+            .expect("finding member id")
+            .is_empty()
+    );
+
+    let mut score_params = std::collections::BTreeMap::new();
+    score_params.insert(
+        "decision_id".to_string(),
+        cozo::DataValue::from(decision_id),
+    );
+    let score_rows = db
+        .raw_query_params(
+            r#"
+?[
+    formula_id,
+    score_json,
+    weight,
+    selected
+] :=
+    *eval_selection_score {
+        decision_id,
+        formula_id,
+        score_json,
+        weight,
+        selected
+    },
+    decision_id = $decision_id
+"#,
+            score_params,
+        )
+        .expect("query selection score rows");
+    assert_eq!(score_rows.rows.len(), 1);
+    let score_row = score_rows.row_refs().next().expect("selection score row");
+    assert!(
+        score_row
+            .get::<String>("formula_id")
+            .expect("formula")
+            .starts_with("score_child_prop:")
+    );
+    assert!(
+        score_row
+            .get::<String>("score_json")
+            .expect("score json")
+            .contains("\"selected\":true")
+    );
+    assert!(score_row.get::<f64>("weight").expect("weight") > 0.0);
+    assert!(score_row.get::<bool>("selected").expect("selected score"));
+    let journal_entries = PrototypeJournal::new(prototype1_transition_journal_path(&manifest_path))
+        .load_entries()
+        .expect("load journal entries");
+    assert!(
+        journal_entries
+            .iter()
+            .all(|entry| !matches!(entry, JournalEntry::Successor(_))),
+        "passive eval-store selection rows must not replace successor transition authority"
+    );
 
     let (selection, trace) = collect_traces(|| {
         select_artifact_for_handoff(&decision, &material)
@@ -6369,6 +8068,23 @@ seed = 0
             "source=CurrentGeneration",
         ],
     ));
+
+    fs::remove_file(&db_path).expect("remove owner eval DB for strict-missing check");
+    let err = crate::cli::prototype1_state::cli_facing::emit_selection_decision_for_backend(
+        &manifest_path,
+        &parent_identity,
+        &decision,
+        &material,
+        profile::EvalStorageBackend::DualStrict,
+    )
+    .expect_err("dual-strict selection persistence requires owner eval DB");
+    match err {
+        PrepareError::DatabaseSetup { phase, detail } => {
+            assert_eq!(phase, "eval_selection_decision_db_missing");
+            assert!(detail.contains("dual-strict selection persistence requires owner eval DB"));
+        }
+        other => panic!("unexpected strict selection DB error: {other:?}"),
+    }
 }
 
 #[test]

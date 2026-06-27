@@ -5,11 +5,14 @@
 
 use std::fs;
 
+use chrono::Utc;
 use ploke_core::EXECUTION_DEBUG_TARGET;
 use tracing::{debug, info};
 
 use crate::{
     CampaignOverrides, ResolvedCampaignConfig,
+    campaign::campaign_closure_state_path,
+    campaign_manifest_path,
     cli::{
         InspectOutputFormat, Prototype1StateStopAfter,
         prototype1_process::{
@@ -20,39 +23,36 @@ use crate::{
             backend::GitWorktreeBackend,
             cli_facing::{
                 ParentSelection, PlannedChildren, Prototype1StateReport, Prototype1StateRunShape,
-                append_parent_target_sample, campaign_manifest_path_for_id,
-                current_dir_as_repo_root, ensure_prototype1_baseline_closure_state,
-                establish_parent_baseline_for_id, initialize_prototype1_parent_identity,
+                append_parent_target_sample, current_dir_as_repo_root,
+                emit_selection_decision_for_backend, ensure_prototype1_baseline_closure_state,
+                establish_parent_baseline, initialize_prototype1_parent_identity,
                 live_successor_continuation_decision, outcome_for_report,
                 prototype1_state_report_path, prototype1_state_successor_handoff_mode,
                 prototype1_state_transition_error, record_active_prototype1_monitor_target,
-                resolve_campaign_config_for_id, resolve_child_plan_for_id,
-                resolve_parent_policy_budget, resolve_prototype1_parent_identity,
-                resolve_prototype1_state_campaign, run_adaptive_child_fanout, run_child_fanout,
-                same_existing_path, select_artifact_for_handoff, traversal_metric_inputs,
+                resolve_child_plan_for_id, resolve_parent_policy_budget,
+                resolve_prototype1_parent_identity, resolve_prototype1_state_campaign,
+                run_adaptive_child_fanout, run_child_fanout, same_existing_path,
+                select_artifact_for_handoff, traversal_metric_inputs,
             },
-            eval_store::{ConfiguredEvalStore, EvalStore, ParentStartedEvidence},
+            eval_store::{
+                ConfiguredEvalStore, EvalStore, ParentStartedEvidence,
+                prototype1_eval_store_db_path, write_baseline_to_owner_db,
+                write_closure_state_to_owner_db, write_r0_context_to_owner_db,
+            },
             event::RecordedAt,
             invocation::{self, InvocationAuthority, SuccessorCompletionStatus},
             journal::{self, JournalEntry, PrototypeJournal, prototype1_transition_journal_path},
             observe,
             parent::{Check, Genesis, Parent, Predecessor, Startup, Unchecked},
-            profile::EvalStorageBackend,
+            profile::{self, EvalStorageBackend},
             successor::Record as SuccessorRecord,
             typestate,
         },
     },
     intervention::{Prototype1ChildBudget, Prototype1ChildScheduleMode, RecordStore},
+    load_campaign_manifest, load_closure_state, resolve_campaign_config,
     spec::PrepareError,
 };
-
-fn eval_storage_backend_name(backend: EvalStorageBackend) -> &'static str {
-    match backend {
-        EvalStorageBackend::Fs => "fs",
-        EvalStorageBackend::Database => "database",
-        EvalStorageBackend::DualStrict => "dual-strict",
-    }
-}
 
 // ANCHOR: prototype1_live_edges
 /// Resolve command-derived context and open the transition journal.
@@ -71,11 +71,27 @@ pub(crate) fn r0_to_r1(
     };
     let campaign_id = resolve_prototype1_state_campaign(&command, &repo_root)?;
     record_active_prototype1_monitor_target(&campaign_id, &repo_root);
-    let manifest_path = campaign_manifest_path_for_id(&campaign_id)?;
+    let manifest_path = campaign_manifest_path(&campaign_id)?;
     let run_shape = Prototype1StateRunShape::resolve(&command, &manifest_path)?;
-    let resolved_campaign =
-        resolve_campaign_config_for_id(&campaign_id, &CampaignOverrides::default())?;
-    ensure_prototype1_baseline_closure_state(&resolved_campaign)?;
+    let resolved_campaign = resolve_campaign_config(&campaign_id, &CampaignOverrides::default())?;
+    let closure_state_path = ensure_prototype1_baseline_closure_state(&resolved_campaign)?;
+    if run_shape.eval_storage_backend.mirrors_owner_db() {
+        let manifest = load_campaign_manifest(&campaign_id)?;
+        let admitted_profile = profile::load_admitted_run_profile(&manifest_path)?;
+        let closure_state = load_closure_state(&campaign_id)?;
+        write_r0_context_to_owner_db(
+            &prototype1_eval_store_db_path(&manifest_path),
+            &manifest_path,
+            &manifest,
+            run_shape.eval_storage_backend,
+            admitted_profile.as_ref(),
+            &closure_state_path,
+            &closure_state,
+        )
+        .map_err(|err| {
+            prototype1_state_transition_error("prototype1_r0_context", err.to_string())
+        })?;
+    }
     let journal_path = prototype1_transition_journal_path(&manifest_path);
     let journal = PrototypeJournal::new(journal_path.clone());
 
@@ -417,14 +433,19 @@ pub(crate) fn r4c_to_r5(
                 prototype1_state_transition_error("prototype1_parent_start", err.to_string())
             })?;
         }
-        EvalStorageBackend::Database | EvalStorageBackend::DualStrict => {
-            return Err(PrepareError::DatabaseSetup {
-                phase: "prototype1_eval_store",
-                detail: format!(
-                    "eval storage backend '{}' is not wired for production parent-start until the DB handle slice",
-                    eval_storage_backend_name(parts.run_shape.eval_storage_backend)
-                ),
-            });
+        EvalStorageBackend::DbMirror | EvalStorageBackend::Database => {
+            let db_path = prototype1_eval_store_db_path(&parts.manifest_path);
+            let mut store = ConfiguredEvalStore::db_mirror(&mut parts.journal, db_path);
+            store.put_parent_started(evidence).map_err(|err| {
+                prototype1_state_transition_error("prototype1_parent_start", err.to_string())
+            })?;
+        }
+        EvalStorageBackend::DualStrict => {
+            let db_path = prototype1_eval_store_db_path(&parts.manifest_path);
+            let mut store = ConfiguredEvalStore::dual_strict(&mut parts.journal, db_path);
+            store.put_parent_started(evidence).map_err(|err| {
+                prototype1_state_transition_error("prototype1_parent_start", err.to_string())
+            })?;
         }
     }
 
@@ -452,18 +473,72 @@ pub(crate) async fn r5_to_r6(
     let typestate::ReadyParts { collected, parent } = r5.into_parts();
     let mut parts = collected.into_parts();
     let parent_identity = parent.identity().clone();
-    let parent_baseline = establish_parent_baseline_for_id(
+    let parent_baseline = match establish_parent_baseline(
         &parts.campaign_id,
         &parts.campaign_config,
         &parts.manifest_path,
         &parent_identity,
     )
-    .await?;
+    .await
+    {
+        Ok(parent_baseline) => parent_baseline,
+        Err(error) => {
+            if parts.run_shape.eval_storage_backend.mirrors_owner_db()
+                && parent_identity.generation() == 0
+            {
+                mirror_parent_closure_state_after_baseline_error(&parts)?;
+            }
+            return Err(error);
+        }
+    };
+    if parts.run_shape.eval_storage_backend.mirrors_owner_db() {
+        let closure = if parent_identity.generation() == 0 {
+            let path = campaign_closure_state_path(&parts.campaign_id)?;
+            let state = load_closure_state(&parts.campaign_id)?;
+            Some((path, state))
+        } else {
+            None
+        };
+        let closure_ref = closure
+            .as_ref()
+            .map(|(path, state)| (path.as_path(), state));
+        write_baseline_to_owner_db(
+            &prototype1_eval_store_db_path(&parts.manifest_path),
+            &parent_identity,
+            &parent_baseline,
+            closure_ref,
+            None,
+            None,
+            Utc::now().to_rfc3339(),
+        )
+        .map_err(|err| {
+            prototype1_state_transition_error("prototype1_parent_baseline", err.to_string())
+        })?;
+    }
     parts.facts.parent_baseline = Some(parent_baseline);
     Ok(typestate::R6::from_collected_parent(
         parts.into_collected(),
         parent,
     ))
+}
+
+fn mirror_parent_closure_state_after_baseline_error(
+    parts: &typestate::context::CollectedParts<Prototype1StateRunShape, ResolvedCampaignConfig>,
+) -> Result<(), PrepareError> {
+    let closure_path = campaign_closure_state_path(&parts.campaign_id)?;
+    let closure_state = load_closure_state(&parts.campaign_id)?;
+    write_closure_state_to_owner_db(
+        &prototype1_eval_store_db_path(&parts.manifest_path),
+        &closure_path,
+        &closure_state,
+    )
+    .map(|_| ())
+    .map_err(|err| {
+        prototype1_state_transition_error(
+            "prototype1_parent_baseline_closure_state_mirror",
+            err.to_string(),
+        )
+    })
 }
 // ANCHOR_END: prototype1_live_edge_r5_to_r6
 
@@ -509,7 +584,7 @@ pub(crate) async fn r7_to_r8(
         parts.command.node_id.as_deref(),
         plan_child_budget,
         parts.run_shape.broad_tui,
-        parts.run_shape.anti_attractor_policy,
+        parts.run_shape.eval_storage_backend,
         parts.campaign_config.route_source.clone(),
     )
     .await?;
@@ -733,6 +808,15 @@ pub(crate) async fn r10_to_r11(
         };
         (child_outcomes, selection)
     };
+    if let Some((decision, material)) = selection.as_ref() {
+        emit_selection_decision_for_backend(
+            &parts.manifest_path,
+            &parent_identity,
+            decision,
+            material,
+            parts.run_shape.eval_storage_backend,
+        )?;
+    }
     parts.facts.child_outcomes = Some(child_outcomes);
     parts.facts.selection = selection;
     parts.facts.rejected_attempt_payloads = None;
@@ -880,19 +964,6 @@ pub(crate) fn r12_to_r13(
         ))
         .success();
         parts
-            .journal
-            .append(JournalEntry::Successor(
-                SuccessorRecord::selected_with_decision(
-                    parts.campaign_id.clone(),
-                    node.node_id.clone(),
-                    decision.clone(),
-                    selection_decision.clone(),
-                ),
-            ))
-            .map_err(|err| {
-                prototype1_state_transition_error("prototype1_successor_selection", err.to_string())
-            })?;
-        parts
             .facts
             .report
             .as_mut()
@@ -907,6 +978,22 @@ pub(crate) fn r12_to_r13(
 
         // ANCHOR: prototype1_live_edge_r12_handoff_branch
         if let Some((selected_artifact, selection_entry)) = handoff {
+            parts
+                .journal
+                .append(JournalEntry::Successor(
+                    SuccessorRecord::selected_with_decision(
+                        parts.campaign_id.clone(),
+                        node.node_id.clone(),
+                        decision.clone(),
+                        selection_decision.clone(),
+                    ),
+                ))
+                .map_err(|err| {
+                    prototype1_state_transition_error(
+                        "prototype1_successor_selection",
+                        err.to_string(),
+                    )
+                })?;
             match spawn_and_handoff_prototype1_successor(
                 &parts.campaign_id,
                 selected_artifact,

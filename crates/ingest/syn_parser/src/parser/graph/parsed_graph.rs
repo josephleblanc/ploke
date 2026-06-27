@@ -1054,6 +1054,45 @@ impl ParsedCodeGraph {
         self.graph.consts.retain(|n| set.contains(&n.any_id()));
         self.graph.modules.retain(|n| set.contains(&n.any_id()));
         self.graph.statics.retain(|n| set.contains(&n.any_id()));
+
+        let live_call_owners: HashSet<CallBodyOwnerId> = self
+            .graph
+            .functions
+            .iter()
+            .map(|function| CallBodyOwnerId::Function(function.id))
+            .chain(
+                self.graph
+                    .consts
+                    .iter()
+                    .map(|const_node| CallBodyOwnerId::Const(const_node.id)),
+            )
+            .chain(
+                self.graph
+                    .statics
+                    .iter()
+                    .map(|static_node| CallBodyOwnerId::Static(static_node.id)),
+            )
+            .chain(
+                self.graph
+                    .impls
+                    .iter()
+                    .flat_map(|imp| imp.methods.iter())
+                    .chain(self.graph.traits.iter().flat_map(|tr| tr.methods.iter()))
+                    .map(|method| CallBodyOwnerId::Method(method.id)),
+            )
+            .collect();
+        self.graph
+            .call_sites
+            .retain(|call| live_call_owners.contains(&call.owner()));
+        let live_call_ids: HashSet<AnyCallSiteId> =
+            self.graph.call_sites.iter().map(CallNode::id).collect();
+        self.graph
+            .call_site_relations
+            .retain(|relation| match relation {
+                CallSiteRelation::BodyContainsCall { source, target } => {
+                    live_call_owners.contains(source) && live_call_ids.contains(target)
+                }
+            });
     }
 }
 

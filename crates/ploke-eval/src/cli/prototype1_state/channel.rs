@@ -42,6 +42,7 @@ use uuid::Uuid;
 use super::{
     child::{self, Child},
     cli_facing::Prototype1TreatmentEvidence,
+    eval_store,
     event::{RecordedAt, RuntimeId},
     invocation::{SuccessorCompletionRecord, SuccessorReadyRecord},
     parent::{self, Parent},
@@ -91,6 +92,10 @@ pub(crate) mod stream {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub(crate) enum FromParent {}
 }
+
+mod mirror;
+
+use mirror::{mirror_channel_message, mirror_parent_channel_imports};
 
 /// State marker `S` may send message marker `M` through its role channel.
 pub(crate) trait CanSend<M> {}
@@ -548,7 +553,11 @@ where
         &self,
         cursor: Cursor,
     ) -> Result<(Cursor, Vec<Envelope<ToParent>>), ChannelError<T::Error>> {
-        self.read(&self.endpoints.child_to_parent(), cursor)
+        let endpoint = self.endpoints.child_to_parent();
+        let (cursor, records) = self.read_records(&endpoint, cursor)?;
+        mirror_parent_channel_imports(&endpoint, &records).map_err(ChannelError::EvalStore)?;
+        let envelopes = records.into_iter().map(|record| record.envelope).collect();
+        Ok((cursor, envelopes))
     }
 }
 
@@ -575,7 +584,7 @@ where
     pub(crate) fn send_ready(
         self,
     ) -> Result<(Channel<Child<child::Ready>, T>, Receipt), ChannelError<T::Error>> {
-        let receipt = self.write(&self.endpoints.child_to_parent(), ToParent::Ready)?;
+        let receipt = self.write_child_message(ToParent::Ready, "ready")?;
         Ok((self.cast(), receipt))
     }
 }
@@ -589,7 +598,7 @@ where
     pub(crate) fn send_evaluating(
         self,
     ) -> Result<(Channel<Child<child::Evaluating>, T>, Receipt), ChannelError<T::Error>> {
-        let receipt = self.write(&self.endpoints.child_to_parent(), ToParent::Evaluating)?;
+        let receipt = self.write_child_message(ToParent::Evaluating, "evaluating")?;
         Ok((self.cast(), receipt))
     }
 }
@@ -605,12 +614,12 @@ where
         runner_result: Prototype1RunnerResult,
         treatment: Option<Prototype1TreatmentEvidence>,
     ) -> Result<(Channel<Child<child::ResultWritten>, T>, Receipt), ChannelError<T::Error>> {
-        let receipt = self.write(
-            &self.endpoints.child_to_parent(),
+        let receipt = self.write_child_message(
             ToParent::Result {
                 runner_result,
                 treatment,
             },
+            "result",
         )?;
         Ok((self.cast(), receipt))
     }
@@ -630,9 +639,9 @@ where
         self,
         runner_result_path: PathBuf,
     ) -> Result<(Channel<Child<child::ResultWritten>, T>, Receipt), ChannelError<T::Error>> {
-        let receipt = self.write(
-            &self.endpoints.child_to_parent(),
+        let receipt = self.write_child_message(
             ToParent::ResultWritten { runner_result_path },
+            "result_written",
         )?;
         Ok((self.cast(), receipt))
     }
@@ -648,11 +657,11 @@ where
         &self,
         detail: impl Into<String>,
     ) -> Result<Receipt, ChannelError<T::Error>> {
-        self.write(
-            &self.endpoints.child_to_parent(),
+        self.write_child_message(
             ToParent::Failed {
                 detail: detail.into(),
             },
+            "failed",
         )
     }
 }
@@ -667,10 +676,7 @@ where
         &self,
         status: Option<i32>,
     ) -> Result<Receipt, ChannelError<T::Error>> {
-        self.write(
-            &self.endpoints.child_to_parent(),
-            ToParent::Exited { status },
-        )
+        self.write_child_message(ToParent::Exited { status }, "exited")
     }
 }
 
@@ -683,10 +689,7 @@ where
         &self,
         record: SuccessorReadyRecord,
     ) -> Result<Receipt, ChannelError<T::Error>> {
-        self.write(
-            &self.endpoints.child_to_parent(),
-            ToParent::SuccessorReady { record },
-        )
+        self.write_child_message(ToParent::SuccessorReady { record }, "successor_ready")
     }
 
     /// Send successor bounded-turn completion through the runtime channel.
@@ -694,9 +697,9 @@ where
         &self,
         record: SuccessorCompletionRecord,
     ) -> Result<Receipt, ChannelError<T::Error>> {
-        self.write(
-            &self.endpoints.child_to_parent(),
+        self.write_child_message(
             ToParent::SuccessorCompletion { record },
+            "successor_completion",
         )
     }
 
@@ -711,6 +714,23 @@ where
             .map_err(ChannelError::Transport)
     }
 
+    fn write_child_message(
+        &self,
+        message: ToParent,
+        message_kind: &'static str,
+    ) -> Result<Receipt, ChannelError<T::Error>> {
+        let endpoint = self.endpoints.child_to_parent();
+        let envelope = Envelope::new(&endpoint, message).map_err(ChannelError::Encode)?;
+        let bytes = serde_json::to_vec(&envelope).map_err(ChannelError::Encode)?;
+        let receipt = self
+            .transport
+            .append(&endpoint, &bytes)
+            .map_err(ChannelError::Transport)?;
+        mirror_channel_message(&endpoint, &envelope, &bytes, &receipt, message_kind)
+            .map_err(ChannelError::EvalStore)?;
+        Ok(receipt)
+    }
+
     fn read<M>(
         &self,
         endpoint: &Endpoint,
@@ -719,26 +739,57 @@ where
     where
         M: DeserializeOwned + Serialize,
     {
+        let (cursor, records) = self.read_records(endpoint, cursor)?;
+        let envelopes = records.into_iter().map(|record| record.envelope).collect();
+        Ok((cursor, envelopes))
+    }
+
+    fn read_records<M>(
+        &self,
+        endpoint: &Endpoint,
+        cursor: Cursor,
+    ) -> Result<(Cursor, Vec<ChannelReadRecord<M>>), ChannelError<T::Error>>
+    where
+        M: DeserializeOwned + Serialize,
+    {
+        let start = cursor;
         let (cursor, records) = self
             .transport
             .read_since(endpoint, cursor)
             .map_err(ChannelError::Transport)?;
-        let envelopes = records
+        let mut offset = start.offset();
+        let records = records
             .into_iter()
-            .map(|record| {
+            .map(|bytes| {
                 let envelope: Envelope<M> =
-                    serde_json::from_slice(&record).map_err(ChannelError::Decode)?;
+                    serde_json::from_slice(&bytes).map_err(ChannelError::Decode)?;
                 envelope
                     .validate_endpoint(endpoint)
                     .map_err(ChannelError::Envelope)?;
                 envelope
                     .validate_body_hash()
                     .map_err(ChannelError::Envelope)?;
-                Ok(envelope)
+                offset += bytes.len() as u64 + 1;
+                Ok(ChannelReadRecord {
+                    receipt: Receipt {
+                        endpoint: endpoint.path.clone(),
+                        cursor: Cursor { offset },
+                        bytes_written: bytes.len(),
+                    },
+                    bytes,
+                    envelope,
+                })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Ok((cursor, envelopes))
+        Ok((cursor, records))
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ChannelReadRecord<M> {
+    envelope: Envelope<M>,
+    bytes: Vec<u8>,
+    receipt: Receipt,
 }
 
 /// Channel-level serialization, validation, or transport failure.
@@ -752,6 +803,8 @@ pub(crate) enum ChannelError<E> {
     Envelope(EnvelopeError),
     /// Transport failed.
     Transport(E),
+    /// Eval-store mirror failed after the transport accepted an envelope.
+    EvalStore(eval_store::EvalStoreError),
 }
 
 /// Envelope identity mismatch.
@@ -907,118 +960,4 @@ pub(crate) enum FileTransportError {
 struct Private;
 
 #[cfg(test)]
-mod tests {
-    use super::super::event::{Paths, Refs};
-    use super::*;
-
-    fn endpoints(root: PathBuf) -> Endpoints {
-        Endpoints::new(
-            root,
-            CampaignId::from("campaign-1"),
-            "node-1".to_string(),
-            RuntimeId::new(),
-        )
-    }
-
-    fn child() -> Child<child::Starting> {
-        Child::new(
-            PathBuf::from("/tmp/prototype1-test-journal.jsonl"),
-            RuntimeId::new(),
-            1,
-            Refs {
-                campaign_id: CampaignId::from("campaign-1"),
-                node_id: "node-1".to_string(),
-                instance_id: "instance-1".to_string(),
-                source_state_id: "source-1".to_string(),
-                branch_id: "branch-1".to_string(),
-                candidate_id: "candidate-1".to_string(),
-                branch_label: "label-1".to_string(),
-                spec_id: "spec-1".to_string(),
-            },
-            Paths {
-                repo_root: PathBuf::from("/tmp/repo"),
-                workspace_root: PathBuf::from("/tmp/workspace"),
-                binary_path: PathBuf::from("/tmp/bin/ploke-eval"),
-                target_relpath: PathBuf::from("target.txt"),
-                absolute_path: PathBuf::from("/tmp/workspace/target.txt"),
-            },
-            100,
-        )
-    }
-
-    fn channel<R>(endpoints: Endpoints) -> Channel<R, FileTransport> {
-        Channel::new(endpoints, FileTransport)
-    }
-
-    #[test]
-    fn parent_and_child_have_opposite_directions_from_existing_role_states() {
-        let temp = tempfile::tempdir().unwrap();
-        let endpoints = endpoints(temp.path().join("channels/runtime-1"));
-        let child_role = child();
-        let parent = channel::<Parent<parent::Selectable>>(endpoints.clone());
-        let child = Channel::for_child(&child_role, endpoints, FileTransport);
-
-        parent.send_cancel("test cancellation").unwrap();
-        let (child, _) = child.send_ready().unwrap();
-
-        let (_, child_messages) = child.recv_from_parent(Cursor::start()).unwrap();
-        let (_, parent_messages) = parent.recv_from_child(Cursor::start()).unwrap();
-
-        assert_eq!(child_messages.len(), 1);
-        assert_eq!(child_messages[0].direction(), Direction::ParentToChild);
-        assert_eq!(
-            child_messages[0].body(),
-            &ToChild::Cancel {
-                reason: "test cancellation".to_string()
-            }
-        );
-        assert_eq!(parent_messages.len(), 1);
-        assert_eq!(parent_messages[0].direction(), Direction::ChildToParent);
-        assert!(matches!(parent_messages[0].body(), ToParent::Ready));
-    }
-
-    #[test]
-    fn file_transport_reads_only_new_complete_records() {
-        let temp = tempfile::tempdir().unwrap();
-        let endpoints = endpoints(temp.path().join("channels/runtime-1"));
-        let child_role = child();
-        let child = Channel::for_child(&child_role, endpoints.clone(), FileTransport);
-        let parent = channel::<Parent<parent::Selectable>>(endpoints);
-
-        let (child, first) = child.send_ready().unwrap();
-        child.send_evaluating().unwrap();
-
-        let (_, all_messages) = parent.recv_from_child(Cursor::start()).unwrap();
-        let (_, new_messages) = parent.recv_from_child(first.cursor()).unwrap();
-
-        assert_eq!(all_messages.len(), 2);
-        assert_eq!(new_messages.len(), 1);
-        assert!(matches!(new_messages[0].body(), ToParent::Evaluating));
-    }
-
-    #[test]
-    fn envelope_validation_rejects_wrong_endpoint_direction() {
-        let temp = tempfile::tempdir().unwrap();
-        let endpoints = endpoints(temp.path().join("channels/runtime-1"));
-        let child_endpoint = endpoints.child_to_parent();
-        let parent_endpoint = endpoints.parent_to_child();
-        let envelope = Envelope::new(&child_endpoint, ToParent::Ready).unwrap();
-
-        let error = envelope.validate_endpoint(&parent_endpoint).unwrap_err();
-
-        assert!(matches!(error, EnvelopeError::Direction { .. }));
-    }
-
-    #[test]
-    fn envelope_validation_rejects_wrong_body_hash() {
-        let temp = tempfile::tempdir().unwrap();
-        let endpoints = endpoints(temp.path().join("channels/runtime-1"));
-        let child_endpoint = endpoints.child_to_parent();
-        let mut envelope = Envelope::new(&child_endpoint, ToParent::Ready).unwrap();
-        envelope.body_hash = "not-the-real-hash".to_string();
-
-        let error = envelope.validate_body_hash().unwrap_err();
-
-        assert!(matches!(error, EnvelopeError::BodyHash { .. }));
-    }
-}
+mod tests;

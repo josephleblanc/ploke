@@ -38,7 +38,7 @@ pub enum LoopSubcommand {
         name = "walk",
         about = "Debug-step Prototype 1 typestate transitions through a local walk server",
         long_about = "Debug-step Prototype 1 typestate transitions through a local walk server.\n\nThe walk server is a local debugging harness over live Prototype 1 transition edges. It is not production loop authority. By default it uses the active walk context if one was set with `walk use`, otherwise the current directory, and a repo-hashed socket under the runtime directory.",
-        after_help = "Common workflows:\n  Set context:       ploke-eval loop walk use /path/to/parent-worktree\n  Start live walk:   ploke-eval loop walk start\n  Inspect progress:  ploke-eval loop walk summary -v\n  Replay history:    ploke-eval loop walk replay --index 0\n  Move replay:       ploke-eval loop walk forward --steps 10 --tail 20\n  Live step:         ploke-eval loop walk step --until r6\n\nSafety notes:\n  replay/back/forward are read-only historical cursor commands.\n  step drives live typestate edges; long live edges require --watch.\n  R12 -> R13b successor handoff mutates checkout state and requires --allow git-changes.\n  branch-live writes only explicit provenance and requires --allow provenance-record."
+        after_help = "Common workflows:\n  Set context:       ploke-eval loop walk use /path/to/parent-worktree\n  Start live walk:   ploke-eval loop walk start\n  Inspect progress:  ploke-eval loop walk summary -v\n  Replay history:    ploke-eval loop walk replay --index 0\n  Query eval DB:     ploke-eval loop walk db_query --script '::relations'\n  Move replay:       ploke-eval loop walk forward --steps 10 --tail 20\n  Live step:         ploke-eval loop walk step --until r6\n\nSafety notes:\n  replay/back/forward and db_query are read-only inspection commands.\n  step drives live typestate edges; long live edges require --watch.\n  R12 -> R13b successor handoff mutates checkout state and requires --allow git-changes.\n  branch-live writes only explicit provenance and requires --allow provenance-record."
     )]
     Prototype1StateWalk(Prototype1StateWalkCommand),
     // ANCHOR_END: prototype1_walk_command_safety_help
@@ -166,6 +166,11 @@ pub enum Prototype1StateWalkSubcommand {
     Files(Prototype1StateWalkControlCommand),
     /// Show current in-memory walk state or the last step delta.
     Show(Prototype1StateWalkShowCommand),
+    /// Audit file/database persistence surfaces for a walk transition.
+    Audit(Prototype1StateWalkAuditCommand),
+    /// Run an immutable CozoScript query against the active loop run eval DB.
+    #[command(name = "db_query", visible_alias = "db-query")]
+    DbQuery(Prototype1StateWalkDbQueryCommand),
     /// Inspect nested LLM/tool-loop debugger checkpoints.
     Llm(Prototype1StateWalkLlmCommand),
     /// Summarize durable campaign progress without contacting the walk server.
@@ -237,6 +242,95 @@ pub struct Prototype1StateWalkControlCommand {
     /// Include protocol and transition-graph versions in table output.
     #[arg(long)]
     pub with_version: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum Prototype1StateWalkAuditScope {
+    /// Audit R0 preconditions plus expected file/DB persistence for R0 -> R1.
+    R0ToR1,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
+#[serde(rename_all = "snake_case")]
+pub enum Prototype1StateWalkAuditTransition {
+    R0ToR1,
+    R1ToR2a,
+    R1ToR3,
+    R3ToR4a,
+    R4aToR4b,
+    R4aToR4c,
+    R4bToR4c,
+    R4cToR5,
+    R5ToR6,
+    R6ToR7,
+    R7ToR8,
+    R8ToR9,
+    R9ToR10,
+    R10ToR11a,
+    R10ToR11,
+    R11aToR12,
+    R11ToR12,
+    R12ToR13a,
+    R12ToR13b,
+    R13aToR14a,
+    R13bToR14b,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Audit file/database persistence surfaces for a walk transition",
+    after_help = "Examples:\n  ploke-eval loop walk audit --repo-root .\n  ploke-eval loop walk audit --repo-root . --transition r10-to-r11\n  ploke-eval loop walk audit --repo-root . --format json\n  ploke-eval loop walk audit --repo-root . --verbose\n  ploke-eval loop walk audit --repo-root . --with-note\n  ploke-eval loop walk audit --repo-root . --verify\n\nThe first audit scope is r0-to-r1: it checks R0 preconditions, the documents r0_to_r1 expects, and whether that transition is expected to write files or DB rows. By default this command skips durable reconstruction and surface re-hashing; use --verify to reconstruct and verify the latest typestate first. Use --transition to show only one transition's checklist items. Use --verbose for per-item paths, DB relations, counts, and legacy document/DB details. Use --with-note to include the checklist note column. This command is read-only and uses the local walk server like show/replay."
+)]
+pub struct Prototype1StateWalkAuditCommand {
+    #[command(flatten)]
+    pub control: Prototype1StateWalkControlCommand,
+
+    /// Campaign id. Defaults to parent identity in the repo root.
+    #[arg(long)]
+    pub campaign: Option<CampaignId>,
+
+    /// Audit scope to run.
+    #[arg(long, value_enum, default_value_t = Prototype1StateWalkAuditScope::R0ToR1)]
+    pub scope: Prototype1StateWalkAuditScope,
+
+    /// Show only one transition's persistence checklist items.
+    #[arg(long, value_enum)]
+    pub transition: Option<Prototype1StateWalkAuditTransition>,
+
+    /// Reconstruct and verify durable walk state before auditing. This may hash large checkout surfaces.
+    #[arg(long)]
+    pub verify: bool,
+
+    /// Show paths, relations, counts, and per-item details in table output.
+    #[arg(long)]
+    pub verbose: bool,
+
+    /// Include the note column in the checklist table.
+    #[arg(long)]
+    pub with_note: bool,
+}
+
+#[derive(Debug, Clone, Parser)]
+#[command(
+    about = "Run an immutable CozoScript query against the active loop run eval DB",
+    after_help = "Examples:\n  ploke-eval loop walk db_query --script '::relations'\n  ploke-eval loop walk db_query --script '?[campaign_id, dataset_sources] := *eval_campaign { campaign_id, dataset_sources }'\n  ploke-eval loop walk db_query --repo-root /path/to/parent-worktree --format json --script '::relations'\n\nThis command is read-only: it restores the owner eval DB backup into memory and executes the script with Cozo ScriptMutability::Immutable."
+)]
+pub struct Prototype1StateWalkDbQueryCommand {
+    /// Parent checkout root. Defaults to active walk context, then current directory.
+    #[arg(long, value_name = "PATH")]
+    pub repo_root: Option<PathBuf>,
+
+    /// Campaign id. Defaults to parent identity in the repo root.
+    #[arg(long)]
+    pub campaign: Option<CampaignId>,
+
+    /// CozoScript to execute immutably against the loop run owner eval DB.
+    #[arg(long, value_name = "COZOSCRIPT")]
+    pub script: String,
+
+    #[arg(long, value_enum, default_value_t = InspectOutputFormat::Table)]
+    pub format: InspectOutputFormat,
 }
 
 #[derive(Debug, Clone, Parser)]

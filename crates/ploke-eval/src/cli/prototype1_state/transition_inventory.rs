@@ -1,5 +1,4 @@
 //! Source-derived Prototype 1 transition inventory.
-#![cfg_attr(not(test), allow(dead_code))]
 //!
 //! The rows here are migration-test metadata, not runtime authority. Parent
 //! rows are derived from [`WalkPhase::next_steps`] so a new walk edge must be

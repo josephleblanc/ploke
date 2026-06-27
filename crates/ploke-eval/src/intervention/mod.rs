@@ -49,8 +49,8 @@ pub use scheduler::{
     prototype1_runner_result_path, prototype1_scheduler_path, record_continuation_decision,
     record_runner_result, register_root_parent_node, register_treatment_evaluation_node,
     runner_request_from_node, update_node_status, update_node_workspace_root,
-    update_scheduler_policy, write_node_projection, write_runner_request_projection,
-    write_runner_result_at, write_treatment_evaluation_projection,
+    update_scheduler_policy, write_node_projection, write_parent_node_projection,
+    write_runner_request_projection, write_runner_result_at, write_treatment_evaluation_projection,
 };
 pub use spec::{
     AppliedEdit, ArtifactEdit, InterventionApplyInput, InterventionApplyOutput,

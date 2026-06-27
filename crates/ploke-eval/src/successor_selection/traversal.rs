@@ -2235,10 +2235,11 @@ mod tests {
         cli::prototype1_state::{
             evidence::PROTOTYPE1_BRANCH_EVALUATION_PROCEDURE_ID,
             history::{
-                CandidateArtifact, CandidateCoordinate, CandidateLifecycle, HistoryCandidate,
-                HistoryCandidateSource, HistoryCandidates, HistoryHash, LineageId, ProcedureRef,
-                SealedCandidateEvidence, SealedComparedRunEvidence, SealedEvaluationEvidence,
-                SealedEvidenceCitation, SelectionDecisionEntry, SelectionScope, SubjectRef,
+                CHILD_CHANNEL_TERMINAL_RESULT_RECORD, CandidateArtifact, CandidateCoordinate,
+                CandidateLifecycle, HistoryCandidate, HistoryCandidateSource, HistoryCandidates,
+                HistoryHash, LineageId, ProcedureRef, SealedCandidateEvidence,
+                SealedComparedRunEvidence, SealedEvaluationEvidence, SealedEvidenceCitation,
+                SealedRuntimeEvidence, SelectionDecisionEntry, SelectionScope, SubjectRef,
                 TraversalEvidence,
             },
         },
@@ -3746,12 +3747,31 @@ mod tests {
                 })
                 .into_iter()
                 .collect(),
-            runtimes: Vec::new(),
+            runtimes: test_runtime_evidence(node_id),
             branches: Vec::new(),
             extra_document_citations: Vec::new(),
             extra_journal_citations: Vec::new(),
             child_diagnostics: Vec::new(),
         }
+    }
+
+    fn test_runtime_evidence(node_id: &str) -> Vec<SealedRuntimeEvidence> {
+        let runtime_id = format!("runtime:{node_id}");
+        vec![SealedRuntimeEvidence {
+            runtime_id: runtime_id.clone(),
+            document_citations: vec![SealedEvidenceCitation {
+                ref_id: format!("channel:child-to-parent:terminal-result:{node_id}:{runtime_id}"),
+                content_hash: Some(
+                    HistoryHash::of_domain_json(
+                        "prototype1.test.child_channel_terminal_result",
+                        &runtime_id,
+                    )
+                    .expect("terminal hash"),
+                ),
+                record_name: Some(CHILD_CHANNEL_TERMINAL_RESULT_RECORD.to_string()),
+            }],
+            journal_citations: Vec::new(),
+        }]
     }
 
     fn candidate_artifact(node_id: &str, branch_id: &str) -> CandidateArtifact {

@@ -5,6 +5,7 @@
 //! harness over the canonical `live_edges`, not production loop authority.
 
 pub(crate) mod args;
+pub(crate) mod audit;
 pub(crate) mod client;
 pub(crate) mod controller;
 pub(crate) mod epoch;

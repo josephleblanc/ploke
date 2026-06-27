@@ -13,8 +13,9 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    campaign_manifest_path,
     cli::prototype1_state::{
-        cli_facing::{campaign_manifest_path_for_id, prototype1_state_transition_error},
+        cli_facing::prototype1_state_transition_error,
         event::RecordedAt,
         identity::load_parent_identity_optional,
         journal::{self, JournalEntry, PrototypeJournal, prototype1_transition_journal_path},
@@ -73,7 +74,7 @@ impl ReplayCursor {
             }
         })?;
         let campaign_id = identity.campaign_id().clone();
-        let manifest_path = campaign_manifest_path_for_id(&campaign_id)?;
+        let manifest_path = campaign_manifest_path(&campaign_id)?;
         let journal_path = prototype1_transition_journal_path(&manifest_path);
         let journal = PrototypeJournal::new(journal_path.clone());
         let entries = journal.load_entries().map_err(|error| {
@@ -208,7 +209,7 @@ impl ReplayCursor {
                 detail: "walk branch-live requires a non-empty --reason".to_string(),
             });
         }
-        let manifest_path = campaign_manifest_path_for_id(&self.campaign_id)?;
+        let manifest_path = campaign_manifest_path(&self.campaign_id)?;
         let dir = manifest_path
             .parent()
             .unwrap_or_else(|| Path::new("."))
