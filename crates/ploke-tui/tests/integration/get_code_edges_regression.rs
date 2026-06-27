@@ -381,6 +381,27 @@ async fn code_item_edges_returns_call_context_for_call_graph_item() {
     let db = Arc::new(Database::new(
         setup_db_full_multi_embedding("fixture_call_graph").expect("fixture_call_graph db"),
     ));
+    let crate_root = workspace_root().join("tests/fixture_crates/fixture_call_graph");
+    let module_path = vec!["crate".to_string()];
+    let file_path = crate_root.join("src/lib.rs");
+    let owner = graph_resolve_exact(
+        db.as_ref(),
+        "function",
+        file_path.as_path(),
+        &module_path,
+        "call_crate_local_target",
+    )
+    .expect("resolve call_crate_local_target")
+    .pop()
+    .expect("call_crate_local_target row")
+    .id;
+    assert!(
+        db.project_call_proof_facts_for_node(owner, "bd:fixture-call-graph")
+            .expect("project node proof facts")
+            >= 3,
+        "call_crate_local_target should project node-scoped proof rows"
+    );
+
     let cfg = UserConfig::default();
     let runtime_cfg = RuntimeConfig::from(cfg.clone());
     let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
@@ -401,8 +422,11 @@ async fn code_item_edges_returns_call_context_for_call_graph_item() {
         !rag.call_context_degraded(),
         "fixture_call_graph should expose call context"
     );
+    assert!(
+        !rag.proof_context_degraded(),
+        "projected fixture_call_graph facts should expose proof context"
+    );
 
-    let crate_root = workspace_root().join("tests/fixture_crates/fixture_call_graph");
     let state = Arc::new(AppState {
         chat: ChatState::new(ChatHistory::new()),
         config: ConfigState::new(runtime_cfg),
@@ -422,20 +446,6 @@ async fn code_item_edges_returns_call_context_for_call_graph_item() {
         .system
         .set_crate_focus_for_test(crate_root.clone())
         .await;
-
-    let module_path = vec!["crate".to_string()];
-    let file_path = crate_root.join("src/lib.rs");
-    let owner = graph_resolve_exact(
-        db.as_ref(),
-        "function",
-        file_path.as_path(),
-        &module_path,
-        "call_crate_local_target",
-    )
-    .expect("resolve call_crate_local_target")
-    .pop()
-    .expect("call_crate_local_target row")
-    .id;
 
     let ctx = Ctx {
         state,
@@ -461,6 +471,11 @@ async fn code_item_edges_returns_call_context_for_call_graph_item() {
         .and_then(|node| node.get("call_context"))
         .and_then(|value| value.as_array())
         .expect("node_info.call_context array");
+    let proof_context = payload
+        .get("node_info")
+        .and_then(|node| node.get("proof_context"))
+        .and_then(|value| value.as_array())
+        .expect("node_info.proof_context array");
 
     assert!(
         call_context.iter().any(|call| {
@@ -474,6 +489,16 @@ async fn code_item_edges_returns_call_context_for_call_graph_item() {
         }),
         "code_item_edges should return node-scoped call context for call_crate_local_target: {call_context:#?}"
     );
+    assert!(
+        proof_context.iter().any(|proof| {
+            proof.get("kind").and_then(serde_json::Value::as_str) == Some("call_edge")
+                && proof
+                    .get("caller_def_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(owner.to_string().as_str())
+        }),
+        "code_item_edges should return node-scoped proof context for call_crate_local_target: {proof_context:#?}"
+    );
     assert_eq!(
         result
             .ui_payload
@@ -484,6 +509,17 @@ async fn code_item_edges_returns_call_context_for_call_graph_item() {
                 .find(|field| field.name.as_ref() == "call_context"))
             .map(|field| field.value.as_ref()),
         Some(call_context.len().to_string().as_str())
+    );
+    assert_eq!(
+        result
+            .ui_payload
+            .as_ref()
+            .and_then(|payload| payload
+                .fields
+                .iter()
+                .find(|field| field.name.as_ref() == "proof_context"))
+            .map(|field| field.value.as_ref()),
+        Some(proof_context.len().to_string().as_str())
     );
 }
 

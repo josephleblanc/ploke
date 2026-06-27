@@ -471,6 +471,38 @@ impl RagService {
             .collect()
     }
 
+    pub fn proof_context_for_node(&self, node_id: Uuid) -> Result<Vec<ProofContextInfo>, RagError> {
+        let cfg = self.cfg.proof_context;
+        if !cfg.enabled || cfg.max_rows_per_part == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut seen = HashSet::new();
+        let mut rows = self
+            .db
+            .proof_symbol_lookup(&node_id.to_string())?
+            .into_iter()
+            .map(row_to_proof_context)
+            .filter(|row| seen.insert((row.fact_id.clone(), row.blocker_reason.clone())))
+            .collect::<Vec<_>>();
+        rows.sort_by(|left, right| {
+            (
+                left.call_site_id.as_deref().unwrap_or(""),
+                left.kind.as_str(),
+                left.fact_id.as_str(),
+                left.blocker_reason.as_deref().unwrap_or(""),
+            )
+                .cmp(&(
+                    right.call_site_id.as_deref().unwrap_or(""),
+                    right.kind.as_str(),
+                    right.fact_id.as_str(),
+                    right.blocker_reason.as_deref().unwrap_or(""),
+                ))
+        });
+        rows.truncate(cfg.max_rows_per_part);
+        Ok(rows)
+    }
+
     fn apply_type_context_gate(db: &Database, cfg: &mut RagConfig) -> Result<bool, RagError> {
         if !cfg.type_context.enabled {
             return Ok(false);
@@ -1096,29 +1128,7 @@ impl RagService {
 
         let mut out = HashMap::new();
         for id in seed_ids {
-            let mut seen = HashSet::new();
-            let mut rows = self
-                .db
-                .proof_symbol_lookup(&id.to_string())?
-                .into_iter()
-                .map(row_to_proof_context)
-                .filter(|row| seen.insert((row.fact_id.clone(), row.blocker_reason.clone())))
-                .collect::<Vec<_>>();
-            rows.sort_by(|left, right| {
-                (
-                    left.call_site_id.as_deref().unwrap_or(""),
-                    left.kind.as_str(),
-                    left.fact_id.as_str(),
-                    left.blocker_reason.as_deref().unwrap_or(""),
-                )
-                    .cmp(&(
-                        right.call_site_id.as_deref().unwrap_or(""),
-                        right.kind.as_str(),
-                        right.fact_id.as_str(),
-                        right.blocker_reason.as_deref().unwrap_or(""),
-                    ))
-            });
-            rows.truncate(cfg.max_rows_per_part);
+            let rows = self.proof_context_for_node(id)?;
             if !rows.is_empty() {
                 out.insert(id, rows);
             }

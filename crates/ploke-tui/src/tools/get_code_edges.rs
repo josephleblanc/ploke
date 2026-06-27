@@ -270,6 +270,16 @@ for a more fuzzy search."#
             }
             _ => Vec::new(),
         };
+        let proof_context = match ctx.state.rag.as_ref() {
+            Some(rag) if !rag.proof_context_degraded() => rag
+                .proof_context_for_node(resolved_item_id)
+                .map_err(|err| {
+                    ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                        "failed to collect proof context for code item {resolved_item_id}: {err}"
+                    )))
+                })?,
+            _ => Vec::new(),
+        };
 
         let mod_path_vec = params
             .module_path
@@ -316,7 +326,7 @@ for a more fuzzy search."#
             type_context: None,
             call_expansion: None,
             call_context,
-            proof_context: Vec::new(),
+            proof_context,
         };
 
         let node_edge_info = NodeEdgeInfo {
@@ -332,6 +342,10 @@ for a more fuzzy search."#
             .with_field(
                 "call_context",
                 node_edge_info.node_info.call_context.len().to_string(),
+            )
+            .with_field(
+                "proof_context",
+                node_edge_info.node_info.proof_context.len().to_string(),
             );
         let content = serde_json::to_string(&node_edge_info).map_err(|err| {
             ploke_error::Error::Internal(InternalError::CompilerError(format!(
