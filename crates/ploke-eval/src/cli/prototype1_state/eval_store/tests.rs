@@ -24,11 +24,12 @@ use super::{
     AGENT_TURN_EVENT_REL, AGENT_TURN_REL, APPLY_EVENT_REL, ARTIFACT_REF_REL, ARTIFACT_REL,
     ARTIFACT_SURFACE_REL, BASELINE_INSTANCE_METRICS_REL, BASELINE_INSTANCE_REL, BASELINE_REL,
     BINARY_REF_REL, BUILD_EVENT_REL, CAMPAIGN_EVAL_BUDGET_REL, CAMPAIGN_EVAL_POLICY_REL,
-    CAMPAIGN_PROTOCOL_POLICY_REL, CAMPAIGN_REL, CLOSURE_ARTIFACT_REF_REL, CLOSURE_INSTANCE_REL,
-    CLOSURE_PROTOCOL_COUNTS_REL, CLOSURE_PROTOCOL_PROCEDURE_REL, CLOSURE_REF_REL,
-    CONTINUATION_DECISION_REL, EVALUATION_INSTANCE_REL, EVALUATION_REL, MESSAGE_EVENT_REL,
-    MODEL_EXCHANGE_REL, OPERATION_REL, PATCH_REL, PROFILE_COMMITMENT_REL, SELECTION_CANDIDATE_REL,
-    SELECTION_DECISION_REL, SELECTION_FINDING_REL, SELECTION_SCORE_REL, TOOL_EVENT_REL,
+    CAMPAIGN_PROTOCOL_POLICY_REL, CAMPAIGN_REL, CHILD_PLAN_CHILD_REL, CHILD_PLAN_REJECTED_REL,
+    CHILD_PLAN_REL, CLOSURE_ARTIFACT_REF_REL, CLOSURE_INSTANCE_REL, CLOSURE_PROTOCOL_COUNTS_REL,
+    CLOSURE_PROTOCOL_PROCEDURE_REL, CLOSURE_REF_REL, CONTINUATION_DECISION_REL,
+    EVALUATION_INSTANCE_REL, EVALUATION_REL, MESSAGE_EVENT_REL, MODEL_EXCHANGE_REL, OPERATION_REL,
+    PATCH_REL, PROFILE_COMMITMENT_REL, SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL,
+    SELECTION_FINDING_REL, SELECTION_SCORE_REL, TOOL_EVENT_REL,
     api::EvalStorageMode,
     cozo_schema::eval_relation_exists,
     error::EvalStoreError,
@@ -38,7 +39,7 @@ use super::{
         PARENT_STARTED_TRANSITION, RECORD_REL, STORE_SCOPE, TRACE_EVENT_REL,
         parent_started_db_receipt,
     },
-    schema::EvalRelationSchema,
+    schema::{EvalRelationSchema, put_eval_params},
 };
 use crate::cli::prototype1_state::{
     event::RecordedAt,
@@ -273,6 +274,30 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
         },
         {
             let schema = &super::cozo_schema::TraceEventSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::child_plan::ChildPlanSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::child_plan::ChildPlanChildSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::child_plan::ChildPlanRejectedSchema::SCHEMA;
             (
                 schema.relation(),
                 schema.script_create(),
@@ -517,6 +542,21 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
             r#"?[trace_event_id, campaign_id, parent_id, runtime_id, node_id, generation, branch_id, role, pipeline, stage, authority, transition, event_name, span_name, target, level, outcome, duration_ms, record_access, record_kind, record_path, record_index, record_count, program, exit_code, error, source_log_ref, source_event_index, recorded_at] <- [[$trace_event_id, $campaign_id, $parent_id, $runtime_id, $node_id, $generation, $branch_id, $role, $pipeline, $stage, $authority, $transition, $event_name, $span_name, $target, $level, $outcome, $duration_ms, $record_access, $record_kind, $record_path, $record_index, $record_count, $program, $exit_code, $error, $source_log_ref, $source_event_index, $recorded_at]] :put eval_trace_event { trace_event_id => campaign_id, parent_id, runtime_id, node_id, generation, branch_id, role, pipeline, stage, authority, transition, event_name, span_name, target, level, outcome, duration_ms, record_access, record_kind, record_path, record_index, record_count, program, exit_code, error, source_log_ref, source_event_index, recorded_at }"#,
         ),
         (
+            "eval_child_plan",
+            r#":create eval_child_plan { plan_id: String => campaign_id: String, schema_version: String, parent_node_id: String, child_generation: Int, message_path: String, message_sha256: String, child_count: Int, rejected_count: Int, recorded_at: String, ingested_at: String }"#,
+            r#"?[plan_id, campaign_id, schema_version, parent_node_id, child_generation, message_path, message_sha256, child_count, rejected_count, recorded_at, ingested_at] <- [[$plan_id, $campaign_id, $schema_version, $parent_node_id, $child_generation, $message_path, $message_sha256, $child_count, $rejected_count, $recorded_at, $ingested_at]] :put eval_child_plan { plan_id => campaign_id, schema_version, parent_node_id, child_generation, message_path, message_sha256, child_count, rejected_count, recorded_at, ingested_at }"#,
+        ),
+        (
+            "eval_child_plan_child",
+            r#":create eval_child_plan_child { plan_id: String, child_node_id: String => campaign_id: String, parent_node_id: String, child_index: Int, child_generation: Int, node_schema_version: String, branch_id: String, parent_branch_id: String?, candidate_id: String, instance_id: String, source_state_id: String, target_relpath: String, node_path: String, runner_request_path: String, runner_result_path: String, workspace_root: String, binary_path: String, status: String, resolved_branch_id: String, resolved_candidate_id: String, source_content_hash: String, proposed_content_hash: String, selected_branch_id: String?, surface_present: Bool, harness_present: Bool }"#,
+            r#"?[plan_id, child_node_id, campaign_id, parent_node_id, child_index, child_generation, node_schema_version, branch_id, parent_branch_id, candidate_id, instance_id, source_state_id, target_relpath, node_path, runner_request_path, runner_result_path, workspace_root, binary_path, status, resolved_branch_id, resolved_candidate_id, source_content_hash, proposed_content_hash, selected_branch_id, surface_present, harness_present] <- [[$plan_id, $child_node_id, $campaign_id, $parent_node_id, $child_index, $child_generation, $node_schema_version, $branch_id, $parent_branch_id, $candidate_id, $instance_id, $source_state_id, $target_relpath, $node_path, $runner_request_path, $runner_result_path, $workspace_root, $binary_path, $status, $resolved_branch_id, $resolved_candidate_id, $source_content_hash, $proposed_content_hash, $selected_branch_id, $surface_present, $harness_present]] :put eval_child_plan_child { plan_id, child_node_id => campaign_id, parent_node_id, child_index, child_generation, node_schema_version, branch_id, parent_branch_id, candidate_id, instance_id, source_state_id, target_relpath, node_path, runner_request_path, runner_result_path, workspace_root, binary_path, status, resolved_branch_id, resolved_candidate_id, source_content_hash, proposed_content_hash, selected_branch_id, surface_present, harness_present }"#,
+        ),
+        (
+            "eval_child_plan_rejected_attempt",
+            r#":create eval_child_plan_rejected_attempt { plan_id: String, attempt_index: Int => campaign_id: String, parent_node_id: String, producer_id: String, proposal_id: String, run_id: String, policy: String, target_relpath: String, outcome: String, reason: String? }"#,
+            r#"?[plan_id, attempt_index, campaign_id, parent_node_id, producer_id, proposal_id, run_id, policy, target_relpath, outcome, reason] <- [[$plan_id, $attempt_index, $campaign_id, $parent_node_id, $producer_id, $proposal_id, $run_id, $policy, $target_relpath, $outcome, $reason]] :put eval_child_plan_rejected_attempt { plan_id, attempt_index => campaign_id, parent_node_id, producer_id, proposal_id, run_id, policy, target_relpath, outcome, reason }"#,
+        ),
+        (
             "eval_artifact",
             r#":create eval_artifact { artifact_id: String => campaign_id: String, tree_hash: String?, git_branch: String?, git_commit: String?, source: String, store_scope: String, created_by: String?, parent_artifact_id: String? }"#,
             r#"?[artifact_id, campaign_id, tree_hash, git_branch, git_commit, source, store_scope, created_by, parent_artifact_id] <- [[$artifact_id, $campaign_id, $tree_hash, $git_branch, $git_commit, $source, $store_scope, $created_by, $parent_artifact_id]] :put eval_artifact { artifact_id => campaign_id, tree_hash, git_branch, git_commit, source, store_scope, created_by, parent_artifact_id }"#,
@@ -756,11 +796,136 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
     assert!(eval_relation_exists(&db, RECORD_REL).expect("record rel exists"));
     assert!(eval_relation_exists(&db, LOG_REF_REL).expect("log rel exists"));
     assert!(eval_relation_exists(&db, TRACE_EVENT_REL).expect("trace rel exists"));
+    assert!(eval_relation_exists(&db, CHILD_PLAN_REL).expect("child plan rel exists"));
+    assert!(eval_relation_exists(&db, CHILD_PLAN_CHILD_REL).expect("child plan child rel exists"));
+    assert!(
+        eval_relation_exists(&db, CHILD_PLAN_REJECTED_REL).expect("child plan rejected rel exists")
+    );
     assert!(eval_relation_exists(&db, AGENT_TURN_REL).expect("agent turn rel exists"));
     assert!(eval_relation_exists(&db, AGENT_TURN_EVENT_REL).expect("agent turn event rel exists"));
     assert!(eval_relation_exists(&db, MODEL_EXCHANGE_REL).expect("model exchange rel exists"));
     assert!(eval_relation_exists(&db, MESSAGE_EVENT_REL).expect("message event rel exists"));
     assert!(eval_relation_exists(&db, TOOL_EVENT_REL).expect("tool event rel exists"));
+}
+
+#[test]
+fn existing_owner_db_missing_child_plan_schema_fails_without_migration() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let db_path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+    let db = Database::new_init().expect("db");
+    super::cozo_schema::TransitionEventSchema::SCHEMA
+        .ensure_installed(&db, "test.schema.transition")
+        .expect("transition schema");
+
+    let mut transition = BTreeMap::new();
+    transition.insert("event_id".to_string(), "event-1".into());
+    transition.insert("campaign_id".to_string(), "campaign".into());
+    transition.insert("parent_id".to_string(), "parent".into());
+    transition.insert("runtime_id".to_string(), "runtime".into());
+    transition.insert("node_id".to_string(), "parent".into());
+    transition.insert("generation".to_string(), 0_i64.into());
+    transition.insert("transition".to_string(), "r4c_to_r5".into());
+    transition.insert("phase".to_string(), "parent_started".into());
+    transition.insert("outcome".to_string(), "recorded".into());
+    transition.insert("store_scope".to_string(), "parent".into());
+    transition.insert("producer_role".to_string(), "parent".into());
+    transition.insert("visibility_scope".to_string(), "parent_visible".into());
+    transition.insert("source_class".to_string(), "direct_write".into());
+    transition.insert("evidence_class".to_string(), "typed_transition".into());
+    transition.insert("validation_status".to_string(), "valid".into());
+    transition.insert("source_stream_id".to_string(), "journal".into());
+    transition.insert("source_event_index".to_string(), 0_i64.into());
+    transition.insert("source_line".to_string(), 1_i64.into());
+    transition.insert("source_ref".to_string(), "journal:L1".into());
+    transition.insert("content_sha256".to_string(), "content".into());
+    transition.insert("semantic_hash".to_string(), "semantic".into());
+    transition.insert("recorded_at".to_string(), 1000_i64.into());
+    transition.insert("ingested_at".to_string(), "2026-06-27T00:00:00Z".into());
+    put_eval_params(
+        &db,
+        &super::cozo_schema::TransitionEventSchema::SCHEMA,
+        transition,
+        "test.put.transition",
+    )
+    .expect("put transition");
+    super::cozo_store::persist_owner_eval_database(&db, &db_path).expect("persist transition db");
+
+    let restored = load_owner_eval_database(&db_path).expect("restore db");
+    let err = DbEvalStore::new(&restored)
+        .install_schema()
+        .expect_err("old eval DB must not be migrated in-place");
+    assert!(
+        err.to_string()
+            .contains("existing eval DB is missing current relation"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        err.to_string().contains("eval_child_plan"),
+        "missing relation should be named: {err}"
+    );
+
+    let restored = load_owner_eval_database(&db_path).expect("restore db again");
+    let transitions = restored
+        .raw_query_params(
+            r#"
+?[event_id] :=
+    *eval_transition_event { event_id: event_id }
+"#,
+            BTreeMap::new(),
+        )
+        .expect("query transition ids");
+    let transition_ids: Vec<_> = transitions
+        .row_refs()
+        .map(|row| row.get::<String>("event_id").expect("event id"))
+        .collect();
+    assert_eq!(transition_ids, vec!["event-1".to_string()]);
+}
+
+#[test]
+fn existing_owner_db_with_bad_child_plan_schema_version_fails_without_reuse() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let db_path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+    let db = Database::new_init().expect("db");
+    DbEvalStore::new(&db)
+        .install_schema()
+        .expect("current schema installs");
+
+    let mut plan = BTreeMap::new();
+    plan.insert("plan_id".to_string(), "plan-1".into());
+    plan.insert("campaign_id".to_string(), "campaign".into());
+    plan.insert("schema_version".to_string(), "node-88bcb4fbf7fb309a".into());
+    plan.insert("parent_node_id".to_string(), "parent".into());
+    plan.insert("child_generation".to_string(), 1_i64.into());
+    plan.insert(
+        "message_path".to_string(),
+        "prototype1/messages/child-plan.json".into(),
+    );
+    plan.insert("message_sha256".to_string(), "sha".into());
+    plan.insert("child_count".to_string(), 0_i64.into());
+    plan.insert("rejected_count".to_string(), 0_i64.into());
+    plan.insert("recorded_at".to_string(), "2026-06-27T00:00:00Z".into());
+    plan.insert("ingested_at".to_string(), "2026-06-27T00:00:00Z".into());
+    put_eval_params(
+        &db,
+        &super::child_plan::ChildPlanSchema::SCHEMA,
+        plan,
+        "test.put.bad_child_plan_version",
+    )
+    .expect("put bad child plan row");
+    super::cozo_store::persist_owner_eval_database(&db, &db_path).expect("persist db");
+
+    let restored = load_owner_eval_database(&db_path).expect("restore db");
+    let err = DbEvalStore::new(&restored)
+        .install_schema()
+        .expect_err("bad child-plan rows must not be reused");
+    assert!(
+        err.to_string().contains("unsupported schema_version"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        err.to_string().contains(CHILD_PLAN_SCHEMA_VERSION),
+        "expected version should be named: {err}"
+    );
 }
 
 #[test]

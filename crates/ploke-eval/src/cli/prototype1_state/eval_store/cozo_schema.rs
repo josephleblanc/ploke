@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use cozo::DataValue;
 
@@ -6,6 +6,10 @@ use super::{
     agent_turn::ensure_agent_turn_schema,
     artifact::ensure_artifact_schema,
     build::ensure_build_schema,
+    child_plan::{
+        CHILD_PLAN_SCHEMA_VERSION, ChildPlanChildSchema, ChildPlanRejectedSchema, ChildPlanSchema,
+        ensure_child_plan_schema,
+    },
     continuation::ensure_continuation_schema,
     cozo_store::EvalDb,
     error::EvalStoreError,
@@ -205,6 +209,10 @@ define_eval_schema!(TraceEventSchema {
 });
 
 pub(super) fn ensure_eval_store_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), EvalStoreError> {
+    let existing = eval_relation_names(db)?;
+    reject_unsupported_schema_drift(&existing)?;
+    reject_child_plan_row_drift(db, &existing)?;
+
     TransitionEventSchema::SCHEMA.ensure_installed(db, "schema.eval_transition_event")?;
     RecordRefSchema::SCHEMA.ensure_installed(db, "schema.eval_record_ref")?;
     LogRefSchema::SCHEMA.ensure_installed(db, "schema.eval_log_ref")?;
@@ -222,6 +230,7 @@ pub(super) fn ensure_eval_store_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(),
     ensure_artifact_schema(db)?;
     ensure_build_schema(db)?;
     ensure_operation_schema(db)?;
+    ensure_child_plan_schema(db)?;
     ensure_agent_turn_schema(db)?;
 
     Ok(())
@@ -231,16 +240,87 @@ pub(super) fn eval_relation_exists<D: EvalDb + ?Sized>(
     db: &D,
     relation: &str,
 ) -> Result<bool, EvalStoreError> {
+    Ok(eval_relation_names(db)?.contains(relation))
+}
+
+fn reject_unsupported_schema_drift(existing: &BTreeSet<String>) -> Result<(), EvalStoreError> {
+    if !existing.iter().any(|name| name.starts_with("eval_")) {
+        return Ok(());
+    }
+    let required = [
+        ChildPlanSchema::RELATION,
+        ChildPlanChildSchema::RELATION,
+        ChildPlanRejectedSchema::RELATION,
+    ];
+    let missing = required
+        .into_iter()
+        .filter(|relation| !existing.contains(*relation))
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(EvalStoreError::DbSetup {
+        phase: "schema.eval_store.no_migration",
+        detail: format!(
+            "existing eval DB is missing current relation(s) {}; regenerate the owner eval DB instead of adding schema to an old backup",
+            missing.join(", ")
+        ),
+    })
+}
+
+fn reject_child_plan_row_drift<D: EvalDb + ?Sized>(
+    db: &D,
+    existing: &BTreeSet<String>,
+) -> Result<(), EvalStoreError> {
+    if !existing.contains(ChildPlanSchema::RELATION) {
+        return Ok(());
+    }
+    let mut params = BTreeMap::new();
+    params.insert(
+        "schema_version".to_string(),
+        CHILD_PLAN_SCHEMA_VERSION.to_string().into(),
+    );
+    let query = r#"
+?[plan_id, actual_schema_version] :=
+  *eval_child_plan { plan_id: plan_id, schema_version: actual_schema_version },
+  actual_schema_version != $schema_version
+:limit 1
+"#;
+    let result = db
+        .eval_query_params(query, params)
+        .map_err(|source| EvalStoreError::Db {
+            phase: "schema.eval_child_plan.version",
+            source,
+        })?;
+    if result.rows.is_empty() {
+        return Ok(());
+    }
+    let details = result
+        .rows
+        .first()
+        .map(|row| format!("row={row:?}"))
+        .unwrap_or_else(|| "row=<unavailable>".to_string());
+    Err(EvalStoreError::DbSetup {
+        phase: "schema.eval_child_plan.version",
+        detail: format!(
+            "existing eval DB contains eval_child_plan rows with an unsupported schema_version; expected {CHILD_PLAN_SCHEMA_VERSION}; regenerate the owner eval DB instead of reusing this backup ({details})"
+        ),
+    })
+}
+
+fn eval_relation_names<D: EvalDb + ?Sized>(db: &D) -> Result<BTreeSet<String>, EvalStoreError> {
     let result = db
         .eval_query_params("::relations", BTreeMap::new())
         .map_err(|source| EvalStoreError::Db {
             phase: "schema.relations",
             source,
         })?;
-    Ok(result.rows.iter().any(|row| {
-        row.first().and_then(|value| match value {
-            DataValue::Str(value) => Some(value.as_str()),
+    Ok(result
+        .rows
+        .iter()
+        .filter_map(|row| match row.first() {
+            Some(DataValue::Str(value)) => Some(value.to_string()),
             _ => None,
-        }) == Some(relation)
-    }))
+        })
+        .collect())
 }

@@ -9,6 +9,7 @@ mod agent_turn;
 mod api;
 mod artifact;
 mod build;
+mod child_plan;
 mod continuation;
 mod cozo_params;
 mod cozo_schema;
@@ -46,6 +47,11 @@ pub(crate) use build::{BINARY_REF_REL, BUILD_EVENT_REL};
 pub(crate) use build::{
     BinaryRefEvidence, BuildEventEvidence, BuildProvenanceEvidence, file_sha256,
     write_build_provenance_to_owner_db,
+};
+#[cfg(test)]
+pub(crate) use child_plan::{CHILD_PLAN_CHILD_REL, CHILD_PLAN_REJECTED_REL, CHILD_PLAN_REL};
+pub(crate) use child_plan::{
+    CHILD_PLAN_SCHEMA_VERSION, ChildPlanEvidence, write_child_plan_to_owner_db,
 };
 #[cfg(test)]
 pub(crate) use continuation::CONTINUATION_DECISION_REL;

@@ -2349,37 +2349,116 @@ fn tui_edit_surface_parent_selection_publishes_child_plan() {
     let refs = db
         .raw_query_params(
             r#"
-?[family, producer_id, payload_json] :=
-    *eval_record_ref { campaign_id, family, producer_id, payload_json },
+?[family, producer_id] :=
+    *eval_record_ref { campaign_id, family, producer_id },
     campaign_id = $campaign_id
 "#,
             params,
         )
         .expect("query all record refs");
     let mut nodes = BTreeSet::new();
-    let mut plans = Vec::new();
     for row in refs.row_refs() {
         let family = row.get::<String>("family").expect("family");
         let producer = row.get::<String>("producer_id").expect("producer");
-        let payload = row.get::<String>("payload_json").expect("payload");
         if family == "scheduler_node" {
             nodes.insert(producer.clone());
         }
-        if family == "child_plan_file" && producer == body.parent_node_id() {
-            plans.push(payload);
-        }
+        assert_ne!(
+            family, "child_plan_file",
+            "child-plan persistence must use normalized eval_child_plan rows, not eval_record_ref payloads"
+        );
     }
     for child in body.children() {
         assert!(
             nodes.contains(child.node_id()),
-            "child scheduler node '{}' should be mirrored to eval_record_ref",
+            "child scheduler node '{}' should still be mirrored until scheduler-node normalization lands",
             child.node_id()
         );
     }
-    assert_eq!(plans.len(), 1, "child-plan file should be mirrored once");
+
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "campaign_id".to_string(),
+        cozo::DataValue::from(CLI_TEST_CAMPAIGN.to_string()),
+    );
+    params.insert(
+        "parent_node_id".to_string(),
+        cozo::DataValue::from(body.parent_node_id().to_string()),
+    );
+    let plans = db
+        .raw_query_params(
+            r#"
+?[plan_id, child_generation, child_count, rejected_count, message_sha256] :=
+    *eval_child_plan {
+        plan_id,
+        campaign_id,
+        parent_node_id,
+        child_generation,
+        child_count,
+        rejected_count,
+        message_sha256
+    },
+    campaign_id = $campaign_id,
+    parent_node_id = $parent_node_id
+"#,
+            params,
+        )
+        .expect("query normalized child plan rows");
+    assert_eq!(
+        plans.rows.len(),
+        1,
+        "child plan should have one normalized row"
+    );
+    let plan = plans.row_refs().next().expect("child plan row");
+    let plan_id = plan.get::<String>("plan_id").expect("plan id");
+    assert_eq!(plan.get::<i64>("child_generation").expect("generation"), 1);
+    assert_eq!(plan.get::<i64>("child_count").expect("child count"), 1);
+    assert_eq!(
+        plan.get::<i64>("rejected_count").expect("rejected count"),
+        0
+    );
     assert!(
-        plans[0].contains(body.children()[0].node_id()),
-        "child-plan payload should contain planned child identity"
+        !plan
+            .get::<String>("message_sha256")
+            .expect("message hash")
+            .is_empty(),
+        "child-plan row carries message content hash"
+    );
+
+    let mut params = std::collections::BTreeMap::new();
+    params.insert("plan_id".to_string(), cozo::DataValue::from(plan_id));
+    let children = db
+        .raw_query_params(
+            r#"
+?[child_node_id, branch_id, child_index, status, runner_request_path] :=
+    *eval_child_plan_child {
+        plan_id,
+        child_node_id,
+        branch_id,
+        child_index,
+        status,
+        runner_request_path
+    },
+    plan_id = $plan_id
+"#,
+            params,
+        )
+        .expect("query normalized child-plan children");
+    assert_eq!(children.rows.len(), body.children().len());
+    let child_row = children.row_refs().next().expect("child row");
+    assert_eq!(
+        child_row.get::<String>("child_node_id").expect("child id"),
+        body.children()[0].node_id()
+    );
+    assert_eq!(
+        child_row.get::<String>("status").expect("status"),
+        "planned"
+    );
+    assert!(
+        child_row
+            .get::<String>("runner_request_path")
+            .expect("request path")
+            .ends_with("runner-request.json")
     );
 }
 
@@ -6317,6 +6396,12 @@ fn broad_harness_materialization_rejects_post_admission_drift() {
 fn below_min_rejected_attempts_are_persisted_and_recoverable_from_existing_child_plan() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let manifest_path = tmp.path().join("campaign.json");
+    let db_path = eval_store::prototype1_eval_store_db_path(&manifest_path);
+    fs::create_dir_all(db_path.parent().expect("eval db parent")).expect("eval db dir");
+    ploke_db::Database::new_init()
+        .expect("empty eval db")
+        .write_backup_to_path(&db_path)
+        .expect("seed owner eval db");
     let repo_root = tmp.path().join("repo");
     write_broad_surface_targets(&repo_root);
     let rejected = surface_attempt::Evidence::rejected(
@@ -6361,8 +6446,80 @@ fn below_min_rejected_attempts_are_persisted_and_recoverable_from_existing_child
     );
     assert_eq!(
         receipt.rejected_surface_attempts,
-        vec![rejected],
+        vec![rejected.clone()],
         "rejected attempts should survive receive_existing_child_plan"
+    );
+
+    let db = eval_store::load_owner_eval_database(&db_path).expect("owner eval DB loads");
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "campaign_id".to_string(),
+        cozo::DataValue::from(CLI_TEST_CAMPAIGN.to_string()),
+    );
+    params.insert(
+        "parent_node_id".to_string(),
+        cozo::DataValue::from(receipt.plan.body().parent_node_id().to_string()),
+    );
+    let plans = db
+        .raw_query_params(
+            r#"
+?[plan_id, child_count, rejected_count] :=
+    *eval_child_plan {
+        plan_id,
+        campaign_id,
+        parent_node_id,
+        child_count,
+        rejected_count
+    },
+    campaign_id = $campaign_id,
+    parent_node_id = $parent_node_id
+"#,
+            params,
+        )
+        .expect("query rejected-only normalized child plan");
+    assert_eq!(plans.rows.len(), 1);
+    let plan = plans.row_refs().next().expect("child plan row");
+    let plan_id = plan.get::<String>("plan_id").expect("plan id");
+    assert_eq!(plan.get::<i64>("child_count").expect("child count"), 0);
+    assert_eq!(
+        plan.get::<i64>("rejected_count").expect("rejected count"),
+        1
+    );
+
+    let mut params = std::collections::BTreeMap::new();
+    params.insert("plan_id".to_string(), cozo::DataValue::from(plan_id));
+    let attempts = db
+        .raw_query_params(
+            r#"
+?[producer_id, proposal_id, run_id, policy, target_relpath, outcome, reason] :=
+    *eval_child_plan_rejected_attempt {
+        plan_id,
+        producer_id,
+        proposal_id,
+        run_id,
+        policy,
+        target_relpath,
+        outcome,
+        reason
+    },
+    plan_id = $plan_id
+"#,
+            params,
+        )
+        .expect("query normalized rejected attempts");
+    assert_eq!(attempts.rows.len(), 1);
+    let attempt = attempts.row_refs().next().expect("attempt row");
+    assert_eq!(
+        attempt.get::<String>("proposal_id").expect("proposal id"),
+        "proposal-rejected"
+    );
+    assert_eq!(
+        attempt.get::<String>("outcome").expect("outcome"),
+        "rejected"
+    );
+    assert_eq!(
+        attempt.get::<String>("reason").expect("reason"),
+        "backend rejected deterministic proposal"
     );
 
     let parent_identity = test_parent_identity();

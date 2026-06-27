@@ -3116,7 +3116,6 @@ fn publish_broad_harness_child_plan_from_admitted(
 
 const TUI_EDIT_SURFACE_PRODUCER_ID: &str = "prototype1:tui-edit-surface:deterministic-v1";
 const TUI_EDIT_SURFACE_POLICY_ID: &str = "surface-policy:tool-surface-v1";
-const PROTOTYPE1_CHILD_PLAN_FILE_SCHEMA_VERSION: &str = "prototype1-child-plan-file.v1";
 
 fn publish_deterministic_tui_tools_child_plan(
     env: ChildPlanEnv<'_>,
@@ -4165,21 +4164,38 @@ fn write_child_plan_file(
         })?;
     }
     write_json_file_pretty(path, body)?;
-    emit_child_plan_record_ref(campaign_id, path, body)
+    emit_child_plan_db_projection(campaign_id, path, body)
 }
 
-fn emit_child_plan_record_ref(
+fn emit_child_plan_db_projection(
     campaign_id: &CampaignId,
     path: &Path,
     body: &ChildPlanFiles,
 ) -> Result<(), PrepareError> {
-    crate::record_emission::emit_parent_eval_record_ref_for_json_file_if_owner_db_exists(
-        path,
-        campaign_id,
-        "child_plan_file",
-        PROTOTYPE1_CHILD_PLAN_FILE_SCHEMA_VERSION,
-        body.parent_node_id(),
+    let db_path = eval_store::owner_eval_db_file_for_record_path(path).map_err(|source| {
+        PrepareError::DatabaseSetup {
+            phase: "eval_child_plan_path",
+            detail: source.to_string(),
+        }
+    })?;
+    if !db_path.is_file() {
+        return Ok(());
+    }
+    eval_store::write_child_plan_to_owner_db(
+        &db_path,
+        eval_store::ChildPlanEvidence {
+            campaign_id: campaign_id.clone(),
+            schema_version: eval_store::CHILD_PLAN_SCHEMA_VERSION.to_string(),
+            message_path: path.to_path_buf(),
+            body: body.clone(),
+            recorded_at: Utc::now().to_rfc3339(),
+        },
     )
+    .map_err(|source| PrepareError::DatabaseSetup {
+        phase: "eval_child_plan_put",
+        detail: source.to_string(),
+    })?;
+    Ok(())
 }
 
 fn emit_child_plan_replay_refs(
@@ -4187,7 +4203,7 @@ fn emit_child_plan_replay_refs(
     path: &Path,
     body: &ChildPlanFiles,
 ) -> Result<(), PrepareError> {
-    emit_child_plan_record_ref(campaign_id, path, body)?;
+    emit_child_plan_db_projection(campaign_id, path, body)?;
     for child in body.children() {
         let node = child.node_record();
         let path = node.node_dir.join("node.json");
