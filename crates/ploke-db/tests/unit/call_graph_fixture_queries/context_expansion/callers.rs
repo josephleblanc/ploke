@@ -99,6 +99,20 @@ fn fixture_callers_for_target_reads_method_and_associated_callers() -> Result<()
     assert_eq!(caller.target.source_kind, CallSiteKind::Method);
     assert_eq!(caller.target.target_kind, CallTargetKind::Method);
 
+    let owner = function_id_by_name(&db, "call_typed_double_reference_local_instance_method")?;
+    let caller = caller_by_owner_method_receiver(
+        &callers,
+        owner,
+        "instance_value",
+        &CallReceiver::TypedLocalBinding {
+            name: "value".to_string(),
+            type_path: path(&["LocalAssoc"]),
+        },
+    );
+    assert_eq!(caller.target.relation, CallRelationKind::Method);
+    assert_eq!(caller.target.source_kind, CallSiteKind::Method);
+    assert_eq!(caller.target.target_kind, CallTargetKind::Method);
+
     let owner = function_id_by_name(&db, "call_method_as_associated_function")?;
     let caller = caller_by_owner_kind_path(
         &callers,
