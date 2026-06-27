@@ -259,6 +259,7 @@ for a more fuzzy search."#
             }
         };
         let resolved_item_id = resolved_item[0].id;
+        let carriers = lookup_support::context_carriers_for_node(&ctx, resolved_item_id)?;
         let tool_results = ctx
             .state
             .io_handle
@@ -290,14 +291,22 @@ for a more fuzzy search."#
             snippet,
             type_context: None,
             call_expansion: None,
-            call_context: Vec::new(),
-            proof_context: Vec::new(),
+            call_context: carriers.call_context,
+            proof_context: carriers.proof_context,
         };
 
         let summary = format!("Resolved item in {}", concise_context.file_path.as_ref());
         let ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
             .with_field("file_path", concise_context.file_path.as_ref())
-            .with_field("canon_path", concise_context.canon_path.as_ref());
+            .with_field("canon_path", concise_context.canon_path.as_ref())
+            .with_field(
+                "call_context",
+                concise_context.call_context.len().to_string(),
+            )
+            .with_field(
+                "proof_context",
+                concise_context.proof_context.len().to_string(),
+            );
         let content = serde_json::to_string(&concise_context).map_err(|err| {
             ploke_error::Error::Internal(InternalError::CompilerError(format!(
                 "failed to serialize ConciseContext: {err}. This indicates an error in the ploke application itself, not due to incorrect search terms. Please consider filing an issue on the ploke github."

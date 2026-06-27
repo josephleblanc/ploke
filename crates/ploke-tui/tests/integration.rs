@@ -38,6 +38,12 @@ mod command_stress_tokio;
 #[path = "integration/command_verbosity_profile.rs"]
 mod command_verbosity_profile;
 
+#[path = "integration/call_graph_tool_support.rs"]
+mod call_graph_tool_support;
+
+#[path = "integration/code_item_lookup_regression.rs"]
+mod code_item_lookup_regression;
+
 #[path = "integration/commands_parser_m1.rs"]
 mod commands_parser_m1;
 

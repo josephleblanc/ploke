@@ -260,26 +260,7 @@ for a more fuzzy search."#
             }
         };
         let resolved_item_id = resolved_item[0].id;
-        let call_context = match ctx.state.rag.as_ref() {
-            Some(rag) if !rag.call_context_degraded() => {
-                rag.call_context_for_node(resolved_item_id).map_err(|err| {
-                    ploke_error::Error::Internal(InternalError::CompilerError(format!(
-                        "failed to collect call context for code item {resolved_item_id}: {err}"
-                    )))
-                })?
-            }
-            _ => Vec::new(),
-        };
-        let proof_context = match ctx.state.rag.as_ref() {
-            Some(rag) if !rag.proof_context_degraded() => rag
-                .proof_context_for_node(resolved_item_id)
-                .map_err(|err| {
-                    ploke_error::Error::Internal(InternalError::CompilerError(format!(
-                        "failed to collect proof context for code item {resolved_item_id}: {err}"
-                    )))
-                })?,
-            _ => Vec::new(),
-        };
+        let carriers = lookup_support::context_carriers_for_node(&ctx, resolved_item_id)?;
 
         let mod_path_vec = params
             .module_path
@@ -325,8 +306,8 @@ for a more fuzzy search."#
             snippet,
             type_context: None,
             call_expansion: None,
-            call_context,
-            proof_context,
+            call_context: carriers.call_context,
+            proof_context: carriers.proof_context,
         };
 
         let node_edge_info = NodeEdgeInfo {

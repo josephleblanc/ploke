@@ -1,4 +1,8 @@
-use ploke_core::tool_types::ToolName;
+use ploke_core::{
+    rag_types::{CallContextInfo, ProofContextInfo},
+    tool_types::ToolName,
+};
+use uuid::Uuid;
 
 use super::{ToolError, ToolErrorCode, ToolInvocationError, ToolRetryContext};
 
@@ -71,6 +75,44 @@ pub(super) fn item_canon_path(module_path: &str, item_name: &str) -> String {
     } else {
         format!("{module_path}::{item_name}")
     }
+}
+
+pub(super) struct ContextCarriers {
+    pub(super) call_context: Vec<CallContextInfo>,
+    pub(super) proof_context: Vec<ProofContextInfo>,
+}
+
+pub(super) fn context_carriers_for_node(
+    ctx: &super::Ctx,
+    node_id: Uuid,
+) -> Result<ContextCarriers, ploke_error::Error> {
+    use ploke_error::InternalError;
+
+    let call_context = match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.call_context_degraded() => {
+            rag.call_context_for_node(node_id).map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect call context for code item {node_id}: {err}"
+                )))
+            })?
+        }
+        _ => Vec::new(),
+    };
+    let proof_context = match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.proof_context_degraded() => {
+            rag.proof_context_for_node(node_id).map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect proof context for code item {node_id}: {err}"
+                )))
+            })?
+        }
+        _ => Vec::new(),
+    };
+
+    Ok(ContextCarriers {
+        call_context,
+        proof_context,
+    })
 }
 
 fn display_received(received: &str) -> &str {

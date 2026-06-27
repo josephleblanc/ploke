@@ -1,16 +1,11 @@
 use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
 use ploke_core::ArcStr;
-use ploke_db::{
-    Database,
-    helpers::{graph_resolve_edges, graph_resolve_exact, list_primary_nodes},
-};
+use ploke_db::helpers::{graph_resolve_edges, graph_resolve_exact, list_primary_nodes};
 use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_io::IoManagerHandle;
-use ploke_rag::{RagConfig, RagService, TokenBudget};
-use ploke_test_utils::{
-    PLOKE_DB_PRIMARY, setup_db_full_multi_embedding, shared_backup_fixture_db, workspace_root,
-};
+use ploke_rag::TokenBudget;
+use ploke_test_utils::{PLOKE_DB_PRIMARY, shared_backup_fixture_db, workspace_root};
 use ploke_tui::{
     EventBus,
     app_state::{
@@ -27,6 +22,8 @@ use ploke_tui::{
 };
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
+
+use crate::call_graph_tool_support::CallGraphToolFixture;
 
 #[tokio::test]
 async fn code_item_edges_handles_trailing_module_separators() {
@@ -378,85 +375,11 @@ async fn code_item_edges_returns_edges_for_database_struct_in_ploke_db() {
 
 #[tokio::test]
 async fn code_item_edges_returns_call_context_for_call_graph_item() {
-    let db = Arc::new(Database::new(
-        setup_db_full_multi_embedding("fixture_call_graph").expect("fixture_call_graph db"),
-    ));
-    let crate_root = workspace_root().join("tests/fixture_crates/fixture_call_graph");
-    let module_path = vec!["crate".to_string()];
-    let file_path = crate_root.join("src/lib.rs");
-    let owner = graph_resolve_exact(
-        db.as_ref(),
-        "function",
-        file_path.as_path(),
-        &module_path,
-        "call_crate_local_target",
-    )
-    .expect("resolve call_crate_local_target")
-    .pop()
-    .expect("call_crate_local_target row")
-    .id;
-    assert!(
-        db.project_call_proof_facts_for_node(owner, "bd:fixture-call-graph")
-            .expect("project node proof facts")
-            >= 3,
-        "call_crate_local_target should project node-scoped proof rows"
-    );
-
-    let cfg = UserConfig::default();
-    let runtime_cfg = RuntimeConfig::from(cfg.clone());
-    let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
-        Arc::clone(&db.active_embedding_set),
-        cfg.load_embedding_processor().expect("embedder"),
-    ));
-    let io_handle = IoManagerHandle::new();
-    let rag = Arc::new(
-        RagService::new_full(
-            Arc::clone(&db),
-            Arc::clone(&embedder),
-            io_handle.clone(),
-            RagConfig::default(),
-        )
-        .expect("rag service"),
-    );
-    assert!(
-        !rag.call_context_degraded(),
-        "fixture_call_graph should expose call context"
-    );
-    assert!(
-        !rag.proof_context_degraded(),
-        "projected fixture_call_graph facts should expose proof context"
-    );
-
-    let state = Arc::new(AppState {
-        chat: ChatState::new(ChatHistory::new()),
-        config: ConfigState::new(runtime_cfg),
-        system: SystemState::new(SystemStatus::new(None)),
-        indexing_state: RwLock::new(None),
-        indexer_task: None,
-        indexing_control: Arc::new(Mutex::new(None)),
-        db: Arc::clone(&db),
-        embedder,
-        io_handle,
-        proposals: RwLock::new(HashMap::new()),
-        create_proposals: RwLock::new(HashMap::new()),
-        rag: Some(rag),
-        budget: TokenBudget::default(),
-    });
-    state
-        .system
-        .set_crate_focus_for_test(crate_root.clone())
-        .await;
-
-    let ctx = Ctx {
-        state,
-        event_bus: Arc::new(EventBus::new(EventBusCaps::default())),
-        request_id: Uuid::new_v4(),
-        parent_id: Uuid::new_v4(),
-        call_id: ArcStr::from("call-graph-edges"),
-    };
+    let fixture = CallGraphToolFixture::new().await;
+    let ctx = fixture.ctx("call-graph-edges");
     let params = EdgesParams {
         item_name: Cow::Borrowed("call_crate_local_target"),
-        file_path: Cow::Owned(file_path.display().to_string()),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
         node_kind: Cow::Borrowed("function"),
         module_path: Cow::Borrowed("crate"),
     };
@@ -476,11 +399,11 @@ async fn code_item_edges_returns_call_context_for_call_graph_item() {
         .and_then(|node| node.get("proof_context"))
         .and_then(|value| value.as_array())
         .expect("node_info.proof_context array");
+    let owner = fixture.owner.to_string();
 
     assert!(
         call_context.iter().any(|call| {
-            call.get("owner_id").and_then(serde_json::Value::as_str)
-                == Some(owner.to_string().as_str())
+            call.get("owner_id").and_then(serde_json::Value::as_str) == Some(owner.as_str())
                 && call.get("kind").and_then(serde_json::Value::as_str) == Some("path")
                 && call
                     .get("targets")
@@ -495,10 +418,12 @@ async fn code_item_edges_returns_call_context_for_call_graph_item() {
                 && proof
                     .get("caller_def_id")
                     .and_then(serde_json::Value::as_str)
-                    == Some(owner.to_string().as_str())
+                    == Some(owner.as_str())
         }),
         "code_item_edges should return node-scoped proof context for call_crate_local_target: {proof_context:#?}"
     );
+    let call_count = call_context.len().to_string();
+    let proof_count = proof_context.len().to_string();
     assert_eq!(
         result
             .ui_payload
@@ -508,7 +433,7 @@ async fn code_item_edges_returns_call_context_for_call_graph_item() {
                 .iter()
                 .find(|field| field.name.as_ref() == "call_context"))
             .map(|field| field.value.as_ref()),
-        Some(call_context.len().to_string().as_str())
+        Some(call_count.as_str())
     );
     assert_eq!(
         result
@@ -519,7 +444,7 @@ async fn code_item_edges_returns_call_context_for_call_graph_item() {
                 .iter()
                 .find(|field| field.name.as_ref() == "proof_context"))
             .map(|field| field.value.as_ref()),
-        Some(proof_context.len().to_string().as_str())
+        Some(proof_count.as_str())
     );
 }
 
