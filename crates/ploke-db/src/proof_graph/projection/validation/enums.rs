@@ -118,6 +118,8 @@ const EFFECT_CLASSES: &[&str] = &[
     "durable_evidence_write",
     "durable_evidence_read",
     "external_summary_boundary",
+    "proc_macro_summary_boundary",
+    "build_script_summary_boundary",
 ];
 
 const SUMMARY_CLASSES: &[&str] = &[

@@ -105,7 +105,6 @@ fn derived_gap_reason(row: &ProofFactRow, rows: &[ProofFactRow]) -> Option<Strin
         {
             let default_reason = expansion_boundary_gap_reason(row);
             if row.status.as_deref() == Some("externally_summarized")
-                && default_reason == "external_dependency_summary_missing"
                 && external_summary_gap_is_discharged(row, rows, &default_reason)
             {
                 None
@@ -257,10 +256,14 @@ fn external_summary_gap_is_discharged(
     row.blocker_reason
         .as_deref()
         .is_none_or(|reason| reason == default_reason)
-        && has_matching_admitted_external_summary(row, rows)
+        && has_matching_admitted_external_summary(row, rows, summary_effect_for_gap(default_reason))
 }
 
-fn has_matching_admitted_external_summary(row: &ProofFactRow, rows: &[ProofFactRow]) -> bool {
+fn has_matching_admitted_external_summary(
+    row: &ProofFactRow,
+    rows: &[ProofFactRow],
+    required_effect: &str,
+) -> bool {
     let Some(external_summary_id) = row.external_summary_id.as_deref() else {
         return false;
     };
@@ -270,16 +273,24 @@ fn has_matching_admitted_external_summary(row: &ProofFactRow, rows: &[ProofFactR
             && summary.external_summary_id.as_deref() == Some(external_summary_id)
             && summary.status.as_deref() == Some("admitted")
             && summary.summary_class.as_deref() != Some("opaque_blocked")
-            && summary_allows_external_summary_boundary(summary)
+            && summary_allows_effect(summary, required_effect)
             && external_summary_domain_matches(row, summary, rows)
     })
 }
 
-fn summary_allows_external_summary_boundary(summary: &ProofFactRow) -> bool {
+fn summary_effect_for_gap(default_reason: &str) -> &'static str {
+    match default_reason {
+        "proc_macro_summary_missing" => "proc_macro_summary_boundary",
+        "build_script_summary_missing" => "build_script_summary_boundary",
+        _ => "external_summary_boundary",
+    }
+}
+
+fn summary_allows_effect(summary: &ProofFactRow, required_effect: &str) -> bool {
     summary
         .allowed_effects
         .iter()
-        .any(|effect| effect == "external_summary_boundary")
+        .any(|effect| effect == required_effect)
 }
 
 fn external_summary_domain_matches(

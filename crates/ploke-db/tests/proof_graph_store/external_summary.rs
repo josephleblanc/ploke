@@ -532,3 +532,44 @@ fn proof_blockers_keep_macro_and_build_summary_gaps_without_specific_semantics()
         assert_eq!(blockers[0].reason, expected_reason);
     }
 }
+
+#[test]
+fn proof_blockers_discharge_macro_and_build_summaries_with_dedicated_authority() {
+    for (boundary_kind, effect) in [
+        ("proc_macro_function", "proc_macro_summary_boundary"),
+        ("build_script", "build_script_summary_boundary"),
+    ] {
+        let db = Database::new_init().expect("create db");
+        db.ensure_proof_graph_schema().expect("proof graph schema");
+        let mut boundary = externally_summarized_boundary(Some("external-summary:dep:serde"));
+        boundary["boundary_kind"] = json!(boundary_kind);
+        boundary
+            .as_object_mut()
+            .expect("boundary object")
+            .remove("blocking_reason");
+        let mut summary = external_summary_record();
+        summary["summary_class"] = json!("audited_no_process_effects");
+        summary["status"] = json!("admitted");
+        summary["allowed_effects"] = json!([effect]);
+        let mut records = main_domain_records();
+        records.extend([boundary, summary]);
+        db.upsert_proof_fact_values(&records)
+            .expect("import dedicated macro/build summary proof facts");
+
+        let blockers = db.proof_blockers().expect("blocker inspection");
+        assert!(
+            blockers.is_empty(),
+            "{boundary_kind} should discharge when the admitted summary carries dedicated authority: {blockers:#?}"
+        );
+
+        let rows = db
+            .proof_graphrag_context("external-summary:dep:serde")
+            .expect("summary context");
+        assert!(
+            rows.iter()
+                .filter(|row| row.kind == "expansion_boundary")
+                .all(|row| row.blocker_reason.is_none()),
+            "dedicated macro/build summary authority should clear derived context blockers: {rows:#?}"
+        );
+    }
+}
