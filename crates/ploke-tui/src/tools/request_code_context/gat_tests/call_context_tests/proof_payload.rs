@@ -1,5 +1,47 @@
 use super::*;
 
+fn assert_projected_owner_rows(
+    rows: &[ploke_core::rag_types::ProofContextInfo],
+    owner: Uuid,
+    target: Uuid,
+) {
+    let owner = owner.to_string();
+    let target = target.to_string();
+    assert_eq!(rows.len(), 3, "projected proof context rows: {rows:#?}");
+    let site = rows
+        .iter()
+        .find(|row| row.kind == "call_site")
+        .expect("projected proof context should include call_site fact");
+    let site_id = site
+        .call_site_id
+        .as_deref()
+        .expect("call_site proof fact should carry call_site_id");
+    assert_eq!(site.caller_def_id.as_deref(), Some(owner.as_str()));
+    assert_eq!(
+        site.build_domain_id.as_deref(),
+        Some("bd:fixture-call-graph")
+    );
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "call_edge"
+                && row.call_site_id.as_deref() == Some(site_id)
+                && row.caller_def_id.as_deref() == Some(owner.as_str())
+                && row.callee_def_id.as_deref() == Some(target.as_str())
+                && row.resolution_state.as_deref() == Some("resolved")
+        }),
+        "projected proof context should include resolved call_edge fact: {rows:#?}"
+    );
+    assert!(
+        rows.iter().any(|row| {
+            row.kind == "call_resolution"
+                && row.call_site_id.as_deref() == Some(site_id)
+                && row.resolution_state.as_deref() == Some("resolved")
+                && row.resolved_def_id.as_deref() == Some(target.as_str())
+        }),
+        "projected proof context should include resolved call_resolution fact: {rows:#?}"
+    );
+}
+
 #[tokio::test]
 async fn request_code_context_returns_projected_proof_context() -> color_eyre::Result<()> {
     let db = Arc::new(Database::new(setup_db_full_multi_embedding(
@@ -35,45 +77,7 @@ async fn request_code_context_returns_projected_proof_context() -> color_eyre::R
         .find(|part| part.id == owner)
         .expect("request_code_context should materialize the projected proof owner");
     let proof_rows = &owner_part.proof_context;
-    let owner_id = owner.to_string();
-    let target_id = target.to_string();
-    assert_eq!(
-        proof_rows.len(),
-        3,
-        "owner part should carry projected proof rows: {proof_rows:#?}"
-    );
-    let site = proof_rows
-        .iter()
-        .find(|row| row.kind == "call_site")
-        .expect("projected proof context should include call_site fact");
-    let site_id = site
-        .call_site_id
-        .as_deref()
-        .expect("call_site proof fact should carry call_site_id");
-    assert_eq!(site.caller_def_id.as_deref(), Some(owner_id.as_str()));
-    assert_eq!(
-        site.build_domain_id.as_deref(),
-        Some("bd:fixture-call-graph")
-    );
-    assert!(
-        proof_rows.iter().any(|row| {
-            row.kind == "call_edge"
-                && row.call_site_id.as_deref() == Some(site_id)
-                && row.caller_def_id.as_deref() == Some(owner_id.as_str())
-                && row.callee_def_id.as_deref() == Some(target_id.as_str())
-                && row.resolution_state.as_deref() == Some("resolved")
-        }),
-        "projected proof context should include resolved call_edge fact: {proof_rows:#?}"
-    );
-    assert!(
-        proof_rows.iter().any(|row| {
-            row.kind == "call_resolution"
-                && row.call_site_id.as_deref() == Some(site_id)
-                && row.resolution_state.as_deref() == Some("resolved")
-                && row.resolved_def_id.as_deref() == Some(target_id.as_str())
-        }),
-        "projected proof context should include resolved call_resolution fact: {proof_rows:#?}"
-    );
+    assert_projected_owner_rows(proof_rows, owner, target);
 
     let payload = tool_result
         .ui_payload
@@ -87,6 +91,87 @@ async fn request_code_context_returns_projected_proof_context() -> color_eyre::R
     assert!(
         proof_context_count >= proof_rows.len(),
         "UI proof-context count should include at least the owner proof rows: {result:#?}"
+    );
+    assert_eq!(
+        ui_field(payload, "proof_context"),
+        proof_context_count.to_string()
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn request_code_context_returns_expanded_method_proof_context() -> color_eyre::Result<()> {
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let target = one_uuid(
+        &db,
+        &method_by_impl_self_query("LocalAssoc", "instance_value"),
+    )?;
+    let method_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_typed_local_instance_method"),
+    )?;
+    let nested_ref_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_typed_double_reference_local_instance_method",
+        ),
+    )?;
+    let method_callers = [
+        (method_owner, "method-call owner"),
+        (nested_ref_owner, "nested-reference method owner"),
+    ];
+    for &(owner, label) in &method_callers {
+        assert_eq!(
+            db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?,
+            3,
+            "{label} should project call_site, call_edge, and call_resolution facts"
+        );
+    }
+
+    let tool_result =
+        execute_fixture_tool_request(&db, "instance_value", 1, "expanded_method_proof_context")
+            .await?;
+    let result: RequestCodeContextResult = serde_json::from_str(&tool_result.content)?;
+    assert_result_ok(&result, "instance_value", 1, "fixture_call_graph");
+    assert!(
+        result
+            .note
+            .as_deref()
+            .is_none_or(|note| { !note.contains("Proof-context expansion is unavailable") }),
+        "projected method proof facts should avoid degraded proof-context note: {result:#?}"
+    );
+
+    for &(owner, label) in &method_callers {
+        let part = result
+            .context
+            .iter()
+            .find(|part| part.id == owner)
+            .unwrap_or_else(|| {
+                panic!("request_code_context should materialize the {label} proof context")
+            });
+        assert!(
+            part.call_expansion.is_some(),
+            "{label} should be present because call-context expansion required it"
+        );
+        assert_projected_owner_rows(&part.proof_context, owner, target);
+    }
+
+    let payload = tool_result
+        .ui_payload
+        .as_ref()
+        .expect("request_code_context should emit a UI payload");
+    let proof_context_count = result
+        .context
+        .iter()
+        .map(|part| part.proof_context.len())
+        .sum::<usize>();
+    assert!(
+        proof_context_count >= method_callers.len() * 3,
+        "UI proof-context count should include both expanded method caller proof rows: {result:#?}"
     );
     assert_eq!(
         ui_field(payload, "proof_context"),
