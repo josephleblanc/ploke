@@ -131,17 +131,28 @@ fn fixture_expand_call_context_target_seed_preserves_method_family_callers() -> 
 {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let target = method_id_by_impl_self_type_name(&db, "LocalAssoc", "instance_value")?;
-    let method_owner = function_id_by_name(&db, "call_typed_local_instance_method")?;
     let assoc_owner = function_id_by_name(&db, "call_method_as_associated_function")?;
+    let method_callers = [
+        ("call_typed_local_instance_method", "method-call"),
+        (
+            "call_typed_double_reference_local_instance_method",
+            "nested-reference method",
+        ),
+    ];
 
-    let method_context = db.call_context_for_owner(method_owner)?;
     let method_receiver = CallReceiver::TypedLocalBinding {
         name: "value".to_string(),
         type_path: path(&["LocalAssoc"]),
     };
-    let method_site = row_by_method_receiver(&method_context, "instance_value", &method_receiver)
-        .site
-        .id;
+    let mut method_candidates = Vec::new();
+    for (owner_name, label) in method_callers {
+        let owner = function_id_by_name(&db, owner_name)?;
+        let context = db.call_context_for_owner(owner)?;
+        let site = row_by_method_receiver(&context, "instance_value", &method_receiver)
+            .site
+            .id;
+        method_candidates.push((owner, site, label));
+    }
 
     let assoc_context = db.call_context_for_owner(assoc_owner)?;
     let assoc_site = row_by_path(&assoc_context, &["LocalAssoc", "instance_value"])
@@ -157,7 +168,7 @@ fn fixture_expand_call_context_target_seed_preserves_method_family_callers() -> 
         },
     )?;
     assert!(
-        candidates.len() >= 2,
+        candidates.len() >= method_candidates.len() + 1,
         "method target should expose multiple incoming expansion candidates: {candidates:#?}"
     );
     assert_incoming_candidates_for_target(
@@ -165,13 +176,15 @@ fn fixture_expand_call_context_target_seed_preserves_method_family_callers() -> 
         target,
         "incoming method expansion should preserve the seed target and relation",
     );
-    assert_incoming_candidate(
-        &candidates,
-        method_owner,
-        method_site,
-        target,
-        "method-call incoming candidate missing",
-    );
+    for (owner, site, label) in method_candidates {
+        assert_incoming_candidate(
+            &candidates,
+            owner,
+            site,
+            target,
+            &format!("{label} incoming candidate missing"),
+        );
+    }
     assert_incoming_candidate(
         &candidates,
         assoc_owner,
