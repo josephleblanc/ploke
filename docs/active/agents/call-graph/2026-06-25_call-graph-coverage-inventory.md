@@ -40,6 +40,15 @@ future work can choose the next batch without rereading the diary-style notes.
 
 ## Recent downstream slice
 
+- 2026-06-28: File-module declaration paths now participate in explicit
+  `crate::module::function` call resolution. Source oracle:
+  `axum-macros/src/lib.rs:9` declares `attr_parsing`,
+  `axum-macros/src/attr_parsing.rs:59` defines `parse_attrs`, and
+  `axum-macros/src/typed_path.rs:23` calls it as
+  `crate::attr_parsing::parse_attrs(...)`. Regression coverage:
+  `fixture_call_graph_call_crate_file_module_target_resolves_file_module_path_call_site`,
+  `axum_real_target_explicit_crate_path_parse_attrs_reaches_helper`, and
+  `axum_real_target_parse_attrs_reaches_helper_current_fanout`.
 - 2026-06-28: Real-corpus `Body::empty` traversal is now covered across DB,
   proof projection, RAG exact call context, and exact TUI item tools. Source
   oracle:

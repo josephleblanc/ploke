@@ -22,6 +22,7 @@ const CONST_STATIC_RS: &str = "src/const_static.rs";
 const STRUCTS_RS: &str = "src/structs.rs";
 const PATH_RESOLUTION_LIB_RS: &str = "src/lib.rs";
 const CALL_GRAPH_LIB_RS: &str = "src/lib.rs";
+const CALL_GRAPH_FILE_MOD_RS: &str = "src/file_mod.rs";
 const EDGE_CASES_LIB_RS: &str = "src/lib.rs";
 const GENERICS_LIB_RS: &str = "src/lib.rs";
 const TYPE_RESOLUTION_V2_LIB_RS: &str = "src/lib.rs";
@@ -264,6 +265,7 @@ const REEXPORTED_TRAIT_ASSOC_FUNCTION_CALL_SPAN: (usize, usize) = (24853, 24904)
 const GROUPED_IMPORTED_TRAIT_ASSOC_FUNCTION_CALL_SPAN: (usize, usize) = (26060, 26108);
 const CRATE_MODULE_NESTED_TARGET_CALL_SPAN: (usize, usize) = (8743, 8776);
 const SELF_MODULE_NESTED_TARGET_CALL_SPAN: (usize, usize) = (8833, 8865);
+const CRATE_FILE_MODULE_TARGET_CALL_SPAN: (usize, usize) = (26521, 26558);
 const METHOD_AS_ASSOCIATED_FUNCTION_CALL_SPAN: (usize, usize) = (8954, 8988);
 const FN_CALL_CONST_FIVE_CALL_SPAN: (usize, usize) = (1631, 1637);
 const STATIC_FN_CALL_FIVE_CALL_SPAN: (usize, usize) = (4495, 4501);
@@ -411,6 +413,17 @@ fn fixture_call_graph_function_args(
         fixture: "fixture_call_graph",
         relative_file_path: CALL_GRAPH_LIB_RS,
         expected_path,
+        ident,
+        item_kind: ItemKind::Function,
+        expected_cfg: None,
+    }
+}
+
+fn fixture_call_graph_file_module_function_args(ident: &'static str) -> ParanoidArgs<'static> {
+    ParanoidArgs {
+        fixture: "fixture_call_graph",
+        relative_file_path: CALL_GRAPH_FILE_MOD_RS,
+        expected_path: &["crate", "file_mod"],
         ident,
         item_kind: ItemKind::Function,
         expected_cfg: None,
@@ -1885,6 +1898,30 @@ paranoid_call_site_test!(
         ExpectedCallSite::path(
             &["crate", "local_mod", "nested_target"],
             CRATE_MODULE_NESTED_TARGET_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_crate_file_module_target_resolves_file_module_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_crate_file_module_target"
+    },
+    expected: {
+        let target_args = fixture_call_graph_file_module_function_args("file_module_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("file_mod::file_module_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["crate", "file_mod", "file_module_target"],
+            CRATE_FILE_MODULE_TARGET_CALL_SPAN,
             0,
             0,
             &[],

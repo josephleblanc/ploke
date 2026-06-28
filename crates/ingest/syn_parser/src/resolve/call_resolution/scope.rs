@@ -289,7 +289,7 @@ impl CallRelationResolver<'_> {
         let mut candidates = Vec::new();
         self.visit_scope_candidates(module_id, segment, &mut |candidate| {
             if let Ok(candidate_module) = ModuleNodeId::try_from(candidate) {
-                candidates.push(candidate_module);
+                candidates.push(self.import_scope_module(candidate_module)?);
             }
             Ok(())
         })?;

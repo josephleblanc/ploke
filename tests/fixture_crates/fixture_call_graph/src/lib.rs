@@ -1211,3 +1211,9 @@ impl SelfFieldAssocOwner {
         self.value.instance_value()
     }
 }
+
+pub mod file_mod;
+
+pub fn call_crate_file_module_target() -> i32 {
+    crate::file_mod::file_module_target()
+}

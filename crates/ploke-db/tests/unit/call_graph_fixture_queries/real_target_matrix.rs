@@ -18,7 +18,7 @@
 //! | --- | --- | --- |
 //! | Regular helper callers | `axum-macros/src/lib.rs:{724,739}` call root `expand(...)` | `callers_for_target`, `call_sites_for_target`, and owner traversal resolve both helper callers. |
 //! | UI test helper callers | `axum-macros/src/{debug_handler.rs,typed_path.rs,from_ref.rs,from_request/mod.rs}` call `crate::run_ui_tests(...)` | target-centered callers and context expansion traverse the five real helper edges. |
-//! | Import/path function call | `axum-macros/src/typed_path.rs:23` calls `crate::attr_parsing::parse_attrs(...)` | currently unresolved in the corpus fixture; the structural row is asserted as a targetless gap. |
+//! | Import/path function call | `axum-macros/src/typed_path.rs:23` calls `crate::attr_parsing::parse_attrs(...)` | explicit file-module paths and imported `parse_attrs` rows traverse to the local helper. |
 //! | Routing helper paths | `axum/src/routing/mod.rs:{410,430}` and `routing/tests/mod.rs:{56,59}` call `take_route_or_internal_error` | currently targetless in the corpus fixture. |
 //! | External roots | `axum/src/json.rs:184` and `axum/src/response/sse.rs:449` call dependency/std roots | external rows remain targetless and do not become traversal edges. |
 //! | Re-exported body constructor | `axum-core/src/response/into_response.rs:{128,163}` call `Body::empty()` | current resolved subset traverses two one-hop edges; broader fanout remains an import/re-export gap. |

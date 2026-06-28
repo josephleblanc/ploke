@@ -59,7 +59,7 @@ fn axum_macros_expand_helpers_reach_root_expand() -> Result<(), DbError> {
 }
 
 #[test]
-fn axum_real_target_explicit_crate_path_parse_attrs_is_documented_gap() -> Result<(), DbError> {
+fn axum_real_target_explicit_crate_path_parse_attrs_reaches_helper() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
     // Matrix: `parse_attrs` path/import row.
@@ -67,43 +67,44 @@ fn axum_real_target_explicit_crate_path_parse_attrs_is_documented_gap() -> Resul
     //   axum-macros/src/attr_parsing.rs:59 defines `parse_attrs`.
     //   axum-macros/src/typed_path.rs:23 calls
     //   `crate::attr_parsing::parse_attrs(&input.attrs, "typed_path")`.
-    // Current model gap: the callsite is structurally present, but this corpus
-    // fixture does not yet resolve the explicit crate path to the helper.
+    // Expected traversal: `typed_path::expand` reaches `parse_attrs` in one
+    // edge through the file-module declaration at axum-macros/src/lib.rs:9.
     let owner = function_id_by_name_in_module(&db, &["crate", "typed_path"], "expand")?;
     let target = function_id_by_name_in_module(&db, &["crate", "attr_parsing"], "parse_attrs")?;
     let context = db.call_context_for_owner(owner)?;
     let row = row_by_path(&context, &["crate", "attr_parsing", "parse_attrs"]);
 
-    assert_eq!(row.status.status, CallStatusKind::Unresolved);
-    assert_eq!(row.status.resolution, None);
-    assert!(
-        row.targets.is_empty(),
-        "unresolved parse_attrs row should not expose traversal targets: {row:#?}"
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
     );
-    assert!(
-        relations_for_site(&db, row.site.id)?.rows.is_empty(),
-        "typed_path::expand parse_attrs row should have zero persisted call edges"
-    );
-    assert_no_traversal_candidates_for_site(
+    assert_one_edge_traversal(
         &db,
-        owner,
-        row.site.id,
-        "axum-macros/src/typed_path.rs:23 crate::attr_parsing::parse_attrs",
+        TraversalExpectation {
+            label: "axum-macros/src/typed_path.rs:23 crate::attr_parsing::parse_attrs",
+            owner,
+            target,
+            site_id: row.site.id,
+            expected_edge_count: 1,
+        },
     )?;
-    assert!(
-        db.callers_for_target(target)?.iter().all(|caller| {
-            caller.site.owner_id != owner
-                || caller.site.path.as_ref()
-                    != Some(&path(&["crate", "attr_parsing", "parse_attrs"]))
-        }),
-        "the typed_path::expand parse_attrs row should remain targetless until explicit crate-path resolution handles this corpus row"
+
+    let callers = db.callers_for_target(target)?;
+    caller_by_owner_kind_path(
+        &callers,
+        owner,
+        CallSiteKind::Path,
+        &["crate", "attr_parsing", "parse_attrs"],
     );
 
     Ok(())
 }
 
 #[test]
-fn axum_real_target_imported_parse_attrs_reaches_helper_subset() -> Result<(), DbError> {
+fn axum_real_target_parse_attrs_reaches_helper_current_fanout() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
     let target = function_id_by_name_in_module(&db, &["crate", "attr_parsing"], "parse_attrs")?;
 
@@ -114,28 +115,39 @@ fn axum_real_target_imported_parse_attrs_reaches_helper_subset() -> Result<(), D
     //
     // Source chain:
     //   axum-macros/src/attr_parsing.rs:59 defines `parse_attrs`.
+    //   axum-macros/src/typed_path.rs:23 calls it with an explicit
+    //   `crate::attr_parsing::parse_attrs(...)` path.
     //   axum-macros/src/from_ref.rs:9 imports it and from_ref.rs:30 calls it
     //   from `expand_field`.
     //   axum-macros/src/from_request/mod.rs:3 imports it and source callsites
     //   are :112, :196, :471, :598, :727, :892, :908, :1029, and :1039.
-    // Expected traversal: seven call-site edges reach `parse_attrs` in one
-    // step; target expansion de-duplicates those to five owner candidates.
+    // Expected traversal: eight call-site edges reach `parse_attrs` in one
+    // step; target expansion de-duplicates those to six owner candidates.
     // The three closure-body rows at :471, :1029, and :1039 are asserted below
     // as absent until nested closure call-body ownership lands.
     let cases = [
         (
+            "typed_path.rs:23 expand -> crate::attr_parsing::parse_attrs",
+            function_id_by_name_in_module(&db, &["crate", "typed_path"], "expand")?,
+            &["crate", "attr_parsing", "parse_attrs"][..],
+            1,
+        ),
+        (
             "from_ref.rs:30 expand_field -> parse_attrs",
             function_id_by_name_in_module(&db, &["crate", "from_ref"], "expand_field")?,
+            &["parse_attrs"][..],
             1,
         ),
         (
             "from_request/mod.rs:{112,196} expand -> parse_attrs",
             function_id_by_name_in_module(&db, &["crate", "from_request"], "expand")?,
+            &["parse_attrs"][..],
             2,
         ),
         (
             "from_request/mod.rs:592 extract_fields -> parse_attrs",
             function_id_by_name_in_module(&db, &["crate", "from_request"], "extract_fields")?,
+            &["parse_attrs"][..],
             1,
         ),
         (
@@ -145,6 +157,7 @@ fn axum_real_target_imported_parse_attrs_reaches_helper_subset() -> Result<(), D
                 &["crate", "from_request"],
                 "impl_struct_by_extracting_all_at_once",
             )?,
+            &["parse_attrs"][..],
             1,
         ),
         (
@@ -154,18 +167,20 @@ fn axum_real_target_imported_parse_attrs_reaches_helper_subset() -> Result<(), D
                 &["crate", "from_request"],
                 "impl_enum_by_extracting_all_at_once",
             )?,
+            &["parse_attrs"][..],
             2,
         ),
     ];
 
-    let mut expected_by_owner = std::collections::BTreeMap::new();
-    for (label, owner, expected_edges) in cases {
+    let mut expected_owners = std::collections::BTreeSet::new();
+    let mut expected_by_owner_path = std::collections::BTreeMap::new();
+    for (label, owner, call_path, expected_edges) in cases {
         let context = db.call_context_for_owner(owner)?;
         let rows = context
             .iter()
             .filter(|row| {
                 row.site.kind == CallSiteKind::Path
-                    && row.site.path.as_ref() == Some(&path(&["parse_attrs"]))
+                    && row.site.path.as_ref() == Some(&path(call_path))
             })
             .collect::<Vec<_>>();
         assert_eq!(
@@ -182,18 +197,18 @@ fn axum_real_target_imported_parse_attrs_reaches_helper_subset() -> Result<(), D
                 CallTargetKind::Function,
             );
         }
-        expected_by_owner.insert(owner, expected_edges);
+        expected_owners.insert(owner);
+        expected_by_owner_path.insert((owner, path(call_path)), expected_edges);
     }
 
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        7,
-        "parse_attrs should expose the seven currently resolved imported callers: {callers:#?}"
+        8,
+        "parse_attrs should expose the eight currently resolved real-corpus callers: {callers:#?}"
     );
-    let mut actual_by_owner = std::collections::BTreeMap::<_, usize>::new();
+    let mut actual_by_owner_path = std::collections::BTreeMap::<_, usize>::new();
     for caller in &callers {
-        assert_eq!(caller.site.path, Some(path(&["parse_attrs"])));
         assert_eq!(caller.status.status, CallStatusKind::Resolved);
         assert_eq!(
             caller.status.resolution,
@@ -202,10 +217,19 @@ fn axum_real_target_imported_parse_attrs_reaches_helper_subset() -> Result<(), D
         assert_eq!(caller.target.relation, CallRelationKind::Function);
         assert_eq!(caller.target.source_kind, CallSiteKind::Path);
         assert_eq!(caller.target.target_kind, CallTargetKind::Function);
-        *actual_by_owner.entry(caller.site.owner_id).or_default() += 1;
+        *actual_by_owner_path
+            .entry((
+                caller.site.owner_id,
+                caller
+                    .site
+                    .path
+                    .clone()
+                    .expect("parse_attrs caller should carry a path"),
+            ))
+            .or_default() += 1;
     }
     assert_eq!(
-        actual_by_owner, expected_by_owner,
+        actual_by_owner_path, expected_by_owner_path,
         "target-centered parse_attrs callers should match the source-oracle owner fanout"
     );
 
@@ -219,10 +243,10 @@ fn axum_real_target_imported_parse_attrs_reaches_helper_subset() -> Result<(), D
     )?;
     assert_eq!(
         incoming.len(),
-        expected_by_owner.len(),
+        expected_owners.len(),
         "parse_attrs target expansion should return one one-hop candidate per owner"
     );
-    for owner in expected_by_owner.keys().copied() {
+    for owner in expected_owners {
         assert!(
             incoming.iter().any(|candidate| {
                 candidate.node_id == owner
