@@ -777,6 +777,92 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
         assert_owner_path_targetless(&db, owner, &["post"], CallStatusKind::Unsupported, label)?;
     }
 
+    struct RoutingPostCase {
+        owner: &'static str,
+        expected_count: usize,
+        label: &'static str,
+    }
+
+    // Matrix routing-test rows:
+    //   routing/tests/mod.rs:88,768,810,888-890,916,936,956,
+    //   982,986,988,1043,1306 call generated `post(...)`.
+    // These 14 projected rows are grouped by owner because the DB fixture does
+    // not persist source line numbers for individual call sites.
+    let routing_cases = [
+        RoutingPostCase {
+            owner: "hello_world",
+            expected_count: 1,
+            label: "axum/src/routing/tests/mod.rs:88",
+        },
+        RoutingPostCase {
+            owner: "different_methods_added_in_different_routes",
+            expected_count: 1,
+            label: "axum/src/routing/tests/mod.rs:768",
+        },
+        RoutingPostCase {
+            owner: "merging_routers_with_same_paths_but_different_methods",
+            expected_count: 1,
+            label: "axum/src/routing/tests/mod.rs:810",
+        },
+        RoutingPostCase {
+            owner: "body_limited_by_default",
+            expected_count: 3,
+            label: "axum/src/routing/tests/mod.rs:888-890",
+        },
+        RoutingPostCase {
+            owner: "disabling_the_default_limit",
+            expected_count: 1,
+            label: "axum/src/routing/tests/mod.rs:916",
+        },
+        RoutingPostCase {
+            owner: "limited_body_with_content_length",
+            expected_count: 1,
+            label: "axum/src/routing/tests/mod.rs:936",
+        },
+        RoutingPostCase {
+            owner: "changing_the_default_limit",
+            expected_count: 1,
+            label: "axum/src/routing/tests/mod.rs:956",
+        },
+        RoutingPostCase {
+            owner: "changing_the_default_limit_differently_on_different_routes",
+            expected_count: 3,
+            label: "axum/src/routing/tests/mod.rs:982,986,988",
+        },
+        RoutingPostCase {
+            owner: "limited_body_with_streaming_body",
+            expected_count: 1,
+            label: "axum/src/routing/tests/mod.rs:1043",
+        },
+        RoutingPostCase {
+            owner: "impl_handler_for_into_response",
+            expected_count: 1,
+            label: "axum/src/routing/tests/mod.rs:1306",
+        },
+    ];
+
+    for case in routing_cases {
+        let owner = function_id_by_name_in_module(&db, &["crate", "routing", "tests"], case.owner)?;
+        assert_owner_path_targetless_count(
+            &db,
+            owner,
+            &["post"],
+            CallStatusKind::Unsupported,
+            case.expected_count,
+            case.label,
+        )?;
+    }
+
+    let logging_owner =
+        function_id_by_name_in_module(&db, &["crate", "routing", "tests"], "logging_rejections")?;
+    let logging_context = db.call_context_for_owner(logging_owner)?;
+    assert!(
+        logging_context
+            .iter()
+            .all(|row| row.site.path.as_ref() != Some(&path(&["post"]))),
+        "axum/src/routing/tests/mod.rs:1215 closure-body post(...) should remain absent until closure ownership is modeled: {logging_context:#?}"
+    );
+
     assert_targetless_path_rows(&db, &["post"], CallStatusKind::Unsupported, 22)?;
 
     Ok(())
