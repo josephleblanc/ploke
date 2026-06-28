@@ -56,10 +56,24 @@ fn axum_real_target_supported_callers_are_one_hop_traversable() -> Result<(), Db
             expected_traversal_candidates: 5,
         },
         ResolvedTraversalCase {
-            // axum-core/src/response/into_response.rs:128 and :163 call
-            // `Body::empty()`. Callee: axum-core/src/body.rs:52.
+            // axum-core/src/body.rs:110 and :116 call `Self::empty()`, and
+            // axum-core/src/response/into_response.rs response conversion
+            // rows call `Body::empty()`. Callee: axum-core/src/body.rs:52.
             label: "axum-core Body::empty current resolved subset",
             target: method_id_by_name_and_body_substring(&db, "empty", "Empty::new()")?,
+            expected_call_edges: 4,
+            expected_traversal_candidates: 4,
+        },
+        ResolvedTraversalCase {
+            // axum/src/json.rs:112 and :128 call `Self::from_bytes(&bytes)`
+            // from trait impl bodies for `Json<T>`. Callee:
+            // axum/src/json.rs:164.
+            label: "axum Json::from_bytes trait-impl Self callers",
+            target: method_id_by_name_and_body_substring(
+                &db,
+                "from_bytes",
+                "serde_json::Deserializer::from_slice(bytes)",
+            )?,
             expected_call_edges: 2,
             expected_traversal_candidates: 2,
         },
@@ -128,13 +142,13 @@ fn axum_real_target_supported_callers_are_one_hop_traversable() -> Result<(), Db
         },
         ResolvedTraversalCase {
             // Router::new is defined at axum/src/routing/mod.rs:162. The
-            // matrix includes many real `Router::new()` callsites; the current
-            // fixture exposes 142 resolved caller rows while other same-shaped
-            // rows remain targetless import/type-proof gaps.
+            // matrix includes many real `Router::new()` callsites; the
+            // regenerated fixture also resolves axum/src/routing/mod.rs:109
+            // `Self::new()` from `Default for Router`.
             label: "axum Router::new current resolved fanout",
             target: method_id_by_name_and_body_substring(&db, "new", "default_fallback: true")?,
-            expected_call_edges: 142,
-            expected_traversal_candidates: 121,
+            expected_call_edges: 143,
+            expected_traversal_candidates: 122,
         },
     ];
 

@@ -47,7 +47,7 @@ fn axum_real_target_into_service_future_new_is_documented_gap() -> Result<(), Db
 }
 
 #[test]
-fn axum_real_target_json_from_bytes_self_paths_are_documented_gap() -> Result<(), DbError> {
+fn axum_real_target_json_from_bytes_self_paths_reach_inherent_method() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
     let target = method_id_by_name_and_body_substring(
         &db,
@@ -59,8 +59,9 @@ fn axum_real_target_json_from_bytes_self_paths_are_documented_gap() -> Result<()
     // Source chain:
     //   axum/src/json.rs:164 defines `Json::from_bytes`.
     //   axum/src/json.rs:112 and :128 call `Self::from_bytes(&bytes)`.
-    // Current model gap: associated-function `Self::...` resolution is not
-    // available in the axum fixture, so each structural row remains targetless.
+    // Expected traversal: both trait impl methods for `Json<T>` reach the
+    // inherent `Json::from_bytes` method in one local-exact associated-function
+    // edge.
     let owners =
         method_ids_by_name_and_body_substring(&db, "from_request", "Self::from_bytes(&bytes)")?;
     assert_eq!(
@@ -72,33 +73,32 @@ fn axum_real_target_json_from_bytes_self_paths_are_documented_gap() -> Result<()
     for owner in owners {
         let context = db.call_context_for_owner(owner)?;
         let row = row_by_kind_path(&context, CallSiteKind::Path, &["Self", "from_bytes"]);
-        assert_eq!(row.status.status, CallStatusKind::Unsupported);
-        assert_eq!(row.status.resolution, None);
-        assert!(
-            row.targets.is_empty(),
-            "unsupported Self::from_bytes row should remain targetless: {row:#?}"
+        assert_resolved_target(
+            row,
+            target,
+            CallRelationKind::AssociatedFunction,
+            CallSiteKind::Path,
+            CallTargetKind::Method,
         );
-        assert!(
-            relations_for_site(&db, row.site.id)?.rows.is_empty(),
-            "Self::from_bytes structural row should have zero persisted call edges"
-        );
-        assert_no_traversal_candidates_for_site(
+        assert_one_edge_traversal(
             &db,
-            owner,
-            row.site.id,
-            "axum/src/json.rs:112 or :128 Self::from_bytes",
+            TraversalExpectation {
+                label: "axum/src/json.rs:112 or :128 Self::from_bytes",
+                owner,
+                target,
+                site_id: row.site.id,
+                expected_edge_count: 1,
+            },
         )?;
     }
 
-    assert!(
-        db.call_sites_for_target(target)?.is_empty(),
-        "Json::from_bytes should remain targetless until Self::associated-function resolution lands"
+    let callers = db.callers_for_target(target)?;
+    assert_eq!(
+        callers.len(),
+        2,
+        "Json::from_bytes should expose both resolved Self::from_bytes callers: {callers:#?}"
     );
-    assert_no_incoming_traversal_to_target(
-        &db,
-        target,
-        "axum/src/json.rs:112 and :128 Self::from_bytes",
-    )?;
+    assert_sites_match_callers(&db, target, &callers, "Json::from_bytes callers")?;
 
     Ok(())
 }

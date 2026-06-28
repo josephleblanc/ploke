@@ -633,6 +633,12 @@ Expected searchable corpus embedding config:
     owner-centered and target-centered call context
   - `RequestExt::extract` and `RequestPartsExt::extract` reach
     `extract_with_state` through same-impl self-method call resolution
+  - `Body` conversion impl `Self::empty()` rows reach the inherent
+    `Body::empty` associated function through local-exact call resolution
+  - `Json<T>` trait impl `Self::from_bytes(&bytes)` rows reach the inherent
+    `Json::from_bytes` associated function through local-exact call resolution
+  - `Router` `Default::default` reaches `Router::new` through a local-exact
+    `Self::new()` associated-function edge
   - selected proc-macro body, closure body, and dynamic callable field shapes
     are documented as unsupported contracts until parser/resolver ownership
     improves

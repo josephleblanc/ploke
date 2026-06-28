@@ -81,10 +81,13 @@ for `middleware/{map_request,from_fn,map_response}.rs`.
 | `Body::empty` | `axum/src/form.rs:158`; `extract/query.rs:106`; `extract/raw_form.rs:65`; `extract/ws.rs:394,400,1129,1191`; `serve/mod.rs:799`; `middleware/from_fn.rs:411`; `routing/route.rs:161,174`; `routing/method_routing.rs:1700`; `routing/tests/get_to_head.rs:25,59`; `routing/tests/merge.rs:198,204`; `routing/tests/mod.rs:228,1133,1151` | local/imported `Body` -> axum re-export `axum/src/body/mod.rs:10` or direct `axum_core::body::Body` import -> `axum-core/src/body.rs:52`. |
 
 Current executable coverage: DB target traversal, proof projection, RAG exact
-call context, `code_item_lookup`, and `code_item_edges` assert the two resolved
-`axum-core/src/response/into_response.rs:{128,163}` caller edges. The remaining
-rows in this fanout are still tracked as import/re-export completeness gaps, not
-as expected-passing traversal edges. The DB matrix now also pins
+call context, `code_item_lookup`, and `code_item_edges` assert the resolved
+`axum-core/src/response/into_response.rs` `Body::empty` caller edges. After
+regenerating the axum call-graph fixture, the DB matrix also asserts the two
+`axum-core/src/body.rs:{110,116}` `Self::empty()` rows that traverse to
+`Body::empty`. The remaining rows in this fanout are still tracked as
+import/re-export completeness gaps, not as expected-passing traversal edges. The
+DB matrix now also pins
 `axum/src/extract/raw_form.rs:65` as a targetless external row because that owner
 imports `axum_core::body::Body` across the axum member boundary.
 
@@ -127,6 +130,16 @@ RAG exact call context, `code_item_lookup`, and `code_item_edges` now also asser
 that the explicit real-corpus `BoxedIntoRoute(...)` constructor edge is visible
 downstream with its target-centered proof row; the unsupported `Self(...)` rows
 remain DB-only fail-closed gap assertions.
+
+The regenerated axum call-graph fixture also resolves both
+`axum/src/json.rs:{112,128}` `Self::from_bytes(&bytes)` rows to the inherent
+`Json::from_bytes` method at `axum/src/json.rs:164`. The DB matrix asserts both
+one-hop owner-to-target traversal edges and includes this target in the
+consolidated supported traversal table.
+
+The same regeneration resolves `axum/src/routing/mod.rs:109` `Self::new()` from
+`Default for Router` to `Router::new`. The real-target receiver matrix now pins
+143 `Router::new` caller edges and 122 incoming expansion candidates.
 
 ## Receiver And Method Oracles
 

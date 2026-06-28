@@ -593,18 +593,22 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
     // Matrix: `Body::empty` re-exported constructor row.
     // Source chain:
     //   axum-core/src/body.rs:52 defines `Body::empty`.
-    //   axum-core/src/response/into_response.rs:128,163 call `Body::empty()`.
+    //   axum-core/src/body.rs:110 and :116 call `Self::empty()` from body
+    //   conversion impls.
+    //   axum-core/src/response/into_response.rs response conversion rows call
+    //   `Body::empty()`.
     //   axum/src/extract/raw_form.rs:65 calls `Body::empty()` through a
     //   direct `axum_core::body::Body` import inside a test helper.
-    // Expected traversal for the current fixture: two `into_response` callers,
-    // each with one edge to `Body::empty`. The raw_form helper row is
-    // structurally present but targetless and classified external because the
-    // owner imports `axum_core::body::Body` across the axum member boundary.
+    // Expected traversal for the current fixture: two `Body::empty` rows and
+    // two `Self::empty` rows reach the same target in one edge. The raw_form
+    // helper row is structurally present but targetless and classified external
+    // because the owner imports `axum_core::body::Body` across the axum member
+    // boundary.
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        2,
-        "current axum fixture should resolve exactly the two axum-core into_response Body::empty callers: {callers:#?}"
+        4,
+        "current axum fixture should resolve exactly the four axum-core Body::empty callers: {callers:#?}"
     );
     assert_sites_match_callers(&db, target, &callers, "Body::empty current resolved subset")?;
 
@@ -618,12 +622,21 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
     )?;
     assert_eq!(
         incoming.len(),
-        2,
-        "Body::empty target expansion should traverse the two current resolved edges: {incoming:#?}"
+        4,
+        "Body::empty target expansion should traverse the four current resolved edges: {incoming:#?}"
     );
 
+    let mut path_counts = std::collections::BTreeMap::new();
     for caller in callers {
-        assert_eq!(caller.site.path, Some(path(&["Body", "empty"])));
+        *path_counts
+            .entry(
+                caller
+                    .site
+                    .path
+                    .clone()
+                    .expect("Body::empty caller should carry a path"),
+            )
+            .or_insert(0usize) += 1;
         assert_eq!(caller.status.status, CallStatusKind::Resolved);
         assert_eq!(
             caller.status.resolution,
@@ -640,6 +653,14 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
             "Body::empty incoming caller missing",
         );
     }
+    assert_eq!(
+        path_counts,
+        std::collections::BTreeMap::from([
+            (path(&["Body", "empty"]), 2),
+            (path(&["Self", "empty"]), 2),
+        ]),
+        "Body::empty callers should split into literal Body::empty and trait-impl Self::empty rows"
+    );
 
     let raw_form_owner = function_id_by_name_in_module(
         &db,
@@ -664,22 +685,40 @@ fn axum_real_target_body_empty_projects_proof_facts() -> Result<(), DbError> {
 
     // Matrix proof bridge:
     //   axum-core/src/body.rs:52 defines `Body::empty`.
-    //   axum-core/src/response/into_response.rs:128 and :163 call
+    //   axum-core/src/body.rs:110 and :116 call `Self::empty()`.
+    //   axum-core/src/response/into_response.rs response conversion rows call
     //   `Body::empty()`.
-    // Expected proof traversal: both current resolved caller sites project
+    // Expected proof traversal: all current resolved caller sites project
     // call_site, call_resolution, and call_edge facts for the same target.
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        2,
-        "Body::empty proof setup should use the current two resolved corpus callers: {callers:#?}"
+        4,
+        "Body::empty proof setup should use the current four resolved corpus callers: {callers:#?}"
     );
+    let mut path_counts = std::collections::BTreeMap::new();
     for caller in &callers {
-        assert_eq!(caller.site.path, Some(path(&["Body", "empty"])));
+        *path_counts
+            .entry(
+                caller
+                    .site
+                    .path
+                    .clone()
+                    .expect("Body::empty caller should carry a path"),
+            )
+            .or_insert(0usize) += 1;
         assert_eq!(caller.target.relation, CallRelationKind::AssociatedFunction);
         assert_eq!(caller.target.source_kind, CallSiteKind::Path);
         assert_eq!(caller.target.target_kind, CallTargetKind::Method);
     }
+    assert_eq!(
+        path_counts,
+        std::collections::BTreeMap::from([
+            (path(&["Body", "empty"]), 2),
+            (path(&["Self", "empty"]), 2),
+        ]),
+        "Body::empty proof callers should split into literal Body::empty and Self::empty rows"
+    );
     let expected = callers
         .iter()
         .map(|caller| TargetProofSite {
@@ -688,14 +727,17 @@ fn axum_real_target_body_empty_projects_proof_facts() -> Result<(), DbError> {
         })
         .collect::<Vec<_>>();
 
-    assert_target_proof_projection(
+    assert_target_proof_projection_source_counts(
         &db,
         "real corpus Body::empty",
         "bd:corpus-axum-call-graph",
         target,
         &callers,
         &expected,
-        "axum-core/src/response/into_response.rs",
+        &[
+            ("axum-core/src/body.rs", 2),
+            ("axum-core/src/response/into_response.rs", 2),
+        ],
         "type_resolution_missing",
     )
 }
