@@ -135,6 +135,59 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
     )
 }
 
+pub(super) fn assert_targetless_dynamic_line_fanout_by_method(
+    db: &Database,
+    fixture: &FixtureDb,
+    owner_method: &str,
+    status: CallStatusKind,
+    expected: &[SourceLineFanout],
+) -> Result<(), DbError> {
+    let mut params = BTreeMap::new();
+    params.insert("method".to_string(), DataValue::from(owner_method));
+    params.insert("status".to_string(), DataValue::from(format!("{status:?}")));
+
+    let script = format!(
+        r#"
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[file_path, site_id, owner_id, span, resolution_kind] :=
+    *method {{ id: owner_id, name: $method @ 'NOW' }},
+    *call_site {{
+        id: site_id,
+        owner_id,
+        call_kind: "Dynamic",
+        span @ 'NOW'
+    }},
+    *call_resolution_status {{
+        source_id: site_id,
+        source_kind: "Dynamic",
+        status_kind: $status,
+        resolution_kind @ 'NOW'
+    }},
+    ancestor[owner_id, module_id],
+    *module {{ id: module_id @ 'NOW' }},
+    file_owner_for_module[module_id, file_id],
+    *file_mod {{ owner_id: file_id, file_path @ 'NOW' }}
+:sort file_path, span, site_id
+"#
+    );
+
+    let rows = db.raw_query_params(&script, params)?;
+    assert_targetless_line_rows(
+        db,
+        fixture,
+        &rows.rows,
+        expected,
+        "(self.call)",
+        &format!("{status:?} source-line fanout rows for dynamic owner method {owner_method:?}"),
+    )
+}
+
 fn assert_targetless_line_rows(
     db: &Database,
     fixture: &FixtureDb,

@@ -5,7 +5,8 @@ use ploke_test_utils::{
 use super::super::*;
 use super::common::*;
 use super::source_lines::{
-    SourceLineFanout, assert_targetless_method_line_fanout, assert_targetless_path_line_fanout,
+    SourceLineFanout, assert_targetless_dynamic_line_fanout_by_method,
+    assert_targetless_method_line_fanout, assert_targetless_path_line_fanout,
 };
 
 #[test]
@@ -322,6 +323,16 @@ fn memchr_function_pointer_field_calls_are_dynamic_targetless_oracles() -> Resul
     // Current model: both function-pointer field calls are structural dynamic
     // rows owned by methods named `find`, with no local target edge.
     assert_targetless_dynamic_rows_by_method_name(&db, "find", &[4, 2])?;
+    assert_targetless_dynamic_line_fanout_by_method(
+        &db,
+        &CORPUS_MEMCHR_CALL_GRAPH,
+        "find",
+        CallStatusKind::Unsupported,
+        &[SourceLineFanout {
+            file_suffix: "src/memmem/searcher.rs",
+            lines: &[222, 718],
+        }],
+    )?;
 
     let searcher_find = method_id_by_name_body_and_file_suffix(
         &db,

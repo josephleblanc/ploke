@@ -284,10 +284,10 @@ in `crates/ploke-db/tests/unit/call_graph_fixture_queries/real_target_matrix/fal
 Current executable coverage: `fallback.rs` now pins the chrono alias rows by
 exact source owner and source-line fanout, pins chrono try-receiver and
 guarded-receiver rows by owner and source-line fanout, and pins the memchr
-function-pointer and callable trait-object cases by owner or explicit
-owner-scoped absence. The generic-array guarded match-arm case remains a
-fixture-wide absence assertion because the source checkout is not present in
-`tests/fixture_github_clones/corpus`.
+function-pointer rows by owner and source-line fanout. It also pins memchr
+callable trait-object cases by explicit owner-scoped absence. The generic-array
+guarded match-arm case remains a fixture-wide absence assertion because the
+source checkout is not present in `tests/fixture_github_clones/corpus`.
 
 ## Boundary Items
 
