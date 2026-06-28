@@ -40,6 +40,15 @@ future work can choose the next batch without rereading the diary-style notes.
 
 ## Recent downstream slice
 
+- 2026-06-28: The real-corpus call-site oracle matrix is covered in
+  `ploke-db` by the split `real_target_matrix` suite. Supported rows are
+  asserted through target-centered callers, call sites, and one-hop
+  owner-to-target traversal counts; unsupported and fallback rows assert
+  targetless or absent projections with zero traversal. The executable suite
+  references both real-corpus matrix docs and cites the inspected axum/fallback
+  source locations inline. Focused verification:
+  `cargo test -p ploke-db real_target_matrix -- --nocapture` passed with
+  53 tests, 0 failed.
 - 2026-06-28: Real-corpus `parse_attrs` traversal is now covered across DB,
   DB proof projection, RAG exact call context, and exact TUI item tools. Source
   oracle:

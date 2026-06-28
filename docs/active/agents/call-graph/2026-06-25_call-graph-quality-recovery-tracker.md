@@ -920,6 +920,10 @@ next likely slices are:
 
 Progress note, 2026-06-28:
 
+- The `ploke-db` real-corpus call-site oracle matrix is covered by the split
+  `real_target_matrix` suite. Supported cases assert target-centered callers,
+  call-site parity, and one-hop owner/callee traversal counts; unsupported and
+  fallback cases assert targetless or absent projections with zero traversal.
 - `code_item_lookup` and `code_item_edges` now share an exact `owner_type`
   disambiguator for inherent methods, mirroring the existing `owner_trait`
   path. The real-corpus TUI matrix now covers `HandleError::new` and
@@ -936,6 +940,11 @@ Rollout note, 2026-06-27:
   DB, RAG, and TUI call-context surfaces.
 
 ## Latest verification
+
+For the `ploke-db` real-corpus call-site oracle matrix:
+
+- `cargo test -p ploke-db real_target_matrix -- --nocapture`
+  - passed: 53 passed, 0 failed.
 
 For `67981c03 Block missing proof build domains` and
 `0dfe6a7f Block incomplete proof build domains`:
