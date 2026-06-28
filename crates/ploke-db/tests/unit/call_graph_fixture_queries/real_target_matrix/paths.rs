@@ -752,10 +752,10 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
             status: CallStatusKind::External,
         },
         BodyEmptyPathCase {
-            // axum/src/routing/tests/mod.rs:1277
+            // axum/src/routing/tests/mod.rs:1133
             // `connect_going_to_custom_fallback` builds a CONNECT request with
             // `Body::empty()`.
-            label: "axum/src/routing/tests/mod.rs:1277",
+            label: "axum/src/routing/tests/mod.rs:1133",
             owner: function_id_by_name_in_module(
                 &db,
                 &["crate", "routing", "tests"],
@@ -764,10 +764,10 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
             status: CallStatusKind::External,
         },
         BodyEmptyPathCase {
-            // axum/src/routing/tests/mod.rs:1295
+            // axum/src/routing/tests/mod.rs:1151
             // `connect_going_to_default_fallback` builds a CONNECT request with
             // `Body::empty()`.
-            label: "axum/src/routing/tests/mod.rs:1295",
+            label: "axum/src/routing/tests/mod.rs:1151",
             owner: function_id_by_name_in_module(
                 &db,
                 &["crate", "routing", "tests"],
@@ -776,10 +776,10 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
             status: CallStatusKind::External,
         },
         BodyEmptyPathCase {
-            // axum/src/serve/mod.rs:1035
+            // axum/src/serve/mod.rs:799
             // `serving_on_custom_io_type` builds a request body with
             // `Body::empty()`.
-            label: "axum/src/serve/mod.rs:1035",
+            label: "axum/src/serve/mod.rs:799",
             owner: function_id_by_name_in_module(
                 &db,
                 &["crate", "serve", "tests"],
@@ -879,11 +879,27 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
     for case in targetless_cases {
         assert_owner_path_targetless(&db, case.owner, &["Body", "empty"], case.status, case.label)?;
     }
+    let route_poll_owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "poll",
+        "*res.body_mut() = Body::empty()",
+        "axum/src/routing/route.rs",
+    )?;
+    assert_owner_path_targetless_count(
+        &db,
+        route_poll_owner,
+        &["Body", "empty"],
+        CallStatusKind::External,
+        1,
+        "axum/src/routing/route.rs:174",
+    )?;
 
     // Matrix targetless source rows:
     //   external: axum/src/extract/query.rs:106; raw_form.rs:65;
     //   form.rs:158; middleware/from_fn.rs:411;
-    //   routing/tests/mod.rs:{228,1277,1295}; serve/mod.rs:1035.
+    //   routing/route.rs:174; routing/tests/mod.rs:{228,1133,1151};
+    //   serve/mod.rs:799. The routing/route.rs:161 closure-body row remains
+    //   absent until nested closure ownership is modeled.
     //   unsupported: axum-core/src/ext_traits/request.rs:{346,364,377,390};
     //   routing/method_routing.rs:1700;
     //   routing/tests/get_to_head.rs:{25,59}.
@@ -896,8 +912,45 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
             ("axum/src/extract/raw_form.rs", 1),
             ("axum/src/form.rs", 1),
             ("axum/src/middleware/from_fn.rs", 1),
+            ("axum/src/routing/route.rs", 1),
             ("axum/src/routing/tests/mod.rs", 3),
             ("axum/src/serve/mod.rs", 1),
+        ],
+    )?;
+    assert_targetless_path_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        &["Body", "empty"],
+        CallStatusKind::External,
+        &[
+            SourceLineFanout {
+                file_suffix: "axum/src/extract/query.rs",
+                lines: &[106],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/extract/raw_form.rs",
+                lines: &[65],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/form.rs",
+                lines: &[158],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/middleware/from_fn.rs",
+                lines: &[411],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/route.rs",
+                lines: &[174],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/mod.rs",
+                lines: &[228, 1133, 1151],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/serve/mod.rs",
+                lines: &[799],
+            },
         ],
     )?;
     assert_path_file_fanout(
@@ -908,6 +961,26 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
             ("axum-core/src/ext_traits/request.rs", 4),
             ("axum/src/routing/method_routing.rs", 1),
             ("axum/src/routing/tests/get_to_head.rs", 2),
+        ],
+    )?;
+    assert_targetless_path_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        &["Body", "empty"],
+        CallStatusKind::Unsupported,
+        &[
+            SourceLineFanout {
+                file_suffix: "axum-core/src/ext_traits/request.rs",
+                lines: &[346, 364, 377, 390],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/method_routing.rs",
+                lines: &[1700],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/get_to_head.rs",
+                lines: &[25, 59],
+            },
         ],
     )?;
 

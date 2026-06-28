@@ -628,6 +628,7 @@ pub(super) fn assert_path_file_fanout(
     let script = format!(
         r#"
 {ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
 
 module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
 file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
