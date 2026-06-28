@@ -160,16 +160,31 @@ fn axum_real_target_header_value_from_static_external_paths_are_targetless() -> 
 {
     let db = setup_axum_call_graph_db()?;
 
-    // Matrix: const initializer and external `HeaderValue::from_static` rows.
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   const initializer and external `HeaderValue::from_static` rows.
+    //
     // Source chain:
+    //   axum/src/extract/ws.rs:382 and :384 include local const
+    //   initializers inside `WebSocketUpgrade::on_upgrade`.
     //   axum/src/routing/route.rs:202 includes
     //   `HeaderValue::from_static("0")` in a local const initializer.
     //   axum-core/src/response/into_response.rs:196,207,232,320,
     //   axum/src/json.rs:208,217, and axum/src/response/mod.rs:47 call the
     //   same external associated function from response conversion bodies.
     // Current DB contract: all projected rows stay external and targetless.
-    // The local const initializer is still flattened under `set_content_length`
-    // rather than owned by a `CallBodyOwnerId::Const`.
+    // The route local const initializer is still flattened under
+    // `set_content_length`; the websocket const initializer rows are absent.
+    // No row is owned by `CallBodyOwnerId::Const` yet.
+    assert_no_method_owner_by_body_and_file_suffix(
+        &db,
+        "on_upgrade",
+        "const UPGRADE: HeaderValue = HeaderValue::from_static(\"upgrade\")",
+        "axum/src/extract/ws.rs",
+        "axum/src/extract/ws.rs:382 and :384",
+    )?;
+
     let route_owner =
         function_id_by_name_in_module(&db, &["crate", "routing", "route"], "set_content_length")?;
     assert_owner_path_targetless(
