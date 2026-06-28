@@ -122,9 +122,9 @@ These rows are inside the current axum call-graph fixture and produce stable DB 
 | --- | --- | --- |
 | Grouped import free function | `axum/src/json.rs:237`, `axum/src/json.rs:248` | Covered by `axum_real_target_generated_post_function_is_documented_gap`: the `deserialize_body` owner has a visible unsupported, targetless `post` row. |
 | Glob import type call | `axum/src/json.rs:237`, `axum/src/json.rs:250` | Covered by `axum_real_target_test_client_new_high_fanout_is_documented_gap`: the `deserialize_body` owner has a visible unsupported, targetless `TestClient::new` row. |
-| Trait-associated dispatch | `axum-core/src/ext_traits/request.rs:279` | Find `E::from_request(self, state)` and assert the call is represented as trait-associated or conservatively unsupported, not lost. |
-| Opaque callable field | `axum/src/boxed.rs:85` | Find `(self.into_route)(...)` and assert a dynamic call site exists with unsupported/fail-closed status. |
-| IIFE closure expression | `axum-macros/src/lib.rs:734`, `axum-macros/src/lib.rs:738` | Find the dynamic call for `(|| { ... })()` and assert it is persisted without a fake semantic target. |
+| Trait-associated dispatch | `axum-core/src/ext_traits/request.rs:279` | Covered by `axum_real_target_trait_associated_paths_are_documented_gaps`: `E::from_request` is visible, unsupported, targetless, and non-traversable. |
+| Opaque callable field | `axum/src/boxed.rs:85` | Covered by `axum_dynamic_callable_fields_are_visible_unsupported_blockers`: the dynamic row is visible, unsupported, targetless, and non-traversable. |
+| IIFE closure expression | `axum-macros/src/lib.rs:734`, `axum-macros/src/lib.rs:738` | Covered by `axum_macro_callback_rows_are_visible_or_explicitly_absent`: the IIFE dynamic row is visible without a fabricated semantic target. |
 
 ## Notes
 
