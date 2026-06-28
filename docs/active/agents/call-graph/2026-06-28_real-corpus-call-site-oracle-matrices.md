@@ -153,7 +153,10 @@ It also asserts that `axum-macros/src/with_position.rs:92`
 RAG exact call context, `code_item_lookup`, and `code_item_edges` now also assert
 that the explicit real-corpus `BoxedIntoRoute(...)` constructor edge is visible
 downstream with its target-centered proof row; the unsupported `Self(...)` rows
-remain DB-only fail-closed gap assertions.
+remain DB-only fail-closed gap assertions. Exact TUI tools also accept
+`node_kind=variant` and assert that the real-corpus
+`Position::First(item)` constructor edge is visible from the exact enum-variant
+target.
 
 The regenerated axum call-graph fixture also resolves both
 `axum/src/json.rs:{112,128}` `Self::from_bytes(&bytes)` rows to the inherent
@@ -170,9 +173,7 @@ the explicit `axum/src/routing/method_routing.rs:1494`
 `crate::Router::new()` row. TUI `code_item_lookup` and `code_item_edges` now
 accept `owner_type` for exact inherent-method disambiguation, so the downstream
 real-corpus matrix asserts both `HandleError::new` caller rows and all 144
-`Router::new` caller rows with target-centered proof rows. Enum variant
-constructor lookup remains a separate exact-tool addressability gap because
-variants are secondary nodes, not `NodeKind` primary items.
+`Router::new` caller rows with target-centered proof rows.
 
 ## Receiver And Method Oracles
 

@@ -927,6 +927,9 @@ Progress note, 2026-06-28:
 - `request_code_context` compact UI summaries now surface nonzero call and
   proof blocker counts, matching the structured UI payload fields so collapsed
   tool output still exposes fail-closed context.
+- Exact TUI lookup and edge tools now accept `node_kind=variant` and cover the
+  real-corpus `Position::First` enum-variant constructor target through the
+  existing table-driven axum tool matrix.
 - `code_item_lookup` and `code_item_edges` now share an exact `owner_type`
   disambiguator for inherent methods, mirroring the existing `owner_trait`
   path. The real-corpus TUI matrix now covers `HandleError::new` and
@@ -948,6 +951,17 @@ For the `ploke-db` real-corpus call-site oracle matrix:
 
 - `cargo test -p ploke-db real_target_matrix -- --nocapture`
   - passed: 53 passed, 0 failed.
+
+For exact TUI enum-variant target addressability:
+
+- Red check before implementation:
+  `cargo test -p ploke-tui --test integration call_graph_tool_remaining_matrix -- --nocapture`
+  failed after adding `Position::First` to the table, first on an invalid test
+  helper assumption about `enum.module_id`.
+- `cargo test -p ploke-tui --test integration call_graph_tool_remaining_matrix -- --nocapture`
+  - passed: 2 passed, 0 failed.
+- `cargo test -p ploke-tui --test integration tool_node_kind_schema -- --nocapture`
+  - passed: 3 passed, 0 failed.
 
 For `request_code_context` compact blocker summaries:
 

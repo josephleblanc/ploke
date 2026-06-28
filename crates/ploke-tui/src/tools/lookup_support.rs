@@ -7,6 +7,7 @@ use ploke_db::{
     Database, DbError,
     helpers::{
         graph_resolve_exact, graph_resolve_exact_impl_method, graph_resolve_exact_trait_method,
+        graph_resolve_exact_variant,
     },
 };
 use std::path::Path;
@@ -154,6 +155,9 @@ pub(super) fn resolve_exact_item(
         }
         Some(OwnerQualifier::Type(owner)) => {
             graph_resolve_exact_impl_method(db, abs_path, mod_path, item_name, owner)
+        }
+        None if matches!(node_kind, NodeKind::Variant) => {
+            graph_resolve_exact_variant(db, abs_path, mod_path, item_name)
         }
         None => graph_resolve_exact(db, node_kind.as_relation(), abs_path, mod_path, item_name),
     }

@@ -71,6 +71,49 @@ file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module
         .map_err(|e| DbError::Cozo(e.to_string()))
 }
 
+/// Resolve an enum variant by canonical module path, variant name, and file.
+///
+/// Variants are secondary nodes: the `variant` relation carries the variant id
+/// and name, while snippet metadata comes from the owning enum. This mirrors
+/// the variant handling in `Database::get_snippet_context_nodes_ordered`.
+pub fn graph_resolve_exact_variant(
+    db: &Database,
+    file_path: &Path,
+    module_path: &[String],
+    item_name: &str,
+) -> Result<Vec<EmbeddingData>, DbError> {
+    let file_path_lit = serde_json::to_string(&file_path.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "\"\"".to_string());
+    let item_name_lit = serde_json::to_string(&item_name).unwrap_or_else(|_| "\"\"".to_string());
+    let mod_path_lit = serde_json::to_string(&module_path).unwrap_or_else(|_| "[]".to_string());
+    let ancestor_rules = lookup_ancestor_rules_now();
+
+    let script = format!(
+        r#"
+{ancestor_rules}
+module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
+file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
+
+?[id, name, file_path, file_hash, hash, span, namespace, mod_path] :=
+  *variant{{ id, name, owner_id: enum_id @ 'NOW' }},
+  *enum{{ id: enum_id, tracking_hash: hash, span @ 'NOW' }},
+  ancestor[enum_id, mod_id],
+  *module{{ id: mod_id, path: mod_path @ 'NOW' }},
+  file_owner_for_module[mod_id, file_owner_id],
+  *module{{ id: file_owner_id, tracking_hash: file_hash @ 'NOW' }},
+  *file_mod{{ owner_id: file_owner_id, file_path, namespace @ 'NOW' }},
+  name == {item_name_lit},
+  file_path == {file_path_lit},
+  mod_path == {mod_path_lit}
+"#
+    );
+
+    let qr = db.raw_query(&script)?;
+    qr.to_embedding_nodes()
+        .map_err(|e| DbError::Cozo(e.to_string()))
+}
+
 /// Resolve a method by canonical module path, item name, and owning trait.
 ///
 /// This is intentionally separate from [`graph_resolve_exact`] so existing

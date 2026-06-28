@@ -292,7 +292,7 @@ for a more fuzzy search."#
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
             .collect_vec();
-        let resolved_edges = if owner.is_some() {
+        let resolved_edges = if owner.is_some() || matches!(node_kind, NodeKind::Variant) {
             graph_resolve_edges_for_id(&ctx.state.db, node_kind.as_relation(), resolved_item_id)?
         } else {
             graph_resolve_edges(

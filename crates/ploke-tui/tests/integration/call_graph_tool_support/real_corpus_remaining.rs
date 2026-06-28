@@ -4,6 +4,7 @@ use super::*;
 pub(crate) enum AxumRemainingTarget {
     CoreTryDowncast,
     AxumTryDowncast,
+    PositionFirst,
     HandleErrorNew,
     FromRequest,
     FromRequestParts,
@@ -25,9 +26,10 @@ pub(crate) struct AxumRemainingToolFixture {
 }
 
 impl AxumRemainingTarget {
-    pub(crate) const TOOL_REACHABLE_CASES: [Self; 7] = [
+    pub(crate) const TOOL_REACHABLE_CASES: [Self; 8] = [
         Self::CoreTryDowncast,
         Self::AxumTryDowncast,
+        Self::PositionFirst,
         Self::HandleErrorNew,
         Self::FromRequest,
         Self::FromRequestParts,
@@ -39,6 +41,7 @@ impl AxumRemainingTarget {
         match self {
             Self::CoreTryDowncast => "axum-core try_downcast",
             Self::AxumTryDowncast => "axum try_downcast",
+            Self::PositionFirst => "axum-macros Position::First",
             Self::HandleErrorNew => "axum HandleError::new",
             Self::FromRequest => "axum-core FromRequest::from_request",
             Self::FromRequestParts => "axum-core FromRequestParts::from_request_parts",
@@ -50,6 +53,7 @@ impl AxumRemainingTarget {
     fn item_name(self) -> &'static str {
         match self {
             Self::CoreTryDowncast | Self::AxumTryDowncast => "try_downcast",
+            Self::PositionFirst => "First",
             Self::HandleErrorNew | Self::RouterNew => "new",
             Self::FromRequest => "from_request",
             Self::FromRequestParts => "from_request_parts",
@@ -64,6 +68,7 @@ impl AxumRemainingTarget {
             Self::FromRef => Some("FromRef"),
             Self::CoreTryDowncast
             | Self::AxumTryDowncast
+            | Self::PositionFirst
             | Self::HandleErrorNew
             | Self::RouterNew => None,
         }
@@ -75,6 +80,7 @@ impl AxumRemainingTarget {
             Self::RouterNew => Some("Router"),
             Self::CoreTryDowncast
             | Self::AxumTryDowncast
+            | Self::PositionFirst
             | Self::FromRequest
             | Self::FromRequestParts
             | Self::FromRef => None,
@@ -84,6 +90,7 @@ impl AxumRemainingTarget {
     fn node_kind(self) -> &'static str {
         match self {
             Self::CoreTryDowncast | Self::AxumTryDowncast => "function",
+            Self::PositionFirst => "variant",
             Self::HandleErrorNew
             | Self::FromRequest
             | Self::FromRequestParts
@@ -96,6 +103,7 @@ impl AxumRemainingTarget {
         match self {
             Self::CoreTryDowncast => 2,
             Self::AxumTryDowncast => 1,
+            Self::PositionFirst => 1,
             Self::HandleErrorNew => 2,
             Self::FromRequest => 2,
             Self::FromRequestParts => 3,
@@ -112,6 +120,12 @@ impl AxumRemainingTarget {
             Self::AxumTryDowncast => {
                 function_target_by_name_and_file(db, "try_downcast", "axum/src/util.rs")
             }
+            Self::PositionFirst => variant_target_by_enum_and_name(
+                db,
+                "Position",
+                "First",
+                "axum-macros/src/with_position.rs",
+            ),
             Self::HandleErrorNew => {
                 inherent_method_target(db, "HandleError", "new", "axum/src/error_handling/mod.rs")
             }
@@ -314,6 +328,42 @@ impl_self_type[self_type_id] :=
         }),
         |row| data_str(&row[1], "file_path").ends_with(file_suffix),
         method_name,
+    )
+}
+
+fn variant_target_by_enum_and_name(
+    db: &Database,
+    enum_name: &str,
+    variant_name: &str,
+    file_suffix: &str,
+) -> TargetInfo {
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[id, file_path, mod_path] :=
+    *enum {{ id: enum_id, name: $enum_name @ 'NOW' }},
+    *variant {{ id, name: $variant_name, owner_id: enum_id @ 'NOW' }},
+    ancestor[enum_id, module_id],
+    *module{{ id: module_id, path: mod_path @ 'NOW' }},
+    file_owner_for_module[module_id, file_id],
+    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+    let mut params = BTreeMap::new();
+    params.insert("enum_name".to_string(), DataValue::from(enum_name));
+    params.insert("variant_name".to_string(), DataValue::from(variant_name));
+
+    one_target_info(
+        db.raw_query_params(&script, params)
+            .unwrap_or_else(|err| panic!("query enum variant {enum_name}::{variant_name}: {err}")),
+        |row| data_str(&row[1], "file_path").ends_with(file_suffix),
+        variant_name,
     )
 }
 

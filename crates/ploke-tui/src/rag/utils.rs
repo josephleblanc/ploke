@@ -88,10 +88,11 @@ pub enum NodeKind {
     Trait,
     TypeAlias,
     Union,
+    Variant,
 }
 
 impl NodeKind {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 14] = [
         Self::Function,
         Self::Method,
         Self::Const,
@@ -105,6 +106,7 @@ impl NodeKind {
         Self::Trait,
         Self::TypeAlias,
         Self::Union,
+        Self::Variant,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -126,10 +128,11 @@ impl NodeKind {
             NodeKind::Trait => "trait",
             NodeKind::TypeAlias => "type_alias",
             NodeKind::Union => "union",
+            NodeKind::Variant => "variant",
         }
     }
 
-    pub fn allowed_values() -> [&'static str; 13] {
+    pub fn allowed_values() -> [&'static str; 14] {
         Self::ALL.map(|kind| kind.as_relation())
     }
 
@@ -179,6 +182,7 @@ impl std::str::FromStr for NodeKind {
             "trait" => Ok(Self::Trait),
             "type_alias" => Ok(Self::TypeAlias),
             "union" => Ok(Self::Union),
+            "variant" => Ok(Self::Variant),
             _ => Err("invalid node kind"),
         }
     }
