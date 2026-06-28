@@ -40,6 +40,41 @@ impl CallRelationResolver<'_> {
             return Ok(());
         }
 
+        let mut constructor_unresolved = false;
+        if let Some(resolution) = self.resolve_constructor_path(call)? {
+            match resolution {
+                ConstructorPathResolution::TupleStruct(target) => {
+                    relations.push(CallRelation::TupleStructConstructor {
+                        source: call.id,
+                        target,
+                    });
+                    statuses.push(CallResolutionStatus::Resolved {
+                        source,
+                        kind: CallResolutionKind::LocalExact,
+                    });
+                    return Ok(());
+                }
+                ConstructorPathResolution::EnumVariant(target) => {
+                    relations.push(CallRelation::EnumVariantConstructor {
+                        source: call.id,
+                        target,
+                    });
+                    statuses.push(CallResolutionStatus::Resolved {
+                        source,
+                        kind: CallResolutionKind::LocalExact,
+                    });
+                    return Ok(());
+                }
+                ConstructorPathResolution::Unresolved => {
+                    constructor_unresolved = true;
+                }
+                ConstructorPathResolution::Ambiguous => {
+                    statuses.push(CallResolutionStatus::Ambiguous { source });
+                    return Ok(());
+                }
+            }
+        }
+
         if let Some(resolution) =
             self.resolve_associated_function_path(call.owner, &call.path, type_relations)?
         {
@@ -67,35 +102,8 @@ impl CallRelationResolver<'_> {
             return Ok(());
         }
 
-        if let Some(resolution) = self.resolve_constructor_path(call)? {
-            match resolution {
-                ConstructorPathResolution::TupleStruct(target) => {
-                    relations.push(CallRelation::TupleStructConstructor {
-                        source: call.id,
-                        target,
-                    });
-                    statuses.push(CallResolutionStatus::Resolved {
-                        source,
-                        kind: CallResolutionKind::LocalExact,
-                    });
-                }
-                ConstructorPathResolution::EnumVariant(target) => {
-                    relations.push(CallRelation::EnumVariantConstructor {
-                        source: call.id,
-                        target,
-                    });
-                    statuses.push(CallResolutionStatus::Resolved {
-                        source,
-                        kind: CallResolutionKind::LocalExact,
-                    });
-                }
-                ConstructorPathResolution::Unresolved => {
-                    statuses.push(CallResolutionStatus::Unresolved { source });
-                }
-                ConstructorPathResolution::Ambiguous => {
-                    statuses.push(CallResolutionStatus::Ambiguous { source });
-                }
-            }
+        if constructor_unresolved {
+            statuses.push(CallResolutionStatus::Unresolved { source });
             return Ok(());
         }
 

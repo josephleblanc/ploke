@@ -1022,63 +1022,56 @@ fn axum_real_target_try_downcast_helpers_reach_current_resolved_subset() -> Resu
 }
 
 #[test]
-fn axum_real_target_position_first_variant_is_documented_gap() -> Result<(), DbError> {
+fn axum_real_target_position_first_variant_reaches_enum_variant() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
     // Matrix: `Position::First` enum variant constructor row.
+    // Source-oracle reference:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
     // Source chain:
     //   axum-macros/src/with_position.rs:65 defines `Position`.
     //   with_position.rs:66 defines variant `First`.
-    //   with_position.rs:92 calls `Position::First(item)`.
-    // Current model gap: the constructor call is structurally present, but it
-    // does not produce a resolved target-centered edge yet.
+    //   with_position.rs:92 calls `Position::First(item)` from
+    //   `WithPosition<I>::next`.
+    // Expected traversal: `WithPosition<I>::next` reaches the local
+    // `Position::First` variant constructor in one persisted call edge.
     let position = variant_id_by_enum_and_variant_names(&db, "Position", "First")?;
     let owner = method_id_by_name_and_body_substring(&db, "next", "Position::First(item)")?;
     let context = db.call_context_for_owner(owner)?;
     let row = row_by_path(&context, &["Position", "First"]);
 
-    assert_eq!(row.status.status, CallStatusKind::Unresolved);
-    assert_eq!(row.status.resolution, None);
-    assert!(
-        row.targets.is_empty(),
-        "Position::First constructor row should remain targetless: {row:#?}"
+    assert_resolved_target(
+        row,
+        position,
+        CallRelationKind::EnumVariantConstructor,
+        CallSiteKind::Path,
+        CallTargetKind::Variant,
     );
-    assert!(
-        relations_for_site(&db, row.site.id)?.rows.is_empty(),
-        "Position::First constructor row should have zero persisted call edges"
-    );
-    assert_no_traversal_candidates_for_site(
+    assert_one_edge_traversal(
         &db,
-        owner,
-        row.site.id,
-        "axum-macros/src/with_position.rs:92 Position::First",
-    )?;
-
-    let outgoing = db.expand_call_context(
-        CallContextSeed::Owner(owner),
-        CallContextOptions {
-            include_incoming_callers: false,
-            max_candidates: 512,
-            ..CallContextOptions::default()
+        TraversalExpectation {
+            label: "axum-macros/src/with_position.rs:92 Position::First",
+            owner,
+            target: position,
+            site_id: row.site.id,
+            expected_edge_count: 1,
         },
     )?;
-    assert!(
-        outgoing
-            .iter()
-            .all(|candidate| candidate.target_id != position),
-        "targetless Position::First row should not traverse to the enum variant: {outgoing:#?}"
-    );
 
     let callers = db.callers_for_target(position)?;
-    assert!(
-        callers.is_empty(),
-        "Position::First should remain targetless until enum variant constructor resolution covers this corpus row: {callers:#?}"
+    assert_eq!(
+        callers.len(),
+        1,
+        "Position::First should expose the inspected real-corpus caller: {callers:#?}"
     );
-    assert_no_incoming_traversal_to_target(
+    assert_sites_match_callers(
         &db,
         position,
-        "axum-macros/src/with_position.rs:92 Position::First",
+        &callers,
+        "Position::First real-corpus caller",
     )?;
+    caller_by_owner_kind_path(&callers, owner, CallSiteKind::Path, &["Position", "First"]);
 
     Ok(())
 }

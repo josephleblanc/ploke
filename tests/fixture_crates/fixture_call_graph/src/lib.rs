@@ -1227,3 +1227,17 @@ impl TraitImplAssocMakeTrait for LocalAssoc {
         Self::make()
     }
 }
+
+pub enum EnumWithInherentImpl {
+    Case(i32),
+}
+
+impl EnumWithInherentImpl {
+    pub fn helper() -> i32 {
+        7
+    }
+}
+
+pub fn call_enum_variant_with_inherent_impl(value: i32) -> EnumWithInherentImpl {
+    EnumWithInherentImpl::Case(value)
+}

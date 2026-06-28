@@ -126,6 +126,9 @@ The real-target constructor matrix also asserts the current split for
 `BoxedIntoRoute`: the explicit `BoxedIntoRoute(...)` call traverses to the tuple
 struct in one edge, while both `Self(...)` constructor rows are structural,
 unsupported, and have zero traversal candidates.
+It also asserts that `axum-macros/src/with_position.rs:92`
+`Position::First(item)` traverses to the local enum variant constructor at
+`axum-macros/src/with_position.rs:66` in one call edge.
 RAG exact call context, `code_item_lookup`, and `code_item_edges` now also assert
 that the explicit real-corpus `BoxedIntoRoute(...)` constructor edge is visible
 downstream with its target-centered proof row; the unsupported `Self(...)` rows

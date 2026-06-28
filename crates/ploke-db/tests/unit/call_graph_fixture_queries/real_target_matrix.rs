@@ -25,6 +25,7 @@
 //! | Inherent associated function | `axum/src/json.rs:{112,128}` call `Self::from_bytes(...)` | both trait-impl `Self::from_bytes` rows traverse to the inherent `Json::from_bytes` method. |
 //! | Trait associated function | `axum/src/handler/service.rs:171` calls `Handler::call(...)` | currently unresolved: the structural row is visible but does not yet traverse to the trait method. |
 //! | Tuple-struct constructor | `axum/src/boxed.rs:{23,38,51}` calls `BoxedIntoRoute(...)` / `Self(...)` | explicit tuple-struct constructor resolves to the `BoxedIntoRoute` struct in one call edge; `Self(...)` rows remain unsupported and targetless. |
+//! | Enum variant constructor | `axum-macros/src/with_position.rs:92` calls `Position::First(item)` | local enum-variant constructor resolves to the `Position::First` variant in one call edge. |
 //! | Inherent constructor | `axum/src/error_handling/mod.rs:65` calls `HandleError::new(...)` | extension methods resolve to the local inherent constructor in one call edge. |
 //! | Generated constructor | `axum/src/handler/service.rs:174` calls `IntoServiceFuture::new(...)` | currently unresolved in the corpus fixture. |
 //! | High-fanout test helper | `axum/src/test_helpers/test_client.rs:36` defines `TestClient::new`; the oracle lists selected-member callsites | 167 structural `TestClient::new` rows are projected by module and file fanout, but all remain unsupported and targetless. |

@@ -86,6 +86,7 @@ const LOCAL_ASSOC_MAKE_CALL_SPAN: (usize, usize) = (921, 939);
 const QUALIFIED_LOCAL_ASSOC_MAKE_CALL_SPAN: (usize, usize) = (1004, 1024);
 const TRAIT_IMPL_ASSOC_MAKE_IMPL_SPAN: (usize, usize) = (26656, 26786);
 const TRAIT_IMPL_ASSOC_MAKE_CALL_SPAN: (usize, usize) = (26766, 26778);
+const ENUM_WITH_INHERENT_IMPL_CASE_CALL_SPAN: (usize, usize) = (27000, 27033);
 const EXPLICIT_DROP_IMPL_SPAN: (usize, usize) = (16418, 16493);
 const IMPORTED_ALIAS_CALL_SPAN: (usize, usize) = (1393, 1409);
 const GLOBBED_TARGET_CALL_SPAN: (usize, usize) = (1461, 1477);
@@ -440,6 +441,32 @@ fn fixture_call_graph_struct_args(ident: &'static str) -> ParanoidArgs<'static> 
         ident,
         item_kind: ItemKind::Struct,
         expected_cfg: None,
+    }
+}
+
+fn fixture_call_graph_enum_variant_id(enum_name: &str, variant_name: &str) -> VariantNodeId {
+    let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+    let mut matches = parsed_graphs
+        .iter()
+        .flat_map(|parsed| parsed.graph.defined_types())
+        .filter_map(|type_def| match type_def {
+            TypeDefNode::Enum(enum_node) => Some(enum_node),
+            _ => None,
+        })
+        .filter(|enum_node| enum_node.name == enum_name)
+        .flat_map(|enum_node| enum_node.variants.iter())
+        .filter(|variant| variant.name == variant_name)
+        .map(|variant| variant.id)
+        .collect::<Vec<_>>();
+    matches.sort_unstable();
+    matches.dedup();
+    match matches.as_slice() {
+        [id] => *id,
+        [] => panic!("expected variant {enum_name}::{variant_name} in fixture_call_graph"),
+        many => panic!(
+            "expected exactly one variant {enum_name}::{variant_name}, found {}",
+            many.len()
+        ),
     }
 }
 
@@ -2804,6 +2831,26 @@ paranoid_call_site_test!(
             0,
             &[],
             ExpectedCallOutcome::ResolvedTupleStructConstructorLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_enum_variant_constructor_with_inherent_impl_resolves_variant_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_enum_variant_with_inherent_impl"
+    },
+    expected: {
+        let target = fixture_call_graph_enum_variant_id("EnumWithInherentImpl", "Case");
+        ExpectedCallSite::path(
+            &["EnumWithInherentImpl", "Case"],
+            ENUM_WITH_INHERENT_IMPL_CASE_CALL_SPAN,
+            1,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedEnumVariantConstructorLocalExact { target },
         )
     },
 );

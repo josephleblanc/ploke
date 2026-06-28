@@ -102,6 +102,15 @@ fn axum_real_target_supported_callers_are_one_hop_traversable() -> Result<(), Db
             expected_traversal_candidates: 1,
         },
         ResolvedTraversalCase {
+            // axum-macros/src/with_position.rs:92 calls the enum variant
+            // constructor `Position::First(item)`. Callee binding:
+            // axum-macros/src/with_position.rs:66.
+            label: "axum-macros Position::First enum variant constructor",
+            target: variant_id_by_enum_and_variant_names(&db, "Position", "First")?,
+            expected_call_edges: 1,
+            expected_traversal_candidates: 1,
+        },
+        ResolvedTraversalCase {
             // axum/src/error_handling/mod.rs:65 and
             // axum/src/service_ext.rs:43 call `HandleError::new(...)`.
             // Callee: axum/src/error_handling/mod.rs:80.
