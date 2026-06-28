@@ -267,7 +267,12 @@ dynamic callable-field rows, the `expand_with` callback setup, the
 `expand_attr_with` IIFE row, and the `from_request::expand` enum-state IIFE row.
 It also asserts that proc-macro callback arguments such as `from_ref::expand` and
 `axum_test::expand` are not fabricated as ordinary path-call edges before
-interprocedural callback proof exists.
+interprocedural callback proof exists. RAG call-context and proof-context tests
+now preserve the four currently projected dynamic callable-field blockers in
+`axum/src/boxed.rs:{85,120,159}` and `axum/src/serve/listener.rs:236`, including
+zero traversal targets and `dynamic_dispatch_unbounded` proof rows. Exact TUI
+`code_item_lookup` and `code_item_edges` tests assert the same four owner-seeded
+targetless rows and blocked proof facts.
 
 ## Fallback Fixture Oracle Matrix
 
