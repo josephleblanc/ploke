@@ -96,8 +96,9 @@ regenerating the axum call-graph fixture, the DB matrix also asserts the two
 `axum-core/src/body.rs:{110,116}` `Self::empty()` rows that traverse to
 `Body::empty`. The remaining rows in this fanout are still tracked as
 import/re-export completeness gaps, not as expected-passing traversal edges. The
-DB matrix now also pins the current targetless file buckets with zero traversal
-candidates: eight external rows in `axum/src/{extract/query.rs,
+DB matrix now also pins the current targetless rows by exact owner/source label
+and by aggregate file bucket, with zero traversal candidates: eight external
+rows in `axum/src/{extract/query.rs,
 extract/raw_form.rs,form.rs,middleware/from_fn.rs,routing/tests/mod.rs,
 serve/mod.rs}` and seven unsupported rows in
 `axum-core/src/ext_traits/request.rs`,
