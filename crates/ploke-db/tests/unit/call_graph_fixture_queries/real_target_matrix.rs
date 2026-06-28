@@ -52,4 +52,5 @@ mod fallback;
 mod paths;
 mod receivers;
 mod trait_body;
+mod traversal;
 mod unsupported;
