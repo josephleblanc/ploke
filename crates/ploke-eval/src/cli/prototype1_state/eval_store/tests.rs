@@ -28,12 +28,14 @@ use super::{
     CHILD_PLAN_REL, CLOSURE_ARTIFACT_REF_REL, CLOSURE_INSTANCE_REL, CLOSURE_PROTOCOL_COUNTS_REL,
     CLOSURE_PROTOCOL_PROCEDURE_REL, CLOSURE_REF_REL, CONTINUATION_DECISION_REL,
     EVALUATION_INSTANCE_REL, EVALUATION_REL, HARNESS_DIAGNOSTIC_REL, HARNESS_REQUEST_REL,
-    HARNESS_WORKSPACE_CHANGE_REL, HARNESS_WORKSPACE_REL, MESSAGE_EVENT_REL, MODEL_EXCHANGE_REL,
-    OPERATION_REL, PARENT_IDENTITY_REL, PARENT_START_REL, PATCH_REL, PROFILE_COMMITMENT_REL,
-    RUN_PROFILE_POLICY_REL, RUNNER_REQUEST_ARG_REL, RUNNER_REQUEST_REL, RUNNER_REQUEST_TARGET_REL,
-    RUNNER_RESULT_REL, SCHEDULER_NODE_REL, SCHEDULER_NODE_STATUS_REL, SCHEDULER_NODE_TARGET_REL,
-    SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL, SELECTION_FINDING_REL, SELECTION_SCORE_REL,
-    TOOL_EVENT_REL, WALK_EVENT_REL, WALK_EVENT_TRANSITION_REL,
+    HARNESS_SUBMISSION_CHANGE_REL, HARNESS_SUBMISSION_CHECK_REL, HARNESS_SUBMISSION_CITATION_REL,
+    HARNESS_SUBMISSION_REL, HARNESS_WORKSPACE_CHANGE_REL, HARNESS_WORKSPACE_REL, MESSAGE_EVENT_REL,
+    MODEL_EXCHANGE_REL, OPERATION_REL, PARENT_IDENTITY_REL, PARENT_START_REL, PATCH_REL,
+    PROFILE_COMMITMENT_REL, RUN_PROFILE_POLICY_REL, RUNNER_REQUEST_ARG_REL, RUNNER_REQUEST_REL,
+    RUNNER_REQUEST_TARGET_REL, RUNNER_RESULT_REL, SCHEDULER_NODE_REL, SCHEDULER_NODE_STATUS_REL,
+    SCHEDULER_NODE_TARGET_REL, SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL,
+    SELECTION_FINDING_REL, SELECTION_SCORE_REL, TOOL_EVENT_REL, WALK_EVENT_REL,
+    WALK_EVENT_TRANSITION_REL,
     api::EvalStorageMode,
     cozo_schema::eval_relation_exists,
     error::EvalStoreError,
@@ -405,6 +407,38 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
             )
         },
         {
+            let schema = &super::harness::HarnessSubmissionSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::harness::HarnessSubmissionChangeSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::harness::HarnessSubmissionCitationSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::harness::HarnessSubmissionCheckSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
             let schema = &super::walk_event::WalkEventSchema::SCHEMA;
             (
                 schema.relation(),
@@ -749,6 +783,26 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
             r#"?[request_id, diagnostics_path, change_index, campaign_id, schema_version, status_code, path, original_path] <- [[$request_id, $diagnostics_path, $change_index, $campaign_id, $schema_version, $status_code, $path, $original_path]] :put eval_harness_workspace_change { request_id, diagnostics_path, change_index => campaign_id, schema_version, status_code, path, original_path }"#,
         ),
         (
+            "eval_harness_submission",
+            r#":create eval_harness_submission { request_id: String => campaign_id: String, schema_version: String, request_hash: String, parent_node_id: String, workspace_path: String, submitted_path: String, result_sha256: String, changed_file_count: Int, citation_count: Int, check_count: Int, hypothesis: String, expected_effect: String, ingested_at: String }"#,
+            r#"?[request_id, campaign_id, schema_version, request_hash, parent_node_id, workspace_path, submitted_path, result_sha256, changed_file_count, citation_count, check_count, hypothesis, expected_effect, ingested_at] <- [[$request_id, $campaign_id, $schema_version, $request_hash, $parent_node_id, $workspace_path, $submitted_path, $result_sha256, $changed_file_count, $citation_count, $check_count, $hypothesis, $expected_effect, $ingested_at]] :put eval_harness_submission { request_id => campaign_id, schema_version, request_hash, parent_node_id, workspace_path, submitted_path, result_sha256, changed_file_count, citation_count, check_count, hypothesis, expected_effect, ingested_at }"#,
+        ),
+        (
+            "eval_harness_submission_change",
+            r#":create eval_harness_submission_change { request_id: String, change_index: Int => campaign_id: String, schema_version: String, workspace_relpath: String, summary: String }"#,
+            r#"?[request_id, change_index, campaign_id, schema_version, workspace_relpath, summary] <- [[$request_id, $change_index, $campaign_id, $schema_version, $workspace_relpath, $summary]] :put eval_harness_submission_change { request_id, change_index => campaign_id, schema_version, workspace_relpath, summary }"#,
+        ),
+        (
+            "eval_harness_submission_citation",
+            r#":create eval_harness_submission_citation { request_id: String, citation_index: Int => campaign_id: String, schema_version: String, kind: String, location: String, summary: String }"#,
+            r#"?[request_id, citation_index, campaign_id, schema_version, kind, location, summary] <- [[$request_id, $citation_index, $campaign_id, $schema_version, $kind, $location, $summary]] :put eval_harness_submission_citation { request_id, citation_index => campaign_id, schema_version, kind, location, summary }"#,
+        ),
+        (
+            "eval_harness_submission_check",
+            r#":create eval_harness_submission_check { request_id: String, check_index: Int => campaign_id: String, schema_version: String, label: String, command: String, success_signal: String }"#,
+            r#"?[request_id, check_index, campaign_id, schema_version, label, command, success_signal] <- [[$request_id, $check_index, $campaign_id, $schema_version, $label, $command, $success_signal]] :put eval_harness_submission_check { request_id, check_index => campaign_id, schema_version, label, command, success_signal }"#,
+        ),
+        (
             "eval_walk_event",
             r#":create eval_walk_event { event_id: String => campaign_id: String, schema_version: String, node_id: String, parent_id: String, generation: Int, branch_id: String, command: String, status: String, phase_before: String?, phase_after: String, target_phase: String?, watch: Bool?, allow_git_changes: Bool?, transition_count: Int, protocol_version: Int, transition_graph_version: String, repo_root: String, exe_path: String, exe_sha256: String, exe_modified_unix_ms: Int?, git_head: String?, source_status_hash: String?, recorded_at: String, ingested_at: String }"#,
             r#"?[event_id, campaign_id, schema_version, node_id, parent_id, generation, branch_id, command, status, phase_before, phase_after, target_phase, watch, allow_git_changes, transition_count, protocol_version, transition_graph_version, repo_root, exe_path, exe_sha256, exe_modified_unix_ms, git_head, source_status_hash, recorded_at, ingested_at] <- [[$event_id, $campaign_id, $schema_version, $node_id, $parent_id, $generation, $branch_id, $command, $status, $phase_before, $phase_after, $target_phase, $watch, $allow_git_changes, $transition_count, $protocol_version, $transition_graph_version, $repo_root, $exe_path, $exe_sha256, $exe_modified_unix_ms, $git_head, $source_status_hash, $recorded_at, $ingested_at]] :put eval_walk_event { event_id => campaign_id, schema_version, node_id, parent_id, generation, branch_id, command, status, phase_before, phase_after, target_phase, watch, allow_git_changes, transition_count, protocol_version, transition_graph_version, repo_root, exe_path, exe_sha256, exe_modified_unix_ms, git_head, source_status_hash, recorded_at, ingested_at }"#,
@@ -1044,6 +1098,21 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
     assert!(
         eval_relation_exists(&db, HARNESS_WORKSPACE_CHANGE_REL)
             .expect("harness workspace change rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, HARNESS_SUBMISSION_REL).expect("harness submission rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, HARNESS_SUBMISSION_CHANGE_REL)
+            .expect("harness submission change rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, HARNESS_SUBMISSION_CITATION_REL)
+            .expect("harness submission citation rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, HARNESS_SUBMISSION_CHECK_REL)
+            .expect("harness submission check rel exists")
     );
     assert!(eval_relation_exists(&db, PARENT_IDENTITY_REL).expect("parent identity rel exists"));
     assert!(eval_relation_exists(&db, PARENT_START_REL).expect("parent start rel exists"));
@@ -1464,6 +1533,12 @@ fn prototype1_eval_store_harness_rows_capture_request_diagnostics_and_workspace_
         String::from_utf8_lossy(&git_init.stderr)
     );
     fs::write(published.workspace_path().join("changed.txt"), "dirty\n").expect("dirty file");
+    let submitted = sample_submitted_harness_result(&published);
+    fs::write(
+        published.submitted_result_path(),
+        serde_json::to_vec_pretty(&submitted).expect("submitted result json"),
+    )
+    .expect("write submitted result");
     let run =
         crate::cli::prototype1_state::edit_surface::tui_adapter::HeadlessRun::setup_unavailable(
             "test_setup",
@@ -1511,6 +1586,93 @@ fn prototype1_eval_store_harness_rows_capture_request_diagnostics_and_workspace_
     let row = rows.row_refs().next().expect("workspace change row");
     assert_eq!(row.get::<String>("status_code").expect("status"), "??");
     assert_eq!(row.get::<String>("path").expect("path"), "changed.txt");
+
+    let rows = query_harness_submission(&db, &campaign_id);
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("submission row");
+    assert_eq!(row.get::<i64>("changed_file_count").expect("changes"), 1);
+    assert_eq!(row.get::<i64>("citation_count").expect("citations"), 1);
+    assert_eq!(row.get::<i64>("check_count").expect("checks"), 1);
+    assert_eq!(
+        row.get::<String>("hypothesis").expect("hypothesis"),
+        "separate submitted evidence from authority"
+    );
+    assert_eq!(
+        row.get::<String>("expected_effect").expect("effect"),
+        "future descendants admit typed evidence without reading harness files"
+    );
+
+    let rows = query_harness_submission_changes(&db, &campaign_id);
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("submission change row");
+    assert_eq!(
+        row.get::<String>("workspace_relpath").expect("relpath"),
+        "changed.txt"
+    );
+    assert_eq!(row.get::<String>("summary").expect("summary"), "dirty file");
+
+    let rows = query_harness_submission_citations(&db, &campaign_id);
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("submission citation row");
+    assert_eq!(row.get::<String>("kind").expect("kind"), "HistoryBlocks");
+    assert_eq!(
+        row.get::<String>("summary").expect("summary"),
+        "history says keep authority separate"
+    );
+
+    let rows = query_harness_submission_checks(&db, &campaign_id);
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("submission check row");
+    assert_eq!(row.get::<String>("label").expect("label"), "unit");
+    assert_eq!(
+        row.get::<String>("command").expect("command"),
+        "cargo test -p ploke-eval eval_store"
+    );
+}
+
+fn sample_submitted_harness_result(
+    published: &crate::cli::prototype1_state::edit_surface::harness_request::PublishedBroadHarnessRequest,
+) -> crate::cli::prototype1_state::edit_surface::harness_result::SubmittedBroadHarnessResult {
+    use crate::cli::prototype1_state::edit_surface::harness_request::{
+        EvidenceRootKind, EvidenceRootLocation, SubmissionAuthorityBoundary,
+    };
+    use crate::cli::prototype1_state::edit_surface::harness_result::{
+        SubmittedBroadHarnessResult, SubmittedChangeSummary, SubmittedCheckRecommendation,
+        SubmittedEvidenceCitation, SubmittedFileChange, SubmittedHarnessReturnEvidence,
+        SubmittedImprovementRationale,
+    };
+
+    SubmittedBroadHarnessResult::bind(
+        published,
+        SubmittedHarnessReturnEvidence {
+            authority_boundary: SubmissionAuthorityBoundary::submitted_evidence_only(),
+            change_summary: SubmittedChangeSummary {
+                changed_files: vec![SubmittedFileChange {
+                    workspace_relpath: PathBuf::from("changed.txt"),
+                    summary: "dirty file".to_string(),
+                }],
+            },
+            guiding_evidence: vec![SubmittedEvidenceCitation {
+                kind: EvidenceRootKind::HistoryBlocks,
+                location: EvidenceRootLocation::Directory {
+                    path: PathBuf::from("/tmp/history/blocks"),
+                },
+                summary: "history says keep authority separate".to_string(),
+            }],
+            rationale: SubmittedImprovementRationale {
+                hypothesis: "separate submitted evidence from authority".to_string(),
+                expected_descendant_effect:
+                    "future descendants admit typed evidence without reading harness files"
+                        .to_string(),
+            },
+            checks: vec![SubmittedCheckRecommendation {
+                label: "unit".to_string(),
+                command: "cargo test -p ploke-eval eval_store".to_string(),
+                success_signal: "eval-store rows are queryable".to_string(),
+            }],
+        },
+    )
+    .expect("submitted result binds published request")
 }
 
 #[test]
@@ -2915,6 +3077,62 @@ fn query_harness_workspace_change(db: &Database, campaign_id: &CampaignId) -> Qu
         params,
     )
     .expect("query harness workspace change")
+}
+
+fn query_harness_submission(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[request_id, changed_file_count, citation_count, check_count, hypothesis, expected_effect] :=
+    *eval_harness_submission { campaign_id, request_id, changed_file_count, citation_count, check_count, hypothesis, expected_effect },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query harness submission")
+}
+
+fn query_harness_submission_changes(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[request_id, workspace_relpath, summary] :=
+    *eval_harness_submission_change { campaign_id, request_id, workspace_relpath, summary },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query harness submission changes")
+}
+
+fn query_harness_submission_citations(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[request_id, kind, location, summary] :=
+    *eval_harness_submission_citation { campaign_id, request_id, kind, location, summary },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query harness submission citations")
+}
+
+fn query_harness_submission_checks(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[request_id, label, command, success_signal] :=
+    *eval_harness_submission_check { campaign_id, request_id, label, command, success_signal },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query harness submission checks")
 }
 
 fn query_closure_refs(db: &Database, campaign_id: &CampaignId) -> QueryResult {

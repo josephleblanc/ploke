@@ -133,6 +133,17 @@ pub(crate) const HARNESS_WORKSPACE_REL: &str = harness::HarnessWorkspaceSchema::
 pub(crate) const HARNESS_WORKSPACE_CHANGE_REL: &str =
     harness::HarnessWorkspaceChangeSchema::RELATION;
 #[cfg(test)]
+pub(crate) const HARNESS_SUBMISSION_REL: &str = harness::HarnessSubmissionSchema::RELATION;
+#[cfg(test)]
+pub(crate) const HARNESS_SUBMISSION_CHANGE_REL: &str =
+    harness::HarnessSubmissionChangeSchema::RELATION;
+#[cfg(test)]
+pub(crate) const HARNESS_SUBMISSION_CITATION_REL: &str =
+    harness::HarnessSubmissionCitationSchema::RELATION;
+#[cfg(test)]
+pub(crate) const HARNESS_SUBMISSION_CHECK_REL: &str =
+    harness::HarnessSubmissionCheckSchema::RELATION;
+#[cfg(test)]
 pub(crate) const WALK_EVENT_REL: &str = walk_event::WalkEventSchema::RELATION;
 #[cfg(test)]
 pub(crate) const WALK_EVENT_TRANSITION_REL: &str = walk_event::WalkEventTransitionSchema::RELATION;

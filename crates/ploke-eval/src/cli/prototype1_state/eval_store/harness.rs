@@ -10,7 +10,8 @@ use cozo::DataValue;
 use serde_json::Value;
 
 use crate::cli::prototype1_state::edit_surface::{
-    harness_request::PublishedBroadHarnessRequest, tui_adapter,
+    harness_request::PublishedBroadHarnessRequest, harness_result::SubmittedBroadHarnessResult,
+    tui_adapter,
 };
 use ploke_records::ids::CampaignId;
 
@@ -24,6 +25,7 @@ use super::{
 pub(crate) const HARNESS_REQUEST_SCHEMA_VERSION: &str = "prototype1-harness-request.v1";
 pub(crate) const HARNESS_DIAGNOSTIC_SCHEMA_VERSION: &str = "prototype1-harness-diagnostic.v1";
 pub(crate) const HARNESS_WORKSPACE_SCHEMA_VERSION: &str = "prototype1-harness-workspace.v1";
+pub(crate) const HARNESS_SUBMISSION_SCHEMA_VERSION: &str = "prototype1-harness-submission.v1";
 
 define_eval_schema!(HarnessRequestSchema {
     "eval_harness_request",
@@ -99,6 +101,56 @@ define_eval_schema!(HarnessWorkspaceChangeSchema {
     original_path: "String?",
 });
 
+define_eval_schema!(HarnessSubmissionSchema {
+    "eval_harness_submission",
+    request_id: "String" =>
+    campaign_id: "String",
+    schema_version: "String",
+    request_hash: "String",
+    parent_node_id: "String",
+    workspace_path: "String",
+    submitted_path: "String",
+    result_sha256: "String",
+    changed_file_count: "Int",
+    citation_count: "Int",
+    check_count: "Int",
+    hypothesis: "String",
+    expected_effect: "String",
+    ingested_at: "String",
+});
+
+define_eval_schema!(HarnessSubmissionChangeSchema {
+    "eval_harness_submission_change",
+    request_id: "String",
+    change_index: "Int" =>
+    campaign_id: "String",
+    schema_version: "String",
+    workspace_relpath: "String",
+    summary: "String",
+});
+
+define_eval_schema!(HarnessSubmissionCitationSchema {
+    "eval_harness_submission_citation",
+    request_id: "String",
+    citation_index: "Int" =>
+    campaign_id: "String",
+    schema_version: "String",
+    kind: "String",
+    location: "String",
+    summary: "String",
+});
+
+define_eval_schema!(HarnessSubmissionCheckSchema {
+    "eval_harness_submission_check",
+    request_id: "String",
+    check_index: "Int" =>
+    campaign_id: "String",
+    schema_version: "String",
+    label: "String",
+    command: "String",
+    success_signal: "String",
+});
+
 struct RequestRow {
     campaign_id: String,
     request_id: String,
@@ -165,6 +217,48 @@ struct WorkspaceChangeRow {
     original_path: Option<String>,
 }
 
+struct SubmissionRow {
+    campaign_id: String,
+    request_id: String,
+    request_hash: String,
+    parent_node_id: String,
+    workspace_path: String,
+    submitted_path: String,
+    result_sha256: String,
+    changed_file_count: i64,
+    citation_count: i64,
+    check_count: i64,
+    hypothesis: String,
+    expected_effect: String,
+    ingested_at: String,
+}
+
+struct SubmissionChangeRow {
+    campaign_id: String,
+    request_id: String,
+    change_index: i64,
+    workspace_relpath: String,
+    summary: String,
+}
+
+struct SubmissionCitationRow {
+    campaign_id: String,
+    request_id: String,
+    citation_index: i64,
+    kind: String,
+    location: String,
+    summary: String,
+}
+
+struct SubmissionCheckRow {
+    campaign_id: String,
+    request_id: String,
+    check_index: i64,
+    label: String,
+    command: String,
+    success_signal: String,
+}
+
 #[derive(Default)]
 struct EventCounts {
     events: i64,
@@ -198,6 +292,13 @@ pub(super) fn ensure_harness_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), Ev
     HarnessWorkspaceSchema::SCHEMA.ensure_installed(db, "schema.eval_harness_workspace")?;
     HarnessWorkspaceChangeSchema::SCHEMA
         .ensure_installed(db, "schema.eval_harness_workspace_change")?;
+    HarnessSubmissionSchema::SCHEMA.ensure_installed(db, "schema.eval_harness_submission")?;
+    HarnessSubmissionChangeSchema::SCHEMA
+        .ensure_installed(db, "schema.eval_harness_submission_change")?;
+    HarnessSubmissionCitationSchema::SCHEMA
+        .ensure_installed(db, "schema.eval_harness_submission_citation")?;
+    HarnessSubmissionCheckSchema::SCHEMA
+        .ensure_installed(db, "schema.eval_harness_submission_check")?;
     Ok(())
 }
 
@@ -247,6 +348,10 @@ pub(crate) fn write_harness_diagnostic_to_owner_db(
                     original_path: change.original_path.clone(),
                 },
             )?;
+        }
+        if published.submitted_result_path().is_file() {
+            let submitted = load_submitted_result(published)?;
+            put_submission_rows(db, campaign_id, published, &submitted)?;
         }
         Ok(())
     })
@@ -364,6 +469,126 @@ fn workspace_row(
         change_count: usize_to_i64(status.changes.len(), "eval_harness_workspace.change_count")?,
         ingested_at: Utc::now().to_rfc3339(),
     })
+}
+
+fn load_submitted_result(
+    published: &PublishedBroadHarnessRequest,
+) -> Result<SubmittedBroadHarnessResult, EvalStoreError> {
+    let path = published.submitted_result_path();
+    let bytes = fs::read(path).map_err(|source| EvalStoreError::Io {
+        phase: "eval_harness_submission.read",
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let submitted =
+        serde_json::from_slice::<SubmittedBroadHarnessResult>(&bytes).map_err(|source| {
+            EvalStoreError::Validation {
+                field: "eval_harness_submission.submitted_result",
+                detail: source.to_string(),
+            }
+        })?;
+    submitted
+        .verify_request(published)
+        .map_err(|source| EvalStoreError::Validation {
+            field: "eval_harness_submission.request_binding",
+            detail: format!("{source:?}"),
+        })?;
+    Ok(submitted)
+}
+
+fn submission_row(
+    campaign_id: &CampaignId,
+    published: &PublishedBroadHarnessRequest,
+    submitted: &SubmittedBroadHarnessResult,
+) -> Result<SubmissionRow, EvalStoreError> {
+    let evidence = &submitted.return_evidence;
+    Ok(SubmissionRow {
+        campaign_id: campaign_id.to_string(),
+        request_id: published.request_id().to_string(),
+        request_hash: published.request_hash().to_string(),
+        parent_node_id: submitted.request.parent_node_id.as_str().to_string(),
+        workspace_path: submitted.candidate.workspace_path.display().to_string(),
+        submitted_path: submitted
+            .candidate
+            .submitted_result_path
+            .display()
+            .to_string(),
+        result_sha256: file_sha256(
+            published.submitted_result_path(),
+            "eval_harness_submission.result",
+        )?,
+        changed_file_count: usize_to_i64(
+            evidence.change_summary.changed_files.len(),
+            "eval_harness_submission.changed_file_count",
+        )?,
+        citation_count: usize_to_i64(
+            evidence.guiding_evidence.len(),
+            "eval_harness_submission.citation_count",
+        )?,
+        check_count: usize_to_i64(evidence.checks.len(), "eval_harness_submission.check_count")?,
+        hypothesis: evidence.rationale.hypothesis.clone(),
+        expected_effect: evidence.rationale.expected_descendant_effect.clone(),
+        ingested_at: Utc::now().to_rfc3339(),
+    })
+}
+
+fn put_submission_rows<D: EvalDb + ?Sized>(
+    db: &D,
+    campaign_id: &CampaignId,
+    published: &PublishedBroadHarnessRequest,
+    submitted: &SubmittedBroadHarnessResult,
+) -> Result<(), EvalStoreError> {
+    put_submission_row(db, &submission_row(campaign_id, published, submitted)?)?;
+    for (index, change) in submitted
+        .return_evidence
+        .change_summary
+        .changed_files
+        .iter()
+        .enumerate()
+    {
+        put_submission_change_row(
+            db,
+            &SubmissionChangeRow {
+                campaign_id: campaign_id.to_string(),
+                request_id: published.request_id().to_string(),
+                change_index: usize_to_i64(index, "eval_harness_submission_change.index")?,
+                workspace_relpath: change.workspace_relpath.display().to_string(),
+                summary: change.summary.clone(),
+            },
+        )?;
+    }
+    for (index, citation) in submitted
+        .return_evidence
+        .guiding_evidence
+        .iter()
+        .enumerate()
+    {
+        put_submission_citation_row(
+            db,
+            &SubmissionCitationRow {
+                campaign_id: campaign_id.to_string(),
+                request_id: published.request_id().to_string(),
+                citation_index: usize_to_i64(index, "eval_harness_submission_citation.index")?,
+                kind: format!("{:?}", citation.kind),
+                location: citation.location.render(),
+                summary: citation.summary.clone(),
+            },
+        )?;
+    }
+    for (index, check) in submitted.return_evidence.checks.iter().enumerate() {
+        put_submission_check_row(
+            db,
+            &SubmissionCheckRow {
+                campaign_id: campaign_id.to_string(),
+                request_id: published.request_id().to_string(),
+                check_index: usize_to_i64(index, "eval_harness_submission_check.index")?,
+                label: check.label.clone(),
+                command: check.command.clone(),
+                success_signal: check.success_signal.clone(),
+            },
+        )?;
+    }
+    Ok(())
 }
 
 fn put_request_row<D: EvalDb + ?Sized>(db: &D, row: &RequestRow) -> Result<(), EvalStoreError> {
@@ -533,6 +758,128 @@ fn put_workspace_change_row<D: EvalDb + ?Sized>(
         &HarnessWorkspaceChangeSchema::SCHEMA,
         params,
         "put.eval_harness_workspace_change",
+    )
+}
+
+fn put_submission_row<D: EvalDb + ?Sized>(
+    db: &D,
+    row: &SubmissionRow,
+) -> Result<(), EvalStoreError> {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), row.campaign_id.clone().into());
+    params.insert("request_id".to_string(), row.request_id.clone().into());
+    params.insert(
+        "schema_version".to_string(),
+        HARNESS_SUBMISSION_SCHEMA_VERSION.into(),
+    );
+    params.insert("request_hash".to_string(), row.request_hash.clone().into());
+    params.insert(
+        "parent_node_id".to_string(),
+        row.parent_node_id.clone().into(),
+    );
+    params.insert(
+        "workspace_path".to_string(),
+        row.workspace_path.clone().into(),
+    );
+    params.insert(
+        "submitted_path".to_string(),
+        row.submitted_path.clone().into(),
+    );
+    params.insert(
+        "result_sha256".to_string(),
+        row.result_sha256.clone().into(),
+    );
+    params.insert(
+        "changed_file_count".to_string(),
+        row.changed_file_count.into(),
+    );
+    params.insert("citation_count".to_string(), row.citation_count.into());
+    params.insert("check_count".to_string(), row.check_count.into());
+    params.insert("hypothesis".to_string(), row.hypothesis.clone().into());
+    params.insert(
+        "expected_effect".to_string(),
+        row.expected_effect.clone().into(),
+    );
+    params.insert("ingested_at".to_string(), row.ingested_at.clone().into());
+    put_eval_params(
+        db,
+        &HarnessSubmissionSchema::SCHEMA,
+        params,
+        "put.eval_harness_submission",
+    )
+}
+
+fn put_submission_change_row<D: EvalDb + ?Sized>(
+    db: &D,
+    row: &SubmissionChangeRow,
+) -> Result<(), EvalStoreError> {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), row.campaign_id.clone().into());
+    params.insert("request_id".to_string(), row.request_id.clone().into());
+    params.insert("change_index".to_string(), row.change_index.into());
+    params.insert(
+        "schema_version".to_string(),
+        HARNESS_SUBMISSION_SCHEMA_VERSION.into(),
+    );
+    params.insert(
+        "workspace_relpath".to_string(),
+        row.workspace_relpath.clone().into(),
+    );
+    params.insert("summary".to_string(), row.summary.clone().into());
+    put_eval_params(
+        db,
+        &HarnessSubmissionChangeSchema::SCHEMA,
+        params,
+        "put.eval_harness_submission_change",
+    )
+}
+
+fn put_submission_citation_row<D: EvalDb + ?Sized>(
+    db: &D,
+    row: &SubmissionCitationRow,
+) -> Result<(), EvalStoreError> {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), row.campaign_id.clone().into());
+    params.insert("request_id".to_string(), row.request_id.clone().into());
+    params.insert("citation_index".to_string(), row.citation_index.into());
+    params.insert(
+        "schema_version".to_string(),
+        HARNESS_SUBMISSION_SCHEMA_VERSION.into(),
+    );
+    params.insert("kind".to_string(), row.kind.clone().into());
+    params.insert("location".to_string(), row.location.clone().into());
+    params.insert("summary".to_string(), row.summary.clone().into());
+    put_eval_params(
+        db,
+        &HarnessSubmissionCitationSchema::SCHEMA,
+        params,
+        "put.eval_harness_submission_citation",
+    )
+}
+
+fn put_submission_check_row<D: EvalDb + ?Sized>(
+    db: &D,
+    row: &SubmissionCheckRow,
+) -> Result<(), EvalStoreError> {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), row.campaign_id.clone().into());
+    params.insert("request_id".to_string(), row.request_id.clone().into());
+    params.insert("check_index".to_string(), row.check_index.into());
+    params.insert(
+        "schema_version".to_string(),
+        HARNESS_SUBMISSION_SCHEMA_VERSION.into(),
+    );
+    params.insert("label".to_string(), row.label.clone().into());
+    params.insert("command".to_string(), row.command.clone().into());
+    params.insert(
+        "success_signal".to_string(),
+        row.success_signal.clone().into(),
+    );
+    put_eval_params(
+        db,
+        &HarnessSubmissionCheckSchema::SCHEMA,
+        params,
+        "put.eval_harness_submission_check",
     )
 }
 
