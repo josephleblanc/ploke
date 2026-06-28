@@ -262,6 +262,28 @@ pub(super) fn assert_targetless_method_rows(
     Ok(())
 }
 
+pub(super) fn assert_no_method_rows(db: &Database, method: &str) -> Result<(), DbError> {
+    let mut params = BTreeMap::new();
+    params.insert("method".to_string(), DataValue::from(method));
+
+    let rows = db.raw_query_params(
+        r#"?[site_id] :=
+            *call_site {
+                id: site_id,
+                call_kind: "Method",
+                method_name: $method @ 'NOW'
+            }"#,
+        params,
+    )?;
+    assert!(
+        rows.rows.is_empty(),
+        "expected no method rows for {method:?}: {:#?}",
+        rows.rows
+    );
+
+    Ok(())
+}
+
 fn path_value(path_parts: &[&str]) -> DataValue {
     DataValue::List(
         path_parts

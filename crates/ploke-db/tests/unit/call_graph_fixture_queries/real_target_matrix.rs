@@ -27,17 +27,21 @@
 //! | Tuple-struct constructor | `axum/src/boxed.rs:38` calls `BoxedIntoRoute(...)` | explicit tuple-struct constructor resolves to the `BoxedIntoRoute` struct in one call edge. |
 //! | Inherent constructor | `axum/src/error_handling/mod.rs:65` calls `HandleError::new(...)` | extension methods resolve to the local inherent constructor in one call edge. |
 //! | Generated constructor | `axum/src/handler/service.rs:174` calls `IntoServiceFuture::new(...)` | currently unresolved in the corpus fixture. |
+//! | High-fanout test helper | `axum/src/test_helpers/test_client.rs:36` defines `TestClient::new`; the oracle lists selected-member callsites | 167 structural `TestClient::new` rows are projected, but all remain unsupported and targetless. |
 //! | Same-impl self methods | `axum-core/src/ext_traits/{request.rs:268,request_parts.rs:122}` call `self.extract_with_state(&())` | owner traversal resolves both method calls to their same-impl `extract_with_state`. |
 //! | Trait associated extraction paths | `axum-core/src/ext_traits/{request.rs:279,305}` and `request_parts.rs:133` call `E::from_request*` | currently unsupported: type-parameter trait paths are visible but targetless. |
 //! | Bounded `FromRef` paths | `axum/src/extract/state.rs:309` and `middleware/from_extractor.rs:328` call `InnerState::from_ref(...)` | currently unsupported: bounded associated paths are visible but targetless. |
 //! | Listener `Self::accept` paths | `axum/src/serve/listener.rs:{41,61}` call `Self::accept(self).await` | currently unsupported and targetless; the row must not be modeled as recursive trait dispatch. |
 //! | Const initializer external paths | `axum/src/extract/ws.rs:{382,384}` and `routing/route.rs:202` call `HeaderValue::from_static(...)` | external const-owner rows remain targetless and do not become local traversal edges. |
+//! | Generated handler functions | `routing::post` template/invocation plus JSON/multipart/routing tests | no generated `post` function is exposed yet; 22 structural `post` rows are unsupported and targetless. |
+//! | Handler macro extraction paths | `axum/src/handler/mod.rs:{242,250}` calls `$ty::from_request_parts` and `$last::from_request` | macro-template associated paths are not projected yet. |
 //! | Receiver forwarding gaps | `axum/src/extension.rs:180`, `routing/route.rs:51`, and `middleware/from_fn.rs:411` exercise field/result receivers | unsupported receiver shapes remain visible and targetless; `Router::new` currently has 142 caller rows and 121 incoming expansion candidates. |
 //! | Await and trait-object receivers | `test_helpers/test_client.rs:134`, `serve/listener.rs:143`, and `error_handling/mod.rs:251` use await/dyn receiver calls | awaited/dyn receiver rows remain targetless; qualified `<dyn Any>::downcast_mut` is not projected yet. |
 //! | Proc-macro body calls | `axum-macros/src/lib.rs:{377,426,665,715}` call `expand_with(...)` | currently unsupported: proc-macro function bodies are not visited for call sites. |
 //! | Closure body call | `axum-macros/src/from_ref.rs:23` calls `expand_field(...)` inside a closure | currently unsupported: no call site targets `expand_field`. |
 //! | Dynamic callable fields | `axum/src/boxed.rs:{85,120,159}` and `serve/listener.rs:236` call function-pointer / trait-object fields | currently unsupported: visible dynamic call sites remain targetless blockers. |
 //! | Macro callback/IIFE calls | `axum-macros/src/lib.rs:{724,734-738}` uses `and_then(f)` and an immediately invoked closure | callback receiver and IIFE dynamic rows are asserted; inner closure-body callback invocation remains absent. |
+//! | Shadowed local callable | `axum/src/routing/tests/mod.rs:{418,423-434}` shadows imported `get` with a closure | only the two setup `routing::get` rows are projected; closure calls inside assertion macros are not fabricated as routing edges. |
 
 mod associated;
 mod common;

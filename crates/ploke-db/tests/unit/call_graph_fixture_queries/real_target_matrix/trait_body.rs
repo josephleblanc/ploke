@@ -108,3 +108,18 @@ fn axum_real_target_blanket_via_parts_self_path_is_absent_gap() -> Result<(), Db
     // `Self::from_request_parts` path row in the axum fixture yet.
     assert_no_path_rows(&db, &["Self", "from_request_parts"])
 }
+
+#[test]
+fn axum_real_target_handler_macro_extraction_paths_are_absent_gaps() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: generated `Handler::call` extraction rows.
+    // Source chain:
+    //   axum/src/handler/mod.rs:242 calls
+    //   `$ty::from_request_parts(&mut parts, &state).await`.
+    //   handler/mod.rs:250 calls `$last::from_request(req, &state).await`.
+    // Current model gap: these macro-template associated paths are not
+    // projected as stable call_site rows in the axum fixture yet.
+    assert_no_path_rows(&db, &["ty", "from_request_parts"])?;
+    assert_no_path_rows(&db, &["last", "from_request"])
+}

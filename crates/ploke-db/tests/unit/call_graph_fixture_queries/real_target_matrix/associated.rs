@@ -107,6 +107,28 @@ fn axum_real_target_handler_service_trait_call_is_documented_gap() -> Result<(),
 }
 
 #[test]
+fn axum_real_target_test_client_new_high_fanout_is_documented_gap() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: high-fanout `TestClient::new`.
+    // Source chain:
+    //   axum/src/test_helpers/test_client.rs:36 defines `TestClient::new`.
+    //   The oracle matrix records 172 selected-member text callsites.
+    // Current DB contract: 167 structural `TestClient::new` path rows are
+    // projected in the corpus fixture, but they are unsupported and targetless.
+    // The remaining text rows are not asserted as resolved edges until owner
+    // rows are generated mechanically from parser facts.
+    assert_targetless_path_rows(
+        &db,
+        &["TestClient", "new"],
+        CallStatusKind::Unsupported,
+        167,
+    )?;
+
+    Ok(())
+}
+
+#[test]
 fn axum_real_target_boxed_into_route_explicit_constructor_reaches_struct() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
@@ -168,5 +190,22 @@ fn axum_real_target_handle_error_extension_reaches_constructor() -> Result<(), D
             target,
             site_id: row.site.id,
         },
-    )
+    )?;
+
+    // Matrix: `ServiceExt::handle_error` user call.
+    // Source chain:
+    //   axum/src/routing/tests/handle_error.rs:86 calls
+    //   `fallible_service.handle_error(...)`.
+    //   axum/src/service_ext.rs:43 calls `HandleError::new(...)` from the
+    //   trait default method.
+    // Current DB contract: both `HandleError::new` path rows resolve to the
+    // constructor, but the user-facing `.handle_error(...)` method row is not
+    // projected yet.
+    let callers = db.callers_for_target(target)?;
+    assert_eq!(
+        callers.len(),
+        2,
+        "HandleError::new should expose both resolved constructor callers: {callers:#?}"
+    );
+    assert_no_method_rows(&db, "handle_error")
 }

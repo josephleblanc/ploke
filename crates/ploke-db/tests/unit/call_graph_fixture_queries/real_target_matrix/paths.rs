@@ -264,6 +264,7 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
         rows.rows.is_empty(),
         "generated routing::post should remain absent until macro-generated handler functions are modeled: {rows:#?}"
     );
+    assert_targetless_path_rows(&db, &["post"], CallStatusKind::Unsupported, 22)?;
 
     Ok(())
 }
@@ -355,6 +356,46 @@ fn axum_real_target_position_first_variant_is_documented_gap() -> Result<(), DbE
         callers.is_empty(),
         "Position::First should remain targetless until enum variant constructor resolution covers this corpus row: {callers:#?}"
     );
+
+    Ok(())
+}
+
+#[test]
+fn axum_real_target_shadowed_get_closure_is_documented_gap() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: shadowed callable `get`.
+    // Source chain:
+    //   axum/src/routing/tests/mod.rs:418 binds `let get = |path| ...`.
+    //   routing/tests/mod.rs:423-434 call that local closure inside
+    //   `assert_eq!(get(...).await, ...)`.
+    // Current model gap: the function owner only projects the two setup
+    // `routing::get` path calls at routing/tests/mod.rs:412-413 plus macro
+    // rows for the assertions; it must not fabricate edges from the shadowed
+    // local closure calls to the imported routing helper.
+    let owner = function_id_by_name(&db, "what_matches_wildcard")?;
+    let context = db.call_context_for_owner(owner)?;
+    let get_path = path(&["get"]);
+    let get_rows = context
+        .iter()
+        .filter(|row| {
+            row.site.kind == CallSiteKind::Path && row.site.path == Some(get_path.clone())
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        get_rows.len(),
+        2,
+        "what_matches_wildcard should only project the two setup routing::get rows until macro/closure body calls are modeled: {context:#?}"
+    );
+    for row in get_rows {
+        assert_eq!(row.status.status, CallStatusKind::Unsupported);
+        assert_eq!(row.status.resolution, None);
+        assert_eq!(row.site.arg_count, Some(1));
+        assert!(
+            row.targets.is_empty(),
+            "shadowed get/routing get rows should remain targetless in current fixture: {row:#?}"
+        );
+    }
 
     Ok(())
 }
