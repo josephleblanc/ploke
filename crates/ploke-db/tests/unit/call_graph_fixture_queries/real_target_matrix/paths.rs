@@ -725,6 +725,57 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
         CallStatusKind::Unsupported,
         "axum/src/json.rs:248 grouped-import post",
     )?;
+    for (owner_name, label) in [
+        (
+            "consume_body_to_json_requires_json_content_type",
+            "json.rs:264",
+        ),
+        ("json_content_types", "json.rs:279"),
+        ("invalid_json_syntax", "json.rs:299"),
+        ("extra_chars_after_valid_json_syntax", "json.rs:318"),
+        ("invalid_json_data", "json.rs:353"),
+    ] {
+        let owner = function_id_by_name_in_module(&db, &["crate", "json", "tests"], owner_name)?;
+        assert_owner_path_targetless(&db, owner, &["post"], CallStatusKind::Unsupported, label)?;
+    }
+
+    for (owner_name, label) in [
+        (
+            "content_type_with_encoding",
+            "axum/src/extract/multipart.rs:381",
+        ),
+        ("body_too_large", "axum/src/extract/multipart.rs:420"),
+        ("optional_multipart", "axum/src/extract/multipart.rs:448"),
+    ] {
+        let rows = db.raw_query_params(
+            r#"?[id] :=
+                *function { id, name: $name @ 'NOW' }"#,
+            std::collections::BTreeMap::from([(
+                "name".to_string(),
+                cozo::DataValue::from(owner_name),
+            )]),
+        )?;
+        assert!(
+            rows.rows.is_empty(),
+            "{label} multipart owner should remain absent in the current fixture: {rows:#?}"
+        );
+    }
+    assert_no_path_rows(&db, &["handler", "post"])?;
+
+    for (owner_name, label) in [
+        ("merge", "axum/src/routing/method_routing.rs:1448"),
+        (
+            "merge_accessing_state",
+            "axum/src/routing/method_routing.rs:1660",
+        ),
+    ] {
+        let owner = function_id_by_name_in_module(
+            &db,
+            &["crate", "routing", "method_routing", "tests"],
+            owner_name,
+        )?;
+        assert_owner_path_targetless(&db, owner, &["post"], CallStatusKind::Unsupported, label)?;
+    }
 
     assert_targetless_path_rows(&db, &["post"], CallStatusKind::Unsupported, 22)?;
 
