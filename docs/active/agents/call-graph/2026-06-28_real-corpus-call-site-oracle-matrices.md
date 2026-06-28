@@ -159,6 +159,6 @@ in `crates/ploke-db/tests/unit/call_graph_fixture_queries/real_target_matrix/fal
 
 | Item | Current state | Required next step before strict DB test |
 | --- | --- | --- |
-| `TestClient::new` owner-per-callsite matrix | Exact 172 file/line callsites are listed, but owner extraction is grouped rather than one row per owner. | Generate owner rows from parser facts or a small source-outline script before asserting all 172 callsites. |
+| `TestClient::new` owner-per-callsite matrix | Exact 172 file/line callsites are listed. `ploke-db` now asserts the current 167 projected structural rows by module fanout from parser facts, with all rows unsupported and targetless. The five missing source rows are the three `extract/multipart.rs` rows plus one `routing/tests/mod.rs` row and one `routing/tests/nest.rs` row. | Generate exact owner/source rows before asserting full 172-callsite parity; keep the current 167-row module-fanout assertion as the fail-closed DB contract until projection coverage changes. |
 | Markdown/doc-comment examples | Excluded from oracle rows. | Keep excluded unless parser fixture intentionally ingests docs as Rust examples. |
 | Dynamic callback targets | Source binding chains are recorded, but concrete targets remain intentionally unresolved. | Tests should assert structural dynamic call plus `Unsupported`/fail-closed status, not guessed callees. |
