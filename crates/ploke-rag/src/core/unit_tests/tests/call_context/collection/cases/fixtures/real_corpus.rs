@@ -26,19 +26,15 @@ async fn call_context_exact_reads_axum_body_empty_incoming_callers() -> Result<(
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        2,
-        "current axum fixture should resolve exactly the two axum-core Body::empty callers: {callers:#?}"
+        4,
+        "current axum fixture should resolve exactly the four axum-core Body::empty callers: {callers:#?}"
     );
 
     let context = rag.exact_call_context(target)?;
-    let expected_callee = CallCalleeInfo::Path {
-        path: path(&["Body", "empty"]),
-    };
     let incoming = context
         .iter()
         .filter(|call| {
             call.kind == CallSiteKind::Path
-                && call.callee == expected_callee
                 && call
                     .targets
                     .iter()
@@ -50,16 +46,17 @@ async fn call_context_exact_reads_axum_body_empty_incoming_callers() -> Result<(
     // Source chain:
     //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
     //   axum-core/src/body.rs:52 defines `Body::empty`.
-    //   axum-core/src/response/into_response.rs:128 calls `Body::empty()`.
-    //   axum-core/src/response/into_response.rs:163 calls `Body::empty()`.
+    //   axum-core/src/body.rs:110 and :116 call `Self::empty()`.
+    //   axum-core/src/response/into_response.rs response conversion rows call
+    //   `Body::empty()`.
     // Expected traversal for the current fixture: the RAG exact call-context
-    // path preserves the same two incoming caller-site edges exposed by
+    // path preserves the same four incoming caller-site edges exposed by
     // `Database::callers_for_target`. Broader axum re-export fanout remains a
     // separate import/re-export completeness gap tracked by the matrix.
     assert_eq!(
         incoming.len(),
-        2,
-        "RAG exact call context should expose both current Body::empty incoming edges: {context:#?}"
+        4,
+        "RAG exact call context should expose all current Body::empty incoming edges: {context:#?}"
     );
 
     let expected_site_ids = callers
@@ -75,13 +72,23 @@ async fn call_context_exact_reads_axum_body_empty_incoming_callers() -> Result<(
         "RAG call context should preserve the DB caller site identities"
     );
 
+    let mut path_counts = BTreeMap::<Vec<String>, usize>::new();
     for call in incoming {
         assert_eq!(call.status, CallStatusKind::Resolved);
         assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
         assert_eq!(call.targets.len(), 1);
         assert_eq!(call.targets[0].target_id, target);
         assert_eq!(call.targets[0].relation, CallTargetKind::AssociatedFunction);
+        let CallCalleeInfo::Path { path } = &call.callee else {
+            panic!("Body::empty incoming caller should be a path call: {call:#?}");
+        };
+        *path_counts.entry(path.clone()).or_default() += 1;
     }
+    assert_eq!(
+        path_counts,
+        BTreeMap::from([(path(&["Body", "empty"]), 2), (path(&["Self", "empty"]), 2),]),
+        "RAG call context should preserve literal Body::empty and trait-impl Self::empty path shapes"
+    );
 
     Ok(())
 }
