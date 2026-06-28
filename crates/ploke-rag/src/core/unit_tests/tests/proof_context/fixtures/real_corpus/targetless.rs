@@ -1,8 +1,9 @@
 use super::super::super::super::*;
 use super::super::super::helpers::assert_blocked_resolution;
 use super::helpers::{
-    AXUM_DOMAIN, assert_site_blocker, await_result_unwrap_site, axum_db, conn_limiter_accept_owner,
-    dynamic_site, method_id_by_name_and_body, targetless_method_site,
+    AXUM_DOMAIN, assert_site_blocker, assert_site_resolution_blocker, await_result_unwrap_site,
+    axum_db, conn_limiter_accept_owner, dynamic_site, method_id_by_name_and_body,
+    targetless_method_site, targetless_method_site_with_status,
 };
 
 struct DynamicCase {
@@ -16,6 +17,7 @@ struct MethodCase {
     method: &'static str,
     body: &'static str,
     callee: CallCalleeInfo,
+    status: CallStatusKind,
 }
 
 #[tokio::test]
@@ -86,6 +88,7 @@ async fn proof_context_collection_preserves_axum_route_oneshot_blockers() -> Res
                     method_name: "clone".to_string(),
                 }),
             },
+            status: CallStatusKind::Unsupported,
         },
         MethodCase {
             label: "Route::oneshot_inner_owned tuple-field receiver",
@@ -97,6 +100,7 @@ async fn proof_context_collection_preserves_axum_route_oneshot_blockers() -> Res
                     path: vec!["0".to_string()],
                 }),
             },
+            status: CallStatusKind::Unsupported,
         },
     ];
 
@@ -164,6 +168,7 @@ async fn proof_context_collection_preserves_axum_size_hint_self_field_blocker() 
                 path: vec!["0".to_string()],
             }),
         },
+        status: CallStatusKind::Unsupported,
     };
 
     let owner = method_id_by_name_and_body(&db, case.method, case.body)?;
@@ -201,6 +206,72 @@ async fn proof_context_collection_preserves_axum_size_hint_self_field_blocker() 
     // tuple-field receiver proof and external http_body dispatch are modeled.
     assert_blocked_resolution(rows, owner, "type_resolution_missing");
     assert_site_blocker(rows, owner, site_id, "type_resolution_missing", case.label);
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn proof_context_collection_preserves_axum_request_parts_local_receiver_blocker()
+-> Result<(), Error> {
+    init_tracing_once();
+    let db = axum_db()?;
+
+    let case = MethodCase {
+        label: "RequestPartsExt custom extractor local receiver",
+        method: "from_request_parts",
+        body: "parts.extract_with_state(state)",
+        callee: CallCalleeInfo::Method {
+            name: "extract_with_state".to_string(),
+            receiver: Some(CallReceiverInfo::LocalBinding {
+                name: "parts".to_string(),
+            }),
+        },
+        status: CallStatusKind::Unresolved,
+    };
+
+    let owner = method_id_by_name_and_body(&db, case.method, case.body)?;
+    let projected = db.project_call_proof_facts_for_owner(owner, AXUM_DOMAIN)?;
+    assert!(
+        projected >= 2,
+        "{} should project targetless local receiver proof rows",
+        case.label
+    );
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.proof_context_degraded(),
+        "projected axum request-parts local receiver facts should enable RAG proof context"
+    );
+
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let calls = call_context
+        .get(&owner)
+        .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
+    let site_id =
+        targetless_method_site_with_status(calls, owner, &case.callee, case.status, case.label);
+
+    let proof_context = rag.collect_proof_context(&[(owner, 1.0)])?;
+    let rows = proof_context
+        .get(&owner)
+        .unwrap_or_else(|| panic!("{} should receive projected proof rows", case.label));
+
+    // Matrix: local-binding request-parts receiver row.
+    // Source chain:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   axum-core/src/ext_traits/request_parts.rs:186 calls
+    //   `parts.extract_with_state(state)`.
+    // Expected proof traversal: owner-seeded proof context must include the
+    // call_site plus unresolved call_resolution fact for this exact targetless
+    // local-binding receiver row. There are zero callee edges until local
+    // receiver type proof connects `parts` to RequestPartsExt.
+    assert_site_resolution_blocker(
+        rows,
+        owner,
+        site_id,
+        "unresolved",
+        "type_resolution_missing",
+        case.label,
+    );
 
     Ok(())
 }

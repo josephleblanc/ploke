@@ -249,13 +249,23 @@ pub(super) fn targetless_method_site(
     callee: &CallCalleeInfo,
     label: &str,
 ) -> Uuid {
+    targetless_method_site_with_status(calls, owner, callee, CallStatusKind::Unsupported, label)
+}
+
+pub(super) fn targetless_method_site_with_status(
+    calls: &[CallContextInfo],
+    owner: Uuid,
+    callee: &CallCalleeInfo,
+    status: CallStatusKind,
+    label: &str,
+) -> Uuid {
     let matching = calls
         .iter()
         .filter(|call| {
             call.owner_id == owner
                 && call.kind == CallSiteKind::Method
                 && &call.callee == callee
-                && call.status == CallStatusKind::Unsupported
+                && call.status == status
                 && call.resolution.is_none()
                 && call.targets.is_empty()
         })
@@ -295,6 +305,17 @@ pub(super) fn assert_site_blocker(
     reason: &str,
     label: &str,
 ) {
+    assert_site_resolution_blocker(rows, owner, site_id, "blocked", reason, label);
+}
+
+pub(super) fn assert_site_resolution_blocker(
+    rows: &[ProofContextInfo],
+    owner: Uuid,
+    site_id: Uuid,
+    state: &str,
+    reason: &str,
+    label: &str,
+) {
     let owner = owner.to_string();
     let site_id = site_id.to_string();
     assert!(
@@ -310,10 +331,16 @@ pub(super) fn assert_site_blocker(
         rows.iter().any(|row| {
             row.kind == "call_resolution"
                 && row.call_site_id.as_deref() == Some(site_id.as_str())
-                && row.resolution_state.as_deref() == Some("blocked")
+                && row.resolution_state.as_deref() == Some(state)
                 && row.blocker_reason.as_deref() == Some(reason)
         }),
-        "{label} proof context should include the blocked call_resolution fact: {rows:#?}"
+        "{label} proof context should include the {state} call_resolution fact: {rows:#?}"
+    );
+    assert!(
+        rows.iter().all(|row| {
+            row.kind != "call_edge" || row.call_site_id.as_deref() != Some(site_id.as_str())
+        }),
+        "{label} proof context should not fabricate a call_edge for targetless site {site_id}: {rows:#?}"
     );
 }
 
