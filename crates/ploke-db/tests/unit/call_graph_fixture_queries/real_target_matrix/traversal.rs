@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use uuid::Uuid;
 
@@ -230,7 +230,7 @@ fn assert_resolved_callers_traverse_from_owners(
     );
     assert_sites_match_callers(db, case.target, &callers, case.label)?;
 
-    let mut sites_by_owner = BTreeMap::<Uuid, Vec<Uuid>>::new();
+    let mut sites_by_owner = BTreeMap::<Uuid, BTreeSet<Uuid>>::new();
     for caller in &callers {
         assert_eq!(
             caller.status.status,
@@ -249,10 +249,11 @@ fn assert_resolved_callers_traverse_from_owners(
             "{} returned a caller for the wrong target: {caller:#?}",
             case.label
         );
+        assert_raw_relation_matches_caller(db, caller, case.label)?;
         sites_by_owner
             .entry(caller.site.owner_id)
             .or_default()
-            .push(caller.site.id);
+            .insert(caller.site.id);
     }
 
     let incoming = db.expand_call_context(
@@ -276,6 +277,28 @@ fn assert_resolved_callers_traverse_from_owners(
         "{} should expose exactly {} one-hop incoming traversal candidate(s): {incoming:#?}",
         case.label, case.expected_traversal_candidates
     );
+    let caller_sites = sites_by_owner
+        .values()
+        .flat_map(|sites| sites.iter().copied())
+        .collect::<BTreeSet<_>>();
+    for candidate in incoming.iter().filter(|candidate| {
+        candidate.target_id == case.target
+            && candidate.relation == ploke_db::CallContextRelation::IncomingCaller
+            && candidate.distance == 1
+    }) {
+        assert!(
+            sites_by_owner
+                .get(&candidate.node_id)
+                .is_some_and(|sites| sites.contains(&candidate.call_site_id)),
+            "{} target traversal candidate should point back to an inspected caller/site pair: {candidate:#?}; callers: {sites_by_owner:#?}",
+            case.label
+        );
+        assert!(
+            caller_sites.contains(&candidate.call_site_id),
+            "{} target traversal should not invent call-site ids outside callers_for_target: {candidate:#?}",
+            case.label
+        );
+    }
 
     for (owner, site_ids) in sites_by_owner {
         let outgoing = db.expand_call_context(
@@ -298,7 +321,50 @@ fn assert_resolved_callers_traverse_from_owners(
             case.label,
             case.target
         );
+        let outgoing_target_matches = outgoing
+            .iter()
+            .filter(|candidate| {
+                candidate.node_id == case.target
+                    && candidate.target_id == case.target
+                    && candidate.relation == ploke_db::CallContextRelation::OutgoingTarget
+                    && candidate.distance == 1
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            outgoing_target_matches.len(),
+            1,
+            "{} should expose one de-duplicated owner-to-target traversal candidate for owner {owner}: {outgoing:#?}",
+            case.label
+        );
+        assert!(
+            site_ids.contains(&outgoing_target_matches[0].call_site_id),
+            "{} owner traversal should use one of the inspected caller sites for owner {owner}: {outgoing_target_matches:#?}; expected sites: {site_ids:#?}",
+            case.label
+        );
     }
 
+    Ok(())
+}
+
+fn assert_raw_relation_matches_caller(
+    db: &Database,
+    caller: &ploke_db::CallCallerRow,
+    label: &str,
+) -> Result<(), DbError> {
+    let raw = relations_for_site(db, caller.site.id)?;
+    let mut matching = 0usize;
+    for row in &raw.rows {
+        if to_uuid(&row[0])? == caller.target.target_id
+            && data_str(&row[1], "relation_kind") == format!("{:?}", caller.target.relation)
+            && data_str(&row[2], "source_kind") == format!("{:?}", caller.target.source_kind)
+            && data_str(&row[3], "target_kind") == format!("{:?}", caller.target.target_kind)
+        {
+            matching += 1;
+        }
+    }
+    assert_eq!(
+        matching, 1,
+        "{label} callers_for_target row should correspond to exactly one persisted call_relation edge: caller={caller:#?}; raw={raw:#?}"
+    );
     Ok(())
 }
