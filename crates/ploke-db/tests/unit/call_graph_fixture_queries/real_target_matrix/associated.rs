@@ -164,48 +164,66 @@ fn axum_real_target_boxed_into_route_explicit_constructor_reaches_struct() -> Re
 fn axum_real_target_handle_error_extension_reaches_constructor() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Matrix: `HandleError::new` inherent constructor row.
-    // Source chain:
-    //   axum/src/error_handling/mod.rs:80 defines `HandleError::new`.
-    //   axum/src/error_handling/mod.rs:65 calls `HandleError::new(self, f)`.
-    // Expected traversal: `HandleErrorExt::handle_error` -> constructor, one call edge.
-    let owner =
-        method_id_by_name_and_body_substring(&db, "handle_error", "HandleError::new(self, f)")?;
     let target = method_id_by_name_and_body_substring(&db, "new", "Self { inner, f, _extractor")?;
-    let context = db.call_context_for_owner(owner)?;
-    let row = row_by_path(&context, &["HandleError", "new"]);
 
-    assert_resolved_target(
-        row,
-        target,
-        CallRelationKind::AssociatedFunction,
-        CallSiteKind::Path,
-        CallTargetKind::Method,
-    );
-    assert_one_edge_traversal(
-        &db,
-        TraversalExpectation {
-            label: "handle_error -> HandleError::new",
-            owner,
+    // Matrix: `HandleError::new` inherent constructor rows.
+    // Source chains:
+    //   axum/src/error_handling/mod.rs:80 defines `HandleError::new`.
+    //   axum/src/error_handling/mod.rs:65 calls
+    //   `HandleError::new(inner, self.f.clone())` from `Layer::layer`.
+    //   axum/src/service_ext.rs:43 calls `HandleError::new(self, f)` from the
+    //   `ServiceExt::handle_error` trait default method.
+    // Expected traversal: each owner reaches the constructor in one call edge.
+    let cases = [
+        (
+            "Layer::layer -> HandleError::new",
+            method_id_by_name_and_body_substring(
+                &db,
+                "layer",
+                "HandleError::new(inner, self.f.clone())",
+            )?,
+        ),
+        (
+            "ServiceExt::handle_error -> HandleError::new",
+            method_id_by_trait_name(&db, "ServiceExt", "handle_error")?,
+        ),
+    ];
+
+    for (label, owner) in cases {
+        let context = db.call_context_for_owner(owner)?;
+        let row = row_by_path(&context, &["HandleError", "new"]);
+
+        assert_resolved_target(
+            row,
             target,
-            site_id: row.site.id,
-        },
-    )?;
+            CallRelationKind::AssociatedFunction,
+            CallSiteKind::Path,
+            CallTargetKind::Method,
+        );
+        assert_one_edge_traversal(
+            &db,
+            TraversalExpectation {
+                label,
+                owner,
+                target,
+                site_id: row.site.id,
+            },
+        )?;
+    }
 
-    // Matrix: `ServiceExt::handle_error` user call.
-    // Source chain:
-    //   axum/src/routing/tests/handle_error.rs:86 calls
-    //   `fallible_service.handle_error(...)`.
-    //   axum/src/service_ext.rs:43 calls `HandleError::new(...)` from the
-    //   trait default method.
-    // Current DB contract: both `HandleError::new` path rows resolve to the
-    // constructor, but the user-facing `.handle_error(...)` method row is not
-    // projected yet.
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
         2,
         "HandleError::new should expose both resolved constructor callers: {callers:#?}"
     );
+
+    // Matrix: user-facing service-extension dispatch.
+    // Source chain:
+    //   axum/src/routing/tests/handle_error.rs:86 calls
+    //   `fallible_service.handle_error(...)`.
+    // Current model gap: the user-facing `.handle_error(...)` receiver row is
+    // not projected yet, even though the trait default body reaches
+    // `HandleError::new`.
     assert_no_method_rows(&db, "handle_error")
 }

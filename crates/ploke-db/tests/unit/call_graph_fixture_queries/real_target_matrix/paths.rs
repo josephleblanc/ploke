@@ -150,14 +150,64 @@ fn axum_real_target_take_route_helper_is_documented_gap() -> Result<(), DbError>
     // Source chain:
     //   axum/src/routing/mod.rs:63 defines `take_route_or_internal_error`.
     //   routing/mod.rs:410,430 and routing/tests/mod.rs:56,59 call it.
-    // Current model gap: this axum fixture has no resolved target-centered
-    // callers for these same-module / super-path rows yet.
+    // Current model gap: the debug-only `super::...` test owner is not present
+    // in this fixture, and the same-module callsites in `fallback_endpoint`
+    // live inside closure bodies that are not projected yet. No local
+    // traversal edge should be invented.
     let target =
         function_id_by_name_in_module(&db, &["crate", "routing"], "take_route_or_internal_error")?;
+    assert_no_path_rows(&db, &["super", "take_route_or_internal_error"])?;
+    assert_no_path_rows(&db, &["take_route_or_internal_error"])?;
+
     let callers = db.callers_for_target(target)?;
     assert!(
         callers.is_empty(),
         "take_route_or_internal_error should remain targetless until routing same-module/super paths resolve: {callers:#?}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn axum_real_target_turbofish_calls_are_documented_gaps() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: external turbofish path calls.
+    // Source chain:
+    //   axum-macros/src/attr_parsing.rs:22 and :45 call
+    //   `std::any::type_name::<K>()` while building duplicate-attribute
+    //   errors.
+    // Expected traversal: zero local call edges; both rows classify as
+    // external and preserve one generic argument.
+    for (label, owner_name) in [
+        ("attr_parsing.rs:22", "parse_parenthesized_attribute"),
+        ("attr_parsing.rs:45", "parse_assignment_attribute"),
+    ] {
+        let owner = function_id_by_name_in_module(&db, &["crate", "attr_parsing"], owner_name)?;
+        let context = db.call_context_for_owner(owner)?;
+        let row = row_by_path(&context, &["std", "any", "type_name"]);
+        assert_external_targetless(row);
+        assert_eq!(
+            row.site.generic_arg_count,
+            Some(1),
+            "{label} should preserve the `<K>` turbofish arity"
+        );
+    }
+
+    // Matrix: turbofish method call.
+    // Source chain:
+    //   axum-macros/src/attr_parsing.rs:66 calls
+    //   `attr.parse_args::<T>()` inside an iterator closure.
+    // Current model gap: closure bodies do not yet receive nested call owners,
+    // so the `parse_args::<T>()` method call is not projected under
+    // `parse_attrs`; no traversal edge should be invented.
+    let owner = function_id_by_name_in_module(&db, &["crate", "attr_parsing"], "parse_attrs")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert!(
+        context
+            .iter()
+            .all(|row| row.site.method.as_deref() != Some("parse_args")),
+        "closure-body parse_args::<T>() should remain absent until closure owners are modeled: {context:#?}"
     );
 
     Ok(())
@@ -348,9 +398,35 @@ fn axum_real_target_position_first_variant_is_documented_gap() -> Result<(), DbE
     //   axum-macros/src/with_position.rs:65 defines `Position`.
     //   with_position.rs:66 defines variant `First`.
     //   with_position.rs:92 calls `Position::First(item)`.
-    // Current model gap: the variant exists, but this constructor call does not
-    // produce a resolved target-centered edge yet.
+    // Current model gap: the constructor call is structurally present, but it
+    // does not produce a resolved target-centered edge yet.
     let position = variant_id_by_enum_and_variant_names(&db, "Position", "First")?;
+    let owner = method_id_by_name_and_body_substring(&db, "next", "Position::First(item)")?;
+    let context = db.call_context_for_owner(owner)?;
+    let row = row_by_path(&context, &["Position", "First"]);
+
+    assert_eq!(row.status.status, CallStatusKind::Unresolved);
+    assert_eq!(row.status.resolution, None);
+    assert!(
+        row.targets.is_empty(),
+        "Position::First constructor row should remain targetless: {row:#?}"
+    );
+
+    let outgoing = db.expand_call_context(
+        CallContextSeed::Owner(owner),
+        CallContextOptions {
+            include_incoming_callers: false,
+            max_candidates: 512,
+            ..CallContextOptions::default()
+        },
+    )?;
+    assert!(
+        outgoing
+            .iter()
+            .all(|candidate| candidate.target_id != position),
+        "targetless Position::First row should not traverse to the enum variant: {outgoing:#?}"
+    );
+
     let callers = db.callers_for_target(position)?;
     assert!(
         callers.is_empty(),
