@@ -80,12 +80,18 @@ fn axum_dynamic_callable_fields_are_visible_unsupported_blockers() -> Result<(),
 
     // Ground truth:
     //   axum/src/boxed.rs:85  (self.into_route)(self.handler, state)
+    //   axum/src/boxed.rs:120 (self.into_route)(self.router, state)
     //   axum/src/boxed.rs:159 (self.layer)(self.inner.into_route(state))
     let cases = [
         DynamicGap {
             method_name: "into_route",
             body_marker: "(self.into_route)(self.handler, state)",
             source_line: 85,
+        },
+        DynamicGap {
+            method_name: "into_route",
+            body_marker: "(self.into_route)(self.router, state)",
+            source_line: 120,
         },
         DynamicGap {
             method_name: "into_route",
