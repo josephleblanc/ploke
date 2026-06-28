@@ -6,7 +6,8 @@ use ploke_tui::tools::{
 };
 
 use crate::call_graph_tool_support::{
-    CallGraphToolFixture, assert_incoming_context, assert_target_proof, ui_field,
+    AxumBodyEmptyToolFixture, CallGraphToolFixture, assert_body_empty_incoming_context,
+    assert_incoming_context, assert_target_proof, ui_field,
 };
 
 #[tokio::test]
@@ -117,5 +118,58 @@ async fn code_item_lookup_returns_incoming_callers_for_call_graph_target() {
             .expect("incoming count")
             >= 1,
         "code_item_lookup should surface incoming caller count for target lookups"
+    );
+}
+
+#[tokio::test]
+async fn code_item_lookup_returns_real_corpus_body_empty_callers() {
+    let fixture = AxumBodyEmptyToolFixture::new().await;
+    let module_path = fixture.module_path_arg();
+    let params = LookupParams {
+        item_name: Cow::Borrowed("empty"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("method"),
+        module_path: Cow::Owned(module_path),
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("axum-body-empty-lookup"))
+        .await
+        .expect("tool execution");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let call_context = payload
+        .get("call_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_context array");
+    let proof_context = payload
+        .get("proof_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("proof_context array");
+
+    // Real-corpus oracle matrix:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   axum-core/src/body.rs:52 defines `Body::empty`.
+    //   axum-core/src/response/into_response.rs:128 calls `Body::empty()`.
+    //   axum-core/src/response/into_response.rs:163 calls `Body::empty()`.
+    // Expected tool traversal: exact lookup of the callee method exposes both
+    // incoming caller-site edges and their projected proof rows.
+    assert_body_empty_incoming_context(
+        call_context,
+        &fixture.callers,
+        fixture.target,
+        "code_item_lookup",
+    );
+    for caller in &fixture.callers {
+        assert_target_proof(proof_context, *caller, fixture.target, "code_item_lookup");
+    }
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "call_context_incoming"), "2");
+    assert!(
+        ui_field(ui, "proof_context")
+            .parse::<usize>()
+            .expect("proof count")
+            >= 2,
+        "code_item_lookup should surface real-corpus Body::empty proof rows"
     );
 }
