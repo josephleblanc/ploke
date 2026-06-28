@@ -304,6 +304,64 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
         assert_eq!(caller.target.target_kind, CallTargetKind::Method);
     }
 
+    let compile_owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "serve", "tests"],
+        "if_it_compiles_it_works",
+    )?;
+    let compile_context = db.call_context_for_owner(compile_owner)?;
+    let router_new = row_by_path(&compile_context, &["Router", "new"]);
+    assert_resolved_target(
+        router_new,
+        target,
+        CallRelationKind::AssociatedFunction,
+        CallSiteKind::Path,
+        CallTargetKind::Method,
+    );
+    assert_one_edge_traversal(
+        &db,
+        TraversalExpectation {
+            label: "axum/src/serve/mod.rs:756 Router::new",
+            owner: compile_owner,
+            target,
+            site_id: router_new.site.id,
+            expected_edge_count: 1,
+        },
+    )?;
+
+    // Matrix source: axum/src/serve/mod.rs:769,770,772,776,780,785,790,795
+    // call `router.clone...` from the same typed local binding. The clone
+    // dispatch itself is still targetless and must not traverse to `Router`.
+    let clone_rows = compile_context
+        .iter()
+        .filter(|row| {
+            row.site.method.as_deref() == Some("clone")
+                && row.site.receiver.as_ref()
+                    == Some(&CallReceiver::TypedLocalBinding {
+                        name: "router".to_string(),
+                        type_path: path(&["Router"]),
+                    })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        clone_rows.len(),
+        8,
+        "axum/src/serve/mod.rs if_it_compiles_it_works should project the eight router.clone rows: {compile_context:#?}"
+    );
+    for row in clone_rows {
+        assert_targetless_status(row, CallStatusKind::Unresolved);
+        assert!(
+            relations_for_site(&db, row.site.id)?.rows.is_empty(),
+            "axum/src/serve/mod.rs router.clone row should have zero persisted call edges"
+        );
+        assert_no_traversal_candidates_for_site(
+            &db,
+            compile_owner,
+            row.site.id,
+            "axum/src/serve/mod.rs router.clone",
+        )?;
+    }
+
     let incoming = db.expand_call_context(
         CallContextSeed::Target(target),
         CallContextOptions {
@@ -381,6 +439,20 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
 
     let from_fn_owner =
         function_id_by_name_in_module(&db, &["crate", "middleware", "from_fn", "tests"], "basic")?;
+    assert_owner_path_targetless(
+        &db,
+        from_fn_owner,
+        &["Request", "builder"],
+        CallStatusKind::Unsupported,
+        "axum/src/middleware/from_fn.rs:411 Request::builder",
+    )?;
+    assert_owner_path_targetless(
+        &db,
+        from_fn_owner,
+        &["Body", "empty"],
+        CallStatusKind::External,
+        "axum/src/middleware/from_fn.rs:411 Body::empty",
+    )?;
     assert_owner_method_targetless(
         &db,
         from_fn_owner,

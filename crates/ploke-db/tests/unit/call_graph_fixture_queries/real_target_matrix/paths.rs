@@ -541,6 +541,14 @@ fn axum_real_target_external_path_rows_remain_targetless() -> Result<(), DbError
 
     assert_targetless_path_rows(&db, &["std", "mem", "replace"], CallStatusKind::External, 2)?;
 
+    assert_no_method_owner_by_body_and_file_suffix(
+        &db,
+        "call",
+        "let (mut parts, body) = req.into_parts();",
+        "axum/src/error_handling/mod.rs",
+        "axum/src/error_handling/mod.rs:181 macro-template std::mem::replace",
+    )?;
+
     for (label, file_suffix) in [
         (
             "axum/src/middleware/map_request.rs:281",

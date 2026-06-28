@@ -311,6 +311,52 @@ fn axum_real_target_trait_object_dispatch_rows_are_documented_gaps() -> Result<(
         CallStatusKind::Unsupported,
         4,
     )?;
+    let owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "poll",
+        "self.project().future.poll(cx)",
+        "axum/src/error_handling/mod.rs",
+    )?;
+    let context = db.call_context_for_owner(owner)?;
+    let project = row_by_method_receiver(&context, "project", &CallReceiver::SelfValue);
+    assert_targetless_status(project, CallStatusKind::Unresolved);
+    assert!(
+        relations_for_site(&db, project.site.id)?.rows.is_empty(),
+        "axum/src/error_handling/mod.rs:251 self.project() should have zero persisted call edges"
+    );
+    assert_no_traversal_candidates_for_site(
+        &db,
+        owner,
+        project.site.id,
+        "axum/src/error_handling/mod.rs:251 self.project() receiver setup",
+    )?;
+    assert!(
+        context
+            .iter()
+            .all(|row| row.site.method.as_deref() != Some("poll")),
+        "axum/src/error_handling/mod.rs:251 final dyn Future::poll row should remain absent under the source owner: {context:#?}"
+    );
+
+    for (label, owner) in [
+        (
+            "axum-core/src/body.rs:29 <dyn Any>::downcast_mut",
+            function_id_by_name_in_module(&db, &["crate", "body"], "try_downcast")?,
+        ),
+        (
+            "axum/src/util.rs:105 <dyn Any>::downcast_mut",
+            function_id_by_name_in_module(&db, &["crate", "util"], "try_downcast")?,
+        ),
+    ] {
+        let context = db.call_context_for_owner(owner)?;
+        assert!(
+            context.iter().all(|row| {
+                row.site.method.as_deref() != Some("downcast_mut")
+                    && row.site.path.as_ref() != Some(&path(&["dyn", "Any", "downcast_mut"]))
+            }),
+            "{label} should remain absent until qualified dyn paths are projected: {context:#?}"
+        );
+    }
+
     assert_no_path_rows(&db, &["dyn", "Any", "downcast_mut"])
 }
 

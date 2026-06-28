@@ -178,6 +178,13 @@ fn axum_real_target_test_client_new_high_fanout_is_documented_gap() -> Result<()
         CallStatusKind::Unsupported,
         167,
     )?;
+    assert_no_method_owner_by_body_and_file_suffix(
+        &db,
+        "new",
+        "Self { client, addr }",
+        "axum/src/test_helpers/test_client.rs",
+        "axum/src/test_helpers/test_client.rs:36 TestClient::new",
+    )?;
 
     // Matrix immediate candidate:
     //   axum/src/json.rs:237 imports `test_helpers::*`.
