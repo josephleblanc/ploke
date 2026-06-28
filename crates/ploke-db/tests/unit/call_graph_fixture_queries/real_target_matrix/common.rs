@@ -91,6 +91,44 @@ pub(super) fn assert_one_edge_traversal(
         expected.label,
     );
 
+    let target_sites = db.call_sites_for_target(expected.target)?;
+    let matching_sites = target_sites
+        .iter()
+        .filter(|row| row.owner_id == expected.owner && row.id == expected.site_id)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching_sites.len(),
+        expected.expected_edge_count,
+        "{} should expose the same call site through call_sites_for_target: {target_sites:#?}",
+        expected.label
+    );
+
+    Ok(())
+}
+
+pub(super) fn assert_sites_match_callers(
+    db: &Database,
+    target: Uuid,
+    callers: &[ploke_db::CallCallerRow],
+    label: &str,
+) -> Result<(), DbError> {
+    let site_rows = db.call_sites_for_target(target)?;
+    assert_eq!(
+        site_rows.len(),
+        callers.len(),
+        "{label} should expose the same row count through call_sites_for_target and callers_for_target"
+    );
+
+    let caller_ids = callers
+        .iter()
+        .map(|row| row.site.id)
+        .collect::<BTreeSet<_>>();
+    let site_ids = site_rows.iter().map(|row| row.id).collect::<BTreeSet<_>>();
+    assert_eq!(
+        site_ids, caller_ids,
+        "{label} should expose the same call-site ids through both target-centered query surfaces"
+    );
+
     Ok(())
 }
 

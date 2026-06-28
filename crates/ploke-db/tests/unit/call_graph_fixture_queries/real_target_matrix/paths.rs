@@ -49,6 +49,7 @@ fn axum_macros_expand_helpers_reach_root_expand() -> Result<(), DbError> {
         cases.len(),
         "root expand should have exactly the inspected helper callers: {callers:#?}"
     );
+    assert_sites_match_callers(&db, target, &callers, "root expand helper callers")?;
     for case in cases {
         let owner = function_id_by_name_in_module(&db, &["crate"], case.owner_name)?;
         let caller = caller_by_owner_kind_path(&callers, owner, CallSiteKind::Path, case.path);
@@ -207,6 +208,7 @@ fn axum_real_target_parse_attrs_reaches_helper_current_fanout() -> Result<(), Db
         8,
         "parse_attrs should expose the eight currently resolved real-corpus callers: {callers:#?}"
     );
+    assert_sites_match_callers(&db, target, &callers, "parse_attrs real-corpus callers")?;
     let mut actual_by_owner_path = std::collections::BTreeMap::<_, usize>::new();
     for caller in &callers {
         assert_eq!(caller.status.status, CallStatusKind::Resolved);
@@ -392,6 +394,7 @@ fn axum_real_target_run_ui_tests_crate_paths_reach_helper() -> Result<(), DbErro
         cases.len(),
         "run_ui_tests should have exactly the five inspected real-corpus callers"
     );
+    assert_sites_match_callers(&db, target, &callers, "run_ui_tests real-corpus callers")?;
 
     Ok(())
 }
@@ -585,6 +588,7 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
         2,
         "current axum fixture should resolve exactly the two axum-core into_response Body::empty callers: {callers:#?}"
     );
+    assert_sites_match_callers(&db, target, &callers, "Body::empty current resolved subset")?;
 
     let incoming = db.expand_call_context(
         CallContextSeed::Target(target),
@@ -752,6 +756,7 @@ fn axum_real_target_try_downcast_helpers_reach_current_resolved_subset() -> Resu
             expected_edges,
             "{label} should expose the current resolved subset of callers: {callers:#?}"
         );
+        assert_sites_match_callers(&db, target, &callers, label)?;
         for caller in &callers {
             assert_eq!(caller.status.status, CallStatusKind::Resolved);
             assert_eq!(

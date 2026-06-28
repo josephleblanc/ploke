@@ -27,6 +27,12 @@ fn chrono_alias_constructor_rows_are_targetless_fallback_oracles() -> Result<(),
         CallStatusKind::Unresolved,
         11,
     )?;
+    let target = variant_id_by_enum_and_variant_names(&db, "LocalResult", "Single")?;
+    assert_no_incoming_traversal_to_target(
+        &db,
+        target,
+        "chrono/src/offset/mod.rs alias constructor rows",
+    )?;
     assert_no_path_rows(&db, &["LocalResult", "Single"])
 }
 
@@ -53,6 +59,17 @@ fn chrono_try_receiver_method_rows_are_targetless_fallback_oracles() -> Result<(
         None,
         CallStatusKind::Unsupported,
         2,
+    )?;
+    let target = method_id_by_name_body_and_file_suffix(
+        &db,
+        "naive_utc",
+        "self.datetime",
+        "src/datetime/mod.rs",
+    )?;
+    assert_no_incoming_traversal_to_target(
+        &db,
+        target,
+        "chrono/src/format/parsed.rs try receiver naive_utc rows",
     )
 }
 

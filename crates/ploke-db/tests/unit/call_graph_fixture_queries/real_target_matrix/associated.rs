@@ -312,6 +312,12 @@ fn axum_real_target_boxed_into_route_self_constructors_are_documented_gap() -> R
             .all(|caller| caller.site.path != Some(path(&["Self"]))),
         "BoxedIntoRoute target callers should not include unsupported Self constructor rows: {callers:#?}"
     );
+    assert_sites_match_callers(
+        &db,
+        target,
+        &callers,
+        "BoxedIntoRoute supported constructor callers",
+    )?;
 
     Ok(())
 }
@@ -410,6 +416,12 @@ fn axum_real_target_handle_error_extension_reaches_constructor() -> Result<(), D
         2,
         "HandleError::new should expose both resolved constructor callers: {callers:#?}"
     );
+    assert_sites_match_callers(
+        &db,
+        target,
+        &callers,
+        "HandleError::new constructor callers",
+    )?;
 
     // Matrix: user-facing service-extension dispatch.
     // Source chain:

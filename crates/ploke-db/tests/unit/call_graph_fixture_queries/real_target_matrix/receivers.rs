@@ -60,6 +60,12 @@ fn axum_core_extract_self_methods_reach_same_impl_methods() -> Result<(), DbErro
             1,
             "each extract_with_state impl should have exactly one inspected self-method caller"
         );
+        assert_sites_match_callers(
+            &db,
+            target,
+            &callers,
+            "extract_with_state self-method caller",
+        )?;
         assert_eq!(callers[0].status.status, CallStatusKind::Resolved);
         assert_eq!(callers[0].target.target_id, target);
     }
@@ -285,6 +291,7 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
         142,
         "Router::new should expose the current resolved corpus subset: {callers:#?}"
     );
+    assert_sites_match_callers(&db, target, &callers, "Router::new resolved corpus subset")?;
     for caller in &callers {
         assert_eq!(caller.site.path, Some(path(&["Router", "new"])));
         assert_eq!(caller.status.status, CallStatusKind::Resolved);
