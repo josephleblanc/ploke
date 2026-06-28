@@ -666,13 +666,192 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
         &["crate", "extract", "raw_form", "tests"],
         "check_query",
     )?;
-    assert_owner_path_targetless(
-        &db,
-        raw_form_owner,
-        &["Body", "empty"],
-        CallStatusKind::External,
-        "axum/src/extract/raw_form.rs:65",
-    )?;
+    struct BodyEmptyPathCase {
+        label: &'static str,
+        owner: Uuid,
+        status: CallStatusKind,
+    }
+
+    let targetless_cases = [
+        BodyEmptyPathCase {
+            // axum/src/extract/query.rs:106
+            // `check` builds `Request::builder().body(Body::empty())`.
+            label: "axum/src/extract/query.rs:106",
+            owner: function_id_by_name_in_module(
+                &db,
+                &["crate", "extract", "query", "tests"],
+                "check",
+            )?,
+            status: CallStatusKind::External,
+        },
+        BodyEmptyPathCase {
+            // axum/src/extract/raw_form.rs:65
+            // `check_query` builds `Request::builder().body(Body::empty())`.
+            label: "axum/src/extract/raw_form.rs:65",
+            owner: raw_form_owner,
+            status: CallStatusKind::External,
+        },
+        BodyEmptyPathCase {
+            // axum/src/form.rs:158
+            // `check_query` builds `Request::builder().body(Body::empty())`.
+            label: "axum/src/form.rs:158",
+            owner: function_id_by_name_in_module(&db, &["crate", "form", "tests"], "check_query")?,
+            status: CallStatusKind::External,
+        },
+        BodyEmptyPathCase {
+            // axum/src/middleware/from_fn.rs:411
+            // `basic` builds `Request::builder().uri("/").body(Body::empty())`
+            // before calling `app.oneshot(...)`.
+            label: "axum/src/middleware/from_fn.rs:411",
+            owner: function_id_by_name_in_module(
+                &db,
+                &["crate", "middleware", "from_fn", "tests"],
+                "basic",
+            )?,
+            status: CallStatusKind::External,
+        },
+        BodyEmptyPathCase {
+            // axum/src/routing/tests/mod.rs:228
+            // nested `handler` returns `Response::new(Body::empty())`; the
+            // current fixture owns this nested item row under
+            // `service_in_bottom`.
+            label: "axum/src/routing/tests/mod.rs:228",
+            owner: function_id_by_name_in_module(
+                &db,
+                &["crate", "routing", "tests"],
+                "service_in_bottom",
+            )?,
+            status: CallStatusKind::External,
+        },
+        BodyEmptyPathCase {
+            // axum/src/routing/tests/mod.rs:1277
+            // `connect_going_to_custom_fallback` builds a CONNECT request with
+            // `Body::empty()`.
+            label: "axum/src/routing/tests/mod.rs:1277",
+            owner: function_id_by_name_in_module(
+                &db,
+                &["crate", "routing", "tests"],
+                "connect_going_to_custom_fallback",
+            )?,
+            status: CallStatusKind::External,
+        },
+        BodyEmptyPathCase {
+            // axum/src/routing/tests/mod.rs:1295
+            // `connect_going_to_default_fallback` builds a CONNECT request with
+            // `Body::empty()`.
+            label: "axum/src/routing/tests/mod.rs:1295",
+            owner: function_id_by_name_in_module(
+                &db,
+                &["crate", "routing", "tests"],
+                "connect_going_to_default_fallback",
+            )?,
+            status: CallStatusKind::External,
+        },
+        BodyEmptyPathCase {
+            // axum/src/serve/mod.rs:1035
+            // `serving_on_custom_io_type` builds a request body with
+            // `Body::empty()`.
+            label: "axum/src/serve/mod.rs:1035",
+            owner: function_id_by_name_in_module(
+                &db,
+                &["crate", "serve", "tests"],
+                "serving_on_custom_io_type",
+            )?,
+            status: CallStatusKind::External,
+        },
+        BodyEmptyPathCase {
+            // axum-core/src/ext_traits/request.rs:346
+            // `extract_without_state` passes `Body::empty()` to `Request::new`.
+            label: "axum-core/src/ext_traits/request.rs:346",
+            owner: function_id_by_name_in_module(
+                &db,
+                &["crate", "ext_traits", "request", "tests"],
+                "extract_without_state",
+            )?,
+            status: CallStatusKind::Unsupported,
+        },
+        BodyEmptyPathCase {
+            // axum-core/src/ext_traits/request.rs:364
+            // `extract_with_state` passes `Body::empty()` to `Request::new`.
+            label: "axum-core/src/ext_traits/request.rs:364",
+            owner: function_id_by_name_in_module(
+                &db,
+                &["crate", "ext_traits", "request", "tests"],
+                "extract_with_state",
+            )?,
+            status: CallStatusKind::Unsupported,
+        },
+        BodyEmptyPathCase {
+            // axum-core/src/ext_traits/request.rs:377
+            // `extract_parts_without_state` calls `.body(Body::empty())`.
+            label: "axum-core/src/ext_traits/request.rs:377",
+            owner: function_id_by_name_in_module(
+                &db,
+                &["crate", "ext_traits", "request", "tests"],
+                "extract_parts_without_state",
+            )?,
+            status: CallStatusKind::Unsupported,
+        },
+        BodyEmptyPathCase {
+            // axum-core/src/ext_traits/request.rs:390
+            // `extract_parts_with_state` calls `.body(Body::empty())`.
+            label: "axum-core/src/ext_traits/request.rs:390",
+            owner: function_id_by_name_in_module(
+                &db,
+                &["crate", "ext_traits", "request", "tests"],
+                "extract_parts_with_state",
+            )?,
+            status: CallStatusKind::Unsupported,
+        },
+        BodyEmptyPathCase {
+            // axum/src/routing/method_routing.rs:1700
+            // helper `call` builds a request with `.body(Body::empty())`.
+            label: "axum/src/routing/method_routing.rs:1700",
+            owner: function_id_by_name_in_module(
+                &db,
+                &["crate", "routing", "method_routing", "tests"],
+                "call",
+            )?,
+            status: CallStatusKind::Unsupported,
+        },
+        BodyEmptyPathCase {
+            // axum/src/routing/tests/get_to_head.rs:25
+            // `for_handlers::get_handles_head` builds a HEAD request with
+            // `Body::empty()`.
+            label: "axum/src/routing/tests/get_to_head.rs:25",
+            owner: function_id_by_name_in_module(
+                &db,
+                &["crate", "routing", "tests", "get_to_head", "for_handlers"],
+                "get_handles_head",
+            )?,
+            status: CallStatusKind::Unsupported,
+        },
+        BodyEmptyPathCase {
+            // axum/src/routing/tests/get_to_head.rs:59
+            // `for_services::get_handles_head` builds a HEAD request with
+            // `Body::empty()`.
+            label: "axum/src/routing/tests/get_to_head.rs:59",
+            owner: function_id_by_name_in_module(
+                &db,
+                &["crate", "routing", "tests", "get_to_head", "for_services"],
+                "get_handles_head",
+            )?,
+            status: CallStatusKind::Unsupported,
+        },
+    ];
+
+    // Matrix targetless source rows:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Expected traversal: each row above is visible in the corpus fixture, but
+    // none may produce a local edge to axum-core/src/body.rs:52 `Body::empty`.
+    // The explicit owner assertions below preserve the inspected callsite
+    // locations while the file-bucket assertions keep the aggregate contract.
+    for case in targetless_cases {
+        assert_owner_path_targetless(&db, case.owner, &["Body", "empty"], case.status, case.label)?;
+    }
+
     // Matrix targetless source rows:
     //   external: axum/src/extract/query.rs:106; raw_form.rs:65;
     //   form.rs:158; middleware/from_fn.rs:411;
