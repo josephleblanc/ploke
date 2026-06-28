@@ -71,57 +71,40 @@ fn axum_real_target_const_initializer_external_paths_are_targetless() -> Result<
     )
 }
 
-fn assert_targetless_path_rows(
-    db: &Database,
-    path_parts: &[&str],
-    status: CallStatusKind,
-    expected_count: usize,
-) -> Result<(), DbError> {
-    let mut params = std::collections::BTreeMap::new();
-    params.insert(
-        "path".to_string(),
-        cozo::DataValue::List(
-            path_parts
-                .iter()
-                .map(|part| cozo::DataValue::from(*part))
-                .collect(),
-        ),
-    );
-    params.insert(
-        "status".to_string(),
-        cozo::DataValue::from(format!("{status:?}")),
-    );
+#[test]
+fn axum_real_target_trait_object_dispatch_rows_are_documented_gaps() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
 
-    let rows = db.raw_query_params(
-        r#"?[site_id, owner_id, resolution_kind] :=
-            *call_site {
-                id: site_id,
-                owner_id,
-                call_kind: "Path",
-                path: $path @ 'NOW'
-            },
-            *call_resolution_status {
-                source_id: site_id,
-                source_kind: "Path",
-                status_kind: $status,
-                resolution_kind @ 'NOW'
-            }"#,
-        params,
+    // Matrix: trait-object dispatch rows.
+    // Source chains:
+    //   axum/src/error_handling/mod.rs:251 calls
+    //   `self.project().future.poll(cx)` on
+    //   `Pin<Box<dyn Future<...>>>` from error_handling/mod.rs:240.
+    //   axum-core/src/body.rs:32 calls
+    //   `<dyn std::any::Any>::downcast_mut::<Option<T>>(&mut k)`.
+    // Current model gap: dyn Future dispatch is visible through the
+    // method-call-result `poll` row and stays targetless; the qualified
+    // `<dyn Any>::downcast_mut` syntax is not projected as a path row yet.
+    assert_targetless_method_rows(
+        &db,
+        "poll",
+        "MethodCallResult",
+        Some(&["as_mut"]),
+        CallStatusKind::Unsupported,
+        4,
     )?;
-    assert_eq!(
-        rows.rows.len(),
-        expected_count,
-        "expected {expected_count} {status:?} targetless path rows for {path_parts:?}: {:#?}",
-        rows.rows
-    );
-    for row in &rows.rows {
-        assert_eq!(row[2], cozo::DataValue::Null);
-        let site_id = to_uuid(&row[0])?;
-        assert!(
-            relations_for_site(db, site_id)?.rows.is_empty(),
-            "{path_parts:?} row should not have call_relation targets"
-        );
-    }
+    assert_no_path_rows(&db, &["dyn", "Any", "downcast_mut"])
+}
 
-    Ok(())
+#[test]
+fn axum_real_target_blanket_via_parts_self_path_is_absent_gap() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: `FromRequest` ViaParts blanket inner call.
+    // Source chain:
+    //   axum-core/src/extract/mod.rs:103 calls
+    //   `Self::from_request_parts(parts, state).await`.
+    // Current model gap: this async blanket-impl body does not project a
+    // `Self::from_request_parts` path row in the axum fixture yet.
+    assert_no_path_rows(&db, &["Self", "from_request_parts"])
 }

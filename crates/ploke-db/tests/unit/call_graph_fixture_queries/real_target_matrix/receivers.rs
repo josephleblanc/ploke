@@ -80,7 +80,7 @@ fn axum_real_target_request_extensions_mut_receivers_are_documented_gaps() -> Re
         &db,
         "extensions_mut",
         "LocalBinding",
-        &["req"],
+        Some(&["req"]),
         CallStatusKind::Unresolved,
         6,
     )?;
@@ -130,7 +130,7 @@ fn axum_real_target_turbofish_local_receiver_is_documented_gap() -> Result<(), D
         &db,
         "extract_with_state",
         "LocalBinding",
-        &["parts"],
+        Some(&["parts"]),
         CallStatusKind::Unresolved,
         1,
     )?;
@@ -138,66 +138,180 @@ fn axum_real_target_turbofish_local_receiver_is_documented_gap() -> Result<(), D
     Ok(())
 }
 
-fn assert_targetless_method_rows(
-    db: &Database,
-    method: &str,
-    receiver_kind: &str,
-    receiver_path: &[&str],
-    status: CallStatusKind,
-    expected_count: usize,
-) -> Result<(), DbError> {
-    let mut params = std::collections::BTreeMap::new();
-    params.insert("method".to_string(), cozo::DataValue::from(method));
-    params.insert(
-        "receiver_kind".to_string(),
-        cozo::DataValue::from(receiver_kind),
-    );
-    params.insert(
-        "status".to_string(),
-        cozo::DataValue::from(format!("{status:?}")),
-    );
-    params.insert(
-        "receiver_path".to_string(),
-        cozo::DataValue::List(
-            receiver_path
-                .iter()
-                .map(|part| cozo::DataValue::from(*part))
-                .collect(),
-        ),
-    );
+#[test]
+fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
 
-    let rows = db.raw_query_params(
-        r#"?[site_id, owner_id, resolution_kind] :=
-            *call_site {
-                id: site_id,
-                owner_id,
-                call_kind: "Method",
-                method_name: $method,
-                receiver_kind: $receiver_kind,
-                receiver_path: $receiver_path @ 'NOW'
-            },
-            *call_resolution_status {
-                source_id: site_id,
-                source_kind: "Method",
-                status_kind: $status,
-                resolution_kind @ 'NOW'
-            }"#,
-        params,
+    // Matrix: service forwarding receiver rows.
+    // Source chain:
+    //   axum/src/extension.rs:180 calls `self.inner.poll_ready(cx)`.
+    //   Other service wrappers use the same `SelfField` forwarding shape, and
+    //   tuple wrappers project as `self.0.poll_ready(...)`.
+    // Current model gap: external trait receiver dispatch is visible but
+    // targetless.
+    assert_targetless_method_rows(
+        &db,
+        "poll_ready",
+        "SelfField",
+        Some(&["inner"]),
+        CallStatusKind::Unsupported,
+        7,
     )?;
+    assert_targetless_method_rows(
+        &db,
+        "poll_ready",
+        "SelfField",
+        Some(&["0"]),
+        CallStatusKind::Unsupported,
+        3,
+    )
+}
+
+#[test]
+fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: `Router::new` / typed `router.clone`.
+    // Source chain:
+    //   axum/src/routing/mod.rs:162 defines `Router::new`.
+    //   axum/src/serve/mod.rs:756 calls `Router::new()`.
+    //   serve/mod.rs:769,770,772,776,780,785 call `router.clone...`.
+    // Expected traversal: the current caller API exposes 142 resolved
+    // `Router::new` rows, while target expansion traverses 121 incoming
+    // candidates for the same target. Typed router clone receiver rows remain
+    // targetless because Clone dispatch is not modeled yet.
+    let target = method_id_by_name_and_body_substring(&db, "new", "default_fallback: true")?;
+    let callers = db.callers_for_target(target)?;
     assert_eq!(
-        rows.rows.len(),
-        expected_count,
-        "expected {expected_count} {status:?} targetless method rows for {method}.{receiver_path:?}: {:#?}",
-        rows.rows
+        callers.len(),
+        142,
+        "Router::new should expose the current resolved corpus subset: {callers:#?}"
     );
-    for row in &rows.rows {
-        assert_eq!(row[2], cozo::DataValue::Null);
-        let site_id = to_uuid(&row[0])?;
-        assert!(
-            relations_for_site(db, site_id)?.rows.is_empty(),
-            "{method}.{receiver_path:?} row should not have call_relation targets"
+    for caller in &callers {
+        assert_eq!(caller.site.path, Some(path(&["Router", "new"])));
+        assert_eq!(caller.status.status, CallStatusKind::Resolved);
+        assert_eq!(
+            caller.status.resolution,
+            Some(CallResolutionKind::LocalExact)
         );
+        assert_eq!(caller.target.relation, CallRelationKind::AssociatedFunction);
+        assert_eq!(caller.target.source_kind, CallSiteKind::Path);
+        assert_eq!(caller.target.target_kind, CallTargetKind::Method);
     }
 
-    Ok(())
+    let incoming = db.expand_call_context(
+        CallContextSeed::Target(target),
+        CallContextOptions {
+            include_outgoing_targets: false,
+            max_candidates: 256,
+            ..CallContextOptions::default()
+        },
+    )?;
+    assert_eq!(
+        incoming.len(),
+        121,
+        "Router::new target expansion should traverse the current incoming candidate subset"
+    );
+    let caller_sites = callers
+        .iter()
+        .map(|caller| caller.site.id)
+        .collect::<std::collections::HashSet<_>>();
+    for candidate in &incoming {
+        assert!(
+            caller_sites.contains(&candidate.call_site_id),
+            "Router::new target expansion should only return known caller sites: {candidate:#?}"
+        );
+        assert_eq!(candidate.target_id, target);
+        assert_eq!(candidate.distance, 1);
+    }
+
+    assert_targetless_path_rows(&db, &["Router", "new"], CallStatusKind::Unsupported, 158)?;
+    assert_targetless_method_rows(
+        &db,
+        "clone",
+        "TypedLocalBinding",
+        Some(&["router", "Router"]),
+        CallStatusKind::Unresolved,
+        10,
+    )?;
+    assert_targetless_method_rows(
+        &db,
+        "clone",
+        "TypedLocalBinding",
+        Some(&["app", "Router"]),
+        CallStatusKind::Unresolved,
+        1,
+    )
+}
+
+#[test]
+fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: result receiver chains.
+    // Source chains:
+    //   axum/src/middleware/from_fn.rs:411 calls
+    //   `Request::builder().uri(\"/\").body(Body::empty()).unwrap()`.
+    //   axum/src/routing/route.rs:51 calls
+    //   `self.0.clone().oneshot(req)`.
+    // Current model gap: path-call and method-call result receivers are
+    // structurally projected but remain targetless unless the nested local
+    // associated function is already in the resolved subset.
+    assert_targetless_path_rows(&db, &["Request", "builder"], CallStatusKind::External, 8)?;
+    assert_targetless_path_rows(&db, &["Request", "builder"], CallStatusKind::Unsupported, 6)?;
+    assert_targetless_method_rows(
+        &db,
+        "oneshot",
+        "MethodCallResult",
+        Some(&["clone"]),
+        CallStatusKind::Unsupported,
+        1,
+    )?;
+    assert_targetless_method_rows(
+        &db,
+        "oneshot",
+        "SelfField",
+        Some(&["0"]),
+        CallStatusKind::Unsupported,
+        1,
+    )?;
+    assert_targetless_method_rows(
+        &db,
+        "unwrap",
+        "MethodCallResult",
+        Some(&["body"]),
+        CallStatusKind::Unsupported,
+        17,
+    )
+}
+
+#[test]
+fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: await result receiver rows.
+    // Source chain:
+    //   axum/src/test_helpers/test_client.rs:134 calls
+    //   `self.builder.send().await.unwrap()` inside an async block.
+    //   axum/src/serve/listener.rs:143 calls
+    //   `self.sem.clone().acquire_owned().await.unwrap()`.
+    // Current model gap: awaited-result receiver shapes are visible in the
+    // corpus, but they stay targetless. The test-client async block row remains
+    // part of the broader nested async-owner gap rather than a local edge.
+    assert_targetless_method_rows(
+        &db,
+        "unwrap",
+        "AwaitResult",
+        None,
+        CallStatusKind::Unsupported,
+        39,
+    )?;
+    assert_targetless_method_rows(
+        &db,
+        "send",
+        "MethodCallResult",
+        Some(&["get"]),
+        CallStatusKind::Unsupported,
+        3,
+    )
 }

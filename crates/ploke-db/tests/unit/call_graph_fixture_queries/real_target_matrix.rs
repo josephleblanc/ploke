@@ -32,9 +32,12 @@
 //! | Bounded `FromRef` paths | `axum/src/extract/state.rs:309` and `middleware/from_extractor.rs:328` call `InnerState::from_ref(...)` | currently unsupported: bounded associated paths are visible but targetless. |
 //! | Listener `Self::accept` paths | `axum/src/serve/listener.rs:{41,61}` call `Self::accept(self).await` | currently unsupported and targetless; the row must not be modeled as recursive trait dispatch. |
 //! | Const initializer external paths | `axum/src/extract/ws.rs:{382,384}` and `routing/route.rs:202` call `HeaderValue::from_static(...)` | external const-owner rows remain targetless and do not become local traversal edges. |
+//! | Receiver forwarding gaps | `axum/src/extension.rs:180`, `routing/route.rs:51`, and `middleware/from_fn.rs:411` exercise field/result receivers | unsupported receiver shapes remain visible and targetless; `Router::new` currently has 142 caller rows and 121 incoming expansion candidates. |
+//! | Await and trait-object receivers | `test_helpers/test_client.rs:134`, `serve/listener.rs:143`, and `error_handling/mod.rs:251` use await/dyn receiver calls | awaited/dyn receiver rows remain targetless; qualified `<dyn Any>::downcast_mut` is not projected yet. |
 //! | Proc-macro body calls | `axum-macros/src/lib.rs:{377,426,665,715}` call `expand_with(...)` | currently unsupported: proc-macro function bodies are not visited for call sites. |
 //! | Closure body call | `axum-macros/src/from_ref.rs:23` calls `expand_field(...)` inside a closure | currently unsupported: no call site targets `expand_field`. |
-//! | Dynamic callable fields | `axum/src/boxed.rs:{85,159}` call function-pointer / trait-object fields | currently unsupported: visible dynamic call sites remain targetless blockers. |
+//! | Dynamic callable fields | `axum/src/boxed.rs:{85,120,159}` and `serve/listener.rs:236` call function-pointer / trait-object fields | currently unsupported: visible dynamic call sites remain targetless blockers. |
+//! | Macro callback/IIFE calls | `axum-macros/src/lib.rs:{724,734-738}` uses `and_then(f)` and an immediately invoked closure | callback receiver and IIFE dynamic rows are asserted; inner closure-body callback invocation remains absent. |
 
 mod associated;
 mod common;

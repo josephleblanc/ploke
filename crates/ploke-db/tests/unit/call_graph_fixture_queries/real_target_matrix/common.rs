@@ -142,3 +142,131 @@ pub(super) fn method_ids_by_name_and_body_substring(
 fn body_key(value: &str) -> String {
     value.chars().filter(|ch| !ch.is_whitespace()).collect()
 }
+
+pub(super) fn assert_targetless_path_rows(
+    db: &Database,
+    path_parts: &[&str],
+    status: CallStatusKind,
+    expected_count: usize,
+) -> Result<(), DbError> {
+    let mut params = BTreeMap::new();
+    params.insert("path".to_string(), path_value(path_parts));
+    params.insert("status".to_string(), DataValue::from(format!("{status:?}")));
+
+    let rows = db.raw_query_params(
+        r#"?[site_id, owner_id, resolution_kind] :=
+            *call_site {
+                id: site_id,
+                owner_id,
+                call_kind: "Path",
+                path: $path @ 'NOW'
+            },
+            *call_resolution_status {
+                source_id: site_id,
+                source_kind: "Path",
+                status_kind: $status,
+                resolution_kind @ 'NOW'
+            }"#,
+        params,
+    )?;
+    assert_eq!(
+        rows.rows.len(),
+        expected_count,
+        "expected {expected_count} {status:?} targetless path rows for {path_parts:?}: {:#?}",
+        rows.rows
+    );
+    for row in &rows.rows {
+        assert_eq!(row[2], DataValue::Null);
+        let site_id = to_uuid(&row[0])?;
+        assert!(
+            relations_for_site(db, site_id)?.rows.is_empty(),
+            "{path_parts:?} row should not have call_relation targets"
+        );
+    }
+
+    Ok(())
+}
+
+pub(super) fn assert_no_path_rows(db: &Database, path_parts: &[&str]) -> Result<(), DbError> {
+    let mut params = BTreeMap::new();
+    params.insert("path".to_string(), path_value(path_parts));
+
+    let rows = db.raw_query_params(
+        r#"?[site_id] :=
+            *call_site {
+                id: site_id,
+                call_kind: "Path",
+                path: $path @ 'NOW'
+            }"#,
+        params,
+    )?;
+    assert!(
+        rows.rows.is_empty(),
+        "expected no path rows for {path_parts:?}: {:#?}",
+        rows.rows
+    );
+
+    Ok(())
+}
+
+pub(super) fn assert_targetless_method_rows(
+    db: &Database,
+    method: &str,
+    receiver_kind: &str,
+    receiver_path: Option<&[&str]>,
+    status: CallStatusKind,
+    expected_count: usize,
+) -> Result<(), DbError> {
+    let mut params = BTreeMap::new();
+    params.insert("method".to_string(), DataValue::from(method));
+    params.insert("receiver_kind".to_string(), DataValue::from(receiver_kind));
+    params.insert("status".to_string(), DataValue::from(format!("{status:?}")));
+    params.insert(
+        "receiver_path".to_string(),
+        receiver_path.map_or(DataValue::Null, path_value),
+    );
+
+    let rows = db.raw_query_params(
+        r#"?[site_id, owner_id, resolution_kind] :=
+            *call_site {
+                id: site_id,
+                owner_id,
+                call_kind: "Method",
+                method_name: $method,
+                receiver_kind: $receiver_kind,
+                receiver_path: $receiver_path @ 'NOW'
+            },
+            *call_resolution_status {
+                source_id: site_id,
+                source_kind: "Method",
+                status_kind: $status,
+                resolution_kind @ 'NOW'
+            }"#,
+        params,
+    )?;
+    assert_eq!(
+        rows.rows.len(),
+        expected_count,
+        "expected {expected_count} {status:?} targetless method rows for {method}.{receiver_path:?}: {:#?}",
+        rows.rows
+    );
+    for row in &rows.rows {
+        assert_eq!(row[2], DataValue::Null);
+        let site_id = to_uuid(&row[0])?;
+        assert!(
+            relations_for_site(db, site_id)?.rows.is_empty(),
+            "{method}.{receiver_path:?} row should not have call_relation targets"
+        );
+    }
+
+    Ok(())
+}
+
+fn path_value(path_parts: &[&str]) -> DataValue {
+    DataValue::List(
+        path_parts
+            .iter()
+            .map(|part| DataValue::from(*part))
+            .collect(),
+    )
+}
