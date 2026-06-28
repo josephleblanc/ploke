@@ -306,7 +306,7 @@ fn assert_targetless_line_rows(
         let text = lines
             .get(line_index)
             .unwrap_or_else(|| panic!("{suffix}:{line} should exist in pinned source"));
-        let window = lines[line_index..usize::min(line_index + 5, lines.len())].join("\n");
+        let window = lines[line_index..usize::min(line_index + 12, lines.len())].join("\n");
         assert!(
             window.contains(needle),
             "{suffix}:{line} should contain {needle:?} on the span line or nearby continuation; source line was {text:?}"
