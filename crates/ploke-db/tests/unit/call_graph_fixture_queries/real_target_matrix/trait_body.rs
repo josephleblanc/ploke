@@ -195,6 +195,75 @@ fn axum_real_target_header_value_from_static_external_paths_are_targetless() -> 
         "axum/src/routing/route.rs:202",
     )?;
 
+    let json_owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "into_response",
+        "serde_json::to_writer(&mut buf, &self.0)",
+        "axum/src/json.rs",
+    )?;
+    assert_owner_path_targetless_count(
+        &db,
+        json_owner,
+        &["HeaderValue", "from_static"],
+        CallStatusKind::External,
+        2,
+        "axum/src/json.rs:208 and :217 HeaderValue::from_static",
+    )?;
+
+    let html_owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "into_response",
+        "mime::TEXT_HTML_UTF_8.as_ref()",
+        "axum/src/response/mod.rs",
+    )?;
+    assert_owner_path_targetless(
+        &db,
+        html_owner,
+        &["HeaderValue", "from_static"],
+        CallStatusKind::External,
+        "axum/src/response/mod.rs:47 HeaderValue::from_static",
+    )?;
+
+    let core_cases = [
+        (
+            "axum-core/src/response/into_response.rs:196 HeaderValue::from_static",
+            "mime::TEXT_PLAIN_UTF_8.as_ref()",
+            1,
+        ),
+        (
+            "axum-core/src/response/into_response.rs:207 and :320 HeaderValue::from_static",
+            "Body::from(self).into_response();res.headers_mut().insert(header::CONTENT_TYPE,HeaderValue::from_static(mime::APPLICATION_OCTET_STREAM.as_ref())",
+            2,
+        ),
+        (
+            "axum-core/src/response/into_response.rs:232 HeaderValue::from_static",
+            "BytesChainBody",
+            1,
+        ),
+    ];
+    for (label, body_marker, expected_owners) in core_cases {
+        let owners = method_ids_by_name_body_and_file_suffix(
+            &db,
+            "into_response",
+            body_marker,
+            "axum-core/src/response/into_response.rs",
+        )?;
+        assert_eq!(
+            owners.len(),
+            expected_owners,
+            "{label} should resolve the expected into_response owner set"
+        );
+        for owner in owners {
+            assert_owner_path_targetless(
+                &db,
+                owner,
+                &["HeaderValue", "from_static"],
+                CallStatusKind::External,
+                label,
+            )?;
+        }
+    }
+
     let const_rows = db.raw_query(
         r#"?[site_id] :=
             *const { id: owner_id @ 'NOW' },

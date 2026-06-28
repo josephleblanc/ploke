@@ -136,15 +136,46 @@ pub(super) fn assert_owner_path_targetless(
     status: CallStatusKind,
     label: &str,
 ) -> Result<Uuid, DbError> {
+    let sites = assert_owner_path_targetless_count(db, owner, path_parts, status, 1, label)?;
+    Ok(sites[0])
+}
+
+pub(super) fn assert_owner_path_targetless_count(
+    db: &Database,
+    owner: Uuid,
+    path_parts: &[&str],
+    status: CallStatusKind,
+    expected_count: usize,
+    label: &str,
+) -> Result<Vec<Uuid>, DbError> {
     let context = db.call_context_for_owner(owner)?;
-    let row = row_by_kind_path(&context, CallSiteKind::Path, path_parts);
-    assert_targetless_status(row, status);
-    assert!(
-        relations_for_site(db, row.site.id)?.rows.is_empty(),
-        "{label} should not have raw call_relation targets"
+    let rows = context
+        .iter()
+        .filter(|row| {
+            row.site.kind == CallSiteKind::Path && row.site.path.as_ref() == Some(&path(path_parts))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rows.len(),
+        expected_count,
+        "{label} should expose exactly {expected_count} targetless path row(s): {context:#?}"
     );
-    assert_no_traversal_candidates_for_site(db, owner, row.site.id, label)?;
-    Ok(row.site.id)
+
+    let mut sites = Vec::new();
+    for row in rows {
+        assert_targetless_status(row, status);
+        assert!(
+            relations_for_site(db, row.site.id)?.rows.is_empty(),
+            "{label} should not have raw call_relation targets"
+        );
+        sites.push(row.site.id);
+    }
+    assert_no_traversal_candidates_for_sites(
+        db,
+        &sites.iter().map(|site| (owner, *site)).collect::<Vec<_>>(),
+        label,
+    )?;
+    Ok(sites)
 }
 
 pub(super) fn assert_owner_method_targetless(
@@ -341,7 +372,7 @@ pub(super) fn assert_no_method_owner_by_body_and_file_suffix(
     Ok(())
 }
 
-fn method_ids_by_name_body_and_file_suffix(
+pub(super) fn method_ids_by_name_body_and_file_suffix(
     db: &Database,
     name: &str,
     body_marker: &str,

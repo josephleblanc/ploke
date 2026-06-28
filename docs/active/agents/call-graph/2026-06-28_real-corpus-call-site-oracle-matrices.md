@@ -88,6 +88,12 @@ as expected-passing traversal edges. The DB matrix now also pins
 `axum/src/extract/raw_form.rs:65` as a targetless external row because that owner
 imports `axum_core::body::Body` across the axum member boundary.
 
+The DB matrix also pins all eight currently projected external
+`HeaderValue::from_static` rows by exact owner: four `axum-core` response
+conversion owners, two JSON response rows under one owner, the HTML response
+owner, and the `set_content_length` local const row. The websocket const
+initializer rows remain absent until const body ownership is modeled.
+
 ## High-Fanout Test Helper Matrix
 
 `TestClient::new` has 172 selected-member text callsites. The full fanout is useful for fixture coverage, but a strict DB oracle should be generated from parser facts because owner recovery by hand is noisy.
