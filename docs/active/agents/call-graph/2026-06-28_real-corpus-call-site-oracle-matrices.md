@@ -161,6 +161,12 @@ remain DB-only fail-closed gap assertions. Exact TUI tools also accept
 `Position::First(item)` constructor edge is visible from the exact enum-variant
 target.
 
+The same DB test also pins the macro-bound
+`try_downcast::<i32, _>(...)` rows in both
+`axum-core/src/body.rs:{251,252}` and `axum/src/util.rs:{114,115}` as
+unsupported `assert_eq!` macro callsites with zero `try_downcast` path rows and
+zero traversal candidates.
+
 The regenerated axum call-graph fixture also resolves both
 `axum/src/json.rs:{112,128}` `Self::from_bytes(&bytes)` rows to the inherent
 `Json::from_bytes` method at `axum/src/json.rs:164`. The DB matrix asserts both

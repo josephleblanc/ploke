@@ -1344,33 +1344,44 @@ fn axum_real_target_try_downcast_helpers_reach_current_resolved_subset() -> Resu
         }
     }
 
-    let turbofish_owner =
-        function_id_by_name_in_module(&db, &["crate", "body"], "test_try_downcast")?;
-    let turbofish_context = db.call_context_for_owner(turbofish_owner)?;
-    let turbofish_path_rows = turbofish_context
-        .iter()
-        .filter(|row| {
-            row.site.kind == CallSiteKind::Path
-                && row.site.path.as_ref() == Some(&path(&["try_downcast"]))
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        turbofish_path_rows.len(),
-        0,
-        "axum-core/src/body.rs:251 and :252 are inside assert_eq! macro invocations and should not be flattened into try_downcast path rows: {turbofish_context:#?}"
-    );
-    assert_eq!(
-        turbofish_context.len(),
-        2,
-        "axum-core/src/body.rs:251 and :252 should project two unsupported macro-bound rows: {turbofish_context:#?}"
-    );
-    for row in &turbofish_context {
-        assert_targetless_status(row, CallStatusKind::Unsupported);
-        assert_eq!(row.site.generic_arg_count, None);
-        assert!(
-            relations_for_site(&db, row.site.id)?.rows.is_empty(),
-            "macro-bound try_downcast rows should not fabricate local targets"
+    let macro_bound_cases = [
+        ("axum-core/src/body.rs:251 and :252", &["crate", "body"][..]),
+        ("axum/src/util.rs:114 and :115", &["crate", "util"][..]),
+    ];
+    for (label, module_path) in macro_bound_cases {
+        let owner = function_id_by_name_in_module(&db, module_path, "test_try_downcast")?;
+        let context = db.call_context_for_owner(owner)?;
+        let path_rows = context
+            .iter()
+            .filter(|row| {
+                row.site.kind == CallSiteKind::Path
+                    && row.site.path.as_ref() == Some(&path(&["try_downcast"]))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            path_rows.len(),
+            0,
+            "{label} are inside assert_eq! macro invocations and should not be flattened into try_downcast path rows: {context:#?}"
         );
+        assert_eq!(
+            context.len(),
+            2,
+            "{label} should project two unsupported macro-bound rows: {context:#?}"
+        );
+        for row in &context {
+            assert_eq!(
+                row.site.kind,
+                CallSiteKind::Macro,
+                "{label} should only project macro call rows for assert_eq! wrappers: {context:#?}"
+            );
+            assert_targetless_status(row, CallStatusKind::Unsupported);
+            assert_eq!(row.site.generic_arg_count, None);
+            assert!(
+                relations_for_site(&db, row.site.id)?.rows.is_empty(),
+                "{label} macro-bound try_downcast rows should not fabricate local targets"
+            );
+            assert_no_traversal_candidates_for_site(&db, owner, row.site.id, label)?;
+        }
     }
 
     Ok(())
