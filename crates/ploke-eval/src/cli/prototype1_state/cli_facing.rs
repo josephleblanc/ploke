@@ -1242,12 +1242,14 @@ async fn run_parent_target_selection(
             .await
             .map(ParentTargetSelection::ChildPlan),
         CandidateGenerationConfig::BroadHarnessRequest => {
-            let batch = publish_broad_harness_child_plan_request(
+            let batch = publish_broad_harness_child_plan_request_with_store(
+                Some(env.campaign_id),
                 env.manifest_path,
                 env.repo_root,
                 parent,
                 child_budget,
                 env.broad_tui,
+                env.eval_storage_backend,
             )?;
             run_pre_child_planning_review(env, &batch).await?;
             Ok(ParentTargetSelection::AwaitingHarnessBatch(batch))
@@ -1360,12 +1362,33 @@ async fn run_legacy_parent_target_selection(
     receive_child_plan(env, &parent_identity, planned, locked)
 }
 
+#[cfg(test)]
 fn publish_broad_harness_child_plan_request(
     manifest_path: &Path,
     repo_root: &Path,
     parent: Parent<Ready>,
     child_budget: Prototype1ChildBudget,
     broad_tui: profile::BroadTui,
+) -> Result<HarnessRequestBatch, PrepareError> {
+    publish_broad_harness_child_plan_request_with_store(
+        None,
+        manifest_path,
+        repo_root,
+        parent,
+        child_budget,
+        broad_tui,
+        profile::EvalStorageBackend::Fs,
+    )
+}
+
+fn publish_broad_harness_child_plan_request_with_store(
+    campaign_id: Option<&CampaignId>,
+    manifest_path: &Path,
+    repo_root: &Path,
+    parent: Parent<Ready>,
+    child_budget: Prototype1ChildBudget,
+    broad_tui: profile::BroadTui,
+    eval_storage_backend: profile::EvalStorageBackend,
 ) -> Result<HarnessRequestBatch, PrepareError> {
     let parent_identity = parent.identity().clone();
     let root_node = parent.node().clone();
@@ -1390,7 +1413,8 @@ fn publish_broad_harness_child_plan_request(
         .unwrap_or(slot_count);
     let mut slots = Vec::with_capacity(slot_count);
     for _ in 0..slot_count {
-        let publication = publish_broad_edit_harness_request_with_graph_limit(
+        let publication = publish_broad_edit_harness_request_with_graph_limit_with_store(
+            campaign_id,
             manifest_path,
             repo_root,
             &parent_identity,
@@ -1399,6 +1423,7 @@ fn publish_broad_harness_child_plan_request(
             broad_tui
                 .graph_nearest
                 .unwrap_or(DEFAULT_GRAPH_NEAREST_ITEMS),
+            eval_storage_backend,
         )?;
         slots.push(HarnessRequestSlot {
             request_path: publication.request_path,
@@ -2108,7 +2133,7 @@ async fn run_broad_headless_tui_attempt_with_options(
         Err(source) => {
             if let Some((phase, detail)) = source.setup_failure() {
                 let run = tui_adapter::HeadlessRun::setup_unavailable(phase, detail.to_string());
-                write_broad_headless_tui_diagnostics(slot, &run)
+                write_broad_headless_tui_diagnostics(slot, &run, campaign_id, eval_storage_backend)
                     .map_err(tui_adapter::BroadAttemptError::from)?;
                 return Err(tui_adapter::BroadAttemptError::Setup {
                     phase,
@@ -2120,7 +2145,7 @@ async fn run_broad_headless_tui_attempt_with_options(
     };
     let tui_adapter::AttemptOutcome { run, terminal } = attempt_outcome;
 
-    write_broad_headless_tui_diagnostics(slot, &run)
+    write_broad_headless_tui_diagnostics(slot, &run, campaign_id, eval_storage_backend)
         .map_err(tui_adapter::BroadAttemptError::from)?;
     write_broad_headless_tui_turn_live_bundle(
         slot,
@@ -2555,6 +2580,8 @@ fn stash_transfer_enabled() -> bool {
 fn write_broad_headless_tui_diagnostics(
     slot: &HarnessRequestSlot,
     run: &tui_adapter::HeadlessRun,
+    campaign_id: Option<&CampaignId>,
+    eval_storage_backend: profile::EvalStorageBackend,
 ) -> Result<(), PrepareError> {
     let path = broad_headless_tui_diagnostics_path(slot.published.submitted_result_path());
     if let Some(parent) = path.parent() {
@@ -2563,7 +2590,22 @@ fn write_broad_headless_tui_diagnostics(
             source,
         })?;
     }
-    write_json_file_pretty(&path, &run.evidence())
+    write_json_file_pretty(&path, &run.evidence())?;
+    if eval_storage_backend.mirrors_owner_db() {
+        let campaign_id = campaign_id.ok_or_else(|| PrepareError::DatabaseSetup {
+            phase: "eval_harness_diagnostic_put",
+            detail: "DB-backed harness diagnostics require a campaign id".to_string(),
+        })?;
+        eval_store::write_harness_diagnostic_to_owner_db(campaign_id, &slot.published, &path, run)
+            .map_err(|source| PrepareError::DatabaseSetup {
+                phase: "eval_harness_diagnostic_put",
+                detail: format!(
+                    "failed to persist broad-harness diagnostics '{}' to owner eval DB: {source}",
+                    path.display()
+                ),
+            })?;
+    }
+    Ok(())
 }
 
 fn broad_headless_tui_diagnostics_path(submitted_result_path: &Path) -> PathBuf {
@@ -3238,6 +3280,7 @@ struct BroadHarnessRequestPublication {
         crate::cli::prototype1_state::edit_surface::harness_request::PublishedBroadHarnessRequest,
 }
 
+#[cfg(test)]
 fn publish_broad_edit_harness_request_with_graph_limit(
     manifest_path: &Path,
     repo_root: &Path,
@@ -3245,6 +3288,28 @@ fn publish_broad_edit_harness_request_with_graph_limit(
     child_budget: Prototype1ChildBudget,
     admission_binding: harness_request::RequestAdmissionBinding,
     nearest_items: usize,
+) -> Result<BroadHarnessRequestPublication, PrepareError> {
+    publish_broad_edit_harness_request_with_graph_limit_with_store(
+        None,
+        manifest_path,
+        repo_root,
+        parent,
+        child_budget,
+        admission_binding,
+        nearest_items,
+        profile::EvalStorageBackend::Fs,
+    )
+}
+
+fn publish_broad_edit_harness_request_with_graph_limit_with_store(
+    campaign_id: Option<&CampaignId>,
+    manifest_path: &Path,
+    repo_root: &Path,
+    parent: &ParentIdentity,
+    child_budget: Prototype1ChildBudget,
+    admission_binding: harness_request::RequestAdmissionBinding,
+    nearest_items: usize,
+    eval_storage_backend: profile::EvalStorageBackend,
 ) -> Result<BroadHarnessRequestPublication, PrepareError> {
     let prototype_root = prototype1_campaign_root(manifest_path);
     let request_dir = prototype_root.join("messages/edit-harness-request");
@@ -3285,6 +3350,21 @@ fn publish_broad_edit_harness_request_with_graph_limit(
             source,
         }
     })?;
+    if eval_storage_backend.mirrors_owner_db() {
+        let campaign_id = campaign_id.ok_or_else(|| PrepareError::DatabaseSetup {
+            phase: "eval_harness_request_put",
+            detail: "DB-backed harness requests require a campaign id".to_string(),
+        })?;
+        eval_store::write_harness_request_to_owner_db(campaign_id, &published).map_err(
+            |source| PrepareError::DatabaseSetup {
+                phase: "eval_harness_request_put",
+                detail: format!(
+                    "failed to persist broad-harness request '{}' to owner eval DB: {source}",
+                    published.request_path().display()
+                ),
+            },
+        )?;
+    }
     Ok(BroadHarnessRequestPublication {
         request_path,
         published,

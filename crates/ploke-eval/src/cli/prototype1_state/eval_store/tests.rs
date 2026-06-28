@@ -27,11 +27,13 @@ use super::{
     CAMPAIGN_PROTOCOL_POLICY_REL, CAMPAIGN_REL, CHILD_PLAN_CHILD_REL, CHILD_PLAN_REJECTED_REL,
     CHILD_PLAN_REL, CLOSURE_ARTIFACT_REF_REL, CLOSURE_INSTANCE_REL, CLOSURE_PROTOCOL_COUNTS_REL,
     CLOSURE_PROTOCOL_PROCEDURE_REL, CLOSURE_REF_REL, CONTINUATION_DECISION_REL,
-    EVALUATION_INSTANCE_REL, EVALUATION_REL, MESSAGE_EVENT_REL, MODEL_EXCHANGE_REL, OPERATION_REL,
-    PATCH_REL, PROFILE_COMMITMENT_REL, RUNNER_REQUEST_ARG_REL, RUNNER_REQUEST_REL,
-    RUNNER_REQUEST_TARGET_REL, RUNNER_RESULT_REL, SCHEDULER_NODE_REL, SCHEDULER_NODE_STATUS_REL,
-    SCHEDULER_NODE_TARGET_REL, SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL,
-    SELECTION_FINDING_REL, SELECTION_SCORE_REL, TOOL_EVENT_REL,
+    EVALUATION_INSTANCE_REL, EVALUATION_REL, HARNESS_DIAGNOSTIC_REL, HARNESS_REQUEST_REL,
+    HARNESS_WORKSPACE_CHANGE_REL, HARNESS_WORKSPACE_REL, MESSAGE_EVENT_REL, MODEL_EXCHANGE_REL,
+    OPERATION_REL, PATCH_REL, PROFILE_COMMITMENT_REL, RUN_PROFILE_POLICY_REL,
+    RUNNER_REQUEST_ARG_REL, RUNNER_REQUEST_REL, RUNNER_REQUEST_TARGET_REL, RUNNER_RESULT_REL,
+    SCHEDULER_NODE_REL, SCHEDULER_NODE_STATUS_REL, SCHEDULER_NODE_TARGET_REL,
+    SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL, SELECTION_FINDING_REL, SELECTION_SCORE_REL,
+    TOOL_EVENT_REL,
     api::EvalStorageMode,
     cozo_schema::eval_relation_exists,
     error::EvalStoreError,
@@ -140,6 +142,14 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
         },
         {
             let schema = &super::setup::ProfileCommitmentSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::setup::RunProfilePolicySchema::SCHEMA;
             (
                 schema.relation(),
                 schema.script_create(),
@@ -363,6 +373,38 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
             )
         },
         {
+            let schema = &super::harness::HarnessRequestSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::harness::HarnessDiagnosticSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::harness::HarnessWorkspaceSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::harness::HarnessWorkspaceChangeSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
             let schema = &super::artifact::ArtifactSchema::SCHEMA;
             (
                 schema.relation(),
@@ -515,6 +557,11 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
             r#"?[profile_ref_id, campaign_id, schema_version, profile_name, source_ref, profile_path, content_sha256, source_path, admitted_at, storage_ref, ingested_at] <- [[$profile_ref_id, $campaign_id, $schema_version, $profile_name, $source_ref, $profile_path, $content_sha256, $source_path, $admitted_at, $storage_ref, $ingested_at]] :put eval_profile_commitment { profile_ref_id => campaign_id, schema_version, profile_name, source_ref, profile_path, content_sha256, source_path, admitted_at, storage_ref, ingested_at }"#,
         ),
         (
+            "eval_run_profile_policy",
+            r#":create eval_run_profile_policy { campaign_id: String => profile_ref_id: String, schema_version: String, max_generations: Int, max_total_nodes: Int, child_min: Int, child_max: Int, parallel_targets: Int?, schedule_mode: String, stop_first_keep: Bool, require_keep: Bool, explore_rejected: Bool, generation_source: String, selection_strategy: String, selection_evidence: String, selection_seed: Int, metrics_persist: Bool, score_profile: String, imp_enabled: Bool, imp_budget_k: Int, imp_archive: String, imp_score_points: Int, imp_required: Bool, oracle_mode: String, oracle_required: Bool, stop_after: String, observe_stale_secs: Int, trace_jsonl: String, debug_tools: Bool, broad_max_attempts: Int?, fresh_slots: Int?, graph_nearest: Int?, timeout_secs: Int?, control_mode: String, parallel_cap: Int?, ingested_at: String }"#,
+            r#"?[campaign_id, profile_ref_id, schema_version, max_generations, max_total_nodes, child_min, child_max, parallel_targets, schedule_mode, stop_first_keep, require_keep, explore_rejected, generation_source, selection_strategy, selection_evidence, selection_seed, metrics_persist, score_profile, imp_enabled, imp_budget_k, imp_archive, imp_score_points, imp_required, oracle_mode, oracle_required, stop_after, observe_stale_secs, trace_jsonl, debug_tools, broad_max_attempts, fresh_slots, graph_nearest, timeout_secs, control_mode, parallel_cap, ingested_at] <- [[$campaign_id, $profile_ref_id, $schema_version, $max_generations, $max_total_nodes, $child_min, $child_max, $parallel_targets, $schedule_mode, $stop_first_keep, $require_keep, $explore_rejected, $generation_source, $selection_strategy, $selection_evidence, $selection_seed, $metrics_persist, $score_profile, $imp_enabled, $imp_budget_k, $imp_archive, $imp_score_points, $imp_required, $oracle_mode, $oracle_required, $stop_after, $observe_stale_secs, $trace_jsonl, $debug_tools, $broad_max_attempts, $fresh_slots, $graph_nearest, $timeout_secs, $control_mode, $parallel_cap, $ingested_at]] :put eval_run_profile_policy { campaign_id => profile_ref_id, schema_version, max_generations, max_total_nodes, child_min, child_max, parallel_targets, schedule_mode, stop_first_keep, require_keep, explore_rejected, generation_source, selection_strategy, selection_evidence, selection_seed, metrics_persist, score_profile, imp_enabled, imp_budget_k, imp_archive, imp_score_points, imp_required, oracle_mode, oracle_required, stop_after, observe_stale_secs, trace_jsonl, debug_tools, broad_max_attempts, fresh_slots, graph_nearest, timeout_secs, control_mode, parallel_cap, ingested_at }"#,
+        ),
+        (
             "eval_closure_ref",
             r#":create eval_closure_ref { closure_ref_id: String => campaign_id: String, run_id: String?, store_scope: String, source_ref: String, content_sha256: String, schema_version: String, recorded_at: String, ingested_at: String }"#,
             r#"?[closure_ref_id, campaign_id, run_id, store_scope, source_ref, content_sha256, schema_version, recorded_at, ingested_at] <- [[$closure_ref_id, $campaign_id, $run_id, $store_scope, $source_ref, $content_sha256, $schema_version, $recorded_at, $ingested_at]] :put eval_closure_ref { closure_ref_id => campaign_id, run_id, store_scope, source_ref, content_sha256, schema_version, recorded_at, ingested_at }"#,
@@ -648,6 +695,26 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
             "eval_runner_result",
             r#":create eval_runner_result { campaign_id: String, node_id: String, result_path: String => projection_schema_version: String, result_schema_version: String, generation: Int, branch_id: String, status: String, disposition: String, treatment_campaign_id: String?, evaluation_artifact_path: String?, detail: String?, exit_code: Int?, stdout_excerpt: String?, stderr_excerpt: String?, runtime_id: String?, path_kind: String, content_sha256: String, recorded_at: String, ingested_at: String }"#,
             r#"?[campaign_id, node_id, result_path, projection_schema_version, result_schema_version, generation, branch_id, status, disposition, treatment_campaign_id, evaluation_artifact_path, detail, exit_code, stdout_excerpt, stderr_excerpt, runtime_id, path_kind, content_sha256, recorded_at, ingested_at] <- [[$campaign_id, $node_id, $result_path, $projection_schema_version, $result_schema_version, $generation, $branch_id, $status, $disposition, $treatment_campaign_id, $evaluation_artifact_path, $detail, $exit_code, $stdout_excerpt, $stderr_excerpt, $runtime_id, $path_kind, $content_sha256, $recorded_at, $ingested_at]] :put eval_runner_result { campaign_id, node_id, result_path => projection_schema_version, result_schema_version, generation, branch_id, status, disposition, treatment_campaign_id, evaluation_artifact_path, detail, exit_code, stdout_excerpt, stderr_excerpt, runtime_id, path_kind, content_sha256, recorded_at, ingested_at }"#,
+        ),
+        (
+            "eval_harness_request",
+            r#":create eval_harness_request { request_id: String => campaign_id: String, schema_version: String, request_hash: String, parent_node_id: String, request_path: String, prompt_path: String, submitted_path: String, workspace_path: String, source_repo: String, child_min: Int, child_max: Int, graph_nearest: Int, edit_policy: String, admission_policy: String, request_sha256: String, prompt_sha256: String, ingested_at: String }"#,
+            r#"?[request_id, campaign_id, schema_version, request_hash, parent_node_id, request_path, prompt_path, submitted_path, workspace_path, source_repo, child_min, child_max, graph_nearest, edit_policy, admission_policy, request_sha256, prompt_sha256, ingested_at] <- [[$request_id, $campaign_id, $schema_version, $request_hash, $parent_node_id, $request_path, $prompt_path, $submitted_path, $workspace_path, $source_repo, $child_min, $child_max, $graph_nearest, $edit_policy, $admission_policy, $request_sha256, $prompt_sha256, $ingested_at]] :put eval_harness_request { request_id => campaign_id, schema_version, request_hash, parent_node_id, request_path, prompt_path, submitted_path, workspace_path, source_repo, child_min, child_max, graph_nearest, edit_policy, admission_policy, request_sha256, prompt_sha256, ingested_at }"#,
+        ),
+        (
+            "eval_harness_diagnostic",
+            r#":create eval_harness_diagnostic { request_id: String, diagnostics_path: String => campaign_id: String, schema_version: String, terminal_kind: String?, terminal_detail: String?, attempts: Int, events: Int, validations: Int, prompts: Int, tool_requests: Int, tool_completed: Int, tool_failed: Int, turns: Int, proposals: Int, assistants: Int, outcomes: Int, first_tool: String?, last_tool: String?, content_sha256: String, ingested_at: String }"#,
+            r#"?[request_id, diagnostics_path, campaign_id, schema_version, terminal_kind, terminal_detail, attempts, events, validations, prompts, tool_requests, tool_completed, tool_failed, turns, proposals, assistants, outcomes, first_tool, last_tool, content_sha256, ingested_at] <- [[$request_id, $diagnostics_path, $campaign_id, $schema_version, $terminal_kind, $terminal_detail, $attempts, $events, $validations, $prompts, $tool_requests, $tool_completed, $tool_failed, $turns, $proposals, $assistants, $outcomes, $first_tool, $last_tool, $content_sha256, $ingested_at]] :put eval_harness_diagnostic { request_id, diagnostics_path => campaign_id, schema_version, terminal_kind, terminal_detail, attempts, events, validations, prompts, tool_requests, tool_completed, tool_failed, turns, proposals, assistants, outcomes, first_tool, last_tool, content_sha256, ingested_at }"#,
+        ),
+        (
+            "eval_harness_workspace",
+            r#":create eval_harness_workspace { request_id: String, diagnostics_path: String => campaign_id: String, schema_version: String, workspace_path: String, source_repo: String, exists: Bool, git_status_ok: Bool, status_error: String?, change_count: Int, ingested_at: String }"#,
+            r#"?[request_id, diagnostics_path, campaign_id, schema_version, workspace_path, source_repo, exists, git_status_ok, status_error, change_count, ingested_at] <- [[$request_id, $diagnostics_path, $campaign_id, $schema_version, $workspace_path, $source_repo, $exists, $git_status_ok, $status_error, $change_count, $ingested_at]] :put eval_harness_workspace { request_id, diagnostics_path => campaign_id, schema_version, workspace_path, source_repo, exists, git_status_ok, status_error, change_count, ingested_at }"#,
+        ),
+        (
+            "eval_harness_workspace_change",
+            r#":create eval_harness_workspace_change { request_id: String, diagnostics_path: String, change_index: Int => campaign_id: String, schema_version: String, status_code: String, path: String, original_path: String? }"#,
+            r#"?[request_id, diagnostics_path, change_index, campaign_id, schema_version, status_code, path, original_path] <- [[$request_id, $diagnostics_path, $change_index, $campaign_id, $schema_version, $status_code, $path, $original_path]] :put eval_harness_workspace_change { request_id, diagnostics_path, change_index => campaign_id, schema_version, status_code, path, original_path }"#,
         ),
         (
             "eval_artifact",
@@ -833,6 +900,9 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
     assert!(
         eval_relation_exists(&db, PROFILE_COMMITMENT_REL).expect("profile commitment rel exists")
     );
+    assert!(
+        eval_relation_exists(&db, RUN_PROFILE_POLICY_REL).expect("run profile policy rel exists")
+    );
     assert!(eval_relation_exists(&db, CLOSURE_REF_REL).expect("closure ref rel exists"));
     assert!(eval_relation_exists(&db, CLOSURE_INSTANCE_REL).expect("closure instance rel exists"));
     assert!(
@@ -912,6 +982,17 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
             .expect("runner request target rel exists")
     );
     assert!(eval_relation_exists(&db, RUNNER_RESULT_REL).expect("runner result rel exists"));
+    assert!(eval_relation_exists(&db, HARNESS_REQUEST_REL).expect("harness request rel exists"));
+    assert!(
+        eval_relation_exists(&db, HARNESS_DIAGNOSTIC_REL).expect("harness diagnostic rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, HARNESS_WORKSPACE_REL).expect("harness workspace rel exists")
+    );
+    assert!(
+        eval_relation_exists(&db, HARNESS_WORKSPACE_CHANGE_REL)
+            .expect("harness workspace change rel exists")
+    );
     assert!(eval_relation_exists(&db, AGENT_TURN_REL).expect("agent turn rel exists"));
     assert!(eval_relation_exists(&db, AGENT_TURN_EVENT_REL).expect("agent turn event rel exists"));
     assert!(eval_relation_exists(&db, MODEL_EXCHANGE_REL).expect("model exchange rel exists"));
@@ -1193,6 +1274,127 @@ fn prototype1_eval_store_owner_db_serializes_parallel_agent_turn_writes() {
 }
 
 #[test]
+fn prototype1_eval_store_harness_rows_capture_request_diagnostics_and_workspace_changes() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let campaign_id = CampaignId::from("campaign");
+    let prototype = tmp.path().join("prototype1");
+    fs::create_dir_all(&prototype).expect("prototype dir");
+    let db_path = prototype.join("eval-store.cozo.sqlite");
+    let db = Database::new_init().expect("db");
+    DbEvalStore::new(&db).install_schema().expect("schema");
+    super::cozo_store::persist_owner_eval_database(&db, &db_path).expect("persist owner db");
+
+    let repo_root = tmp.path().join("repo");
+    fs::create_dir_all(&repo_root).expect("repo dir");
+    let request_path = prototype.join("messages/edit-harness-request/node-parent.json");
+    let prompt_path = prototype.join("messages/edit-harness-request/node-parent.md");
+    let submitted_path = prototype.join("messages/edit-harness-result/node-parent.json");
+    let artifact_id = crate::loop_graph::ArtifactId::new("artifact:harness-base");
+    let binding =
+        crate::cli::prototype1_state::edit_surface::harness_request::RequestAdmissionBinding::new(
+            crate::loop_graph::Coordinate {
+                runtime_id: crate::loop_graph::RuntimeId::new(),
+                target: crate::loop_graph::OperationTarget::Artifact {
+                    artifact_id: artifact_id.clone(),
+                },
+            },
+            artifact_id,
+            "policy:harness",
+        )
+        .expect("admission binding");
+    let published = crate::cli::prototype1_state::edit_surface::harness_request::PublishedBroadHarnessRequest::prototype1_workspace(
+        "node-parent".to_string(),
+        repo_root,
+        crate::cli::prototype1_state::edit_surface::harness_request::HarnessChildBudget {
+            min_children: 1,
+            max_children: 1,
+        },
+        &prototype,
+        request_path,
+        prompt_path,
+        submitted_path,
+        binding,
+    );
+    fs::create_dir_all(published.request_path().parent().expect("request parent"))
+        .expect("request parent dir");
+    fs::create_dir_all(
+        published
+            .submitted_result_path()
+            .parent()
+            .expect("result parent"),
+    )
+    .expect("result parent dir");
+    fs::write(
+        published.request_path(),
+        serde_json::to_vec_pretty(&published).expect("request json"),
+    )
+    .expect("write request");
+    fs::write(published.prompt_path(), published.request().render_prompt()).expect("write prompt");
+
+    write_harness_request_to_owner_db(&campaign_id, &published).expect("request row write");
+
+    fs::create_dir_all(published.workspace_path()).expect("workspace dir");
+    let git_init = std::process::Command::new("git")
+        .arg("init")
+        .arg(published.workspace_path())
+        .output()
+        .expect("git init command");
+    assert!(
+        git_init.status.success(),
+        "git init failed: {}",
+        String::from_utf8_lossy(&git_init.stderr)
+    );
+    fs::write(published.workspace_path().join("changed.txt"), "dirty\n").expect("dirty file");
+    let run =
+        crate::cli::prototype1_state::edit_surface::tui_adapter::HeadlessRun::setup_unavailable(
+            "test_setup",
+            "unavailable for unit test",
+        );
+    let diagnostics_path = published
+        .submitted_result_path()
+        .with_extension("headless-tui.json");
+    fs::write(
+        &diagnostics_path,
+        serde_json::to_vec_pretty(&run.evidence()).expect("diagnostics json"),
+    )
+    .expect("write diagnostics");
+    write_harness_diagnostic_to_owner_db(&campaign_id, &published, &diagnostics_path, &run)
+        .expect("diagnostic row write");
+
+    let db = load_owner_eval_database(&db_path).expect("owner db loads");
+    let rows = query_harness_request(&db, &campaign_id);
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("request row");
+    assert_eq!(row.get::<i64>("child_min").expect("child min"), 1);
+    assert_eq!(
+        row.get::<String>("admission_policy").expect("admission"),
+        "policy:harness"
+    );
+
+    let rows = query_harness_diagnostic(&db, &campaign_id);
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("diagnostic row");
+    assert_eq!(
+        row.get::<String>("terminal_kind").expect("terminal kind"),
+        "setup_unavailable"
+    );
+    assert_eq!(row.get::<i64>("attempts").expect("attempts"), 0);
+
+    let rows = query_harness_workspace(&db, &campaign_id);
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("workspace row");
+    assert!(row.get::<bool>("exists").expect("exists"));
+    assert!(row.get::<bool>("git_status_ok").expect("git ok"));
+    assert_eq!(row.get::<i64>("change_count").expect("changes"), 1);
+
+    let rows = query_harness_workspace_change(&db, &campaign_id);
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("workspace change row");
+    assert_eq!(row.get::<String>("status_code").expect("status"), "??");
+    assert_eq!(row.get::<String>("path").expect("path"), "changed.txt");
+}
+
+#[test]
 fn prototype1_eval_store_setup_relations_round_trip_actual_loop_types() {
     let tmp = tempfile::tempdir().expect("tmp");
     let campaign_id = CampaignId::from("campaign");
@@ -1386,11 +1588,53 @@ fn prototype1_eval_store_setup_relations_round_trip_actual_loop_types() {
     let profiles = query_profile_commitments(&db, &campaign_id);
     assert_eq!(profiles.rows.len(), 1);
     let profile_row = profiles.row_refs().next().expect("profile row");
+    let profile_ref_id = profile_row
+        .get::<String>("profile_ref_id")
+        .expect("profile ref id");
     assert_eq!(
         profile_row
             .get::<String>("profile_name")
             .expect("profile name"),
         admitted.profile.name
+    );
+
+    let policy = query_run_profile_policy(&db, &campaign_id);
+    assert_eq!(policy.rows.len(), 1);
+    let policy_row = policy.row_refs().next().expect("policy row");
+    assert_eq!(
+        policy_row
+            .get::<String>("profile_ref_id")
+            .expect("policy profile ref"),
+        profile_ref_id
+    );
+    assert_eq!(
+        policy_row.get::<i64>("max_generations").expect("max gen"),
+        3
+    );
+    assert_eq!(
+        policy_row.get::<i64>("max_total_nodes").expect("max nodes"),
+        9
+    );
+    assert_eq!(policy_row.get::<i64>("child_min").expect("child min"), 1);
+    assert_eq!(policy_row.get::<i64>("child_max").expect("child max"), 2);
+    assert_eq!(
+        policy_row
+            .get::<i64>("parallel_targets")
+            .expect("parallel targets"),
+        1
+    );
+    assert_eq!(
+        policy_row
+            .get::<String>("generation_source")
+            .expect("generation source"),
+        "broad-harness-request"
+    );
+    assert_eq!(policy_row.get::<i64>("timeout_secs").expect("timeout"), 300);
+    assert_eq!(
+        policy_row
+            .get::<String>("control_mode")
+            .expect("control mode"),
+        "continuous"
     );
 
     let closures = query_closure_refs(&db, &campaign_id);
@@ -2081,6 +2325,37 @@ fn sample_campaign_manifest(campaign_id: CampaignId) -> CampaignManifest {
 }
 
 fn sample_admitted_profile(root: &std::path::Path) -> profile::AdmittedRunProfile {
+    let mut run_profile = profile::Prototype1RunProfile {
+        schema_version: profile::RUN_PROFILE_SCHEMA_VERSION.to_string(),
+        name: "test-profile".to_string(),
+        storage: profile::Storage {
+            worktree_root: root.join("worktrees"),
+            eval: profile::EvalStorage {
+                backend: profile::EvalStorageBackend::DualStrict,
+            },
+        },
+        target: profile::Target::default(),
+        model: profile::ModelDefaults::default(),
+        search: profile::Search::default(),
+        generation: profile::Generation::default(),
+        selection: profile::Selection::default(),
+        protocol: profile::Protocol::default(),
+        execution: profile::Execution::default(),
+        control: profile::Control::default(),
+    };
+    run_profile.search.max_generations = 3;
+    run_profile.search.max_total_nodes = 9;
+    run_profile.search.children =
+        crate::intervention::Prototype1ChildBudget::new(1, 2).with_parallel_targets(1);
+    run_profile.selection.seed = 42;
+    run_profile.execution.broad_tui = profile::BroadTui {
+        max_attempts: Some(1),
+        fresh_slots_per_child: Some(1),
+        graph_nearest: Some(5),
+        timeout_secs: Some(300),
+    };
+    run_profile.control.parallel_cap = Some(1);
+
     profile::AdmittedRunProfile {
         commitment: profile::RunProfileCommitment {
             schema_version: profile::RUN_PROFILE_COMMITMENT_SCHEMA_VERSION.to_string(),
@@ -2089,24 +2364,7 @@ fn sample_admitted_profile(root: &std::path::Path) -> profile::AdmittedRunProfil
             source_path: Some(root.join("operator-profile.toml")),
             admitted_at: "2026-06-23T00:00:00Z".to_string(),
         },
-        profile: profile::Prototype1RunProfile {
-            schema_version: profile::RUN_PROFILE_SCHEMA_VERSION.to_string(),
-            name: "test-profile".to_string(),
-            storage: profile::Storage {
-                worktree_root: root.join("worktrees"),
-                eval: profile::EvalStorage {
-                    backend: profile::EvalStorageBackend::DualStrict,
-                },
-            },
-            target: profile::Target::default(),
-            model: profile::ModelDefaults::default(),
-            search: profile::Search::default(),
-            generation: profile::Generation::default(),
-            selection: profile::Selection::default(),
-            protocol: profile::Protocol::default(),
-            execution: profile::Execution::default(),
-            control: profile::Control::default(),
-        },
+        profile: run_profile,
     }
 }
 
@@ -2347,6 +2605,76 @@ fn query_profile_commitments(db: &Database, campaign_id: &CampaignId) -> QueryRe
         params,
     )
     .expect("query profile commitments")
+}
+
+fn query_run_profile_policy(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[profile_ref_id, max_generations, max_total_nodes, child_min, child_max, parallel_targets, generation_source, timeout_secs, control_mode] :=
+    *eval_run_profile_policy { campaign_id, profile_ref_id, max_generations, max_total_nodes, child_min, child_max, parallel_targets, generation_source, timeout_secs, control_mode },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query run profile policy")
+}
+
+fn query_harness_request(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[request_id, child_min, admission_policy] :=
+    *eval_harness_request { campaign_id, request_id, child_min, admission_policy },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query harness request")
+}
+
+fn query_harness_diagnostic(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[request_id, terminal_kind, attempts] :=
+    *eval_harness_diagnostic { campaign_id, request_id, terminal_kind, attempts },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query harness diagnostic")
+}
+
+fn query_harness_workspace(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[request_id, exists, git_status_ok, change_count] :=
+    *eval_harness_workspace { campaign_id, request_id, exists, git_status_ok, change_count },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query harness workspace")
+}
+
+fn query_harness_workspace_change(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[request_id, status_code, path] :=
+    *eval_harness_workspace_change { campaign_id, request_id, status_code, path },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query harness workspace change")
 }
 
 fn query_closure_refs(db: &Database, campaign_id: &CampaignId) -> QueryResult {

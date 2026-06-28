@@ -109,6 +109,46 @@ define_eval_schema!(ProfileCommitmentSchema {
     ingested_at: "String",
 });
 
+define_eval_schema!(RunProfilePolicySchema {
+    "eval_run_profile_policy",
+    campaign_id: "String" =>
+    profile_ref_id: "String",
+    schema_version: "String",
+    max_generations: "Int",
+    max_total_nodes: "Int",
+    child_min: "Int",
+    child_max: "Int",
+    parallel_targets: "Int?",
+    schedule_mode: "String",
+    stop_first_keep: "Bool",
+    require_keep: "Bool",
+    explore_rejected: "Bool",
+    generation_source: "String",
+    selection_strategy: "String",
+    selection_evidence: "String",
+    selection_seed: "Int",
+    metrics_persist: "Bool",
+    score_profile: "String",
+    imp_enabled: "Bool",
+    imp_budget_k: "Int",
+    imp_archive: "String",
+    imp_score_points: "Int",
+    imp_required: "Bool",
+    oracle_mode: "String",
+    oracle_required: "Bool",
+    stop_after: "String",
+    observe_stale_secs: "Int",
+    trace_jsonl: "String",
+    debug_tools: "Bool",
+    broad_max_attempts: "Int?",
+    fresh_slots: "Int?",
+    graph_nearest: "Int?",
+    timeout_secs: "Int?",
+    control_mode: "String",
+    parallel_cap: "Int?",
+    ingested_at: "String",
+});
+
 define_eval_schema!(ClosureRefSchema {
     "eval_closure_ref",
     closure_ref_id: "String" =>
@@ -236,6 +276,7 @@ pub(crate) const CAMPAIGN_EVAL_POLICY_REL: &str = CampaignEvalPolicySchema::RELA
 pub(crate) const CAMPAIGN_EVAL_BUDGET_REL: &str = CampaignEvalBudgetSchema::RELATION;
 pub(crate) const CAMPAIGN_PROTOCOL_POLICY_REL: &str = CampaignProtocolPolicySchema::RELATION;
 pub(crate) const PROFILE_COMMITMENT_REL: &str = ProfileCommitmentSchema::RELATION;
+pub(crate) const RUN_PROFILE_POLICY_REL: &str = RunProfilePolicySchema::RELATION;
 pub(crate) const CLOSURE_REF_REL: &str = ClosureRefSchema::RELATION;
 pub(crate) const CLOSURE_INSTANCE_REL: &str = ClosureInstanceSchema::RELATION;
 pub(crate) const CLOSURE_ARTIFACT_REF_REL: &str = ClosureArtifactRefSchema::RELATION;
@@ -252,6 +293,7 @@ pub(super) fn ensure_setup_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(), Eval
     CampaignProtocolPolicySchema::SCHEMA
         .ensure_installed(db, "schema.eval_campaign_protocol_policy")?;
     ProfileCommitmentSchema::SCHEMA.ensure_installed(db, "schema.eval_profile_commitment")?;
+    RunProfilePolicySchema::SCHEMA.ensure_installed(db, "schema.eval_run_profile_policy")?;
     ClosureRefSchema::SCHEMA.ensure_installed(db, "schema.eval_closure_ref")?;
     ClosureInstanceSchema::SCHEMA.ensure_installed(db, "schema.eval_closure_instance")?;
     ClosureArtifactRefSchema::SCHEMA.ensure_installed(db, "schema.eval_closure_artifact_ref")?;
@@ -432,6 +474,195 @@ pub(super) fn put_campaign_manifest<D: EvalDb + ?Sized>(
     profile_ref_id: Option<&str>,
 ) -> Result<(), EvalStoreError> {
     manifest.put_into_eval_db(db, manifest_path, storage_backend, profile_ref_id)
+}
+
+pub(super) fn put_run_profile_policy<D: EvalDb + ?Sized>(
+    db: &D,
+    campaign_id: &ploke_records::ids::CampaignId,
+    profile_ref_id: &str,
+    admitted: &AdmittedRunProfile,
+) -> Result<(), EvalStoreError> {
+    let profile = &admitted.profile;
+    let search = &profile.search;
+    let child = search.children;
+    let selection = profile.selection;
+    let metrics = selection.metrics;
+    let imp = metrics.imp_at_k;
+    let execution = &profile.execution;
+    let broad = execution.broad_tui;
+    let control = profile.control;
+
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    params.insert(
+        "profile_ref_id".to_string(),
+        profile_ref_id.to_string().into(),
+    );
+    params.insert(
+        "schema_version".to_string(),
+        admitted.profile.schema_version.clone().into(),
+    );
+    params.insert(
+        "max_generations".to_string(),
+        i64::from(search.max_generations).into(),
+    );
+    params.insert(
+        "max_total_nodes".to_string(),
+        i64::from(search.max_total_nodes).into(),
+    );
+    params.insert("child_min".to_string(), i64::from(child.min).into());
+    params.insert("child_max".to_string(), i64::from(child.max).into());
+    params.insert(
+        "parallel_targets".to_string(),
+        option_u32_param(child.parallel_targets),
+    );
+    params.insert(
+        "schedule_mode".to_string(),
+        enum_string(&search.schedule, "eval_run_profile_policy.schedule_mode")?.into(),
+    );
+    params.insert(
+        "stop_first_keep".to_string(),
+        DataValue::Bool(search.stop_on_first_keep),
+    );
+    params.insert(
+        "require_keep".to_string(),
+        DataValue::Bool(search.require_keep_for_continuation),
+    );
+    params.insert(
+        "explore_rejected".to_string(),
+        DataValue::Bool(search.explore_from_rejected),
+    );
+    params.insert(
+        "generation_source".to_string(),
+        enum_string(
+            &profile.generation.source,
+            "eval_run_profile_policy.generation_source",
+        )?
+        .into(),
+    );
+    params.insert(
+        "selection_strategy".to_string(),
+        enum_string(
+            &selection.strategy,
+            "eval_run_profile_policy.selection_strategy",
+        )?
+        .into(),
+    );
+    params.insert(
+        "selection_evidence".to_string(),
+        enum_string(
+            &selection.evidence,
+            "eval_run_profile_policy.selection_evidence",
+        )?
+        .into(),
+    );
+    params.insert(
+        "selection_seed".to_string(),
+        u64_to_i64(selection.seed, "eval_run_profile_policy.selection_seed")?.into(),
+    );
+    params.insert(
+        "metrics_persist".to_string(),
+        DataValue::Bool(metrics.persist),
+    );
+    params.insert(
+        "score_profile".to_string(),
+        enum_string(
+            &metrics.score_profile,
+            "eval_run_profile_policy.score_profile",
+        )?
+        .into(),
+    );
+    params.insert("imp_enabled".to_string(), DataValue::Bool(imp.enabled));
+    params.insert(
+        "imp_budget_k".to_string(),
+        usize_to_i64(imp.budget_k, "eval_run_profile_policy.imp_budget_k")?.into(),
+    );
+    params.insert(
+        "imp_archive".to_string(),
+        enum_string(&imp.archive_scope, "eval_run_profile_policy.imp_archive")?.into(),
+    );
+    params.insert(
+        "imp_score_points".to_string(),
+        imp.score_points_per_imp_point.into(),
+    );
+    params.insert(
+        "imp_required".to_string(),
+        DataValue::Bool(imp.require_for_score),
+    );
+    params.insert(
+        "oracle_mode".to_string(),
+        enum_string(
+            &selection.oracle.mode,
+            "eval_run_profile_policy.oracle_mode",
+        )?
+        .into(),
+    );
+    params.insert(
+        "oracle_required".to_string(),
+        DataValue::Bool(selection.oracle.require_evidence),
+    );
+    params.insert(
+        "stop_after".to_string(),
+        enum_string(&execution.stop_after, "eval_run_profile_policy.stop_after")?.into(),
+    );
+    params.insert(
+        "observe_stale_secs".to_string(),
+        u64_to_i64(
+            execution.observe_child_stale_after_secs,
+            "eval_run_profile_policy.observe_stale_secs",
+        )?
+        .into(),
+    );
+    params.insert(
+        "trace_jsonl".to_string(),
+        enum_string(
+            &execution.trace_jsonl,
+            "eval_run_profile_policy.trace_jsonl",
+        )?
+        .into(),
+    );
+    params.insert(
+        "debug_tools".to_string(),
+        DataValue::Bool(execution.debug_tools),
+    );
+    params.insert(
+        "broad_max_attempts".to_string(),
+        option_u32_param(broad.max_attempts),
+    );
+    params.insert(
+        "fresh_slots".to_string(),
+        option_usize_param(
+            broad.fresh_slots_per_child,
+            "eval_run_profile_policy.fresh_slots",
+        )?,
+    );
+    params.insert(
+        "graph_nearest".to_string(),
+        option_usize_param(broad.graph_nearest, "eval_run_profile_policy.graph_nearest")?,
+    );
+    params.insert(
+        "timeout_secs".to_string(),
+        option_u64_param(broad.timeout_secs, "eval_run_profile_policy.timeout_secs")?,
+    );
+    params.insert(
+        "control_mode".to_string(),
+        enum_string(&control.mode, "eval_run_profile_policy.control_mode")?.into(),
+    );
+    params.insert(
+        "parallel_cap".to_string(),
+        option_u32_param(control.parallel_cap),
+    );
+    params.insert(
+        "ingested_at".to_string(),
+        chrono::Utc::now().to_rfc3339().into(),
+    );
+
+    put_eval_params(
+        db,
+        &RunProfilePolicySchema::SCHEMA,
+        params,
+        "put.eval_run_profile_policy",
+    )
 }
 
 fn put_campaign_eval_rows<D: EvalDb + ?Sized>(
@@ -1595,6 +1826,25 @@ fn usize_to_i64(value: usize, field: &'static str) -> Result<i64, EvalStoreError
         field,
         detail: format!("value {value} does not fit in Int"),
     })
+}
+
+fn u64_to_i64(value: u64, field: &'static str) -> Result<i64, EvalStoreError> {
+    i64::try_from(value).map_err(|_| EvalStoreError::Validation {
+        field,
+        detail: format!("value {value} does not fit in Int"),
+    })
+}
+
+fn option_u32_param(value: Option<u32>) -> DataValue {
+    value
+        .map(|value| DataValue::from(i64::from(value)))
+        .unwrap_or(DataValue::Null)
+}
+
+fn option_u64_param(value: Option<u64>, field: &'static str) -> Result<DataValue, EvalStoreError> {
+    value
+        .map(|value| u64_to_i64(value, field).map(DataValue::from))
+        .unwrap_or(Ok(DataValue::Null))
 }
 
 fn profile_ref_id(

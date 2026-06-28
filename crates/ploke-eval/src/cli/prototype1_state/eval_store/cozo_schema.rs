@@ -14,6 +14,10 @@ use super::{
     cozo_store::EvalDb,
     error::EvalStoreError,
     evaluation::ensure_evaluation_schema,
+    harness::{
+        HarnessDiagnosticSchema, HarnessRequestSchema, HarnessWorkspaceChangeSchema,
+        HarnessWorkspaceSchema, ensure_harness_schema,
+    },
     operation::ensure_operation_schema,
     runner_io::{
         RUNNER_REQUEST_SCHEMA_VERSION, RUNNER_RESULT_SCHEMA_VERSION, RunnerRequestArgSchema,
@@ -26,7 +30,7 @@ use super::{
     },
     schema::{EvalRelationSchema, define_eval_schema},
     selection::ensure_selection_schema,
-    setup::ensure_setup_schema,
+    setup::{RunProfilePolicySchema, ensure_setup_schema},
 };
 
 define_eval_schema!(TransitionEventSchema {
@@ -244,6 +248,7 @@ pub(super) fn ensure_eval_store_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(),
     ensure_child_plan_schema(db)?;
     ensure_scheduler_node_schema(db)?;
     ensure_runner_io_schema(db)?;
+    ensure_harness_schema(db)?;
     ensure_agent_turn_schema(db)?;
 
     Ok(())
@@ -271,6 +276,11 @@ fn reject_unsupported_schema_drift(existing: &BTreeSet<String>) -> Result<(), Ev
         RunnerRequestArgSchema::RELATION,
         RunnerRequestTargetSchema::RELATION,
         RunnerResultSchema::RELATION,
+        RunProfilePolicySchema::RELATION,
+        HarnessRequestSchema::RELATION,
+        HarnessDiagnosticSchema::RELATION,
+        HarnessWorkspaceSchema::RELATION,
+        HarnessWorkspaceChangeSchema::RELATION,
     ];
     let missing = required
         .into_iter()

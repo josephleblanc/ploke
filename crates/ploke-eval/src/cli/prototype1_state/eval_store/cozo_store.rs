@@ -111,6 +111,16 @@ impl<'a, D: EvalDb + ?Sized> DbEvalStore<'a, D> {
             storage_backend,
             profile_ref_id.as_deref(),
         )?;
+        if let (Some(admitted), Some(profile_ref_id)) =
+            (admitted_profile, profile_ref_id.as_deref())
+        {
+            setup::put_run_profile_policy(
+                self.db,
+                &manifest.campaign_id,
+                profile_ref_id,
+                admitted,
+            )?;
+        }
         setup::put_closure_ref(self.db, closure_path, closure_state)?;
         Ok(())
     }

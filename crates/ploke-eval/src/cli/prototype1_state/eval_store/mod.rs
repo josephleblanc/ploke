@@ -17,6 +17,7 @@ mod cozo_store;
 mod error;
 mod evaluation;
 mod evidence;
+mod harness;
 mod observation;
 mod operation;
 mod runner_io;
@@ -81,6 +82,7 @@ pub(crate) use evidence::{
     ChannelMessageEvidence, ChannelReceiptEvidence, ImportEventEvidence, InvocationEvidence,
     LogRefEvidence, ParentStartedEvidence, RecordRefEvidence, TraceEventEvidence,
 };
+pub(crate) use harness::{write_harness_diagnostic_to_owner_db, write_harness_request_to_owner_db};
 #[cfg(test)]
 pub(crate) use observation::ObservationJsonlImport;
 #[cfg(test)]
@@ -113,5 +115,14 @@ pub(crate) use setup::{
     BASELINE_INSTANCE_METRICS_REL, BASELINE_INSTANCE_REL, BASELINE_REL, CAMPAIGN_EVAL_BUDGET_REL,
     CAMPAIGN_EVAL_POLICY_REL, CAMPAIGN_PROTOCOL_POLICY_REL, CAMPAIGN_REL, CLOSURE_ARTIFACT_REF_REL,
     CLOSURE_INSTANCE_REL, CLOSURE_PROTOCOL_COUNTS_REL, CLOSURE_PROTOCOL_PROCEDURE_REL,
-    CLOSURE_REF_REL, PROFILE_COMMITMENT_REL,
+    CLOSURE_REF_REL, PROFILE_COMMITMENT_REL, RUN_PROFILE_POLICY_REL,
 };
+#[cfg(test)]
+pub(crate) const HARNESS_REQUEST_REL: &str = harness::HarnessRequestSchema::RELATION;
+#[cfg(test)]
+pub(crate) const HARNESS_DIAGNOSTIC_REL: &str = harness::HarnessDiagnosticSchema::RELATION;
+#[cfg(test)]
+pub(crate) const HARNESS_WORKSPACE_REL: &str = harness::HarnessWorkspaceSchema::RELATION;
+#[cfg(test)]
+pub(crate) const HARNESS_WORKSPACE_CHANGE_REL: &str =
+    harness::HarnessWorkspaceChangeSchema::RELATION;
