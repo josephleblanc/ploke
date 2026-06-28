@@ -238,6 +238,34 @@ fn context_carrier_counts(result: &RequestCodeContextResult) -> ContextCarrierCo
     }
 }
 
+fn summarize_context_carriers(summary: String, counts: &ContextCarrierCounts) -> String {
+    let mut blockers = Vec::new();
+    if counts.call_blockers > 0 {
+        blockers.push(format!(
+            "{} call {}",
+            counts.call_blockers,
+            pluralize(counts.call_blockers, "blocker", "blockers")
+        ));
+    }
+    if counts.proof_blockers > 0 {
+        blockers.push(format!(
+            "{} proof {}",
+            counts.proof_blockers,
+            pluralize(counts.proof_blockers, "blocker", "blockers")
+        ));
+    }
+
+    if blockers.is_empty() {
+        summary
+    } else {
+        format!("{summary}; {}", blockers.join(", "))
+    }
+}
+
+fn pluralize(count: usize, singular: &'static str, plural: &'static str) -> &'static str {
+    if count == 1 { singular } else { plural }
+}
+
 // --- GAT-based tool impl ---
 use std::borrow::Cow;
 
@@ -395,6 +423,7 @@ impl super::Tool for RequestCodeContextGat {
             apply_proof_context_degraded_note(&mut result);
         }
         let counts = context_carrier_counts(&result);
+        let summary = summarize_context_carriers(summary, &counts);
         let mut ui_payload = super::ToolUiPayload::new(Self::name(), ctx.call_id.clone(), summary)
             .with_field("search_term", result.search_term.as_str())
             .with_field(

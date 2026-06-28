@@ -89,6 +89,12 @@ async fn request_code_context_preserves_multiple_proof_blockers_for_one_fact()
         ui_field(payload, "proof_blockers"),
         expected_proof_blockers.to_string()
     );
+    assert!(
+        payload
+            .summary
+            .contains(&format!("{expected_proof_blockers} proof blockers")),
+        "request_code_context summary should surface nonzero proof blocker counts for compact UI rendering: {payload:#?}"
+    );
 
     Ok(())
 }
