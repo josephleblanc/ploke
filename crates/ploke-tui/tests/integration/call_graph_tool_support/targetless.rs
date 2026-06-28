@@ -17,12 +17,14 @@ pub(crate) struct DynamicToolFixture {
     pub(crate) owner: Uuid,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct ReceiverToolCase {
     pub(crate) label: &'static str,
     pub(crate) method: &'static str,
     pub(crate) callee: &'static str,
+    pub(crate) status: CallStatusKind,
     pub(crate) owner_type: &'static str,
+    pub(crate) module_path: Option<&'static [&'static str]>,
     pub(crate) file_suffix: &'static str,
     pub(crate) body: &'static str,
     receiver: ReceiverShape,
@@ -32,6 +34,7 @@ pub(crate) struct ReceiverToolCase {
 enum ReceiverShape {
     MethodResult { method: &'static str },
     SelfField { path: &'static [&'static str] },
+    LocalBinding { name: &'static str },
 }
 
 pub(crate) struct ReceiverToolFixture {
@@ -81,7 +84,9 @@ impl ReceiverToolCase {
             label: "axum/src/routing/route.rs:51 Route::oneshot_inner",
             method: "oneshot_inner",
             callee: "oneshot",
+            status: CallStatusKind::Unsupported,
             owner_type: "Route",
+            module_path: None,
             file_suffix: "axum/src/routing/route.rs",
             body: "self.0.clone().oneshot(req)",
             receiver: ReceiverShape::MethodResult { method: "clone" },
@@ -90,7 +95,9 @@ impl ReceiverToolCase {
             label: "axum/src/routing/route.rs:57 Route::oneshot_inner_owned",
             method: "oneshot_inner_owned",
             callee: "oneshot",
+            status: CallStatusKind::Unsupported,
             owner_type: "Route",
+            module_path: None,
             file_suffix: "axum/src/routing/route.rs",
             body: "self.0.oneshot(req)",
             receiver: ReceiverShape::SelfField { path: &["0"] },
@@ -101,19 +108,36 @@ impl ReceiverToolCase {
         label: "axum-core/src/body.rs:127 Body::size_hint self field",
         method: "size_hint",
         callee: "size_hint",
+        status: CallStatusKind::Unsupported,
         owner_type: "Body",
+        module_path: None,
         file_suffix: "axum-core/src/body.rs",
         body: "self.0.size_hint()",
         receiver: ReceiverShape::SelfField { path: &["0"] },
     }];
 
-    pub(crate) fn callee(self) -> CallCalleeInfo {
+    pub(crate) const REQUEST_PARTS: [Self; 1] = [Self {
+        label: "axum-core/src/ext_traits/request_parts.rs:186 parts.extract_with_state",
+        method: "from_request_parts",
+        callee: "extract_with_state",
+        status: CallStatusKind::Unresolved,
+        owner_type: "WorksForCustomExtractor",
+        module_path: Some(&["crate", "ext_traits", "request_parts", "tests"]),
+        file_suffix: "axum-core/src/ext_traits/request_parts.rs",
+        body: "parts.extract_with_state(state)",
+        receiver: ReceiverShape::LocalBinding { name: "parts" },
+    }];
+
+    pub(crate) fn callee(&self) -> CallCalleeInfo {
         let receiver = match self.receiver {
             ReceiverShape::MethodResult { method } => Some(CallReceiverInfo::MethodCallResult {
                 method_name: method.to_string(),
             }),
             ReceiverShape::SelfField { path } => Some(CallReceiverInfo::SelfField {
                 path: path.iter().map(|segment| (*segment).to_string()).collect(),
+            }),
+            ReceiverShape::LocalBinding { name } => Some(CallReceiverInfo::LocalBinding {
+                name: name.to_string(),
             }),
         };
         CallCalleeInfo::Method {
@@ -126,7 +150,15 @@ impl ReceiverToolCase {
 impl DynamicToolFixture {
     pub(crate) async fn new(case: DynamicToolCase) -> Self {
         let db = axum_call_graph_db();
-        let owner = owner_by_body(&db, case.method, case.file_suffix, case.body, case.label);
+        let owner = owner_by_body(
+            &db,
+            case.method,
+            case.owner_type,
+            None,
+            case.file_suffix,
+            case.body,
+            case.label,
+        );
         assert!(
             db.project_call_proof_facts_for_node(owner.id, "bd:corpus-axum-call-graph")
                 .unwrap_or_else(|err| panic!("project {} proof facts: {err}", case.label))
@@ -157,7 +189,15 @@ impl DynamicToolFixture {
 impl ReceiverToolFixture {
     pub(crate) async fn new(case: ReceiverToolCase) -> Self {
         let db = axum_call_graph_db();
-        let owner = owner_by_body(&db, case.method, case.file_suffix, case.body, case.label);
+        let owner = owner_by_body(
+            &db,
+            case.method,
+            case.owner_type,
+            case.module_path,
+            case.file_suffix,
+            case.body,
+            case.label,
+        );
         assert!(
             db.project_call_proof_facts_for_node(owner.id, "bd:corpus-axum-call-graph")
                 .unwrap_or_else(|err| panic!("project {} proof facts: {err}", case.label))
@@ -219,6 +259,7 @@ pub(crate) fn assert_method_context(
     calls: &[serde_json::Value],
     owner: Uuid,
     callee: &CallCalleeInfo,
+    status: &CallStatusKind,
     label: &str,
     tool: &str,
 ) -> Uuid {
@@ -235,7 +276,7 @@ pub(crate) fn assert_method_context(
         "{tool} should return exactly one method targetless row for {label}: {calls:#?}"
     );
     let call = &matching[0];
-    assert_eq!(call.status, CallStatusKind::Unsupported);
+    assert_eq!(&call.status, status);
     assert_eq!(call.resolution, None);
     assert!(
         call.targets.is_empty(),
@@ -281,6 +322,7 @@ pub(crate) fn assert_method_proof(
     proofs: &[serde_json::Value],
     owner: Uuid,
     site_id: Uuid,
+    status: &CallStatusKind,
     label: &str,
     tool: &str,
 ) {
@@ -299,26 +341,45 @@ pub(crate) fn assert_method_proof(
         }),
         "{tool} should return the targetless method call_site proof row for {label}: {proofs:#?}"
     );
+    let state = match status {
+        CallStatusKind::Resolved => "resolved",
+        CallStatusKind::Unresolved => "unresolved",
+        CallStatusKind::Ambiguous => "ambiguous",
+        CallStatusKind::External | CallStatusKind::Unsupported => "blocked",
+    };
     assert!(
         rows.iter().any(|proof| {
             proof.kind == "call_resolution"
                 && proof.call_site_id.as_deref() == Some(site_id.as_str())
-                && proof.resolution_state.as_deref() == Some("blocked")
+                && proof.resolution_state.as_deref() == Some(state)
                 && proof.blocker_reason.as_deref() == Some("type_resolution_missing")
         }),
-        "{tool} should return the targetless method blocked resolution proof row for {label}: {proofs:#?}"
+        "{tool} should return the targetless method {state} resolution proof row for {label}: {proofs:#?}"
+    );
+    assert!(
+        rows.iter().all(|proof| {
+            proof.kind != "call_edge" || proof.call_site_id.as_deref() != Some(site_id.as_str())
+        }),
+        "{tool} should not fabricate a call_edge for targetless method row {label}: {proofs:#?}"
     );
 }
 
 fn owner_by_body(
     db: &Database,
     method: &str,
+    owner_type: &str,
+    module_path: Option<&[&str]>,
     file_suffix: &str,
     body_marker: &str,
     label: &str,
 ) -> TargetInfo {
     let mut params = BTreeMap::new();
     params.insert("name".to_string(), DataValue::from(method));
+    params.insert("owner_type".to_string(), DataValue::from(owner_type));
+    params.insert(
+        "owner_path".to_string(),
+        DataValue::List(vec![DataValue::from(owner_type)]),
+    );
 
     let script = format!(
         r#"
@@ -330,8 +391,24 @@ module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
 file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
 file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
 
+impl_self_target[self_target_id] := *struct {{ id: self_target_id, name: $owner_type @ 'NOW' }}
+impl_self_target[self_target_id] := *enum {{ id: self_target_id, name: $owner_type @ 'NOW' }}
+impl_self_target[self_target_id] := *union {{ id: self_target_id, name: $owner_type @ 'NOW' }}
+impl_self_type[self_type_id] :=
+    *type_relation {{
+        source_id: self_type_id,
+        target_id: self_target_id,
+        relation_kind: "Ordinary" @ 'NOW'
+    }},
+    impl_self_target[self_target_id]
+impl_self_type[self_type_id] :=
+    *named_type {{ type_id: self_type_id, path @ 'NOW' }},
+    path == $owner_path
+
 ?[id, body, file_path, mod_path] :=
-    *method {{ id, name: $name, body @ 'NOW' }},
+    *method {{ id, name: $name, body, owner_id: impl_id @ 'NOW' }},
+    *impl {{ id: impl_id, self_type: self_type_id @ 'NOW' }},
+    impl_self_type[self_type_id],
     ancestor[id, mod_id],
     *module{{ id: mod_id, path: mod_path @ 'NOW' }},
     file_owner_for_module[mod_id, file_id],
@@ -349,7 +426,15 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
             let DataValue::Str(body) = &row[1] else {
                 return false;
             };
+            let module_matches = module_path.is_none_or(|expected| {
+                let actual = data_path(&row[3], "module path");
+                actual
+                    .iter()
+                    .map(String::as_str)
+                    .eq(expected.iter().copied())
+            });
             body_key(body).contains(&marker)
+                && module_matches
                 && data_str(&row[2], "file_path").ends_with(file_suffix)
         })
         .collect::<Vec<_>>();
