@@ -238,7 +238,11 @@ The targetless receiver rows for `self.0.size_hint()`, the projected
 non-turbofish `parts.extract_with_state(state)` blanket-helper call at
 `request_parts.rs:186`, and `Route::oneshot` are also pinned by exact
 source-line fanout; the source-oracle turbofish row at `request_parts.rs:164`
-remains absent in the current fixture.
+remains absent in the current fixture. RAG call-context and proof-context tests
+now preserve the `axum-core/src/body.rs:127` `self.0.size_hint()` row with zero
+traversal targets and a `type_resolution_missing` blocked proof row. Exact TUI
+`code_item_lookup` and `code_item_edges` tests assert the same owner-seeded
+self-field receiver row and blocked proof fact.
 The typed-local clone coverage pins all 11 projected `Router` receiver rows:
 ten `router.clone()` rows across `serve/mod.rs` and one `app.clone()` row in
 `routing/tests/mod.rs`, with exact source-line fanout for both typed local
