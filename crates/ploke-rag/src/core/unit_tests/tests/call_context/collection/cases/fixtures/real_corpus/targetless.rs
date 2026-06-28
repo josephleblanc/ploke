@@ -159,3 +159,59 @@ async fn call_context_collection_reads_axum_route_oneshot_receiver_gaps() -> Res
 
     Ok(())
 }
+
+#[tokio::test]
+async fn call_context_collection_reads_axum_size_hint_self_field_gap() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    let case = MethodCase {
+        label: "axum-core/src/body.rs:127 Body::size_hint self field",
+        method: "size_hint",
+        body: "self.0.size_hint()",
+        callee: CallCalleeInfo::Method {
+            name: "size_hint".to_string(),
+            receiver: Some(CallReceiverInfo::SelfField {
+                path: vec!["0".to_string()],
+            }),
+        },
+    };
+
+    let owner = method_id_by_name_and_body_substring(&db, case.method, case.body)?;
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let context = call_context
+        .get(&owner)
+        .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
+    let matching = context
+        .iter()
+        .filter(|call| call.kind == CallSiteKind::Method && call.callee == case.callee)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "{} should expose one targetless self-field receiver row: {context:#?}",
+        case.label
+    );
+
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Source chain:
+    //   axum-core/src/body.rs:127 calls `self.0.size_hint()`.
+    // Expected traversal: the tuple-field receiver is structurally visible,
+    // but has zero traversable targets until tuple-field receiver proof can
+    // connect `Body(BoxBody)` at axum-core/src/body.rs:39 to external
+    // `http_body::Body::size_hint` dispatch.
+    let call = matching[0];
+    assert_eq!(call.owner_id, owner);
+    assert_eq!(call.status, CallStatusKind::Unsupported);
+    assert_eq!(call.resolution, None);
+    assert!(
+        call.targets.is_empty(),
+        "{} should remain targetless in RAG call context: {call:#?}",
+        case.label
+    );
+
+    Ok(())
+}

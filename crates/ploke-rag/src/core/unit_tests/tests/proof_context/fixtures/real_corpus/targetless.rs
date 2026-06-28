@@ -149,6 +149,63 @@ async fn proof_context_collection_preserves_axum_route_oneshot_blockers() -> Res
 }
 
 #[tokio::test]
+async fn proof_context_collection_preserves_axum_size_hint_self_field_blocker() -> Result<(), Error>
+{
+    init_tracing_once();
+    let db = axum_db()?;
+
+    let case = MethodCase {
+        label: "Body::size_hint self-field receiver",
+        method: "size_hint",
+        body: "self.0.size_hint()",
+        callee: CallCalleeInfo::Method {
+            name: "size_hint".to_string(),
+            receiver: Some(CallReceiverInfo::SelfField {
+                path: vec!["0".to_string()],
+            }),
+        },
+    };
+
+    let owner = method_id_by_name_and_body(&db, case.method, case.body)?;
+    let projected = db.project_call_proof_facts_for_owner(owner, AXUM_DOMAIN)?;
+    assert!(
+        projected >= 2,
+        "{} should project targetless self-field receiver proof rows",
+        case.label
+    );
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.proof_context_degraded(),
+        "projected axum Body::size_hint facts should enable RAG proof context"
+    );
+
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let calls = call_context
+        .get(&owner)
+        .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
+    let site_id = targetless_method_site(calls, owner, &case.callee, case.label);
+
+    let proof_context = rag.collect_proof_context(&[(owner, 1.0)])?;
+    let rows = proof_context
+        .get(&owner)
+        .unwrap_or_else(|| panic!("{} should receive projected proof rows", case.label));
+
+    // Matrix: self-field size_hint receiver row.
+    // Source chain:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   axum-core/src/body.rs:127 calls `self.0.size_hint()`.
+    // Expected proof traversal: owner-seeded proof context must include the
+    // call_site plus blocked call_resolution facts for the unsupported,
+    // targetless tuple-field receiver row. There are zero callee edges until
+    // tuple-field receiver proof and external http_body dispatch are modeled.
+    assert_blocked_resolution(rows, owner, "type_resolution_missing");
+    assert_site_blocker(rows, owner, site_id, "type_resolution_missing", case.label);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn proof_context_collection_preserves_axum_dynamic_callable_blockers() -> Result<(), Error> {
     init_tracing_once();
     let db = axum_db()?;
