@@ -69,6 +69,12 @@ High-fanout targets are grouped by identical evidence chain. Before turning high
 | `Body::empty` | `axum-core/src/response/into_response.rs:128,163`; `axum-core/src/ext_traits/request.rs:346,364,377,390` | direct `axum_core::body::Body` path -> `axum-core/src/body.rs:52`. |
 | `Body::empty` | `axum/src/form.rs:158`; `extract/query.rs:106`; `extract/raw_form.rs:65`; `extract/ws.rs:394,400,1129,1191`; `serve/mod.rs:799`; `middleware/from_fn.rs:411`; `routing/route.rs:161,174`; `routing/method_routing.rs:1700`; `routing/tests/get_to_head.rs:25,59`; `routing/tests/merge.rs:198,204`; `routing/tests/mod.rs:228,1133,1151` | local/imported `Body` -> axum re-export `axum/src/body/mod.rs:10` or direct `axum_core::body::Body` import -> `axum-core/src/body.rs:52`. |
 
+Current executable coverage: DB target traversal, proof projection, RAG exact
+call context, `code_item_lookup`, and `code_item_edges` assert the two resolved
+`axum-core/src/response/into_response.rs:{128,163}` caller edges. The remaining
+rows in this fanout are still tracked as import/re-export completeness gaps, not
+as expected-passing traversal edges.
+
 ## High-Fanout Test Helper Matrix
 
 `TestClient::new` has 172 selected-member text callsites. The full fanout is useful for fixture coverage, but a strict DB oracle should be generated from parser facts because owner recovery by hand is noisy.

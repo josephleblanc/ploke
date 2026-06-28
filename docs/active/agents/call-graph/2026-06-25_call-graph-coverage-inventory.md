@@ -40,6 +40,19 @@ future work can choose the next batch without rereading the diary-style notes.
 
 ## Recent downstream slice
 
+- 2026-06-28: Real-corpus `Body::empty` traversal is now covered across DB,
+  proof projection, RAG exact call context, and exact TUI item tools. Source
+  oracle:
+  `axum-core/src/body.rs:52` defines `Body::empty`, and
+  `axum-core/src/response/into_response.rs:128,163` are the currently
+  resolved caller edges in `corpus_axum_call_graph`. Regression coverage:
+  `axum_real_target_body_empty_reaches_current_resolved_subset`,
+  `axum_real_target_body_empty_projects_proof_facts`,
+  `call_context_exact_reads_axum_body_empty_incoming_callers`,
+  `code_item_lookup_returns_real_corpus_body_empty_callers`, and
+  `code_item_edges_returns_real_corpus_body_empty_callers`. Broader axum
+  `Body::empty` fanout through re-export/import paths remains a separate
+  import-completeness gap tracked by the real-corpus oracle matrix.
 - 2026-06-27: `code_item_lookup` and `code_item_edges` now collect exact
   node-scoped call/proof context through `RagService::exact_call_context` and
   `RagService::exact_proof_context`, so explicit tool lookups do not inherit
