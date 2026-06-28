@@ -10,6 +10,28 @@ pub(in crate::unit) fn assert_target_proof_projection(
     source_suffix: &str,
     blocker_reason: &str,
 ) -> Result<(), DbError> {
+    assert_target_proof_projection_source_counts(
+        db,
+        label,
+        domain,
+        target,
+        callers,
+        expected,
+        &[(source_suffix, expected.len())],
+        blocker_reason,
+    )
+}
+
+pub(in crate::unit) fn assert_target_proof_projection_source_counts(
+    db: &Database,
+    label: &str,
+    domain: &str,
+    target: Uuid,
+    callers: &[CallCallerRow],
+    expected: &[TargetProofSite],
+    source_counts: &[(&str, usize)],
+    blocker_reason: &str,
+) -> Result<(), DbError> {
     let count = db.project_call_proof_facts_for_target(target, domain)?;
     let resolved_count = callers
         .iter()
@@ -50,16 +72,30 @@ pub(in crate::unit) fn assert_target_proof_projection(
         "{label} projection should not include unrelated {blocker_reason} blockers"
     );
 
+    let mut actual_source_counts = std::collections::BTreeMap::<&str, usize>::new();
     for site in expected {
         let provenance = db
             .proof_source_provenance(&site.site.to_string())?
             .unwrap_or_else(|| panic!("projected {label} source provenance"));
-        assert!(
-            provenance.source_file.ends_with(source_suffix),
-            "source provenance: {provenance:#?}"
-        );
+        let suffix = source_counts
+            .iter()
+            .map(|(suffix, _)| *suffix)
+            .find(|suffix| provenance.source_file.ends_with(suffix))
+            .unwrap_or_else(|| {
+                panic!("{label} source provenance did not match expected suffixes: {provenance:#?}")
+            });
+        *actual_source_counts.entry(suffix).or_default() += 1;
         assert!(provenance.start_byte < provenance.end_byte);
     }
+
+    let expected_source_counts = source_counts
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeMap<_, _>>();
+    assert_eq!(
+        actual_source_counts, expected_source_counts,
+        "{label} source provenance counts"
+    );
 
     Ok(())
 }

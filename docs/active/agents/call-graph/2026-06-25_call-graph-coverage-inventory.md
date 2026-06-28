@@ -41,7 +41,8 @@ future work can choose the next batch without rereading the diary-style notes.
 ## Recent downstream slice
 
 - 2026-06-28: Real-corpus `parse_attrs` traversal is now covered across DB,
-  RAG exact call context, and exact TUI item tools. Source oracle:
+  DB proof projection, RAG exact call context, and exact TUI item tools. Source
+  oracle:
   `axum-macros/src/attr_parsing.rs:59` defines `parse_attrs`,
   `axum-macros/src/typed_path.rs:23` calls it through
   `crate::attr_parsing::parse_attrs(...)`, and the current fixture also
@@ -49,6 +50,7 @@ future work can choose the next batch without rereading the diary-style notes.
   `from_request/mod.rs`. Regression coverage:
   `axum_real_target_explicit_crate_path_parse_attrs_reaches_helper`,
   `axum_real_target_parse_attrs_reaches_helper_current_fanout`,
+  `axum_real_target_parse_attrs_projects_proof_facts`,
   `call_context_exact_reads_axum_parse_attrs_incoming_callers`,
   `code_item_lookup_returns_real_corpus_parse_attrs_callers`, and
   `code_item_edges_returns_real_corpus_parse_attrs_callers`.

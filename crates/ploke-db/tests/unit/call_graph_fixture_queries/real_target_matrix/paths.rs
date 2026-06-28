@@ -292,6 +292,59 @@ fn axum_real_target_parse_attrs_reaches_helper_current_fanout() -> Result<(), Db
 }
 
 #[test]
+fn axum_real_target_parse_attrs_projects_proof_facts() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+    let target = function_id_by_name_in_module(&db, &["crate", "attr_parsing"], "parse_attrs")?;
+
+    // Matrix proof bridge:
+    //   axum-macros/src/attr_parsing.rs:59 defines `parse_attrs`.
+    //   axum-macros/src/typed_path.rs:23 calls
+    //   `crate::attr_parsing::parse_attrs(...)`.
+    //   from_ref.rs:30 and from_request/mod.rs:{112,196,592,715,880,896}
+    //   call imported `parse_attrs(...)`.
+    // Expected proof traversal: all eight current caller sites project
+    // call_site, call_resolution, call_edge, and per-source provenance facts.
+    let callers = db.callers_for_target(target)?;
+    assert_eq!(
+        callers.len(),
+        8,
+        "parse_attrs proof setup should use the current eight corpus callers: {callers:#?}"
+    );
+    for caller in &callers {
+        assert_eq!(caller.status.status, CallStatusKind::Resolved);
+        assert_eq!(
+            caller.status.resolution,
+            Some(CallResolutionKind::LocalExact)
+        );
+        assert_eq!(caller.target.relation, CallRelationKind::Function);
+        assert_eq!(caller.target.source_kind, CallSiteKind::Path);
+        assert_eq!(caller.target.target_kind, CallTargetKind::Function);
+    }
+    let expected = callers
+        .iter()
+        .map(|caller| TargetProofSite {
+            owner: caller.site.owner_id,
+            site: caller.site.id,
+        })
+        .collect::<Vec<_>>();
+
+    assert_target_proof_projection_source_counts(
+        &db,
+        "real corpus parse_attrs",
+        "bd:corpus-axum-call-graph",
+        target,
+        &callers,
+        &expected,
+        &[
+            ("axum-macros/src/typed_path.rs", 1),
+            ("axum-macros/src/from_ref.rs", 1),
+            ("axum-macros/src/from_request/mod.rs", 6),
+        ],
+        "type_resolution_missing",
+    )
+}
+
+#[test]
 fn axum_real_target_run_ui_tests_crate_paths_reach_helper() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
     let target = function_id_by_name_in_module(&db, &["crate"], "run_ui_tests")?;
