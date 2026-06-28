@@ -17,8 +17,11 @@ async fn request_code_context_returns_targetless_special_form_call_context()
     )?;
     let chained_target = one_uuid(&db, &function_in_module_query(&["crate"], "make_unary_fn"))?;
 
-    let extern_result =
-        execute_fixture_request(&db, "call_extern_c_function", 1, "extern_c_call_context").await?;
+    let extern_tool_result =
+        execute_fixture_tool_request(&db, "call_extern_c_function", 1, "extern_c_call_context")
+            .await?;
+    let extern_result: RequestCodeContextResult =
+        serde_json::from_str(&extern_tool_result.content)?;
     assert_result_ok(
         &extern_result,
         "call_extern_c_function",
@@ -49,14 +52,17 @@ async fn request_code_context_returns_targetless_special_form_call_context()
         extern_call.targets.is_empty(),
         "extern C calls must not fabricate TUI targets: {extern_call:#?}"
     );
+    assert_call_blockers(&extern_tool_result, &extern_result);
 
-    let chained_result = execute_fixture_request(
+    let chained_tool_result = execute_fixture_tool_request(
         &db,
         "call_chained_returned_function",
         1,
         "chained_returned_call_context",
     )
     .await?;
+    let chained_result: RequestCodeContextResult =
+        serde_json::from_str(&chained_tool_result.content)?;
     assert_result_ok(
         &chained_result,
         "call_chained_returned_function",
@@ -110,6 +116,28 @@ async fn request_code_context_returns_targetless_special_form_call_context()
         dynamic_call.targets.is_empty(),
         "outer chained returned-function dynamic calls must not fabricate TUI targets: {dynamic_call:#?}"
     );
+    assert_call_blockers(&chained_tool_result, &chained_result);
 
     Ok(())
+}
+
+fn assert_call_blockers(tool_result: &crate::tools::ToolResult, result: &RequestCodeContextResult) {
+    let payload = tool_result
+        .ui_payload
+        .as_ref()
+        .expect("request_code_context should emit a UI payload");
+    let expected = result
+        .context
+        .iter()
+        .flat_map(|part| part.call_context.iter())
+        .filter(|call| call.status != CallStatusKind::Resolved)
+        .count();
+    assert_eq!(ui_field(payload, "call_blockers"), expected.to_string());
+    assert!(
+        payload.summary.contains(&format!(
+            "{expected} call {}",
+            if expected == 1 { "blocker" } else { "blockers" }
+        )),
+        "request_code_context summary should surface nonzero call blocker counts for compact UI rendering: {payload:#?}"
+    );
 }
