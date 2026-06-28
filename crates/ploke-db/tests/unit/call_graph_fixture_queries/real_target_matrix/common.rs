@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use cozo::DataValue;
+use ploke_db::multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE};
 use ploke_test_utils::{CORPUS_AXUM_CALL_GRAPH, FixtureDb, fresh_backup_fixture_db};
 use uuid::Uuid;
 
@@ -70,6 +71,23 @@ pub(super) fn assert_one_edge_traversal(
 
 pub(super) fn assert_external_targetless(row: &ploke_db::CallContextRow) {
     assert_targetless_status(row, CallStatusKind::External);
+}
+
+pub(super) fn assert_owner_path_targetless(
+    db: &Database,
+    owner: Uuid,
+    path_parts: &[&str],
+    status: CallStatusKind,
+    label: &str,
+) -> Result<Uuid, DbError> {
+    let context = db.call_context_for_owner(owner)?;
+    let row = row_by_kind_path(&context, CallSiteKind::Path, path_parts);
+    assert_targetless_status(row, status);
+    assert!(
+        relations_for_site(db, row.site.id)?.rows.is_empty(),
+        "{label} should not have raw call_relation targets"
+    );
+    Ok(row.site.id)
 }
 
 pub(super) fn assert_targetless_status(row: &ploke_db::CallContextRow, status: CallStatusKind) {
@@ -142,6 +160,58 @@ pub(super) fn method_ids_by_name_and_body_substring(
         .collect::<Vec<_>>();
 
     matching.iter().map(to_uuid).collect()
+}
+
+pub(super) fn method_id_by_name_body_and_file_suffix(
+    db: &Database,
+    name: &str,
+    body_marker: &str,
+    file_suffix: &str,
+) -> Result<Uuid, DbError> {
+    let mut params = BTreeMap::new();
+    params.insert("name".to_string(), DataValue::from(name));
+
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[id, body, file_path] :=
+    *method {{ id, name: $name, body @ 'NOW' }},
+    ancestor[id, mod_id],
+    *module{{ id: mod_id @ 'NOW' }},
+    file_owner_for_module[mod_id, file_id],
+    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+    let rows = db.raw_query_params(&script, params)?;
+    let normalized_marker = body_key(body_marker);
+    let matching = rows
+        .rows
+        .iter()
+        .filter_map(|row| {
+            let body = match &row[1] {
+                DataValue::Str(body) => body.as_str(),
+                _ => return None,
+            };
+            let file_path = data_str(&row[2], "file_path");
+            (body_key(body).contains(&normalized_marker) && file_path.ends_with(file_suffix))
+                .then(|| row[0].clone())
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one method named {name:?} in {file_suffix:?} whose body contains {body_marker:?}; rows: {:#?}",
+        rows.rows
+    );
+
+    to_uuid(matching.iter().next().expect("one matching method"))
 }
 
 fn body_key(value: &str) -> String {
