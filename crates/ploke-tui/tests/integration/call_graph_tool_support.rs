@@ -71,6 +71,14 @@ pub(crate) struct AxumBoxedIntoRouteToolFixture {
     pub(crate) caller: ExpectedCallSite,
 }
 
+pub(crate) struct AxumRunUiTestsToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) target: Uuid,
+    pub(crate) callers: Vec<ExpectedCallSite>,
+}
+
 pub(crate) struct ExpectedCallSite {
     pub(crate) owner: Uuid,
     pub(crate) site: Uuid,
@@ -315,6 +323,54 @@ impl AxumBoxedIntoRouteToolFixture {
             module_path: target.module_path,
             target: target.id,
             caller: callers.pop().expect("one BoxedIntoRoute caller"),
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl AxumRunUiTestsToolFixture {
+    pub(crate) async fn new() -> Self {
+        let db = axum_call_graph_db();
+        let target = axum_run_ui_tests_target(&db);
+        let callers = db
+            .callers_for_target(target.id)
+            .expect("run_ui_tests incoming callers")
+            .into_iter()
+            .map(|caller| ExpectedCallSite {
+                owner: caller.site.owner_id,
+                site: caller.site.id,
+                path: caller
+                    .site
+                    .path
+                    .expect("run_ui_tests caller should carry a path"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            callers.len(),
+            5,
+            "current axum fixture should resolve the five run_ui_tests caller sites"
+        );
+        assert!(
+            db.project_call_proof_facts_for_node(target.id, "bd:corpus-axum-call-graph")
+                .expect("project axum run_ui_tests proof facts")
+                >= callers.len(),
+            "run_ui_tests should project target-scoped proof rows for real-corpus callers"
+        );
+        let state = axum_state_for_target(Arc::clone(&db), &target, "run_ui_tests").await;
+
+        Self {
+            state,
+            file_path: target.file_path,
+            module_path: target.module_path,
+            target: target.id,
+            callers,
         }
     }
 
@@ -595,6 +651,49 @@ fn axum_boxed_into_route_target(db: &Database) -> TargetInfo {
     }
 }
 
+fn axum_run_ui_tests_target(db: &Database) -> TargetInfo {
+    let mut params = BTreeMap::new();
+    params.insert("name".to_string(), DataValue::from("run_ui_tests"));
+
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[id, file_path, mod_path] :=
+    *function {{ id, name: $name, module_id @ 'NOW' }},
+    *module{{ id: module_id, path: mod_path @ 'NOW' }},
+    file_owner_for_module[module_id, file_id],
+    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+    let rows = db
+        .raw_query_params(&script, params)
+        .expect("query axum run_ui_tests target");
+    let matching = rows
+        .rows
+        .iter()
+        .filter(|row| data_str(&row[1], "file_path").ends_with("axum-macros/src/lib.rs"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one axum-macros run_ui_tests target; rows: {:#?}",
+        rows.rows
+    );
+    let row = matching[0];
+
+    TargetInfo {
+        id: to_uuid(&row[0]).expect("run_ui_tests uuid"),
+        file_path: PathBuf::from(data_str(&row[1], "file_path")),
+        module_path: data_path(&row[2], "module path"),
+    }
+}
+
 fn data_str<'a>(value: &'a DataValue, label: &str) -> &'a str {
     match value {
         DataValue::Str(value) => value.as_str(),
@@ -769,6 +868,15 @@ pub(crate) fn assert_boxed_into_route_incoming_context(
         matching, 1,
         "{label} should return the BoxedIntoRoute constructor incoming caller site {site}: {calls:#?}"
     );
+}
+
+pub(crate) fn assert_run_ui_tests_incoming_context(
+    calls: &[serde_json::Value],
+    callers: &[ExpectedCallSite],
+    target: Uuid,
+    label: &str,
+) {
+    assert_expected_path_incoming_context(calls, callers, target, label, "run_ui_tests");
 }
 
 pub(crate) fn assert_target_proof(
