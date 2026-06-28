@@ -75,6 +75,13 @@ for `middleware/{map_request,from_fn,map_response}.rs`.
 | `routing::post` | `axum/src/routing/method_routing.rs:1448,1660` | `merge`; `merge_accessing_state` | same-module test visibility through `use super::*` at `method_routing.rs:1391` -> generated function binding. |
 | `routing::post` | `axum/src/routing/tests/mod.rs:88,624,666,744,745,746,772,792,812,838,842,844,899,1071,1162` | routing tests | grouped `crate::routing::{..., post, ...}` import at `routing/tests/mod.rs:8-11` -> generated function binding. |
 
+Current executable coverage: `ploke-db` real-target matrix tests assert that no
+generated `post` function node exists yet, then pin the 22 currently projected
+`post(...)` rows as unsupported, targetless, and non-traversable by source-file
+fanout: six JSON rows, two `method_routing.rs` rows, and fourteen
+`routing/tests/mod.rs` rows. The multipart rows remain absent in the current
+fixture.
+
 ## Re-Exported Body Constructor Fanout
 
 | Target | Callsites | Evidence chain |
@@ -89,9 +96,13 @@ regenerating the axum call-graph fixture, the DB matrix also asserts the two
 `axum-core/src/body.rs:{110,116}` `Self::empty()` rows that traverse to
 `Body::empty`. The remaining rows in this fanout are still tracked as
 import/re-export completeness gaps, not as expected-passing traversal edges. The
-DB matrix now also pins
-`axum/src/extract/raw_form.rs:65` as a targetless external row because that owner
-imports `axum_core::body::Body` across the axum member boundary.
+DB matrix now also pins the current targetless file buckets with zero traversal
+candidates: eight external rows in `axum/src/{extract/query.rs,
+extract/raw_form.rs,form.rs,middleware/from_fn.rs,routing/tests/mod.rs,
+serve/mod.rs}` and seven unsupported rows in
+`axum-core/src/ext_traits/request.rs`,
+`axum/src/routing/method_routing.rs`, and
+`axum/src/routing/tests/get_to_head.rs`.
 
 The DB matrix also pins all eight currently projected external
 `HeaderValue::from_static` rows by exact owner: four `axum-core` response

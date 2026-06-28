@@ -646,7 +646,7 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
         status_kind: $status,
         resolution_kind @ 'NOW'
     }},
-    *function {{ id: owner_id, module_id @ 'NOW' }},
+    ancestor[owner_id, module_id],
     *module {{ id: module_id @ 'NOW' }},
     file_owner_for_module[module_id, file_id],
     *file_mod {{ owner_id: file_id, file_path @ 'NOW' }}

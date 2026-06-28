@@ -600,10 +600,9 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
     //   axum/src/extract/raw_form.rs:65 calls `Body::empty()` through a
     //   direct `axum_core::body::Body` import inside a test helper.
     // Expected traversal for the current fixture: two `Body::empty` rows and
-    // two `Self::empty` rows reach the same target in one edge. The raw_form
-    // helper row is structurally present but targetless and classified external
-    // because the owner imports `axum_core::body::Body` across the axum member
-    // boundary.
+    // two `Self::empty` rows reach the same target in one edge. The remaining
+    // projected matrix rows are file-bucketed below as external or unsupported
+    // and must expose zero traversal candidates.
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
@@ -673,6 +672,36 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
         &["Body", "empty"],
         CallStatusKind::External,
         "axum/src/extract/raw_form.rs:65",
+    )?;
+    // Matrix targetless source rows:
+    //   external: axum/src/extract/query.rs:106; raw_form.rs:65;
+    //   form.rs:158; middleware/from_fn.rs:411;
+    //   routing/tests/mod.rs:{228,1277,1295}; serve/mod.rs:1035.
+    //   unsupported: axum-core/src/ext_traits/request.rs:{346,364,377,390};
+    //   routing/method_routing.rs:1700;
+    //   routing/tests/get_to_head.rs:{25,59}.
+    assert_path_file_fanout(
+        &db,
+        &["Body", "empty"],
+        CallStatusKind::External,
+        &[
+            ("axum/src/extract/query.rs", 1),
+            ("axum/src/extract/raw_form.rs", 1),
+            ("axum/src/form.rs", 1),
+            ("axum/src/middleware/from_fn.rs", 1),
+            ("axum/src/routing/tests/mod.rs", 3),
+            ("axum/src/serve/mod.rs", 1),
+        ],
+    )?;
+    assert_path_file_fanout(
+        &db,
+        &["Body", "empty"],
+        CallStatusKind::Unsupported,
+        &[
+            ("axum-core/src/ext_traits/request.rs", 4),
+            ("axum/src/routing/method_routing.rs", 1),
+            ("axum/src/routing/tests/get_to_head.rs", 2),
+        ],
     )?;
 
     Ok(())
@@ -916,6 +945,16 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
     );
 
     assert_targetless_path_rows(&db, &["post"], CallStatusKind::Unsupported, 22)?;
+    assert_path_file_fanout(
+        &db,
+        &["post"],
+        CallStatusKind::Unsupported,
+        &[
+            ("axum/src/json.rs", 6),
+            ("axum/src/routing/method_routing.rs", 2),
+            ("axum/src/routing/tests/mod.rs", 14),
+        ],
+    )?;
 
     Ok(())
 }
