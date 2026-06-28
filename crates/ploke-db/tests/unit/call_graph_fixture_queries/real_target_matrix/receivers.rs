@@ -784,6 +784,56 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
     }
 
     assert_targetless_path_rows(&db, &["Router", "new"], CallStatusKind::Unsupported, 158)?;
+    // Matrix: unresolved `Router::new` helper-test rows. These are the
+    // currently projected rows that do not traverse to
+    // axum/src/routing/mod.rs:162, mostly from routing test helper modules.
+    // Source chain: callsite -> visible `Router` import/re-export evidence ->
+    // `Router::new`, but no supported target proof for this subset yet.
+    assert_targetless_path_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        &["Router", "new"],
+        CallStatusKind::Unsupported,
+        &[
+            SourceLineFanout {
+                file_suffix: "axum-core/src/extract/request_parts.rs",
+                lines: &[193],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/fallback.rs",
+                lines: &[
+                    6, 21, 22, 36, 48, 49, 65, 86, 87, 98, 99, 114, 115, 115, 127, 129, 130, 147,
+                    148, 165, 166, 181, 184, 203, 205, 215, 217, 219, 234, 236, 239, 254, 256, 258,
+                    274, 276, 278, 293, 295, 297, 312, 312, 323, 323, 334, 351, 372, 384, 398,
+                ],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/get_to_head.rs",
+                lines: &[10, 44],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/handle_error.rs",
+                lines: &[17, 33, 50, 68, 88],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/merge.rs",
+                lines: &[
+                    8, 11, 31, 32, 33, 34, 76, 77, 85, 92, 93, 110, 111, 127, 128, 146, 147, 147,
+                    158, 159, 170, 172, 173, 174, 175, 176, 177, 194, 201, 231, 231, 232, 261, 263,
+                    263, 265, 294, 296, 296, 298, 298, 299, 339, 341, 341, 343, 373, 377,
+                ],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/nest.rs",
+                lines: &[
+                    7, 37, 62, 63, 81, 82, 88, 89, 97, 105, 111, 111, 117, 122, 124, 126, 148, 150,
+                    152, 168, 170, 172, 191, 201, 204, 219, 222, 226, 238, 238, 272, 276, 291, 296,
+                    307, 323, 324, 325, 326, 392, 392, 400, 400, 405, 406, 421, 425, 455, 459, 468,
+                    471, 479, 483,
+                ],
+            },
+        ],
+    )?;
     assert_targetless_method_rows(
         &db,
         "clone",
