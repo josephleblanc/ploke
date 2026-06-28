@@ -7,7 +7,7 @@ use ploke_tui::tools::{
 };
 
 use crate::call_graph_tool_support::{
-    AxumRemainingTarget, AxumRemainingToolFixture, assert_expected_path_incoming_context,
+    AxumRemainingTarget, AxumRemainingToolFixture, assert_expected_remaining_incoming_context,
     assert_target_proof, ui_field,
 };
 
@@ -44,11 +44,12 @@ async fn code_item_lookup_returns_remaining_real_corpus_supported_callers() {
         //   2026-06-28_real-corpus-call-site-oracle-matrices.md
         //
         // This batch covers additional tool-reachable supported rows from the
-        // DB/RAG matrix: try_downcast helpers and the
+        // DB/RAG matrix: try_downcast helpers, same-impl
+        // `self.extract_with_state` method calls, and the
         // FromRequest/FromRequestParts/FromRef trait method bindings. Each
-        // exact lookup should expose the same incoming call-site identities as
-        // the target-centered DB traversal.
-        assert_expected_path_incoming_context(
+        // exact lookup should expose the same incoming call-site identities and
+        // callee shape as the target-centered DB traversal.
+        assert_expected_remaining_incoming_context(
             call_context,
             &fixture.callers,
             fixture.target,
@@ -104,7 +105,7 @@ async fn code_item_edges_returns_remaining_real_corpus_supported_callers() {
         // Same real-corpus oracle batch as the lookup test above, exercised
         // through `code_item_edges` so tool callers can traverse from the exact
         // target item to its incoming callsites in the edge-oriented payload.
-        assert_expected_path_incoming_context(
+        assert_expected_remaining_incoming_context(
             call_context,
             &fixture.callers,
             fixture.target,

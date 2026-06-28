@@ -183,6 +183,10 @@ the explicit `axum/src/routing/method_routing.rs:1494`
 accept `owner_type` for exact inherent-method disambiguation, so the downstream
 real-corpus matrix asserts both `HandleError::new` caller rows and all 144
 `Router::new` caller rows with target-centered proof rows.
+The same table-driven TUI matrix now also preserves the two DB/RAG-supported
+same-impl `self.extract_with_state(&())` method-call rows through
+`code_item_lookup` and `code_item_edges`, including their `self` receiver callee
+shape and target-centered proof rows.
 
 ## Receiver And Method Oracles
 

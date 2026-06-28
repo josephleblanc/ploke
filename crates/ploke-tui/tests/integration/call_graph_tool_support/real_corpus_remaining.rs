@@ -6,6 +6,8 @@ pub(crate) enum AxumRemainingTarget {
     AxumTryDowncast,
     PositionFirst,
     HandleErrorNew,
+    RequestExtExtract,
+    RequestPartsExtExtract,
     FromRequest,
     FromRequestParts,
     FromRef,
@@ -22,15 +24,24 @@ pub(crate) struct AxumRemainingToolFixture {
     pub(crate) file_path: PathBuf,
     pub(crate) module_path: Vec<String>,
     pub(crate) target: Uuid,
-    pub(crate) callers: Vec<ExpectedCallSite>,
+    pub(crate) callers: Vec<ExpectedRemainingCallSite>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ExpectedRemainingCallSite {
+    pub(crate) owner: Uuid,
+    pub(crate) site: Uuid,
+    pub(crate) callee: CallCalleeInfo,
 }
 
 impl AxumRemainingTarget {
-    pub(crate) const TOOL_REACHABLE_CASES: [Self; 8] = [
+    pub(crate) const TOOL_REACHABLE_CASES: [Self; 10] = [
         Self::CoreTryDowncast,
         Self::AxumTryDowncast,
         Self::PositionFirst,
         Self::HandleErrorNew,
+        Self::RequestExtExtract,
+        Self::RequestPartsExtExtract,
         Self::FromRequest,
         Self::FromRequestParts,
         Self::FromRef,
@@ -43,6 +54,8 @@ impl AxumRemainingTarget {
             Self::AxumTryDowncast => "axum try_downcast",
             Self::PositionFirst => "axum-macros Position::First",
             Self::HandleErrorNew => "axum HandleError::new",
+            Self::RequestExtExtract => "axum-core RequestExt extract self-call",
+            Self::RequestPartsExtExtract => "axum-core RequestPartsExt extract self-call",
             Self::FromRequest => "axum-core FromRequest::from_request",
             Self::FromRequestParts => "axum-core FromRequestParts::from_request_parts",
             Self::FromRef => "axum-core FromRef::from_ref",
@@ -55,6 +68,7 @@ impl AxumRemainingTarget {
             Self::CoreTryDowncast | Self::AxumTryDowncast => "try_downcast",
             Self::PositionFirst => "First",
             Self::HandleErrorNew | Self::RouterNew => "new",
+            Self::RequestExtExtract | Self::RequestPartsExtExtract => "extract_with_state",
             Self::FromRequest => "from_request",
             Self::FromRequestParts => "from_request_parts",
             Self::FromRef => "from_ref",
@@ -70,6 +84,8 @@ impl AxumRemainingTarget {
             | Self::AxumTryDowncast
             | Self::PositionFirst
             | Self::HandleErrorNew
+            | Self::RequestExtExtract
+            | Self::RequestPartsExtExtract
             | Self::RouterNew => None,
         }
     }
@@ -78,6 +94,8 @@ impl AxumRemainingTarget {
         match self {
             Self::HandleErrorNew => Some("HandleError"),
             Self::RouterNew => Some("Router"),
+            Self::RequestExtExtract => Some("Request"),
+            Self::RequestPartsExtExtract => Some("Parts"),
             Self::CoreTryDowncast
             | Self::AxumTryDowncast
             | Self::PositionFirst
@@ -92,6 +110,8 @@ impl AxumRemainingTarget {
             Self::CoreTryDowncast | Self::AxumTryDowncast => "function",
             Self::PositionFirst => "variant",
             Self::HandleErrorNew
+            | Self::RequestExtExtract
+            | Self::RequestPartsExtExtract
             | Self::FromRequest
             | Self::FromRequestParts
             | Self::FromRef
@@ -105,6 +125,8 @@ impl AxumRemainingTarget {
             Self::AxumTryDowncast => 1,
             Self::PositionFirst => 1,
             Self::HandleErrorNew => 2,
+            Self::RequestExtExtract => 1,
+            Self::RequestPartsExtExtract => 1,
             Self::FromRequest => 2,
             Self::FromRequestParts => 3,
             Self::FromRef => 2,
@@ -129,6 +151,18 @@ impl AxumRemainingTarget {
             Self::HandleErrorNew => {
                 inherent_method_target(db, "HandleError", "new", "axum/src/error_handling/mod.rs")
             }
+            Self::RequestExtExtract => method_target_by_body_and_file(
+                db,
+                "extract_with_state",
+                "E::from_request(self, state)",
+                "axum-core/src/ext_traits/request.rs",
+            ),
+            Self::RequestPartsExtExtract => method_target_by_body_and_file(
+                db,
+                "extract_with_state",
+                "E::from_request_parts(self, state)",
+                "axum-core/src/ext_traits/request_parts.rs",
+            ),
             Self::FromRequest => trait_method_target_by_name_and_file(
                 db,
                 "FromRequest",
@@ -162,13 +196,10 @@ impl AxumRemainingToolFixture {
             .callers_for_target(target.id)
             .unwrap_or_else(|err| panic!("{} incoming callers: {err}", case.label()))
             .into_iter()
-            .map(|caller| ExpectedCallSite {
+            .map(|caller| ExpectedRemainingCallSite {
                 owner: caller.site.owner_id,
                 site: caller.site.id,
-                path: caller
-                    .site
-                    .path
-                    .unwrap_or_else(|| panic!("{} caller should carry a path", case.label())),
+                callee: callee_for_site(caller.site, case.label()),
             })
             .collect::<Vec<_>>();
         assert_eq!(
@@ -209,6 +240,72 @@ impl AxumRemainingToolFixture {
     }
 }
 
+pub(crate) fn assert_expected_remaining_incoming_context(
+    calls: &[serde_json::Value],
+    callers: &[ExpectedRemainingCallSite],
+    target: Uuid,
+    tool: &str,
+    label: &str,
+) {
+    let incoming = calls
+        .iter()
+        .filter_map(|call| serde_json::from_value::<CallContextInfo>(call.clone()).ok())
+        .filter(|call| {
+            call.targets
+                .iter()
+                .any(|candidate| candidate.target_id == target)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        incoming.len(),
+        callers.len(),
+        "{tool} should return all incoming caller-site rows for {label}: {calls:#?}"
+    );
+
+    for expected in callers {
+        assert!(
+            incoming.iter().any(|call| {
+                call.owner_id == expected.owner
+                    && call.site_id == expected.site
+                    && call.callee == expected.callee
+            }),
+            "{tool} should return incoming caller site {} for {label}: {calls:#?}",
+            expected.site
+        );
+    }
+}
+
+fn callee_for_site(site: ploke_db::CallSiteRow, label: &str) -> CallCalleeInfo {
+    match site.kind {
+        ploke_db::CallSiteKind::Path => CallCalleeInfo::Path {
+            path: site
+                .path
+                .unwrap_or_else(|| panic!("{label} path caller should carry a path")),
+        },
+        ploke_db::CallSiteKind::Method => CallCalleeInfo::Method {
+            name: site
+                .method
+                .unwrap_or_else(|| panic!("{label} method caller should carry a method name")),
+            receiver: same_impl_receiver_info(site.receiver, label),
+        },
+        kind => panic!("{label} remaining supported caller should be path or method, got {kind:?}"),
+    }
+}
+
+fn same_impl_receiver_info(
+    receiver: Option<ploke_db::CallReceiver>,
+    label: &str,
+) -> Option<CallReceiverInfo> {
+    match receiver {
+        Some(ploke_db::CallReceiver::SelfValue) => Some(CallReceiverInfo::SelfValue),
+        other => {
+            panic!(
+                "{label} remaining supported method caller should use self receiver, got {other:?}"
+            )
+        }
+    }
+}
+
 fn function_target_by_name_and_file(db: &Database, name: &str, file_suffix: &str) -> TargetInfo {
     let mut params = BTreeMap::new();
     params.insert("name".to_string(), DataValue::from(name));
@@ -234,6 +331,48 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
             .unwrap_or_else(|err| panic!("query function {name}: {err}")),
         |row| data_str(&row[1], "file_path").ends_with(file_suffix),
         name,
+    )
+}
+
+fn method_target_by_body_and_file(
+    db: &Database,
+    method_name: &str,
+    body_needle: &str,
+    file_suffix: &str,
+) -> TargetInfo {
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[id, body, file_path, mod_path] :=
+    *method {{ id, name: $method_name, body @ 'NOW' }},
+    *module{{ id: mod_id, path: mod_path @ 'NOW' }},
+    ancestor[id, mod_id],
+    file_owner_for_module[mod_id, file_id],
+    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+    let mut params = BTreeMap::new();
+    params.insert("method_name".to_string(), DataValue::from(method_name));
+
+    one_target_info(
+        db.raw_query_params(&script, params).unwrap_or_else(|err| {
+            panic!("query method {method_name} with body {body_needle}: {err}")
+        }),
+        |row| {
+            let DataValue::Str(body) = &row[1] else {
+                return false;
+            };
+            body_key(body.as_str()).contains(&body_key(body_needle))
+                && data_str(&row[2], "file_path").ends_with(file_suffix)
+        },
+        method_name,
     )
 }
 
