@@ -1158,5 +1158,17 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
         Some(&["get"]),
         CallStatusKind::Unsupported,
         3,
+    )?;
+    assert_targetless_method_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        "send",
+        "MethodCallResult",
+        Some(&["get"]),
+        CallStatusKind::Unsupported,
+        &[SourceLineFanout {
+            file_suffix: "axum/src/extract/connect_info.rs",
+            lines: &[330, 371, 416],
+        }],
     )
 }
