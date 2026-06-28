@@ -37,6 +37,37 @@ fn axum_proc_macro_body_calls_are_documented_unsupported_gap() -> Result<(), DbE
 }
 
 #[test]
+fn axum_proc_macro_callback_argument_calls_are_documented_unsupported_gap() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: proc-macro callback argument rows.
+    // Source chains:
+    //   axum-macros/src/lib.rs:581 calls
+    //   `expand_attr_with(_attr, input, |attrs, item_fn| ...)` from
+    //   `debug_handler`.
+    //   axum-macros/src/lib.rs:637 calls the same helper from
+    //   `debug_middleware`.
+    //   axum-macros/src/lib.rs:655 passes function item
+    //   `axum_test::expand` to `expand_attr_with`.
+    //   axum-macros/src/lib.rs:715 passes function item `from_ref::expand` to
+    //   `expand_with`.
+    // Current model gap: proc-macro bodies are not visited for call-site
+    // extraction, and function items passed as callback arguments must not be
+    // fabricated as ordinary call edges.
+    let expand_attr_with = function_id_by_name_in_module(&db, &["crate"], "expand_attr_with")?;
+    let callers = db.callers_for_target(expand_attr_with)?;
+    assert!(
+        callers.is_empty(),
+        "expand_attr_with should have no resolved proc-macro-body callers until those bodies are visited: {callers:#?}"
+    );
+
+    assert_no_path_rows(&db, &["expand_attr_with"])?;
+    assert_no_path_rows(&db, &["debug_handler", "expand"])?;
+    assert_no_path_rows(&db, &["axum_test", "expand"])?;
+    assert_no_path_rows(&db, &["from_ref", "expand"])
+}
+
+#[test]
 fn axum_closure_body_call_is_documented_unsupported_gap() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
@@ -159,10 +190,13 @@ fn axum_macro_callback_rows_are_visible_or_explicitly_absent() -> Result<(), DbE
     //   `expand(syn::parse(input).and_then(f))`.
     //   lib.rs:734-738 immediately invokes an IIFE closure whose body calls
     //   `f(attr, input)`.
+    //   axum-macros/src/from_request/mod.rs:200-203 immediately invokes an
+    //   IIFE closure while deriving enum state.
     // Current model contract: the `syn::parse` path and `and_then(f)` receiver
     // are projected in `expand_with`; `expand_attr_with` projects the IIFE
-    // dynamic call, but the inner closure-body `f(attr, input)` is absent until
-    // nested closure owners are modeled.
+    // dynamic call, and `from_request::expand` projects its enum-state IIFE.
+    // The inner closure-body `f(attr, input)` is absent until nested closure
+    // owners are modeled.
     let expand_with = function_id_by_name_in_module(&db, &["crate"], "expand_with")?;
     let expand_with_context = db.call_context_for_owner(expand_with)?;
 
@@ -217,6 +251,32 @@ fn axum_macro_callback_rows_are_visible_or_explicitly_absent() -> Result<(), DbE
             .all(|row| row.site.kind != CallSiteKind::Dynamic || row.site.arg_count != Some(2)),
         "inner closure-body f(attr, input) should remain absent until closure ownership is modeled: {expand_attr_context:#?}"
     );
+
+    let from_request_expand =
+        function_id_by_name_in_module(&db, &["crate", "from_request"], "expand")?;
+    let from_request_context = db.call_context_for_owner(from_request_expand)?;
+    let enum_state_iife = assert_targetless_row(
+        &from_request_context,
+        from_request_expand,
+        TargetlessRowCase::dynamic_args(
+            None,
+            0,
+            CallStatusKind::Unsupported,
+            "from_request enum-state IIFE",
+        ),
+    );
+    assert!(
+        relations_for_site(&db, enum_state_iife.site.id)?
+            .rows
+            .is_empty(),
+        "from_request enum-state IIFE dynamic row should not fabricate targets"
+    );
+    assert_no_traversal_candidates_for_site(
+        &db,
+        from_request_expand,
+        enum_state_iife.site.id,
+        "axum-macros/src/from_request/mod.rs:200-203 IIFE dynamic call",
+    )?;
 
     Ok(())
 }

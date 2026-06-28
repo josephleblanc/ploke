@@ -244,6 +244,61 @@ fn axum_real_target_boxed_into_route_explicit_constructor_reaches_struct() -> Re
 }
 
 #[test]
+fn axum_real_target_boxed_into_route_self_constructors_are_documented_gap() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: `BoxedIntoRoute` tuple-struct constructor rows.
+    // Source chains:
+    //   axum/src/boxed.rs:12 defines `BoxedIntoRoute<S, E>(...)`.
+    //   axum/src/boxed.rs:23 calls `Self(Box::new(MakeErasedHandler { ... }))`
+    //   from `BoxedIntoRoute::from_handler`.
+    //   axum/src/boxed.rs:51 calls `Self(self.0.clone_box())` from
+    //   `Clone for BoxedIntoRoute::clone`.
+    // Current model gap: each `Self(...)` constructor call is structurally
+    // visible but unsupported and targetless. The explicit
+    // `BoxedIntoRoute(...)` row above is the only current tuple-struct
+    // constructor traversal for this target.
+    let target = struct_id_by_name(&db, "BoxedIntoRoute")?;
+    let cases = [
+        (
+            "axum/src/boxed.rs:23 BoxedIntoRoute::from_handler -> Self constructor",
+            method_id_by_name_and_body_substring(&db, "from_handler", "Self(Box::new")?,
+        ),
+        (
+            "axum/src/boxed.rs:51 BoxedIntoRoute::clone -> Self constructor",
+            method_id_by_name_body_and_file_suffix(
+                &db,
+                "clone",
+                "Self(self.0.clone_box())",
+                "axum/src/boxed.rs",
+            )?,
+        ),
+    ];
+
+    for (label, owner) in cases {
+        let context = db.call_context_for_owner(owner)?;
+        let row = row_by_path(&context, &["Self"]);
+
+        assert_targetless_status(row, CallStatusKind::Unsupported);
+        assert!(
+            relations_for_site(&db, row.site.id)?.rows.is_empty(),
+            "{label} should not have persisted call_relation targets"
+        );
+        assert_no_traversal_candidates_for_site(&db, owner, row.site.id, label)?;
+    }
+
+    let callers = db.callers_for_target(target)?;
+    assert!(
+        callers
+            .iter()
+            .all(|caller| caller.site.path != Some(path(&["Self"]))),
+        "BoxedIntoRoute target callers should not include unsupported Self constructor rows: {callers:#?}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn axum_real_target_boxed_into_route_constructor_projects_proof_facts() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 

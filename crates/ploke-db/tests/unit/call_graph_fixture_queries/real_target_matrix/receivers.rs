@@ -85,6 +85,18 @@ fn axum_real_target_request_extensions_mut_receivers_are_documented_gaps() -> Re
     let context = db.call_context_for_owner(owner)?;
     let request_new = row_by_path(&context, &["Request", "new"]);
     assert_targetless_status(request_new, CallStatusKind::Unresolved);
+    assert!(
+        relations_for_site(&db, request_new.site.id)?
+            .rows
+            .is_empty(),
+        "axum-core/src/ext_traits/request.rs:297 Request::new should not have raw call_relation targets"
+    );
+    assert_no_traversal_candidates_for_site(
+        &db,
+        owner,
+        request_new.site.id,
+        "axum-core/src/ext_traits/request.rs:297 Request::new setup for req.extensions_mut",
+    )?;
 
     let parameter_owner = method_id_by_name_body_and_file_suffix(
         &db,

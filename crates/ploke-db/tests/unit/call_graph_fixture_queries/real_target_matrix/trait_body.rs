@@ -227,6 +227,8 @@ fn axum_real_target_trait_object_dispatch_rows_are_documented_gaps() -> Result<(
     //   axum/src/error_handling/mod.rs:251 calls
     //   `self.project().future.poll(cx)` on
     //   `Pin<Box<dyn Future<...>>>` from error_handling/mod.rs:240.
+    //   The semantic target is trait-object `Future::poll`, with no concrete
+    //   runtime future available in the current call graph.
     //   axum-core/src/body.rs:32 calls
     //   `<dyn std::any::Any>::downcast_mut::<Option<T>>(&mut k)`.
     // Current model gap: dyn Future dispatch is visible through the
@@ -269,4 +271,42 @@ fn axum_real_target_handler_macro_extraction_paths_are_absent_gaps() -> Result<(
     // projected as stable call_site rows in the axum fixture yet.
     assert_no_path_rows(&db, &["ty", "from_request_parts"])?;
     assert_no_path_rows(&db, &["last", "from_request"])
+}
+
+#[test]
+fn axum_real_target_handler_async_block_body_calls_are_absent_gaps() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: async block body boundary.
+    // Source chains:
+    //   axum/src/handler/mod.rs:217 calls
+    //   `Box::pin(async move { self().await.into_response() })`.
+    //   axum/src/handler/mod.rs:240 starts the generated `Handler::call`
+    //   async block whose inner calls are separately documented by the
+    //   `$ty::from_request_parts` and `$last::from_request` matrix rows.
+    // Current model gap: async-block bodies do not yet receive independent
+    // call-body ownership, so inner `self(...)` and `into_response()` calls
+    // must not be flattened into the enclosing `Handler::call` owner.
+    let owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "call",
+        "self().await.into_response()",
+        "axum/src/handler/mod.rs",
+    )?;
+    let context = db.call_context_for_owner(owner)?;
+
+    assert!(
+        context
+            .iter()
+            .all(|row| row.site.kind != CallSiteKind::Dynamic),
+        "axum/src/handler/mod.rs:217 inner async-block `self()` should remain absent until nested async ownership lands: {context:#?}"
+    );
+    assert!(
+        context
+            .iter()
+            .all(|row| row.site.method.as_deref() != Some("into_response")),
+        "axum/src/handler/mod.rs:217 inner async-block `into_response()` should remain absent until nested async ownership lands: {context:#?}"
+    );
+
+    Ok(())
 }

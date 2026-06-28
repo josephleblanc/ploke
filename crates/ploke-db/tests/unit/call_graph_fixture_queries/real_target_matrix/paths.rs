@@ -369,6 +369,16 @@ fn axum_real_target_turbofish_calls_are_documented_gaps() -> Result<(), DbError>
             Some(1),
             "{label} should preserve the `<K>` turbofish arity"
         );
+        assert!(
+            relations_for_site(&db, row.site.id)?.rows.is_empty(),
+            "{label} should not have raw call_relation targets"
+        );
+        assert_no_traversal_candidates_for_site(
+            &db,
+            owner,
+            row.site.id,
+            &format!("{label} std::any::type_name::<K>"),
+        )?;
     }
 
     // Matrix: turbofish method call.
