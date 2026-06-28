@@ -5,7 +5,10 @@ use std::{
 };
 
 use cozo::DataValue;
-use ploke_core::ArcStr;
+use ploke_core::{
+    ArcStr,
+    rag_types::{CallCalleeInfo, CallContextInfo, CallReceiverInfo, CallSiteKind, CallStatusKind},
+};
 use ploke_db::{
     Database,
     helpers::graph_resolve_exact,
@@ -89,6 +92,13 @@ pub(crate) struct AxumHandlerCallToolFixture {
     pub(crate) module_path: Vec<String>,
     pub(crate) target: Uuid,
     pub(crate) caller: ExpectedCallSite,
+}
+
+pub(crate) struct AxumAwaitReceiverToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) owner: Uuid,
 }
 
 pub(crate) struct ExpectedCallSite {
@@ -436,6 +446,35 @@ impl AxumHandlerCallToolFixture {
             module_path: target.module_path,
             target: target.id,
             caller: callers.pop().expect("one Handler::call caller"),
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl AxumAwaitReceiverToolFixture {
+    pub(crate) async fn new() -> Self {
+        let db = axum_call_graph_db();
+        let owner = axum_await_receiver_owner(&db);
+        assert!(
+            db.project_call_proof_facts_for_node(owner.id, "bd:corpus-axum-call-graph")
+                .expect("project axum ConnLimiter::accept proof facts")
+                >= 2,
+            "ConnLimiter::accept should project targetless call-site proof rows"
+        );
+        let state = axum_state_for_target(Arc::clone(&db), &owner, "ConnLimiter::accept").await;
+
+        Self {
+            state,
+            file_path: owner.file_path,
+            module_path: owner.module_path,
+            owner: owner.id,
         }
     }
 
@@ -802,6 +841,57 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
     }
 }
 
+fn axum_await_receiver_owner(db: &Database) -> TargetInfo {
+    let mut params = BTreeMap::new();
+    params.insert("name".to_string(), DataValue::from("accept"));
+
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[id, body, file_path, mod_path] :=
+    *method {{ id, name: $name, body @ 'NOW' }},
+    ancestor[id, mod_id],
+    *module{{ id: mod_id, path: mod_path @ 'NOW' }},
+    file_owner_for_module[mod_id, file_id],
+    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+    let rows = db
+        .raw_query_params(&script, params)
+        .expect("query axum ConnLimiter::accept owner");
+    let matching = rows
+        .rows
+        .iter()
+        .filter(|row| {
+            let DataValue::Str(body) = &row[1] else {
+                return false;
+            };
+            body_key(body).contains("self.sem.clone().acquire_owned().await.unwrap()")
+                && data_str(&row[2], "file_path").ends_with("axum/src/serve/listener.rs")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one axum ConnLimiter::accept owner; rows: {:#?}",
+        rows.rows
+    );
+    let row = matching[0];
+
+    TargetInfo {
+        id: to_uuid(&row[0]).expect("ConnLimiter::accept uuid"),
+        file_path: PathBuf::from(data_str(&row[2], "file_path")),
+        module_path: data_path(&row[3], "module path"),
+    }
+}
+
 fn data_str<'a>(value: &'a DataValue, label: &str) -> &'a str {
     match value {
         DataValue::Str(value) => value.as_str(),
@@ -1024,6 +1114,38 @@ pub(crate) fn assert_target_proof(
                     == Some(target.as_str())
         }),
         "{label} should return target-centered proof rows for local_target callers: {proofs:#?}"
+    );
+}
+
+pub(crate) fn assert_await_result_unwrap_context(
+    calls: &[serde_json::Value],
+    owner: Uuid,
+    label: &str,
+) {
+    let matching = calls
+        .iter()
+        .filter_map(|call| serde_json::from_value::<CallContextInfo>(call.clone()).ok())
+        .filter(|call| {
+            call.owner_id == owner
+                && call.kind == CallSiteKind::Method
+                && call.callee
+                    == (CallCalleeInfo::Method {
+                        name: "unwrap".to_string(),
+                        receiver: Some(CallReceiverInfo::AwaitResult),
+                    })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "{label} should return exactly one targetless AwaitResult unwrap row: {calls:#?}"
+    );
+    let call = &matching[0];
+    assert_eq!(call.status, CallStatusKind::Unsupported);
+    assert_eq!(call.resolution, None);
+    assert!(
+        call.targets.is_empty(),
+        "{label} should not fabricate a target for AwaitResult unwrap: {call:#?}"
     );
 }
 

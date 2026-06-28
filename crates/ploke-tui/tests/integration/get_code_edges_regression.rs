@@ -24,13 +24,13 @@ use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
 use crate::call_graph_tool_support::{
-    AxumBodyEmptyToolFixture, AxumBoxedIntoRouteToolFixture, AxumHandlerCallToolFixture,
-    AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture, AxumRunUiTestsToolFixture,
-    CallGraphToolFixture, assert_body_empty_incoming_context,
-    assert_boxed_into_route_incoming_context, assert_handler_call_incoming_context,
-    assert_incoming_context, assert_json_from_bytes_incoming_context,
-    assert_parse_attrs_incoming_context, assert_run_ui_tests_incoming_context, assert_target_proof,
-    ui_field,
+    AxumAwaitReceiverToolFixture, AxumBodyEmptyToolFixture, AxumBoxedIntoRouteToolFixture,
+    AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture,
+    AxumRunUiTestsToolFixture, CallGraphToolFixture, assert_await_result_unwrap_context,
+    assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
+    assert_handler_call_incoming_context, assert_incoming_context,
+    assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
+    assert_run_ui_tests_incoming_context, assert_target_proof, ui_field,
 };
 
 #[tokio::test]
@@ -449,6 +449,52 @@ async fn code_item_edges_returns_call_context_for_call_graph_item() {
             .expect("outgoing count")
             >= 1,
         "code_item_edges should surface outgoing call-context count for owner lookups"
+    );
+}
+
+#[tokio::test]
+async fn code_item_edges_returns_real_corpus_await_receiver_targetless_row() {
+    let fixture = AxumAwaitReceiverToolFixture::new().await;
+    let module_path = fixture.module_path_arg();
+    let params = EdgesParams {
+        item_name: Cow::Borrowed("accept"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("method"),
+        module_path: Cow::Owned(module_path),
+        owner_trait: None,
+        owner_type: Some(Cow::Borrowed("ConnLimiter")),
+    };
+
+    let result = CodeItemEdges::execute(params, fixture.ctx("axum-await-edges"))
+        .await
+        .expect("tool execution");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let call_context = payload
+        .get("node_info")
+        .and_then(|node| node.get("call_context"))
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_context array");
+
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Source chain:
+    //   axum/src/serve/listener.rs:142 owns `ConnLimiter<T>::accept`.
+    //   axum/src/serve/listener.rs:143 calls
+    //   `self.sem.clone().acquire_owned().await.unwrap()`.
+    // The edge-oriented exact tool should expose the same unsupported,
+    // targetless AwaitResult receiver row as lookup, without a fabricated edge.
+    assert_await_result_unwrap_context(call_context, fixture.owner, "code_item_edges");
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert!(
+        ui_field(ui, "call_context_outgoing")
+            .parse::<usize>()
+            .expect("outgoing count")
+            >= 1,
+        "code_item_edges should surface outgoing targetless call-context count"
     );
 }
 
