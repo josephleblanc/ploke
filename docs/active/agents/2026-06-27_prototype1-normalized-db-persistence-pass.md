@@ -1,6 +1,6 @@
 # 2026-06-27 Prototype 1 normalized DB persistence pass
 
-**Status:** active plan + audit log; child-plan normalized slice has fresh DB proof; scheduler-node setup and generation-1 child rows have fresh DB proof; runner-request setup/child rows and runner-result rows have fresh DB proof; run-policy and broad-harness request/diagnostic/workspace rows have fresh DB proof; walk-event authority slice has local eval-store proof, fresh committed-code DB proof pending
+**Status:** active plan + audit log; child-plan normalized slice has fresh DB proof; scheduler-node setup and generation-1 child rows have fresh DB proof; runner-request setup/child rows and runner-result rows have fresh DB proof; run-policy and broad-harness request/diagnostic/workspace rows have fresh DB proof; walk-event authority slice has fresh committed-code DB proof
 **Purpose:** restart spine for a fresh pass over `ploke-eval loop walk` persistence with normalized Cozo relations as the required target.
 **Related:**
 - `docs/active/agents/2026-06-22_prototype1-eval-store-data-model/README.md`
@@ -832,7 +832,75 @@ cargo test -p ploke-eval eval_store --lib
 
 Local test proof: `prototype1_eval_store_walk_event_rows_capture_epoch_and_phase` persists and queries one `eval_walk_event` row plus one `eval_walk_event_transition` row from a reloaded owner eval DB.
 
-Fresh committed-code proof pending: rebuild `ploke-eval`, run a fresh campaign from committed code, and confirm `eval_walk_event` / `eval_walk_event_transition` via `ploke-eval loop walk db_query --script <cozo>` before making DB coverage claims for live runs.
+Fresh committed-code DB proof:
+
+- Campaign: `p1-walkevent-db-20260628-131410`
+- Proof source worktree: `/home/brasides/.ploke-eval/worktrees/p1-walkevent-src-b710d29f0`
+- Worktree head: `3c2e4c644903c3999b2b273654f293e06bc32f3d`
+- Worktree parent / code slice: `b710d29f0279f8bbe22bdf94ff654108052462a3`
+- Binary: `/home/brasides/code/ploke/target/debug/ploke-eval`
+- Binary SHA-256: `97be99f3846e82dba1a943b01d61d0d01ab109292f15b22e5bfadafe3f6475f3`
+
+`walk db_query` proof for `eval_walk_event`:
+
+```json
+[
+  {
+    "command": "start",
+    "event_id": "cd55b9a698ddb4b8a669aa5e59f65f950603ff17c5c0b4b8cfb14a856142e736",
+    "exe_path": "/home/brasides/code/ploke/target/debug/ploke-eval",
+    "exe_sha256": "97be99f3846e82dba1a943b01d61d0d01ab109292f15b22e5bfadafe3f6475f3",
+    "git_head": "3c2e4c644903c3999b2b273654f293e06bc32f3d",
+    "phase_after": "r7",
+    "phase_before": "r4c",
+    "protocol_version": 3,
+    "source_status_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "status": "ok",
+    "target_phase": "r7",
+    "transition_count": 3,
+    "transition_graph_version": "walk-r0-r14a-v1"
+  },
+  {
+    "command": "start",
+    "event_id": "d87cbc52cf23325342195b7b5f8692f272683cb66600d655ce3573b5b0419a3c",
+    "exe_path": "/home/brasides/code/ploke/target/debug/ploke-eval",
+    "exe_sha256": "97be99f3846e82dba1a943b01d61d0d01ab109292f15b22e5bfadafe3f6475f3",
+    "git_head": "3c2e4c644903c3999b2b273654f293e06bc32f3d",
+    "phase_after": "r0",
+    "phase_before": "empty",
+    "protocol_version": 3,
+    "source_status_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "status": "ok",
+    "target_phase": "r0",
+    "transition_count": 0,
+    "transition_graph_version": "walk-r0-r14a-v1"
+  }
+]
+```
+
+`walk db_query` proof for `eval_walk_event_transition`:
+
+```json
+[
+  {
+    "event_id": "cd55b9a698ddb4b8a669aa5e59f65f950603ff17c5c0b4b8cfb14a856142e736",
+    "transition_index": 0,
+    "transition_label": "r4c->r5:r4c_to_r5"
+  },
+  {
+    "event_id": "cd55b9a698ddb4b8a669aa5e59f65f950603ff17c5c0b4b8cfb14a856142e736",
+    "transition_index": 1,
+    "transition_label": "r5->r6:r5_to_r6"
+  },
+  {
+    "event_id": "cd55b9a698ddb4b8a669aa5e59f65f950603ff17c5c0b4b8cfb14a856142e736",
+    "transition_index": 2,
+    "transition_label": "r6->r7:r6_to_r7"
+  }
+]
+```
+
+Conclusion: the owner eval DB can answer which committed worktree/binary advanced the walk, the binary digest, git/source epoch, phase before/after, target phase, and normalized transition labels for this proof campaign without reading walk files.
 
 ## Initial persistence matrix
 
@@ -860,7 +928,7 @@ Legend:
 | Build / artifact / patch / apply facts | `eval_artifact*`, `eval_binary_ref`, `eval_build_event`, `eval_operation`, `eval_patch`, `eval_apply_event` | Partly normalized | Need verify whether all file artifacts have normalized coverage or only event projections. |
 | Selection | `eval_selection_decision`, candidate/finding/score | Normalized | Good initial shape; verify rows per generation/current parent. |
 | Continuation decision | `eval_continuation_decision` | Normalized | Present after handoff. |
-| Walk command authority / R-phase event ledger | `eval_walk_event`, `eval_walk_event_transition` | Implemented locally; fresh live DB proof pending | Captures successful `walk start`/`walk step` command authority, binary digest, git/source epoch, phase before/after, and normalized transition labels. Needs committed-code campaign proof via `walk db_query`. |
+| Walk command authority / R-phase event ledger | `eval_walk_event`, `eval_walk_event_transition` | Implemented; fresh committed-code DB proof complete | Fresh campaign `p1-walkevent-db-20260628-131410` proves successful `walk start` command authority, binary digest, git/source epoch, phase before/after, and normalized transition labels through R7. |
 | Run profile policy / broad-harness policy | `eval_run_profile_policy` | Normalized | Fresh campaign `p1-policyharness-db-20260628-032903` proves max generations/nodes, child min/max/parallel targets, generation source, schedule, timeout, fresh slots, graph nearest, and control mode. |
 | Broad-harness request/diagnostics/workspace | `eval_harness_request`, `eval_harness_diagnostic`, `eval_harness_workspace`, `eval_harness_workspace_change` | Normalized first slice | Fresh campaign `p1-policyharness-db-20260628-032903` proves request identity/hash/paths/policy, diagnostic terminal/event/tool counts, and dirty candidate workspace path. Still need richer prompt/patch/rationale rows. |
 | History blocks/indexes | none dedicated; maybe refs only | Missing | Required next major schema area: blocks, block entries, heads/indexes. |
@@ -889,10 +957,10 @@ Do not continue live fanout as proof work until these are handled in a structure
    - Fresh `walk db_query` proof: `p1-runnerio-db-20260627-125536` setup has one root parent request row and four arg rows.
    - Fresh `walk db_query` proof: `p1-policyharness-db-20260628-032903` has the admitted child runner request and two successful result rows (`attempt`, `node_latest`).
 
-4. **Normalize walk command authority / R-phase event ledger** — implemented locally; fresh committed-code DB proof pending.
+4. **Normalize walk command authority / R-phase event ledger** — implemented; fresh committed-code DB proof complete.
    - Relations: `eval_walk_event`, `eval_walk_event_transition`.
    - Captures successful `walk start`/`walk step` authority facts, executable SHA-256, git/source epoch, and normalized transition labels.
-   - Next: rebuild, run a fresh committed-code campaign, and prove rows with `walk db_query`.
+   - Fresh `walk db_query` proof: `p1-walkevent-db-20260628-131410` has start events plus normalized `r4c->r5`, `r5->r6`, and `r6->r7` transition labels.
 
 5. **Normalize parent identity and successor handoff**
    - Parent identity currently changes on disk at handoff; DB should expose current and historical parent lineage.
