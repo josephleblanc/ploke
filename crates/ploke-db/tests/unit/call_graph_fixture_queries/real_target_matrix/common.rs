@@ -224,15 +224,50 @@ pub(super) fn assert_owner_method_targetless(
     status: CallStatusKind,
     label: &str,
 ) -> Result<Uuid, DbError> {
+    let sites =
+        assert_owner_method_targetless_count(db, owner, method, receiver, status, 1, label)?;
+    Ok(sites[0])
+}
+
+pub(super) fn assert_owner_method_targetless_count(
+    db: &Database,
+    owner: Uuid,
+    method: &str,
+    receiver: &CallReceiver,
+    status: CallStatusKind,
+    expected_count: usize,
+    label: &str,
+) -> Result<Vec<Uuid>, DbError> {
     let context = db.call_context_for_owner(owner)?;
-    let row = row_by_method_receiver(&context, method, receiver);
-    assert_targetless_status(row, status);
-    assert!(
-        relations_for_site(db, row.site.id)?.rows.is_empty(),
-        "{label} should not have raw call_relation targets"
+    let rows = context
+        .iter()
+        .filter(|row| {
+            row.site.kind == CallSiteKind::Method
+                && row.site.method.as_deref() == Some(method)
+                && row.site.receiver.as_ref() == Some(receiver)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rows.len(),
+        expected_count,
+        "{label} should expose exactly {expected_count} targetless method row(s): {context:#?}"
     );
-    assert_no_traversal_candidates_for_site(db, owner, row.site.id, label)?;
-    Ok(row.site.id)
+
+    let mut sites = Vec::new();
+    for row in rows {
+        assert_targetless_status(row, status);
+        assert!(
+            relations_for_site(db, row.site.id)?.rows.is_empty(),
+            "{label} should not have raw call_relation targets"
+        );
+        sites.push(row.site.id);
+    }
+    assert_no_traversal_candidates_for_sites(
+        db,
+        &sites.iter().map(|site| (owner, *site)).collect::<Vec<_>>(),
+        label,
+    )?;
+    Ok(sites)
 }
 
 pub(super) fn assert_targetless_status(row: &ploke_db::CallContextRow, status: CallStatusKind) {

@@ -158,6 +158,13 @@ unsupported, and have zero traversal candidates.
 | closure body boundary | `axum-macros/src/from_ref.rs:23` | closure inside `from_ref::expand` | closure call to `expand_field` should be nested-owner owned once closures are modeled; target fn `from_ref.rs:29`. |
 | async block boundary | `axum/src/handler/mod.rs:217,240` | handler `call` async blocks | calls inside async blocks should not be flattened into outer function owner once nested async owners are modeled. |
 
+Current executable coverage: receiver tests now assert exact owner-count buckets
+for the six projected `req.extensions_mut()` local-binding rows, the seven
+projected `self.inner.poll_ready(cx)` forwarding rows, and the three projected
+`self.0.poll_ready(cx)` tuple-field rows. The tuple-field coverage includes the
+nested local `impl Service` rows currently owned by their enclosing test
+functions in `routing/tests/mod.rs` and `routing/tests/nest.rs`.
+
 ## Dynamic And Unsupported Callable Oracles
 
 | Case | Callsites | Owner | Evidence chain |

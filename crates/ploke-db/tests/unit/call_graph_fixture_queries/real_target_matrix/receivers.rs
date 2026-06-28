@@ -104,22 +104,85 @@ fn axum_real_target_request_extensions_mut_receivers_are_documented_gaps() -> Re
         "axum-core/src/ext_traits/request.rs:297 Request::new setup for req.extensions_mut",
     )?;
 
-    let parameter_owner = method_id_by_name_body_and_file_suffix(
-        &db,
-        "call",
-        "req.extensions_mut().insert(self.value.clone())",
-        "axum/src/extension.rs",
-    )?;
-    assert_owner_method_targetless(
-        &db,
-        parameter_owner,
-        "extensions_mut",
-        &CallReceiver::LocalBinding {
-            name: "req".to_string(),
-        },
-        CallStatusKind::Unresolved,
-        "axum/src/extension.rs:184",
-    )?;
+    let req_receiver = CallReceiver::LocalBinding {
+        name: "req".to_string(),
+    };
+    let cases = [
+        (
+            // axum-core/src/extract/default_body_limit.rs:183
+            // `DefaultBodyLimit::apply` calls `req.extensions_mut().insert(...)`.
+            "axum-core/src/extract/default_body_limit.rs:183",
+            method_id_by_name_body_and_file_suffix(
+                &db,
+                "apply",
+                "req.extensions_mut().insert(self.kind)",
+                "axum-core/src/extract/default_body_limit.rs",
+            )?,
+            1,
+        ),
+        (
+            // axum-core/src/extract/default_body_limit.rs:225
+            // `DefaultBodyLimitService::call` calls the same external receiver.
+            "axum-core/src/extract/default_body_limit.rs:225",
+            method_id_by_name_body_and_file_suffix(
+                &db,
+                "call",
+                "req.extensions_mut().insert(self.kind)",
+                "axum-core/src/extract/default_body_limit.rs",
+            )?,
+            1,
+        ),
+        (
+            // axum/src/extension.rs:184
+            // `AddExtension::call` uses the parameter receiver from
+            // `mut req: Request<ResBody>` at axum/src/extension.rs:183.
+            "axum/src/extension.rs:184",
+            method_id_by_name_body_and_file_suffix(
+                &db,
+                "call",
+                "req.extensions_mut().insert(self.value.clone())",
+                "axum/src/extension.rs",
+            )?,
+            1,
+        ),
+        (
+            // axum/src/extract/nested_path.rs:95 and :103
+            // `SetNestedPath::call` has two `req.extensions_mut()` callsites
+            // in the same owner body, so the oracle preserves count 2.
+            "axum/src/extract/nested_path.rs:95 and :103",
+            method_id_by_name_body_and_file_suffix(
+                &db,
+                "call",
+                "req.extensions_mut().get_mut::<NestedPath>()",
+                "axum/src/extract/nested_path.rs",
+            )?,
+            2,
+        ),
+        (
+            // axum/src/routing/path_router.rs:336
+            // `PathRouter::call_with_state` inserts `OriginalUri` before
+            // routing to an endpoint.
+            "axum/src/routing/path_router.rs:336",
+            method_id_by_name_body_and_file_suffix(
+                &db,
+                "call_with_state",
+                "req.extensions_mut().insert(original_uri)",
+                "axum/src/routing/path_router.rs",
+            )?,
+            1,
+        ),
+    ];
+    for (label, owner, count) in cases {
+        assert_owner_method_targetless_count(
+            &db,
+            owner,
+            "extensions_mut",
+            &req_receiver,
+            CallStatusKind::Unresolved,
+            count,
+            label,
+        )?;
+    }
 
     assert_targetless_method_rows(
         &db,
@@ -237,22 +300,155 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
     //   tuple wrappers project as `self.0.poll_ready(...)`.
     // Current model gap: external trait receiver dispatch is visible but
     // targetless.
-    let owner = method_id_by_name_body_and_file_suffix(
+    let inner_receiver = CallReceiver::SelfField {
+        path: vec!["inner".to_string()],
+    };
+    let inner_cases = [
+        (
+            // axum-core/src/extract/default_body_limit.rs:220
+            // `DefaultBodyLimitService::poll_ready` forwards to `S: Service`.
+            "axum-core/src/extract/default_body_limit.rs:220",
+            method_id_by_name_body_and_file_suffix(
+                &db,
+                "poll_ready",
+                "self.inner.poll_ready(cx)",
+                "axum-core/src/extract/default_body_limit.rs",
+            )?,
+        ),
+        (
+            // axum/src/extension.rs:180
+            // `AddExtension::poll_ready` forwards through `self.inner`.
+            "axum/src/extension.rs:180",
+            method_id_by_name_body_and_file_suffix(
+                &db,
+                "poll_ready",
+                "self.inner.poll_ready(cx)",
+                "axum/src/extension.rs",
+            )?,
+        ),
+        (
+            // axum/src/extract/nested_path.rs:91
+            // `SetNestedPath::poll_ready` forwards through `self.inner`.
+            "axum/src/extract/nested_path.rs:91",
+            method_id_by_name_body_and_file_suffix(
+                &db,
+                "poll_ready",
+                "self.inner.poll_ready(cx)",
+                "axum/src/extract/nested_path.rs",
+            )?,
+        ),
+        (
+            // axum/src/middleware/from_extractor.rs:212
+            // `FromExtractor::poll_ready` forwards through `self.inner`.
+            "axum/src/middleware/from_extractor.rs:212",
+            method_id_by_name_body_and_file_suffix(
+                &db,
+                "poll_ready",
+                "self.inner.poll_ready(cx)",
+                "axum/src/middleware/from_extractor.rs",
+            )?,
+        ),
+        (
+            // axum/src/middleware/from_fn.rs:280 / :358
+            // The current fixture projects one `self.inner.poll_ready(cx)`
+            // owner from this file; it remains external-trait targetless.
+            "axum/src/middleware/from_fn.rs:280 or :358 projected owner",
+            method_id_by_name_body_and_file_suffix(
+                &db,
+                "poll_ready",
+                "self.inner.poll_ready(cx)",
+                "axum/src/middleware/from_fn.rs",
+            )?,
+        ),
+        (
+            // axum/src/routing/strip_prefix.rs:36
+            // `StripPrefix::poll_ready` forwards through `self.inner`.
+            "axum/src/routing/strip_prefix.rs:36",
+            method_id_by_name_body_and_file_suffix(
+                &db,
+                "poll_ready",
+                "self.inner.poll_ready(cx)",
+                "axum/src/routing/strip_prefix.rs",
+            )?,
+        ),
+        (
+            // axum/src/util.rs:69
+            // `MapFuture::poll_ready` forwards through `self.inner`.
+            "axum/src/util.rs:69",
+            method_id_by_name_body_and_file_suffix(
+                &db,
+                "poll_ready",
+                "self.inner.poll_ready(cx)",
+                "axum/src/util.rs",
+            )?,
+        ),
+    ];
+    for (label, owner) in inner_cases {
+        assert_owner_method_targetless_count(
+            &db,
+            owner,
+            "poll_ready",
+            &inner_receiver,
+            CallStatusKind::Unsupported,
+            1,
+            label,
+        )?;
+    }
+
+    let tuple_receiver = CallReceiver::SelfField {
+        path: vec!["0".to_string()],
+    };
+    let tuple_method_owner = method_id_by_name_body_and_file_suffix(
         &db,
         "poll_ready",
-        "self.inner.poll_ready(cx)",
-        "axum/src/extension.rs",
+        "self.0.poll_ready(cx)",
+        "axum/src/middleware/response_axum_body.rs",
     )?;
-    assert_owner_method_targetless(
+    assert_owner_method_targetless_count(
         &db,
-        owner,
+        tuple_method_owner,
         "poll_ready",
-        &CallReceiver::SelfField {
-            path: vec!["inner".to_string()],
-        },
+        &tuple_receiver,
         CallStatusKind::Unsupported,
-        "axum/src/extension.rs:180",
+        1,
+        // axum/src/middleware/response_axum_body.rs:45
+        "axum/src/middleware/response_axum_body.rs:45",
     )?;
+
+    let tuple_function_cases = [
+        (
+            // axum/src/routing/tests/mod.rs:703
+            // Local `CountMiddleware<S>(S)` impl inside the test function.
+            "axum/src/routing/tests/mod.rs:703",
+            function_id_by_name_in_module(
+                &db,
+                &["crate", "routing", "tests"],
+                "middleware_still_run_for_unmatched_requests",
+            )?,
+        ),
+        (
+            // axum/src/routing/tests/nest.rs:258
+            // Local `SetUriExtension<S>(S)` impl inside the test function.
+            "axum/src/routing/tests/nest.rs:258",
+            function_id_by_name_in_module(
+                &db,
+                &["crate", "routing", "tests", "nest"],
+                "outer_middleware_still_see_whole_url",
+            )?,
+        ),
+    ];
+    for (label, owner) in tuple_function_cases {
+        assert_owner_method_targetless_count(
+            &db,
+            owner,
+            "poll_ready",
+            &tuple_receiver,
+            CallStatusKind::Unsupported,
+            1,
+            label,
+        )?;
+    }
+
     assert_targetless_method_rows(
         &db,
         "poll_ready",
