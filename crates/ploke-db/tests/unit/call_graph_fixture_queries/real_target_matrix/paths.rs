@@ -569,17 +569,18 @@ fn axum_real_target_try_downcast_helpers_reach_current_resolved_subset() -> Resu
     // Matrix: same-named `try_downcast` helpers.
     // Source chain:
     //   axum-core/src/body.rs:23 defines the axum-core helper; body.rs callsites
-    //   at :20, :48, :224, and :225 are the source oracle.
+    //   at :20, :48, :251, and :252 are the source oracle. The test function
+    //   rows at :251 and :252 use `try_downcast::<i32, _>(...)`.
     //   axum/src/util.rs:99 defines the axum helper; routing/mod.rs:205 and
     //   util.rs:114,115 are the source oracle.
-    // Expected traversal for the current fixture: two resolved callers for the
-    // axum-core helper and one resolved caller for the axum helper.
+    // Expected traversal for the current fixture: two resolved non-macro
+    // callers for the axum-core helper and one resolved caller for the axum
+    // helper. The turbofish test calls are inside `assert_eq!` macro
+    // invocations, so they remain unsupported macro rows rather than path
+    // traversal edges.
+    let core_target = function_id_by_name_in_module(&db, &["crate", "body"], "try_downcast")?;
     let cases = [
-        (
-            "axum-core try_downcast",
-            function_id_by_name_in_module(&db, &["crate", "body"], "try_downcast")?,
-            2,
-        ),
+        ("axum-core try_downcast", core_target, 2),
         (
             "axum try_downcast",
             function_id_by_name_in_module(&db, &["crate", "util"], "try_downcast")?,
@@ -627,6 +628,35 @@ fn axum_real_target_try_downcast_helpers_reach_current_resolved_subset() -> Resu
                 label,
             );
         }
+    }
+
+    let turbofish_owner =
+        function_id_by_name_in_module(&db, &["crate", "body"], "test_try_downcast")?;
+    let turbofish_context = db.call_context_for_owner(turbofish_owner)?;
+    let turbofish_path_rows = turbofish_context
+        .iter()
+        .filter(|row| {
+            row.site.kind == CallSiteKind::Path
+                && row.site.path.as_ref() == Some(&path(&["try_downcast"]))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        turbofish_path_rows.len(),
+        0,
+        "axum-core/src/body.rs:251 and :252 are inside assert_eq! macro invocations and should not be flattened into try_downcast path rows: {turbofish_context:#?}"
+    );
+    assert_eq!(
+        turbofish_context.len(),
+        2,
+        "axum-core/src/body.rs:251 and :252 should project two unsupported macro-bound rows: {turbofish_context:#?}"
+    );
+    for row in &turbofish_context {
+        assert_targetless_status(row, CallStatusKind::Unsupported);
+        assert_eq!(row.site.generic_arg_count, None);
+        assert!(
+            relations_for_site(&db, row.site.id)?.rows.is_empty(),
+            "macro-bound try_downcast rows should not fabricate local targets"
+        );
     }
 
     Ok(())

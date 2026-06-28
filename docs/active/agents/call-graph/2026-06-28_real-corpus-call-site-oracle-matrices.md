@@ -104,6 +104,11 @@ as expected-passing traversal edges.
 | `HandleError::new` | `axum/src/error_handling/mod.rs:65`; `service_ext.rs:43` | `HandleErrorLayer::layer`; trait default `ServiceExt::handle_error` | local inherent associated function -> `error_handling/mod.rs:80`; service extension chain also has user `.handle_error(...)` at `routing/tests/handle_error.rs:86`. |
 | `Handler::call` | `axum/src/handler/service.rs:171` | `impl Service for HandlerService::call` | import `super::Handler` at `service.rs:1`; bound `H: Handler<T, S>` at `:148`; call `Handler::call(...)` -> trait method `handler/mod.rs:153`. |
 
+Current executable coverage: the `try_downcast` DB test asserts the current
+one-hop resolved subset for the two same-named helpers. It also pins the axum-core
+`try_downcast::<i32, _>` test rows as unsupported macro-bound rows, not
+traversal edges, because the calls occur inside `assert_eq!` macro arguments.
+
 ## Receiver And Method Oracles
 
 | Case | Callsites | Owner | Evidence chain |
