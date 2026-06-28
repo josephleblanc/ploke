@@ -15,7 +15,7 @@ pub(super) const MAX_PROMPT_MESSAGE_PREVIEW_CHARS: usize = 500;
 pub(super) const MAX_RAG_PART_PREVIEWS: usize = 8;
 pub(super) const LIVE_TRACE_ENV: &str = "PLOKE_EVAL_HEADLESS_TUI_LIVE";
 pub(super) const POST_APPLY_STATUS_TIMEOUT_SECS: u64 = 120;
-pub(super) const POST_APPLY_INDEX_TIMEOUT_SECS: u64 = 180;
+pub(super) const POST_APPLY_INDEX_TIMEOUT_SECS: u64 = 600;
 pub(super) const POST_APPLY_INDEX_START_GRACE_MS: u64 = 2_000;
 
 use ploke_llm::{
