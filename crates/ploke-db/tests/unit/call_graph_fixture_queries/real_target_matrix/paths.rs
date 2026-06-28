@@ -524,6 +524,16 @@ fn axum_real_target_external_path_rows_remain_targetless() -> Result<(), DbError
         json_row.site.id,
         "axum/src/json.rs:184 serde_json::Deserializer::from_slice",
     )?;
+    assert_targetless_path_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        &["serde_json", "Deserializer", "from_slice"],
+        CallStatusKind::External,
+        &[SourceLineFanout {
+            file_suffix: "axum/src/json.rs",
+            lines: &[184],
+        }],
+    )?;
 
     let replace_owner =
         method_id_by_name_and_body_substring(&db, "write_buf", "std::mem::replace")?;
@@ -552,6 +562,22 @@ fn axum_real_target_external_path_rows_remain_targetless() -> Result<(), DbError
     )?;
 
     assert_targetless_path_rows(&db, &["std", "mem", "replace"], CallStatusKind::External, 2)?;
+    assert_targetless_path_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        &["std", "mem", "replace"],
+        CallStatusKind::External,
+        &[
+            SourceLineFanout {
+                file_suffix: "axum/src/error_handling/mod.rs",
+                lines: &[138],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/response/sse.rs",
+                lines: &[449],
+            },
+        ],
+    )?;
 
     assert_no_method_owner_by_body_and_file_suffix(
         &db,
