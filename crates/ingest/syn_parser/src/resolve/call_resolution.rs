@@ -105,6 +105,12 @@ enum AssocPathResolution {
     Unsupported,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct GenericBoundScope<'a> {
+    params: &'a [GenericParamNode],
+    predicates: &'a [TypeWherePredicate],
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConstructorPathResolution {
     TupleStruct(StructNodeId),
@@ -2047,7 +2053,7 @@ impl<'a> CallRelationResolver<'a> {
             return Ok(None);
         };
 
-        let traits = self.generic_bound_traits(owner, target, param_id, type_relations)?;
+        let traits = self.generic_bound_traits(owner, target, Some(param_id), type_relations)?;
         if traits.is_empty() {
             return Ok(None);
         }
@@ -2074,39 +2080,49 @@ impl<'a> CallRelationResolver<'a> {
         &self,
         owner: CallBodyOwnerId,
         target: OrdinaryTypeTargetId,
-        param_id: TypeGenericParamNodeId,
+        param_id: Option<TypeGenericParamNodeId>,
         type_relations: &[TypeRelation],
     ) -> Result<Vec<TraitNodeId>, SynParserError> {
-        let Some((params, predicates)) = self.owner_generic_bounds(owner)? else {
-            return Ok(Vec::new());
-        };
-
         let mut sources = Vec::new();
-        for param in params {
-            if TypeGenericParamNodeId::try_refine(param.id, &param.kind).ok() == Some(param_id)
-                && let Some(bounds) = param.kind.bounds()
-            {
-                sources.extend(bounds.iter().copied());
+        for scope in self.generic_bound_scopes(owner)? {
+            if let Some(param_id) = param_id {
+                for param in scope.params {
+                    if TypeGenericParamNodeId::try_refine(param.id, &param.kind).ok()
+                        == Some(param_id)
+                        && let Some(bounds) = param.kind.bounds()
+                    {
+                        sources.extend(bounds.iter().copied());
+                    }
+                }
+            }
+
+            for predicate in scope.predicates {
+                let Ok(source) = OrdinaryTypeSourceId::try_from(predicate.subject) else {
+                    continue;
+                };
+                if type_relations.iter().any(|relation| {
+                    matches!(
+                        relation,
+                        TypeRelation::Ordinary {
+                            source: relation_source,
+                            target: relation_target,
+                        } if *relation_source == source && *relation_target == target
+                    )
+                }) {
+                    sources.extend(predicate.bounds.iter().copied());
+                }
             }
         }
 
-        for predicate in predicates {
-            let Ok(source) = OrdinaryTypeSourceId::try_from(predicate.subject) else {
-                continue;
-            };
-            if type_relations.iter().any(|relation| {
-                matches!(
-                    relation,
-                    TypeRelation::Ordinary {
-                        source: relation_source,
-                        target: relation_target,
-                    } if *relation_source == source && *relation_target == target
-                )
-            }) {
-                sources.extend(predicate.bounds.iter().copied());
-            }
-        }
+        self.bound_traits_from_sources(&sources, type_relations)
+    }
 
+    fn bound_traits_from_sources(
+        &self,
+        sources: &[TraitTypeSourceId],
+        type_relations: &[TypeRelation],
+    ) -> Result<Vec<TraitNodeId>, SynParserError> {
+        let mut sources = sources.to_vec();
         sources.sort_unstable();
         sources.dedup();
 
@@ -2123,6 +2139,37 @@ impl<'a> CallRelationResolver<'a> {
         traits.dedup();
 
         Ok(traits)
+    }
+
+    fn where_bound_traits_for_type_name(
+        &self,
+        owner: CallBodyOwnerId,
+        type_segment: &str,
+        type_relations: &[TypeRelation],
+    ) -> Result<Vec<TraitNodeId>, SynParserError> {
+        let mut sources = Vec::new();
+        for scope in self.generic_bound_scopes(owner)? {
+            for predicate in scope.predicates {
+                if self.type_path_matches_segment(predicate.subject, type_segment)? {
+                    sources.extend(predicate.bounds.iter().copied());
+                }
+            }
+        }
+
+        self.bound_traits_from_sources(&sources, type_relations)
+    }
+
+    fn type_path_matches_segment(
+        &self,
+        type_id: OrdinaryTypeUseId,
+        segment: &str,
+    ) -> Result<bool, SynParserError> {
+        match self.type_node(type_id)? {
+            TypeNode::Named(node) => Ok(node.path.last().is_some_and(|part| part == segment)),
+            TypeNode::Reference(node) => self.type_path_matches_segment(node.referenced, segment),
+            TypeNode::Paren(node) => self.type_path_matches_segment(node.inner, segment),
+            _ => Ok(false),
+        }
     }
 
     fn resolve_bound_method_from_types(
@@ -2202,42 +2249,65 @@ impl<'a> CallRelationResolver<'a> {
         Ok(Some(Self::method_resolution(candidates)))
     }
 
-    fn owner_generic_bounds(
+    fn generic_bound_scopes(
         &self,
         owner: CallBodyOwnerId,
-    ) -> Result<Option<(&[GenericParamNode], &[TypeWherePredicate])>, SynParserError> {
+    ) -> Result<Vec<GenericBoundScope<'_>>, SynParserError> {
         match owner {
             CallBodyOwnerId::Function(id) => self
                 .graph
                 .functions()
                 .iter()
                 .find(|node| node.id == id)
-                .map(|node| Some((node.generic_params.as_slice(), node.where_predicates.as_slice())))
+                .map(|node| {
+                    vec![GenericBoundScope {
+                        params: node.generic_params.as_slice(),
+                        predicates: node.where_predicates.as_slice(),
+                    }]
+                })
                 .ok_or_else(|| {
                     SynParserError::InternalState(format!(
                         "call resolution found call owned by missing function {id}"
                     ))
                 }),
-            CallBodyOwnerId::Method(id) => self
-                .graph
-                .find_node_unique(id.as_any())
-                .map_err(|err| {
+            CallBodyOwnerId::Method(id) => {
+                let node = self.graph.find_node_unique(id.as_any()).map_err(|err| {
                     SynParserError::InternalState(format!(
                         "call resolution found call owned by missing or non-unique method {id}: {err}"
                     ))
-                })
-                .and_then(|node| {
-                    node.as_method()
-                        .map(|node| {
-                            Some((node.generic_params.as_slice(), node.where_predicates.as_slice()))
-                        })
-                        .ok_or_else(|| {
-                            SynParserError::InternalState(format!(
-                                "call resolution owner {id} did not resolve to a method node"
-                            ))
-                        })
-                }),
-            CallBodyOwnerId::Const(_) | CallBodyOwnerId::Static(_) => Ok(None),
+                })?;
+                let method = node.as_method().ok_or_else(|| {
+                    SynParserError::InternalState(format!(
+                        "call resolution owner {id} did not resolve to a method node"
+                    ))
+                })?;
+
+                let mut scopes = vec![GenericBoundScope {
+                    params: method.generic_params.as_slice(),
+                    predicates: method.where_predicates.as_slice(),
+                }];
+
+                if let Some(impl_id) = self.impl_for_owner_method(id)? {
+                    let Some(impl_node) = self.maybe_impl_node(impl_id) else {
+                        return Err(SynParserError::InternalState(format!(
+                            "call resolution found method {id} owned by missing impl {impl_id}"
+                        )));
+                    };
+                    scopes.push(GenericBoundScope {
+                        params: impl_node.generic_params.as_slice(),
+                        predicates: impl_node.where_predicates.as_slice(),
+                    });
+                } else if let Some(trait_id) = self.trait_for_owner_method(id)? {
+                    let trait_node = self.graph.get_trait_checked(trait_id)?;
+                    scopes.push(GenericBoundScope {
+                        params: trait_node.generic_params.as_slice(),
+                        predicates: trait_node.where_predicates.as_slice(),
+                    });
+                }
+
+                Ok(scopes)
+            }
+            CallBodyOwnerId::Const(_) | CallBodyOwnerId::Static(_) => Ok(Vec::new()),
         }
     }
 

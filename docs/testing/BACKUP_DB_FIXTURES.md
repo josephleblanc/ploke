@@ -641,9 +641,14 @@ Expected searchable corpus embedding config:
     `Json::from_bytes` associated function through local-exact call resolution
   - `Handler::call(handler, req, state)` reaches the `Handler::call` trait
     method binding through path-style trait method resolution
-  - `E::from_request` and `E::from_request_parts` reach their
-    `FromRequest` / `FromRequestParts` trait method bindings through
-    bounded type-parameter associated path resolution
+  - `E::from_request`, `T::from_request`, `E::from_request_parts`, and
+    `T::from_request_parts` reach their `FromRequest` / `FromRequestParts`
+    trait method bindings through bounded type-parameter associated path
+    resolution
+  - same-crate axum-core `InnerState::from_ref` and `String::from_ref`
+    bounded associated paths reach the `FromRef::from_ref` trait method
+    binding; axum rows whose bounds import `FromRef` through dependency root
+    `axum_core::extract::FromRef` remain unsupported and targetless
   - `Router` `Default::default` reaches `Router::new` through a local-exact
     `Self::new()` associated-function edge
   - selected proc-macro body, closure body, and dynamic callable field shapes

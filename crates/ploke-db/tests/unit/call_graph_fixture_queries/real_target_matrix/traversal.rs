@@ -160,21 +160,39 @@ fn axum_real_target_supported_callers_are_one_hop_traversable() -> Result<(), Db
         },
         ResolvedTraversalCase {
             // axum-core/src/ext_traits/request.rs:279 calls
-            // `E::from_request(self, state)` from the generic bound
-            // `E: FromRequest<S, M>` at request.rs:276. Callee binding:
-            // axum-core/src/extract/mod.rs:85 trait method.
-            label: "axum-core E::from_request trait-associated path",
+            // `E::from_request(self, state)` from `E: FromRequest<S, M>`.
+            // axum-core/src/extract/mod.rs:127 calls
+            // `T::from_request(req, state)` from `T: FromRequest<S>`.
+            // Callee binding: axum-core/src/extract/mod.rs:85 trait method.
+            label: "axum-core FromRequest::from_request trait-associated paths",
             target: method_id_by_trait_name(&db, "FromRequest", "from_request")?,
-            expected_call_edges: 1,
-            expected_traversal_candidates: 1,
+            expected_call_edges: 2,
+            expected_traversal_candidates: 2,
         },
         ResolvedTraversalCase {
             // axum-core/src/ext_traits/request.rs:305 and
             // ext_traits/request_parts.rs:133 call
             // `E::from_request_parts(...)` from `E: FromRequestParts<S>`.
+            // axum-core/src/extract/mod.rs:115 calls
+            // `T::from_request_parts(parts, state)` from
+            // `T: FromRequestParts<S>`.
             // Callee binding: axum-core/src/extract/mod.rs:59 trait method.
-            label: "axum-core E::from_request_parts trait-associated paths",
+            label: "axum-core FromRequestParts::from_request_parts trait-associated paths",
             target: method_id_by_trait_name(&db, "FromRequestParts", "from_request_parts")?,
+            expected_call_edges: 3,
+            expected_traversal_candidates: 3,
+        },
+        ResolvedTraversalCase {
+            // axum-core/src/ext_traits/mod.rs:25 and
+            // axum-core/src/ext_traits/mod.rs:45 call
+            // `InnerState::from_ref(state)` through
+            // `InnerState: FromRef<OuterState>` and `String::from_ref(state)`
+            // through `String: FromRef<S>`. Callee binding:
+            // axum-core/src/extract/from_ref.rs:15 trait method. The
+            // axum/src dependency-root `axum_core::extract::FromRef` rows are
+            // asserted separately as unsupported.
+            label: "axum-core FromRef::from_ref same-crate bounded associated paths",
+            target: method_id_by_trait_name(&db, "FromRef", "from_ref")?,
             expected_call_edges: 2,
             expected_traversal_candidates: 2,
         },

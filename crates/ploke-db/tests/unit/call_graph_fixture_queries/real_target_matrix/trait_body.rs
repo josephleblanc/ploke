@@ -8,8 +8,10 @@ fn axum_real_target_trait_associated_paths_reach_trait_methods() -> Result<(), D
     // Matrix: trait-associated extraction calls.
     // Source chain:
     //   axum-core/src/ext_traits/request.rs:279 calls `E::from_request`.
+    //   axum-core/src/extract/mod.rs:127 calls `T::from_request`.
     //   axum-core/src/ext_traits/request.rs:305 and
     //   ext_traits/request_parts.rs:133 call `E::from_request_parts`.
+    //   axum-core/src/extract/mod.rs:115 calls `T::from_request_parts`.
     // Intermediate bindings:
     //   axum-core/src/extract/mod.rs:79 declares trait `FromRequest`.
     //   axum-core/src/extract/mod.rs:85 declares `FromRequest::from_request`.
@@ -37,6 +39,17 @@ fn axum_real_target_trait_associated_paths_reach_trait_methods() -> Result<(), D
             from_request,
         ),
         (
+            "axum-core/src/extract/mod.rs:127",
+            method_id_by_name_body_and_file_suffix(
+                &db,
+                "from_request",
+                "T::from_request(req, state).await",
+                "axum-core/src/extract/mod.rs",
+            )?,
+            &["T", "from_request"][..],
+            from_request,
+        ),
+        (
             "axum-core/src/ext_traits/request.rs:305",
             method_id_by_name_body_and_file_suffix(
                 &db,
@@ -45,6 +58,17 @@ fn axum_real_target_trait_associated_paths_reach_trait_methods() -> Result<(), D
                 "axum-core/src/ext_traits/request.rs",
             )?,
             &["E", "from_request_parts"][..],
+            from_request_parts,
+        ),
+        (
+            "axum-core/src/extract/mod.rs:115",
+            method_id_by_name_body_and_file_suffix(
+                &db,
+                "from_request_parts",
+                "T::from_request_parts(parts, state).await",
+                "axum-core/src/extract/mod.rs",
+            )?,
+            &["T", "from_request_parts"][..],
             from_request_parts,
         ),
         (
@@ -84,21 +108,21 @@ fn axum_real_target_trait_associated_paths_reach_trait_methods() -> Result<(), D
     let from_request_callers = db.callers_for_target(from_request)?;
     assert_eq!(
         from_request_callers.len(),
-        1,
-        "FromRequest::from_request should expose the inspected E::from_request caller: {from_request_callers:#?}"
+        2,
+        "FromRequest::from_request should expose both inspected bounded callers: {from_request_callers:#?}"
     );
     assert_sites_match_callers(
         &db,
         from_request,
         &from_request_callers,
-        "FromRequest::from_request real-corpus caller",
+        "FromRequest::from_request real-corpus callers",
     )?;
 
     let from_request_parts_callers = db.callers_for_target(from_request_parts)?;
     assert_eq!(
         from_request_parts_callers.len(),
-        2,
-        "FromRequestParts::from_request_parts should expose both inspected E::from_request_parts callers: {from_request_parts_callers:#?}"
+        3,
+        "FromRequestParts::from_request_parts should expose all inspected bounded callers: {from_request_parts_callers:#?}"
     );
     assert_sites_match_callers(
         &db,
@@ -111,20 +135,24 @@ fn axum_real_target_trait_associated_paths_reach_trait_methods() -> Result<(), D
 }
 
 #[test]
-fn axum_real_target_from_ref_paths_are_documented_gaps() -> Result<(), DbError> {
+fn axum_real_target_from_ref_same_crate_paths_reach_trait_method() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Matrix: `FromRef::from_ref` bounded calls.
+    // Matrix: same-crate `FromRef::from_ref` bounded calls.
     // Source chain:
     //   axum-core/src/ext_traits/mod.rs:25 calls
     //   `InnerState::from_ref(state)`.
     //   axum-core/src/ext_traits/mod.rs:45 calls `String::from_ref(state)`.
-    //   axum/src/extract/state.rs:309 calls `InnerState::from_ref(state)`.
-    //   axum/src/middleware/from_extractor.rs:328 calls
-    //   `Secret::from_ref(state)` from a test function.
-    // Current model gap: these bounded associated path rows are visible but
-    // unsupported, targetless, and must not traverse to a guessed blanket impl.
-    let method_cases = [
+    // Intermediate binding:
+    //   axum-core/src/extract/from_ref.rs:13 declares trait `FromRef`.
+    //   axum-core/src/extract/from_ref.rs:15 declares `FromRef::from_ref`.
+    // Expected traversal: explicit where-predicate bounds such as
+    // `InnerState: FromRef<OuterState>` and `String: FromRef<S>` resolve to
+    // the trait method binding in one local-exact associated-function edge.
+    // Concrete runtime impl dispatch remains type-dependent and is not guessed.
+    let target = method_id_by_trait_name(&db, "FromRef", "from_ref")?;
+
+    let cases = [
         (
             "axum-core/src/ext_traits/mod.rs:25",
             method_id_by_name_body_and_file_suffix(
@@ -134,6 +162,7 @@ fn axum_real_target_from_ref_paths_are_documented_gaps() -> Result<(), DbError> 
                 "axum-core/src/ext_traits/mod.rs",
             )?,
             &["InnerState", "from_ref"][..],
+            target,
         ),
         (
             "axum-core/src/ext_traits/mod.rs:45",
@@ -144,39 +173,87 @@ fn axum_real_target_from_ref_paths_are_documented_gaps() -> Result<(), DbError> 
                 "axum-core/src/ext_traits/mod.rs",
             )?,
             &["String", "from_ref"][..],
-        ),
-        (
-            "axum/src/extract/state.rs:309",
-            method_id_by_name_body_and_file_suffix(
-                &db,
-                "from_request_parts",
-                "InnerState::from_ref(state)",
-                "axum/src/extract/state.rs",
-            )?,
-            &["InnerState", "from_ref"][..],
+            target,
         ),
     ];
-    for (label, owner, path) in method_cases {
-        assert_owner_path_targetless(&db, owner, path, CallStatusKind::Unsupported, label)?;
+    for (label, owner, path, target) in cases {
+        let context = db.call_context_for_owner(owner)?;
+        let row = row_by_path(&context, path);
+        assert_resolved_target(
+            row,
+            target,
+            CallRelationKind::AssociatedFunction,
+            CallSiteKind::Path,
+            CallTargetKind::Method,
+        );
+        assert_one_edge_traversal(
+            &db,
+            TraversalExpectation {
+                label,
+                owner,
+                target,
+                site_id: row.site.id,
+                expected_edge_count: 1,
+            },
+        )?;
     }
 
-    let test_owner = function_id_by_name(&db, "test_from_extractor")?;
+    let callers = db.callers_for_target(target)?;
+    assert_eq!(
+        callers.len(),
+        2,
+        "FromRef::from_ref should expose the two same-crate bounded associated-path callers: {callers:#?}"
+    );
+    assert_sites_match_callers(
+        &db,
+        target,
+        &callers,
+        "FromRef::from_ref same-crate real-corpus callers",
+    )?;
+
+    Ok(())
+}
+
+#[test]
+fn axum_real_target_from_ref_dependency_root_bounds_are_documented_gaps() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: dependency-root `FromRef::from_ref` bounded calls.
+    // Source chain:
+    //   axum/src/extract/state.rs:1 imports `axum_core::extract::FromRef`.
+    //   axum/src/extract/state.rs:309 calls `InnerState::from_ref(state)`.
+    //   axum/src/middleware/from_extractor.rs:306 imports
+    //   `axum_core::extract::FromRef`.
+    //   axum/src/middleware/from_extractor.rs:328 calls
+    //   `Secret::from_ref(state)` from a test function.
+    // Current model gap: type resolution treats dependency roots as external
+    // even when the same fixture also parsed the dependency crate. These rows
+    // stay visible, unsupported, and targetless rather than guessing that
+    // `axum_core::extract::FromRef` is the local axum-core trait node.
+    let state_owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "from_request_parts",
+        "InnerState::from_ref(state)",
+        "axum/src/extract/state.rs",
+    )?;
     assert_owner_path_targetless(
         &db,
-        test_owner,
+        state_owner,
+        &["InnerState", "from_ref"],
+        CallStatusKind::Unsupported,
+        "axum/src/extract/state.rs:309",
+    )?;
+
+    let middleware_owner = function_id_by_name(&db, "test_from_extractor")?;
+    assert_owner_path_targetless(
+        &db,
+        middleware_owner,
         &["Secret", "from_ref"],
         CallStatusKind::Unsupported,
         "axum/src/middleware/from_extractor.rs:328",
     )?;
 
-    assert_targetless_path_rows(
-        &db,
-        &["InnerState", "from_ref"],
-        CallStatusKind::Unsupported,
-        2,
-    )?;
-    assert_targetless_path_rows(&db, &["String", "from_ref"], CallStatusKind::Unsupported, 1)?;
-    assert_targetless_path_rows(&db, &["Secret", "from_ref"], CallStatusKind::Unsupported, 1)
+    Ok(())
 }
 
 #[test]

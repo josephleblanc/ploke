@@ -63,14 +63,32 @@ impl CallRelationResolver<'_> {
         }
 
         match self.resolve_local_type_segment(owner, type_segment)? {
-            LocalTypeResolution::Resolved(target) => self.resolve_type_associated_function(
+            LocalTypeResolution::Resolved(target) => {
+                let resolution = self.resolve_type_associated_function(
+                    owner,
+                    target,
+                    method_name,
+                    Some(arg_count),
+                    type_relations,
+                )?;
+                match resolution {
+                    Some(resolution) => Ok(Some(resolution)),
+                    None => self.resolve_where_bound_assoc_function_by_name(
+                        owner,
+                        type_segment,
+                        method_name,
+                        arg_count,
+                        type_relations,
+                    ),
+                }
+            }
+            LocalTypeResolution::Unresolved => self.resolve_where_bound_assoc_function_by_name(
                 owner,
-                target,
+                type_segment,
                 method_name,
-                Some(arg_count),
+                arg_count,
                 type_relations,
             ),
-            LocalTypeResolution::Unresolved => Ok(None),
             LocalTypeResolution::Ambiguous => Ok(Some(AssocPathResolution::Ambiguous)),
         }
     }
@@ -83,18 +101,16 @@ impl CallRelationResolver<'_> {
         arg_count: usize,
         type_relations: &[TypeRelation],
     ) -> Result<Option<AssocPathResolution>, SynParserError> {
-        let Some((params, _)) = self.owner_generic_bounds(owner)? else {
-            return Ok(None);
-        };
-
-        let matches = params
-            .iter()
-            .filter_map(|param| {
+        let mut matches = Vec::new();
+        for scope in self.generic_bound_scopes(owner)? {
+            matches.extend(scope.params.iter().filter_map(|param| {
                 (param.kind.name() == Some(type_segment))
                     .then(|| TypeGenericParamNodeId::try_refine(param.id, &param.kind).ok())
                     .flatten()
-            })
-            .collect::<Vec<_>>();
+            }));
+        }
+        matches.sort_unstable();
+        matches.dedup();
 
         match matches.as_slice() {
             [] => Ok(None),
@@ -110,6 +126,23 @@ impl CallRelationResolver<'_> {
             }
             _ => Ok(Some(AssocPathResolution::Ambiguous)),
         }
+    }
+
+    fn resolve_where_bound_assoc_function_by_name(
+        &self,
+        owner: CallBodyOwnerId,
+        type_segment: &str,
+        method_name: &str,
+        arg_count: usize,
+        type_relations: &[TypeRelation],
+    ) -> Result<Option<AssocPathResolution>, SynParserError> {
+        let traits = self.where_bound_traits_for_type_name(owner, type_segment, type_relations)?;
+        if traits.is_empty() {
+            return Ok(None);
+        }
+
+        self.resolve_bound_assoc_function(traits, method_name, arg_count)
+            .map(Some)
     }
 
     fn resolve_local_type_assoc_function(
@@ -248,15 +281,22 @@ impl CallRelationResolver<'_> {
         arg_count: usize,
         type_relations: &[TypeRelation],
     ) -> Result<Option<AssocPathResolution>, SynParserError> {
-        let Ok(param_id) = TypeGenericParamNodeId::try_from(target) else {
-            return Ok(None);
-        };
-
+        let param_id = TypeGenericParamNodeId::try_from(target).ok();
         let traits = self.generic_bound_traits(owner, target, param_id, type_relations)?;
         if traits.is_empty() {
             return Ok(None);
         }
 
+        self.resolve_bound_assoc_function(traits, method_name, arg_count)
+            .map(Some)
+    }
+
+    fn resolve_bound_assoc_function(
+        &self,
+        traits: Vec<crate::parser::nodes::TraitNodeId>,
+        method_name: &str,
+        arg_count: usize,
+    ) -> Result<AssocPathResolution, SynParserError> {
         let mut candidates = Vec::new();
         for trait_id in traits {
             let trait_node = self.graph.get_trait_checked(trait_id)?;
@@ -271,6 +311,6 @@ impl CallRelationResolver<'_> {
             );
         }
 
-        Ok(Some(Self::method_resolution(candidates)))
+        Ok(Self::method_resolution(candidates))
     }
 }
