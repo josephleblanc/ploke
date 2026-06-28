@@ -28,6 +28,10 @@
 //! | Inherent constructor | `axum/src/error_handling/mod.rs:65` calls `HandleError::new(...)` | extension methods resolve to the local inherent constructor in one call edge. |
 //! | Generated constructor | `axum/src/handler/service.rs:174` calls `IntoServiceFuture::new(...)` | currently unresolved in the corpus fixture. |
 //! | Same-impl self methods | `axum-core/src/ext_traits/{request.rs:268,request_parts.rs:122}` call `self.extract_with_state(&())` | owner traversal resolves both method calls to their same-impl `extract_with_state`. |
+//! | Trait associated extraction paths | `axum-core/src/ext_traits/{request.rs:279,305}` and `request_parts.rs:133` call `E::from_request*` | currently unsupported: type-parameter trait paths are visible but targetless. |
+//! | Bounded `FromRef` paths | `axum/src/extract/state.rs:309` and `middleware/from_extractor.rs:328` call `InnerState::from_ref(...)` | currently unsupported: bounded associated paths are visible but targetless. |
+//! | Listener `Self::accept` paths | `axum/src/serve/listener.rs:{41,61}` call `Self::accept(self).await` | currently unsupported and targetless; the row must not be modeled as recursive trait dispatch. |
+//! | Const initializer external paths | `axum/src/extract/ws.rs:{382,384}` and `routing/route.rs:202` call `HeaderValue::from_static(...)` | external const-owner rows remain targetless and do not become local traversal edges. |
 //! | Proc-macro body calls | `axum-macros/src/lib.rs:{377,426,665,715}` call `expand_with(...)` | currently unsupported: proc-macro function bodies are not visited for call sites. |
 //! | Closure body call | `axum-macros/src/from_ref.rs:23` calls `expand_field(...)` inside a closure | currently unsupported: no call site targets `expand_field`. |
 //! | Dynamic callable fields | `axum/src/boxed.rs:{85,159}` call function-pointer / trait-object fields | currently unsupported: visible dynamic call sites remain targetless blockers. |
@@ -36,4 +40,5 @@ mod associated;
 mod common;
 mod paths;
 mod receivers;
+mod trait_body;
 mod unsupported;
