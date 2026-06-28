@@ -176,6 +176,77 @@ async fn call_context_exact_reads_axum_parse_attrs_incoming_callers() -> Result<
     Ok(())
 }
 
+#[tokio::test]
+async fn call_context_exact_reads_axum_boxed_into_route_constructor_callers() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(fresh_backup_fixture_db(
+        &ploke_test_utils::CORPUS_AXUM_CALL_GRAPH,
+    )?);
+    assert!(
+        db.has_call_graph_relations()?,
+        "corpus_axum_call_graph must include call graph relations for RAG call-context tests"
+    );
+
+    let target = struct_id_by_name(&db, "BoxedIntoRoute")?;
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.call_context_degraded(),
+        "axum call graph backup should enable RAG call context"
+    );
+
+    let callers = db.callers_for_target(target)?;
+    assert_eq!(
+        callers.len(),
+        1,
+        "current axum fixture should resolve the explicit BoxedIntoRoute constructor caller: {callers:#?}"
+    );
+
+    let context = rag.exact_call_context(target)?;
+    let expected_callee = CallCalleeInfo::Path {
+        path: path(&["BoxedIntoRoute"]),
+    };
+    let incoming = context
+        .iter()
+        .filter(|call| {
+            call.kind == CallSiteKind::Path
+                && call.callee == expected_callee
+                && call
+                    .targets
+                    .iter()
+                    .any(|candidate| candidate.target_id == target)
+        })
+        .collect::<Vec<_>>();
+
+    // Matrix: `BoxedIntoRoute` tuple-struct constructor row.
+    // Source chain:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   axum/src/boxed.rs:12 defines `BoxedIntoRoute<S, E>(...)`.
+    //   axum/src/boxed.rs:38 calls `BoxedIntoRoute(Box::new(...))`.
+    // Expected traversal: RAG exact call context preserves the same one-hop
+    // constructor edge exposed by `Database::callers_for_target`; the
+    // `Self(...)` rows at boxed.rs:23 and :51 remain unsupported targetless
+    // gaps and are not incoming callers for this struct target.
+    assert_eq!(
+        incoming.len(),
+        1,
+        "RAG exact call context should expose the current BoxedIntoRoute constructor edge: {context:#?}"
+    );
+
+    let call = incoming[0];
+    assert_eq!(call.owner_id, callers[0].site.owner_id);
+    assert_eq!(call.site_id, callers[0].site.id);
+    assert_eq!(call.status, CallStatusKind::Resolved);
+    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(call.targets.len(), 1);
+    assert_eq!(call.targets[0].target_id, target);
+    assert_eq!(
+        call.targets[0].relation,
+        CallTargetKind::TupleStructConstructor
+    );
+
+    Ok(())
+}
+
 fn method_id_by_name_and_body_substring(
     db: &Database,
     name: &str,
@@ -240,6 +311,25 @@ fn function_id_by_name_in_module(
         rows.rows.len(),
         1,
         "expected exactly one function named {name:?} in module {module_path:?}; rows: {:#?}",
+        rows.rows
+    );
+
+    to_uuid(&rows.rows[0][0]).map_err(Error::from)
+}
+
+fn struct_id_by_name(db: &Database, name: &str) -> Result<Uuid, Error> {
+    let mut params = BTreeMap::new();
+    params.insert("name".to_string(), DataValue::from(name));
+
+    let rows = db.raw_query_params(
+        r#"?[id] :=
+            *struct { id, name: $name @ 'NOW' }"#,
+        params,
+    )?;
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "expected exactly one struct named {name:?}; rows: {:#?}",
         rows.rows
     );
 
