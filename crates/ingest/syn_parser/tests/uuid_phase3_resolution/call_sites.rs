@@ -84,6 +84,8 @@ const LOCAL_ASSOC_IMPL_SPAN: (usize, usize) = (736, 868);
 const SELF_ASSOC_MAKE_CALL_SPAN: (usize, usize) = (848, 860);
 const LOCAL_ASSOC_MAKE_CALL_SPAN: (usize, usize) = (921, 939);
 const QUALIFIED_LOCAL_ASSOC_MAKE_CALL_SPAN: (usize, usize) = (1004, 1024);
+const TRAIT_IMPL_ASSOC_MAKE_IMPL_SPAN: (usize, usize) = (26656, 26786);
+const TRAIT_IMPL_ASSOC_MAKE_CALL_SPAN: (usize, usize) = (26766, 26778);
 const EXPLICIT_DROP_IMPL_SPAN: (usize, usize) = (16418, 16493);
 const IMPORTED_ALIAS_CALL_SPAN: (usize, usize) = (1393, 1409);
 const GLOBBED_TARGET_CALL_SPAN: (usize, usize) = (1461, 1477);
@@ -569,6 +571,21 @@ fn fixture_call_graph_assoc_method_args(ident: &'static str) -> AssocParanoidArg
         expected_path: &["crate"],
         owner: AssocOwner::Impl {
             span: LOCAL_ASSOC_IMPL_SPAN,
+        },
+        ident,
+        expected_cfg: None,
+    }
+}
+
+fn fixture_call_graph_trait_impl_assoc_make_method_args(
+    ident: &'static str,
+) -> AssocParanoidArgs<'static> {
+    AssocParanoidArgs {
+        fixture: "fixture_call_graph",
+        relative_file_path: CALL_GRAPH_LIB_RS,
+        expected_path: &["crate"],
+        owner: AssocOwner::Impl {
+            span: TRAIT_IMPL_ASSOC_MAKE_IMPL_SPAN,
         },
         ident,
         expected_cfg: None,
@@ -2809,6 +2826,29 @@ paranoid_call_site_test!(
             0,
             &[],
             ExpectedCallOutcome::ResolvedAssociatedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_trait_impl_method_body_resolves_self_associated_function_to_inherent_method_call_site,
+    fixture: "fixture_call_graph",
+    owner: method {
+        args: fixture_call_graph_trait_impl_assoc_make_method_args("trait_impl_calls_inherent_make")
+    },
+    expected: {
+        let target_args = fixture_call_graph_assoc_method_args("make");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_method_pid(&parsed_graphs)?;
+        ExpectedCallSite::path(
+            &["Self", "make"],
+            TRAIT_IMPL_ASSOC_MAKE_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedAssociatedFunctionLocalExact {
+                target: target_info.test_method_id(),
+            },
         )
     },
 );

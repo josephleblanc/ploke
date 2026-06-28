@@ -1217,3 +1217,13 @@ pub mod file_mod;
 pub fn call_crate_file_module_target() -> i32 {
     crate::file_mod::file_module_target()
 }
+
+pub trait TraitImplAssocMakeTrait {
+    fn trait_impl_calls_inherent_make() -> LocalAssoc;
+}
+
+impl TraitImplAssocMakeTrait for LocalAssoc {
+    fn trait_impl_calls_inherent_make() -> LocalAssoc {
+        Self::make()
+    }
+}
