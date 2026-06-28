@@ -242,6 +242,38 @@ pub(super) fn method_id_by_name_body_and_file_suffix(
     body_marker: &str,
     file_suffix: &str,
 ) -> Result<Uuid, DbError> {
+    let matching = method_ids_by_name_body_and_file_suffix(db, name, body_marker, file_suffix)?;
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one method named {name:?} in {file_suffix:?} whose body contains {body_marker:?}"
+    );
+
+    Ok(matching[0])
+}
+
+pub(super) fn assert_no_method_owner_by_body_and_file_suffix(
+    db: &Database,
+    name: &str,
+    body_marker: &str,
+    file_suffix: &str,
+    label: &str,
+) -> Result<(), DbError> {
+    let matching = method_ids_by_name_body_and_file_suffix(db, name, body_marker, file_suffix)?;
+    assert!(
+        matching.is_empty(),
+        "{label} should remain absent as a method owner in the current fixture: {matching:#?}"
+    );
+
+    Ok(())
+}
+
+fn method_ids_by_name_body_and_file_suffix(
+    db: &Database,
+    name: &str,
+    body_marker: &str,
+    file_suffix: &str,
+) -> Result<Vec<Uuid>, DbError> {
     let mut params = BTreeMap::new();
     params.insert("name".to_string(), DataValue::from(name));
 
@@ -278,14 +310,8 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
                 .then(|| row[0].clone())
         })
         .collect::<std::collections::BTreeSet<_>>();
-    assert_eq!(
-        matching.len(),
-        1,
-        "expected exactly one method named {name:?} in {file_suffix:?} whose body contains {body_marker:?}; rows: {:#?}",
-        rows.rows
-    );
 
-    to_uuid(matching.iter().next().expect("one matching method"))
+    matching.iter().map(to_uuid).collect()
 }
 
 fn body_key(value: &str) -> String {

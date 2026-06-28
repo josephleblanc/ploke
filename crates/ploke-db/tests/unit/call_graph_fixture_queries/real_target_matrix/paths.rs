@@ -97,15 +97,21 @@ fn axum_real_target_imported_parse_attrs_reaches_helper_subset() -> Result<(), D
     let db = setup_axum_call_graph_db()?;
     let target = function_id_by_name_in_module(&db, &["crate", "attr_parsing"], "parse_attrs")?;
 
-    // Matrix: imported `parse_attrs` path rows.
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   `parse_attrs` path/import row.
+    //
     // Source chain:
     //   axum-macros/src/attr_parsing.rs:59 defines `parse_attrs`.
-    //   from_ref.rs:9 imports it and from_ref.rs:30 calls it from
-    //   `expand_field`.
-    //   from_request/mod.rs:3 imports it and current resolved rows are at
-    //   :112, :196, :592, :715, :880, and :896.
+    //   axum-macros/src/from_ref.rs:9 imports it and from_ref.rs:30 calls it
+    //   from `expand_field`.
+    //   axum-macros/src/from_request/mod.rs:3 imports it and source callsites
+    //   are :112, :196, :471, :598, :727, :892, :908, :1029, and :1039.
     // Expected traversal: seven call-site edges reach `parse_attrs` in one
     // step; target expansion de-duplicates those to five owner candidates.
+    // The three closure-body rows at :471, :1029, and :1039 are asserted below
+    // as absent until nested closure call-body ownership lands.
     let cases = [
         (
             "from_ref.rs:30 expand_field -> parse_attrs",
@@ -217,6 +223,36 @@ fn axum_real_target_imported_parse_attrs_reaches_helper_subset() -> Result<(), D
             "parse_attrs expansion should include owner {owner}: {incoming:#?}"
         );
     }
+
+    let extract_fields =
+        function_id_by_name_in_module(&db, &["crate", "from_request"], "extract_fields")?;
+    let extract_fields_rows = db
+        .call_context_for_owner(extract_fields)?
+        .into_iter()
+        .filter(|row| {
+            row.site.kind == CallSiteKind::Path
+                && row.site.path.as_ref() == Some(&path(&["parse_attrs"]))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        extract_fields_rows.len(),
+        1,
+        "from_request::extract_fields should keep only the current non-closure parse_attrs row; the matrix source at axum-macros/src/from_request/mod.rs:471 remains a nested-owner gap"
+    );
+
+    let inferred_state = function_id_by_name_in_module(
+        &db,
+        &["crate", "from_request"],
+        "infer_state_type_from_field_attributes",
+    )?;
+    let inferred_state_context = db.call_context_for_owner(inferred_state)?;
+    assert!(
+        inferred_state_context.iter().all(|row| {
+            row.site.kind != CallSiteKind::Path
+                || row.site.path.as_ref() != Some(&path(&["parse_attrs"]))
+        }),
+        "from_request::infer_state_type_from_field_attributes should not flatten closure-body parse_attrs rows from axum-macros/src/from_request/mod.rs:1029 and :1039: {inferred_state_context:#?}"
+    );
 
     Ok(())
 }
@@ -348,11 +384,20 @@ fn axum_real_target_turbofish_calls_are_documented_gaps() -> Result<(), DbError>
 fn axum_real_target_external_path_rows_remain_targetless() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
-    // Matrix: external path rows.
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   external path rows.
+    //
     // Source chain:
     //   axum/src/json.rs:184 calls `serde_json::Deserializer::from_slice(bytes)`.
-    //   axum/src/response/sse.rs:449 calls `std::mem::replace(...)`.
-    // Expected traversal: zero local call edges; both rows classify as external.
+    //   axum/src/error_handling/mod.rs:138,181;
+    //   middleware/map_request.rs:281; middleware/from_fn.rs:285;
+    //   middleware/map_response.rs:260; and response/sse.rs:449 call
+    //   `std::mem::replace(...)`.
+    // Expected traversal: zero local call edges. The current fixture projects
+    // two std-root rows as external and leaves the wrapper-body rows listed
+    // below absent rather than inventing local traversal edges.
     let json_owner = method_id_by_name_and_body_substring(
         &db,
         "from_bytes",
@@ -368,6 +413,29 @@ fn axum_real_target_external_path_rows_remain_targetless() -> Result<(), DbError
     let replace_row = row_by_path(&replace_context, &["std", "mem", "replace"]);
     assert_external_targetless(replace_row);
     assert_targetless_path_rows(&db, &["std", "mem", "replace"], CallStatusKind::External, 2)?;
+
+    for (label, file_suffix) in [
+        (
+            "axum/src/middleware/map_request.rs:281",
+            "axum/src/middleware/map_request.rs",
+        ),
+        (
+            "axum/src/middleware/from_fn.rs:285",
+            "axum/src/middleware/from_fn.rs",
+        ),
+        (
+            "axum/src/middleware/map_response.rs:260",
+            "axum/src/middleware/map_response.rs",
+        ),
+    ] {
+        assert_no_method_owner_by_body_and_file_suffix(
+            &db,
+            "call",
+            "std::mem::replace(&mut self.inner, not_ready_inner)",
+            file_suffix,
+            label,
+        )?;
+    }
 
     Ok(())
 }

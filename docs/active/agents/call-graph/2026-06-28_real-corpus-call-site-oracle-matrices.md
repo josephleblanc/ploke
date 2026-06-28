@@ -53,6 +53,14 @@ High-fanout targets are grouped by identical evidence chain. Before turning high
 | `serde_json::Deserializer::from_slice` | `axum/src/json.rs:184` | `Json<T>::from_bytes` | `serde_json::...` path -> external dependency root in `axum/Cargo.toml:135` and dev dependency `:189`. |
 | `std::mem::replace` | `axum/src/error_handling/mod.rs:138,181`; `middleware/map_request.rs:281`; `middleware/from_fn.rs:285`; `middleware/map_response.rs:260`; `response/sse.rs:449` | service call bodies and `EventDataWriter::write_buf` | `std::mem::replace` path -> std-root external classification. |
 
+Current executable coverage: `ploke-db` real-target matrix tests assert seven
+one-hop imported `parse_attrs` edges, one targetless explicit
+`crate::attr_parsing::parse_attrs` row, and absent nested closure-body rows for
+`from_request/mod.rs:471,1029,1039`. The external path test asserts
+`serde_json::Deserializer::from_slice`, the two currently projected
+`std::mem::replace` external rows, and the current absent wrapper-body owner rows
+for `middleware/{map_request,from_fn,map_response}.rs`.
+
 ## Generated Handler Function Fanout
 
 | Target | Callsites | Owner(s) | Evidence chain |
