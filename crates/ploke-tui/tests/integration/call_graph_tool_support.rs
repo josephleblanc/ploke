@@ -55,6 +55,14 @@ pub(crate) struct AxumParseAttrsToolFixture {
     pub(crate) callers: Vec<ExpectedCallSite>,
 }
 
+pub(crate) struct AxumJsonFromBytesToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) target: Uuid,
+    pub(crate) callers: Vec<ExpectedCallSite>,
+}
+
 pub(crate) struct AxumBoxedIntoRouteToolFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,
@@ -204,6 +212,54 @@ impl AxumParseAttrsToolFixture {
             "parse_attrs should project target-scoped proof rows for real-corpus callers"
         );
         let state = axum_state_for_target(Arc::clone(&db), &target, "parse_attrs").await;
+
+        Self {
+            state,
+            file_path: target.file_path,
+            module_path: target.module_path,
+            target: target.id,
+            callers,
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl AxumJsonFromBytesToolFixture {
+    pub(crate) async fn new() -> Self {
+        let db = axum_call_graph_db();
+        let target = axum_json_from_bytes_target(&db);
+        let callers = db
+            .callers_for_target(target.id)
+            .expect("Json::from_bytes incoming callers")
+            .into_iter()
+            .map(|caller| ExpectedCallSite {
+                owner: caller.site.owner_id,
+                site: caller.site.id,
+                path: caller
+                    .site
+                    .path
+                    .expect("Json::from_bytes caller should carry a path"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            callers.len(),
+            2,
+            "current axum fixture should resolve the two Json::from_bytes caller sites"
+        );
+        assert!(
+            db.project_call_proof_facts_for_node(target.id, "bd:corpus-axum-call-graph")
+                .expect("project axum Json::from_bytes proof facts")
+                >= callers.len(),
+            "Json::from_bytes should project target-scoped proof rows for real-corpus callers"
+        );
+        let state = axum_state_for_target(Arc::clone(&db), &target, "Json::from_bytes").await;
 
         Self {
             state,
@@ -452,6 +508,55 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
     }
 }
 
+fn axum_json_from_bytes_target(db: &Database) -> TargetInfo {
+    let mut params = BTreeMap::new();
+    params.insert("name".to_string(), DataValue::from("from_bytes"));
+
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[id, body, file_path, mod_path] :=
+    *method {{ id, name: $name, body @ 'NOW' }},
+    ancestor[id, mod_id],
+    *module{{ id: mod_id, path: mod_path @ 'NOW' }},
+    file_owner_for_module[mod_id, file_id],
+    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+    let rows = db
+        .raw_query_params(&script, params)
+        .expect("query axum Json::from_bytes target");
+    let matching = rows
+        .rows
+        .iter()
+        .filter(|row| {
+            body_key(data_str(&row[1], "method body"))
+                .contains("serde_json::Deserializer::from_slice(bytes)")
+                && data_str(&row[2], "file_path").ends_with("axum/src/json.rs")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one axum Json::from_bytes target; rows: {:#?}",
+        rows.rows
+    );
+    let row = matching[0];
+
+    TargetInfo {
+        id: to_uuid(&row[0]).expect("Json::from_bytes uuid"),
+        file_path: PathBuf::from(data_str(&row[2], "file_path")),
+        module_path: data_path(&row[3], "module path"),
+    }
+}
+
 fn axum_boxed_into_route_target(db: &Database) -> TargetInfo {
     let mut params = BTreeMap::new();
     params.insert("name".to_string(), DataValue::from("BoxedIntoRoute"));
@@ -546,53 +651,7 @@ pub(crate) fn assert_body_empty_incoming_context(
     target: Uuid,
     label: &str,
 ) {
-    let target = target.to_string();
-    let matching = calls
-        .iter()
-        .filter(|call| {
-            call.get("kind").and_then(serde_json::Value::as_str) == Some("path")
-                && call
-                    .get("targets")
-                    .and_then(serde_json::Value::as_array)
-                    .is_some_and(|targets| {
-                        targets.iter().any(|candidate| {
-                            candidate
-                                .get("target_id")
-                                .and_then(serde_json::Value::as_str)
-                                == Some(target.as_str())
-                        })
-                    })
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        matching.len(),
-        callers.len(),
-        "{label} should return all Body::empty incoming caller-site rows: {calls:#?}"
-    );
-
-    for expected in callers {
-        let owner = expected.owner.to_string();
-        let site = expected.site.to_string();
-        assert!(
-            matching.iter().any(|call| {
-                call.get("owner_id").and_then(serde_json::Value::as_str) == Some(owner.as_str())
-                    && call.get("site_id").and_then(serde_json::Value::as_str)
-                        == Some(site.as_str())
-                    && call.get("kind").and_then(serde_json::Value::as_str) == Some("path")
-                    && call
-                        .get("callee")
-                        .and_then(|callee| callee.get("path"))
-                        .and_then(|path_variant| path_variant.get("path"))
-                        .and_then(serde_json::Value::as_array)
-                        .is_some_and(|path| {
-                            path.iter()
-                                .filter_map(serde_json::Value::as_str)
-                                .eq(expected.path.iter().map(String::as_str))
-                        })
-            }),
-            "{label} should return Body::empty incoming caller site {site}: {calls:#?}"
-        );
-    }
+    assert_expected_path_incoming_context(calls, callers, target, label, "Body::empty");
 }
 
 pub(crate) fn assert_parse_attrs_incoming_context(
@@ -600,6 +659,25 @@ pub(crate) fn assert_parse_attrs_incoming_context(
     callers: &[ExpectedCallSite],
     target: Uuid,
     label: &str,
+) {
+    assert_expected_path_incoming_context(calls, callers, target, label, "parse_attrs");
+}
+
+pub(crate) fn assert_json_from_bytes_incoming_context(
+    calls: &[serde_json::Value],
+    callers: &[ExpectedCallSite],
+    target: Uuid,
+    label: &str,
+) {
+    assert_expected_path_incoming_context(calls, callers, target, label, "Json::from_bytes");
+}
+
+fn assert_expected_path_incoming_context(
+    calls: &[serde_json::Value],
+    callers: &[ExpectedCallSite],
+    target: Uuid,
+    label: &str,
+    target_label: &str,
 ) {
     let target = target.to_string();
     let matching = calls
@@ -622,7 +700,7 @@ pub(crate) fn assert_parse_attrs_incoming_context(
     assert_eq!(
         matching.len(),
         callers.len(),
-        "{label} should return all parse_attrs incoming caller-site rows: {calls:#?}"
+        "{label} should return all {target_label} incoming caller-site rows: {calls:#?}"
     );
 
     for expected in callers {
@@ -644,7 +722,7 @@ pub(crate) fn assert_parse_attrs_incoming_context(
                                 .eq(expected.path.iter().map(String::as_str))
                         })
             }),
-            "{label} should return parse_attrs incoming caller site {site}: {calls:#?}"
+            "{label} should return {target_label} incoming caller site {site}: {calls:#?}"
         );
     }
 }

@@ -6,10 +6,11 @@ use ploke_tui::tools::{
 };
 
 use crate::call_graph_tool_support::{
-    AxumBodyEmptyToolFixture, AxumBoxedIntoRouteToolFixture, AxumParseAttrsToolFixture,
-    CallGraphToolFixture, assert_body_empty_incoming_context,
+    AxumBodyEmptyToolFixture, AxumBoxedIntoRouteToolFixture, AxumJsonFromBytesToolFixture,
+    AxumParseAttrsToolFixture, CallGraphToolFixture, assert_body_empty_incoming_context,
     assert_boxed_into_route_incoming_context, assert_incoming_context,
-    assert_parse_attrs_incoming_context, assert_target_proof, ui_field,
+    assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
+    assert_target_proof, ui_field,
 };
 
 #[tokio::test]
@@ -239,6 +240,63 @@ async fn code_item_lookup_returns_real_corpus_parse_attrs_callers() {
             .expect("proof count")
             >= fixture.callers.len(),
         "code_item_lookup should surface real-corpus parse_attrs proof rows"
+    );
+}
+
+#[tokio::test]
+async fn code_item_lookup_returns_real_corpus_json_from_bytes_callers() {
+    let fixture = AxumJsonFromBytesToolFixture::new().await;
+    let module_path = fixture.module_path_arg();
+    let params = LookupParams {
+        item_name: Cow::Borrowed("from_bytes"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("method"),
+        module_path: Cow::Owned(module_path),
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("axum-json-from-bytes-lookup"))
+        .await
+        .expect("tool execution");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let call_context = payload
+        .get("call_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_context array");
+    let proof_context = payload
+        .get("proof_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("proof_context array");
+
+    // Real-corpus oracle matrix:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   axum/src/json.rs:164 defines `Json::from_bytes`.
+    //   axum/src/json.rs:112 and :128 call `Self::from_bytes(&bytes)`.
+    // Expected tool traversal: exact lookup of the callee method exposes both
+    // trait-impl `Self::from_bytes` caller-site edges and proof rows.
+    assert_json_from_bytes_incoming_context(
+        call_context,
+        &fixture.callers,
+        fixture.target,
+        "code_item_lookup",
+    );
+    for caller in &fixture.callers {
+        assert_target_proof(
+            proof_context,
+            caller.owner,
+            fixture.target,
+            "code_item_lookup",
+        );
+    }
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "call_context_incoming"), "2");
+    assert!(
+        ui_field(ui, "proof_context")
+            .parse::<usize>()
+            .expect("proof count")
+            >= fixture.callers.len(),
+        "code_item_lookup should surface real-corpus Json::from_bytes proof rows"
     );
 }
 

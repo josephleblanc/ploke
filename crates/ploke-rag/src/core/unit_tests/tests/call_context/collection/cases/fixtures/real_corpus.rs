@@ -184,6 +184,95 @@ async fn call_context_exact_reads_axum_parse_attrs_incoming_callers() -> Result<
 }
 
 #[tokio::test]
+async fn call_context_exact_reads_axum_json_from_bytes_incoming_callers() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(fresh_backup_fixture_db(
+        &ploke_test_utils::CORPUS_AXUM_CALL_GRAPH,
+    )?);
+    assert!(
+        db.has_call_graph_relations()?,
+        "corpus_axum_call_graph must include call graph relations for RAG call-context tests"
+    );
+
+    let target = method_id_by_name_and_body_substring(
+        &db,
+        "from_bytes",
+        "serde_json::Deserializer::from_slice(bytes)",
+    )?;
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.call_context_degraded(),
+        "axum call graph backup should enable RAG call context"
+    );
+
+    let callers = db.callers_for_target(target)?;
+    assert_eq!(
+        callers.len(),
+        2,
+        "current axum fixture should resolve the two Json::from_bytes caller sites: {callers:#?}"
+    );
+
+    let context = rag.exact_call_context(target)?;
+    let incoming = context
+        .iter()
+        .filter(|call| {
+            call.kind == CallSiteKind::Path
+                && call
+                    .targets
+                    .iter()
+                    .any(|candidate| candidate.target_id == target)
+        })
+        .collect::<Vec<_>>();
+
+    // Matrix: `Json::from_bytes` inherent method row.
+    // Source chain:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   axum/src/json.rs:164 defines `Json::from_bytes`.
+    //   axum/src/json.rs:112 and :128 call `Self::from_bytes(&bytes)`.
+    // Expected traversal: RAG exact call context preserves both one-hop
+    // `Self::from_bytes` associated-function edges exposed by
+    // `Database::callers_for_target`.
+    assert_eq!(
+        incoming.len(),
+        2,
+        "RAG exact call context should expose both Json::from_bytes incoming edges: {context:#?}"
+    );
+
+    let expected_site_ids = callers
+        .iter()
+        .map(|caller| caller.site.id)
+        .collect::<BTreeSet<_>>();
+    let incoming_site_ids = incoming
+        .iter()
+        .map(|call| call.site_id)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        incoming_site_ids, expected_site_ids,
+        "RAG call context should preserve the DB Json::from_bytes caller site identities"
+    );
+
+    let mut path_counts = BTreeMap::<Vec<String>, usize>::new();
+    for call in incoming {
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(call.targets.len(), 1);
+        assert_eq!(call.targets[0].target_id, target);
+        assert_eq!(call.targets[0].relation, CallTargetKind::AssociatedFunction);
+        let CallCalleeInfo::Path { path } = &call.callee else {
+            panic!("Json::from_bytes incoming caller should be a path call: {call:#?}");
+        };
+        *path_counts.entry(path.clone()).or_default() += 1;
+    }
+    assert_eq!(
+        path_counts,
+        BTreeMap::from([(path(&["Self", "from_bytes"]), 2)]),
+        "RAG call context should preserve the trait-impl Self::from_bytes path shape"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_exact_reads_axum_boxed_into_route_constructor_callers() -> Result<(), Error> {
     init_tracing_once();
     let db = Arc::new(fresh_backup_fixture_db(
