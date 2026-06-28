@@ -20,6 +20,7 @@ mod evidence;
 mod harness;
 mod observation;
 mod operation;
+mod parent_identity;
 mod runner_io;
 mod scheduler_node;
 mod schema;
@@ -111,6 +112,10 @@ pub(crate) use selection::{
     SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL, SELECTION_FINDING_REL, SELECTION_SCORE_REL,
 };
 pub(crate) use selection::{SelectionDecisionEvidence, write_selection_decision_to_owner_db};
+#[cfg(test)]
+pub(crate) const PARENT_IDENTITY_REL: &str = parent_identity::ParentIdentitySchema::RELATION;
+#[cfg(test)]
+pub(crate) const PARENT_START_REL: &str = parent_identity::ParentStartSchema::RELATION;
 #[cfg(test)]
 pub(crate) use setup::{
     BASELINE_INSTANCE_METRICS_REL, BASELINE_INSTANCE_REL, BASELINE_REL, CAMPAIGN_EVAL_BUDGET_REL,

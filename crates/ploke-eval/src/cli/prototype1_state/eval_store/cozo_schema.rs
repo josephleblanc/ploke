@@ -19,6 +19,7 @@ use super::{
         HarnessWorkspaceSchema, ensure_harness_schema,
     },
     operation::ensure_operation_schema,
+    parent_identity::{ParentIdentitySchema, ParentStartSchema, ensure_parent_identity_schema},
     runner_io::{
         RUNNER_REQUEST_SCHEMA_VERSION, RUNNER_RESULT_SCHEMA_VERSION, RunnerRequestArgSchema,
         RunnerRequestSchema, RunnerRequestTargetSchema, RunnerResultSchema,
@@ -250,6 +251,7 @@ pub(super) fn ensure_eval_store_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(),
     ensure_scheduler_node_schema(db)?;
     ensure_runner_io_schema(db)?;
     ensure_harness_schema(db)?;
+    ensure_parent_identity_schema(db)?;
     ensure_walk_event_schema(db)?;
     ensure_agent_turn_schema(db)?;
 
@@ -283,6 +285,8 @@ fn reject_unsupported_schema_drift(existing: &BTreeSet<String>) -> Result<(), Ev
         HarnessDiagnosticSchema::RELATION,
         HarnessWorkspaceSchema::RELATION,
         HarnessWorkspaceChangeSchema::RELATION,
+        ParentIdentitySchema::RELATION,
+        ParentStartSchema::RELATION,
         WalkEventSchema::RELATION,
         WalkEventTransitionSchema::RELATION,
     ];

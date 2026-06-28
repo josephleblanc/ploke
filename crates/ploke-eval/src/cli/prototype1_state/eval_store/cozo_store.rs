@@ -42,6 +42,7 @@ use super::{
         record_ref_row_from_evidence, trace_event_row,
     },
     observation::{ObservationJsonlImport, parse_observation_jsonl},
+    parent_identity,
     schema::put_eval_params,
     setup,
 };
@@ -173,6 +174,7 @@ impl<'a, D: EvalDb + ?Sized> DbEvalStore<'a, D> {
                     attempted_semantic_hash: rows.event.semantic_hash,
                 });
             }
+            parent_identity::put_parent_started_identity_rows(self.db, evidence, &rows)?;
             verify_parent_started_db_rows(self.db, &rows)?;
             return Ok(rows.receipt);
         }
@@ -180,6 +182,7 @@ impl<'a, D: EvalDb + ?Sized> DbEvalStore<'a, D> {
         for record in &rows.records {
             put_record_ref_row(self.db, record)?;
         }
+        parent_identity::put_parent_started_identity_rows(self.db, evidence, &rows)?;
         verify_parent_started_db_rows(self.db, &rows)?;
         Ok(rows.receipt)
     }

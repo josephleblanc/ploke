@@ -29,9 +29,9 @@ use super::{
     CLOSURE_PROTOCOL_PROCEDURE_REL, CLOSURE_REF_REL, CONTINUATION_DECISION_REL,
     EVALUATION_INSTANCE_REL, EVALUATION_REL, HARNESS_DIAGNOSTIC_REL, HARNESS_REQUEST_REL,
     HARNESS_WORKSPACE_CHANGE_REL, HARNESS_WORKSPACE_REL, MESSAGE_EVENT_REL, MODEL_EXCHANGE_REL,
-    OPERATION_REL, PATCH_REL, PROFILE_COMMITMENT_REL, RUN_PROFILE_POLICY_REL,
-    RUNNER_REQUEST_ARG_REL, RUNNER_REQUEST_REL, RUNNER_REQUEST_TARGET_REL, RUNNER_RESULT_REL,
-    SCHEDULER_NODE_REL, SCHEDULER_NODE_STATUS_REL, SCHEDULER_NODE_TARGET_REL,
+    OPERATION_REL, PARENT_IDENTITY_REL, PARENT_START_REL, PATCH_REL, PROFILE_COMMITMENT_REL,
+    RUN_PROFILE_POLICY_REL, RUNNER_REQUEST_ARG_REL, RUNNER_REQUEST_REL, RUNNER_REQUEST_TARGET_REL,
+    RUNNER_RESULT_REL, SCHEDULER_NODE_REL, SCHEDULER_NODE_STATUS_REL, SCHEDULER_NODE_TARGET_REL,
     SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL, SELECTION_FINDING_REL, SELECTION_SCORE_REL,
     TOOL_EVENT_REL, WALK_EVENT_REL, WALK_EVENT_TRANSITION_REL,
     api::EvalStorageMode,
@@ -421,6 +421,22 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
             )
         },
         {
+            let schema = &super::parent_identity::ParentIdentitySchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::parent_identity::ParentStartSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
             let schema = &super::artifact::ArtifactSchema::SCHEMA;
             (
                 schema.relation(),
@@ -743,6 +759,16 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
             r#"?[event_id, transition_index, campaign_id, schema_version, transition_label] <- [[$event_id, $transition_index, $campaign_id, $schema_version, $transition_label]] :put eval_walk_event_transition { event_id, transition_index => campaign_id, schema_version, transition_label }"#,
         ),
         (
+            "eval_parent_identity",
+            r#":create eval_parent_identity { campaign_id: String, parent_id: String => schema_version: String, identity_schema_version: String, node_id: String, generation: Int, branch_id: String, artifact_branch: String?, instance_id: String?, previous_parent_id: String?, parent_node_id: String?, identity_created_at: String, semantic_hash: String, ingested_at: String }"#,
+            r#"?[campaign_id, parent_id, schema_version, identity_schema_version, node_id, generation, branch_id, artifact_branch, instance_id, previous_parent_id, parent_node_id, identity_created_at, semantic_hash, ingested_at] <- [[$campaign_id, $parent_id, $schema_version, $identity_schema_version, $node_id, $generation, $branch_id, $artifact_branch, $instance_id, $previous_parent_id, $parent_node_id, $identity_created_at, $semantic_hash, $ingested_at]] :put eval_parent_identity { campaign_id, parent_id => schema_version, identity_schema_version, node_id, generation, branch_id, artifact_branch, instance_id, previous_parent_id, parent_node_id, identity_created_at, semantic_hash, ingested_at }"#,
+        ),
+        (
+            "eval_parent_start",
+            r#":create eval_parent_start { start_event_id: String => campaign_id: String, schema_version: String, parent_id: String, node_id: String, generation: Int, branch_id: String, repo_root: String, startup_kind: String, handoff_runtime_id: String?, pid: Int, source_stream_id: String, source_event_index: Int, source_line: Int, parent_recorded_at: Int, resource_recorded_at: Int, semantic_hash: String, ingested_at: String }"#,
+            r#"?[start_event_id, campaign_id, schema_version, parent_id, node_id, generation, branch_id, repo_root, startup_kind, handoff_runtime_id, pid, source_stream_id, source_event_index, source_line, parent_recorded_at, resource_recorded_at, semantic_hash, ingested_at] <- [[$start_event_id, $campaign_id, $schema_version, $parent_id, $node_id, $generation, $branch_id, $repo_root, $startup_kind, $handoff_runtime_id, $pid, $source_stream_id, $source_event_index, $source_line, $parent_recorded_at, $resource_recorded_at, $semantic_hash, $ingested_at]] :put eval_parent_start { start_event_id => campaign_id, schema_version, parent_id, node_id, generation, branch_id, repo_root, startup_kind, handoff_runtime_id, pid, source_stream_id, source_event_index, source_line, parent_recorded_at, resource_recorded_at, semantic_hash, ingested_at }"#,
+        ),
+        (
             "eval_artifact",
             r#":create eval_artifact { artifact_id: String => campaign_id: String, tree_hash: String?, git_branch: String?, git_commit: String?, source: String, store_scope: String, created_by: String?, parent_artifact_id: String? }"#,
             r#"?[artifact_id, campaign_id, tree_hash, git_branch, git_commit, source, store_scope, created_by, parent_artifact_id] <- [[$artifact_id, $campaign_id, $tree_hash, $git_branch, $git_commit, $source, $store_scope, $created_by, $parent_artifact_id]] :put eval_artifact { artifact_id => campaign_id, tree_hash, git_branch, git_commit, source, store_scope, created_by, parent_artifact_id }"#,
@@ -1019,6 +1045,8 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
         eval_relation_exists(&db, HARNESS_WORKSPACE_CHANGE_REL)
             .expect("harness workspace change rel exists")
     );
+    assert!(eval_relation_exists(&db, PARENT_IDENTITY_REL).expect("parent identity rel exists"));
+    assert!(eval_relation_exists(&db, PARENT_START_REL).expect("parent start rel exists"));
     assert!(eval_relation_exists(&db, WALK_EVENT_REL).expect("walk event rel exists"));
     assert!(
         eval_relation_exists(&db, WALK_EVENT_TRANSITION_REL)
@@ -2195,6 +2223,49 @@ fn prototype1_eval_store_parent_start_db_round_trips_rows() {
             .1,
         receipt.resource.content_sha256
     );
+
+    let identities = query_parent_identities(&db, &evidence.campaign_id);
+    assert_eq!(identities.rows.len(), 1);
+    let identity = identities.row_refs().next().expect("identity row");
+    assert_eq!(
+        identity.get::<String>("parent_id").expect("parent"),
+        "parent"
+    );
+    assert_eq!(identity.get::<String>("node_id").expect("node"), "parent");
+    assert_eq!(identity.get::<i64>("generation").expect("generation"), 0);
+    assert_eq!(
+        identity.get::<String>("branch_id").expect("branch"),
+        "branch-parent"
+    );
+    assert_eq!(
+        identity
+            .get::<String>("artifact_branch")
+            .expect("artifact branch"),
+        "artifact-parent"
+    );
+    assert_eq!(
+        identity.get::<String>("instance_id").expect("instance"),
+        "instance"
+    );
+
+    let starts = query_parent_starts(&db, &evidence.campaign_id);
+    assert_eq!(starts.rows.len(), 1);
+    let start = starts.row_refs().next().expect("parent start row");
+    assert_eq!(
+        start
+            .get::<String>("start_event_id")
+            .expect("start event id"),
+        db_receipt.event_id
+    );
+    assert_eq!(
+        start.get::<String>("startup_kind").expect("startup kind"),
+        "genesis"
+    );
+    assert_eq!(start.get::<i64>("pid").expect("pid"), 42);
+    assert_eq!(
+        start.get::<i64>("source_event_index").expect("event index"),
+        receipt.parent.source_event_index as i64
+    );
 }
 
 #[test]
@@ -2214,6 +2285,16 @@ fn prototype1_eval_store_parent_start_db_duplicate_identical_is_idempotent() {
     assert_eq!(second, first);
     assert_eq!(query_transition_event(&db, &first.event_id).rows.len(), 1);
     assert_eq!(query_record_refs(&db, &evidence.campaign_id).rows.len(), 2);
+    assert_eq!(
+        query_parent_identities(&db, &evidence.campaign_id)
+            .rows
+            .len(),
+        1
+    );
+    assert_eq!(
+        query_parent_starts(&db, &evidence.campaign_id).rows.len(),
+        1
+    );
 }
 
 #[test]
@@ -2246,6 +2327,16 @@ fn prototype1_eval_store_parent_start_db_duplicate_semantic_mismatch_fails() {
     }
     assert_eq!(query_transition_event(&db, &first.event_id).rows.len(), 1);
     assert_eq!(query_record_refs(&db, &evidence.campaign_id).rows.len(), 2);
+    assert_eq!(
+        query_parent_identities(&db, &evidence.campaign_id)
+            .rows
+            .len(),
+        1
+    );
+    assert_eq!(
+        query_parent_starts(&db, &evidence.campaign_id).rows.len(),
+        1
+    );
 }
 
 #[test]
@@ -2270,6 +2361,16 @@ fn prototype1_eval_store_parent_start_db_missing_required_hash_fails_before_rows
     assert!(query_all_transition_events(&db).rows.is_empty());
     assert!(
         query_record_refs(&db, &evidence.campaign_id)
+            .rows
+            .is_empty()
+    );
+    assert!(
+        query_parent_identities(&db, &evidence.campaign_id)
+            .rows
+            .is_empty()
+    );
+    assert!(
+        query_parent_starts(&db, &evidence.campaign_id)
             .rows
             .is_empty()
     );
@@ -2299,6 +2400,16 @@ fn prototype1_eval_store_parent_start_dual_strict_persists_owner_db() {
         1
     );
     assert_eq!(query_record_refs(&db, &evidence.campaign_id).rows.len(), 2);
+    assert_eq!(
+        query_parent_identities(&db, &evidence.campaign_id)
+            .rows
+            .len(),
+        1
+    );
+    assert_eq!(
+        query_parent_starts(&db, &evidence.campaign_id).rows.len(),
+        1
+    );
 }
 
 #[test]
@@ -2356,6 +2467,16 @@ fn prototype1_eval_store_parent_start_dual_strict_failure_keeps_repairable_journ
         1
     );
     assert_eq!(query_record_refs(&db, &evidence.campaign_id).rows.len(), 2);
+    assert_eq!(
+        query_parent_identities(&db, &evidence.campaign_id)
+            .rows
+            .len(),
+        1
+    );
+    assert_eq!(
+        query_parent_starts(&db, &evidence.campaign_id).rows.len(),
+        1
+    );
 }
 
 fn sample_campaign_manifest(campaign_id: CampaignId) -> CampaignManifest {
@@ -2908,6 +3029,66 @@ fn query_transition_event(db: &Database, event_id: &str) -> QueryResult {
             params,
         )
         .expect("query transition event")
+}
+
+fn query_parent_identities(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert(
+        "campaign_id".to_string(),
+        DataValue::from(campaign_id.to_string()),
+    );
+    db.raw_query_params(
+        r#"
+?[parent_id, node_id, generation, branch_id, artifact_branch, instance_id, previous_parent_id, parent_node_id, identity_created_at, semantic_hash] :=
+    *eval_parent_identity {
+        campaign_id,
+        parent_id,
+        node_id,
+        generation,
+        branch_id,
+        artifact_branch,
+        instance_id,
+        previous_parent_id,
+        parent_node_id,
+        identity_created_at,
+        semantic_hash
+    },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query parent identities")
+}
+
+fn query_parent_starts(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert(
+        "campaign_id".to_string(),
+        DataValue::from(campaign_id.to_string()),
+    );
+    db.raw_query_params(
+        r#"
+?[start_event_id, parent_id, node_id, generation, branch_id, repo_root, startup_kind, handoff_runtime_id, pid, source_event_index, source_line, semantic_hash] :=
+    *eval_parent_start {
+        start_event_id,
+        campaign_id,
+        parent_id,
+        node_id,
+        generation,
+        branch_id,
+        repo_root,
+        startup_kind,
+        handoff_runtime_id,
+        pid,
+        source_event_index,
+        source_line,
+        semantic_hash
+    },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query parent starts")
 }
 
 fn query_all_transition_events(db: &Database) -> QueryResult {
