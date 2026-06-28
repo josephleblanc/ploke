@@ -96,7 +96,7 @@ initializer rows remain absent until const body ownership is modeled.
 
 ## High-Fanout Test Helper Matrix
 
-`TestClient::new` has 172 selected-member text callsites. The full fanout is useful for fixture coverage, but a strict DB oracle should be generated from parser facts because owner recovery by hand is noisy.
+`TestClient::new` has 172 selected-member text callsites. The full fanout is useful for fixture coverage; strict DB assertions should be generated from parser facts because owner recovery by hand is noisy.
 
 | Target | Exact callsite fanout | Evidence chain |
 | --- | --- | --- |
@@ -219,10 +219,10 @@ explicit owner-scoped absence. The generic-array guarded match-arm case remains
 a fixture-wide absence assertion because the source checkout is not present in
 `tests/fixture_github_clones/corpus`.
 
-## Not-Fully-Oracled Items
+## Boundary Items
 
-| Item | Current state | Required next step before strict DB test |
+| Item | Current state | Required next step before stricter DB test |
 | --- | --- | --- |
-| `TestClient::new` owner-per-callsite matrix | Exact 172 file/line callsites are listed. `ploke-db` now asserts the current 167 projected structural rows by module fanout from parser facts, with all rows unsupported and targetless. The five missing source rows are the three `extract/multipart.rs` rows plus one `routing/tests/mod.rs` row and one `routing/tests/nest.rs` row. | Generate exact owner/source rows before asserting full 172-callsite parity; keep the current 167-row module-fanout assertion as the fail-closed DB contract until projection coverage changes. |
+| `TestClient::new` owner-per-callsite matrix | Exact 172 file/line callsites are listed. `ploke-db` now asserts the current 167 projected structural rows by module and source-file fanout from parser facts, with all rows unsupported, targetless, and non-traversable. The five missing source rows are the three `extract/multipart.rs` rows plus one `routing/tests/mod.rs` row and one `routing/tests/nest.rs` row. | Generate exact owner/source-line rows before asserting full 172-callsite parity; keep the current 167-row module/file-fanout assertion as the fail-closed DB contract until projection coverage changes. |
 | Markdown/doc-comment examples | Excluded from oracle rows. | Keep excluded unless parser fixture intentionally ingests docs as Rust examples. |
 | Dynamic callback targets | Source binding chains are recorded, but concrete targets remain intentionally unresolved. | Tests should assert structural dynamic call plus `Unsupported`/fail-closed status, not guessed callees. |

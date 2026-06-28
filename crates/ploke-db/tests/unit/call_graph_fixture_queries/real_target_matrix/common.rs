@@ -615,6 +615,94 @@ pub(super) fn assert_path_module_fanout(
     Ok(())
 }
 
+pub(super) fn assert_path_file_fanout(
+    db: &Database,
+    path_parts: &[&str],
+    status: CallStatusKind,
+    expected: &[(&str, usize)],
+) -> Result<(), DbError> {
+    let mut params = BTreeMap::new();
+    params.insert("path".to_string(), path_value(path_parts));
+    params.insert("status".to_string(), DataValue::from(format!("{status:?}")));
+
+    let script = format!(
+        r#"
+{ANCESTOR_RULES_NOW}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[file_path, site_id, owner_id, resolution_kind] :=
+    *call_site {{
+        id: site_id,
+        owner_id,
+        call_kind: "Path",
+        path: $path @ 'NOW'
+    }},
+    *call_resolution_status {{
+        source_id: site_id,
+        source_kind: "Path",
+        status_kind: $status,
+        resolution_kind @ 'NOW'
+    }},
+    *function {{ id: owner_id, module_id @ 'NOW' }},
+    *module {{ id: module_id @ 'NOW' }},
+    file_owner_for_module[module_id, file_id],
+    *file_mod {{ owner_id: file_id, file_path @ 'NOW' }}
+:sort file_path, site_id
+"#
+    );
+
+    let rows = db.raw_query_params(&script, params)?;
+    let expected_suffixes = expected
+        .iter()
+        .map(|(suffix, _)| *suffix)
+        .collect::<BTreeSet<_>>();
+    let mut actual = BTreeMap::<String, usize>::new();
+    let mut sites = Vec::new();
+
+    for row in &rows.rows {
+        let file_path = data_str(&row[0], "file_path");
+        let Some(suffix) = expected_suffixes
+            .iter()
+            .find(|suffix| file_path.ends_with(**suffix))
+        else {
+            panic!(
+                "unexpected file path for {status:?} {path_parts:?} row: {file_path}; rows: {:#?}",
+                rows.rows
+            );
+        };
+        assert_eq!(row[3], DataValue::Null);
+
+        let site_id = to_uuid(&row[1])?;
+        let owner_id = to_uuid(&row[2])?;
+        assert!(
+            relations_for_site(db, site_id)?.rows.is_empty(),
+            "{status:?} {path_parts:?} row in {suffix} should not have call_relation targets"
+        );
+
+        *actual.entry((*suffix).to_string()).or_default() += 1;
+        sites.push((owner_id, site_id));
+    }
+
+    let expected = expected
+        .iter()
+        .map(|(suffix, count)| ((*suffix).to_string(), *count))
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(
+        actual, expected,
+        "unexpected {status:?} file fanout for {path_parts:?}"
+    );
+    assert_no_traversal_candidates_for_sites(
+        db,
+        &sites,
+        &format!("{status:?} file fanout rows for {path_parts:?}"),
+    )?;
+
+    Ok(())
+}
+
 pub(super) fn assert_no_path_rows(db: &Database, path_parts: &[&str]) -> Result<(), DbError> {
     let mut params = BTreeMap::new();
     params.insert("path".to_string(), path_value(path_parts));

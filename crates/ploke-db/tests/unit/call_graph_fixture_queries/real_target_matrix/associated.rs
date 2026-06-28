@@ -231,6 +231,40 @@ fn axum_real_target_test_client_new_high_fanout_is_documented_gap() -> Result<()
             (&["crate", "routing", "tests", "nest"], 15),
         ],
     )?;
+    // File-level projection oracle for the same high-fanout matrix:
+    //   the oracle lists 172 selected-member text callsites. The DB currently
+    //   projects 167 structural rows. The absent source rows are
+    //   axum/src/extract/multipart.rs:{383,423,449},
+    //   one routing/tests/mod.rs row, and one routing/tests/nest.rs row.
+    //   Every projected row is targetless, so traversal edge count is 0.
+    assert_path_file_fanout(
+        &db,
+        &["TestClient", "new"],
+        CallStatusKind::Unsupported,
+        &[
+            ("axum-core/src/extract/request_parts.rs", 1),
+            ("axum/src/extension.rs", 1),
+            ("axum/src/extract/connect_info.rs", 1),
+            ("axum/src/extract/matched_path.rs", 14),
+            ("axum/src/extract/mod.rs", 1),
+            ("axum/src/extract/nested_path.rs", 6),
+            ("axum/src/extract/path/mod.rs", 19),
+            ("axum/src/extract/query.rs", 1),
+            ("axum/src/form.rs", 1),
+            ("axum/src/handler/mod.rs", 2),
+            ("axum/src/json.rs", 6),
+            ("axum/src/middleware/from_extractor.rs", 1),
+            ("axum/src/middleware/map_request.rs", 2),
+            ("axum/src/middleware/map_response.rs", 1),
+            ("axum/src/response/mod.rs", 1),
+            ("axum/src/response/sse.rs", 3),
+            ("axum/src/routing/tests/fallback.rs", 25),
+            ("axum/src/routing/tests/handle_error.rs", 5),
+            ("axum/src/routing/tests/merge.rs", 16),
+            ("axum/src/routing/tests/mod.rs", 45),
+            ("axum/src/routing/tests/nest.rs", 15),
+        ],
+    )?;
 
     Ok(())
 }
