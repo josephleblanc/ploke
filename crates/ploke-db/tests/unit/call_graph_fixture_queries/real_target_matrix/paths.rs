@@ -1,5 +1,7 @@
 use super::super::*;
 use super::common::*;
+use super::source_lines::*;
+use ploke_test_utils::CORPUS_AXUM_CALL_GRAPH;
 
 #[test]
 fn axum_macros_expand_helpers_reach_root_expand() -> Result<(), DbError> {
@@ -1048,10 +1050,10 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
     }
 
     // Matrix routing-test rows:
-    //   routing/tests/mod.rs:88,768,810,888-890,916,936,956,
-    //   982,986,988,1043,1306 call generated `post(...)`.
-    // These 14 projected rows are grouped by owner because the DB fixture does
-    // not persist source line numbers for individual call sites.
+    //   routing/tests/mod.rs:88,624,666,744,745,746,772,792,812,
+    //   838,842,844,899,1162 call generated `post(...)`.
+    // These 14 projected rows are grouped by owner here; the source-line
+    // assertion below pins the exact persisted span-derived file/line fanout.
     let routing_cases = [
         RoutingPostCase {
             owner: "hello_world",
@@ -1136,6 +1138,38 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
             ("axum/src/json.rs", 6),
             ("axum/src/routing/method_routing.rs", 2),
             ("axum/src/routing/tests/mod.rs", 14),
+        ],
+    )?;
+    // Source-line projection oracle for the same matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Projected rows stay fail-closed: callsite -> grouped import or same-module
+    // visibility -> generated `routing::post` template
+    // axum/src/routing/method_routing.rs:165 / invocation :445, but no
+    // generated function node or traversal edge. The multipart rows at
+    // axum/src/extract/multipart.rs:{381,404,420,448} plus closure-body
+    // logging rows at axum/src/routing/tests/mod.rs:{1071,1215} remain absent.
+    assert_targetless_path_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        &["post"],
+        CallStatusKind::Unsupported,
+        &[
+            SourceLineFanout {
+                file_suffix: "axum/src/json.rs",
+                lines: &[248, 264, 279, 299, 318, 353],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/method_routing.rs",
+                lines: &[1448, 1660],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/mod.rs",
+                lines: &[
+                    88, 624, 666, 744, 745, 746, 772, 792, 812, 838, 842, 844, 899, 1162,
+                ],
+            },
         ],
     )?;
 

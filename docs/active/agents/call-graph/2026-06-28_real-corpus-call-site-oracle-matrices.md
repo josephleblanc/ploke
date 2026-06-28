@@ -77,10 +77,10 @@ for `middleware/{map_request,from_fn,map_response}.rs`.
 
 Current executable coverage: `ploke-db` real-target matrix tests assert that no
 generated `post` function node exists yet, then pin the 22 currently projected
-`post(...)` rows as unsupported, targetless, and non-traversable by source-file
-fanout: six JSON rows, two `method_routing.rs` rows, and fourteen
-`routing/tests/mod.rs` rows. The multipart rows remain absent in the current
-fixture.
+`post(...)` rows as unsupported, targetless, and non-traversable by exact
+source-line fanout: six JSON rows, two `method_routing.rs` rows, and fourteen
+`routing/tests/mod.rs` rows. The multipart rows and the closure-body
+`routing/tests/mod.rs:1071` / `:1215` rows remain absent in the current fixture.
 
 ## Re-Exported Body Constructor Fanout
 
