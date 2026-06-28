@@ -90,6 +90,24 @@ pub(super) fn assert_owner_path_targetless(
     Ok(row.site.id)
 }
 
+pub(super) fn assert_owner_method_targetless(
+    db: &Database,
+    owner: Uuid,
+    method: &str,
+    receiver: &CallReceiver,
+    status: CallStatusKind,
+    label: &str,
+) -> Result<Uuid, DbError> {
+    let context = db.call_context_for_owner(owner)?;
+    let row = row_by_method_receiver(&context, method, receiver);
+    assert_targetless_status(row, status);
+    assert!(
+        relations_for_site(db, row.site.id)?.rows.is_empty(),
+        "{label} should not have raw call_relation targets"
+    );
+    Ok(row.site.id)
+}
+
 pub(super) fn assert_targetless_status(row: &ploke_db::CallContextRow, status: CallStatusKind) {
     assert_eq!(row.status.status, status);
     assert_eq!(row.status.resolution, None);

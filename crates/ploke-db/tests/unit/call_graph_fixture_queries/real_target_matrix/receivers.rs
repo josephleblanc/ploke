@@ -85,6 +85,23 @@ fn axum_real_target_request_extensions_mut_receivers_are_documented_gaps() -> Re
     let request_new = row_by_path(&context, &["Request", "new"]);
     assert_targetless_status(request_new, CallStatusKind::Unresolved);
 
+    let parameter_owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "call",
+        "req.extensions_mut().insert(self.value.clone())",
+        "axum/src/extension.rs",
+    )?;
+    assert_owner_method_targetless(
+        &db,
+        parameter_owner,
+        "extensions_mut",
+        &CallReceiver::LocalBinding {
+            name: "req".to_string(),
+        },
+        CallStatusKind::Unresolved,
+        "axum/src/extension.rs:184",
+    )?;
+
     assert_targetless_method_rows(
         &db,
         "extensions_mut",
@@ -107,15 +124,16 @@ fn axum_real_target_self_field_size_hint_is_documented_gap() -> Result<(), DbErr
     // Current model gap: the tuple-field receiver shape is visible but remains
     // unsupported and targetless.
     let owner = method_id_by_name_and_body_substring(&db, "size_hint", "self.0.size_hint()")?;
-    let context = db.call_context_for_owner(owner)?;
-    let row = row_by_method_receiver(
-        &context,
+    assert_owner_method_targetless(
+        &db,
+        owner,
         "size_hint",
         &CallReceiver::SelfField {
             path: vec!["0".to_string()],
         },
-    );
-    assert_targetless_status(row, CallStatusKind::Unsupported);
+        CallStatusKind::Unsupported,
+        "axum-core/src/body.rs:127",
+    )?;
 
     Ok(())
 }
@@ -200,6 +218,22 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
     //   tuple wrappers project as `self.0.poll_ready(...)`.
     // Current model gap: external trait receiver dispatch is visible but
     // targetless.
+    let owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "poll_ready",
+        "self.inner.poll_ready(cx)",
+        "axum/src/extension.rs",
+    )?;
+    assert_owner_method_targetless(
+        &db,
+        owner,
+        "poll_ready",
+        &CallReceiver::SelfField {
+            path: vec!["inner".to_string()],
+        },
+        CallStatusKind::Unsupported,
+        "axum/src/extension.rs:180",
+    )?;
     assert_targetless_method_rows(
         &db,
         "poll_ready",
@@ -308,6 +342,35 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
     // Current model gap: path-call and method-call result receivers are
     // structurally projected but remain targetless unless the nested local
     // associated function is already in the resolved subset.
+    let route_owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "oneshot_inner",
+        "self.0.clone().oneshot(req)",
+        "axum/src/routing/route.rs",
+    )?;
+    assert_owner_method_targetless(
+        &db,
+        route_owner,
+        "oneshot",
+        &CallReceiver::MethodCallResult {
+            method_name: "clone".to_string(),
+        },
+        CallStatusKind::Unsupported,
+        "axum/src/routing/route.rs:51",
+    )?;
+
+    let from_fn_owner =
+        function_id_by_name_in_module(&db, &["crate", "middleware", "from_fn", "tests"], "basic")?;
+    assert_owner_method_targetless(
+        &db,
+        from_fn_owner,
+        "unwrap",
+        &CallReceiver::MethodCallResult {
+            method_name: "body".to_string(),
+        },
+        CallStatusKind::Unsupported,
+        "axum/src/middleware/from_fn.rs:411",
+    )?;
     assert_targetless_path_rows(&db, &["Request", "builder"], CallStatusKind::External, 8)?;
     assert_targetless_path_rows(&db, &["Request", "builder"], CallStatusKind::Unsupported, 6)?;
     assert_targetless_method_rows(
@@ -349,6 +412,21 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
     // Current model gap: awaited-result receiver shapes are visible in the
     // corpus, but they stay targetless. The test-client async block row remains
     // part of the broader nested async-owner gap rather than a local edge.
+    let listener_owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "accept",
+        "self.sem.clone().acquire_owned().await.unwrap()",
+        "axum/src/serve/listener.rs",
+    )?;
+    assert_owner_method_targetless(
+        &db,
+        listener_owner,
+        "unwrap",
+        &CallReceiver::AwaitResult,
+        CallStatusKind::Unsupported,
+        "axum/src/serve/listener.rs:143",
+    )?;
+
     assert_targetless_method_rows(
         &db,
         "unwrap",
