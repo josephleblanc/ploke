@@ -64,11 +64,15 @@ pub(super) fn assert_one_edge_traversal(
 }
 
 pub(super) fn assert_external_targetless(row: &ploke_db::CallContextRow) {
-    assert_eq!(row.status.status, CallStatusKind::External);
+    assert_targetless_status(row, CallStatusKind::External);
+}
+
+pub(super) fn assert_targetless_status(row: &ploke_db::CallContextRow, status: CallStatusKind) {
+    assert_eq!(row.status.status, status);
     assert_eq!(row.status.resolution, None);
     assert!(
         row.targets.is_empty(),
-        "external row should not expose local traversal targets: {row:#?}"
+        "{status:?} row should not expose local traversal targets: {row:#?}"
     );
 }
 
