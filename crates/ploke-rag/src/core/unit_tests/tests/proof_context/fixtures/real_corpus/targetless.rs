@@ -2,13 +2,20 @@ use super::super::super::super::*;
 use super::super::super::helpers::assert_blocked_resolution;
 use super::helpers::{
     AXUM_DOMAIN, assert_site_blocker, await_result_unwrap_site, axum_db, conn_limiter_accept_owner,
-    dynamic_site, method_id_by_name_and_body,
+    dynamic_site, method_id_by_name_and_body, targetless_method_site,
 };
 
 struct DynamicCase {
     label: &'static str,
     method: &'static str,
     body: &'static str,
+}
+
+struct MethodCase {
+    label: &'static str,
+    method: &'static str,
+    body: &'static str,
+    callee: CallCalleeInfo,
 }
 
 #[tokio::test]
@@ -59,6 +66,84 @@ async fn proof_context_collection_preserves_axum_await_result_receiver_blocker()
         "type_resolution_missing",
         "ConnLimiter::accept AwaitResult unwrap",
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn proof_context_collection_preserves_axum_route_oneshot_blockers() -> Result<(), Error> {
+    init_tracing_once();
+    let db = axum_db()?;
+
+    let cases = [
+        MethodCase {
+            label: "Route::oneshot_inner method-call-result receiver",
+            method: "oneshot_inner",
+            body: "self.0.clone().oneshot(req)",
+            callee: CallCalleeInfo::Method {
+                name: "oneshot".to_string(),
+                receiver: Some(CallReceiverInfo::MethodCallResult {
+                    method_name: "clone".to_string(),
+                }),
+            },
+        },
+        MethodCase {
+            label: "Route::oneshot_inner_owned tuple-field receiver",
+            method: "oneshot_inner_owned",
+            body: "self.0.oneshot(req)",
+            callee: CallCalleeInfo::Method {
+                name: "oneshot".to_string(),
+                receiver: Some(CallReceiverInfo::SelfField {
+                    path: vec!["0".to_string()],
+                }),
+            },
+        },
+    ];
+
+    let mut owners = Vec::new();
+    for case in cases {
+        let owner = method_id_by_name_and_body(&db, case.method, case.body)?;
+        let projected = db.project_call_proof_facts_for_owner(owner, AXUM_DOMAIN)?;
+        assert!(
+            projected >= 2,
+            "{} should project targetless Route::oneshot proof rows",
+            case.label
+        );
+        owners.push((case, owner));
+    }
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.proof_context_degraded(),
+        "projected axum Route::oneshot facts should enable RAG proof context"
+    );
+
+    for (case, owner) in owners {
+        let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+        let calls = call_context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
+        let site_id = targetless_method_site(calls, owner, &case.callee, case.label);
+
+        let proof_context = rag.collect_proof_context(&[(owner, 1.0)])?;
+        let rows = proof_context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("{} should receive projected proof rows", case.label));
+
+        // Matrix: Route::oneshot receiver rows.
+        // Source chain:
+        //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+        //   axum/src/routing/route.rs:51 calls
+        //   `self.0.clone().oneshot(req)`.
+        //   axum/src/routing/route.rs:57 calls `self.0.oneshot(req)`.
+        // Expected proof traversal: owner-seeded proof context must include the
+        // call_site plus blocked call_resolution facts for both unsupported,
+        // targetless Route::oneshot receiver shapes. There are zero callee
+        // edges until external tower receiver dispatch and tuple-field receiver
+        // proof are modeled.
+        assert_blocked_resolution(rows, owner, "type_resolution_missing");
+        assert_site_blocker(rows, owner, site_id, "type_resolution_missing", case.label);
+    }
 
     Ok(())
 }

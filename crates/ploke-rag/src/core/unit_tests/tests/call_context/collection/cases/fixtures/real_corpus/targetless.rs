@@ -6,6 +6,13 @@ struct DynamicCase {
     body: &'static str,
 }
 
+struct MethodCase {
+    label: &'static str,
+    method: &'static str,
+    body: &'static str,
+    callee: CallCalleeInfo,
+}
+
 #[tokio::test]
 async fn call_context_collection_reads_axum_dynamic_callable_field_gaps() -> Result<(), Error> {
     init_tracing_once();
@@ -68,6 +75,78 @@ async fn call_context_collection_reads_axum_dynamic_callable_field_gaps() -> Res
         );
 
         let call = dynamic[0];
+        assert_eq!(call.owner_id, owner);
+        assert_eq!(call.status, CallStatusKind::Unsupported);
+        assert_eq!(call.resolution, None);
+        assert!(
+            call.targets.is_empty(),
+            "{} should remain targetless in RAG call context: {call:#?}",
+            case.label
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn call_context_collection_reads_axum_route_oneshot_receiver_gaps() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    let cases = [
+        MethodCase {
+            label: "axum/src/routing/route.rs:51 Route::oneshot_inner",
+            method: "oneshot_inner",
+            body: "self.0.clone().oneshot(req)",
+            callee: CallCalleeInfo::Method {
+                name: "oneshot".to_string(),
+                receiver: Some(CallReceiverInfo::MethodCallResult {
+                    method_name: "clone".to_string(),
+                }),
+            },
+        },
+        MethodCase {
+            label: "axum/src/routing/route.rs:57 Route::oneshot_inner_owned",
+            method: "oneshot_inner_owned",
+            body: "self.0.oneshot(req)",
+            callee: CallCalleeInfo::Method {
+                name: "oneshot".to_string(),
+                receiver: Some(CallReceiverInfo::SelfField {
+                    path: vec!["0".to_string()],
+                }),
+            },
+        },
+    ];
+
+    for case in cases {
+        let owner = method_id_by_name_and_body_substring(&db, case.method, case.body)?;
+        let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+        let context = call_context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
+        let matching = context
+            .iter()
+            .filter(|call| call.kind == CallSiteKind::Method && call.callee == case.callee)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matching.len(),
+            1,
+            "{} should expose one targetless Route::oneshot row: {context:#?}",
+            case.label
+        );
+
+        // Matrix:
+        //   docs/active/agents/call-graph/
+        //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+        //
+        // Source chains:
+        //   axum/src/routing/route.rs:51 calls
+        //   `self.0.clone().oneshot(req)`.
+        //   axum/src/routing/route.rs:57 calls `self.0.oneshot(req)`.
+        // Expected traversal: both receiver shapes are structurally visible
+        // method callsites, but have zero traversable targets until external
+        // tower receiver dispatch and tuple-field receiver proof are modeled.
+        let call = matching[0];
         assert_eq!(call.owner_id, owner);
         assert_eq!(call.status, CallStatusKind::Unsupported);
         assert_eq!(call.resolution, None);

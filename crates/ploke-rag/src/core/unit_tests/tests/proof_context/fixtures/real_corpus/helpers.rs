@@ -236,16 +236,25 @@ pub(super) fn conn_limiter_accept_owner(db: &Database) -> Result<Uuid, Error> {
 }
 
 pub(super) fn await_result_unwrap_site(calls: &[CallContextInfo], owner: Uuid) -> Uuid {
+    let callee = CallCalleeInfo::Method {
+        name: "unwrap".to_string(),
+        receiver: Some(CallReceiverInfo::AwaitResult),
+    };
+    targetless_method_site(calls, owner, &callee, "AwaitResult unwrap")
+}
+
+pub(super) fn targetless_method_site(
+    calls: &[CallContextInfo],
+    owner: Uuid,
+    callee: &CallCalleeInfo,
+    label: &str,
+) -> Uuid {
     let matching = calls
         .iter()
         .filter(|call| {
             call.owner_id == owner
                 && call.kind == CallSiteKind::Method
-                && call.callee
-                    == (CallCalleeInfo::Method {
-                        name: "unwrap".to_string(),
-                        receiver: Some(CallReceiverInfo::AwaitResult),
-                    })
+                && &call.callee == callee
                 && call.status == CallStatusKind::Unsupported
                 && call.resolution.is_none()
                 && call.targets.is_empty()
@@ -254,7 +263,7 @@ pub(super) fn await_result_unwrap_site(calls: &[CallContextInfo], owner: Uuid) -
     assert_eq!(
         matching.len(),
         1,
-        "expected one targetless AwaitResult unwrap call row: {calls:#?}"
+        "expected one targetless {label} call row: {calls:#?}"
     );
     matching[0].site_id
 }
