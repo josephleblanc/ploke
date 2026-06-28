@@ -59,7 +59,9 @@ one-hop `parse_attrs` edges, including the explicit
 `axum-macros/src/lib.rs:9`, and absent nested closure-body rows for
 `from_request/mod.rs:471,1029,1039`. The external path test asserts
 `serde_json::Deserializer::from_slice`, the two currently projected
-`std::mem::replace` external rows, and the current absent wrapper-body owner rows
+`std::mem::replace` external rows at
+`axum/src/error_handling/mod.rs:138` and
+`axum/src/response/sse.rs:449`, and the current absent wrapper-body owner rows
 for `middleware/{map_request,from_fn,map_response}.rs`.
 
 ## Generated Handler Function Fanout

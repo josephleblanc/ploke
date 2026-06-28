@@ -468,6 +468,21 @@ fn axum_real_target_external_path_rows_remain_targetless() -> Result<(), DbError
         replace_row.site.id,
         "axum/src/response/sse.rs:449 std::mem::replace",
     )?;
+
+    let error_owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "call",
+        "let inner = std::mem::replace(&mut self.inner, clone)",
+        "axum/src/error_handling/mod.rs",
+    )?;
+    assert_owner_path_targetless(
+        &db,
+        error_owner,
+        &["std", "mem", "replace"],
+        CallStatusKind::External,
+        "axum/src/error_handling/mod.rs:138 std::mem::replace",
+    )?;
+
     assert_targetless_path_rows(&db, &["std", "mem", "replace"], CallStatusKind::External, 2)?;
 
     for (label, file_suffix) in [
