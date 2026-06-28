@@ -310,7 +310,13 @@ impl CallRelationResolver<'_> {
     ) -> Result<LocalFunctionPathResolution, SynParserError> {
         let mut candidates = Vec::new();
         self.visit_scope_candidates(module_id, segment, &mut |candidate| {
-            if let Ok(function_id) = FunctionNodeId::try_from(candidate) {
+            if let Ok(function_id) = FunctionNodeId::try_from(candidate)
+                && self
+                    .graph
+                    .functions()
+                    .iter()
+                    .any(|function| function.id == function_id)
+            {
                 candidates.push(function_id);
             }
             Ok(())

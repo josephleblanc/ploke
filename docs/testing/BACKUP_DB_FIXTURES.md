@@ -210,6 +210,7 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_chrono_type_graph_2026-05-17.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | typed graphRAG type traversal corpus backup | 2026-05-17 |
 | `corpus_chrono_openrouter_embeddings_2026-05-17.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_axum_type_graph_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | typed graphRAG workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
+| `corpus_axum_call_graph_2026-06-28.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-06-28 |
 | `corpus_axum_openrouter_embeddings_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | OpenRouter-searchable workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
 
@@ -563,6 +564,30 @@ Expected searchable corpus embedding config:
     fabricating a terminal target for the paren wrapper
   - `Token![,]` under `Punctuated<syn::Variant, Token![,]>` retains a nested
     macro type without fabricating a terminal target
+
+### `corpus_axum_call_graph_2026-06-28.sqlite`
+
+- Status: active
+- File: `tests/backup_dbs/corpus_axum_call_graph_2026-06-28.sqlite`
+- Parsed target: `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1`
+- Checkout slug: `tests/fixture_github_clones/corpus/tokio-rs__axum`
+- Selected workspace members:
+  - `axum`
+  - `axum-core`
+  - `axum-macros`
+- Expected DB config:
+  - plain backup import
+  - no embedding model contract
+  - no primary vector index required by call graph query contracts
+  - call graph relations projected from the current parser/transform baseline
+- Tests using this fixture:
+  - `expand_with` and `expand_attr_with` reach root `expand` through
+    owner-centered and target-centered call context
+  - `RequestExt::extract` and `RequestPartsExt::extract` reach
+    `extract_with_state` through same-impl self-method call resolution
+  - selected proc-macro body, closure body, and dynamic callable field shapes
+    are documented as unsupported contracts until parser/resolver ownership
+    improves
 
 ### `corpus_axum_openrouter_embeddings_2026-05-17.sqlite`
 

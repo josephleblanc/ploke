@@ -22,6 +22,7 @@ mod node_proof;
 mod owner_context;
 mod path_context;
 mod proof_lookup;
+mod real_target_matrix;
 mod resolved_proof;
 mod target_proof;
 mod trait_method_context;

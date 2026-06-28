@@ -765,6 +765,29 @@ pub const CORPUS_AXUM_TYPE_GRAPH: FixtureDb = FixtureDb {
     notes: "Source-pinned axum workspace backup for TypeNode matrix coverage over trait objects, impl Trait, and nested parenthesized no-target rows.",
 };
 
+pub const CORPUS_AXUM_CALL_GRAPH: FixtureDb = FixtureDb {
+    id: "corpus_axum_call_graph",
+    rel_path: "tests/backup_dbs/corpus_axum_call_graph_2026-06-28.sqlite",
+    parsed_targets: &["github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1"],
+    status: FixtureStatus::Active,
+    creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusWorkspaceTargets {
+        normalized_repo: "tokio-rs/axum",
+        checkout_slug: "tokio-rs__axum",
+        clone_url: "https://github.com/tokio-rs/axum.git",
+        rev: "a3446d68bc03d61fb8e7513052bad2825d0c0db1",
+        target_relative_paths: &["axum", "axum-core", "axum-macros"],
+        output_stem: "corpus_axum_call_graph",
+    }),
+    path_scope: FixturePathScope::SharedSnapshot,
+    default_access: FixtureAccess::ImmutableShared,
+    import_mode: FixtureImportMode::PlainBackup,
+    requires_primary_index: false,
+    bm25_index_expected: false,
+    embedding: None,
+    last_updated: "2026-06-28",
+    notes: "Source-pinned axum workspace backup for real-target call graph query contracts over helper callers, call sites, self-method calls, and documented unsupported proc-macro, closure, and dynamic dispatch shapes.",
+};
+
 pub const CORPUS_AXUM_OPENROUTER_EMBEDDINGS: FixtureDb = FixtureDb {
     id: "corpus_axum_openrouter_embeddings",
     rel_path: "tests/backup_dbs/corpus_axum_openrouter_embeddings_2026-05-17.sqlite",
@@ -835,6 +858,7 @@ pub const BACKUP_DB_FIXTURES: &[&FixtureDb] = &[
     &CORPUS_CHRONO_TYPE_GRAPH,
     &CORPUS_CHRONO_OPENROUTER_EMBEDDINGS,
     &CORPUS_AXUM_TYPE_GRAPH,
+    &CORPUS_AXUM_CALL_GRAPH,
     &CORPUS_AXUM_OPENROUTER_EMBEDDINGS,
     &PLOKE_DB_ORPHANED,
 ];
