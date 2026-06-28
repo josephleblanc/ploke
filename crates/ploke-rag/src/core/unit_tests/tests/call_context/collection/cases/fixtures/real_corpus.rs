@@ -5,9 +5,7 @@ use cozo::DataValue;
 use super::super::super::super::super::*;
 use super::expected::path;
 
-#[tokio::test]
-async fn call_context_exact_reads_axum_body_empty_incoming_callers() -> Result<(), Error> {
-    init_tracing_once();
+fn setup_axum_call_graph_rag() -> Result<(Arc<Database>, RagService), Error> {
     let db = Arc::new(fresh_backup_fixture_db(
         &ploke_test_utils::CORPUS_AXUM_CALL_GRAPH,
     )?);
@@ -16,12 +14,21 @@ async fn call_context_exact_reads_axum_body_empty_incoming_callers() -> Result<(
         "corpus_axum_call_graph must include call graph relations for RAG call-context tests"
     );
 
-    let target = method_id_by_name_and_body_substring(&db, "empty", "Empty::new()")?;
     let rag = init_test_rag_mock(Arc::clone(&db));
     assert!(
         !rag.call_context_degraded(),
         "axum call graph backup should enable RAG call context"
     );
+
+    Ok((db, rag))
+}
+
+#[tokio::test]
+async fn call_context_exact_reads_axum_body_empty_incoming_callers() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    let target = method_id_by_name_and_body_substring(&db, "empty", "Empty::new()")?;
 
     let callers = db.callers_for_target(target)?;
     assert_eq!(
@@ -96,20 +103,9 @@ async fn call_context_exact_reads_axum_body_empty_incoming_callers() -> Result<(
 #[tokio::test]
 async fn call_context_exact_reads_axum_parse_attrs_incoming_callers() -> Result<(), Error> {
     init_tracing_once();
-    let db = Arc::new(fresh_backup_fixture_db(
-        &ploke_test_utils::CORPUS_AXUM_CALL_GRAPH,
-    )?);
-    assert!(
-        db.has_call_graph_relations()?,
-        "corpus_axum_call_graph must include call graph relations for RAG call-context tests"
-    );
+    let (db, rag) = setup_axum_call_graph_rag()?;
 
     let target = function_id_by_name_in_module(&db, &["crate", "attr_parsing"], "parse_attrs")?;
-    let rag = init_test_rag_mock(Arc::clone(&db));
-    assert!(
-        !rag.call_context_degraded(),
-        "axum call graph backup should enable RAG call context"
-    );
 
     let callers = db.callers_for_target(target)?;
     assert_eq!(
@@ -186,24 +182,13 @@ async fn call_context_exact_reads_axum_parse_attrs_incoming_callers() -> Result<
 #[tokio::test]
 async fn call_context_exact_reads_axum_json_from_bytes_incoming_callers() -> Result<(), Error> {
     init_tracing_once();
-    let db = Arc::new(fresh_backup_fixture_db(
-        &ploke_test_utils::CORPUS_AXUM_CALL_GRAPH,
-    )?);
-    assert!(
-        db.has_call_graph_relations()?,
-        "corpus_axum_call_graph must include call graph relations for RAG call-context tests"
-    );
+    let (db, rag) = setup_axum_call_graph_rag()?;
 
     let target = method_id_by_name_and_body_substring(
         &db,
         "from_bytes",
         "serde_json::Deserializer::from_slice(bytes)",
     )?;
-    let rag = init_test_rag_mock(Arc::clone(&db));
-    assert!(
-        !rag.call_context_degraded(),
-        "axum call graph backup should enable RAG call context"
-    );
 
     let callers = db.callers_for_target(target)?;
     assert_eq!(
@@ -275,20 +260,9 @@ async fn call_context_exact_reads_axum_json_from_bytes_incoming_callers() -> Res
 #[tokio::test]
 async fn call_context_exact_reads_axum_boxed_into_route_constructor_callers() -> Result<(), Error> {
     init_tracing_once();
-    let db = Arc::new(fresh_backup_fixture_db(
-        &ploke_test_utils::CORPUS_AXUM_CALL_GRAPH,
-    )?);
-    assert!(
-        db.has_call_graph_relations()?,
-        "corpus_axum_call_graph must include call graph relations for RAG call-context tests"
-    );
+    let (db, rag) = setup_axum_call_graph_rag()?;
 
     let target = struct_id_by_name(&db, "BoxedIntoRoute")?;
-    let rag = init_test_rag_mock(Arc::clone(&db));
-    assert!(
-        !rag.call_context_degraded(),
-        "axum call graph backup should enable RAG call context"
-    );
 
     let callers = db.callers_for_target(target)?;
     assert_eq!(
@@ -339,6 +313,63 @@ async fn call_context_exact_reads_axum_boxed_into_route_constructor_callers() ->
         call.targets[0].relation,
         CallTargetKind::TupleStructConstructor
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn call_context_exact_reads_axum_handler_call_trait_method_caller() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    let target = method_id_by_trait_name(&db, "Handler", "call")?;
+    let callers = db.callers_for_target(target)?;
+    assert_eq!(
+        callers.len(),
+        1,
+        "current axum fixture should resolve the Handler::call trait-method caller: {callers:#?}"
+    );
+
+    let context = rag.exact_call_context(target)?;
+    let expected_callee = CallCalleeInfo::Path {
+        path: path(&["Handler", "call"]),
+    };
+    let incoming = context
+        .iter()
+        .filter(|call| {
+            call.kind == CallSiteKind::Path
+                && call.callee == expected_callee
+                && call
+                    .targets
+                    .iter()
+                    .any(|candidate| candidate.target_id == target)
+        })
+        .collect::<Vec<_>>();
+
+    // Matrix: `Handler::call` trait method path row.
+    // Source chain:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   axum/src/handler/mod.rs:153 declares trait method `Handler::call`.
+    //   axum/src/handler/service.rs:148 binds `H: Handler<T, S>`.
+    //   axum/src/handler/service.rs:171 calls
+    //   `Handler::call(handler, req, self.state.clone())`.
+    // Expected traversal: RAG exact call context preserves the same one-hop
+    // trait-method binding edge exposed by `Database::callers_for_target`.
+    // Concrete runtime impl dispatch remains type-parameter dependent.
+    assert_eq!(
+        incoming.len(),
+        1,
+        "RAG exact call context should expose the current Handler::call trait-method edge: {context:#?}"
+    );
+
+    let call = incoming[0];
+    assert_eq!(call.owner_id, callers[0].site.owner_id);
+    assert_eq!(call.site_id, callers[0].site.id);
+    assert_eq!(call.status, CallStatusKind::Resolved);
+    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(call.targets.len(), 1);
+    assert_eq!(call.targets[0].target_id, target);
+    assert_eq!(call.targets[0].relation, CallTargetKind::AssociatedFunction);
 
     Ok(())
 }
@@ -407,6 +438,31 @@ fn function_id_by_name_in_module(
         rows.rows.len(),
         1,
         "expected exactly one function named {name:?} in module {module_path:?}; rows: {:#?}",
+        rows.rows
+    );
+
+    to_uuid(&rows.rows[0][0]).map_err(Error::from)
+}
+
+fn method_id_by_trait_name(
+    db: &Database,
+    trait_name: &str,
+    method_name: &str,
+) -> Result<Uuid, Error> {
+    let mut params = BTreeMap::new();
+    params.insert("trait_name".to_string(), DataValue::from(trait_name));
+    params.insert("method_name".to_string(), DataValue::from(method_name));
+
+    let rows = db.raw_query_params(
+        r#"?[id] :=
+            *trait { id: trait_id, name: $trait_name @ 'NOW' },
+            *method { id, name: $method_name, owner_id: trait_id @ 'NOW' }"#,
+        params,
+    )?;
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "expected exactly one trait method {trait_name}::{method_name}; rows: {:#?}",
         rows.rows
     );
 
