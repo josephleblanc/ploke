@@ -24,9 +24,24 @@ fn axum_real_target_into_service_future_new_is_documented_gap() -> Result<(), Db
         "unresolved IntoServiceFuture::new row should not expose traversal targets: {row:#?}"
     );
     assert!(
+        relations_for_site(&db, row.site.id)?.rows.is_empty(),
+        "IntoServiceFuture::new structural row should have zero persisted call edges"
+    );
+    assert_no_traversal_candidates_for_site(
+        &db,
+        owner,
+        row.site.id,
+        "axum/src/handler/service.rs:174 IntoServiceFuture::new",
+    )?;
+    assert!(
         db.call_sites_for_target(target)?.is_empty(),
         "IntoServiceFuture::new should remain targetless until generated associated path resolution lands"
     );
+    assert_no_incoming_traversal_to_target(
+        &db,
+        target,
+        "axum/src/handler/service.rs:174 IntoServiceFuture::new",
+    )?;
 
     Ok(())
 }
@@ -63,12 +78,27 @@ fn axum_real_target_json_from_bytes_self_paths_are_documented_gap() -> Result<()
             row.targets.is_empty(),
             "unsupported Self::from_bytes row should remain targetless: {row:#?}"
         );
+        assert!(
+            relations_for_site(&db, row.site.id)?.rows.is_empty(),
+            "Self::from_bytes structural row should have zero persisted call edges"
+        );
+        assert_no_traversal_candidates_for_site(
+            &db,
+            owner,
+            row.site.id,
+            "axum/src/json.rs:112 or :128 Self::from_bytes",
+        )?;
     }
 
     assert!(
         db.call_sites_for_target(target)?.is_empty(),
         "Json::from_bytes should remain targetless until Self::associated-function resolution lands"
     );
+    assert_no_incoming_traversal_to_target(
+        &db,
+        target,
+        "axum/src/json.rs:112 and :128 Self::from_bytes",
+    )?;
 
     Ok(())
 }
@@ -99,9 +129,24 @@ fn axum_real_target_handler_service_trait_call_is_documented_gap() -> Result<(),
         "unresolved Handler::call row should not expose traversal targets: {row:#?}"
     );
     assert!(
+        relations_for_site(&db, row.site.id)?.rows.is_empty(),
+        "Handler::call structural row should have zero persisted call edges"
+    );
+    assert_no_traversal_candidates_for_site(
+        &db,
+        owner,
+        row.site.id,
+        "axum/src/handler/service.rs:171 Handler::call",
+    )?;
+    assert!(
         db.call_sites_for_target(target)?.is_empty(),
         "Handler::call should remain targetless until trait associated-function resolution lands"
     );
+    assert_no_incoming_traversal_to_target(
+        &db,
+        target,
+        "axum/src/handler/service.rs:171 Handler::call",
+    )?;
 
     Ok(())
 }

@@ -199,6 +199,27 @@ pub(super) fn assert_no_traversal_candidates_for_site(
     Ok(())
 }
 
+pub(super) fn assert_no_incoming_traversal_to_target(
+    db: &Database,
+    target: Uuid,
+    label: &str,
+) -> Result<(), DbError> {
+    let incoming = db.expand_call_context(
+        CallContextSeed::Target(target),
+        CallContextOptions {
+            include_outgoing_targets: false,
+            max_candidates: 512,
+            ..CallContextOptions::default()
+        },
+    )?;
+    assert!(
+        incoming.is_empty(),
+        "{label} should have zero incoming traversal candidates: {incoming:#?}"
+    );
+
+    Ok(())
+}
+
 pub(super) fn method_id_by_name_and_body_substring(
     db: &Database,
     name: &str,

@@ -81,6 +81,16 @@ fn axum_real_target_explicit_crate_path_parse_attrs_is_documented_gap() -> Resul
         "unresolved parse_attrs row should not expose traversal targets: {row:#?}"
     );
     assert!(
+        relations_for_site(&db, row.site.id)?.rows.is_empty(),
+        "typed_path::expand parse_attrs row should have zero persisted call edges"
+    );
+    assert_no_traversal_candidates_for_site(
+        &db,
+        owner,
+        row.site.id,
+        "axum-macros/src/typed_path.rs:23 crate::attr_parsing::parse_attrs",
+    )?;
+    assert!(
         db.callers_for_target(target)?.iter().all(|caller| {
             caller.site.owner_id != owner
                 || caller.site.path.as_ref()
@@ -406,12 +416,24 @@ fn axum_real_target_external_path_rows_remain_targetless() -> Result<(), DbError
     let json_context = db.call_context_for_owner(json_owner)?;
     let json_row = row_by_path(&json_context, &["serde_json", "Deserializer", "from_slice"]);
     assert_external_targetless(json_row);
+    assert_no_traversal_candidates_for_site(
+        &db,
+        json_owner,
+        json_row.site.id,
+        "axum/src/json.rs:184 serde_json::Deserializer::from_slice",
+    )?;
 
     let replace_owner =
         method_id_by_name_and_body_substring(&db, "write_buf", "std::mem::replace")?;
     let replace_context = db.call_context_for_owner(replace_owner)?;
     let replace_row = row_by_path(&replace_context, &["std", "mem", "replace"]);
     assert_external_targetless(replace_row);
+    assert_no_traversal_candidates_for_site(
+        &db,
+        replace_owner,
+        replace_row.site.id,
+        "axum/src/response/sse.rs:449 std::mem::replace",
+    )?;
     assert_targetless_path_rows(&db, &["std", "mem", "replace"], CallStatusKind::External, 2)?;
 
     for (label, file_suffix) in [
@@ -700,6 +722,16 @@ fn axum_real_target_position_first_variant_is_documented_gap() -> Result<(), DbE
         row.targets.is_empty(),
         "Position::First constructor row should remain targetless: {row:#?}"
     );
+    assert!(
+        relations_for_site(&db, row.site.id)?.rows.is_empty(),
+        "Position::First constructor row should have zero persisted call edges"
+    );
+    assert_no_traversal_candidates_for_site(
+        &db,
+        owner,
+        row.site.id,
+        "axum-macros/src/with_position.rs:92 Position::First",
+    )?;
 
     let outgoing = db.expand_call_context(
         CallContextSeed::Owner(owner),
@@ -721,6 +753,11 @@ fn axum_real_target_position_first_variant_is_documented_gap() -> Result<(), DbE
         callers.is_empty(),
         "Position::First should remain targetless until enum variant constructor resolution covers this corpus row: {callers:#?}"
     );
+    assert_no_incoming_traversal_to_target(
+        &db,
+        position,
+        "axum-macros/src/with_position.rs:92 Position::First",
+    )?;
 
     Ok(())
 }
@@ -760,6 +797,16 @@ fn axum_real_target_shadowed_get_closure_is_documented_gap() -> Result<(), DbErr
             row.targets.is_empty(),
             "shadowed get/routing get rows should remain targetless in current fixture: {row:#?}"
         );
+        assert!(
+            relations_for_site(&db, row.site.id)?.rows.is_empty(),
+            "shadowed get/routing get setup row should have zero persisted call edges"
+        );
+        assert_no_traversal_candidates_for_site(
+            &db,
+            owner,
+            row.site.id,
+            "axum/src/routing/tests/mod.rs:412-413 setup routing::get rows",
+        )?;
     }
 
     Ok(())
