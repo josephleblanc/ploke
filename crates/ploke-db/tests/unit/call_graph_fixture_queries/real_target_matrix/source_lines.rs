@@ -5,7 +5,7 @@ use std::{
 };
 
 use cozo::DataValue;
-use ploke_db::multi_embedding::db_ext::ANCESTOR_RULES_NOW;
+use ploke_db::multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE};
 use ploke_test_utils::{
     FixtureAutomation, FixtureCreationStrategy, FixtureDb, backup_db_snapshot_fixture_dir,
 };
@@ -33,6 +33,7 @@ pub(super) fn assert_targetless_path_line_fanout(
     let script = format!(
         r#"
 {ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
 
 module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
 file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id

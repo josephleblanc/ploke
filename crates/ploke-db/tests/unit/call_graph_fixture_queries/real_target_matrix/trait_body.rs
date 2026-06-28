@@ -1,5 +1,7 @@
 use super::super::*;
 use super::common::*;
+use super::source_lines::*;
+use ploke_test_utils::CORPUS_AXUM_CALL_GRAPH;
 
 #[test]
 fn axum_real_target_trait_associated_paths_reach_trait_methods() -> Result<(), DbError> {
@@ -412,6 +414,30 @@ fn axum_real_target_header_value_from_static_external_paths_are_targetless() -> 
         &["HeaderValue", "from_static"],
         CallStatusKind::External,
         8,
+    )?;
+    assert_targetless_path_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        &["HeaderValue", "from_static"],
+        CallStatusKind::External,
+        &[
+            SourceLineFanout {
+                file_suffix: "axum-core/src/response/into_response.rs",
+                lines: &[196, 207, 232, 320],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/json.rs",
+                lines: &[208, 217],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/response/mod.rs",
+                lines: &[47],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/route.rs",
+                lines: &[202],
+            },
+        ],
     )
 }
 

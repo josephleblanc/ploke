@@ -106,10 +106,10 @@ serve/mod.rs}` and seven unsupported rows in
 `axum/src/routing/tests/get_to_head.rs`.
 
 The DB matrix also pins all eight currently projected external
-`HeaderValue::from_static` rows by exact owner: four `axum-core` response
-conversion owners, two JSON response rows under one owner, the HTML response
-owner, and the `set_content_length` local const row. The websocket const
-initializer rows remain absent until const body ownership is modeled.
+`HeaderValue::from_static` rows by exact owner and source line: four `axum-core`
+response conversion rows, two JSON response rows under one owner, the HTML
+response owner, and the `set_content_length` local const row. The websocket
+const initializer rows remain absent until const body ownership is modeled.
 
 ## High-Fanout Test Helper Matrix
 
