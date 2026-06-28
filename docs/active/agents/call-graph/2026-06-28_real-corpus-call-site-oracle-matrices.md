@@ -135,7 +135,9 @@ The regenerated axum call-graph fixture also resolves both
 `axum/src/json.rs:{112,128}` `Self::from_bytes(&bytes)` rows to the inherent
 `Json::from_bytes` method at `axum/src/json.rs:164`. The DB matrix asserts both
 one-hop owner-to-target traversal edges and includes this target in the
-consolidated supported traversal table.
+consolidated supported traversal table. RAG exact call context,
+`code_item_lookup`, and `code_item_edges` also assert both downstream
+`Self::from_bytes` caller-site rows with target-centered proof rows.
 
 The same regeneration resolves `axum/src/routing/mod.rs:109` `Self::new()` from
 `Default for Router` to `Router::new`. The real-target receiver matrix now pins
