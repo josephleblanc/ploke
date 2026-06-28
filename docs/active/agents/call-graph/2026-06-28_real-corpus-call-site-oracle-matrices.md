@@ -228,6 +228,12 @@ functions in `routing/tests/mod.rs` and `routing/tests/nest.rs`.
 The result-chain coverage also pins all 14 projected `Request::builder()` rows
 by owner and source line: eight external rows and six unsupported rows, including
 the matrix chain in `middleware/from_fn.rs:411`.
+The exact current source-line fanout is external
+`extract/query.rs:104`, `extract/raw_form.rs:65`, `form.rs:{156,164,226}`,
+`routing/tests/mod.rs:{1129,1147}`, and `serve/mod.rs:799`; unsupported
+`axum-core/src/ext_traits/request.rs:{375,388}`,
+`middleware/from_fn.rs:411`, `routing/method_routing.rs:1697`, and
+`routing/tests/get_to_head.rs:{22,56}`.
 The typed-local clone coverage pins all 11 projected `Router` receiver rows:
 ten `router.clone()` rows across `serve/mod.rs` and one `app.clone()` row in
 `routing/tests/mod.rs`.

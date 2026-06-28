@@ -1,5 +1,8 @@
+use ploke_test_utils::CORPUS_AXUM_CALL_GRAPH;
+
 use super::super::*;
 use super::common::*;
+use super::source_lines::{SourceLineFanout, assert_targetless_path_line_fanout};
 
 #[test]
 fn axum_core_extract_self_methods_reach_same_impl_methods() -> Result<(), DbError> {
@@ -776,22 +779,22 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
             status: CallStatusKind::External,
         },
         RequestBuilderCase {
-            // axum/src/routing/tests/mod.rs:1273
-            label: "axum/src/routing/tests/mod.rs:1273",
+            // axum/src/routing/tests/mod.rs:1129
+            label: "axum/src/routing/tests/mod.rs:1129",
             module_path: &["crate", "routing", "tests"],
             owner: "connect_going_to_custom_fallback",
             status: CallStatusKind::External,
         },
         RequestBuilderCase {
-            // axum/src/routing/tests/mod.rs:1291
-            label: "axum/src/routing/tests/mod.rs:1291",
+            // axum/src/routing/tests/mod.rs:1147
+            label: "axum/src/routing/tests/mod.rs:1147",
             module_path: &["crate", "routing", "tests"],
             owner: "connect_going_to_default_fallback",
             status: CallStatusKind::External,
         },
         RequestBuilderCase {
-            // axum/src/serve/mod.rs:1035
-            label: "axum/src/serve/mod.rs:1035",
+            // axum/src/serve/mod.rs:799
+            label: "axum/src/serve/mod.rs:799",
             module_path: &["crate", "serve", "tests"],
             owner: "serving_on_custom_io_type",
             status: CallStatusKind::External,
@@ -865,6 +868,58 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
     )?;
     assert_targetless_path_rows(&db, &["Request", "builder"], CallStatusKind::External, 8)?;
     assert_targetless_path_rows(&db, &["Request", "builder"], CallStatusKind::Unsupported, 6)?;
+    assert_targetless_path_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        &["Request", "builder"],
+        CallStatusKind::External,
+        &[
+            SourceLineFanout {
+                file_suffix: "axum/src/extract/query.rs",
+                lines: &[104],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/extract/raw_form.rs",
+                lines: &[65],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/form.rs",
+                lines: &[156, 164, 226],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/mod.rs",
+                lines: &[1129, 1147],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/serve/mod.rs",
+                lines: &[799],
+            },
+        ],
+    )?;
+    assert_targetless_path_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        &["Request", "builder"],
+        CallStatusKind::Unsupported,
+        &[
+            SourceLineFanout {
+                file_suffix: "axum-core/src/ext_traits/request.rs",
+                lines: &[375, 388],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/middleware/from_fn.rs",
+                lines: &[411],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/method_routing.rs",
+                lines: &[1697],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/get_to_head.rs",
+                lines: &[22, 56],
+            },
+        ],
+    )?;
     assert_targetless_method_rows(
         &db,
         "oneshot",
