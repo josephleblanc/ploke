@@ -421,6 +421,16 @@ fn axum_real_target_take_route_helper_is_documented_gap() -> Result<(), DbError>
         callers.is_empty(),
         "take_route_or_internal_error should remain targetless until routing same-module/super paths resolve: {callers:#?}"
     );
+    let sites = db.call_sites_for_target(target)?;
+    assert!(
+        sites.is_empty(),
+        "call_sites_for_target should mirror the absent routing helper rows: {sites:#?}"
+    );
+    assert_no_incoming_traversal_to_target(
+        &db,
+        target,
+        "axum/src/routing/mod.rs:410,430 and routing/tests/mod.rs:56,59 take_route_or_internal_error",
+    )?;
 
     Ok(())
 }

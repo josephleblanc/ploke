@@ -32,6 +32,11 @@ fn axum_proc_macro_body_calls_are_documented_unsupported_gap() -> Result<(), DbE
         sites.is_empty(),
         "call_sites_for_target should mirror targetless proc-macro-body gap: {sites:#?}"
     );
+    assert_no_incoming_traversal_to_target(
+        &db,
+        target,
+        "axum-macros/src/lib.rs:377,426,665,715 expand_with proc-macro body calls",
+    )?;
 
     Ok(())
 }
@@ -60,6 +65,16 @@ fn axum_proc_macro_callback_argument_calls_are_documented_unsupported_gap() -> R
         callers.is_empty(),
         "expand_attr_with should have no resolved proc-macro-body callers until those bodies are visited: {callers:#?}"
     );
+    let sites = db.call_sites_for_target(expand_attr_with)?;
+    assert!(
+        sites.is_empty(),
+        "call_sites_for_target should mirror targetless expand_attr_with proc-macro-body gap: {sites:#?}"
+    );
+    assert_no_incoming_traversal_to_target(
+        &db,
+        expand_attr_with,
+        "axum-macros/src/lib.rs:581,637,655 expand_attr_with proc-macro body calls",
+    )?;
 
     assert_no_path_rows(&db, &["expand_attr_with"])?;
     assert_no_path_rows(&db, &["debug_handler", "expand"])?;
@@ -94,6 +109,11 @@ fn axum_closure_body_call_is_documented_unsupported_gap() -> Result<(), DbError>
         sites.is_empty(),
         "expand_field should have no resolved call sites until closure body calls are projected: {sites:#?}"
     );
+    assert_no_incoming_traversal_to_target(
+        &db,
+        target,
+        "axum-macros/src/from_ref.rs:23 closure-body expand_field call",
+    )?;
 
     Ok(())
 }
