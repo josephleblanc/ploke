@@ -1273,3 +1273,18 @@ impl TraitMethodPath for TraitMethodPathTarget {
 pub fn call_trait_method_as_path(value: TraitMethodPathTarget) -> i32 {
     TraitMethodPath::handle(value)
 }
+
+pub trait GenericAssocPathTrait {
+    fn make(value: i32) -> i32;
+}
+
+pub fn call_inline_generic_bound_assoc_path<T: GenericAssocPathTrait>() -> i32 {
+    T::make(7)
+}
+
+pub fn call_where_generic_bound_assoc_path<T>() -> i32
+where
+    T: GenericAssocPathTrait,
+{
+    T::make(11)
+}

@@ -81,7 +81,7 @@ Status values:
 
 | Case | Status | Fixture / crate | File:line | Source shape | Future DB contract |
 | --- | --- | --- | --- | --- | --- |
-| Trait-associated function dispatch | `axum-fixture` | axum-core | `axum-core/src/ext_traits/request.rs:279` | `E::from_request(self, state)` | Should model trait-bound associated call separately from inherent associated calls. |
+| Trait-associated function dispatch | `axum-fixture` | axum-core | `axum-core/src/ext_traits/request.rs:279` | `E::from_request(self, state)` | Covered in `trait_body.rs`: bounded type-parameter associated paths traverse to trait method bindings without guessing concrete impl dispatch. |
 | Concrete trait impl method body | `axum-fixture` | axum | `axum/src/handler/mod.rs:242`, `axum/src/handler/mod.rs:250` | `$ty::from_request_parts(...)` and `$last::from_request(...)` in generated impl body | Query should surface calls owned by impl method bodies. |
 | Trait default method body | `axum-fixture` | axum | `axum/src/service_ext.rs:42`, `axum/src/service_ext.rs:43` | default `handle_error` calls `HandleError::new(self, f)` | Query should surface calls owned by trait default method bodies. |
 | Blanket impl | `axum-fixture` | axum-core | `axum-core/src/extract/from_ref.rs:18` | `impl<T> FromRef<T> for T` | Useful source site for future trait-impl completeness tests; no call site on this line by itself. |
@@ -122,7 +122,7 @@ These rows are inside the current axum call-graph fixture and produce stable DB 
 | --- | --- | --- |
 | Grouped import free function | `axum/src/json.rs:237`, `axum/src/json.rs:248` | Covered by `axum_real_target_generated_post_function_is_documented_gap`: the `deserialize_body` owner has a visible unsupported, targetless `post` row. |
 | Glob import type call | `axum/src/json.rs:237`, `axum/src/json.rs:250` | Covered by `axum_real_target_test_client_new_high_fanout_is_documented_gap`: the `deserialize_body` owner has a visible unsupported, targetless `TestClient::new` row. |
-| Trait-associated dispatch | `axum-core/src/ext_traits/request.rs:279` | Covered by `axum_real_target_trait_associated_paths_are_documented_gaps`: `E::from_request` is visible, unsupported, targetless, and non-traversable. |
+| Trait-associated dispatch | `axum-core/src/ext_traits/request.rs:279` | Covered by `axum_real_target_trait_associated_paths_reach_trait_methods`: `E::from_request` traverses to the `FromRequest::from_request` trait method binding without guessing concrete impl dispatch. |
 | Opaque callable field | `axum/src/boxed.rs:85` | Covered by `axum_dynamic_callable_fields_are_visible_unsupported_blockers`: the dynamic row is visible, unsupported, targetless, and non-traversable. |
 | IIFE closure expression | `axum-macros/src/lib.rs:734`, `axum-macros/src/lib.rs:738` | Covered by `axum_macro_callback_rows_are_visible_or_explicitly_absent`: the IIFE dynamic row is visible without a fabricated semantic target. |
 

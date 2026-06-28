@@ -159,6 +159,26 @@ fn axum_real_target_supported_callers_are_one_hop_traversable() -> Result<(), Db
             expected_traversal_candidates: 1,
         },
         ResolvedTraversalCase {
+            // axum-core/src/ext_traits/request.rs:279 calls
+            // `E::from_request(self, state)` from the generic bound
+            // `E: FromRequest<S, M>` at request.rs:276. Callee binding:
+            // axum-core/src/extract/mod.rs:85 trait method.
+            label: "axum-core E::from_request trait-associated path",
+            target: method_id_by_trait_name(&db, "FromRequest", "from_request")?,
+            expected_call_edges: 1,
+            expected_traversal_candidates: 1,
+        },
+        ResolvedTraversalCase {
+            // axum-core/src/ext_traits/request.rs:305 and
+            // ext_traits/request_parts.rs:133 call
+            // `E::from_request_parts(...)` from `E: FromRequestParts<S>`.
+            // Callee binding: axum-core/src/extract/mod.rs:59 trait method.
+            label: "axum-core E::from_request_parts trait-associated paths",
+            target: method_id_by_trait_name(&db, "FromRequestParts", "from_request_parts")?,
+            expected_call_edges: 2,
+            expected_traversal_candidates: 2,
+        },
+        ResolvedTraversalCase {
             // Router::new is defined at axum/src/routing/mod.rs:162. The
             // matrix includes many real `Router::new()` callsites; the
             // regenerated fixture also resolves axum/src/routing/mod.rs:109

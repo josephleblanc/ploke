@@ -2,7 +2,7 @@ use super::super::*;
 use super::common::*;
 
 #[test]
-fn axum_real_target_trait_associated_paths_are_documented_gaps() -> Result<(), DbError> {
+fn axum_real_target_trait_associated_paths_reach_trait_methods() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
     // Matrix: trait-associated extraction calls.
@@ -10,8 +10,20 @@ fn axum_real_target_trait_associated_paths_are_documented_gaps() -> Result<(), D
     //   axum-core/src/ext_traits/request.rs:279 calls `E::from_request`.
     //   axum-core/src/ext_traits/request.rs:305 and
     //   ext_traits/request_parts.rs:133 call `E::from_request_parts`.
-    // Current model gap: these type-parameter trait calls are structurally
-    // visible but remain unsupported and targetless in the axum fixture.
+    // Intermediate bindings:
+    //   axum-core/src/extract/mod.rs:79 declares trait `FromRequest`.
+    //   axum-core/src/extract/mod.rs:85 declares `FromRequest::from_request`.
+    //   axum-core/src/extract/mod.rs:53 declares trait `FromRequestParts`.
+    //   axum-core/src/extract/mod.rs:59 declares
+    //   `FromRequestParts::from_request_parts`.
+    // Expected traversal: bounded type-parameter associated paths resolve to
+    // the trait method binding in one local-exact associated-function edge.
+    // Concrete runtime impl dispatch remains type-parameter dependent and is
+    // not guessed by this query.
+    let from_request = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
+    let from_request_parts =
+        method_id_by_trait_name(&db, "FromRequestParts", "from_request_parts")?;
+
     let cases = [
         (
             "axum-core/src/ext_traits/request.rs:279",
@@ -22,6 +34,7 @@ fn axum_real_target_trait_associated_paths_are_documented_gaps() -> Result<(), D
                 "axum-core/src/ext_traits/request.rs",
             )?,
             &["E", "from_request"][..],
+            from_request,
         ),
         (
             "axum-core/src/ext_traits/request.rs:305",
@@ -32,6 +45,7 @@ fn axum_real_target_trait_associated_paths_are_documented_gaps() -> Result<(), D
                 "axum-core/src/ext_traits/request.rs",
             )?,
             &["E", "from_request_parts"][..],
+            from_request_parts,
         ),
         (
             "axum-core/src/ext_traits/request_parts.rs:133",
@@ -42,18 +56,55 @@ fn axum_real_target_trait_associated_paths_are_documented_gaps() -> Result<(), D
                 "axum-core/src/ext_traits/request_parts.rs",
             )?,
             &["E", "from_request_parts"][..],
+            from_request_parts,
         ),
     ];
-    for (label, owner, path) in cases {
-        assert_owner_path_targetless(&db, owner, path, CallStatusKind::Unsupported, label)?;
+    for (label, owner, path, target) in cases {
+        let context = db.call_context_for_owner(owner)?;
+        let row = row_by_path(&context, path);
+        assert_resolved_target(
+            row,
+            target,
+            CallRelationKind::AssociatedFunction,
+            CallSiteKind::Path,
+            CallTargetKind::Method,
+        );
+        assert_one_edge_traversal(
+            &db,
+            TraversalExpectation {
+                label,
+                owner,
+                target,
+                site_id: row.site.id,
+                expected_edge_count: 1,
+            },
+        )?;
     }
 
-    assert_targetless_path_rows(&db, &["E", "from_request"], CallStatusKind::Unsupported, 1)?;
-    assert_targetless_path_rows(
+    let from_request_callers = db.callers_for_target(from_request)?;
+    assert_eq!(
+        from_request_callers.len(),
+        1,
+        "FromRequest::from_request should expose the inspected E::from_request caller: {from_request_callers:#?}"
+    );
+    assert_sites_match_callers(
         &db,
-        &["E", "from_request_parts"],
-        CallStatusKind::Unsupported,
+        from_request,
+        &from_request_callers,
+        "FromRequest::from_request real-corpus caller",
+    )?;
+
+    let from_request_parts_callers = db.callers_for_target(from_request_parts)?;
+    assert_eq!(
+        from_request_parts_callers.len(),
         2,
+        "FromRequestParts::from_request_parts should expose both inspected E::from_request_parts callers: {from_request_parts_callers:#?}"
+    );
+    assert_sites_match_callers(
+        &db,
+        from_request_parts,
+        &from_request_parts_callers,
+        "FromRequestParts::from_request_parts real-corpus callers",
     )?;
 
     Ok(())

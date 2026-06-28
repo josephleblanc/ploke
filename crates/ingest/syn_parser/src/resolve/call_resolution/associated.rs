@@ -2,7 +2,7 @@ use crate::{
     error::SynParserError,
     parser::{
         graph::GraphAccess,
-        nodes::{CallBodyOwnerId, OrdinaryTypeTargetId},
+        nodes::{CallBodyOwnerId, OrdinaryTypeTargetId, TypeGenericParamNodeId},
         relations::TypeRelation,
     },
 };
@@ -26,6 +26,7 @@ impl CallRelationResolver<'_> {
                     owner,
                     type_path,
                     method_name,
+                    arg_count,
                     type_relations,
                 );
             }
@@ -51,12 +52,63 @@ impl CallRelationResolver<'_> {
             return Ok(Some(resolution));
         }
 
+        if let Some(resolution) = self.resolve_generic_bound_assoc_function_by_name(
+            owner,
+            type_segment,
+            method_name,
+            arg_count,
+            type_relations,
+        )? {
+            return Ok(Some(resolution));
+        }
+
         match self.resolve_local_type_segment(owner, type_segment)? {
-            LocalTypeResolution::Resolved(target) => {
-                self.resolve_type_associated_function(target, method_name, type_relations)
-            }
+            LocalTypeResolution::Resolved(target) => self.resolve_type_associated_function(
+                owner,
+                target,
+                method_name,
+                Some(arg_count),
+                type_relations,
+            ),
             LocalTypeResolution::Unresolved => Ok(None),
             LocalTypeResolution::Ambiguous => Ok(Some(AssocPathResolution::Ambiguous)),
+        }
+    }
+
+    fn resolve_generic_bound_assoc_function_by_name(
+        &self,
+        owner: CallBodyOwnerId,
+        type_segment: &str,
+        method_name: &str,
+        arg_count: usize,
+        type_relations: &[TypeRelation],
+    ) -> Result<Option<AssocPathResolution>, SynParserError> {
+        let Some((params, _)) = self.owner_generic_bounds(owner)? else {
+            return Ok(None);
+        };
+
+        let matches = params
+            .iter()
+            .filter_map(|param| {
+                (param.kind.name() == Some(type_segment))
+                    .then(|| TypeGenericParamNodeId::try_refine(param.id, &param.kind).ok())
+                    .flatten()
+            })
+            .collect::<Vec<_>>();
+
+        match matches.as_slice() {
+            [] => Ok(None),
+            [param_id] => {
+                let target = OrdinaryTypeTargetId::from(*param_id);
+                self.resolve_generic_bound_path_item(
+                    owner,
+                    target,
+                    method_name,
+                    arg_count,
+                    type_relations,
+                )
+            }
+            _ => Ok(Some(AssocPathResolution::Ambiguous)),
         }
     }
 
@@ -65,12 +117,17 @@ impl CallRelationResolver<'_> {
         owner: CallBodyOwnerId,
         type_path: &[String],
         method_name: &str,
+        arg_count: usize,
         type_relations: &[TypeRelation],
     ) -> Result<Option<AssocPathResolution>, SynParserError> {
         match self.resolve_local_type_path(owner, type_path)? {
-            LocalTypeResolution::Resolved(target) => {
-                self.resolve_type_associated_function(target, method_name, type_relations)
-            }
+            LocalTypeResolution::Resolved(target) => self.resolve_type_associated_function(
+                owner,
+                target,
+                method_name,
+                Some(arg_count),
+                type_relations,
+            ),
             LocalTypeResolution::Unresolved => Ok(None),
             LocalTypeResolution::Ambiguous => Ok(Some(AssocPathResolution::Ambiguous)),
         }
@@ -116,7 +173,13 @@ impl CallRelationResolver<'_> {
                     return Ok(AssocPathResolution::Unsupported);
                 };
                 return self
-                    .resolve_type_associated_function(self_target, method_name, type_relations)
+                    .resolve_type_associated_function(
+                        owner,
+                        self_target,
+                        method_name,
+                        None,
+                        type_relations,
+                    )
                     .map(|resolution| resolution.unwrap_or(AssocPathResolution::Unsupported));
             }
             return Ok(self.resolve_method_in_impl(impl_node, method_name));
@@ -131,8 +194,10 @@ impl CallRelationResolver<'_> {
 
     fn resolve_type_associated_function(
         &self,
+        owner: CallBodyOwnerId,
         target: OrdinaryTypeTargetId,
         method_name: &str,
+        arg_count: Option<usize>,
         type_relations: &[TypeRelation],
     ) -> Result<Option<AssocPathResolution>, SynParserError> {
         let receiver_targets = self.ordinary_receiver_targets(target, type_relations)?;
@@ -162,8 +227,50 @@ impl CallRelationResolver<'_> {
 
         if matched_inherent_impl {
             Ok(Some(Self::method_resolution(candidates)))
+        } else if let Some(arg_count) = arg_count {
+            self.resolve_generic_bound_path_item(
+                owner,
+                target,
+                method_name,
+                arg_count,
+                type_relations,
+            )
         } else {
             Ok(None)
         }
+    }
+
+    fn resolve_generic_bound_path_item(
+        &self,
+        owner: CallBodyOwnerId,
+        target: OrdinaryTypeTargetId,
+        method_name: &str,
+        arg_count: usize,
+        type_relations: &[TypeRelation],
+    ) -> Result<Option<AssocPathResolution>, SynParserError> {
+        let Ok(param_id) = TypeGenericParamNodeId::try_from(target) else {
+            return Ok(None);
+        };
+
+        let traits = self.generic_bound_traits(owner, target, param_id, type_relations)?;
+        if traits.is_empty() {
+            return Ok(None);
+        }
+
+        let mut candidates = Vec::new();
+        for trait_id in traits {
+            let trait_node = self.graph.get_trait_checked(trait_id)?;
+            candidates.extend(
+                trait_node
+                    .methods
+                    .iter()
+                    .filter(|method| {
+                        method.name == method_name && method.parameters.len() == arg_count
+                    })
+                    .map(|method| method.id),
+            );
+        }
+
+        Ok(Some(Self::method_resolution(candidates)))
     }
 }

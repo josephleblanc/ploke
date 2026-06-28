@@ -42,6 +42,8 @@ High-fanout targets are grouped by identical evidence chain. Before turning high
 | `Json::from_bytes` | inherent impl `axum/src/json.rs:157`; fn `:164` | local | `Self::from_bytes` inside `Json<T>` impls. |
 | `HandleError::new` | inherent impl `axum/src/error_handling/mod.rs:78`; fn `:80` | local | Called by layer impl and trait default method. |
 | `Handler::call` | trait method `axum/src/handler/mod.rs:153` | local trait | `Handler::call(...)` syntax now resolves to the trait method binding; concrete runtime impl dispatch remains type-parameter dependent. |
+| `FromRequest::from_request` | trait method `axum-core/src/extract/mod.rs:85` | local trait | `E::from_request(...)` now resolves to the trait method binding through the owner generic bound; concrete runtime impl dispatch remains type-parameter dependent. |
+| `FromRequestParts::from_request_parts` | trait method `axum-core/src/extract/mod.rs:59` | local trait | `E::from_request_parts(...)` now resolves to the trait method binding through the owner generic bound; concrete runtime impl dispatch remains type-parameter dependent. |
 
 ## Path, Import, And External Call Oracles
 
@@ -190,7 +192,11 @@ the explicit `axum/src/routing/method_routing.rs:1494`
 | closure body boundary | `axum-macros/src/from_ref.rs:23` | closure inside `from_ref::expand` | closure call to `expand_field` should be nested-owner owned once closures are modeled; target fn `from_ref.rs:29`. |
 | async block boundary | `axum/src/handler/mod.rs:217,240` | handler `call` async blocks | calls inside async blocks should not be flattened into outer function owner once nested async owners are modeled. |
 
-Current executable coverage: receiver tests now assert exact owner-count buckets
+Current executable coverage: DB target traversal now asserts the one-hop
+`E::from_request` edge to `FromRequest::from_request` and the two one-hop
+`E::from_request_parts` edges to `FromRequestParts::from_request_parts`. These
+are trait method binding edges only; concrete runtime impl dispatch remains a
+documented future slice. Receiver tests now assert exact owner-count buckets
 for the six projected `req.extensions_mut()` local-binding rows, the seven
 projected `self.inner.poll_ready(cx)` forwarding rows, and the three projected
 `self.0.poll_ready(cx)` tuple-field rows. The tuple-field coverage includes the

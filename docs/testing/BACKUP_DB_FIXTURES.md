@@ -641,6 +641,9 @@ Expected searchable corpus embedding config:
     `Json::from_bytes` associated function through local-exact call resolution
   - `Handler::call(handler, req, state)` reaches the `Handler::call` trait
     method binding through path-style trait method resolution
+  - `E::from_request` and `E::from_request_parts` reach their
+    `FromRequest` / `FromRequestParts` trait method bindings through
+    bounded type-parameter associated path resolution
   - `Router` `Default::default` reaches `Router::new` through a local-exact
     `Self::new()` associated-function edge
   - selected proc-macro body, closure body, and dynamic callable field shapes
