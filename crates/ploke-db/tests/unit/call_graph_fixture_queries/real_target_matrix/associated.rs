@@ -198,6 +198,42 @@ fn axum_real_target_boxed_into_route_explicit_constructor_reaches_struct() -> Re
 }
 
 #[test]
+fn axum_real_target_boxed_into_route_constructor_projects_proof_facts() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix proof bridge:
+    //   axum/src/boxed.rs:12 defines `BoxedIntoRoute<S, E>(...)`.
+    //   axum/src/boxed.rs:38 calls `BoxedIntoRoute(Box::new(...))`.
+    // Expected proof traversal: target-centered projection stores the resolved
+    // call_site, call_resolution, and call_edge facts for the real corpus
+    // constructor edge without adding blocker facts.
+    let owner = method_id_by_name_and_body_substring(&db, "map", "BoxedIntoRoute(Box::new")?;
+    let target = struct_id_by_name(&db, "BoxedIntoRoute")?;
+    let callers = db.callers_for_target(target)?;
+    let expected = assert_proof_site_cases(
+        &db,
+        &callers,
+        &[ProofSiteCase::path(
+            owner,
+            &["BoxedIntoRoute"],
+            CallRelationKind::TupleStructConstructor,
+            CallTargetKind::Struct,
+        )],
+    )?;
+
+    assert_target_proof_projection(
+        &db,
+        "real corpus BoxedIntoRoute constructor",
+        "bd:corpus-axum-call-graph",
+        target,
+        &callers,
+        &expected,
+        "axum/src/boxed.rs",
+        "type_resolution_missing",
+    )
+}
+
+#[test]
 fn axum_real_target_handle_error_extension_reaches_constructor() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 

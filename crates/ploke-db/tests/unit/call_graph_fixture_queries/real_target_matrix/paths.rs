@@ -426,6 +426,49 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
 }
 
 #[test]
+fn axum_real_target_body_empty_projects_proof_facts() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+    let target = method_id_by_name_and_body_substring(&db, "empty", "Empty::new()")?;
+
+    // Matrix proof bridge:
+    //   axum-core/src/body.rs:52 defines `Body::empty`.
+    //   axum-core/src/response/into_response.rs:128 and :163 call
+    //   `Body::empty()`.
+    // Expected proof traversal: both current resolved caller sites project
+    // call_site, call_resolution, and call_edge facts for the same target.
+    let callers = db.callers_for_target(target)?;
+    assert_eq!(
+        callers.len(),
+        2,
+        "Body::empty proof setup should use the current two resolved corpus callers: {callers:#?}"
+    );
+    for caller in &callers {
+        assert_eq!(caller.site.path, Some(path(&["Body", "empty"])));
+        assert_eq!(caller.target.relation, CallRelationKind::AssociatedFunction);
+        assert_eq!(caller.target.source_kind, CallSiteKind::Path);
+        assert_eq!(caller.target.target_kind, CallTargetKind::Method);
+    }
+    let expected = callers
+        .iter()
+        .map(|caller| TargetProofSite {
+            owner: caller.site.owner_id,
+            site: caller.site.id,
+        })
+        .collect::<Vec<_>>();
+
+    assert_target_proof_projection(
+        &db,
+        "real corpus Body::empty",
+        "bd:corpus-axum-call-graph",
+        target,
+        &callers,
+        &expected,
+        "axum-core/src/response/into_response.rs",
+        "type_resolution_missing",
+    )
+}
+
+#[test]
 fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
