@@ -81,7 +81,9 @@ Current executable coverage: DB target traversal, proof projection, RAG exact
 call context, `code_item_lookup`, and `code_item_edges` assert the two resolved
 `axum-core/src/response/into_response.rs:{128,163}` caller edges. The remaining
 rows in this fanout are still tracked as import/re-export completeness gaps, not
-as expected-passing traversal edges.
+as expected-passing traversal edges. The DB matrix now also pins
+`axum/src/extract/raw_form.rs:65` as a targetless external row because that owner
+imports `axum_core::body::Body` across the axum member boundary.
 
 ## High-Fanout Test Helper Matrix
 

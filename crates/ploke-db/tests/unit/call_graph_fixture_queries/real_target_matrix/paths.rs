@@ -449,9 +449,12 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
     // Source chain:
     //   axum-core/src/body.rs:52 defines `Body::empty`.
     //   axum-core/src/response/into_response.rs:128,163 call `Body::empty()`.
+    //   axum/src/extract/raw_form.rs:65 calls `Body::empty()` through a
+    //   direct `axum_core::body::Body` import inside a test helper.
     // Expected traversal for the current fixture: two `into_response` callers,
-    // each with one edge to `Body::empty`. The broader matrix fanout is a
-    // remaining import/re-export completeness gap.
+    // each with one edge to `Body::empty`. The raw_form helper row is
+    // structurally present but targetless and classified external because the
+    // owner imports `axum_core::body::Body` across the axum member boundary.
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
@@ -491,6 +494,19 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
             "Body::empty incoming caller missing",
         );
     }
+
+    let raw_form_owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "extract", "raw_form", "tests"],
+        "check_query",
+    )?;
+    assert_owner_path_targetless(
+        &db,
+        raw_form_owner,
+        &["Body", "empty"],
+        CallStatusKind::External,
+        "axum/src/extract/raw_form.rs:65",
+    )?;
 
     Ok(())
 }
