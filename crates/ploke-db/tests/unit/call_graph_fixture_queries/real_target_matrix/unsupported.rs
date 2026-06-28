@@ -1,5 +1,9 @@
 use super::super::*;
 use super::common::*;
+use super::source_lines::{
+    SourceLineFanout, assert_targetless_dynamic_line_fanout_by_method_arg_count,
+};
+use ploke_test_utils::CORPUS_AXUM_CALL_GRAPH;
 
 #[test]
 fn axum_proc_macro_body_calls_are_documented_unsupported_gap() -> Result<(), DbError> {
@@ -197,7 +201,42 @@ fn axum_dynamic_callable_fields_are_visible_unsupported_blockers() -> Result<(),
         assert_no_traversal_candidates_for_site(&db, owner, row.site.id, &label)?;
     }
 
-    Ok(())
+    assert_targetless_dynamic_line_fanout_by_method_arg_count(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        "into_route",
+        2,
+        CallStatusKind::Unsupported,
+        &[SourceLineFanout {
+            file_suffix: "axum/src/boxed.rs",
+            lines: &[85, 120],
+        }],
+        "(self.into_route)",
+    )?;
+    assert_targetless_dynamic_line_fanout_by_method_arg_count(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        "into_route",
+        1,
+        CallStatusKind::Unsupported,
+        &[SourceLineFanout {
+            file_suffix: "axum/src/boxed.rs",
+            lines: &[159],
+        }],
+        "(self.layer)",
+    )?;
+    assert_targetless_dynamic_line_fanout_by_method_arg_count(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        "accept",
+        1,
+        CallStatusKind::Unsupported,
+        &[SourceLineFanout {
+            file_suffix: "axum/src/serve/listener.rs",
+            lines: &[236],
+        }],
+        "(self.tap_fn)",
+    )
 }
 
 #[test]

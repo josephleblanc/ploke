@@ -142,9 +142,55 @@ pub(super) fn assert_targetless_dynamic_line_fanout_by_method(
     status: CallStatusKind,
     expected: &[SourceLineFanout],
 ) -> Result<(), DbError> {
+    assert_targetless_dynamic_line_fanout_by_method_filtered(
+        db,
+        fixture,
+        owner_method,
+        None,
+        status,
+        expected,
+        "(self.call)",
+    )
+}
+
+pub(super) fn assert_targetless_dynamic_line_fanout_by_method_arg_count(
+    db: &Database,
+    fixture: &FixtureDb,
+    owner_method: &str,
+    arg_count: u32,
+    status: CallStatusKind,
+    expected: &[SourceLineFanout],
+    needle: &str,
+) -> Result<(), DbError> {
+    assert_targetless_dynamic_line_fanout_by_method_filtered(
+        db,
+        fixture,
+        owner_method,
+        Some(arg_count),
+        status,
+        expected,
+        needle,
+    )
+}
+
+fn assert_targetless_dynamic_line_fanout_by_method_filtered(
+    db: &Database,
+    fixture: &FixtureDb,
+    owner_method: &str,
+    arg_count: Option<u32>,
+    status: CallStatusKind,
+    expected: &[SourceLineFanout],
+    needle: &str,
+) -> Result<(), DbError> {
     let mut params = BTreeMap::new();
     params.insert("method".to_string(), DataValue::from(owner_method));
     params.insert("status".to_string(), DataValue::from(format!("{status:?}")));
+    let arg_filter = if let Some(arg_count) = arg_count {
+        params.insert("arg_count".to_string(), DataValue::from(arg_count as i64));
+        "arg_count: $arg_count,"
+    } else {
+        ""
+    };
 
     let script = format!(
         r#"
@@ -161,6 +207,7 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
         id: site_id,
         owner_id,
         call_kind: "Dynamic",
+        {arg_filter}
         span @ 'NOW'
     }},
     *call_resolution_status {{
@@ -183,7 +230,7 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
         fixture,
         &rows.rows,
         expected,
-        "(self.call)",
+        needle,
         &format!("{status:?} source-line fanout rows for dynamic owner method {owner_method:?}"),
     )
 }
