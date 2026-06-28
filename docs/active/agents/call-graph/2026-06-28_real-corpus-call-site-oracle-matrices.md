@@ -167,6 +167,9 @@ functions in `routing/tests/mod.rs` and `routing/tests/nest.rs`.
 The result-chain coverage also pins all 14 projected `Request::builder()` rows
 by owner and source line: eight external rows and six unsupported rows, including
 the matrix chain in `middleware/from_fn.rs:411`.
+The typed-local clone coverage pins all 11 projected `Router` receiver rows:
+ten `router.clone()` rows across `serve/mod.rs` and one `app.clone()` row in
+`routing/tests/mod.rs`.
 
 ## Dynamic And Unsupported Callable Oracles
 

@@ -528,35 +528,69 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
     // Matrix source: axum/src/serve/mod.rs:769,770,772,776,780,785,790,795
     // call `router.clone...` from the same typed local binding. The clone
     // dispatch itself is still targetless and must not traverse to `Router`.
-    let clone_rows = compile_context
-        .iter()
-        .filter(|row| {
-            row.site.method.as_deref() == Some("clone")
-                && row.site.receiver.as_ref()
-                    == Some(&CallReceiver::TypedLocalBinding {
-                        name: "router".to_string(),
-                        type_path: path(&["Router"]),
-                    })
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        clone_rows.len(),
-        8,
-        "axum/src/serve/mod.rs if_it_compiles_it_works should project the eight router.clone rows: {compile_context:#?}"
-    );
-    for row in clone_rows {
-        assert_targetless_status(row, CallStatusKind::Unresolved);
-        assert!(
-            relations_for_site(&db, row.site.id)?.rows.is_empty(),
-            "axum/src/serve/mod.rs router.clone row should have zero persisted call edges"
-        );
-        assert_no_traversal_candidates_for_site(
-            &db,
+    let router_receiver = CallReceiver::TypedLocalBinding {
+        name: "router".to_string(),
+        type_path: path(&["Router"]),
+    };
+    let router_clone_cases = [
+        (
+            // axum/src/serve/mod.rs:769,770,772,776,780,785,790,795
+            // `if_it_compiles_it_works` projects eight `router.clone` rows.
+            "axum/src/serve/mod.rs:769,770,772,776,780,785,790,795",
             compile_owner,
-            row.site.id,
-            "axum/src/serve/mod.rs router.clone",
+            8,
+        ),
+        (
+            // axum/src/serve/mod.rs:928
+            "axum/src/serve/mod.rs:928",
+            function_id_by_name_in_module(
+                &db,
+                &["crate", "serve", "tests"],
+                "test_serve_local_addr",
+            )?,
+            1,
+        ),
+        (
+            // axum/src/serve/mod.rs:940
+            "axum/src/serve/mod.rs:940",
+            function_id_by_name_in_module(
+                &db,
+                &["crate", "serve", "tests"],
+                "test_with_graceful_shutdown_local_addr",
+            )?,
+            1,
+        ),
+    ];
+    for (label, owner, count) in router_clone_cases {
+        assert_owner_method_targetless_count(
+            &db,
+            owner,
+            "clone",
+            &router_receiver,
+            CallStatusKind::Unresolved,
+            count,
+            label,
         )?;
     }
+
+    let app_owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "routing", "tests"],
+        "merging_with_overlapping_method_routes",
+    )?;
+    assert_owner_method_targetless_count(
+        &db,
+        app_owner,
+        "clone",
+        &CallReceiver::TypedLocalBinding {
+            name: "app".to_string(),
+            type_path: path(&["Router"]),
+        },
+        CallStatusKind::Unresolved,
+        1,
+        // axum/src/routing/tests/mod.rs:804
+        "axum/src/routing/tests/mod.rs:804",
+    )?;
 
     let incoming = db.expand_call_context(
         CallContextSeed::Target(target),
