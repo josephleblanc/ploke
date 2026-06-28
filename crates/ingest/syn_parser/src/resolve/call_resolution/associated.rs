@@ -14,6 +14,7 @@ impl CallRelationResolver<'_> {
         &self,
         owner: CallBodyOwnerId,
         path: &[String],
+        arg_count: usize,
         type_relations: &[TypeRelation],
     ) -> Result<Option<AssocPathResolution>, SynParserError> {
         let Some((method_name, type_path)) = path.split_last() else {
@@ -41,9 +42,12 @@ impl CallRelationResolver<'_> {
             return Ok(None);
         }
 
-        if let Some(resolution) =
-            self.resolve_trait_associated_function_path(owner, type_segment, method_name)?
-        {
+        if let Some(resolution) = self.resolve_trait_associated_function_path(
+            owner,
+            type_segment,
+            method_name,
+            arg_count,
+        )? {
             return Ok(Some(resolution));
         }
 
@@ -77,13 +81,15 @@ impl CallRelationResolver<'_> {
         owner: CallBodyOwnerId,
         trait_segment: &str,
         method_name: &str,
+        arg_count: usize,
     ) -> Result<Option<AssocPathResolution>, SynParserError> {
         match self.resolve_local_trait_segment(owner, trait_segment)? {
             LocalTraitResolution::Resolved(trait_id) => {
                 let trait_node = self.graph.get_trait_checked(trait_id)?;
-                Ok(Some(self.resolve_associated_function_in_trait(
+                Ok(Some(self.resolve_trait_path_item(
                     trait_node,
                     method_name,
+                    arg_count,
                 )))
             }
             LocalTraitResolution::Unresolved => Ok(None),

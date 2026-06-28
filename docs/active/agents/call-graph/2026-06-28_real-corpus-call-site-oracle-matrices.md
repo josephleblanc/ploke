@@ -41,7 +41,7 @@ High-fanout targets are grouped by identical evidence chain. Before turning high
 | `Position::First` | enum `axum-macros/src/with_position.rs:65`; variant `:66` | local variant constructor | Pattern matches are not constructor callsites. |
 | `Json::from_bytes` | inherent impl `axum/src/json.rs:157`; fn `:164` | local | `Self::from_bytes` inside `Json<T>` impls. |
 | `HandleError::new` | inherent impl `axum/src/error_handling/mod.rs:78`; fn `:80` | local | Called by layer impl and trait default method. |
-| `Handler::call` | trait method `axum/src/handler/mod.rs:153` | local trait | Concrete impl bodies exist, but `Handler::call(...)` syntax targets the trait method binding. |
+| `Handler::call` | trait method `axum/src/handler/mod.rs:153` | local trait | `Handler::call(...)` syntax now resolves to the trait method binding; concrete runtime impl dispatch remains type-parameter dependent. |
 
 ## Path, Import, And External Call Oracles
 
@@ -116,7 +116,7 @@ initializer rows remain absent until const body ownership is modeled.
 | `Position::First` | `axum-macros/src/with_position.rs:92` | `WithPosition<I>::next` | `Position::First(item)` -> enum variant `with_position.rs:66`; pattern hits elsewhere are not constructor callsites. |
 | `Json::from_bytes` | `axum/src/json.rs:112,128` | `FromRequest for Json<T>`; `OptionalFromRequest for Json<T>` | `Self::from_bytes` inside `Json<T>` impls -> inherent fn `json.rs:164`. |
 | `HandleError::new` | `axum/src/error_handling/mod.rs:65`; `service_ext.rs:43` | `HandleErrorLayer::layer`; trait default `ServiceExt::handle_error` | local inherent associated function -> `error_handling/mod.rs:80`; service extension chain also has user `.handle_error(...)` at `routing/tests/handle_error.rs:86`. |
-| `Handler::call` | `axum/src/handler/service.rs:171` | `impl Service for HandlerService::call` | import `super::Handler` at `service.rs:1`; bound `H: Handler<T, S>` at `:148`; call `Handler::call(...)` -> trait method `handler/mod.rs:153`. |
+| `Handler::call` | `axum/src/handler/service.rs:171` | `impl Service for HandlerService::call` | import `super::Handler` at `service.rs:1`; bound `H: Handler<T, S>` at `:148`; call `Handler::call(...)` -> trait method `handler/mod.rs:153`; current traversal stops at the trait binding, not concrete impl dispatch. |
 
 Current executable coverage: the DB matrix asserts that
 `axum/src/handler/service.rs:174`
@@ -127,6 +127,9 @@ asserts the current one-hop resolved subset for the two same-named helpers. It
 also pins the axum-core `try_downcast::<i32, _>` test rows as unsupported
 macro-bound rows, not traversal edges, because the calls occur inside
 `assert_eq!` macro arguments.
+The DB matrix also asserts that `axum/src/handler/service.rs:171`
+`Handler::call(handler, req, self.state.clone())` now traverses to the
+`axum/src/handler/mod.rs:153` trait method binding in one edge.
 The real-target constructor matrix also asserts the current split for
 `BoxedIntoRoute`: the explicit `BoxedIntoRoute(...)` call traverses to the tuple
 struct in one edge, while both `Self(...)` constructor rows are structural,

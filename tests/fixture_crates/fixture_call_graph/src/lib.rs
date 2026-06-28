@@ -1257,3 +1257,19 @@ pub mod qualified_assoc_callers {
         super::qualified_assoc_scope::NestedAssoc::make()
     }
 }
+
+pub trait TraitMethodPath {
+    fn handle(self) -> i32;
+}
+
+pub struct TraitMethodPathTarget;
+
+impl TraitMethodPath for TraitMethodPathTarget {
+    fn handle(self) -> i32 {
+        610
+    }
+}
+
+pub fn call_trait_method_as_path(value: TraitMethodPathTarget) -> i32 {
+    TraitMethodPath::handle(value)
+}

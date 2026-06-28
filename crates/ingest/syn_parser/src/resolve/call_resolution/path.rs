@@ -75,9 +75,12 @@ impl CallRelationResolver<'_> {
             }
         }
 
-        if let Some(resolution) =
-            self.resolve_associated_function_path(call.owner, &call.path, type_relations)?
-        {
+        if let Some(resolution) = self.resolve_associated_function_path(
+            call.owner,
+            &call.path,
+            call.arg_count,
+            type_relations,
+        )? {
             match resolution {
                 AssocPathResolution::Resolved(target) => {
                     relations.push(CallRelation::AssociatedFunction {

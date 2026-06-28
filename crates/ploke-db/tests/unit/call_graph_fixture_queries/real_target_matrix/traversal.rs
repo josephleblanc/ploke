@@ -124,6 +124,15 @@ fn axum_real_target_supported_callers_are_one_hop_traversable() -> Result<(), Db
             expected_traversal_candidates: 2,
         },
         ResolvedTraversalCase {
+            // axum/src/handler/service.rs:171 calls
+            // `Handler::call(handler, req, self.state.clone())`.
+            // Callee binding: axum/src/handler/mod.rs:153 trait method.
+            label: "axum Handler::call trait method path",
+            target: method_id_by_trait_name(&db, "Handler", "call")?,
+            expected_call_edges: 1,
+            expected_traversal_candidates: 1,
+        },
+        ResolvedTraversalCase {
             // axum-core/src/ext_traits/request.rs:268 calls
             // `self.extract_with_state(&())`. Callee is the same impl method
             // with body `E::from_request(self, state)`.

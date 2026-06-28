@@ -753,6 +753,22 @@ impl<'a> CallRelationResolver<'a> {
         )
     }
 
+    fn resolve_trait_path_item(
+        &self,
+        trait_node: &TraitNode,
+        method_name: &str,
+        arg_count: usize,
+    ) -> AssocPathResolution {
+        Self::method_resolution(
+            trait_node
+                .methods
+                .iter()
+                .filter(|method| method.name == method_name && method.parameters.len() == arg_count)
+                .map(|method| method.id)
+                .collect(),
+        )
+    }
+
     fn method_resolution(mut candidates: Vec<MethodNodeId>) -> AssocPathResolution {
         candidates.sort_unstable();
         candidates.dedup();

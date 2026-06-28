@@ -23,7 +23,7 @@
 //! | External roots | `axum/src/json.rs:184` and `axum/src/response/sse.rs:449` call dependency/std roots | external rows remain targetless and do not become traversal edges. |
 //! | Re-exported body constructor | `axum-core/src/body.rs:{110,116}` call `Self::empty()` and response conversion rows call `Body::empty()` | current resolved subset traverses four one-hop edges; broader fanout remains an import/re-export gap. |
 //! | Inherent associated function | `axum/src/json.rs:{112,128}` call `Self::from_bytes(...)` | both trait-impl `Self::from_bytes` rows traverse to the inherent `Json::from_bytes` method. |
-//! | Trait associated function | `axum/src/handler/service.rs:171` calls `Handler::call(...)` | currently unresolved: the structural row is visible but does not yet traverse to the trait method. |
+//! | Trait method path call | `axum/src/handler/service.rs:171` calls `Handler::call(...)` | path-style trait method dispatch resolves to the trait method binding in one call edge. |
 //! | Tuple-struct constructor | `axum/src/boxed.rs:{23,38,51}` calls `BoxedIntoRoute(...)` / `Self(...)` | explicit tuple-struct constructor resolves to the `BoxedIntoRoute` struct in one call edge; `Self(...)` rows remain unsupported and targetless. |
 //! | Enum variant constructor | `axum-macros/src/with_position.rs:92` calls `Position::First(item)` | local enum-variant constructor resolves to the `Position::First` variant in one call edge. |
 //! | Inherent constructor | `axum/src/error_handling/mod.rs:65` calls `HandleError::new(...)` | extension methods resolve to the local inherent constructor in one call edge. |

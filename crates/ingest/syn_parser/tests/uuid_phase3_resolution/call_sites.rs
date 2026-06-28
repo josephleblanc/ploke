@@ -89,6 +89,7 @@ const TRAIT_IMPL_ASSOC_MAKE_CALL_SPAN: (usize, usize) = (26766, 26778);
 const ENUM_WITH_INHERENT_IMPL_CASE_CALL_SPAN: (usize, usize) = (27000, 27033);
 const QUALIFIED_NESTED_ASSOC_IMPL_SPAN: (usize, usize) = (27102, 27185);
 const SUPER_QUALIFIED_NESTED_ASSOC_MAKE_CALL_SPAN: (usize, usize) = (27330, 27379);
+const TRAIT_METHOD_AS_PATH_CALL_SPAN: (usize, usize) = (27658, 27688);
 const EXPLICIT_DROP_IMPL_SPAN: (usize, usize) = (16418, 16493);
 const IMPORTED_ALIAS_CALL_SPAN: (usize, usize) = (1393, 1409);
 const GLOBBED_TARGET_CALL_SPAN: (usize, usize) = (1461, 1477);
@@ -723,6 +724,19 @@ fn fixture_call_graph_assoc_function_trait_args(ident: &'static str) -> AssocPar
         expected_path: &["crate"],
         owner: AssocOwner::Trait {
             trait_name: "LocalAssocFunctionTrait",
+        },
+        ident,
+        expected_cfg: None,
+    }
+}
+
+fn fixture_call_graph_trait_method_path_args(ident: &'static str) -> AssocParanoidArgs<'static> {
+    AssocParanoidArgs {
+        fixture: "fixture_call_graph",
+        relative_file_path: CALL_GRAPH_LIB_RS,
+        expected_path: &["crate"],
+        owner: AssocOwner::Trait {
+            trait_name: "TraitMethodPath",
         },
         ident,
         expected_cfg: None,
@@ -4106,6 +4120,30 @@ paranoid_call_site_test!(
         ExpectedCallSite::path(
             &["LocalAssoc", "instance_value"],
             METHOD_AS_ASSOCIATED_FUNCTION_CALL_SPAN,
+            1,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedAssociatedFunctionLocalExact {
+                target: target_info.test_method_id(),
+            },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_trait_method_as_path_resolves_trait_method_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_trait_method_as_path"
+    },
+    expected: {
+        let target_args = fixture_call_graph_trait_method_path_args("handle");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_method_pid(&parsed_graphs)?;
+        ExpectedCallSite::path(
+            &["TraitMethodPath", "handle"],
+            TRAIT_METHOD_AS_PATH_CALL_SPAN,
             1,
             0,
             &[],

@@ -100,15 +100,16 @@ fn axum_real_target_json_from_bytes_self_paths_reach_inherent_method() -> Result
 }
 
 #[test]
-fn axum_real_target_handler_service_trait_call_is_documented_gap() -> Result<(), DbError> {
+fn axum_real_target_handler_service_trait_call_reaches_trait_method() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
     // Matrix: `Handler::call` trait dispatch row.
     // Source chain:
     //   axum/src/handler/mod.rs:153 declares `Handler::call`.
     //   axum/src/handler/service.rs:171 calls `Handler::call(handler, req, state)`.
-    // Current model gap: the structural path row is present, but full trait
-    // associated-function resolution is not yet modeled for this corpus row.
+    // Expected traversal: path-style trait method dispatch resolves directly
+    // to the trait method binding in one persisted call edge. The concrete
+    // runtime impl remains type-parameter dependent and is not guessed here.
     let owner = method_id_by_name_and_body_substring(
         &db,
         "call",
@@ -118,31 +119,31 @@ fn axum_real_target_handler_service_trait_call_is_documented_gap() -> Result<(),
     let context = db.call_context_for_owner(owner)?;
     let row = row_by_path(&context, &["Handler", "call"]);
 
-    assert_eq!(row.status.status, CallStatusKind::Unresolved);
-    assert_eq!(row.status.resolution, None);
-    assert!(
-        row.targets.is_empty(),
-        "unresolved Handler::call row should not expose traversal targets: {row:#?}"
-    );
-    assert!(
-        relations_for_site(&db, row.site.id)?.rows.is_empty(),
-        "Handler::call structural row should have zero persisted call edges"
-    );
-    assert_no_traversal_candidates_for_site(
-        &db,
-        owner,
-        row.site.id,
-        "axum/src/handler/service.rs:171 Handler::call",
-    )?;
-    assert!(
-        db.call_sites_for_target(target)?.is_empty(),
-        "Handler::call should remain targetless until trait associated-function resolution lands"
-    );
-    assert_no_incoming_traversal_to_target(
-        &db,
+    assert_resolved_target(
+        row,
         target,
-        "axum/src/handler/service.rs:171 Handler::call",
+        CallRelationKind::AssociatedFunction,
+        CallSiteKind::Path,
+        CallTargetKind::Method,
+    );
+    assert_one_edge_traversal(
+        &db,
+        TraversalExpectation {
+            label: "axum/src/handler/service.rs:171 Handler::call",
+            owner,
+            target,
+            site_id: row.site.id,
+            expected_edge_count: 1,
+        },
     )?;
+    let callers = db.callers_for_target(target)?;
+    assert_eq!(
+        callers.len(),
+        1,
+        "Handler::call should expose the inspected real-corpus caller: {callers:#?}"
+    );
+    assert_sites_match_callers(&db, target, &callers, "Handler::call real-corpus caller")?;
+    caller_by_owner_kind_path(&callers, owner, CallSiteKind::Path, &["Handler", "call"]);
 
     Ok(())
 }
