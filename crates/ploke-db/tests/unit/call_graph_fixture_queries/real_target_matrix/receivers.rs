@@ -666,6 +666,23 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
         CallStatusKind::Unsupported,
         "axum/src/routing/route.rs:51",
     )?;
+    let route_owned_owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "oneshot_inner_owned",
+        "self.0.oneshot(req)",
+        "axum/src/routing/route.rs",
+    )?;
+    assert_owner_method_targetless(
+        &db,
+        route_owned_owner,
+        "oneshot",
+        &CallReceiver::SelfField {
+            path: vec!["0".to_string()],
+        },
+        CallStatusKind::Unsupported,
+        // axum/src/routing/route.rs:57
+        "axum/src/routing/route.rs:57",
+    )?;
 
     struct RequestBuilderCase {
         label: &'static str,

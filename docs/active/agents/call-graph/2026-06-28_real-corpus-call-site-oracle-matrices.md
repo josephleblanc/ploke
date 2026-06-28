@@ -170,6 +170,9 @@ the matrix chain in `middleware/from_fn.rs:411`.
 The typed-local clone coverage pins all 11 projected `Router` receiver rows:
 ten `router.clone()` rows across `serve/mod.rs` and one `app.clone()` row in
 `routing/tests/mod.rs`.
+It also pins both projected `Route` `oneshot` receiver rows in
+`routing/route.rs`: the method-call-result receiver at `:51` and the tuple-field
+receiver at `:57`.
 
 ## Dynamic And Unsupported Callable Oracles
 
