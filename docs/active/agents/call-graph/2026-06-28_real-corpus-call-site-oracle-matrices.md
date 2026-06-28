@@ -36,7 +36,7 @@ High-fanout targets are grouped by identical evidence chain. Before turning high
 | `TestClient::new` | struct `axum/src/test_helpers/test_client.rs:30`; fn `:36`; re-export `axum/src/test_helpers/mod.rs:5-6` | local test helper | 172 text callsites in selected members; the matrix below records the exact fanout by file/line and common evidence chain. |
 | `Body::empty` | body type `axum-core/src/body.rs:39`; fn `:52`; re-export `axum/src/body/mod.rs:10` | local/re-exported | Direct `axum_core::body::Body` imports and axum re-export paths both reach this function. |
 | `IntoServiceFuture::new` | macro invocation `axum/src/handler/future.rs:11-18`; generated `new` template `axum/src/macros.rs:19-20` | local generated | Macro-generated inherent constructor. |
-| `try_downcast` | `axum-core/src/body.rs:23`; separate axum helper `axum/src/util.rs:99` | local | Two same-named helpers exist in different crates. |
+| `try_downcast` | `axum-core/src/body.rs:26`; separate axum helper `axum/src/util.rs:99` | local | Two same-named helpers exist in different crates. |
 | `BoxedIntoRoute` constructor | tuple struct `axum/src/boxed.rs:12` | local constructor | Includes explicit `BoxedIntoRoute(...)` and `Self(...)` constructor syntax. |
 | `Position::First` | enum `axum-macros/src/with_position.rs:65`; variant `:66` | local variant constructor | Pattern matches are not constructor callsites. |
 | `Json::from_bytes` | inherent impl `axum/src/json.rs:157`; fn `:164` | local | `Self::from_bytes` inside `Json<T>` impls. |
@@ -98,7 +98,7 @@ imports `axum_core::body::Body` across the axum member boundary.
 | Target | Callsites | Owner(s) | Evidence chain |
 | --- | --- | --- | --- |
 | `IntoServiceFuture::new` | `axum/src/handler/service.rs:174` | `impl Service for HandlerService::call` | `type Future = super::future::IntoServiceFuture<H::Future>` at `service.rs:155` -> call at `:174` -> macro-generated inherent `new` from `handler/future.rs:11-18` and `macros.rs:19-20`. |
-| `try_downcast` in `axum-core` | `axum-core/src/body.rs:20,48,224,225` | `boxed`; `Body::new`; `test_try_downcast` | same-module unqualified call -> `axum-core/src/body.rs:23`. |
+| `try_downcast` in `axum-core` | `axum-core/src/body.rs:23,51,251,252` | `boxed`; `Body::new`; `test_try_downcast` | same-module unqualified call -> `axum-core/src/body.rs:26`. |
 | `try_downcast` in `axum` | `axum/src/routing/mod.rs:205`; `axum/src/util.rs:114,115` | `Router<S>::route_service`; `test_try_downcast` | import `crate::util::try_downcast` at `routing/mod.rs:8-13` or same-module test -> `axum/src/util.rs:99`. |
 | `BoxedIntoRoute` tuple constructor | `axum/src/boxed.rs:23,38,51` | `from_handler`; `map`; `Clone::clone` | explicit constructor or `Self(...)` inside impls -> tuple struct binding `boxed.rs:12`. |
 | `Position::First` | `axum-macros/src/with_position.rs:92` | `WithPosition<I>::next` | `Position::First(item)` -> enum variant `with_position.rs:66`; pattern hits elsewhere are not constructor callsites. |
@@ -110,6 +110,10 @@ Current executable coverage: the `try_downcast` DB test asserts the current
 one-hop resolved subset for the two same-named helpers. It also pins the axum-core
 `try_downcast::<i32, _>` test rows as unsupported macro-bound rows, not
 traversal edges, because the calls occur inside `assert_eq!` macro arguments.
+The real-target constructor matrix also asserts the current split for
+`BoxedIntoRoute`: the explicit `BoxedIntoRoute(...)` call traverses to the tuple
+struct in one edge, while both `Self(...)` constructor rows are structural,
+unsupported, and have zero traversal candidates.
 
 ## Receiver And Method Oracles
 
@@ -159,6 +163,13 @@ traversal edges, because the calls occur inside `assert_eq!` macro arguments.
 | direct callable parameter `f(attr,input)` | `axum-macros/src/lib.rs:737` | `expand_attr_with` | parameter `f: F` at `:727`; bound `F: FnOnce(A, I) -> K` at `:729`; structural dynamic call, target intentionally unknown. |
 | `expand_attr_with(...)` callers | `axum-macros/src/lib.rs:581,637,655` | `debug_handler`; `debug_middleware`; `__private_axum_test` | first two pass closure literals; `:655` passes function item `axum_test::expand` at `axum_test.rs:5`; resolving `f(...)` requires interprocedural callback proof. |
 | IIFE closure expression | `axum-macros/src/lib.rs:734-738`; `from_request/mod.rs:200-203` | `expand_attr_with`; `from_request::expand` | closure literal immediately invoked; structural dynamic call should persist without fake named target. |
+
+Current executable coverage: the real-target DB matrix asserts the visible
+dynamic callable-field rows, the `expand_with` callback setup, the
+`expand_attr_with` IIFE row, and the `from_request::expand` enum-state IIFE row.
+It also asserts that proc-macro callback arguments such as `from_ref::expand` and
+`axum_test::expand` are not fabricated as ordinary path-call edges before
+interprocedural callback proof exists.
 
 ## Fallback Fixture Oracle Matrix
 
