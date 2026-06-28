@@ -3,7 +3,8 @@ use ploke_test_utils::CORPUS_AXUM_CALL_GRAPH;
 use super::super::*;
 use super::common::*;
 use super::source_lines::{
-    SourceLineFanout, assert_targetless_method_line_fanout, assert_targetless_path_line_fanout,
+    SourceLineFanout, assert_targetless_method_line_fanout,
+    assert_targetless_method_line_fanout_with_needle, assert_targetless_path_line_fanout,
 };
 
 #[test]
@@ -1104,6 +1105,57 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
         Some(&["body"]),
         CallStatusKind::Unsupported,
         17,
+    )?;
+    assert_targetless_method_line_fanout_with_needle(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        "unwrap",
+        "MethodCallResult",
+        Some(&["body"]),
+        CallStatusKind::Unsupported,
+        &[
+            SourceLineFanout {
+                file_suffix: "axum-core/src/ext_traits/request.rs",
+                lines: &[375, 388],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/extract/query.rs",
+                lines: &[104],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/extract/raw_form.rs",
+                lines: &[65, 71, 95],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/form.rs",
+                lines: &[156, 164, 226],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/middleware/from_fn.rs",
+                lines: &[411],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/response/mod.rs",
+                lines: &[450],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/method_routing.rs",
+                lines: &[1697],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/get_to_head.rs",
+                lines: &[22, 56],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/mod.rs",
+                lines: &[1129, 1147],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/serve/mod.rs",
+                lines: &[799],
+            },
+        ],
+        "body",
     )
 }
 

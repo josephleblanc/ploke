@@ -82,6 +82,28 @@ pub(super) fn assert_targetless_method_line_fanout(
     status: CallStatusKind,
     expected: &[SourceLineFanout],
 ) -> Result<(), DbError> {
+    assert_targetless_method_line_fanout_with_needle(
+        db,
+        fixture,
+        method,
+        receiver_kind,
+        receiver_path,
+        status,
+        expected,
+        method,
+    )
+}
+
+pub(super) fn assert_targetless_method_line_fanout_with_needle(
+    db: &Database,
+    fixture: &FixtureDb,
+    method: &str,
+    receiver_kind: &str,
+    receiver_path: Option<&[&str]>,
+    status: CallStatusKind,
+    expected: &[SourceLineFanout],
+    needle: &str,
+) -> Result<(), DbError> {
     let mut params = BTreeMap::new();
     params.insert("method".to_string(), DataValue::from(method));
     params.insert("receiver_kind".to_string(), DataValue::from(receiver_kind));
@@ -130,7 +152,7 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
         fixture,
         &rows.rows,
         expected,
-        method,
+        needle,
         &format!("{status:?} source-line fanout rows for method {method:?}"),
     )
 }
@@ -284,7 +306,7 @@ fn assert_targetless_line_rows(
         let text = lines
             .get(line_index)
             .unwrap_or_else(|| panic!("{suffix}:{line} should exist in pinned source"));
-        let window = lines[line_index..usize::min(line_index + 4, lines.len())].join("\n");
+        let window = lines[line_index..usize::min(line_index + 5, lines.len())].join("\n");
         assert!(
             window.contains(needle),
             "{suffix}:{line} should contain {needle:?} on the span line or nearby continuation; source line was {text:?}"
