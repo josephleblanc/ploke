@@ -245,7 +245,10 @@ ten `router.clone()` rows across `serve/mod.rs` and one `app.clone()` row in
 bindings.
 It also pins both projected `Route` `oneshot` receiver rows in
 `routing/route.rs`: the method-call-result receiver at `:51` and the tuple-field
-receiver at `:57`.
+receiver at `:57`. RAG call-context and proof-context tests now preserve those
+two targetless rows with zero traversal targets and `type_resolution_missing`
+blocked proof rows. Exact TUI `code_item_lookup` and `code_item_edges` tests
+assert the same two owner-seeded Route receiver rows and blocked proof facts.
 
 ## Dynamic And Unsupported Callable Oracles
 
