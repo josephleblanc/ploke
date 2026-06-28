@@ -219,13 +219,12 @@ Current executable coverage: DB target traversal now asserts the two one-hop
 the two same-crate axum-core `FromRef::from_ref` bounded associated-path edges.
 These are trait method binding edges only; concrete runtime impl dispatch and
 dependency-root cross-crate trait-bound resolution remain documented future
-slices. Receiver tests now assert exact owner-count buckets
-for the six projected `req.extensions_mut()` local-binding rows, the seven
-projected `self.inner.poll_ready(cx)` forwarding rows, and the three projected
-`self.0.poll_ready(cx)` tuple-field rows; the `poll_ready` rows are now also
-pinned by exact source-line fanout. The tuple-field coverage includes the nested
-local `impl Service` rows currently owned by their enclosing test functions in
-`routing/tests/mod.rs` and `routing/tests/nest.rs`.
+slices. Receiver tests now assert exact owner-count buckets and source-line
+fanout for the six projected `req.extensions_mut()` local-binding rows, the
+seven projected `self.inner.poll_ready(cx)` forwarding rows, and the three
+projected `self.0.poll_ready(cx)` tuple-field rows. The tuple-field coverage
+includes the nested local `impl Service` rows currently owned by their enclosing
+test functions in `routing/tests/mod.rs` and `routing/tests/nest.rs`.
 The result-chain coverage also pins all 14 projected `Request::builder()` rows
 by owner and source line: eight external rows and six unsupported rows, including
 the matrix chain in `middleware/from_fn.rs:411`.
@@ -235,6 +234,11 @@ The exact current source-line fanout is external
 `axum-core/src/ext_traits/request.rs:{375,388}`,
 `middleware/from_fn.rs:411`, `routing/method_routing.rs:1697`, and
 `routing/tests/get_to_head.rs:{22,56}`.
+The targetless receiver rows for `self.0.size_hint()`, the projected
+non-turbofish `parts.extract_with_state(state)` blanket-helper call at
+`request_parts.rs:186`, and `Route::oneshot` are also pinned by exact
+source-line fanout; the source-oracle turbofish row at `request_parts.rs:164`
+remains absent in the current fixture.
 The typed-local clone coverage pins all 11 projected `Router` receiver rows:
 ten `router.clone()` rows across `serve/mod.rs` and one `app.clone()` row in
 `routing/tests/mod.rs`, with exact source-line fanout for both typed local

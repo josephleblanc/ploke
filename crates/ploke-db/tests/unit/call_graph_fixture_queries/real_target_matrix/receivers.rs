@@ -197,6 +197,32 @@ fn axum_real_target_request_extensions_mut_receivers_are_documented_gaps() -> Re
         CallStatusKind::Unresolved,
         6,
     )?;
+    assert_targetless_method_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        "extensions_mut",
+        "LocalBinding",
+        Some(&["req"]),
+        CallStatusKind::Unresolved,
+        &[
+            SourceLineFanout {
+                file_suffix: "axum-core/src/extract/default_body_limit.rs",
+                lines: &[183, 225],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/extension.rs",
+                lines: &[184],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/extract/nested_path.rs",
+                lines: &[95, 103],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/path_router.rs",
+                lines: &[336],
+            },
+        ],
+    )?;
 
     Ok(())
 }
@@ -221,6 +247,18 @@ fn axum_real_target_self_field_size_hint_is_documented_gap() -> Result<(), DbErr
         CallStatusKind::Unsupported,
         "axum-core/src/body.rs:127",
     )?;
+    assert_targetless_method_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        "size_hint",
+        "SelfField",
+        Some(&["0"]),
+        CallStatusKind::Unsupported,
+        &[SourceLineFanout {
+            file_suffix: "axum-core/src/body.rs",
+            lines: &[127],
+        }],
+    )?;
 
     Ok(())
 }
@@ -233,9 +271,10 @@ fn axum_real_target_turbofish_local_receiver_is_documented_gap() -> Result<(), D
     // Source chain:
     //   axum-core/src/ext_traits/request_parts.rs:164 calls
     //   `parts.extract_with_state::<State<String>, String>(&state)`.
-    // Current model gap: the local receiver row is projected, but it does not
-    // resolve back to the `RequestPartsExt::extract_with_state` impl yet, and
-    // the method turbofish arity is not preserved for this receiver shape.
+    // Current model gap: that turbofish row is absent in the current DB
+    // fixture. The one projected targetless `parts.extract_with_state` row is
+    // the blanket-helper call at request_parts.rs:186, and it does not resolve
+    // back to the `RequestPartsExt::extract_with_state` impl.
     let _target_owner = method_id_by_name_and_body_substring(
         &db,
         "extract_with_state",
@@ -248,6 +287,18 @@ fn axum_real_target_turbofish_local_receiver_is_documented_gap() -> Result<(), D
         Some(&["parts"]),
         CallStatusKind::Unresolved,
         1,
+    )?;
+    assert_targetless_method_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        "extract_with_state",
+        "LocalBinding",
+        Some(&["parts"]),
+        CallStatusKind::Unresolved,
+        &[SourceLineFanout {
+            file_suffix: "axum-core/src/ext_traits/request_parts.rs",
+            lines: &[186],
+        }],
     )?;
 
     let mut params = std::collections::BTreeMap::new();
@@ -283,12 +334,12 @@ fn axum_real_target_turbofish_local_receiver_is_documented_gap() -> Result<(), D
     assert_eq!(
         rows.rows.len(),
         1,
-        "request_parts.rs:164 should project exactly one targetless turbofish receiver row"
+        "request_parts.rs:186 should project exactly one targetless local receiver row; the request_parts.rs:164 turbofish source row remains absent"
     );
     assert_eq!(
         rows.rows[0][0],
         cozo::DataValue::Num(cozo::Num::Int(0)),
-        "request_parts.rs:164 currently drops the turbofish arity for this targetless receiver row"
+        "request_parts.rs:186 local receiver row should carry no method turbofish args"
     );
 
     Ok(())
@@ -1014,6 +1065,18 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
         CallStatusKind::Unsupported,
         1,
     )?;
+    assert_targetless_method_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        "oneshot",
+        "MethodCallResult",
+        Some(&["clone"]),
+        CallStatusKind::Unsupported,
+        &[SourceLineFanout {
+            file_suffix: "axum/src/routing/route.rs",
+            lines: &[51],
+        }],
+    )?;
     assert_targetless_method_rows(
         &db,
         "oneshot",
@@ -1021,6 +1084,18 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
         Some(&["0"]),
         CallStatusKind::Unsupported,
         1,
+    )?;
+    assert_targetless_method_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        "oneshot",
+        "SelfField",
+        Some(&["0"]),
+        CallStatusKind::Unsupported,
+        &[SourceLineFanout {
+            file_suffix: "axum/src/routing/route.rs",
+            lines: &[57],
+        }],
     )?;
     assert_targetless_method_rows(
         &db,
