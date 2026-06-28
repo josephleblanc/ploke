@@ -1,6 +1,6 @@
 # 2026-06-27 Prototype 1 normalized DB persistence pass
 
-**Status:** active plan + audit log; child-plan normalized slice has fresh DB proof; scheduler-node setup and generation-1 child rows have fresh DB proof; runner-request setup/child rows and runner-result rows have fresh DB proof; run-policy and broad-harness request/diagnostic/workspace rows have fresh DB proof; walk-event authority slice has fresh committed-code DB proof
+**Status:** active plan + audit log; child-plan normalized slice has fresh DB proof; scheduler-node setup and generation-1 child rows have fresh DB proof; runner-request setup/child rows and runner-result rows have fresh DB proof; run-policy and broad-harness request/diagnostic/workspace rows have fresh DB proof; walk-event authority slice has fresh committed-code DB proof; parent identity/start rows have fresh committed-code DB proof
 **Purpose:** restart spine for a fresh pass over `ploke-eval loop walk` persistence with normalized Cozo relations as the required target.
 **Related:**
 - `docs/active/agents/2026-06-22_prototype1-eval-store-data-model/README.md`
@@ -902,6 +902,87 @@ Fresh committed-code DB proof:
 
 Conclusion: the owner eval DB can answer which committed worktree/binary advanced the walk, the binary digest, git/source epoch, phase before/after, target phase, and normalized transition labels for this proof campaign without reading walk files.
 
+## 2026-06-28 parent identity/start normalized slice
+
+Implemented code slice:
+
+- Added normalized relations:
+  - `eval_parent_identity`
+  - `eval_parent_start`
+- Parent-start DB writes now mirror stable parent identity facts separately from event-scoped startup facts.
+- `eval_parent_identity` is keyed by `(campaign_id, parent_id)` and stores node/generation/branch/artifact/instance/predecessor identity fields plus an identity semantic hash.
+- `eval_parent_start` is keyed by the parent-start transition event id and stores repo root, startup kind (`genesis` or `predecessor`), optional handoff runtime id, PID, source journal coordinates, parent/resource timestamps, and a start semantic hash.
+- Existing `eval_transition_event` and `eval_record_ref` parent-start rows remain as event/provenance/citation layers.
+
+Validation commands run:
+
+```text
+cargo fmt --all
+cargo test -p ploke-eval prototype1_eval_store_parent_start_db_round_trips_rows --lib -- --nocapture
+cargo test -p ploke-eval eval_store --lib
+cargo build -p ploke-eval
+git diff --check
+```
+
+Fresh committed-code DB proof:
+
+- Campaign: `p1-parentid-db-20260628-135404`
+- Proof source worktree: `/home/brasides/.ploke-eval/worktrees/p1-parentid-src-834df5518`
+- Worktree head: `f6a592847d66f93142a56a484876cc2e0bce73fb`
+- Worktree parent / code slice: `834df55183fcedd5d1d409e26f0769467282c8e8`
+- Binary: `/home/brasides/code/ploke/target/debug/ploke-eval`
+- Binary SHA-256: `fbfe99e41ceee5ef14b02750290b19115b4f175d3122cbfbe1c1cbb0a75bfe16`
+- Walk proof command reached `r5 - parent start recorded`.
+
+`walk db_query` proof for `eval_parent_identity`:
+
+```json
+{
+  "artifact_branch": "prototype1-parent-p1-parentid-db-20260628-135404-gen0",
+  "branch_id": "prototype1-parent-p1-parentid-db-20260628-135404-gen0",
+  "campaign_id": "p1-parentid-db-20260628-135404",
+  "generation": 0,
+  "identity_created_at": "2026-06-28T20:54:06.521549689+00:00",
+  "instance_id": "BurntSushi__ripgrep-2209",
+  "node_id": "node-5a26109424e6f6e6",
+  "parent_id": "node-5a26109424e6f6e6",
+  "parent_node_id": null,
+  "previous_parent_id": null
+}
+```
+
+`walk db_query` proof for `eval_parent_start`:
+
+```json
+{
+  "branch_id": "prototype1-parent-p1-parentid-db-20260628-135404-gen0",
+  "campaign_id": "p1-parentid-db-20260628-135404",
+  "generation": 0,
+  "handoff_runtime_id": null,
+  "node_id": "node-5a26109424e6f6e6",
+  "parent_id": "node-5a26109424e6f6e6",
+  "parent_recorded_at": 1782680051511,
+  "pid": 20167,
+  "repo_root": "/home/brasides/.ploke-eval/worktrees/p1-parentid-src-834df5518",
+  "resource_recorded_at": 1782680051511,
+  "source_event_index": 0,
+  "source_line": 1,
+  "start_event_id": "a96bbc4d530046ab5d3faa00677daa13313358622bc2551257be1566b2ec5556",
+  "startup_kind": "genesis"
+}
+```
+
+Correlated `eval_walk_event_transition` proof:
+
+```json
+{
+  "transition_index": 0,
+  "transition_label": "r4c->r5:r4c_to_r5"
+}
+```
+
+Conclusion: for genesis startup, the owner eval DB can now answer the active parent identity, startup kind, start event id, source journal coordinates, and parent-start runtime facts without reading `.ploke/prototype1/parent_identity.json` or transition journal files. Successor handoff rows still need a dedicated fresh proof with non-null predecessor fields and `handoff_runtime_id`.
+
 ## Initial persistence matrix
 
 Legend:
@@ -932,7 +1013,7 @@ Legend:
 | Run profile policy / broad-harness policy | `eval_run_profile_policy` | Normalized | Fresh campaign `p1-policyharness-db-20260628-032903` proves max generations/nodes, child min/max/parallel targets, generation source, schedule, timeout, fresh slots, graph nearest, and control mode. |
 | Broad-harness request/diagnostics/workspace | `eval_harness_request`, `eval_harness_diagnostic`, `eval_harness_workspace`, `eval_harness_workspace_change` | Normalized first slice | Fresh campaign `p1-policyharness-db-20260628-032903` proves request identity/hash/paths/policy, diagnostic terminal/event/tool counts, and dirty candidate workspace path. Still need richer prompt/patch/rationale rows. |
 | History blocks/indexes | none dedicated; maybe refs only | Missing | Required next major schema area: blocks, block entries, heads/indexes. |
-| Parent identity / handoff | no first-class relation | Missing | Needs normalized parent identity and successor handoff relations. |
+| Parent identity / startup / handoff | `eval_parent_identity`, `eval_parent_start` | Parent identity + genesis startup implemented/proven; successor handoff proof pending | Fresh campaign `p1-parentid-db-20260628-135404` proves generation-0 identity and genesis parent-start rows through R5. Need successor handoff proof with predecessor fields and non-null `handoff_runtime_id`; may still need a dedicated handoff relation. |
 | Agent turn / LLM/tool traces | `eval_agent_turn*` schema exists but current rows are zero | Missing or unwired | Need inspect writer paths and live tool/protocol adjudication outputs. |
 | Trace events | `eval_trace_event` exists but current rows zero | Missing or unwired | Decide whether needed for run inspection vs logs. |
 
@@ -962,9 +1043,10 @@ Do not continue live fanout as proof work until these are handled in a structure
    - Captures successful `walk start`/`walk step` authority facts, executable SHA-256, git/source epoch, and normalized transition labels.
    - Fresh `walk db_query` proof: `p1-walkevent-db-20260628-131410` has start events plus normalized `r4c->r5`, `r5->r6`, and `r6->r7` transition labels.
 
-5. **Normalize parent identity and successor handoff**
-   - Parent identity currently changes on disk at handoff; DB should expose current and historical parent lineage.
-   - Handoff should be queryable without reading `.ploke/prototype1/parent_identity.json` or history files.
+5. **Normalize parent identity and successor handoff** — parent identity + genesis startup implemented/proven; successor handoff still pending.
+   - Relations: `eval_parent_identity`, `eval_parent_start`.
+   - Fresh `walk db_query` proof: `p1-parentid-db-20260628-135404` has generation-0 identity and genesis parent-start rows through R5.
+   - Remaining: prove successor handoff with predecessor fields and non-null `handoff_runtime_id`; decide whether a dedicated handoff relation is needed beyond `eval_parent_start`.
 
 6. **Normalize History store enough for DB-first restart/inspection**
    - Do not rely on `eval_record_ref` as the only layer.
