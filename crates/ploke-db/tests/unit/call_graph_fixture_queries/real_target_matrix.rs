@@ -42,9 +42,13 @@
 //! | Dynamic callable fields | `axum/src/boxed.rs:{85,120,159}` and `serve/listener.rs:236` call function-pointer / trait-object fields | currently unsupported: visible dynamic call sites remain targetless blockers. |
 //! | Macro callback/IIFE calls | `axum-macros/src/lib.rs:{724,734-738}` uses `and_then(f)` and an immediately invoked closure | callback receiver and IIFE dynamic rows are asserted; inner closure-body callback invocation remains absent. |
 //! | Shadowed local callable | `axum/src/routing/tests/mod.rs:{418,423-434}` shadows imported `get` with a closure | only the two setup `routing::get` rows are projected; closure calls inside assertion macros are not fabricated as routing edges. |
+//! | Fallback chrono corpus | `MappedLocalTime::Single`, try receiver `.naive_utc()`, and `self.queue.is_empty()` in chrono | registered `corpus_chrono_call_graph` fixture asserts targetless alias/receiver rows. |
+//! | Fallback memchr corpus | arbitrary-expression dynamic callee, function-pointer field calls, and boxed callable fields in memchr | registered `corpus_memchr_call_graph` fixture asserts dynamic field rows and absent unsupported shapes. |
+//! | Fallback generic-array corpus | guarded `iter.size_hint()` match-arm checks in generic-array | registered `corpus_generic_array_call_graph` fixture asserts the current absent projection gap. |
 
 mod associated;
 mod common;
+mod fallback;
 mod paths;
 mod receivers;
 mod trait_body;

@@ -605,6 +605,28 @@ pub const CORPUS_MEMCHR_TYPE_GRAPH: FixtureDb = FixtureDb {
     notes: "Corpus-backed type graph contract fixture for iterator-return and trait-impl graphRAG traversal over memchr.",
 };
 
+pub const CORPUS_MEMCHR_CALL_GRAPH: FixtureDb = FixtureDb {
+    id: "corpus_memchr_call_graph",
+    rel_path: "tests/backup_dbs/corpus_memchr_call_graph_2026-06-28.sqlite",
+    parsed_targets: &["github:BurntSushi/memchr@24f5daa5257e00e87007c936761600e034827905"],
+    status: FixtureStatus::Active,
+    creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
+        normalized_repo: "BurntSushi/memchr",
+        checkout_slug: "BurntSushi__memchr",
+        clone_url: "https://github.com/BurntSushi/memchr.git",
+        rev: "24f5daa5257e00e87007c936761600e034827905",
+        output_stem: "corpus_memchr_call_graph",
+    }),
+    path_scope: FixturePathScope::SharedSnapshot,
+    default_access: FixtureAccess::ImmutableShared,
+    import_mode: FixtureImportMode::PlainBackup,
+    requires_primary_index: false,
+    bm25_index_expected: false,
+    embedding: None,
+    last_updated: "2026-06-28",
+    notes: "Source-pinned memchr corpus backup for real-target call graph query contracts over arbitrary-expression dynamic callees, function-pointer fields, and callable trait object fields.",
+};
+
 pub const CORPUS_MEMCHR_OPENROUTER_EMBEDDINGS: FixtureDb = FixtureDb {
     id: "corpus_memchr_openrouter_embeddings",
     rel_path: "tests/backup_dbs/corpus_memchr_openrouter_embeddings_2026-05-17.sqlite",
@@ -658,6 +680,28 @@ pub const CORPUS_GENERIC_ARRAY_TYPE_GRAPH: FixtureDb = FixtureDb {
     notes: "Corpus-backed type graph contract fixture for const-generic alias and GenericArray traversal.",
 };
 
+pub const CORPUS_GENERIC_ARRAY_CALL_GRAPH: FixtureDb = FixtureDb {
+    id: "corpus_generic_array_call_graph",
+    rel_path: "tests/backup_dbs/corpus_generic_array_call_graph_2026-06-28.sqlite",
+    parsed_targets: &["github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23"],
+    status: FixtureStatus::Active,
+    creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
+        normalized_repo: "fizyk20/generic-array",
+        checkout_slug: "fizyk20__generic-array",
+        clone_url: "https://github.com/fizyk20/generic-array.git",
+        rev: "80bab87431c2e29823dc551a3311324812838a23",
+        output_stem: "corpus_generic_array_call_graph",
+    }),
+    path_scope: FixturePathScope::SharedSnapshot,
+    default_access: FixtureAccess::ImmutableShared,
+    import_mode: FixtureImportMode::PlainBackup,
+    requires_primary_index: false,
+    bm25_index_expected: false,
+    embedding: None,
+    last_updated: "2026-06-28",
+    notes: "Source-pinned generic-array corpus backup for real-target call graph query contracts over guarded match-arm method calls.",
+};
+
 pub const CORPUS_GENERIC_ARRAY_OPENROUTER_EMBEDDINGS: FixtureDb = FixtureDb {
     id: "corpus_generic_array_openrouter_embeddings",
     rel_path: "tests/backup_dbs/corpus_generic_array_openrouter_embeddings_2026-05-17.sqlite",
@@ -709,6 +753,28 @@ pub const CORPUS_CHRONO_TYPE_GRAPH: FixtureDb = FixtureDb {
     embedding: None,
     last_updated: "2026-05-17",
     notes: "Corpus-backed type graph contract fixture for LocalResult/MappedLocalTime and timezone generic traversal.",
+};
+
+pub const CORPUS_CHRONO_CALL_GRAPH: FixtureDb = FixtureDb {
+    id: "corpus_chrono_call_graph",
+    rel_path: "tests/backup_dbs/corpus_chrono_call_graph_2026-06-28.sqlite",
+    parsed_targets: &["github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be"],
+    status: FixtureStatus::Active,
+    creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
+        normalized_repo: "chronotope/chrono",
+        checkout_slug: "chronotope__chrono",
+        clone_url: "https://github.com/chronotope/chrono.git",
+        rev: "120686c82c5da90377e815edb82c9a80b6b4f2be",
+        output_stem: "corpus_chrono_call_graph",
+    }),
+    path_scope: FixturePathScope::SharedSnapshot,
+    default_access: FixtureAccess::ImmutableShared,
+    import_mode: FixtureImportMode::PlainBackup,
+    requires_primary_index: false,
+    bm25_index_expected: false,
+    embedding: None,
+    last_updated: "2026-06-28",
+    notes: "Source-pinned chrono corpus backup for real-target call graph query contracts over alias constructors, try receivers, and guarded match-arm method calls.",
 };
 
 pub const CORPUS_CHRONO_OPENROUTER_EMBEDDINGS: FixtureDb = FixtureDb {
@@ -852,10 +918,13 @@ pub const BACKUP_DB_FIXTURES: &[&FixtureDb] = &[
     &CORPUS_SEMVER_TYPE_GRAPH,
     &CORPUS_SEMVER_OPENROUTER_EMBEDDINGS,
     &CORPUS_MEMCHR_TYPE_GRAPH,
+    &CORPUS_MEMCHR_CALL_GRAPH,
     &CORPUS_MEMCHR_OPENROUTER_EMBEDDINGS,
     &CORPUS_GENERIC_ARRAY_TYPE_GRAPH,
+    &CORPUS_GENERIC_ARRAY_CALL_GRAPH,
     &CORPUS_GENERIC_ARRAY_OPENROUTER_EMBEDDINGS,
     &CORPUS_CHRONO_TYPE_GRAPH,
+    &CORPUS_CHRONO_CALL_GRAPH,
     &CORPUS_CHRONO_OPENROUTER_EMBEDDINGS,
     &CORPUS_AXUM_TYPE_GRAPH,
     &CORPUS_AXUM_CALL_GRAPH,

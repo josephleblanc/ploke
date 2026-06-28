@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use cozo::DataValue;
-use ploke_test_utils::{CORPUS_AXUM_CALL_GRAPH, fresh_backup_fixture_db};
+use ploke_test_utils::{CORPUS_AXUM_CALL_GRAPH, FixtureDb, fresh_backup_fixture_db};
 use uuid::Uuid;
 
 use super::super::*;
@@ -21,11 +21,16 @@ pub(super) struct TraversalExpectation {
 }
 
 pub(super) fn setup_axum_call_graph_db() -> Result<Database, DbError> {
-    let db = fresh_backup_fixture_db(&CORPUS_AXUM_CALL_GRAPH)
-        .map_err(|err| DbError::QueryExecution(err.to_string()))?;
+    setup_call_graph_db(&CORPUS_AXUM_CALL_GRAPH)
+}
+
+pub(super) fn setup_call_graph_db(fixture: &'static FixtureDb) -> Result<Database, DbError> {
+    let db =
+        fresh_backup_fixture_db(fixture).map_err(|err| DbError::QueryExecution(err.to_string()))?;
     assert!(
         db.has_call_graph_relations()?,
-        "corpus_axum_call_graph must be regenerated with populated call graph relations"
+        "{} must be regenerated with populated call graph relations",
+        fixture.id
     );
     Ok(db)
 }
@@ -256,6 +261,111 @@ pub(super) fn assert_targetless_method_rows(
         assert!(
             relations_for_site(db, site_id)?.rows.is_empty(),
             "{method}.{receiver_path:?} row should not have call_relation targets"
+        );
+    }
+
+    Ok(())
+}
+
+pub(super) fn assert_targetless_dynamic_rows_by_method_name(
+    db: &Database,
+    method: &str,
+    expected_arg_counts: &[u32],
+) -> Result<(), DbError> {
+    let mut params = BTreeMap::new();
+    params.insert("method".to_string(), DataValue::from(method));
+
+    let rows = db.raw_query_params(
+        r#"?[site_id, arg_count, status_kind, resolution_kind] :=
+            *method { id: owner_id, name: $method @ 'NOW' },
+            *call_site {
+                id: site_id,
+                owner_id,
+                call_kind: "Dynamic",
+                arg_count @ 'NOW'
+            },
+            *call_resolution_status {
+                source_id: site_id,
+                source_kind: "Dynamic",
+                status_kind,
+                resolution_kind @ 'NOW'
+            }"#,
+        params,
+    )?;
+    assert_eq!(
+        rows.rows.len(),
+        expected_arg_counts.len(),
+        "expected {} targetless dynamic rows owned by methods named {method:?}: {:#?}",
+        expected_arg_counts.len(),
+        rows.rows
+    );
+
+    let mut actual_arg_counts = Vec::new();
+    for row in &rows.rows {
+        assert_eq!(row[2], DataValue::from("Unsupported"));
+        assert_eq!(row[3], DataValue::Null);
+        let site_id = to_uuid(&row[0])?;
+        assert!(
+            relations_for_site(db, site_id)?.rows.is_empty(),
+            "dynamic row owned by {method:?} should not have call_relation targets"
+        );
+        let DataValue::Num(cozo::Num::Int(arg_count)) = &row[1] else {
+            panic!("dynamic row arg_count should be numeric: {row:#?}");
+        };
+        actual_arg_counts.push(*arg_count as u32);
+    }
+    actual_arg_counts.sort_unstable();
+
+    let mut expected = expected_arg_counts.to_vec();
+    expected.sort_unstable();
+    assert_eq!(
+        actual_arg_counts, expected,
+        "unexpected dynamic arg counts for methods named {method:?}"
+    );
+
+    Ok(())
+}
+
+pub(super) fn assert_no_dynamic_rows_by_method_name(
+    db: &Database,
+    method: &str,
+) -> Result<(), DbError> {
+    let mut params = BTreeMap::new();
+    params.insert("method".to_string(), DataValue::from(method));
+
+    let rows = db.raw_query_params(
+        r#"?[site_id] :=
+            *method { id: owner_id, name: $method @ 'NOW' },
+            *call_site { id: site_id, owner_id, call_kind: "Dynamic" }"#,
+        params,
+    )?;
+    assert!(
+        rows.rows.is_empty(),
+        "expected no dynamic rows owned by methods named {method:?}: {:#?}",
+        rows.rows
+    );
+
+    Ok(())
+}
+
+pub(super) fn assert_no_dynamic_rows_by_function_names(
+    db: &Database,
+    function_names: &[&str],
+) -> Result<(), DbError> {
+    for function_name in function_names {
+        let mut params = BTreeMap::new();
+        params.insert("function".to_string(), DataValue::from(*function_name));
+
+        let rows = db.raw_query_params(
+            r#"?[site_id] :=
+                *function { id: owner_id, name: $function @ 'NOW' },
+                *call_site { id: site_id, owner_id, call_kind: "Dynamic" }"#,
+            params,
+        )?;
+        assert!(
+            rows.rows.is_empty(),
+            "expected no dynamic rows owned by functions named {function_name:?}: {:#?}",
+            rows.rows
         );
     }
 
