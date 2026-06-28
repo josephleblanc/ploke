@@ -282,7 +282,17 @@ fn axum_real_target_self_accept_is_documented_gap() -> Result<(), DbError> {
         CallStatusKind::Unsupported,
         "axum/src/serve/listener.rs:41",
     )?;
-    assert_targetless_path_rows(&db, &["Self", "accept"], CallStatusKind::Unsupported, 1)
+    assert_targetless_path_rows(&db, &["Self", "accept"], CallStatusKind::Unsupported, 1)?;
+    assert_targetless_path_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        &["Self", "accept"],
+        CallStatusKind::Unsupported,
+        &[SourceLineFanout {
+            file_suffix: "axum/src/serve/listener.rs",
+            lines: &[41],
+        }],
+    )
 }
 
 #[test]
@@ -452,6 +462,9 @@ fn axum_real_target_trait_object_dispatch_rows_are_documented_gaps() -> Result<(
     //   `Pin<Box<dyn Future<...>>>` from error_handling/mod.rs:240.
     //   The semantic target is trait-object `Future::poll`, with no concrete
     //   runtime future available in the current call graph.
+    //   axum/src/serve/mod.rs:485, middleware/from_fn.rs:375,
+    //   middleware/map_request.rs:345, and middleware/map_response.rs:333
+    //   project the current `as_mut().poll(cx)` targetless receiver bucket.
     //   axum-core/src/body.rs:32 calls
     //   `<dyn std::any::Any>::downcast_mut::<Option<T>>(&mut k)`.
     // Current model gap: dyn Future dispatch is visible through the
@@ -464,6 +477,32 @@ fn axum_real_target_trait_object_dispatch_rows_are_documented_gaps() -> Result<(
         Some(&["as_mut"]),
         CallStatusKind::Unsupported,
         4,
+    )?;
+    assert_targetless_method_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        "poll",
+        "MethodCallResult",
+        Some(&["as_mut"]),
+        CallStatusKind::Unsupported,
+        &[
+            SourceLineFanout {
+                file_suffix: "axum/src/serve/mod.rs",
+                lines: &[485],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/middleware/from_fn.rs",
+                lines: &[375],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/middleware/map_request.rs",
+                lines: &[345],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/middleware/map_response.rs",
+                lines: &[333],
+            },
+        ],
     )?;
     let owner = method_id_by_name_body_and_file_suffix(
         &db,
