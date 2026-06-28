@@ -113,16 +113,53 @@ fn axum_real_target_test_client_new_high_fanout_is_documented_gap() -> Result<()
     // Matrix: high-fanout `TestClient::new`.
     // Source chain:
     //   axum/src/test_helpers/test_client.rs:36 defines `TestClient::new`.
-    //   The oracle matrix records 172 selected-member text callsites.
+    //   The oracle matrix records 172 selected-member text callsites:
+    //   axum-core/src/extract/request_parts.rs:193; axum/src/form.rs:262;
+    //   json.rs:{250,266,281,301,320,355};
+    //   extract/multipart.rs:{383,423,449};
+    //   routing/tests/mod.rs:{90,118,150,188,217,233,242,282,307,323,
+    //   339,352,365,377,396,416,454,472,489,506,527,540,572,589,599,
+    //   626,643,668,685,700,717,738,748,775,798,815,846,905,952,967,
+    //   984,1027,1047,1073,1164,1201}; plus the other file groups
+    //   listed in the oracle matrix.
     // Current DB contract: 167 structural `TestClient::new` path rows are
     // projected in the corpus fixture, but they are unsupported and targetless.
-    // The remaining text rows are not asserted as resolved edges until owner
-    // rows are generated mechanically from parser facts.
+    // The five source rows not represented in the DB fanout are the three
+    // multipart rows plus one routing/tests/mod.rs row and one
+    // routing/tests/nest.rs row; no local traversal edge should be fabricated.
     assert_targetless_path_rows(
         &db,
         &["TestClient", "new"],
         CallStatusKind::Unsupported,
         167,
+    )?;
+    assert_path_module_fanout(
+        &db,
+        &["TestClient", "new"],
+        CallStatusKind::Unsupported,
+        &[
+            (&["crate", "extension", "tests"], 1),
+            (&["crate", "extract", "connect_info", "tests"], 1),
+            (&["crate", "extract", "matched_path", "tests"], 14),
+            (&["crate", "extract", "nested_path", "tests"], 6),
+            (&["crate", "extract", "path", "tests"], 19),
+            (&["crate", "extract", "query", "tests"], 1),
+            (&["crate", "extract", "request_parts", "tests"], 1),
+            (&["crate", "extract", "tests"], 1),
+            (&["crate", "form", "tests"], 1),
+            (&["crate", "handler", "tests"], 2),
+            (&["crate", "json", "tests"], 6),
+            (&["crate", "middleware", "from_extractor", "tests"], 1),
+            (&["crate", "middleware", "map_request", "tests"], 2),
+            (&["crate", "middleware", "map_response", "tests"], 1),
+            (&["crate", "response", "sse", "tests"], 3),
+            (&["crate", "response", "tests"], 1),
+            (&["crate", "routing", "tests"], 45),
+            (&["crate", "routing", "tests", "fallback"], 25),
+            (&["crate", "routing", "tests", "handle_error"], 5),
+            (&["crate", "routing", "tests", "merge"], 16),
+            (&["crate", "routing", "tests", "nest"], 15),
+        ],
     )?;
 
     Ok(())

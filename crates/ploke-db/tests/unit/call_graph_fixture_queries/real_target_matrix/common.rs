@@ -192,6 +192,74 @@ pub(super) fn assert_targetless_path_rows(
     Ok(())
 }
 
+pub(super) fn assert_path_module_fanout(
+    db: &Database,
+    path_parts: &[&str],
+    status: CallStatusKind,
+    expected: &[(&[&str], usize)],
+) -> Result<(), DbError> {
+    let mut params = BTreeMap::new();
+    params.insert("path".to_string(), path_value(path_parts));
+    params.insert("status".to_string(), DataValue::from(format!("{status:?}")));
+
+    let rows = db.raw_query_params(
+        r#"?[module_path, count(site_id)] :=
+            *call_site {
+                id: site_id,
+                owner_id,
+                call_kind: "Path",
+                path: $path @ 'NOW'
+            },
+            *call_resolution_status {
+                source_id: site_id,
+                source_kind: "Path",
+                status_kind: $status @ 'NOW'
+            },
+            *function { id: owner_id, module_id @ 'NOW' },
+            *module { id: module_id, path: module_path @ 'NOW' }
+        :sort module_path"#,
+        params,
+    )?;
+
+    let actual = rows
+        .rows
+        .iter()
+        .map(|row| {
+            let DataValue::List(parts) = &row[0] else {
+                panic!("module path should be a list: {row:#?}");
+            };
+            let module_path = parts
+                .iter()
+                .map(|part| data_str(part, "module_path").to_string())
+                .collect::<Vec<_>>();
+            let DataValue::Num(cozo::Num::Int(count)) = &row[1] else {
+                panic!("fanout count should be an integer: {row:#?}");
+            };
+            (module_path, *count as usize)
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    let expected = expected
+        .iter()
+        .map(|(module_path, count)| {
+            (
+                module_path
+                    .iter()
+                    .map(|part| (*part).to_string())
+                    .collect::<Vec<_>>(),
+                *count,
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    assert_eq!(
+        actual, expected,
+        "unexpected {status:?} module fanout for {path_parts:?}"
+    );
+
+    Ok(())
+}
+
 pub(super) fn assert_no_path_rows(db: &Database, path_parts: &[&str]) -> Result<(), DbError> {
     let mut params = BTreeMap::new();
     params.insert("path".to_string(), path_value(path_parts));
