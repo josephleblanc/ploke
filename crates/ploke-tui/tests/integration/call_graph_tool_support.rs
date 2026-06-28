@@ -32,6 +32,10 @@ use ploke_tui::{
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
+#[path = "call_graph_tool_support/real_corpus_remaining.rs"]
+mod real_corpus_remaining;
+pub(crate) use real_corpus_remaining::*;
+
 pub(crate) struct CallGraphToolFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,
@@ -875,7 +879,7 @@ pub(crate) fn assert_json_from_bytes_incoming_context(
     assert_expected_path_incoming_context(calls, callers, target, label, "Json::from_bytes");
 }
 
-fn assert_expected_path_incoming_context(
+pub(crate) fn assert_expected_path_incoming_context(
     calls: &[serde_json::Value],
     callers: &[ExpectedCallSite],
     target: Uuid,

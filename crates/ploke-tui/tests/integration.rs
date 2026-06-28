@@ -41,6 +41,9 @@ mod command_verbosity_profile;
 #[path = "integration/call_graph_tool_support.rs"]
 mod call_graph_tool_support;
 
+#[path = "integration/call_graph_tool_remaining_matrix.rs"]
+mod call_graph_tool_remaining_matrix;
+
 #[path = "integration/code_item_lookup_regression.rs"]
 mod code_item_lookup_regression;
 
