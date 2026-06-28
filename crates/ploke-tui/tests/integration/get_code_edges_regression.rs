@@ -27,10 +27,11 @@ use crate::call_graph_tool_support::{
     AxumAwaitReceiverToolFixture, AxumBodyEmptyToolFixture, AxumBoxedIntoRouteToolFixture,
     AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture,
     AxumRunUiTestsToolFixture, CallGraphToolFixture, assert_await_result_unwrap_context,
-    assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
-    assert_handler_call_incoming_context, assert_incoming_context,
-    assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
-    assert_run_ui_tests_incoming_context, assert_target_proof, ui_field,
+    assert_await_result_unwrap_proof, assert_body_empty_incoming_context,
+    assert_boxed_into_route_incoming_context, assert_handler_call_incoming_context,
+    assert_incoming_context, assert_json_from_bytes_incoming_context,
+    assert_parse_attrs_incoming_context, assert_run_ui_tests_incoming_context, assert_target_proof,
+    ui_field,
 };
 
 #[tokio::test]
@@ -475,6 +476,11 @@ async fn code_item_edges_returns_real_corpus_await_receiver_targetless_row() {
         .and_then(|node| node.get("call_context"))
         .and_then(serde_json::Value::as_array)
         .expect("node_info.call_context array");
+    let proof_context = payload
+        .get("node_info")
+        .and_then(|node| node.get("proof_context"))
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.proof_context array");
 
     // Matrix:
     //   docs/active/agents/call-graph/
@@ -486,7 +492,9 @@ async fn code_item_edges_returns_real_corpus_await_receiver_targetless_row() {
     //   `self.sem.clone().acquire_owned().await.unwrap()`.
     // The edge-oriented exact tool should expose the same unsupported,
     // targetless AwaitResult receiver row as lookup, without a fabricated edge.
-    assert_await_result_unwrap_context(call_context, fixture.owner, "code_item_edges");
+    let site_id =
+        assert_await_result_unwrap_context(call_context, fixture.owner, "code_item_edges");
+    assert_await_result_unwrap_proof(proof_context, fixture.owner, site_id, "code_item_edges");
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert!(
@@ -496,6 +504,8 @@ async fn code_item_edges_returns_real_corpus_await_receiver_targetless_row() {
             >= 1,
         "code_item_edges should surface outgoing targetless call-context count"
     );
+    let proof_count = proof_context.len().to_string();
+    assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
 }
 
 #[tokio::test]

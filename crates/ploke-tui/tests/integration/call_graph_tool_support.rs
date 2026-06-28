@@ -7,7 +7,10 @@ use std::{
 use cozo::DataValue;
 use ploke_core::{
     ArcStr,
-    rag_types::{CallCalleeInfo, CallContextInfo, CallReceiverInfo, CallSiteKind, CallStatusKind},
+    rag_types::{
+        CallCalleeInfo, CallContextInfo, CallReceiverInfo, CallSiteKind, CallStatusKind,
+        ProofContextInfo,
+    },
 };
 use ploke_db::{
     Database,
@@ -1121,7 +1124,7 @@ pub(crate) fn assert_await_result_unwrap_context(
     calls: &[serde_json::Value],
     owner: Uuid,
     label: &str,
-) {
+) -> Uuid {
     let matching = calls
         .iter()
         .filter_map(|call| serde_json::from_value::<CallContextInfo>(call.clone()).ok())
@@ -1146,6 +1149,39 @@ pub(crate) fn assert_await_result_unwrap_context(
     assert!(
         call.targets.is_empty(),
         "{label} should not fabricate a target for AwaitResult unwrap: {call:#?}"
+    );
+    call.site_id
+}
+
+pub(crate) fn assert_await_result_unwrap_proof(
+    proofs: &[serde_json::Value],
+    owner: Uuid,
+    site_id: Uuid,
+    label: &str,
+) {
+    let owner = owner.to_string();
+    let site_id = site_id.to_string();
+    let rows = proofs
+        .iter()
+        .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_site"
+                && proof.caller_def_id.as_deref() == Some(owner.as_str())
+                && proof.call_site_id.as_deref() == Some(site_id.as_str())
+                && proof.build_domain_id.as_deref() == Some("bd:corpus-axum-call-graph")
+        }),
+        "{label} should return the AwaitResult unwrap call_site proof row: {proofs:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site_id.as_str())
+                && proof.resolution_state.as_deref() == Some("blocked")
+                && proof.blocker_reason.as_deref() == Some("type_resolution_missing")
+        }),
+        "{label} should return the AwaitResult unwrap blocked resolution proof row: {proofs:#?}"
     );
 }
 

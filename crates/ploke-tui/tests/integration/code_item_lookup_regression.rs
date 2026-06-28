@@ -9,10 +9,11 @@ use crate::call_graph_tool_support::{
     AxumAwaitReceiverToolFixture, AxumBodyEmptyToolFixture, AxumBoxedIntoRouteToolFixture,
     AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture,
     AxumRunUiTestsToolFixture, CallGraphToolFixture, assert_await_result_unwrap_context,
-    assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
-    assert_handler_call_incoming_context, assert_incoming_context,
-    assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
-    assert_run_ui_tests_incoming_context, assert_target_proof, ui_field,
+    assert_await_result_unwrap_proof, assert_body_empty_incoming_context,
+    assert_boxed_into_route_incoming_context, assert_handler_call_incoming_context,
+    assert_incoming_context, assert_json_from_bytes_incoming_context,
+    assert_parse_attrs_incoming_context, assert_run_ui_tests_incoming_context, assert_target_proof,
+    ui_field,
 };
 
 #[tokio::test]
@@ -100,6 +101,10 @@ async fn code_item_lookup_returns_real_corpus_await_receiver_targetless_row() {
         .get("call_context")
         .and_then(serde_json::Value::as_array)
         .expect("call_context array");
+    let proof_context = payload
+        .get("proof_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("proof_context array");
 
     // Matrix:
     //   docs/active/agents/call-graph/
@@ -111,7 +116,9 @@ async fn code_item_lookup_returns_real_corpus_await_receiver_targetless_row() {
     //   `self.sem.clone().acquire_owned().await.unwrap()`.
     // The exact lookup tool should expose the DB/RAG-pinned targetless
     // `AwaitResult.unwrap` row without inventing an outgoing target edge.
-    assert_await_result_unwrap_context(call_context, fixture.owner, "code_item_lookup");
+    let site_id =
+        assert_await_result_unwrap_context(call_context, fixture.owner, "code_item_lookup");
+    assert_await_result_unwrap_proof(proof_context, fixture.owner, site_id, "code_item_lookup");
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert!(
@@ -120,6 +127,13 @@ async fn code_item_lookup_returns_real_corpus_await_receiver_targetless_row() {
             .expect("outgoing count")
             >= 1,
         "code_item_lookup should surface outgoing targetless call-context count"
+    );
+    assert!(
+        ui_field(ui, "proof_context")
+            .parse::<usize>()
+            .expect("proof count")
+            >= 2,
+        "code_item_lookup should surface targetless AwaitResult proof rows"
     );
 }
 
