@@ -32,7 +32,7 @@ Status values:
 
 - `axum-fixture`: source is inside a selected member of the current axum call-graph fixture and can be converted directly into a DB query assertion.
 - `axum-unsupported`: source is inside a selected axum member, but the current semantic model should fail closed or mark it unsupported.
-- `fallback-source`: source exists in another registered real GitHub corpus fixture, but that fixture is not currently the axum call-graph DB fixture. Treat it as source evidence until a call-graph fixture/test target is prepared for that crate.
+- `fallback-source`: source exists in another registered real GitHub corpus fixture. The current DB assertions live in the matching fallback call-graph fixture rather than the primary axum fixture.
 - `not-found`: no credible case was found in axum or the registered real GitHub fallback corpus during this survey.
 
 ## Path, Import, And Constructor Cases
@@ -57,7 +57,7 @@ Status values:
 | `Self::associated_function()` | `axum-fixture` | axum | `axum/src/json.rs:112` | `Self::from_bytes(&bytes)` | Associated-function edge should target `Json<T>::from_bytes`. |
 | `Type::associated_function()` | `axum-fixture` | axum | `axum/src/error_handling/mod.rs:65` | `HandleError::new(inner, self.f.clone())` | Associated-function edge should target local inherent `HandleError::new`. |
 | Method as associated function / UFCS-like call | `axum-fixture` | axum | `axum/src/handler/service.rs:171` | `Handler::call(handler, req, self.state.clone())` | Query should preserve this as associated/path-call syntax and resolve through trait/inherent proof only when exact. |
-| Type-alias associated constructor | `fallback-source` | chrono | `src/offset/mod.rs:77`, `src/offset/mod.rs:143` | `type MappedLocalTime<T> = LocalResult<T>;` then `MappedLocalTime::Single(...)` | Good real source case for alias-target constructor proof; needs a chrono call-graph fixture before DB assertion. |
+| Type-alias associated constructor | `fallback-source` | chrono | `src/offset/mod.rs:77`, `src/offset/mod.rs:143` | `type MappedLocalTime<T> = LocalResult<T>;` then `MappedLocalTime::Single(...)` | Covered in `fallback.rs`: chrono rows are projected as targetless `MappedLocalTime::Single` calls with no fabricated `LocalResult::Single` edge. |
 | Raw identifier call | `not-found` | n/a | n/a | Searched selected axum members and fallback real corpus for `r#name(...)`. | Keep synthetic coverage for raw identifier function/method calls. |
 
 ## Receiver And Method Cases
@@ -73,7 +73,7 @@ Status values:
 | Path-call result receiver | `axum-fixture` | axum | `axum/src/middleware/from_fn.rs:411` | `Request::builder().uri("/").body(...).unwrap()` | Query can assert chained method sites after a path-call result receiver. |
 | Method-call result receiver | `axum-fixture` | axum | `axum/src/routing/route.rs:51` | `self.0.clone().oneshot(req)` | Query should traverse nested receiver expression and classify the outer method site. |
 | Await result receiver | `axum-fixture` | axum | `axum/src/test_helpers/test_client.rs:134` | `self.builder.send().await.unwrap()` | Query should preserve method site after `.await` receiver shape. |
-| Try result receiver | `fallback-source` | chrono | `src/format/parsed.rs:836` | `DateTime::from_timestamp_secs(ts).ok_or(OUT_OF_RANGE)?.naive_utc()` | Good real source case for `?` success-type receiver proof; needs chrono call-graph fixture before DB assertion. |
+| Try result receiver | `fallback-source` | chrono | `src/format/parsed.rs:836` | `DateTime::from_timestamp_secs(ts).ok_or(OUT_OF_RANGE)?.naive_utc()` | Covered in `fallback.rs`: chrono try-result receiver rows are visible, unsupported, targetless, and non-traversable. |
 | Generic turbofish method call | `axum-fixture` | axum-core | `axum-core/src/ext_traits/request_parts.rs:164` | `.extract_with_state::<State<String>, String>(&state)` | Method site should preserve generic argument count. |
 | Local shadowed callable value | `axum-fixture` | axum | `axum/src/routing/tests/mod.rs:423` | local `get` closure is later called as `get("/").await` | This is a real local callable shadowing case; query should not emit a fake edge to `routing::get`. |
 
@@ -104,11 +104,11 @@ Status values:
 | Callable parameter direct invocation | `axum-unsupported` | axum-macros | `axum-macros/src/lib.rs:727`, `axum-macros/src/lib.rs:737` | `F: FnOnce(A, I) -> K` then `f(attr, input)` | Structural dynamic call should be persisted; target is intentionally unknown. |
 | Function item passed as callable argument | `axum-fixture` | axum-macros | `axum-macros/src/lib.rs:715` | `expand_with(item, from_ref::expand)` | Useful positive source for future function-item argument proof; not enough alone to resolve `f` inside `expand_with`. |
 | IIFE closure expression | `axum-unsupported` | axum-macros | `axum-macros/src/lib.rs:734`, `axum-macros/src/lib.rs:738` | `(|| { ... })()` | Dynamic callee is a non-path closure expression; structural call should persist and semantic target should remain unsupported. |
-| Dynamic callee from arbitrary expression | `fallback-source` | memchr | `src/arch/x86_64/memchr.rs:153` | `core::mem::transmute::<Fn, RealFn>(fun)(...)` | Strong real fallback for arbitrary expression callee syntax; needs memchr call-graph fixture before DB assertion. |
-| Function-pointer field call | `fallback-source` | memchr | `src/memmem/searcher.rs:222` | `unsafe { (self.call)(self, prestate, haystack, needle) }` | Strong real fallback for callable field/function-pointer dispatch; needs memchr call-graph fixture before DB assertion. |
-| Callable trait object field | `fallback-source` | memchr | `src/tests/substring/mod.rs:68`, `src/tests/substring/mod.rs:94` | `Box<dyn FnMut...>` field then `fwd(...)` | Strong real fallback for `dyn FnMut` dispatch; likely test-only member coverage must be confirmed before fixture use. |
-| Guarded match arm | `fallback-source` | generic-array | `src/lib.rs:1241` | `(n, _) if n > N::USIZE => return Err(LengthError)` | Real guarded arm syntax, but not a dynamic callee. Useful only for receiver/control-flow frontier tests. |
-| Guarded match arm with method in guard | `fallback-source` | chrono | `src/format/strftime.rs:635` | `Item::Numeric(...) if self.queue.is_empty() => ...` | Real guard contains method call; needs chrono call-graph fixture before DB assertion. |
+| Dynamic callee from arbitrary expression | `fallback-source` | memchr | `src/arch/x86_64/memchr.rs:153` | `core::mem::transmute::<Fn, RealFn>(fun)(...)` | Covered in `fallback.rs`: current fixture absence is asserted for the transmute path and outer dynamic call. |
+| Function-pointer field call | `fallback-source` | memchr | `src/memmem/searcher.rs:222` | `unsafe { (self.call)(self, prestate, haystack, needle) }` | Covered in `fallback.rs`: memchr projects two targetless dynamic rows owned by `find` methods. |
+| Callable trait object field | `fallback-source` | memchr | `src/tests/substring/mod.rs:68`, `src/tests/substring/mod.rs:94` | `Box<dyn FnMut...>` field then `fwd(...)` | Covered in `fallback.rs`: current fixture absence is asserted under `Runner::run` without guessing boxed closure targets. |
+| Guarded match arm | `fallback-source` | generic-array | `src/lib.rs:1241` | `(n, _) if n > N::USIZE => return Err(LengthError)` | Covered in `fallback.rs`: current fixture absence is asserted for the guarded `size_hint` rows. |
+| Guarded match arm with method in guard | `fallback-source` | chrono | `src/format/strftime.rs:635` | `Item::Numeric(...) if self.queue.is_empty() => ...` | Covered in `fallback.rs`: chrono guard receiver row is visible, unsupported, targetless, and non-traversable. |
 | Non-path branch expression used as callee | `not-found` | n/a | n/a | Searched for credible `(if ... { f } else { g })()` or `(match ... { ... })()` shape. | Keep synthetic coverage; no real corpus example found. |
 | Returned closure later called | `not-found` | n/a | n/a | Searched selected axum members and fallback real crate sources for `-> impl Fn...` plus call use. | Keep synthetic coverage until a parsed real corpus case is found. |
 | Parenthesized function path / `as fn(...)` cast | `not-found` | n/a | n/a | Searched selected axum members and fallback real corpus for direct parenthesized function-path calls and `as fn(...)` cast calls. | Keep synthetic coverage. |
@@ -128,6 +128,6 @@ These rows are inside the current axum call-graph fixture and produce stable DB 
 
 ## Notes
 
-- The fallback rows are useful for planning but should not be turned into DB assertions until the corresponding crate has a call-graph fixture or the axum fixture is expanded with an equivalent source case.
+- The fallback rows are useful for planning and DB regression coverage; their assertions live in `real_target_matrix/fallback.rs` against the registered fallback call-graph fixtures.
 - The `not-found` rows are deliberate. They prevent future work from inventing weak real-corpus examples for shapes that are currently better covered by synthetic fixtures.
 - Several axum rows are source cases where current semantic resolution is intentionally incomplete. Those tests should assert structural presence plus `Unsupported` or fail-closed status, not a guessed target.
