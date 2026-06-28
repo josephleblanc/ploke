@@ -6,6 +6,7 @@ use super::super::super::super::super::*;
 use super::expected::path;
 
 mod remaining;
+mod targetless;
 
 fn setup_axum_call_graph_rag() -> Result<(Arc<Database>, RagService), Error> {
     let db = Arc::new(fresh_backup_fixture_db(
