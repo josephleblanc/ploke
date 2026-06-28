@@ -21,6 +21,7 @@ pub(crate) struct DynamicToolFixture {
 pub(crate) struct ReceiverToolCase {
     pub(crate) label: &'static str,
     pub(crate) method: &'static str,
+    pub(crate) callee: &'static str,
     pub(crate) owner_type: &'static str,
     pub(crate) file_suffix: &'static str,
     pub(crate) body: &'static str,
@@ -79,6 +80,7 @@ impl ReceiverToolCase {
         Self {
             label: "axum/src/routing/route.rs:51 Route::oneshot_inner",
             method: "oneshot_inner",
+            callee: "oneshot",
             owner_type: "Route",
             file_suffix: "axum/src/routing/route.rs",
             body: "self.0.clone().oneshot(req)",
@@ -87,12 +89,23 @@ impl ReceiverToolCase {
         Self {
             label: "axum/src/routing/route.rs:57 Route::oneshot_inner_owned",
             method: "oneshot_inner_owned",
+            callee: "oneshot",
             owner_type: "Route",
             file_suffix: "axum/src/routing/route.rs",
             body: "self.0.oneshot(req)",
             receiver: ReceiverShape::SelfField { path: &["0"] },
         },
     ];
+
+    pub(crate) const SIZE_HINT: [Self; 1] = [Self {
+        label: "axum-core/src/body.rs:127 Body::size_hint self field",
+        method: "size_hint",
+        callee: "size_hint",
+        owner_type: "Body",
+        file_suffix: "axum-core/src/body.rs",
+        body: "self.0.size_hint()",
+        receiver: ReceiverShape::SelfField { path: &["0"] },
+    }];
 
     pub(crate) fn callee(self) -> CallCalleeInfo {
         let receiver = match self.receiver {
@@ -104,7 +117,7 @@ impl ReceiverToolCase {
             }),
         };
         CallCalleeInfo::Method {
-            name: "oneshot".to_string(),
+            name: self.callee.to_string(),
             receiver,
         }
     }
