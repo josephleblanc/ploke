@@ -1,8 +1,16 @@
 use ploke_core::{
+    io_types::EmbeddingData,
     rag_types::{CallContextInfo, ProofContextInfo},
     tool_types::ToolName,
 };
+use ploke_db::{
+    Database, DbError,
+    helpers::{graph_resolve_exact, graph_resolve_exact_trait_method},
+};
+use std::path::Path;
 use uuid::Uuid;
+
+use crate::rag::utils::NodeKind;
 
 use super::{ToolError, ToolErrorCode, ToolInvocationError, ToolRetryContext};
 
@@ -14,6 +22,10 @@ pub(super) const MODULE_PATH_EXPECTED: &str =
     "crate or crate::module::submodule, without the item name";
 
 pub(super) const LOOKUP_RETRY_HINT: &str = "Use a crate-relative module_path that begins with `crate`. If the exact module path is uncertain, call request_code_context with the item name/signature or read_file on the target file before retrying exact lookup.";
+
+pub(super) const OWNER_TRAIT_DESC: &str = r#"Optional trait name that owns a method item.
+Use only with node_kind=method when file_path, module_path, and item_name are ambiguous.
+Example: owner_trait="Handler" for Handler::call."#;
 
 pub(super) fn validate_module_path(
     tool: ToolName,
@@ -75,6 +87,43 @@ pub(super) fn item_canon_path(module_path: &str, item_name: &str) -> String {
     } else {
         format!("{module_path}::{item_name}")
     }
+}
+
+pub(super) fn normalize_owner_trait(
+    owner_trait: Option<&str>,
+    node_kind: NodeKind,
+) -> Result<Option<String>, ploke_error::Error> {
+    let owner_trait = owner_trait
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if owner_trait.is_some() && !matches!(node_kind, NodeKind::Method) {
+        return Err(ploke_error::Error::Domain(ploke_error::DomainError::Ui {
+            message: "owner_trait can only be used when node_kind is `method`.".to_string(),
+        }));
+    }
+    Ok(owner_trait)
+}
+
+pub(super) fn resolve_exact_item(
+    db: &Database,
+    node_kind: NodeKind,
+    abs_path: &Path,
+    mod_path: &[String],
+    item_name: &str,
+    owner_trait: Option<&str>,
+) -> Result<Vec<EmbeddingData>, DbError> {
+    if let Some(owner_trait) = owner_trait {
+        graph_resolve_exact_trait_method(db, abs_path, mod_path, item_name, owner_trait)
+    } else {
+        graph_resolve_exact(db, node_kind.as_relation(), abs_path, mod_path, item_name)
+    }
+}
+
+pub(super) fn owner_trait_message(owner_trait: Option<&str>) -> String {
+    owner_trait
+        .map(|owner| format!(" and owner_trait {owner}"))
+        .unwrap_or_default()
 }
 
 pub(super) struct ContextCarriers {

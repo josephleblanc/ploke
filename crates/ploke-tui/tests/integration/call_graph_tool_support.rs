@@ -79,6 +79,14 @@ pub(crate) struct AxumRunUiTestsToolFixture {
     pub(crate) callers: Vec<ExpectedCallSite>,
 }
 
+pub(crate) struct AxumHandlerCallToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) target: Uuid,
+    pub(crate) caller: ExpectedCallSite,
+}
+
 pub(crate) struct ExpectedCallSite {
     pub(crate) owner: Uuid,
     pub(crate) site: Uuid,
@@ -371,6 +379,59 @@ impl AxumRunUiTestsToolFixture {
             module_path: target.module_path,
             target: target.id,
             callers,
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl AxumHandlerCallToolFixture {
+    pub(crate) async fn new() -> Self {
+        let db = axum_call_graph_db();
+        let target = axum_handler_call_target(&db);
+        let mut callers = db
+            .callers_for_target(target.id)
+            .expect("Handler::call incoming caller")
+            .into_iter()
+            .map(|caller| ExpectedCallSite {
+                owner: caller.site.owner_id,
+                site: caller.site.id,
+                path: caller
+                    .site
+                    .path
+                    .expect("Handler::call caller should carry a path"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            callers.len(),
+            1,
+            "current axum fixture should resolve one Handler::call trait-method caller"
+        );
+        assert_eq!(
+            callers[0].path,
+            vec!["Handler".to_string(), "call".to_string()],
+            "Handler::call caller should preserve the associated path"
+        );
+        assert!(
+            db.project_call_proof_facts_for_node(target.id, "bd:corpus-axum-call-graph")
+                .expect("project axum Handler::call proof facts")
+                >= callers.len(),
+            "Handler::call should project target-scoped proof rows for its real-corpus caller"
+        );
+        let state = axum_state_for_target(Arc::clone(&db), &target, "Handler::call").await;
+
+        Self {
+            state,
+            file_path: target.file_path,
+            module_path: target.module_path,
+            target: target.id,
+            caller: callers.pop().expect("one Handler::call caller"),
         }
     }
 
@@ -694,6 +755,49 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
     }
 }
 
+fn axum_handler_call_target(db: &Database) -> TargetInfo {
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[id, file_path, mod_path] :=
+    *method {{ id, name: "call", owner_id: trait_id @ 'NOW' }},
+    *trait {{ id: trait_id, name: "Handler" @ 'NOW' }},
+    ancestor[id, mod_id],
+    *module{{ id: mod_id, path: mod_path @ 'NOW' }},
+    file_owner_for_module[mod_id, file_id],
+    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+    let rows = db
+        .raw_query(&script)
+        .expect("query axum Handler::call target");
+    let matching = rows
+        .rows
+        .iter()
+        .filter(|row| data_str(&row[1], "file_path").ends_with("axum/src/handler/mod.rs"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one axum Handler::call trait target; rows: {:#?}",
+        rows.rows
+    );
+    let row = matching[0];
+
+    TargetInfo {
+        id: to_uuid(&row[0]).expect("Handler::call uuid"),
+        file_path: PathBuf::from(data_str(&row[1], "file_path")),
+        module_path: data_path(&row[2], "module path"),
+    }
+}
+
 fn data_str<'a>(value: &'a DataValue, label: &str) -> &'a str {
     match value {
         DataValue::Str(value) => value.as_str(),
@@ -877,6 +981,21 @@ pub(crate) fn assert_run_ui_tests_incoming_context(
     label: &str,
 ) {
     assert_expected_path_incoming_context(calls, callers, target, label, "run_ui_tests");
+}
+
+pub(crate) fn assert_handler_call_incoming_context(
+    calls: &[serde_json::Value],
+    caller: &ExpectedCallSite,
+    target: Uuid,
+    label: &str,
+) {
+    assert_expected_path_incoming_context(
+        calls,
+        std::slice::from_ref(caller),
+        target,
+        label,
+        "Handler::call",
+    );
 }
 
 pub(crate) fn assert_target_proof(

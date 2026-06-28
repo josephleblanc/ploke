@@ -5,7 +5,6 @@ use ploke_core::{
     tool_descriptions::ToolDescription,
     tool_types::ToolName,
 };
-use ploke_db::helpers::graph_resolve_exact;
 use ploke_error::DomainError;
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +32,10 @@ lazy_static::lazy_static! {
             "file_path": { "type": "string", "description": FILE_DESC },
             "node_kind": NodeKind::schema_property(),
             "module_path": { "type": "string", "description": lookup_support::MODULE_PATH_DESC },
+            "owner_trait": {
+                "type": "string",
+                "description": lookup_support::OWNER_TRAIT_DESC
+            },
         },
         "required": ["item_name", "file_path", "node_kind", "module_path"],
         "additionalProperties": false
@@ -49,6 +52,8 @@ pub struct LookupParams<'a> {
     pub node_kind: std::borrow::Cow<'a, str>, // "error" | "overwrite"
     #[serde(default)]
     pub module_path: std::borrow::Cow<'a, str>,
+    #[serde(default, borrow)]
+    pub owner_trait: Option<std::borrow::Cow<'a, str>>,
 }
 
 impl<'a> ValidatesAbolutePath for LookupParams<'a> {
@@ -64,6 +69,7 @@ pub struct LookupParamsOwned {
     pub file_path: String,
     pub node_kind: String,
     pub module_path: String,
+    pub owner_trait: Option<String>,
 }
 
 pub struct CodeItemLookup;
@@ -121,6 +127,7 @@ impl Tool for CodeItemLookup {
             item_name: params.item_name.clone().into_owned(),
             node_kind: params.node_kind.clone().into_owned(),
             module_path: params.module_path.clone().into_owned(),
+            owner_trait: params.owner_trait.as_ref().map(|value| value.to_string()),
         }
     }
 
@@ -165,6 +172,8 @@ impl Tool for CodeItemLookup {
                 ),
             })
         })?;
+        let owner_trait =
+            lookup_support::normalize_owner_trait(params.owner_trait.as_deref(), node_kind)?;
 
         let (primary_root, policy) = ctx
             .state
@@ -211,12 +220,13 @@ for a more fuzzy search."#
             }));
         }
 
-        let resolved_item = match graph_resolve_exact(
+        let resolved_item = match lookup_support::resolve_exact_item(
             &ctx.state.db,
-            node_kind.as_relation(),
+            node_kind,
             &abs_path,
             &mod_path,
             params.item_name.as_ref(),
+            owner_trait.as_deref(),
         ) {
             Ok(t) if t.len() == 1 => t,
             Ok(t) if t.is_empty() => {
@@ -226,11 +236,12 @@ for a more fuzzy search."#
                     .unwrap_or_default();
                 return Err(ploke_error::Error::Domain(DomainError::Ui {
                     message: format!(
-                        "No code item named `{}` found in {} with module_path {} and node_kind {}.{}",
+                        "No code item named `{}` found in {} with module_path {} and node_kind {}{}.{}",
                         params.item_name,
                         rel_path.display(),
                         params.module_path,
                         node_kind.as_str(),
+                        lookup_support::owner_trait_message(owner_trait.as_deref()),
                         hint
                     ),
                 }));
@@ -241,11 +252,12 @@ for a more fuzzy search."#
                 ));
                 return Err(ploke_error::Error::Domain(DomainError::Ui {
                     message: format!(
-                        "Multiple items matched `{}` in {} with module_path {} and node_kind {}; expected a single match. This is an internal error: {}",
+                        "Multiple items matched `{}` in {} with module_path {} and node_kind {}{}; expected a single match. This is an internal error: {}",
                         params.item_name,
                         rel_path.display(),
                         params.module_path,
                         node_kind.as_str(),
+                        lookup_support::owner_trait_message(owner_trait.as_deref()),
                         err
                     ),
                 }));

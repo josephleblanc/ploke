@@ -6,9 +6,10 @@ use ploke_tui::tools::{
 };
 
 use crate::call_graph_tool_support::{
-    AxumBodyEmptyToolFixture, AxumBoxedIntoRouteToolFixture, AxumJsonFromBytesToolFixture,
-    AxumParseAttrsToolFixture, AxumRunUiTestsToolFixture, CallGraphToolFixture,
-    assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
+    AxumBodyEmptyToolFixture, AxumBoxedIntoRouteToolFixture, AxumHandlerCallToolFixture,
+    AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture, AxumRunUiTestsToolFixture,
+    CallGraphToolFixture, assert_body_empty_incoming_context,
+    assert_boxed_into_route_incoming_context, assert_handler_call_incoming_context,
     assert_incoming_context, assert_json_from_bytes_incoming_context,
     assert_parse_attrs_incoming_context, assert_run_ui_tests_incoming_context, assert_target_proof,
     ui_field,
@@ -22,6 +23,7 @@ async fn code_item_lookup_returns_call_and_proof_context_for_call_graph_item() {
         file_path: Cow::Owned(fixture.file_path.display().to_string()),
         node_kind: Cow::Borrowed("function"),
         module_path: Cow::Borrowed("crate"),
+        owner_trait: None,
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("call-graph-lookup"))
@@ -83,6 +85,7 @@ async fn code_item_lookup_returns_incoming_callers_for_call_graph_target() {
         file_path: Cow::Owned(fixture.file_path.display().to_string()),
         node_kind: Cow::Borrowed("function"),
         module_path: Cow::Borrowed("crate"),
+        owner_trait: None,
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("call-graph-target-lookup"))
@@ -134,6 +137,7 @@ async fn code_item_lookup_returns_real_corpus_body_empty_callers() {
         file_path: Cow::Owned(fixture.file_path.display().to_string()),
         node_kind: Cow::Borrowed("method"),
         module_path: Cow::Owned(module_path),
+        owner_trait: None,
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("axum-body-empty-lookup"))
@@ -193,6 +197,7 @@ async fn code_item_lookup_returns_real_corpus_parse_attrs_callers() {
         file_path: Cow::Owned(fixture.file_path.display().to_string()),
         node_kind: Cow::Borrowed("function"),
         module_path: Cow::Owned(module_path),
+        owner_trait: None,
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("axum-parse-attrs-lookup"))
@@ -253,6 +258,7 @@ async fn code_item_lookup_returns_real_corpus_json_from_bytes_callers() {
         file_path: Cow::Owned(fixture.file_path.display().to_string()),
         node_kind: Cow::Borrowed("method"),
         module_path: Cow::Owned(module_path),
+        owner_trait: None,
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("axum-json-from-bytes-lookup"))
@@ -310,6 +316,7 @@ async fn code_item_lookup_returns_real_corpus_boxed_into_route_constructor_calle
         file_path: Cow::Owned(fixture.file_path.display().to_string()),
         node_kind: Cow::Borrowed("struct"),
         module_path: Cow::Owned(module_path),
+        owner_trait: None,
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("axum-boxed-into-route-lookup"))
@@ -365,6 +372,7 @@ async fn code_item_lookup_returns_real_corpus_run_ui_tests_callers() {
         file_path: Cow::Owned(fixture.file_path.display().to_string()),
         node_kind: Cow::Borrowed("function"),
         module_path: Cow::Owned(module_path),
+        owner_trait: None,
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("axum-run-ui-tests-lookup"))
@@ -411,5 +419,83 @@ async fn code_item_lookup_returns_real_corpus_run_ui_tests_callers() {
             .expect("proof count")
             >= fixture.callers.len(),
         "code_item_lookup should surface real-corpus run_ui_tests proof rows"
+    );
+}
+
+#[tokio::test]
+async fn code_item_lookup_disambiguates_real_corpus_handler_call_by_owner_trait() {
+    let fixture = AxumHandlerCallToolFixture::new().await;
+    let module_path = fixture.module_path_arg();
+
+    // Real-corpus oracle matrix:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   axum/src/handler/mod.rs:153 declares trait method `Handler::call`.
+    //   axum/src/handler/service.rs:171 calls
+    //   `Handler::call(handler, req, self.state.clone())`.
+    // Expected exact-tool behavior: unqualified `call` remains ambiguous in
+    // this file/module, while owner_trait="Handler" selects the trait method
+    // and surfaces the one incoming caller edge plus projected proof row.
+    let ambiguous = CodeItemLookup::execute(
+        LookupParams {
+            item_name: Cow::Borrowed("call"),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("method"),
+            module_path: Cow::Owned(module_path.clone()),
+            owner_trait: None,
+        },
+        fixture.ctx("axum-handler-call-ambiguous-lookup"),
+    )
+    .await
+    .expect_err("unqualified Handler::call lookup should remain ambiguous");
+    let ambiguous_message = ambiguous.to_string();
+    assert!(
+        ambiguous_message.contains("Multiple items matched `call`"),
+        "unqualified call lookup should preserve the strict ambiguity error: {ambiguous_message}"
+    );
+
+    let result = CodeItemLookup::execute(
+        LookupParams {
+            item_name: Cow::Borrowed("call"),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("method"),
+            module_path: Cow::Owned(module_path),
+            owner_trait: Some(Cow::Borrowed("Handler")),
+        },
+        fixture.ctx("axum-handler-call-lookup"),
+    )
+    .await
+    .expect("owner-qualified Handler::call lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let call_context = payload
+        .get("call_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_context array");
+    let proof_context = payload
+        .get("proof_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("proof_context array");
+
+    assert_handler_call_incoming_context(
+        call_context,
+        &fixture.caller,
+        fixture.target,
+        "code_item_lookup",
+    );
+    assert_target_proof(
+        proof_context,
+        fixture.caller.owner,
+        fixture.target,
+        "code_item_lookup",
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "call_context_incoming"), "1");
+    assert!(
+        ui_field(ui, "proof_context")
+            .parse::<usize>()
+            .expect("proof context count")
+            >= 1,
+        "code_item_lookup should surface real-corpus Handler::call proof rows"
     );
 }

@@ -24,9 +24,10 @@ use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 
 use crate::call_graph_tool_support::{
-    AxumBodyEmptyToolFixture, AxumBoxedIntoRouteToolFixture, AxumJsonFromBytesToolFixture,
-    AxumParseAttrsToolFixture, AxumRunUiTestsToolFixture, CallGraphToolFixture,
-    assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
+    AxumBodyEmptyToolFixture, AxumBoxedIntoRouteToolFixture, AxumHandlerCallToolFixture,
+    AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture, AxumRunUiTestsToolFixture,
+    CallGraphToolFixture, assert_body_empty_incoming_context,
+    assert_boxed_into_route_incoming_context, assert_handler_call_incoming_context,
     assert_incoming_context, assert_json_from_bytes_incoming_context,
     assert_parse_attrs_incoming_context, assert_run_ui_tests_incoming_context, assert_target_proof,
     ui_field,
@@ -127,6 +128,7 @@ async fn code_item_edges_handles_trailing_module_separators() {
         file_path: Cow::Owned(focus.file_path.display().to_string()),
         node_kind: Cow::Owned(focus.relation.clone()),
         module_path: Cow::Owned(module_path_with_gaps),
+        owner_trait: None,
     };
 
     let result = CodeItemEdges::execute(params, ctx)
@@ -243,6 +245,7 @@ async fn code_item_edges_returns_edges_for_ploke_db_primary_node() {
         file_path: Cow::Owned(focus.file_path.display().to_string()),
         node_kind: Cow::Owned(focus.relation.clone()),
         module_path: Cow::Owned(focus.module_path.join("::")),
+        owner_trait: None,
     };
     let result = CodeItemEdges::execute(params, ctx)
         .await
@@ -361,6 +364,7 @@ async fn code_item_edges_returns_edges_for_database_struct_in_ploke_db() {
         file_path: Cow::Owned(focus.file_path.display().to_string()),
         node_kind: Cow::Owned(focus.relation.clone()),
         module_path: Cow::Owned(focus.module_path.join("::")),
+        owner_trait: None,
     };
 
     let result = CodeItemEdges::execute(params, ctx)
@@ -389,6 +393,7 @@ async fn code_item_edges_returns_call_context_for_call_graph_item() {
         file_path: Cow::Owned(fixture.file_path.display().to_string()),
         node_kind: Cow::Borrowed("function"),
         module_path: Cow::Borrowed("crate"),
+        owner_trait: None,
     };
 
     let result = CodeItemEdges::execute(params, ctx)
@@ -452,6 +457,7 @@ async fn code_item_edges_returns_incoming_callers_for_call_graph_target() {
         file_path: Cow::Owned(fixture.file_path.display().to_string()),
         node_kind: Cow::Borrowed("function"),
         module_path: Cow::Borrowed("crate"),
+        owner_trait: None,
     };
 
     let result = CodeItemEdges::execute(params, ctx)
@@ -507,6 +513,7 @@ async fn code_item_edges_returns_real_corpus_body_empty_callers() {
         file_path: Cow::Owned(fixture.file_path.display().to_string()),
         node_kind: Cow::Borrowed("method"),
         module_path: Cow::Owned(module_path),
+        owner_trait: None,
     };
 
     let result = CodeItemEdges::execute(params, ctx)
@@ -570,6 +577,7 @@ async fn code_item_edges_returns_real_corpus_parse_attrs_callers() {
         file_path: Cow::Owned(fixture.file_path.display().to_string()),
         node_kind: Cow::Borrowed("function"),
         module_path: Cow::Owned(module_path),
+        owner_trait: None,
     };
 
     let result = CodeItemEdges::execute(params, ctx)
@@ -633,6 +641,7 @@ async fn code_item_edges_returns_real_corpus_json_from_bytes_callers() {
         file_path: Cow::Owned(fixture.file_path.display().to_string()),
         node_kind: Cow::Borrowed("method"),
         module_path: Cow::Owned(module_path),
+        owner_trait: None,
     };
 
     let result = CodeItemEdges::execute(params, ctx)
@@ -694,6 +703,7 @@ async fn code_item_edges_returns_real_corpus_boxed_into_route_constructor_caller
         file_path: Cow::Owned(fixture.file_path.display().to_string()),
         node_kind: Cow::Borrowed("struct"),
         module_path: Cow::Owned(module_path),
+        owner_trait: None,
     };
 
     let result = CodeItemEdges::execute(params, ctx)
@@ -752,6 +762,7 @@ async fn code_item_edges_returns_real_corpus_run_ui_tests_callers() {
         file_path: Cow::Owned(fixture.file_path.display().to_string()),
         node_kind: Cow::Borrowed("function"),
         module_path: Cow::Owned(module_path),
+        owner_trait: None,
     };
 
     let result = CodeItemEdges::execute(params, ctx)
@@ -800,6 +811,65 @@ async fn code_item_edges_returns_real_corpus_run_ui_tests_callers() {
             .expect("proof count")
             >= fixture.callers.len(),
         "code_item_edges should surface real-corpus run_ui_tests proof rows"
+    );
+}
+
+#[tokio::test]
+async fn code_item_edges_disambiguates_real_corpus_handler_call_by_owner_trait() {
+    let fixture = AxumHandlerCallToolFixture::new().await;
+    let module_path = fixture.module_path_arg();
+    let params = EdgesParams {
+        item_name: Cow::Borrowed("call"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("method"),
+        module_path: Cow::Owned(module_path),
+        owner_trait: Some(Cow::Borrowed("Handler")),
+    };
+
+    let result = CodeItemEdges::execute(params, fixture.ctx("axum-handler-call-edges"))
+        .await
+        .expect("owner-qualified Handler::call edge lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let node_info = payload.get("node_info").expect("node_info");
+    let call_context = node_info
+        .get("call_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_context array");
+    let proof_context = node_info
+        .get("proof_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.proof_context array");
+
+    // Real-corpus oracle matrix:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   axum/src/handler/mod.rs:153 declares trait method `Handler::call`.
+    //   axum/src/handler/service.rs:171 calls
+    //   `Handler::call(handler, req, self.state.clone())`.
+    // Expected exact-tool behavior: owner_trait="Handler" selects the trait
+    // method in a file/module that otherwise contains multiple `call` methods,
+    // and the tool exposes the DB-proven incoming caller edge.
+    assert_handler_call_incoming_context(
+        call_context,
+        &fixture.caller,
+        fixture.target,
+        "code_item_edges",
+    );
+    assert_target_proof(
+        proof_context,
+        fixture.caller.owner,
+        fixture.target,
+        "code_item_edges",
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "call_context_incoming"), "1");
+    assert!(
+        ui_field(ui, "proof_context")
+            .parse::<usize>()
+            .expect("proof context count")
+            >= 1,
+        "code_item_edges should surface real-corpus Handler::call proof rows"
     );
 }
 
