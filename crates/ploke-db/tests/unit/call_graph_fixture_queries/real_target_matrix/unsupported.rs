@@ -125,17 +125,25 @@ fn axum_dynamic_callable_fields_are_visible_unsupported_blockers() -> Result<(),
             "matrix source line {} should project one dynamic callable field call: {context:#?}",
             case.source_line
         );
+        let row = dynamic_rows[0];
         assert_eq!(
-            dynamic_rows[0].site.arg_count,
+            row.site.arg_count,
             Some(case.expected_args),
             "dynamic callable row at matrix source line {} should preserve argument count",
             case.source_line
         );
-        assert_eq!(dynamic_rows[0].status.status, CallStatusKind::Unsupported);
+        assert_eq!(row.status.status, CallStatusKind::Unsupported);
         assert!(
-            dynamic_rows[0].targets.is_empty(),
+            row.targets.is_empty(),
             "unsupported dynamic callable field call should remain targetless: {dynamic_rows:#?}"
         );
+        assert!(
+            relations_for_site(&db, row.site.id)?.rows.is_empty(),
+            "dynamic callable field row at matrix source line {} should have zero persisted call edges",
+            case.source_line
+        );
+        let label = format!("axum dynamic callable matrix line {}", case.source_line);
+        assert_no_traversal_candidates_for_site(&db, owner, row.site.id, &label)?;
     }
 
     Ok(())
@@ -160,6 +168,12 @@ fn axum_macro_callback_rows_are_visible_or_explicitly_absent() -> Result<(), DbE
 
     let parse_row = row_by_path(&expand_with_context, &["syn", "parse"]);
     assert_external_targetless(parse_row);
+    assert_no_traversal_candidates_for_site(
+        &db,
+        expand_with,
+        parse_row.site.id,
+        "axum-macros/src/lib.rs:724 syn::parse external callback setup",
+    )?;
 
     let and_then = row_by_method_receiver(
         &expand_with_context,
@@ -169,6 +183,16 @@ fn axum_macro_callback_rows_are_visible_or_explicitly_absent() -> Result<(), DbE
         },
     );
     assert_targetless_status(and_then, CallStatusKind::Unsupported);
+    assert!(
+        relations_for_site(&db, and_then.site.id)?.rows.is_empty(),
+        "axum-macros/src/lib.rs:724 and_then(f) should have zero persisted call edges"
+    );
+    assert_no_traversal_candidates_for_site(
+        &db,
+        expand_with,
+        and_then.site.id,
+        "axum-macros/src/lib.rs:724 and_then(f)",
+    )?;
 
     let expand_attr_with = function_id_by_name_in_module(&db, &["crate"], "expand_attr_with")?;
     let expand_attr_context = db.call_context_for_owner(expand_attr_with)?;
@@ -181,6 +205,12 @@ fn axum_macro_callback_rows_are_visible_or_explicitly_absent() -> Result<(), DbE
         relations_for_site(&db, iife.site.id)?.rows.is_empty(),
         "IIFE dynamic row should not fabricate targets"
     );
+    assert_no_traversal_candidates_for_site(
+        &db,
+        expand_attr_with,
+        iife.site.id,
+        "axum-macros/src/lib.rs:734-738 IIFE dynamic call",
+    )?;
     assert!(
         expand_attr_context
             .iter()

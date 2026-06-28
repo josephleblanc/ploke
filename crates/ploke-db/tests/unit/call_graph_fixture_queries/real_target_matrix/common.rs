@@ -143,6 +143,7 @@ pub(super) fn assert_owner_path_targetless(
         relations_for_site(db, row.site.id)?.rows.is_empty(),
         "{label} should not have raw call_relation targets"
     );
+    assert_no_traversal_candidates_for_site(db, owner, row.site.id, label)?;
     Ok(row.site.id)
 }
 
@@ -161,6 +162,7 @@ pub(super) fn assert_owner_method_targetless(
         relations_for_site(db, row.site.id)?.rows.is_empty(),
         "{label} should not have raw call_relation targets"
     );
+    assert_no_traversal_candidates_for_site(db, owner, row.site.id, label)?;
     Ok(row.site.id)
 }
 
@@ -171,6 +173,30 @@ pub(super) fn assert_targetless_status(row: &ploke_db::CallContextRow, status: C
         row.targets.is_empty(),
         "{status:?} row should not expose local traversal targets: {row:#?}"
     );
+}
+
+pub(super) fn assert_no_traversal_candidates_for_site(
+    db: &Database,
+    owner: Uuid,
+    site_id: Uuid,
+    label: &str,
+) -> Result<(), DbError> {
+    let outgoing = db.expand_call_context(
+        CallContextSeed::Owner(owner),
+        CallContextOptions {
+            include_incoming_callers: false,
+            max_candidates: 512,
+            ..CallContextOptions::default()
+        },
+    )?;
+    assert!(
+        outgoing
+            .iter()
+            .all(|candidate| candidate.call_site_id != site_id),
+        "{label} should have zero traversable call edges for targetless site {site_id}: {outgoing:#?}"
+    );
+
+    Ok(())
 }
 
 pub(super) fn method_id_by_name_and_body_substring(
@@ -514,7 +540,7 @@ pub(super) fn assert_targetless_dynamic_rows_by_method_name(
     params.insert("method".to_string(), DataValue::from(method));
 
     let rows = db.raw_query_params(
-        r#"?[site_id, arg_count, status_kind, resolution_kind] :=
+        r#"?[site_id, owner_id, arg_count, status_kind, resolution_kind] :=
             *method { id: owner_id, name: $method @ 'NOW' },
             *call_site {
                 id: site_id,
@@ -540,14 +566,16 @@ pub(super) fn assert_targetless_dynamic_rows_by_method_name(
 
     let mut actual_arg_counts = Vec::new();
     for row in &rows.rows {
-        assert_eq!(row[2], DataValue::from("Unsupported"));
-        assert_eq!(row[3], DataValue::Null);
+        assert_eq!(row[3], DataValue::from("Unsupported"));
+        assert_eq!(row[4], DataValue::Null);
         let site_id = to_uuid(&row[0])?;
+        let owner_id = to_uuid(&row[1])?;
         assert!(
             relations_for_site(db, site_id)?.rows.is_empty(),
             "dynamic row owned by {method:?} should not have call_relation targets"
         );
-        let DataValue::Num(cozo::Num::Int(arg_count)) = &row[1] else {
+        assert_no_traversal_candidates_for_site(db, owner_id, site_id, method)?;
+        let DataValue::Num(cozo::Num::Int(arg_count)) = &row[2] else {
             panic!("dynamic row arg_count should be numeric: {row:#?}");
         };
         actual_arg_counts.push(*arg_count as u32);
