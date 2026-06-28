@@ -5,7 +5,9 @@ use ploke_core::{
 };
 use ploke_db::{
     Database, DbError,
-    helpers::{graph_resolve_exact, graph_resolve_exact_trait_method},
+    helpers::{
+        graph_resolve_exact, graph_resolve_exact_impl_method, graph_resolve_exact_trait_method,
+    },
 };
 use std::path::Path;
 use uuid::Uuid;
@@ -26,6 +28,25 @@ pub(super) const LOOKUP_RETRY_HINT: &str = "Use a crate-relative module_path tha
 pub(super) const OWNER_TRAIT_DESC: &str = r#"Optional trait name that owns a method item.
 Use only with node_kind=method when file_path, module_path, and item_name are ambiguous.
 Example: owner_trait="Handler" for Handler::call."#;
+
+pub(super) const OWNER_TYPE_DESC: &str = r#"Optional self type name that owns an inherent method item.
+Use only with node_kind=method when file_path, module_path, and item_name are ambiguous.
+Example: owner_type="HandleError" for HandleError::new."#;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum OwnerQualifier {
+    Trait(String),
+    Type(String),
+}
+
+impl OwnerQualifier {
+    pub(super) fn message(&self) -> String {
+        match self {
+            Self::Trait(owner) => format!(" and owner_trait {owner}"),
+            Self::Type(owner) => format!(" and owner_type {owner}"),
+        }
+    }
+}
 
 pub(super) fn validate_module_path(
     tool: ToolName,
@@ -89,20 +110,34 @@ pub(super) fn item_canon_path(module_path: &str, item_name: &str) -> String {
     }
 }
 
-pub(super) fn normalize_owner_trait(
+pub(super) fn normalize_owner_qualifier(
     owner_trait: Option<&str>,
+    owner_type: Option<&str>,
     node_kind: NodeKind,
-) -> Result<Option<String>, ploke_error::Error> {
+) -> Result<Option<OwnerQualifier>, ploke_error::Error> {
     let owner_trait = owner_trait
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
-    if owner_trait.is_some() && !matches!(node_kind, NodeKind::Method) {
+    let owner_type = owner_type
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    if owner_trait.is_some() && owner_type.is_some() {
         return Err(ploke_error::Error::Domain(ploke_error::DomainError::Ui {
-            message: "owner_trait can only be used when node_kind is `method`.".to_string(),
+            message: "Provide only one owner qualifier: owner_trait or owner_type.".to_string(),
         }));
     }
-    Ok(owner_trait)
+    if (owner_trait.is_some() || owner_type.is_some()) && !matches!(node_kind, NodeKind::Method) {
+        return Err(ploke_error::Error::Domain(ploke_error::DomainError::Ui {
+            message: "owner qualifiers can only be used when node_kind is `method`.".to_string(),
+        }));
+    }
+
+    Ok(owner_trait
+        .map(OwnerQualifier::Trait)
+        .or_else(|| owner_type.map(OwnerQualifier::Type)))
 }
 
 pub(super) fn resolve_exact_item(
@@ -111,19 +146,21 @@ pub(super) fn resolve_exact_item(
     abs_path: &Path,
     mod_path: &[String],
     item_name: &str,
-    owner_trait: Option<&str>,
+    owner: Option<&OwnerQualifier>,
 ) -> Result<Vec<EmbeddingData>, DbError> {
-    if let Some(owner_trait) = owner_trait {
-        graph_resolve_exact_trait_method(db, abs_path, mod_path, item_name, owner_trait)
-    } else {
-        graph_resolve_exact(db, node_kind.as_relation(), abs_path, mod_path, item_name)
+    match owner {
+        Some(OwnerQualifier::Trait(owner)) => {
+            graph_resolve_exact_trait_method(db, abs_path, mod_path, item_name, owner)
+        }
+        Some(OwnerQualifier::Type(owner)) => {
+            graph_resolve_exact_impl_method(db, abs_path, mod_path, item_name, owner)
+        }
+        None => graph_resolve_exact(db, node_kind.as_relation(), abs_path, mod_path, item_name),
     }
 }
 
-pub(super) fn owner_trait_message(owner_trait: Option<&str>) -> String {
-    owner_trait
-        .map(|owner| format!(" and owner_trait {owner}"))
-        .unwrap_or_default()
+pub(super) fn owner_message(owner: Option<&OwnerQualifier>) -> String {
+    owner.map(OwnerQualifier::message).unwrap_or_default()
 }
 
 pub(super) struct ContextCarriers {
@@ -234,5 +271,21 @@ mod tests {
             item_canon_path("crate::module::", "Thing"),
             "crate::module::Thing"
         );
+    }
+
+    #[test]
+    fn owner_qualifier_accepts_one_method_owner() {
+        let owner = normalize_owner_qualifier(None, Some("HandleError"), NodeKind::Method)
+            .expect("owner type qualifier")
+            .expect("owner type");
+        assert_eq!(owner, OwnerQualifier::Type("HandleError".to_string()));
+        assert_eq!(owner.message(), " and owner_type HandleError");
+    }
+
+    #[test]
+    fn owner_qualifier_rejects_conflicts() {
+        let err = normalize_owner_qualifier(Some("Handler"), Some("HandleError"), NodeKind::Method)
+            .expect_err("conflicting owner qualifiers");
+        assert!(err.to_string().contains("owner_trait or owner_type"));
     }
 }

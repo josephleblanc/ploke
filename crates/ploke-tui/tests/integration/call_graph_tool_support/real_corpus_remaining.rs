@@ -4,9 +4,11 @@ use super::*;
 pub(crate) enum AxumRemainingTarget {
     CoreTryDowncast,
     AxumTryDowncast,
+    HandleErrorNew,
     FromRequest,
     FromRequestParts,
     FromRef,
+    RouterNew,
 }
 
 pub(crate) struct AxumRemainingToolFixture {
@@ -15,6 +17,7 @@ pub(crate) struct AxumRemainingToolFixture {
     pub(crate) item_name: &'static str,
     pub(crate) node_kind: &'static str,
     pub(crate) owner_trait: Option<&'static str>,
+    pub(crate) owner_type: Option<&'static str>,
     pub(crate) file_path: PathBuf,
     pub(crate) module_path: Vec<String>,
     pub(crate) target: Uuid,
@@ -22,27 +25,32 @@ pub(crate) struct AxumRemainingToolFixture {
 }
 
 impl AxumRemainingTarget {
-    pub(crate) const TOOL_REACHABLE_CASES: [Self; 5] = [
+    pub(crate) const TOOL_REACHABLE_CASES: [Self; 7] = [
         Self::CoreTryDowncast,
         Self::AxumTryDowncast,
+        Self::HandleErrorNew,
         Self::FromRequest,
         Self::FromRequestParts,
         Self::FromRef,
+        Self::RouterNew,
     ];
 
     fn label(self) -> &'static str {
         match self {
             Self::CoreTryDowncast => "axum-core try_downcast",
             Self::AxumTryDowncast => "axum try_downcast",
+            Self::HandleErrorNew => "axum HandleError::new",
             Self::FromRequest => "axum-core FromRequest::from_request",
             Self::FromRequestParts => "axum-core FromRequestParts::from_request_parts",
             Self::FromRef => "axum-core FromRef::from_ref",
+            Self::RouterNew => "axum Router::new",
         }
     }
 
     fn item_name(self) -> &'static str {
         match self {
             Self::CoreTryDowncast | Self::AxumTryDowncast => "try_downcast",
+            Self::HandleErrorNew | Self::RouterNew => "new",
             Self::FromRequest => "from_request",
             Self::FromRequestParts => "from_request_parts",
             Self::FromRef => "from_ref",
@@ -54,14 +62,33 @@ impl AxumRemainingTarget {
             Self::FromRequest => Some("FromRequest"),
             Self::FromRequestParts => Some("FromRequestParts"),
             Self::FromRef => Some("FromRef"),
-            Self::CoreTryDowncast | Self::AxumTryDowncast => None,
+            Self::CoreTryDowncast
+            | Self::AxumTryDowncast
+            | Self::HandleErrorNew
+            | Self::RouterNew => None,
+        }
+    }
+
+    fn owner_type(self) -> Option<&'static str> {
+        match self {
+            Self::HandleErrorNew => Some("HandleError"),
+            Self::RouterNew => Some("Router"),
+            Self::CoreTryDowncast
+            | Self::AxumTryDowncast
+            | Self::FromRequest
+            | Self::FromRequestParts
+            | Self::FromRef => None,
         }
     }
 
     fn node_kind(self) -> &'static str {
         match self {
             Self::CoreTryDowncast | Self::AxumTryDowncast => "function",
-            Self::FromRequest | Self::FromRequestParts | Self::FromRef => "method",
+            Self::HandleErrorNew
+            | Self::FromRequest
+            | Self::FromRequestParts
+            | Self::FromRef
+            | Self::RouterNew => "method",
         }
     }
 
@@ -69,9 +96,11 @@ impl AxumRemainingTarget {
         match self {
             Self::CoreTryDowncast => 2,
             Self::AxumTryDowncast => 1,
+            Self::HandleErrorNew => 2,
             Self::FromRequest => 2,
             Self::FromRequestParts => 3,
             Self::FromRef => 2,
+            Self::RouterNew => 144,
         }
     }
 
@@ -82,6 +111,9 @@ impl AxumRemainingTarget {
             }
             Self::AxumTryDowncast => {
                 function_target_by_name_and_file(db, "try_downcast", "axum/src/util.rs")
+            }
+            Self::HandleErrorNew => {
+                inherent_method_target(db, "HandleError", "new", "axum/src/error_handling/mod.rs")
             }
             Self::FromRequest => trait_method_target_by_name_and_file(
                 db,
@@ -101,6 +133,9 @@ impl AxumRemainingTarget {
                 "from_ref",
                 "axum-core/src/extract/from_ref.rs",
             ),
+            Self::RouterNew => {
+                inherent_method_target(db, "Router", "new", "axum/src/routing/mod.rs")
+            }
         }
     }
 }
@@ -143,6 +178,7 @@ impl AxumRemainingToolFixture {
             item_name: case.item_name(),
             node_kind: case.node_kind(),
             owner_trait: case.owner_trait(),
+            owner_type: case.owner_type(),
             file_path: target.file_path,
             module_path: target.module_path,
             target: target.id,
@@ -219,6 +255,63 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
     one_target_info(
         db.raw_query_params(&script, params)
             .unwrap_or_else(|err| panic!("query trait method {trait_name}::{method_name}: {err}")),
+        |row| data_str(&row[1], "file_path").ends_with(file_suffix),
+        method_name,
+    )
+}
+
+fn inherent_method_target(
+    db: &Database,
+    type_name: &str,
+    method_name: &str,
+    file_suffix: &str,
+) -> TargetInfo {
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+impl_self_target[self_target_id] := *struct {{ id: self_target_id, name: $type_name @ 'NOW' }}
+impl_self_target[self_target_id] := *enum {{ id: self_target_id, name: $type_name @ 'NOW' }}
+impl_self_target[self_target_id] := *union {{ id: self_target_id, name: $type_name @ 'NOW' }}
+impl_self_type[self_type_id] :=
+    *type_relation {{
+        source_id: self_type_id,
+        target_id: self_target_id,
+        relation_kind: "Ordinary" @ 'NOW'
+    }},
+    impl_self_target[self_target_id]
+impl_self_type[self_type_id] :=
+    *named_type {{ type_id: self_type_id, path @ 'NOW' }},
+    path == $type_path
+
+?[id, file_path, mod_path] :=
+    *method {{ id, name: $method_name, owner_id: impl_id @ 'NOW' }},
+    *impl {{ id: impl_id, self_type: self_type_id @ 'NOW' }},
+    impl_self_type[self_type_id],
+    ancestor[id, mod_id],
+    *module{{ id: mod_id, path: mod_path @ 'NOW' }},
+    file_owner_for_module[mod_id, file_id],
+    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+    let mut params = BTreeMap::new();
+    params.insert("type_name".to_string(), DataValue::from(type_name));
+    params.insert(
+        "type_path".to_string(),
+        DataValue::List(vec![DataValue::from(type_name)]),
+    );
+    params.insert("method_name".to_string(), DataValue::from(method_name));
+
+    one_target_info(
+        db.raw_query_params(&script, params).unwrap_or_else(|err| {
+            panic!("query inherent method {type_name}::{method_name}: {err}")
+        }),
         |row| data_str(&row[1], "file_path").ends_with(file_suffix),
         method_name,
     )

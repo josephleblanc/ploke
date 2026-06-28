@@ -47,3 +47,27 @@ fn lookup_tool_node_kind_schema_matches_shared_vocabulary() {
         assert!(values.contains(&"method"));
     }
 }
+
+#[test]
+fn exact_lookup_tool_schemas_accept_owner_type_disambiguator() {
+    for schema in [CodeItemLookup::schema(), CodeItemEdges::schema()] {
+        let properties = schema
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+            .expect("tool schema properties");
+        assert!(properties.contains_key("owner_trait"));
+        assert!(properties.contains_key("owner_type"));
+        assert_eq!(
+            properties
+                .get("owner_type")
+                .and_then(|value| value.get("description"))
+                .and_then(serde_json::Value::as_str),
+            Some(
+                r#"Optional self type name that owns an inherent method item.
+Use only with node_kind=method when file_path, module_path, and item_name are ambiguous.
+Example: owner_type="HandleError" for HandleError::new."#
+            ),
+            "owner_type should be documented from the shared lookup support constant"
+        );
+    }
+}

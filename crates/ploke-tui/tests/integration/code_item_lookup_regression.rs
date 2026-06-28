@@ -24,6 +24,7 @@ async fn code_item_lookup_returns_call_and_proof_context_for_call_graph_item() {
         node_kind: Cow::Borrowed("function"),
         module_path: Cow::Borrowed("crate"),
         owner_trait: None,
+        owner_type: None,
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("call-graph-lookup"))
@@ -86,6 +87,7 @@ async fn code_item_lookup_returns_incoming_callers_for_call_graph_target() {
         node_kind: Cow::Borrowed("function"),
         module_path: Cow::Borrowed("crate"),
         owner_trait: None,
+        owner_type: None,
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("call-graph-target-lookup"))
@@ -138,6 +140,7 @@ async fn code_item_lookup_returns_real_corpus_body_empty_callers() {
         node_kind: Cow::Borrowed("method"),
         module_path: Cow::Owned(module_path),
         owner_trait: None,
+        owner_type: None,
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("axum-body-empty-lookup"))
@@ -198,6 +201,7 @@ async fn code_item_lookup_returns_real_corpus_parse_attrs_callers() {
         node_kind: Cow::Borrowed("function"),
         module_path: Cow::Owned(module_path),
         owner_trait: None,
+        owner_type: None,
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("axum-parse-attrs-lookup"))
@@ -259,6 +263,7 @@ async fn code_item_lookup_returns_real_corpus_json_from_bytes_callers() {
         node_kind: Cow::Borrowed("method"),
         module_path: Cow::Owned(module_path),
         owner_trait: None,
+        owner_type: None,
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("axum-json-from-bytes-lookup"))
@@ -317,6 +322,7 @@ async fn code_item_lookup_returns_real_corpus_boxed_into_route_constructor_calle
         node_kind: Cow::Borrowed("struct"),
         module_path: Cow::Owned(module_path),
         owner_trait: None,
+        owner_type: None,
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("axum-boxed-into-route-lookup"))
@@ -373,6 +379,7 @@ async fn code_item_lookup_returns_real_corpus_run_ui_tests_callers() {
         node_kind: Cow::Borrowed("function"),
         module_path: Cow::Owned(module_path),
         owner_trait: None,
+        owner_type: None,
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("axum-run-ui-tests-lookup"))
@@ -442,6 +449,7 @@ async fn code_item_lookup_disambiguates_real_corpus_handler_call_by_owner_trait(
             node_kind: Cow::Borrowed("method"),
             module_path: Cow::Owned(module_path.clone()),
             owner_trait: None,
+            owner_type: None,
         },
         fixture.ctx("axum-handler-call-ambiguous-lookup"),
     )
@@ -460,6 +468,7 @@ async fn code_item_lookup_disambiguates_real_corpus_handler_call_by_owner_trait(
             node_kind: Cow::Borrowed("method"),
             module_path: Cow::Owned(module_path),
             owner_trait: Some(Cow::Borrowed("Handler")),
+            owner_type: None,
         },
         fixture.ctx("axum-handler-call-lookup"),
     )

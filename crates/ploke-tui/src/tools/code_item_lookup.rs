@@ -36,6 +36,10 @@ lazy_static::lazy_static! {
                 "type": "string",
                 "description": lookup_support::OWNER_TRAIT_DESC
             },
+            "owner_type": {
+                "type": "string",
+                "description": lookup_support::OWNER_TYPE_DESC
+            },
         },
         "required": ["item_name", "file_path", "node_kind", "module_path"],
         "additionalProperties": false
@@ -54,6 +58,8 @@ pub struct LookupParams<'a> {
     pub module_path: std::borrow::Cow<'a, str>,
     #[serde(default, borrow)]
     pub owner_trait: Option<std::borrow::Cow<'a, str>>,
+    #[serde(default, borrow)]
+    pub owner_type: Option<std::borrow::Cow<'a, str>>,
 }
 
 impl<'a> ValidatesAbolutePath for LookupParams<'a> {
@@ -70,6 +76,7 @@ pub struct LookupParamsOwned {
     pub node_kind: String,
     pub module_path: String,
     pub owner_trait: Option<String>,
+    pub owner_type: Option<String>,
 }
 
 pub struct CodeItemLookup;
@@ -128,6 +135,7 @@ impl Tool for CodeItemLookup {
             node_kind: params.node_kind.clone().into_owned(),
             module_path: params.module_path.clone().into_owned(),
             owner_trait: params.owner_trait.as_ref().map(|value| value.to_string()),
+            owner_type: params.owner_type.as_ref().map(|value| value.to_string()),
         }
     }
 
@@ -172,8 +180,11 @@ impl Tool for CodeItemLookup {
                 ),
             })
         })?;
-        let owner_trait =
-            lookup_support::normalize_owner_trait(params.owner_trait.as_deref(), node_kind)?;
+        let owner = lookup_support::normalize_owner_qualifier(
+            params.owner_trait.as_deref(),
+            params.owner_type.as_deref(),
+            node_kind,
+        )?;
 
         let (primary_root, policy) = ctx
             .state
@@ -226,7 +237,7 @@ for a more fuzzy search."#
             &abs_path,
             &mod_path,
             params.item_name.as_ref(),
-            owner_trait.as_deref(),
+            owner.as_ref(),
         ) {
             Ok(t) if t.len() == 1 => t,
             Ok(t) if t.is_empty() => {
@@ -241,7 +252,7 @@ for a more fuzzy search."#
                         rel_path.display(),
                         params.module_path,
                         node_kind.as_str(),
-                        lookup_support::owner_trait_message(owner_trait.as_deref()),
+                        lookup_support::owner_message(owner.as_ref()),
                         hint
                     ),
                 }));
@@ -257,7 +268,7 @@ for a more fuzzy search."#
                         rel_path.display(),
                         params.module_path,
                         node_kind.as_str(),
-                        lookup_support::owner_trait_message(owner_trait.as_deref()),
+                        lookup_support::owner_message(owner.as_ref()),
                         err
                     ),
                 }));

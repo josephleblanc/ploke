@@ -118,6 +118,68 @@ file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module
         .map_err(|e| DbError::Cozo(e.to_string()))
 }
 
+/// Resolve an inherent method by canonical module path, item name, and owning self type.
+///
+/// This mirrors [`graph_resolve_exact_trait_method`] for inherent impl items.
+/// It keeps the default exact lookup unchanged while allowing tools to
+/// disambiguate files that contain several methods with the same name.
+pub fn graph_resolve_exact_impl_method(
+    db: &Database,
+    file_path: &Path,
+    module_path: &[String],
+    item_name: &str,
+    type_name: &str,
+) -> Result<Vec<EmbeddingData>, DbError> {
+    let file_path_lit = serde_json::to_string(&file_path.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "\"\"".to_string());
+    let item_name_lit = serde_json::to_string(&item_name).unwrap_or_else(|_| "\"\"".to_string());
+    let type_name_lit = serde_json::to_string(&type_name).unwrap_or_else(|_| "\"\"".to_string());
+    let type_path_lit =
+        serde_json::to_string(&vec![type_name]).unwrap_or_else(|_| "[]".to_string());
+    let mod_path_lit = serde_json::to_string(&module_path).unwrap_or_else(|_| "[]".to_string());
+    let ancestor_rules = lookup_ancestor_rules_now();
+
+    let script = format!(
+        r#"
+{ancestor_rules}
+module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
+file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
+
+impl_self_target[self_target_id] := *struct{{ id: self_target_id, name: {type_name_lit} @ 'NOW' }}
+impl_self_target[self_target_id] := *enum{{ id: self_target_id, name: {type_name_lit} @ 'NOW' }}
+impl_self_target[self_target_id] := *union{{ id: self_target_id, name: {type_name_lit} @ 'NOW' }}
+impl_self_type[self_type_id] :=
+  *type_relation{{
+    source_id: self_type_id,
+    target_id: self_target_id,
+    relation_kind: "Ordinary" @ 'NOW'
+  }},
+  impl_self_target[self_target_id]
+impl_self_type[self_type_id] :=
+  *named_type{{ type_id: self_type_id, path @ 'NOW' }},
+  path == {type_path_lit}
+
+?[id, name, file_path, file_hash, hash, span, namespace, mod_path] :=
+  *method{{ id, name, tracking_hash: hash, span, owner_id: impl_id @ 'NOW' }},
+  *impl{{ id: impl_id, self_type: self_type_id @ 'NOW' }},
+  impl_self_type[self_type_id],
+  ancestor[id, mod_id],
+  *module{{ id: mod_id, path: mod_path @ 'NOW' }},
+  file_owner_for_module[mod_id, file_owner_id],
+  *module{{ id: file_owner_id, tracking_hash: file_hash @ 'NOW' }},
+  *file_mod{{ owner_id: file_owner_id, file_path, namespace @ 'NOW' }},
+  name == {item_name_lit},
+  file_path == {file_path_lit},
+  mod_path == {mod_path_lit}
+"#
+    );
+
+    let qr = db.raw_query(&script)?;
+    qr.to_embedding_nodes()
+        .map_err(|e| DbError::Cozo(e.to_string()))
+}
+
 /// This function is intended to be a helper that assists with a tool call to find all the edges
 /// leading to or from a target item, as specified by their node kind, file path, module path, and
 /// item name.
@@ -849,6 +911,35 @@ mod tests {
         let rows = super::graph_resolve_exact(&db, "method", &file_path, &module_path, "new")?;
 
         assert_eq!(rows.len(), 1, "expected a single method result");
+        assert_eq!(rows[0].name, "new");
+        assert_eq!(rows[0].file_path, file_path);
+        assert!(
+            rows[0].start_byte < rows[0].end_byte,
+            "method span should be non-empty"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn graph_resolve_exact_impl_method_matches_fixture_nodes_inherent_method() -> Result<(), DbError>
+    {
+        let cozo_db = ploke_test_utils::setup_db_full_multi_embedding("fixture_nodes")
+            .expect("database must be set up correctly");
+        let db = Database::new(cozo_db);
+
+        let fixture_root = fixtures_crates_dir().join("fixture_nodes");
+        let file_path = fixture_root.join("src/impls.rs");
+        let module_path = vec!["crate".to_string(), "impls".to_string()];
+        let rows = super::graph_resolve_exact_impl_method(
+            &db,
+            &file_path,
+            &module_path,
+            "new",
+            "SimpleStruct",
+        )?;
+
+        assert_eq!(rows.len(), 1, "expected one SimpleStruct::new method");
         assert_eq!(rows[0].name, "new");
         assert_eq!(rows[0].file_path, file_path);
         assert!(

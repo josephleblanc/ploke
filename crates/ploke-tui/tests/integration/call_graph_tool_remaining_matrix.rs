@@ -22,6 +22,7 @@ async fn code_item_lookup_returns_remaining_real_corpus_supported_callers() {
             node_kind: Cow::Borrowed(fixture.node_kind),
             module_path: Cow::Owned(module_path),
             owner_trait: fixture.owner_trait.map(Cow::Borrowed),
+            owner_type: fixture.owner_type.map(Cow::Borrowed),
         };
 
         let result = CodeItemLookup::execute(params, fixture.ctx("axum-remaining-lookup"))
@@ -82,6 +83,7 @@ async fn code_item_edges_returns_remaining_real_corpus_supported_callers() {
             node_kind: Cow::Borrowed(fixture.node_kind),
             module_path: Cow::Owned(module_path),
             owner_trait: fixture.owner_trait.map(Cow::Borrowed),
+            owner_type: fixture.owner_type.map(Cow::Borrowed),
         };
 
         let result = CodeItemEdges::execute(params, fixture.ctx("axum-remaining-edges"))
