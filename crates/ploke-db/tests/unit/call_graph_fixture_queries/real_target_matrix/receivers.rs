@@ -633,15 +633,120 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
         "axum/src/routing/route.rs:51",
     )?;
 
+    struct RequestBuilderCase {
+        label: &'static str,
+        module_path: &'static [&'static str],
+        owner: &'static str,
+        status: CallStatusKind,
+    }
+
+    let builder_cases = [
+        RequestBuilderCase {
+            // axum/src/extract/query.rs:104
+            label: "axum/src/extract/query.rs:104",
+            module_path: &["crate", "extract", "query", "tests"],
+            owner: "check",
+            status: CallStatusKind::External,
+        },
+        RequestBuilderCase {
+            // axum/src/extract/raw_form.rs:65
+            label: "axum/src/extract/raw_form.rs:65",
+            module_path: &["crate", "extract", "raw_form", "tests"],
+            owner: "check_query",
+            status: CallStatusKind::External,
+        },
+        RequestBuilderCase {
+            // axum/src/form.rs:156
+            label: "axum/src/form.rs:156",
+            module_path: &["crate", "form", "tests"],
+            owner: "check_query",
+            status: CallStatusKind::External,
+        },
+        RequestBuilderCase {
+            // axum/src/form.rs:164
+            label: "axum/src/form.rs:164",
+            module_path: &["crate", "form", "tests"],
+            owner: "check_body",
+            status: CallStatusKind::External,
+        },
+        RequestBuilderCase {
+            // axum/src/form.rs:226
+            label: "axum/src/form.rs:226",
+            module_path: &["crate", "form", "tests"],
+            owner: "test_incorrect_content_type",
+            status: CallStatusKind::External,
+        },
+        RequestBuilderCase {
+            // axum/src/routing/tests/mod.rs:1273
+            label: "axum/src/routing/tests/mod.rs:1273",
+            module_path: &["crate", "routing", "tests"],
+            owner: "connect_going_to_custom_fallback",
+            status: CallStatusKind::External,
+        },
+        RequestBuilderCase {
+            // axum/src/routing/tests/mod.rs:1291
+            label: "axum/src/routing/tests/mod.rs:1291",
+            module_path: &["crate", "routing", "tests"],
+            owner: "connect_going_to_default_fallback",
+            status: CallStatusKind::External,
+        },
+        RequestBuilderCase {
+            // axum/src/serve/mod.rs:1035
+            label: "axum/src/serve/mod.rs:1035",
+            module_path: &["crate", "serve", "tests"],
+            owner: "serving_on_custom_io_type",
+            status: CallStatusKind::External,
+        },
+        RequestBuilderCase {
+            // axum-core/src/ext_traits/request.rs:375
+            label: "axum-core/src/ext_traits/request.rs:375",
+            module_path: &["crate", "ext_traits", "request", "tests"],
+            owner: "extract_parts_without_state",
+            status: CallStatusKind::Unsupported,
+        },
+        RequestBuilderCase {
+            // axum-core/src/ext_traits/request.rs:388
+            label: "axum-core/src/ext_traits/request.rs:388",
+            module_path: &["crate", "ext_traits", "request", "tests"],
+            owner: "extract_parts_with_state",
+            status: CallStatusKind::Unsupported,
+        },
+        RequestBuilderCase {
+            // axum/src/middleware/from_fn.rs:411
+            label: "axum/src/middleware/from_fn.rs:411",
+            module_path: &["crate", "middleware", "from_fn", "tests"],
+            owner: "basic",
+            status: CallStatusKind::Unsupported,
+        },
+        RequestBuilderCase {
+            // axum/src/routing/method_routing.rs:1697
+            label: "axum/src/routing/method_routing.rs:1697",
+            module_path: &["crate", "routing", "method_routing", "tests"],
+            owner: "call",
+            status: CallStatusKind::Unsupported,
+        },
+        RequestBuilderCase {
+            // axum/src/routing/tests/get_to_head.rs:22
+            label: "axum/src/routing/tests/get_to_head.rs:22",
+            module_path: &["crate", "routing", "tests", "get_to_head", "for_handlers"],
+            owner: "get_handles_head",
+            status: CallStatusKind::Unsupported,
+        },
+        RequestBuilderCase {
+            // axum/src/routing/tests/get_to_head.rs:56
+            label: "axum/src/routing/tests/get_to_head.rs:56",
+            module_path: &["crate", "routing", "tests", "get_to_head", "for_services"],
+            owner: "get_handles_head",
+            status: CallStatusKind::Unsupported,
+        },
+    ];
+    for case in builder_cases {
+        let owner = function_id_by_name_in_module(&db, case.module_path, case.owner)?;
+        assert_owner_path_targetless(&db, owner, &["Request", "builder"], case.status, case.label)?;
+    }
+
     let from_fn_owner =
         function_id_by_name_in_module(&db, &["crate", "middleware", "from_fn", "tests"], "basic")?;
-    assert_owner_path_targetless(
-        &db,
-        from_fn_owner,
-        &["Request", "builder"],
-        CallStatusKind::Unsupported,
-        "axum/src/middleware/from_fn.rs:411 Request::builder",
-    )?;
     assert_owner_path_targetless(
         &db,
         from_fn_owner,
