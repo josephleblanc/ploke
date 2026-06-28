@@ -519,6 +519,14 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
         "axum/src/serve/listener.rs:143",
     )?;
 
+    assert_no_method_owner_by_body_and_file_suffix(
+        &db,
+        "into_future",
+        "self.builder.send().await.unwrap()",
+        "axum/src/test_helpers/test_client.rs",
+        "axum/src/test_helpers/test_client.rs:134",
+    )?;
+
     assert_targetless_method_rows(
         &db,
         "unwrap",
