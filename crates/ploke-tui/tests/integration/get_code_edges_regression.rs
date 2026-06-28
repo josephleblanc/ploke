@@ -526,8 +526,9 @@ async fn code_item_edges_returns_real_corpus_body_empty_callers() {
     // Real-corpus oracle matrix:
     //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
     //   axum-core/src/body.rs:52 defines `Body::empty`.
-    //   axum-core/src/response/into_response.rs:128 calls `Body::empty()`.
-    //   axum-core/src/response/into_response.rs:163 calls `Body::empty()`.
+    //   axum-core/src/body.rs:110 and :116 call `Self::empty()`.
+    //   axum-core/src/response/into_response.rs response conversion rows call
+    //   `Body::empty()`.
     // Expected tool traversal: exact edge lookup of the callee method exposes
     // the same incoming caller-site edges and projected proof rows as the DB
     // target-centered query.
@@ -538,16 +539,21 @@ async fn code_item_edges_returns_real_corpus_body_empty_callers() {
         "code_item_edges",
     );
     for caller in &fixture.callers {
-        assert_target_proof(proof_context, *caller, fixture.target, "code_item_edges");
+        assert_target_proof(
+            proof_context,
+            caller.owner,
+            fixture.target,
+            "code_item_edges",
+        );
     }
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
-    assert_eq!(ui_field(ui, "call_context_incoming"), "2");
+    assert_eq!(ui_field(ui, "call_context_incoming"), "4");
     assert!(
         ui_field(ui, "proof_context")
             .parse::<usize>()
             .expect("proof count")
-            >= 2,
+            >= fixture.callers.len(),
         "code_item_edges should surface real-corpus Body::empty proof rows"
     );
 }

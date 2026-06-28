@@ -44,7 +44,7 @@ pub(crate) struct AxumBodyEmptyToolFixture {
     pub(crate) file_path: PathBuf,
     pub(crate) module_path: Vec<String>,
     pub(crate) target: Uuid,
-    pub(crate) callers: Vec<Uuid>,
+    pub(crate) callers: Vec<ExpectedCallSite>,
 }
 
 pub(crate) struct AxumParseAttrsToolFixture {
@@ -135,12 +135,19 @@ impl AxumBodyEmptyToolFixture {
             .callers_for_target(target.id)
             .expect("Body::empty incoming callers")
             .into_iter()
-            .map(|caller| caller.site.owner_id)
+            .map(|caller| ExpectedCallSite {
+                owner: caller.site.owner_id,
+                site: caller.site.id,
+                path: caller
+                    .site
+                    .path
+                    .expect("Body::empty caller should carry a path"),
+            })
             .collect::<Vec<_>>();
         assert_eq!(
             callers.len(),
-            2,
-            "current axum fixture should resolve exactly the two Body::empty caller owners"
+            4,
+            "current axum fixture should resolve exactly the four Body::empty caller sites"
         );
         assert!(
             db.project_call_proof_facts_for_node(target.id, "bd:corpus-axum-call-graph")
@@ -535,16 +542,42 @@ pub(crate) fn assert_incoming_context(
 
 pub(crate) fn assert_body_empty_incoming_context(
     calls: &[serde_json::Value],
-    callers: &[Uuid],
+    callers: &[ExpectedCallSite],
     target: Uuid,
     label: &str,
 ) {
     let target = target.to_string();
-    for owner in callers {
-        let owner = owner.to_string();
+    let matching = calls
+        .iter()
+        .filter(|call| {
+            call.get("kind").and_then(serde_json::Value::as_str) == Some("path")
+                && call
+                    .get("targets")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|targets| {
+                        targets.iter().any(|candidate| {
+                            candidate
+                                .get("target_id")
+                                .and_then(serde_json::Value::as_str)
+                                == Some(target.as_str())
+                        })
+                    })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        callers.len(),
+        "{label} should return all Body::empty incoming caller-site rows: {calls:#?}"
+    );
+
+    for expected in callers {
+        let owner = expected.owner.to_string();
+        let site = expected.site.to_string();
         assert!(
-            calls.iter().any(|call| {
+            matching.iter().any(|call| {
                 call.get("owner_id").and_then(serde_json::Value::as_str) == Some(owner.as_str())
+                    && call.get("site_id").and_then(serde_json::Value::as_str)
+                        == Some(site.as_str())
                     && call.get("kind").and_then(serde_json::Value::as_str) == Some("path")
                     && call
                         .get("callee")
@@ -554,21 +587,10 @@ pub(crate) fn assert_body_empty_incoming_context(
                         .is_some_and(|path| {
                             path.iter()
                                 .filter_map(serde_json::Value::as_str)
-                                .eq(["Body", "empty"])
-                        })
-                    && call
-                        .get("targets")
-                        .and_then(serde_json::Value::as_array)
-                        .is_some_and(|targets| {
-                            targets.iter().any(|candidate| {
-                                candidate
-                                    .get("target_id")
-                                    .and_then(serde_json::Value::as_str)
-                                    == Some(target.as_str())
-                            })
+                                .eq(expected.path.iter().map(String::as_str))
                         })
             }),
-            "{label} should return Body::empty incoming caller context for {owner}: {calls:#?}"
+            "{label} should return Body::empty incoming caller site {site}: {calls:#?}"
         );
     }
 }
