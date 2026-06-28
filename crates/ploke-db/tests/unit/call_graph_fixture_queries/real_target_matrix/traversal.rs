@@ -153,11 +153,12 @@ fn axum_real_target_supported_callers_are_one_hop_traversable() -> Result<(), Db
             // Router::new is defined at axum/src/routing/mod.rs:162. The
             // matrix includes many real `Router::new()` callsites; the
             // regenerated fixture also resolves axum/src/routing/mod.rs:109
-            // `Self::new()` from `Default for Router`.
+            // `Self::new()` from `Default for Router` and
+            // axum/src/routing/method_routing.rs:1494 `crate::Router::new()`.
             label: "axum Router::new current resolved fanout",
             target: method_id_by_name_and_body_substring(&db, "new", "default_fallback: true")?,
-            expected_call_edges: 143,
-            expected_traversal_candidates: 122,
+            expected_call_edges: 144,
+            expected_traversal_candidates: 123,
         },
     ];
 

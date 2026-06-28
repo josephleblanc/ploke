@@ -16,7 +16,18 @@ impl CallRelationResolver<'_> {
         path: &[String],
         type_relations: &[TypeRelation],
     ) -> Result<Option<AssocPathResolution>, SynParserError> {
-        let [type_segment, method_name] = path else {
+        let Some((method_name, type_path)) = path.split_last() else {
+            return Ok(None);
+        };
+        let [type_segment] = type_path else {
+            if self.is_explicit_local_path(type_path) {
+                return self.resolve_local_type_assoc_function(
+                    owner,
+                    type_path,
+                    method_name,
+                    type_relations,
+                );
+            }
             return Ok(None);
         };
 
@@ -37,6 +48,22 @@ impl CallRelationResolver<'_> {
         }
 
         match self.resolve_local_type_segment(owner, type_segment)? {
+            LocalTypeResolution::Resolved(target) => {
+                self.resolve_type_associated_function(target, method_name, type_relations)
+            }
+            LocalTypeResolution::Unresolved => Ok(None),
+            LocalTypeResolution::Ambiguous => Ok(Some(AssocPathResolution::Ambiguous)),
+        }
+    }
+
+    fn resolve_local_type_assoc_function(
+        &self,
+        owner: CallBodyOwnerId,
+        type_path: &[String],
+        method_name: &str,
+        type_relations: &[TypeRelation],
+    ) -> Result<Option<AssocPathResolution>, SynParserError> {
+        match self.resolve_local_type_path(owner, type_path)? {
             LocalTypeResolution::Resolved(target) => {
                 self.resolve_type_associated_function(target, method_name, type_relations)
             }

@@ -1241,3 +1241,19 @@ impl EnumWithInherentImpl {
 pub fn call_enum_variant_with_inherent_impl(value: i32) -> EnumWithInherentImpl {
     EnumWithInherentImpl::Case(value)
 }
+
+pub mod qualified_assoc_scope {
+    pub struct NestedAssoc;
+
+    impl NestedAssoc {
+        pub fn make() -> Self {
+            Self
+        }
+    }
+}
+
+pub mod qualified_assoc_callers {
+    pub fn call_super_qualified_nested_assoc_make() -> super::qualified_assoc_scope::NestedAssoc {
+        super::qualified_assoc_scope::NestedAssoc::make()
+    }
+}

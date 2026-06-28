@@ -477,16 +477,19 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
     //   axum/src/routing/mod.rs:109 calls `Self::new()` from
     //   `Default for Router`.
     //   axum/src/serve/mod.rs:756 calls `Router::new()`.
+    //   axum/src/routing/method_routing.rs:1494 calls
+    //   `crate::Router::new()`.
     //   serve/mod.rs:769,770,772,776,780,785 call `router.clone...`.
     // Expected traversal: the current caller API exposes 142 resolved
-    // `Router::new` rows and one `Self::new` row, while target expansion
-    // traverses 122 incoming candidates for the same target. Typed router clone
-    // receiver rows remain targetless because Clone dispatch is not modeled yet.
+    // `Router::new` rows, one explicit `crate::Router::new` row, and one
+    // `Self::new` row, while target expansion traverses 123 incoming candidates
+    // for the same target. Typed router clone receiver rows remain targetless
+    // because Clone dispatch is not modeled yet.
     let target = method_id_by_name_and_body_substring(&db, "new", "default_fallback: true")?;
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        143,
+        144,
         "Router::new should expose the current resolved corpus subset: {callers:#?}"
     );
     assert_sites_match_callers(&db, target, &callers, "Router::new resolved corpus subset")?;
@@ -514,9 +517,10 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
         path_counts,
         std::collections::BTreeMap::from([
             (path(&["Router", "new"]), 142),
+            (path(&["crate", "Router", "new"]), 1),
             (path(&["Self", "new"]), 1),
         ]),
-        "Router::new callers should split into literal Router::new and Default::default Self::new rows"
+        "Router::new callers should split into literal Router::new, crate::Router::new, and Default::default Self::new rows"
     );
 
     let compile_owner = function_id_by_name_in_module(
@@ -540,6 +544,31 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
             owner: compile_owner,
             target,
             site_id: router_new.site.id,
+            expected_edge_count: 1,
+        },
+    )?;
+
+    let complex_owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "routing", "method_routing", "tests"],
+        "building_complex_router",
+    )?;
+    let complex_context = db.call_context_for_owner(complex_owner)?;
+    let crate_router_new = row_by_path(&complex_context, &["crate", "Router", "new"]);
+    assert_resolved_target(
+        crate_router_new,
+        target,
+        CallRelationKind::AssociatedFunction,
+        CallSiteKind::Path,
+        CallTargetKind::Method,
+    );
+    assert_one_edge_traversal(
+        &db,
+        TraversalExpectation {
+            label: "axum/src/routing/method_routing.rs:1494 crate::Router::new",
+            owner: complex_owner,
+            target,
+            site_id: crate_router_new.site.id,
             expected_edge_count: 1,
         },
     )?;
@@ -621,7 +650,7 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
     )?;
     assert_eq!(
         incoming.len(),
-        122,
+        123,
         "Router::new target expansion should traverse the current incoming candidate subset"
     );
     let caller_sites = callers

@@ -8,12 +8,17 @@ fn axum_real_target_into_service_future_new_is_documented_gap() -> Result<(), Db
     // Matrix: `IntoServiceFuture::new` generated constructor row.
     // Source chain:
     //   axum/src/handler/future.rs:11-18 defines the generated future type.
+    //   axum/src/macros.rs:19-20 contains the macro template that would
+    //   generate the inherent `new` constructor after expansion.
+    //   axum/src/handler/service.rs:155 binds
+    //   `type Future = super::future::IntoServiceFuture<H::Future>`.
     //   axum/src/handler/service.rs:174 calls
     //   `super::future::IntoServiceFuture::new(future)`.
-    // Current model gap: the structural path row exists but is unresolved.
+    // Current model gap: the structural path row exists, but the parser does
+    // not expand `opaque_future!`, so there is no concrete generated
+    // `IntoServiceFuture::new` method node to traverse to.
     let owner =
         method_id_by_name_and_body_substring(&db, "call", "IntoServiceFuture::new(future)")?;
-    let target = method_id_by_name_and_body_substring(&db, "new", "Self { future }")?;
     let context = db.call_context_for_owner(owner)?;
     let row = row_by_path(&context, &["super", "future", "IntoServiceFuture", "new"]);
 
@@ -31,15 +36,6 @@ fn axum_real_target_into_service_future_new_is_documented_gap() -> Result<(), Db
         &db,
         owner,
         row.site.id,
-        "axum/src/handler/service.rs:174 IntoServiceFuture::new",
-    )?;
-    assert!(
-        db.call_sites_for_target(target)?.is_empty(),
-        "IntoServiceFuture::new should remain targetless until generated associated path resolution lands"
-    );
-    assert_no_incoming_traversal_to_target(
-        &db,
-        target,
         "axum/src/handler/service.rs:174 IntoServiceFuture::new",
     )?;
 

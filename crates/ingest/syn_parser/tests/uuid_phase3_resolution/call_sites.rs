@@ -87,6 +87,8 @@ const QUALIFIED_LOCAL_ASSOC_MAKE_CALL_SPAN: (usize, usize) = (1004, 1024);
 const TRAIT_IMPL_ASSOC_MAKE_IMPL_SPAN: (usize, usize) = (26656, 26786);
 const TRAIT_IMPL_ASSOC_MAKE_CALL_SPAN: (usize, usize) = (26766, 26778);
 const ENUM_WITH_INHERENT_IMPL_CASE_CALL_SPAN: (usize, usize) = (27000, 27033);
+const QUALIFIED_NESTED_ASSOC_IMPL_SPAN: (usize, usize) = (27102, 27185);
+const SUPER_QUALIFIED_NESTED_ASSOC_MAKE_CALL_SPAN: (usize, usize) = (27330, 27379);
 const EXPLICIT_DROP_IMPL_SPAN: (usize, usize) = (16418, 16493);
 const IMPORTED_ALIAS_CALL_SPAN: (usize, usize) = (1393, 1409);
 const GLOBBED_TARGET_CALL_SPAN: (usize, usize) = (1461, 1477);
@@ -628,6 +630,19 @@ fn fixture_call_graph_imported_assoc_method_args(
         expected_path: &["crate", "assoc_import_targets"],
         owner: AssocOwner::Impl {
             span: IMPORTED_ASSOC_IMPL_SPAN,
+        },
+        ident,
+        expected_cfg: None,
+    }
+}
+
+fn fixture_call_graph_nested_assoc_method_args(ident: &'static str) -> AssocParanoidArgs<'static> {
+    AssocParanoidArgs {
+        fixture: "fixture_call_graph",
+        relative_file_path: CALL_GRAPH_LIB_RS,
+        expected_path: &["crate", "qualified_assoc_scope"],
+        owner: AssocOwner::Impl {
+            span: QUALIFIED_NESTED_ASSOC_IMPL_SPAN,
         },
         ident,
         expected_cfg: None,
@@ -2938,6 +2953,29 @@ paranoid_call_site_test!(
         ExpectedCallSite::path(
             &["LocalAssoc", "make"],
             QUALIFIED_LOCAL_ASSOC_MAKE_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedAssociatedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_super_qualified_nested_assoc_make_resolves_module_qualified_associated_function_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate", "qualified_assoc_callers"],
+        name: "call_super_qualified_nested_assoc_make"
+    },
+    expected: {
+        let target_args = fixture_call_graph_nested_assoc_method_args("make");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_method_pid(&parsed_graphs)?;
+        let target = target_info.test_method_id();
+        ExpectedCallSite::path(
+            &["super", "qualified_assoc_scope", "NestedAssoc", "make"],
+            SUPER_QUALIFIED_NESTED_ASSOC_MAKE_CALL_SPAN,
             0,
             0,
             &[],
