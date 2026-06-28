@@ -6,8 +6,9 @@ use ploke_tui::tools::{
 };
 
 use crate::call_graph_tool_support::{
-    AxumBodyEmptyToolFixture, AxumParseAttrsToolFixture, CallGraphToolFixture,
-    assert_body_empty_incoming_context, assert_incoming_context,
+    AxumBodyEmptyToolFixture, AxumBoxedIntoRouteToolFixture, AxumParseAttrsToolFixture,
+    CallGraphToolFixture, assert_body_empty_incoming_context,
+    assert_boxed_into_route_incoming_context, assert_incoming_context,
     assert_parse_attrs_incoming_context, assert_target_proof, ui_field,
 };
 
@@ -232,5 +233,60 @@ async fn code_item_lookup_returns_real_corpus_parse_attrs_callers() {
             .expect("proof count")
             >= fixture.callers.len(),
         "code_item_lookup should surface real-corpus parse_attrs proof rows"
+    );
+}
+
+#[tokio::test]
+async fn code_item_lookup_returns_real_corpus_boxed_into_route_constructor_callers() {
+    let fixture = AxumBoxedIntoRouteToolFixture::new().await;
+    let module_path = fixture.module_path_arg();
+    let params = LookupParams {
+        item_name: Cow::Borrowed("BoxedIntoRoute"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("struct"),
+        module_path: Cow::Owned(module_path),
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("axum-boxed-into-route-lookup"))
+        .await
+        .expect("tool execution");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let call_context = payload
+        .get("call_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_context array");
+    let proof_context = payload
+        .get("proof_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("proof_context array");
+
+    // Real-corpus oracle matrix:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   axum/src/boxed.rs:12 defines `BoxedIntoRoute<S, E>(...)`.
+    //   axum/src/boxed.rs:38 calls `BoxedIntoRoute(Box::new(...))`.
+    // Expected tool traversal: exact lookup of the tuple-struct target exposes
+    // the one incoming constructor edge and its projected proof row.
+    assert_boxed_into_route_incoming_context(
+        call_context,
+        &fixture.caller,
+        fixture.target,
+        "code_item_lookup",
+    );
+    assert_target_proof(
+        proof_context,
+        fixture.caller.owner,
+        fixture.target,
+        "code_item_lookup",
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "call_context_incoming"), "1");
+    assert!(
+        ui_field(ui, "proof_context")
+            .parse::<usize>()
+            .expect("proof count")
+            >= 1,
+        "code_item_lookup should surface real-corpus BoxedIntoRoute proof rows"
     );
 }
