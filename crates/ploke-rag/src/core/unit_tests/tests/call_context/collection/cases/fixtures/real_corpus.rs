@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use cozo::DataValue;
+use ploke_db::multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE};
 
 use super::super::super::super::super::*;
 use super::expected::path;
@@ -464,6 +465,58 @@ fn method_id_by_name_and_body_substring(
     );
 
     to_uuid(&matching[0]).map_err(Error::from)
+}
+
+fn method_id_by_file(
+    db: &Database,
+    name: &str,
+    body_marker: &str,
+    file: &str,
+) -> Result<Uuid, Error> {
+    let mut params = BTreeMap::new();
+    params.insert("name".to_string(), DataValue::from(name));
+
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[id, body, file_path] :=
+    *method {{ id, name: $name, body @ 'NOW' }},
+    ancestor[id, mod_id],
+    *module{{ id: mod_id @ 'NOW' }},
+    file_owner_for_module[mod_id, file_id],
+    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+    let rows = db.raw_query_params(&script, params)?;
+    let marker = body_key(body_marker);
+    let matching = rows
+        .rows
+        .iter()
+        .filter(|row| {
+            let DataValue::Str(body) = &row[1] else {
+                return false;
+            };
+            let DataValue::Str(file_path) = &row[2] else {
+                return false;
+            };
+            body_key(body).contains(&marker) && file_path.ends_with(file)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one method named {name:?} in {file:?} whose body contains {body_marker:?}; rows: {:#?}",
+        rows.rows
+    );
+
+    to_uuid(&matching[0][0]).map_err(Error::from)
 }
 
 fn function_id_by_name_in_module(

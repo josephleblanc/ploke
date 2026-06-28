@@ -229,7 +229,14 @@ Current executable coverage: DB target traversal now asserts the two one-hop
 the two same-crate axum-core `FromRef::from_ref` bounded associated-path edges.
 These are trait method binding edges only; concrete runtime impl dispatch and
 dependency-root cross-crate trait-bound resolution remain documented future
-slices. Receiver tests now assert exact owner-count buckets and source-line
+slices. RAG call-context tests now preserve the two dependency-root
+`FromRef::from_ref` path rows at `axum/src/extract/state.rs:314` and
+`axum/src/middleware/from_extractor.rs:328` with zero traversal targets. RAG
+proof-context tests preserve the normal blocked proof row for the top-level
+state extractor and pin the current `canonical_identity_mismatch` proof blocker
+for the nested `test_from_extractor` local-owner boundary, without fabricating a
+`call_edge`.
+Receiver tests now assert exact owner-count buckets and source-line
 fanout for the six projected `req.extensions_mut()` local-binding rows, the
 seven projected `self.inner.poll_ready(cx)` forwarding rows, and the three
 projected `self.0.poll_ready(cx)` tuple-field rows. The tuple-field coverage

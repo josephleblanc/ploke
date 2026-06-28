@@ -936,6 +936,11 @@ Progress note, 2026-06-28:
   `Router::new`, plus the same-impl `RequestExt` and `RequestPartsExt`
   `self.extract_with_state(&())` method-call rows, through the same
   table-driven fixture as the remaining supported axum targets.
+- RAG call-context and proof-context targetless coverage now includes the
+  axum dependency-root `FromRef::from_ref` path rows. The top-level state
+  extractor keeps the normal blocked proof row; the nested `test_from_extractor`
+  local-owner row is pinned as the current `canonical_identity_mismatch` proof
+  boundary, with no fabricated call edge.
 - Focused checks passed for the new DB helper, owner qualifier unit tests,
   TUI schema regression, and remaining real-corpus TUI lookup/edge matrix.
 
@@ -952,6 +957,11 @@ For the `ploke-db` real-corpus call-site oracle matrix:
 
 - `cargo test -p ploke-db real_target_matrix -- --nocapture`
   - passed: 53 passed, 0 failed.
+
+For RAG dependency-root targetless path rows:
+
+- `cargo test -p ploke-rag from_ref_dependency_root -- --nocapture`
+  - passed: 2 passed, 0 failed.
 
 For exact TUI enum-variant target addressability:
 

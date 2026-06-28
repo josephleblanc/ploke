@@ -14,6 +14,26 @@ struct MethodCase {
     status: CallStatusKind,
 }
 
+struct PathCase {
+    label: &'static str,
+    owner: OwnerCase,
+    path: &'static [&'static str],
+    status: CallStatusKind,
+}
+
+#[derive(Clone, Copy)]
+enum OwnerCase {
+    Method {
+        name: &'static str,
+        body: &'static str,
+        file: &'static str,
+    },
+    Function {
+        module: &'static [&'static str],
+        name: &'static str,
+    },
+}
+
 #[tokio::test]
 async fn call_context_collection_reads_axum_dynamic_callable_field_gaps() -> Result<(), Error> {
     init_tracing_once();
@@ -78,6 +98,87 @@ async fn call_context_collection_reads_axum_dynamic_callable_field_gaps() -> Res
         let call = dynamic[0];
         assert_eq!(call.owner_id, owner);
         assert_eq!(call.status, CallStatusKind::Unsupported);
+        assert_eq!(call.resolution, None);
+        assert!(
+            call.targets.is_empty(),
+            "{} should remain targetless in RAG call context: {call:#?}",
+            case.label
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn call_context_collection_reads_axum_from_ref_dependency_root_path_gaps() -> Result<(), Error>
+{
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Source chains:
+    //   axum/src/extract/state.rs:1 imports `axum_core::extract::FromRef`;
+    //   axum/src/extract/state.rs:314 calls `InnerState::from_ref(state)`.
+    //   axum/src/middleware/from_extractor.rs:306 imports the same trait;
+    //   axum/src/middleware/from_extractor.rs:328 calls
+    //   `Secret::from_ref(state)`.
+    // Expected traversal: these path rows are visible, but have zero
+    // traversable targets because dependency-root trait-bound resolution does
+    // not yet connect `axum_core::extract::FromRef` back to the parsed
+    // axum-core trait binding.
+    let cases = [
+        PathCase {
+            label: "axum/src/extract/state.rs:314 InnerState::from_ref dependency root",
+            owner: OwnerCase::Method {
+                name: "from_request_parts",
+                body: "InnerState::from_ref(state)",
+                file: "axum/src/extract/state.rs",
+            },
+            path: &["InnerState", "from_ref"],
+            status: CallStatusKind::Unsupported,
+        },
+        PathCase {
+            label: "axum/src/middleware/from_extractor.rs:328 Secret::from_ref dependency root",
+            owner: OwnerCase::Function {
+                module: &["crate", "middleware", "from_extractor", "tests"],
+                name: "test_from_extractor",
+            },
+            path: &["Secret", "from_ref"],
+            status: CallStatusKind::Unsupported,
+        },
+    ];
+
+    for case in cases {
+        let owner = match case.owner {
+            OwnerCase::Method { name, body, file } => method_id_by_file(&db, name, body, file)?,
+            OwnerCase::Function { module, name } => {
+                function_id_by_name_in_module(&db, module, name)?
+            }
+        };
+        let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+        let context = call_context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
+        let expected = CallCalleeInfo::Path {
+            path: path(case.path),
+        };
+        let matching = context
+            .iter()
+            .filter(|call| call.kind == CallSiteKind::Path && call.callee == expected)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            matching.len(),
+            1,
+            "{} should expose one targetless dependency-root path row: {context:#?}",
+            case.label
+        );
+
+        let call = matching[0];
+        assert_eq!(call.owner_id, owner);
+        assert_eq!(call.status, case.status);
         assert_eq!(call.resolution, None);
         assert!(
             call.targets.is_empty(),
