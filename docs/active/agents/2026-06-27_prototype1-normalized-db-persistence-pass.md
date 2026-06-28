@@ -1,6 +1,6 @@
 # 2026-06-27 Prototype 1 normalized DB persistence pass
 
-**Status:** active plan + audit log; child-plan normalized slice has fresh DB proof; scheduler-node setup rows have fresh DB proof; runner-request setup rows have fresh DB proof; runner-result proof still needs a successful child run
+**Status:** active plan + audit log; child-plan normalized slice has fresh DB proof; scheduler-node setup and generation-1 child rows have fresh DB proof; runner-request setup/child rows and runner-result rows have fresh DB proof; run-policy and broad-harness request/diagnostic/workspace rows have fresh DB proof
 **Purpose:** restart spine for a fresh pass over `ploke-eval loop walk` persistence with normalized Cozo relations as the required target.
 **Related:**
 - `docs/active/agents/2026-06-22_prototype1-eval-store-data-model/README.md`
@@ -636,6 +636,178 @@ reason=broad headless-tui slot ... timed out after 300 seconds
 
 Remaining runner proof gap: this failed R8 did not admit or run a child, so `eval_runner_result` remains unproven by `walk db_query` on a live campaign. A successful admitted child run is still required for runner-result DB proof.
 
+## 2026-06-28 run-policy + broad-harness normalized slice
+
+Committed code slice: `cc17ea3fc Mirror run policy and harness facts into eval DB`.
+
+Implemented normalized relations:
+
+- `eval_run_profile_policy`
+- `eval_harness_request`
+- `eval_harness_diagnostic`
+- `eval_harness_workspace`
+- `eval_harness_workspace_change`
+
+Fresh proof campaign:
+
+- Campaign: `p1-policyharness-db-20260628-032903`
+- Worktree: `/home/brasides/.ploke-eval/worktrees/p1-policyharness-db-20260628-032903`
+- Profile: `p1-broad-db-1x1-20260627-111548`
+- Storage: `dual-strict`
+- Parent: `node-8df19f0907584a48`
+- Admitted child: `node-c88d22b840ec5f94`
+- Child target: `crates/ingest/ploke-embed/src/local/mod.rs`
+- Phase reached for this proof: `r11 - child fanout complete`
+
+Validation commands:
+
+```text
+cargo fmt --all
+cargo test -p ploke-eval eval_store --lib
+cargo build -p ploke-eval
+git diff --check
+npx gitnexus detect-changes -r ploke --scope staged
+```
+
+Fresh run commands:
+
+```text
+git worktree add --detach ~/.ploke-eval/worktrees/p1-policyharness-db-20260628-032903 HEAD
+cd ~/.ploke-eval/worktrees/p1-policyharness-db-20260628-032903
+CARGO_TARGET_DIR=/home/brasides/code/ploke/target /home/brasides/code/ploke/target/debug/ploke-eval loop prototype1-setup \
+  --campaign p1-policyharness-db-20260628-032903 \
+  --profile p1-broad-db-1x1-20260627-111548 \
+  --format json
+/home/brasides/code/ploke/target/debug/ploke-eval loop walk use ~/.ploke-eval/worktrees/p1-policyharness-db-20260628-032903 --format json
+/home/brasides/code/ploke/target/debug/ploke-eval loop walk start --until r7 --format json
+/home/brasides/code/ploke/target/debug/ploke-eval loop walk step --until r8 --watch --format json
+/home/brasides/code/ploke/target/debug/ploke-eval loop walk step --until r11 --watch --format json
+```
+
+DB-query proof snippets and results:
+
+```cozo
+?[campaign_id, max_generations, max_total_nodes, child_min, child_max, parallel_targets, generation_source, schedule_mode, require_keep, timeout_secs, fresh_slots, graph_nearest, control_mode] :=
+  *eval_run_profile_policy { campaign_id, max_generations, max_total_nodes, child_min, child_max, parallel_targets, generation_source, schedule_mode, require_keep, timeout_secs, fresh_slots, graph_nearest, control_mode }
+```
+
+```json
+{
+  "campaign_id": "p1-policyharness-db-20260628-032903",
+  "max_generations": 1,
+  "max_total_nodes": 4,
+  "child_min": 1,
+  "child_max": 1,
+  "parallel_targets": 1,
+  "generation_source": "broad-harness-request",
+  "schedule_mode": "full-batch",
+  "require_keep": false,
+  "timeout_secs": 300,
+  "fresh_slots": 1,
+  "graph_nearest": 24,
+  "control_mode": "continuous"
+}
+```
+
+Relation counts after R8/R11:
+
+```text
+eval_harness_request                 1
+eval_harness_diagnostic              1
+eval_harness_workspace               1
+eval_harness_workspace_change        1
+eval_child_plan                      1
+eval_child_plan_child                1
+eval_child_plan_rejected_attempt     0
+```
+
+Harness request detail:
+
+```json
+{
+  "request_id": "broad-harness-request:node-8df19f0907584a48",
+  "request_hash": "911c66137c741f6547190e66cfdce4cec97a83b55265d0f7a324f0d7c7963b15",
+  "parent_node_id": "node-8df19f0907584a48",
+  "child_min": 1,
+  "child_max": 1,
+  "graph_nearest": 24,
+  "edit_policy": "workspace except ploke-eval",
+  "admission_policy": "workspace except ploke-eval"
+}
+```
+
+Harness diagnostic detail:
+
+```json
+{
+  "request_id": "broad-harness-request:node-8df19f0907584a48",
+  "terminal_kind": "applied",
+  "terminal_detail": "changed_paths=1",
+  "attempts": 4,
+  "events": 22,
+  "validations": 1,
+  "prompts": 1,
+  "tool_requests": 10,
+  "tool_completed": 8,
+  "tool_failed": 3,
+  "proposals": 1,
+  "first_tool": "list_dir",
+  "last_tool": "apply_code_edit"
+}
+```
+
+Harness workspace/change detail:
+
+```json
+{
+  "request_id": "broad-harness-request:node-8df19f0907584a48",
+  "exists": true,
+  "git_status_ok": true,
+  "change_count": 1,
+  "status_code": " M",
+  "path": "crates/ingest/ploke-embed/src/local/mod.rs"
+}
+```
+
+Generation-1 scheduler-node proof:
+
+```json
+{
+  "node_id": "node-c88d22b840ec5f94",
+  "generation": 1,
+  "parent_node_id": "node-8df19f0907584a48",
+  "branch_id": "branch-20c69abb1b27dcaf",
+  "status": "succeeded",
+  "target_relpath": "crates/ingest/ploke-embed/src/local/mod.rs"
+}
+```
+
+Runner request/result proof:
+
+```json
+{
+  "node_id": "node-c88d22b840ec5f94",
+  "generation": 1,
+  "branch_id": "branch-20c69abb1b27dcaf",
+  "target_relpath": "crates/ingest/ploke-embed/src/local/mod.rs",
+  "runner_arg_count": 11
+}
+```
+
+```json
+{
+  "node_id": "node-c88d22b840ec5f94",
+  "generation": 1,
+  "branch_id": "branch-20c69abb1b27dcaf",
+  "status": "succeeded",
+  "disposition": "succeeded",
+  "path_kind": "node_latest",
+  "exit_code": 0
+}
+```
+
+Conclusion: the owner eval DB can now answer the broad-harness policy, request, timeout/budget knobs, diagnostic event counts, candidate workspace dirty path, generation-1 scheduler row, child runner request, and child runner result for this successful live broad-harness run without reading the persisted JSON/TOML files.
+
 ## Initial persistence matrix
 
 Legend:
@@ -651,17 +823,19 @@ Legend:
 | Closure state | `eval_closure_ref`, `eval_closure_instance`, artifact/procedure/count relations | Mostly normalized | Counts relation exists but may be empty; verify semantics before marking complete. |
 | Baseline | `eval_baseline`, instance, metrics relations | Normalized | Current run has two baselines after successor. |
 | Parent-start journal evidence | `eval_transition_event` + some refs | Partially normalized | Later journal events are not comprehensively normalized. |
-| Scheduler node projection `nodes/<node>/node.json` | `eval_scheduler_node`, `eval_scheduler_node_status_event`, `eval_scheduler_node_target_part`; legacy `eval_record_ref.family=scheduler_node` may remain as citation | Implemented; setup/root proof complete, generation-1 child proof pending | Fresh campaign `p1-sched-db-20260627-114548` proves the root parent row and status row. A successful admitted broad-harness child is still needed to prove child scheduler rows. |
-| Runner request `runner-request.json` | `eval_runner_request`, `eval_runner_request_arg`, `eval_runner_request_target_part`; legacy `eval_record_ref.family=runner_request` may remain as citation | Implemented; setup/root proof complete, child request proof pending | Fresh campaign `p1-runnerio-db-20260627-125536` proves the root parent request row and arg rows. A successful child admission is still needed for child runner requests. |
+| Scheduler node projection `nodes/<node>/node.json` | `eval_scheduler_node`, `eval_scheduler_node_status_event`, `eval_scheduler_node_target_part`; legacy `eval_record_ref.family=scheduler_node` may remain as citation | Implemented; setup/root and generation-1 child proof complete | Fresh campaign `p1-policyharness-db-20260628-032903` proves a generation-1 child row through `succeeded` status. |
+| Runner request `runner-request.json` | `eval_runner_request`, `eval_runner_request_arg`, `eval_runner_request_target_part`; legacy `eval_record_ref.family=runner_request` may remain as citation | Implemented; setup/root and child request proof complete | Fresh campaign `p1-policyharness-db-20260628-032903` proves the admitted child request row with 11 args. |
 | Child plan MessageBox | `eval_child_plan`, `eval_child_plan_child`, `eval_child_plan_rejected_attempt` | Normalized for R8 child-plan authority | Fresh DB-backed proof: `p1-normchild-db-20260627-100712` at R8 has 1 plan row, 3 child rows, 0 rejected rows, and 0 `eval_record_ref.family=child_plan_file` rows. |
 | Invocation JSON | `eval_invocation`, `eval_attempt` | Normalized metadata; body not normalized | Need decide which embedded invocation payload facts must be normalized for cross-machine Parent/Child. |
 | Channel JSONL | `eval_channel_message`, receipt/import rows | Transport metadata | Channel as transport is allowed, but terminal result/treatment payload facts should be normalized. |
-| Runner result JSON | `eval_runner_result`; legacy `eval_record_ref.family=runner_result` may remain as citation | Implemented, fresh-run DB proof pending | Normalizes status/disposition, treatment/evaluation refs, path kind, runtime id when path-scoped, exit/excerpts, and content hash. Needs successful admitted child run for DB proof. |
+| Runner result JSON | `eval_runner_result`; legacy `eval_record_ref.family=runner_result` may remain as citation | Implemented; fresh child-run DB proof complete | Fresh campaign `p1-policyharness-db-20260628-032903` proves `attempt` and `node_latest` result rows for the admitted child, both `succeeded` with exit code 0. |
 | Branch evaluation report | `eval_evaluation`, `eval_evaluation_instance` | Normalized | Good DB-first inspection path exists. |
 | Branch registry / comparison log | `eval_record_ref.family=branch_registry` | Payload-ref only | Needs normalized branch registry / comparison summary relation. |
 | Build / artifact / patch / apply facts | `eval_artifact*`, `eval_binary_ref`, `eval_build_event`, `eval_operation`, `eval_patch`, `eval_apply_event` | Partly normalized | Need verify whether all file artifacts have normalized coverage or only event projections. |
 | Selection | `eval_selection_decision`, candidate/finding/score | Normalized | Good initial shape; verify rows per generation/current parent. |
 | Continuation decision | `eval_continuation_decision` | Normalized | Present after handoff. |
+| Run profile policy / broad-harness policy | `eval_run_profile_policy` | Normalized | Fresh campaign `p1-policyharness-db-20260628-032903` proves max generations/nodes, child min/max/parallel targets, generation source, schedule, timeout, fresh slots, graph nearest, and control mode. |
+| Broad-harness request/diagnostics/workspace | `eval_harness_request`, `eval_harness_diagnostic`, `eval_harness_workspace`, `eval_harness_workspace_change` | Normalized first slice | Fresh campaign `p1-policyharness-db-20260628-032903` proves request identity/hash/paths/policy, diagnostic terminal/event/tool counts, and dirty candidate workspace path. Still need richer prompt/patch/rationale rows. |
 | History blocks/indexes | none dedicated; maybe refs only | Missing | Required next major schema area: blocks, block entries, heads/indexes. |
 | Parent identity / handoff | no first-class relation | Missing | Needs normalized parent identity and successor handoff relations. |
 | Agent turn / LLM/tool traces | `eval_agent_turn*` schema exists but current rows are zero | Missing or unwired | Need inspect writer paths and live tool/protocol adjudication outputs. |
@@ -676,17 +850,17 @@ Do not continue live fanout as proof work until these are handled in a structure
    - Writer no longer emits `child_plan_file` as the child-plan persistence surface.
    - Fresh proof campaign `p1-normchild-db-20260627-100712` confirms normalized rows via `walk db_query`.
 
-2. **Create normalized scheduler-node schema** — implemented; setup/root DB proof complete, child-row proof pending.
+2. **Create normalized scheduler-node schema** — implemented; setup/root and generation-1 child DB proof complete.
    - Relations: `eval_scheduler_node`, `eval_scheduler_node_status_event`, `eval_scheduler_node_target_part`.
    - Current node projection and status history are normalized; target parts are keyed by node projection content hash.
    - Fresh `walk db_query` proof: `p1-sched-db-20260627-114548` setup has one root parent scheduler row and one planned status row.
-   - Remaining proof gap: generation-1 child scheduler rows need a successful admitted broad-harness child; first fresh broad attempt rejected because no admitted changes were produced.
+   - Fresh `walk db_query` proof: `p1-policyharness-db-20260628-032903` has a generation-1 child scheduler row through `succeeded` status.
 
-3. **Create normalized runner request/result schemas** — implemented; root request proof complete, result proof pending.
+3. **Create normalized runner request/result schemas** — implemented; root/child request proof and runner-result proof complete.
    - Runner request: `eval_runner_request`, `eval_runner_request_arg`, `eval_runner_request_target_part`.
    - Runner result: `eval_runner_result`.
    - Fresh `walk db_query` proof: `p1-runnerio-db-20260627-125536` setup has one root parent request row and four arg rows.
-   - Remaining proof gap: `eval_runner_result` needs a successful admitted child run; first fresh broad attempt timed out before admission.
+   - Fresh `walk db_query` proof: `p1-policyharness-db-20260628-032903` has the admitted child runner request and two successful result rows (`attempt`, `node_latest`).
 
 4. **Normalize parent identity and successor handoff**
    - Parent identity currently changes on disk at handoff; DB should expose current and historical parent lineage.
