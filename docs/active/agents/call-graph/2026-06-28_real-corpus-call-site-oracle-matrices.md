@@ -282,10 +282,11 @@ in `crates/ploke-db/tests/unit/call_graph_fixture_queries/real_target_matrix/fal
 | generic-array | guarded match arm | `src/lib.rs:1241,1243,1278,1280` | `ArrayLength` bound at `src/lib.rs:245`; `LengthError` at `:1197` | `corpus_generic_array_call_graph` currently does not project `iter.size_hint()` for these guarded match-arm checks. |
 
 Current executable coverage: `fallback.rs` now pins the chrono alias rows by
-exact source owner, pins chrono try-receiver and guarded-receiver rows by owner,
-and pins the memchr function-pointer and callable trait-object cases by owner or
-explicit owner-scoped absence. The generic-array guarded match-arm case remains
-a fixture-wide absence assertion because the source checkout is not present in
+exact source owner and source-line fanout, pins chrono try-receiver and
+guarded-receiver rows by owner and source-line fanout, and pins the memchr
+function-pointer and callable trait-object cases by owner or explicit
+owner-scoped absence. The generic-array guarded match-arm case remains a
+fixture-wide absence assertion because the source checkout is not present in
 `tests/fixture_github_clones/corpus`.
 
 ## Boundary Items

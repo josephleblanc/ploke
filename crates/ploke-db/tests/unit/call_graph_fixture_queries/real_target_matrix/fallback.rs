@@ -4,6 +4,9 @@ use ploke_test_utils::{
 
 use super::super::*;
 use super::common::*;
+use super::source_lines::{
+    SourceLineFanout, assert_targetless_method_line_fanout, assert_targetless_path_line_fanout,
+};
 
 #[test]
 fn chrono_alias_constructor_rows_are_targetless_fallback_oracles() -> Result<(), DbError> {
@@ -29,6 +32,30 @@ fn chrono_alias_constructor_rows_are_targetless_fallback_oracles() -> Result<(),
         &["MappedLocalTime", "Single"],
         CallStatusKind::Unresolved,
         11,
+    )?;
+    assert_targetless_path_line_fanout(
+        &db,
+        &CORPUS_CHRONO_CALL_GRAPH,
+        &["MappedLocalTime", "Single"],
+        CallStatusKind::Unresolved,
+        &[
+            SourceLineFanout {
+                file_suffix: "src/datetime/tests.rs",
+                lines: &[75, 79],
+            },
+            SourceLineFanout {
+                file_suffix: "src/offset/fixed.rs",
+                lines: &[135, 138],
+            },
+            SourceLineFanout {
+                file_suffix: "src/offset/mod.rs",
+                lines: &[143, 156, 468, 502, 535],
+            },
+            SourceLineFanout {
+                file_suffix: "src/offset/utc.rs",
+                lines: &[122, 125],
+            },
+        ],
     )?;
     let target = variant_id_by_enum_and_variant_names(&db, "LocalResult", "Single")?;
     assert_no_incoming_traversal_to_target(
@@ -159,6 +186,18 @@ fn chrono_try_receiver_method_rows_are_targetless_fallback_oracles() -> Result<(
         CallStatusKind::Unsupported,
         2,
     )?;
+    assert_targetless_method_line_fanout(
+        &db,
+        &CORPUS_CHRONO_CALL_GRAPH,
+        "naive_utc",
+        "TryResult",
+        None,
+        CallStatusKind::Unsupported,
+        &[SourceLineFanout {
+            file_suffix: "src/format/parsed.rs",
+            lines: &[836, 953],
+        }],
+    )?;
     let target = method_id_by_name_body_and_file_suffix(
         &db,
         "naive_utc",
@@ -233,6 +272,18 @@ fn chrono_guarded_match_arm_method_guard_is_targetless_fallback_oracle() -> Resu
         Some(&["queue"]),
         CallStatusKind::Unsupported,
         1,
+    )?;
+    assert_targetless_method_line_fanout(
+        &db,
+        &CORPUS_CHRONO_CALL_GRAPH,
+        "is_empty",
+        "SelfField",
+        Some(&["queue"]),
+        CallStatusKind::Unsupported,
+        &[SourceLineFanout {
+            file_suffix: "src/format/strftime.rs",
+            lines: &[635],
+        }],
     )?;
 
     let owner = method_id_by_name_body_and_file_suffix(
