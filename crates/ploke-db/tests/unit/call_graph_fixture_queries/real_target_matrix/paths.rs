@@ -92,6 +92,135 @@ fn axum_real_target_explicit_crate_path_parse_attrs_is_documented_gap() -> Resul
 }
 
 #[test]
+fn axum_real_target_imported_parse_attrs_reaches_helper_subset() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+    let target = function_id_by_name_in_module(&db, &["crate", "attr_parsing"], "parse_attrs")?;
+
+    // Matrix: imported `parse_attrs` path rows.
+    // Source chain:
+    //   axum-macros/src/attr_parsing.rs:59 defines `parse_attrs`.
+    //   from_ref.rs:9 imports it and from_ref.rs:30 calls it from
+    //   `expand_field`.
+    //   from_request/mod.rs:3 imports it and current resolved rows are at
+    //   :112, :196, :592, :715, :880, and :896.
+    // Expected traversal: seven call-site edges reach `parse_attrs` in one
+    // step; target expansion de-duplicates those to five owner candidates.
+    let cases = [
+        (
+            "from_ref.rs:30 expand_field -> parse_attrs",
+            function_id_by_name_in_module(&db, &["crate", "from_ref"], "expand_field")?,
+            1,
+        ),
+        (
+            "from_request/mod.rs:{112,196} expand -> parse_attrs",
+            function_id_by_name_in_module(&db, &["crate", "from_request"], "expand")?,
+            2,
+        ),
+        (
+            "from_request/mod.rs:592 extract_fields -> parse_attrs",
+            function_id_by_name_in_module(&db, &["crate", "from_request"], "extract_fields")?,
+            1,
+        ),
+        (
+            "from_request/mod.rs:715 impl_struct_by_extracting_all_at_once -> parse_attrs",
+            function_id_by_name_in_module(
+                &db,
+                &["crate", "from_request"],
+                "impl_struct_by_extracting_all_at_once",
+            )?,
+            1,
+        ),
+        (
+            "from_request/mod.rs:{880,896} impl_enum_by_extracting_all_at_once -> parse_attrs",
+            function_id_by_name_in_module(
+                &db,
+                &["crate", "from_request"],
+                "impl_enum_by_extracting_all_at_once",
+            )?,
+            2,
+        ),
+    ];
+
+    let mut expected_by_owner = std::collections::BTreeMap::new();
+    for (label, owner, expected_edges) in cases {
+        let context = db.call_context_for_owner(owner)?;
+        let rows = context
+            .iter()
+            .filter(|row| {
+                row.site.kind == CallSiteKind::Path
+                    && row.site.path.as_ref() == Some(&path(&["parse_attrs"]))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rows.len(),
+            expected_edges,
+            "{label} should expose the expected parse_attrs call rows: {context:#?}"
+        );
+        for row in rows {
+            assert_resolved_target(
+                row,
+                target,
+                CallRelationKind::Function,
+                CallSiteKind::Path,
+                CallTargetKind::Function,
+            );
+        }
+        expected_by_owner.insert(owner, expected_edges);
+    }
+
+    let callers = db.callers_for_target(target)?;
+    assert_eq!(
+        callers.len(),
+        7,
+        "parse_attrs should expose the seven currently resolved imported callers: {callers:#?}"
+    );
+    let mut actual_by_owner = std::collections::BTreeMap::<_, usize>::new();
+    for caller in &callers {
+        assert_eq!(caller.site.path, Some(path(&["parse_attrs"])));
+        assert_eq!(caller.status.status, CallStatusKind::Resolved);
+        assert_eq!(
+            caller.status.resolution,
+            Some(CallResolutionKind::LocalExact)
+        );
+        assert_eq!(caller.target.relation, CallRelationKind::Function);
+        assert_eq!(caller.target.source_kind, CallSiteKind::Path);
+        assert_eq!(caller.target.target_kind, CallTargetKind::Function);
+        *actual_by_owner.entry(caller.site.owner_id).or_default() += 1;
+    }
+    assert_eq!(
+        actual_by_owner, expected_by_owner,
+        "target-centered parse_attrs callers should match the source-oracle owner fanout"
+    );
+
+    let incoming = db.expand_call_context(
+        CallContextSeed::Target(target),
+        CallContextOptions {
+            include_outgoing_targets: false,
+            max_candidates: 512,
+            ..CallContextOptions::default()
+        },
+    )?;
+    assert_eq!(
+        incoming.len(),
+        expected_by_owner.len(),
+        "parse_attrs target expansion should return one one-hop candidate per owner"
+    );
+    for owner in expected_by_owner.keys().copied() {
+        assert!(
+            incoming.iter().any(|candidate| {
+                candidate.node_id == owner
+                    && candidate.target_id == target
+                    && candidate.relation == ploke_db::CallContextRelation::IncomingCaller
+                    && candidate.distance == 1
+            }),
+            "parse_attrs expansion should include owner {owner}: {incoming:#?}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn axum_real_target_run_ui_tests_crate_paths_reach_helper() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
     let target = function_id_by_name_in_module(&db, &["crate"], "run_ui_tests")?;
