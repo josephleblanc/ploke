@@ -72,10 +72,19 @@ fn axum_real_target_request_extensions_mut_receivers_are_documented_gaps() -> Re
 
     // Matrix: local and parameter `req.extensions_mut` receiver rows.
     // Source chain:
+    //   axum-core/src/ext_traits/request.rs:297 initializes
+    //   `let mut req = Request::new(())`.
     //   axum-core/src/ext_traits/request.rs:302 calls `req.extensions_mut()`.
     //   axum/src/extension.rs:184 calls `req.extensions_mut()`.
-    // Current model gap: both are projected as method callsites on a local
-    // binding named `req`, but they remain unresolved external receiver calls.
+    // Current model gap: the initializer path is unresolved and targetless; the
+    // receiver calls are projected on a local binding named `req`, but they
+    // remain unresolved external receiver calls.
+    let owner =
+        method_id_by_name_and_body_substring(&db, "extract_parts_with_state", "Request::new(())")?;
+    let context = db.call_context_for_owner(owner)?;
+    let request_new = row_by_path(&context, &["Request", "new"]);
+    assert_targetless_status(request_new, CallStatusKind::Unresolved);
+
     assert_targetless_method_rows(
         &db,
         "extensions_mut",
@@ -118,9 +127,10 @@ fn axum_real_target_turbofish_local_receiver_is_documented_gap() -> Result<(), D
     // Matrix: turbofish method call receiver row.
     // Source chain:
     //   axum-core/src/ext_traits/request_parts.rs:164 calls
-    //   `parts.extract_with_state::<String, _>(&state)`.
+    //   `parts.extract_with_state::<State<String>, String>(&state)`.
     // Current model gap: the local receiver row is projected, but it does not
-    // resolve back to the `RequestPartsExt::extract_with_state` impl yet.
+    // resolve back to the `RequestPartsExt::extract_with_state` impl yet, and
+    // the method turbofish arity is not preserved for this receiver shape.
     let _target_owner = method_id_by_name_and_body_substring(
         &db,
         "extract_with_state",
@@ -134,6 +144,47 @@ fn axum_real_target_turbofish_local_receiver_is_documented_gap() -> Result<(), D
         CallStatusKind::Unresolved,
         1,
     )?;
+
+    let mut params = std::collections::BTreeMap::new();
+    params.insert(
+        "method".to_string(),
+        cozo::DataValue::from("extract_with_state"),
+    );
+    params.insert(
+        "receiver_kind".to_string(),
+        cozo::DataValue::from("LocalBinding"),
+    );
+    params.insert(
+        "receiver_path".to_string(),
+        cozo::DataValue::List(vec![cozo::DataValue::from("parts")]),
+    );
+    let rows = db.raw_query_params(
+        r#"?[generic_arg_count] :=
+            *call_site {
+                id: site_id,
+                call_kind: "Method",
+                method_name: $method,
+                receiver_kind: $receiver_kind,
+                receiver_path: $receiver_path,
+                generic_arg_count @ 'NOW'
+            },
+            *call_resolution_status {
+                source_id: site_id,
+                source_kind: "Method",
+                status_kind: "Unresolved" @ 'NOW'
+            }"#,
+        params,
+    )?;
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "request_parts.rs:164 should project exactly one targetless turbofish receiver row"
+    );
+    assert_eq!(
+        rows.rows[0][0],
+        cozo::DataValue::Num(cozo::Num::Int(0)),
+        "request_parts.rs:164 currently drops the turbofish arity for this targetless receiver row"
+    );
 
     Ok(())
 }

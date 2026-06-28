@@ -365,6 +365,7 @@ fn axum_real_target_external_path_rows_remain_targetless() -> Result<(), DbError
     let replace_context = db.call_context_for_owner(replace_owner)?;
     let replace_row = row_by_path(&replace_context, &["std", "mem", "replace"]);
     assert_external_targetless(replace_row);
+    assert_targetless_path_rows(&db, &["std", "mem", "replace"], CallStatusKind::External, 2)?;
 
     Ok(())
 }
