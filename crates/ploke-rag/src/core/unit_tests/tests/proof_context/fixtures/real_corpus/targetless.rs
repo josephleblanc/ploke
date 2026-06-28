@@ -2,7 +2,14 @@ use super::super::super::super::*;
 use super::super::super::helpers::assert_blocked_resolution;
 use super::helpers::{
     AXUM_DOMAIN, assert_site_blocker, await_result_unwrap_site, axum_db, conn_limiter_accept_owner,
+    dynamic_site, method_id_by_name_and_body,
 };
+
+struct DynamicCase {
+    label: &'static str,
+    method: &'static str,
+    body: &'static str,
+}
 
 #[tokio::test]
 async fn proof_context_collection_preserves_axum_await_result_receiver_blocker() -> Result<(), Error>
@@ -45,7 +52,95 @@ async fn proof_context_collection_preserves_axum_await_result_receiver_blocker()
     // targetless AwaitResult `unwrap` site. There are zero callee edges for
     // this row until awaited-result receiver resolution is implemented.
     assert_blocked_resolution(rows, owner, "type_resolution_missing");
-    assert_site_blocker(rows, owner, site_id, "type_resolution_missing");
+    assert_site_blocker(
+        rows,
+        owner,
+        site_id,
+        "type_resolution_missing",
+        "ConnLimiter::accept AwaitResult unwrap",
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn proof_context_collection_preserves_axum_dynamic_callable_blockers() -> Result<(), Error> {
+    init_tracing_once();
+    let db = axum_db()?;
+
+    let cases = [
+        DynamicCase {
+            label: "MakeErasedHandler::into_route callable field",
+            method: "into_route",
+            body: "(self.into_route)(self.handler, state)",
+        },
+        DynamicCase {
+            label: "MakeErasedRouter::into_route callable field",
+            method: "into_route",
+            body: "(self.into_route)(self.router, state)",
+        },
+        DynamicCase {
+            label: "Map::into_route layer trait object",
+            method: "into_route",
+            body: "(self.layer)(self.inner.into_route(state))",
+        },
+        DynamicCase {
+            label: "TapIo::accept callable field",
+            method: "accept",
+            body: "(self.tap_fn)(&mut io)",
+        },
+    ];
+
+    let mut owners = Vec::new();
+    for case in cases {
+        let owner = method_id_by_name_and_body(&db, case.method, case.body)?;
+        let projected = db.project_call_proof_facts_for_owner(owner, AXUM_DOMAIN)?;
+        assert!(
+            projected >= 2,
+            "{} should project targetless dynamic call-site proof rows",
+            case.label
+        );
+        owners.push((case, owner));
+    }
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.proof_context_degraded(),
+        "projected axum dynamic call graph facts should enable RAG proof context"
+    );
+
+    for (case, owner) in owners {
+        let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+        let calls = call_context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
+        let site_id = dynamic_site(calls, owner, case.label);
+
+        let proof_context = rag.collect_proof_context(&[(owner, 1.0)])?;
+        let rows = proof_context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("{} should receive projected proof rows", case.label));
+
+        // Matrix: dynamic unsupported callable rows.
+        // Source chain:
+        //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+        //   axum/src/boxed.rs:85 calls `(self.into_route)(self.handler, state)`.
+        //   axum/src/boxed.rs:120 calls `(self.into_route)(self.router, state)`.
+        //   axum/src/boxed.rs:159 calls `(self.layer)(self.inner.into_route(state))`.
+        //   axum/src/serve/listener.rs:236 calls `(self.tap_fn)(&mut io)`.
+        // Expected proof traversal: owner-seeded proof context must include the
+        // call_site plus blocked call_resolution facts for each unsupported,
+        // targetless dynamic call site. There are zero callee edges until
+        // callable-field, closure, and callable trait-object proof is modeled.
+        assert_blocked_resolution(rows, owner, "dynamic_dispatch_unbounded");
+        assert_site_blocker(
+            rows,
+            owner,
+            site_id,
+            "dynamic_dispatch_unbounded",
+            case.label,
+        );
+    }
 
     Ok(())
 }

@@ -259,11 +259,32 @@ pub(super) fn await_result_unwrap_site(calls: &[CallContextInfo], owner: Uuid) -
     matching[0].site_id
 }
 
+pub(super) fn dynamic_site(calls: &[CallContextInfo], owner: Uuid, label: &str) -> Uuid {
+    let matching = calls
+        .iter()
+        .filter(|call| {
+            call.owner_id == owner
+                && call.kind == CallSiteKind::Dynamic
+                && call.callee == CallCalleeInfo::Dynamic
+                && call.status == CallStatusKind::Unsupported
+                && call.resolution.is_none()
+                && call.targets.is_empty()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "{label} should expose one targetless dynamic call row: {calls:#?}"
+    );
+    matching[0].site_id
+}
+
 pub(super) fn assert_site_blocker(
     rows: &[ProofContextInfo],
     owner: Uuid,
     site_id: Uuid,
     reason: &str,
+    label: &str,
 ) {
     let owner = owner.to_string();
     let site_id = site_id.to_string();
@@ -274,7 +295,7 @@ pub(super) fn assert_site_blocker(
                 && row.call_site_id.as_deref() == Some(site_id.as_str())
                 && row.build_domain_id.as_deref() == Some(AXUM_DOMAIN)
         }),
-        "proof context should include the AwaitResult unwrap call_site fact: {rows:#?}"
+        "{label} proof context should include the blocked call_site fact: {rows:#?}"
     );
     assert!(
         rows.iter().any(|row| {
@@ -283,7 +304,7 @@ pub(super) fn assert_site_blocker(
                 && row.resolution_state.as_deref() == Some("blocked")
                 && row.blocker_reason.as_deref() == Some(reason)
         }),
-        "proof context should include the AwaitResult unwrap blocked resolution: {rows:#?}"
+        "{label} proof context should include the blocked call_resolution fact: {rows:#?}"
     );
 }
 
