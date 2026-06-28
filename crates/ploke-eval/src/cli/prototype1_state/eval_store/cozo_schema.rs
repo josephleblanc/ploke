@@ -31,6 +31,7 @@ use super::{
     schema::{EvalRelationSchema, define_eval_schema},
     selection::ensure_selection_schema,
     setup::{RunProfilePolicySchema, ensure_setup_schema},
+    walk_event::{WalkEventSchema, WalkEventTransitionSchema, ensure_walk_event_schema},
 };
 
 define_eval_schema!(TransitionEventSchema {
@@ -249,6 +250,7 @@ pub(super) fn ensure_eval_store_schema<D: EvalDb + ?Sized>(db: &D) -> Result<(),
     ensure_scheduler_node_schema(db)?;
     ensure_runner_io_schema(db)?;
     ensure_harness_schema(db)?;
+    ensure_walk_event_schema(db)?;
     ensure_agent_turn_schema(db)?;
 
     Ok(())
@@ -281,6 +283,8 @@ fn reject_unsupported_schema_drift(existing: &BTreeSet<String>) -> Result<(), Ev
         HarnessDiagnosticSchema::RELATION,
         HarnessWorkspaceSchema::RELATION,
         HarnessWorkspaceChangeSchema::RELATION,
+        WalkEventSchema::RELATION,
+        WalkEventTransitionSchema::RELATION,
     ];
     let missing = required
         .into_iter()

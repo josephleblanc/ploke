@@ -1890,7 +1890,9 @@ fn file_sha256(path: &Path, field: &'static str) -> Result<String, EvalStoreErro
         path: path.to_path_buf(),
         source,
     })?;
-    Ok(sha256_hex(&bytes))
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    Ok(sha256_hex(&hasher.finalize()))
 }
 
 fn option_string_param(value: Option<String>) -> DataValue {

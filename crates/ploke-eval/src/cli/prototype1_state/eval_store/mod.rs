@@ -25,6 +25,7 @@ mod scheduler_node;
 mod schema;
 mod selection;
 mod setup;
+mod walk_event;
 
 #[cfg(test)]
 mod tests;
@@ -126,3 +127,8 @@ pub(crate) const HARNESS_WORKSPACE_REL: &str = harness::HarnessWorkspaceSchema::
 #[cfg(test)]
 pub(crate) const HARNESS_WORKSPACE_CHANGE_REL: &str =
     harness::HarnessWorkspaceChangeSchema::RELATION;
+#[cfg(test)]
+pub(crate) const WALK_EVENT_REL: &str = walk_event::WalkEventSchema::RELATION;
+#[cfg(test)]
+pub(crate) const WALK_EVENT_TRANSITION_REL: &str = walk_event::WalkEventTransitionSchema::RELATION;
+pub(crate) use walk_event::{WalkEventEvidence, write_walk_event_to_owner_db};

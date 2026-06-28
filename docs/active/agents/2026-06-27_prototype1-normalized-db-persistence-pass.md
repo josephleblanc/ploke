@@ -1,6 +1,6 @@
 # 2026-06-27 Prototype 1 normalized DB persistence pass
 
-**Status:** active plan + audit log; child-plan normalized slice has fresh DB proof; scheduler-node setup and generation-1 child rows have fresh DB proof; runner-request setup/child rows and runner-result rows have fresh DB proof; run-policy and broad-harness request/diagnostic/workspace rows have fresh DB proof
+**Status:** active plan + audit log; child-plan normalized slice has fresh DB proof; scheduler-node setup and generation-1 child rows have fresh DB proof; runner-request setup/child rows and runner-result rows have fresh DB proof; run-policy and broad-harness request/diagnostic/workspace rows have fresh DB proof; walk-event authority slice has local eval-store proof, fresh committed-code DB proof pending
 **Purpose:** restart spine for a fresh pass over `ploke-eval loop walk` persistence with normalized Cozo relations as the required target.
 **Related:**
 - `docs/active/agents/2026-06-22_prototype1-eval-store-data-model/README.md`
@@ -808,6 +808,32 @@ Runner request/result proof:
 
 Conclusion: the owner eval DB can now answer the broad-harness policy, request, timeout/budget knobs, diagnostic event counts, candidate workspace dirty path, generation-1 scheduler row, child runner request, and child runner result for this successful live broad-harness run without reading the persisted JSON/TOML files.
 
+## 2026-06-28 walk-event authority slice
+
+Implemented code slice:
+
+- Added normalized relations:
+  - `eval_walk_event`
+  - `eval_walk_event_transition`
+- `walk start` and `walk step` now mirror successful walk-server commands into the owner eval DB when a parent identity and owner DB exist.
+- Walk-event rows capture campaign/node/parent/generation/branch identity, command/status, phase before/after, target phase, watch/git-change gates, protocol/transition-graph version, repo root, git head/source-status hash, executable path, executable modified time, and executable SHA-256.
+- Transition labels are normalized into `eval_walk_event_transition` rows instead of a list/debug projection.
+- `WalkController::start` now returns a `WalkAdvanceReport`, so `walk start --until <phase>` can persist the actual R-phase transition labels instead of a lossy no-transition event.
+- Fixed the shared setup `file_sha256` helper to store the SHA-256 digest rather than hex-encoding whole file bytes.
+
+Validation commands run:
+
+```text
+cargo fmt --all
+cargo check -p ploke-eval --lib
+cargo test -p ploke-eval prototype1_eval_store_walk_event_rows_capture_epoch_and_phase --lib -- --nocapture
+cargo test -p ploke-eval eval_store --lib
+```
+
+Local test proof: `prototype1_eval_store_walk_event_rows_capture_epoch_and_phase` persists and queries one `eval_walk_event` row plus one `eval_walk_event_transition` row from a reloaded owner eval DB.
+
+Fresh committed-code proof pending: rebuild `ploke-eval`, run a fresh campaign from committed code, and confirm `eval_walk_event` / `eval_walk_event_transition` via `ploke-eval loop walk db_query --script <cozo>` before making DB coverage claims for live runs.
+
 ## Initial persistence matrix
 
 Legend:
@@ -834,6 +860,7 @@ Legend:
 | Build / artifact / patch / apply facts | `eval_artifact*`, `eval_binary_ref`, `eval_build_event`, `eval_operation`, `eval_patch`, `eval_apply_event` | Partly normalized | Need verify whether all file artifacts have normalized coverage or only event projections. |
 | Selection | `eval_selection_decision`, candidate/finding/score | Normalized | Good initial shape; verify rows per generation/current parent. |
 | Continuation decision | `eval_continuation_decision` | Normalized | Present after handoff. |
+| Walk command authority / R-phase event ledger | `eval_walk_event`, `eval_walk_event_transition` | Implemented locally; fresh live DB proof pending | Captures successful `walk start`/`walk step` command authority, binary digest, git/source epoch, phase before/after, and normalized transition labels. Needs committed-code campaign proof via `walk db_query`. |
 | Run profile policy / broad-harness policy | `eval_run_profile_policy` | Normalized | Fresh campaign `p1-policyharness-db-20260628-032903` proves max generations/nodes, child min/max/parallel targets, generation source, schedule, timeout, fresh slots, graph nearest, and control mode. |
 | Broad-harness request/diagnostics/workspace | `eval_harness_request`, `eval_harness_diagnostic`, `eval_harness_workspace`, `eval_harness_workspace_change` | Normalized first slice | Fresh campaign `p1-policyharness-db-20260628-032903` proves request identity/hash/paths/policy, diagnostic terminal/event/tool counts, and dirty candidate workspace path. Still need richer prompt/patch/rationale rows. |
 | History blocks/indexes | none dedicated; maybe refs only | Missing | Required next major schema area: blocks, block entries, heads/indexes. |
@@ -862,18 +889,23 @@ Do not continue live fanout as proof work until these are handled in a structure
    - Fresh `walk db_query` proof: `p1-runnerio-db-20260627-125536` setup has one root parent request row and four arg rows.
    - Fresh `walk db_query` proof: `p1-policyharness-db-20260628-032903` has the admitted child runner request and two successful result rows (`attempt`, `node_latest`).
 
-4. **Normalize parent identity and successor handoff**
+4. **Normalize walk command authority / R-phase event ledger** — implemented locally; fresh committed-code DB proof pending.
+   - Relations: `eval_walk_event`, `eval_walk_event_transition`.
+   - Captures successful `walk start`/`walk step` authority facts, executable SHA-256, git/source epoch, and normalized transition labels.
+   - Next: rebuild, run a fresh committed-code campaign, and prove rows with `walk db_query`.
+
+5. **Normalize parent identity and successor handoff**
    - Parent identity currently changes on disk at handoff; DB should expose current and historical parent lineage.
    - Handoff should be queryable without reading `.ploke/prototype1/parent_identity.json` or history files.
 
-5. **Normalize History store enough for DB-first restart/inspection**
+6. **Normalize History store enough for DB-first restart/inspection**
    - Do not rely on `eval_record_ref` as the only layer.
    - Need explicit block/head/index relations that can later evolve into the blockchain-like History model.
 
-6. **Audit Channel-derived shared payloads**
+7. **Audit Channel-derived shared payloads**
    - Channel can remain transport, but terminal result/treatment evidence and any shared Parent/Child capabilities should be normalized after receipt/send.
 
-7. **Agent-turn / LLM protocol trace wiring**
+8. **Agent-turn / LLM protocol trace wiring**
    - Existing schema is empty in current run. Need identify whether protocol adjudication uses a path that bypasses agent-turn persistence.
 
 ## Audit loop for the next pass

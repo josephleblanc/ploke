@@ -4,7 +4,9 @@
 //! framed request at a time. Mutating requests pass through the epoch guard so
 //! stale binaries do not continue stepping after the checkout changes.
 
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
+
+use chrono::Utc;
 
 use tokio::{
     net::{UnixListener, UnixStream},
@@ -12,7 +14,11 @@ use tokio::{
 };
 use tracing::{debug, info, warn};
 
-use crate::{cli::Prototype1StateWalkServeCommand, spec::PrepareError};
+use crate::{
+    cli::{Prototype1StateWalkServeCommand, prototype1_state::identity},
+    layout::campaigns_dir,
+    spec::PrepareError,
+};
 
 use super::{
     controller::{DeltaRenderStyle, WalkController},
@@ -26,6 +32,16 @@ use super::{
 struct WalkServer {
     epoch: ServerEpoch,
     controller: WalkController,
+}
+
+struct WalkEventInput {
+    command: &'static str,
+    phase_before: Option<WalkPhase>,
+    phase_after: WalkPhase,
+    target_phase: Option<WalkPhase>,
+    watch: Option<bool>,
+    allow_git_changes: Option<bool>,
+    transitions: Vec<String>,
 }
 
 /// Run the server until it receives `Stop`, the listener fails, or idle TTL expires.
@@ -332,11 +348,26 @@ impl WalkServer {
             WalkRequestBody::Start { config, until } => {
                 match self.ensure_epoch_guard(request.client_epoch.as_ref()) {
                     Ok(()) => match self.controller.start(config, until).await {
-                        Ok(phase) => Ok(WalkResponse::ok(
-                            self.controller.phase(),
-                            format!("started walk at {phase} - {}", phase.detail()),
-                            self.epoch.clone(),
-                        )),
+                        Ok(report) => match self.record_walk_event(WalkEventInput {
+                            command: "start",
+                            phase_before: Some(report.from()),
+                            phase_after: report.to(),
+                            target_phase: Some(until),
+                            watch: None,
+                            allow_git_changes: None,
+                            transitions: report.transition_labels(),
+                        }) {
+                            Ok(()) => Ok(WalkResponse::ok(
+                                self.controller.phase(),
+                                format!(
+                                    "started walk at {} - {}",
+                                    report.to(),
+                                    report.to().detail()
+                                ),
+                                self.epoch.clone(),
+                            )),
+                            Err(error) => Err(error),
+                        },
                         Err(error) => Err(error),
                     },
                     Err(error) => Err(error),
@@ -348,11 +379,22 @@ impl WalkServer {
                 allow_git_changes,
             } => match self.ensure_epoch_guard(request.client_epoch.as_ref()) {
                 Ok(()) => match self.controller.step(until, watch, allow_git_changes).await {
-                    Ok(report) => Ok(WalkResponse::ok(
-                        self.controller.phase(),
-                        report.render(),
-                        self.epoch.clone(),
-                    )),
+                    Ok(report) => match self.record_walk_event(WalkEventInput {
+                        command: "step",
+                        phase_before: Some(report.from()),
+                        phase_after: report.to(),
+                        target_phase: until,
+                        watch: Some(watch),
+                        allow_git_changes: Some(allow_git_changes),
+                        transitions: report.transition_labels(),
+                    }) {
+                        Ok(()) => Ok(WalkResponse::ok(
+                            self.controller.phase(),
+                            report.render(),
+                            self.epoch.clone(),
+                        )),
+                        Err(error) => Err(error),
+                    },
                     Err(error) => Err(error),
                 },
                 Err(error) => Err(error),
@@ -406,6 +448,50 @@ impl WalkServer {
         )
     }
 
+    fn record_walk_event(&self, input: WalkEventInput) -> Result<(), PrepareError> {
+        let Some(identity) = identity::load_parent_identity_optional(&self.epoch.repo_root)? else {
+            return Ok(());
+        };
+        let db_path = owner_db_path(identity.campaign_id().as_str())?;
+        if !db_path.is_file() {
+            return Ok(());
+        }
+        crate::cli::prototype1_state::eval_store::write_walk_event_to_owner_db(
+            &db_path,
+            crate::cli::prototype1_state::eval_store::WalkEventEvidence {
+                campaign_id: identity.campaign_id().to_string(),
+                node_id: identity.node_id().to_string(),
+                parent_id: identity.parent_id().to_string(),
+                generation: identity.generation(),
+                branch_id: identity.branch_id().to_string(),
+                command: input.command.to_string(),
+                status: "ok".to_string(),
+                phase_before: input.phase_before.map(|phase| phase.to_string()),
+                phase_after: input.phase_after.to_string(),
+                target_phase: input.target_phase.map(|phase| phase.to_string()),
+                watch: input.watch,
+                allow_git_changes: input.allow_git_changes,
+                transitions: input.transitions,
+                protocol_version: self.epoch.protocol_version,
+                transition_graph_version: self.epoch.transition_graph_version.clone(),
+                repo_root: self.epoch.repo_root.display().to_string(),
+                exe_path: self.epoch.exe_path.display().to_string(),
+                exe_modified_unix_ms: self.epoch.exe_modified_unix_ms,
+                git_head: self.epoch.git_head.clone(),
+                source_status_hash: self.epoch.source_status_hash.clone(),
+                recorded_at: Utc::now().to_rfc3339(),
+            },
+        )
+        .map_err(|source| PrepareError::DatabaseSetup {
+            phase: "eval_walk_event_put",
+            detail: format!(
+                "failed to persist walk event '{}' for campaign '{}': {source}",
+                input.command,
+                identity.campaign_id()
+            ),
+        })
+    }
+
     fn ensure_epoch_guard(
         &mut self,
         client_epoch: Option<&ServerEpoch>,
@@ -431,4 +517,10 @@ impl WalkServer {
             self.epoch.clone(),
         ))
     }
+}
+
+fn owner_db_path(campaign_id: &str) -> Result<PathBuf, PrepareError> {
+    Ok(campaigns_dir()?
+        .join(campaign_id)
+        .join("prototype1/eval-store.cozo.sqlite"))
 }

@@ -33,7 +33,7 @@ use super::{
     RUNNER_REQUEST_ARG_REL, RUNNER_REQUEST_REL, RUNNER_REQUEST_TARGET_REL, RUNNER_RESULT_REL,
     SCHEDULER_NODE_REL, SCHEDULER_NODE_STATUS_REL, SCHEDULER_NODE_TARGET_REL,
     SELECTION_CANDIDATE_REL, SELECTION_DECISION_REL, SELECTION_FINDING_REL, SELECTION_SCORE_REL,
-    TOOL_EVENT_REL,
+    TOOL_EVENT_REL, WALK_EVENT_REL, WALK_EVENT_TRANSITION_REL,
     api::EvalStorageMode,
     cozo_schema::eval_relation_exists,
     error::EvalStoreError,
@@ -405,6 +405,22 @@ fn non_agent_schema_scripts() -> Vec<(&'static str, String, String)> {
             )
         },
         {
+            let schema = &super::walk_event::WalkEventSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
+            let schema = &super::walk_event::WalkEventTransitionSchema::SCHEMA;
+            (
+                schema.relation(),
+                schema.script_create(),
+                schema.script_put(&eval_schema_params(schema)),
+            )
+        },
+        {
             let schema = &super::artifact::ArtifactSchema::SCHEMA;
             (
                 schema.relation(),
@@ -717,6 +733,16 @@ fn eval_store_non_agent_schema_scripts_are_stable() {
             r#"?[request_id, diagnostics_path, change_index, campaign_id, schema_version, status_code, path, original_path] <- [[$request_id, $diagnostics_path, $change_index, $campaign_id, $schema_version, $status_code, $path, $original_path]] :put eval_harness_workspace_change { request_id, diagnostics_path, change_index => campaign_id, schema_version, status_code, path, original_path }"#,
         ),
         (
+            "eval_walk_event",
+            r#":create eval_walk_event { event_id: String => campaign_id: String, schema_version: String, node_id: String, parent_id: String, generation: Int, branch_id: String, command: String, status: String, phase_before: String?, phase_after: String, target_phase: String?, watch: Bool?, allow_git_changes: Bool?, transition_count: Int, protocol_version: Int, transition_graph_version: String, repo_root: String, exe_path: String, exe_sha256: String, exe_modified_unix_ms: Int?, git_head: String?, source_status_hash: String?, recorded_at: String, ingested_at: String }"#,
+            r#"?[event_id, campaign_id, schema_version, node_id, parent_id, generation, branch_id, command, status, phase_before, phase_after, target_phase, watch, allow_git_changes, transition_count, protocol_version, transition_graph_version, repo_root, exe_path, exe_sha256, exe_modified_unix_ms, git_head, source_status_hash, recorded_at, ingested_at] <- [[$event_id, $campaign_id, $schema_version, $node_id, $parent_id, $generation, $branch_id, $command, $status, $phase_before, $phase_after, $target_phase, $watch, $allow_git_changes, $transition_count, $protocol_version, $transition_graph_version, $repo_root, $exe_path, $exe_sha256, $exe_modified_unix_ms, $git_head, $source_status_hash, $recorded_at, $ingested_at]] :put eval_walk_event { event_id => campaign_id, schema_version, node_id, parent_id, generation, branch_id, command, status, phase_before, phase_after, target_phase, watch, allow_git_changes, transition_count, protocol_version, transition_graph_version, repo_root, exe_path, exe_sha256, exe_modified_unix_ms, git_head, source_status_hash, recorded_at, ingested_at }"#,
+        ),
+        (
+            "eval_walk_event_transition",
+            r#":create eval_walk_event_transition { event_id: String, transition_index: Int => campaign_id: String, schema_version: String, transition_label: String }"#,
+            r#"?[event_id, transition_index, campaign_id, schema_version, transition_label] <- [[$event_id, $transition_index, $campaign_id, $schema_version, $transition_label]] :put eval_walk_event_transition { event_id, transition_index => campaign_id, schema_version, transition_label }"#,
+        ),
+        (
             "eval_artifact",
             r#":create eval_artifact { artifact_id: String => campaign_id: String, tree_hash: String?, git_branch: String?, git_commit: String?, source: String, store_scope: String, created_by: String?, parent_artifact_id: String? }"#,
             r#"?[artifact_id, campaign_id, tree_hash, git_branch, git_commit, source, store_scope, created_by, parent_artifact_id] <- [[$artifact_id, $campaign_id, $tree_hash, $git_branch, $git_commit, $source, $store_scope, $created_by, $parent_artifact_id]] :put eval_artifact { artifact_id => campaign_id, tree_hash, git_branch, git_commit, source, store_scope, created_by, parent_artifact_id }"#,
@@ -992,6 +1018,11 @@ fn prototype1_eval_store_parent_start_db_schema_installs_idempotently() {
     assert!(
         eval_relation_exists(&db, HARNESS_WORKSPACE_CHANGE_REL)
             .expect("harness workspace change rel exists")
+    );
+    assert!(eval_relation_exists(&db, WALK_EVENT_REL).expect("walk event rel exists"));
+    assert!(
+        eval_relation_exists(&db, WALK_EVENT_TRANSITION_REL)
+            .expect("walk event transition rel exists")
     );
     assert!(eval_relation_exists(&db, AGENT_TURN_REL).expect("agent turn rel exists"));
     assert!(eval_relation_exists(&db, AGENT_TURN_EVENT_REL).expect("agent turn event rel exists"));
@@ -1271,6 +1302,66 @@ fn prototype1_eval_store_owner_db_serializes_parallel_agent_turn_writes() {
         )
         .expect("query agent turn rows");
     assert_eq!(result.rows.len(), count);
+}
+
+#[test]
+fn prototype1_eval_store_walk_event_rows_capture_epoch_and_phase() {
+    let tmp = tempfile::tempdir().expect("tmp");
+    let db_path = tmp.path().join("prototype1/eval-store.cozo.sqlite");
+    let db = Database::new_init().expect("db");
+    DbEvalStore::new(&db).install_schema().expect("schema");
+    super::cozo_store::persist_owner_eval_database(&db, &db_path).expect("persist owner db");
+
+    let exe_path = std::env::current_exe().expect("current exe");
+    write_walk_event_to_owner_db(
+        &db_path,
+        WalkEventEvidence {
+            campaign_id: "campaign".to_string(),
+            node_id: "node-parent".to_string(),
+            parent_id: "node-parent".to_string(),
+            generation: 0,
+            branch_id: "branch-parent".to_string(),
+            command: "step".to_string(),
+            status: "ok".to_string(),
+            phase_before: Some("r7".to_string()),
+            phase_after: "r8".to_string(),
+            target_phase: Some("r8".to_string()),
+            watch: Some(true),
+            allow_git_changes: Some(false),
+            transitions: vec!["r7->r8:r7_to_r8".to_string()],
+            protocol_version: 3,
+            transition_graph_version: "walk-r0-r14a-v1".to_string(),
+            repo_root: tmp.path().display().to_string(),
+            exe_path: exe_path.display().to_string(),
+            exe_modified_unix_ms: Some(42),
+            git_head: Some("abc123".to_string()),
+            source_status_hash: Some("hash".to_string()),
+            recorded_at: "2026-06-28T00:00:00Z".to_string(),
+        },
+    )
+    .expect("walk event write");
+
+    let db = load_owner_eval_database(&db_path).expect("owner db loads");
+    let rows = query_walk_events(&db, &CampaignId::from("campaign"));
+    assert_eq!(rows.rows.len(), 1);
+    let row = rows.row_refs().next().expect("walk row");
+    assert_eq!(row.get::<String>("command").expect("command"), "step");
+    assert_eq!(
+        row.get::<String>("phase_before").expect("phase before"),
+        "r7"
+    );
+    assert_eq!(row.get::<String>("phase_after").expect("phase after"), "r8");
+    assert_eq!(row.get::<i64>("transition_count").expect("count"), 1);
+    assert!(!row.get::<String>("exe_sha256").expect("exe sha").is_empty());
+    let transitions = query_walk_event_transitions(&db, &CampaignId::from("campaign"));
+    assert_eq!(transitions.rows.len(), 1);
+    let transition = transitions.row_refs().next().expect("transition row");
+    assert_eq!(
+        transition
+            .get::<String>("transition_label")
+            .expect("transition label"),
+        "r7->r8:r7_to_r8"
+    );
 }
 
 #[test]
@@ -2619,6 +2710,34 @@ fn query_run_profile_policy(db: &Database, campaign_id: &CampaignId) -> QueryRes
         params,
     )
     .expect("query run profile policy")
+}
+
+fn query_walk_events(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[command, phase_before, phase_after, transition_count, exe_sha256] :=
+    *eval_walk_event { campaign_id, command, phase_before, phase_after, transition_count, exe_sha256 },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query walk events")
+}
+
+fn query_walk_event_transitions(db: &Database, campaign_id: &CampaignId) -> QueryResult {
+    let mut params = BTreeMap::new();
+    params.insert("campaign_id".to_string(), campaign_id.to_string().into());
+    db.raw_query_params(
+        r#"
+?[transition_label] :=
+    *eval_walk_event_transition { campaign_id, transition_label },
+    campaign_id = $campaign_id
+"#,
+        params,
+    )
+    .expect("query walk event transitions")
 }
 
 fn query_harness_request(db: &Database, campaign_id: &CampaignId) -> QueryResult {

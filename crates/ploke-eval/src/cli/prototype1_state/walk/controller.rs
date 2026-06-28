@@ -177,6 +177,28 @@ pub(crate) struct DeltaRenderStyle {
 }
 
 impl WalkAdvanceReport {
+    pub(crate) fn from(&self) -> WalkPhase {
+        self.from
+    }
+
+    pub(crate) fn to(&self) -> WalkPhase {
+        self.to
+    }
+
+    pub(crate) fn transition_labels(&self) -> Vec<String> {
+        self.transitions
+            .iter()
+            .map(|transition| {
+                format!(
+                    "{}->{}:{}",
+                    transition.from,
+                    transition.to,
+                    transition.edge()
+                )
+            })
+            .collect()
+    }
+
     /// Render from/to, applied edges, typestate deltas, and next admitted steps.
     pub(crate) fn render(&self) -> String {
         let mut lines = Vec::new();
@@ -1390,7 +1412,7 @@ impl WalkController {
         &mut self,
         config: WalkStartConfig,
         until: WalkPhase,
-    ) -> Result<WalkPhase, PrepareError> {
+    ) -> Result<WalkAdvanceReport, PrepareError> {
         if !matches!(self.state, WalkState::Empty | WalkState::Failed { .. }) {
             return Err(PrepareError::InvalidBatchSelection {
                 detail: format!(
@@ -1421,10 +1443,18 @@ impl WalkController {
             self.refresh_from_disk()?;
             let reconstructed = self.phase();
             if reconstructed != WalkPhase::Empty {
-                if phase_rank(reconstructed) < phase_rank(until) {
-                    self.advance_until(until, false, false).await?;
-                }
-                return Ok(self.phase());
+                let transitions = if phase_rank(reconstructed) < phase_rank(until) {
+                    self.advance_until(until, false, false).await?
+                } else {
+                    Vec::new()
+                };
+                let report = WalkAdvanceReport {
+                    from: reconstructed,
+                    to: self.phase(),
+                    transitions,
+                };
+                self.last_delta = Some(report.clone());
+                return Ok(report);
             }
             self.state = WalkState::Empty;
             self.reconstruction = None;
@@ -1435,8 +1465,14 @@ impl WalkController {
             "start: created r0 for repo_root '{}'",
             repo_root.display()
         ));
-        self.advance_until(until, false, false).await?;
-        Ok(self.phase())
+        let transitions = self.advance_until(until, false, false).await?;
+        let report = WalkAdvanceReport {
+            from: WalkPhase::Empty,
+            to: self.phase(),
+            transitions,
+        };
+        self.last_delta = Some(report.clone());
+        Ok(report)
     }
 
     /// Advance the current walk by one edge or until a requested phase.
