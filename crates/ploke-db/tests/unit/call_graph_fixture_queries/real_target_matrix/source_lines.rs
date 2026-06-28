@@ -62,6 +62,87 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
     );
 
     let rows = db.raw_query_params(&script, params)?;
+    let needle = path_parts.join("::");
+    assert_targetless_line_rows(
+        db,
+        fixture,
+        &rows.rows,
+        expected,
+        &needle,
+        &format!("{status:?} source-line fanout rows for {path_parts:?}"),
+    )
+}
+
+pub(super) fn assert_targetless_method_line_fanout(
+    db: &Database,
+    fixture: &FixtureDb,
+    method: &str,
+    receiver_kind: &str,
+    receiver_path: Option<&[&str]>,
+    status: CallStatusKind,
+    expected: &[SourceLineFanout],
+) -> Result<(), DbError> {
+    let mut params = BTreeMap::new();
+    params.insert("method".to_string(), DataValue::from(method));
+    params.insert("receiver_kind".to_string(), DataValue::from(receiver_kind));
+    params.insert("status".to_string(), DataValue::from(format!("{status:?}")));
+    params.insert(
+        "receiver_path".to_string(),
+        receiver_path.map_or(DataValue::Null, path_value),
+    );
+
+    let script = format!(
+        r#"
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[file_path, site_id, owner_id, span, resolution_kind] :=
+    *call_site {{
+        id: site_id,
+        owner_id,
+        call_kind: "Method",
+        method_name: $method,
+        receiver_kind: $receiver_kind,
+        receiver_path: $receiver_path,
+        span @ 'NOW'
+    }},
+    *call_resolution_status {{
+        source_id: site_id,
+        source_kind: "Method",
+        status_kind: $status,
+        resolution_kind @ 'NOW'
+    }},
+    ancestor[owner_id, module_id],
+    *module {{ id: module_id @ 'NOW' }},
+    file_owner_for_module[module_id, file_id],
+    *file_mod {{ owner_id: file_id, file_path @ 'NOW' }}
+:sort file_path, span, site_id
+"#
+    );
+
+    let rows = db.raw_query_params(&script, params)?;
+    assert_targetless_line_rows(
+        db,
+        fixture,
+        &rows.rows,
+        expected,
+        method,
+        &format!("{status:?} source-line fanout rows for method {method:?}"),
+    )
+}
+
+fn assert_targetless_line_rows(
+    db: &Database,
+    fixture: &FixtureDb,
+    rows: &[Vec<DataValue>],
+    expected: &[SourceLineFanout],
+    needle: &str,
+    label: &str,
+) -> Result<(), DbError> {
     let suffixes = expected
         .iter()
         .map(|case| case.file_suffix)
@@ -69,14 +150,13 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
     let mut sources = BTreeMap::<String, String>::new();
     let mut actual = BTreeMap::<String, Vec<u32>>::new();
     let mut sites = Vec::new();
-    let needle = path_parts.join("::");
 
-    for row in &rows.rows {
+    for row in rows {
         let file_path = data_str(&row[0], "file_path");
         let Some(suffix) = suffixes.iter().find(|suffix| file_path.ends_with(**suffix)) else {
             panic!(
-                "unexpected file path for {status:?} {path_parts:?} row: {file_path}; rows: {:#?}",
-                rows.rows
+                "unexpected file path for {label} row: {file_path}; rows: {:#?}",
+                rows
             );
         };
         assert_eq!(row[4], DataValue::Null);
@@ -85,7 +165,7 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
         let owner_id = to_uuid(&row[2])?;
         assert!(
             relations_for_site(db, site_id)?.rows.is_empty(),
-            "{status:?} {path_parts:?} row in {suffix} should not have call_relation targets"
+            "{label} row in {suffix} should not have call_relation targets"
         );
         sites.push((owner_id, site_id));
 
@@ -99,13 +179,15 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
             })
         });
         let line = line_for_byte(source, span_start(&row[3]));
-        let text = source
-            .lines()
-            .nth(line as usize - 1)
+        let lines = source.lines().collect::<Vec<_>>();
+        let line_index = line as usize - 1;
+        let text = lines
+            .get(line_index)
             .unwrap_or_else(|| panic!("{suffix}:{line} should exist in pinned source"));
+        let window = lines[line_index..usize::min(line_index + 4, lines.len())].join("\n");
         assert!(
-            text.contains(&needle),
-            "{suffix}:{line} should contain {needle:?}; source line was {text:?}"
+            window.contains(needle),
+            "{suffix}:{line} should contain {needle:?} on the span line or nearby continuation; source line was {text:?}"
         );
         actual.entry((*suffix).to_string()).or_default().push(line);
     }
@@ -119,13 +201,9 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
         .collect::<BTreeMap<_, _>>();
     assert_eq!(
         actual, expected,
-        "unexpected {status:?} source-line fanout for {path_parts:?}"
+        "unexpected source-line fanout for {label}"
     );
-    assert_no_traversal_candidates_for_sites(
-        db,
-        &sites,
-        &format!("{status:?} source-line fanout rows for {path_parts:?}"),
-    )?;
+    assert_no_traversal_candidates_for_sites(db, &sites, label)?;
 
     Ok(())
 }

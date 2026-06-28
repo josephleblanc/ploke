@@ -2,7 +2,9 @@ use ploke_test_utils::CORPUS_AXUM_CALL_GRAPH;
 
 use super::super::*;
 use super::common::*;
-use super::source_lines::{SourceLineFanout, assert_targetless_path_line_fanout};
+use super::source_lines::{
+    SourceLineFanout, assert_targetless_method_line_fanout, assert_targetless_path_line_fanout,
+};
 
 #[test]
 fn axum_core_extract_self_methods_reach_same_impl_methods() -> Result<(), DbError> {
@@ -467,6 +469,66 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
         Some(&["0"]),
         CallStatusKind::Unsupported,
         3,
+    )?;
+    assert_targetless_method_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        "poll_ready",
+        "SelfField",
+        Some(&["inner"]),
+        CallStatusKind::Unsupported,
+        &[
+            SourceLineFanout {
+                file_suffix: "axum-core/src/extract/default_body_limit.rs",
+                lines: &[220],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/extension.rs",
+                lines: &[180],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/extract/nested_path.rs",
+                lines: &[91],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/middleware/from_extractor.rs",
+                lines: &[212],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/middleware/from_fn.rs",
+                lines: &[358],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/strip_prefix.rs",
+                lines: &[36],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/util.rs",
+                lines: &[69],
+            },
+        ],
+    )?;
+    assert_targetless_method_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        "poll_ready",
+        "SelfField",
+        Some(&["0"]),
+        CallStatusKind::Unsupported,
+        &[
+            SourceLineFanout {
+                file_suffix: "axum/src/middleware/response_axum_body.rs",
+                lines: &[45],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/mod.rs",
+                lines: &[559],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/nest.rs",
+                lines: &[258],
+            },
+        ],
     )
 }
 
@@ -576,7 +638,7 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
         },
     )?;
 
-    // Matrix source: axum/src/serve/mod.rs:769,770,772,776,780,785,790,795
+    // Matrix source: axum/src/serve/mod.rs:574,575,577,581,585,590,595,601
     // call `router.clone...` from the same typed local binding. The clone
     // dispatch itself is still targetless and must not traverse to `Router`.
     let router_receiver = CallReceiver::TypedLocalBinding {
@@ -585,15 +647,15 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
     };
     let router_clone_cases = [
         (
-            // axum/src/serve/mod.rs:769,770,772,776,780,785,790,795
+            // axum/src/serve/mod.rs:574,575,577,581,585,590,595,601
             // `if_it_compiles_it_works` projects eight `router.clone` rows.
-            "axum/src/serve/mod.rs:769,770,772,776,780,785,790,795",
+            "axum/src/serve/mod.rs:574,575,577,581,585,590,595,601",
             compile_owner,
             8,
         ),
         (
-            // axum/src/serve/mod.rs:928
-            "axum/src/serve/mod.rs:928",
+            // axum/src/serve/mod.rs:692
+            "axum/src/serve/mod.rs:692",
             function_id_by_name_in_module(
                 &db,
                 &["crate", "serve", "tests"],
@@ -602,8 +664,8 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
             1,
         ),
         (
-            // axum/src/serve/mod.rs:940
-            "axum/src/serve/mod.rs:940",
+            // axum/src/serve/mod.rs:704
+            "axum/src/serve/mod.rs:704",
             function_id_by_name_in_module(
                 &db,
                 &["crate", "serve", "tests"],
@@ -678,6 +740,18 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
         CallStatusKind::Unresolved,
         10,
     )?;
+    assert_targetless_method_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        "clone",
+        "TypedLocalBinding",
+        Some(&["router", "Router"]),
+        CallStatusKind::Unresolved,
+        &[SourceLineFanout {
+            file_suffix: "axum/src/serve/mod.rs",
+            lines: &[574, 575, 577, 581, 585, 590, 595, 601, 692, 704],
+        }],
+    )?;
     assert_targetless_method_rows(
         &db,
         "clone",
@@ -685,6 +759,18 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
         Some(&["app", "Router"]),
         CallStatusKind::Unresolved,
         1,
+    )?;
+    assert_targetless_method_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        "clone",
+        "TypedLocalBinding",
+        Some(&["app", "Router"]),
+        CallStatusKind::Unresolved,
+        &[SourceLineFanout {
+            file_suffix: "axum/src/routing/tests/mod.rs",
+            lines: &[660],
+        }],
     )
 }
 

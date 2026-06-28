@@ -184,7 +184,7 @@ real-corpus matrix asserts both `HandleError::new` caller rows and all 144
 | --- | --- | --- | --- |
 | `self.extract_with_state` | `axum-core/src/ext_traits/request.rs:268` | `RequestExt::extract` | impl `RequestExt for Request` at `request.rs:262`; `Request` alias at `extract/mod.rs:29`; same impl method `extract_with_state` at `request.rs:271`; trait declaration `:122`. |
 | `self.inner.poll_ready` | `axum/src/extension.rs:180` | `AddExtension::poll_ready` | field `inner: S` at `extension.rs:164-166`; impl bound `S: Service<Request<ResBody>>` at `:171`; imported `tower_service::Service` at `:12`; external trait method. |
-| `Router::new` / `router.clone` | `Router::new` at `axum/src/serve/mod.rs:561`; `crate::Router::new` at `axum/src/routing/method_routing.rs:1494`; `router.clone` at `serve/mod.rs:574,575,577,581,585,590,596,602` | `if_it_compiles_it_works`; `building_complex_router` | typed local `let router: Router = Router::new()` -> `Router` import `serve/mod.rs:525` -> re-export `lib.rs:470` -> struct `routing/mod.rs:86` -> `Router::new` `:162`; explicit `crate::Router::new()` also targets the same inherent method; clone target `Clone for Router` at `routing/mod.rs:90`. |
+| `Router::new` / `router.clone` | `Router::new` at `axum/src/serve/mod.rs:561`; `crate::Router::new` at `axum/src/routing/method_routing.rs:1494`; `router.clone` span-starts at `serve/mod.rs:574,575,577,581,585,590,595,601,692,704` | `if_it_compiles_it_works`; `building_complex_router`; serve local address tests | typed local `let router: Router = Router::new()` -> `Router` import `serve/mod.rs:525` -> re-export `lib.rs:470` -> struct `routing/mod.rs:86` -> `Router::new` `:162`; explicit `crate::Router::new()` also targets the same inherent method; clone target `Clone for Router` at `routing/mod.rs:90`. |
 | local `req.extensions_mut` | `axum-core/src/ext_traits/request.rs:302` | `RequestExt::extract_parts_with_state` | `let mut req = Request::new(())` at `:297`; `Request` alias to `http::Request` at `extract/mod.rs:29`; external `http::Request::extensions_mut`. |
 | parameter `req.extensions_mut` | `axum/src/extension.rs:184` | `AddExtension::call` | parameter `mut req: Request<ResBody>` at `:183`; `Request` imported from `http` at `:7`; external method. |
 | `self.0.size_hint` | `axum-core/src/body.rs:127` | `impl http_body::Body for Body::size_hint` | tuple field `Body(BoxBody)` at `:39`; `BoxBody` alias at `:13`; external `http_body::Body` trait method. |
@@ -222,9 +222,10 @@ dependency-root cross-crate trait-bound resolution remain documented future
 slices. Receiver tests now assert exact owner-count buckets
 for the six projected `req.extensions_mut()` local-binding rows, the seven
 projected `self.inner.poll_ready(cx)` forwarding rows, and the three projected
-`self.0.poll_ready(cx)` tuple-field rows. The tuple-field coverage includes the
-nested local `impl Service` rows currently owned by their enclosing test
-functions in `routing/tests/mod.rs` and `routing/tests/nest.rs`.
+`self.0.poll_ready(cx)` tuple-field rows; the `poll_ready` rows are now also
+pinned by exact source-line fanout. The tuple-field coverage includes the nested
+local `impl Service` rows currently owned by their enclosing test functions in
+`routing/tests/mod.rs` and `routing/tests/nest.rs`.
 The result-chain coverage also pins all 14 projected `Request::builder()` rows
 by owner and source line: eight external rows and six unsupported rows, including
 the matrix chain in `middleware/from_fn.rs:411`.
@@ -236,7 +237,8 @@ The exact current source-line fanout is external
 `routing/tests/get_to_head.rs:{22,56}`.
 The typed-local clone coverage pins all 11 projected `Router` receiver rows:
 ten `router.clone()` rows across `serve/mod.rs` and one `app.clone()` row in
-`routing/tests/mod.rs`.
+`routing/tests/mod.rs`, with exact source-line fanout for both typed local
+bindings.
 It also pins both projected `Route` `oneshot` receiver rows in
 `routing/route.rs`: the method-call-result receiver at `:51` and the tuple-field
 receiver at `:57`.
