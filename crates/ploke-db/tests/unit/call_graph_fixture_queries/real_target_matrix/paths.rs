@@ -629,6 +629,23 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
         rows.rows.is_empty(),
         "generated routing::post should remain absent until macro-generated handler functions are modeled: {rows:#?}"
     );
+
+    // Matrix immediate candidate:
+    //   axum/src/json.rs:237 imports `routing::post` in a grouped import.
+    //   axum/src/json.rs:248 calls `post(echo_json)` from `deserialize_body`.
+    // Current DB contract: the grouped-import callsite is visible, but it
+    // remains unsupported and targetless because the generated `post` function
+    // binding itself is absent.
+    let json_owner =
+        function_id_by_name_in_module(&db, &["crate", "json", "tests"], "deserialize_body")?;
+    assert_owner_path_targetless(
+        &db,
+        json_owner,
+        &["post"],
+        CallStatusKind::Unsupported,
+        "axum/src/json.rs:248 grouped-import post",
+    )?;
+
     assert_targetless_path_rows(&db, &["post"], CallStatusKind::Unsupported, 22)?;
 
     Ok(())

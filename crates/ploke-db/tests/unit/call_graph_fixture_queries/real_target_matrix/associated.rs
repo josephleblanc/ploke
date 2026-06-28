@@ -178,6 +178,24 @@ fn axum_real_target_test_client_new_high_fanout_is_documented_gap() -> Result<()
         CallStatusKind::Unsupported,
         167,
     )?;
+
+    // Matrix immediate candidate:
+    //   axum/src/json.rs:237 imports `test_helpers::*`.
+    //   axum/src/json.rs:250 calls `TestClient::new(app)` from
+    //   `deserialize_body`.
+    // Current DB contract: the glob-import type callsite is projected, but
+    // associated type-path resolution does not yet traverse to
+    // `test_client.rs:36`.
+    let json_owner =
+        function_id_by_name_in_module(&db, &["crate", "json", "tests"], "deserialize_body")?;
+    assert_owner_path_targetless(
+        &db,
+        json_owner,
+        &["TestClient", "new"],
+        CallStatusKind::Unsupported,
+        "axum/src/json.rs:250 glob-import TestClient::new",
+    )?;
+
     assert_path_module_fanout(
         &db,
         &["TestClient", "new"],

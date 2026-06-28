@@ -114,14 +114,14 @@ Status values:
 | Parenthesized function path / `as fn(...)` cast | `not-found` | n/a | n/a | Searched selected axum members and fallback real corpus for direct parenthesized function-path calls and `as fn(...)` cast calls. | Keep synthetic coverage. |
 | Indexed function value / array of function pointers | `not-found` | n/a | n/a | No credible parsed real corpus case found. | Keep synthetic coverage. |
 
-## Immediate Test Candidates
+## Test Candidate Status
 
-These rows are the most useful near-term additions because they are inside the current axum call-graph fixture and should produce stable DB query assertions without creating a new fixture:
+These rows are inside the current axum call-graph fixture and produce stable DB query assertions without creating a new fixture:
 
 | Candidate | Source | Assertion shape |
 | --- | --- | --- |
-| Grouped import free function | `axum/src/json.rs:237`, `axum/src/json.rs:248` | Find the call site owned by `deserialize_body` and assert it resolves/classifies `post` through `crate::routing::post`. |
-| Glob import type call | `axum/src/json.rs:237`, `axum/src/json.rs:250` | Find `TestClient::new(app)` and assert the type path is visible through `test_helpers::*`. |
+| Grouped import free function | `axum/src/json.rs:237`, `axum/src/json.rs:248` | Covered by `axum_real_target_generated_post_function_is_documented_gap`: the `deserialize_body` owner has a visible unsupported, targetless `post` row. |
+| Glob import type call | `axum/src/json.rs:237`, `axum/src/json.rs:250` | Covered by `axum_real_target_test_client_new_high_fanout_is_documented_gap`: the `deserialize_body` owner has a visible unsupported, targetless `TestClient::new` row. |
 | Trait-associated dispatch | `axum-core/src/ext_traits/request.rs:279` | Find `E::from_request(self, state)` and assert the call is represented as trait-associated or conservatively unsupported, not lost. |
 | Opaque callable field | `axum/src/boxed.rs:85` | Find `(self.into_route)(...)` and assert a dynamic call site exists with unsupported/fail-closed status. |
 | IIFE closure expression | `axum-macros/src/lib.rs:734`, `axum-macros/src/lib.rs:738` | Find the dynamic call for `(|| { ... })()` and assert it is persisted without a fake semantic target. |
