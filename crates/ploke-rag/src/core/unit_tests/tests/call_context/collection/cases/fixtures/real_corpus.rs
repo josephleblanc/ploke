@@ -86,6 +86,96 @@ async fn call_context_exact_reads_axum_body_empty_incoming_callers() -> Result<(
     Ok(())
 }
 
+#[tokio::test]
+async fn call_context_exact_reads_axum_parse_attrs_incoming_callers() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(fresh_backup_fixture_db(
+        &ploke_test_utils::CORPUS_AXUM_CALL_GRAPH,
+    )?);
+    assert!(
+        db.has_call_graph_relations()?,
+        "corpus_axum_call_graph must include call graph relations for RAG call-context tests"
+    );
+
+    let target = function_id_by_name_in_module(&db, &["crate", "attr_parsing"], "parse_attrs")?;
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.call_context_degraded(),
+        "axum call graph backup should enable RAG call context"
+    );
+
+    let callers = db.callers_for_target(target)?;
+    assert_eq!(
+        callers.len(),
+        8,
+        "current axum fixture should resolve the eight parse_attrs caller sites: {callers:#?}"
+    );
+
+    let context = rag.exact_call_context(target)?;
+    let incoming = context
+        .iter()
+        .filter(|call| {
+            call.kind == CallSiteKind::Path
+                && call
+                    .targets
+                    .iter()
+                    .any(|candidate| candidate.target_id == target)
+        })
+        .collect::<Vec<_>>();
+
+    // Matrix: `parse_attrs` path/import row.
+    // Source chain:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   axum-macros/src/attr_parsing.rs:59 defines `parse_attrs`.
+    //   axum-macros/src/typed_path.rs:23 calls
+    //   `crate::attr_parsing::parse_attrs(...)`.
+    //   from_ref.rs:30 and from_request/mod.rs:{112,196,592,715,880,896}
+    //   call imported `parse_attrs(...)`.
+    // Expected traversal: RAG exact call context preserves the same eight
+    // incoming caller-site edges exposed by `Database::callers_for_target`.
+    assert_eq!(
+        incoming.len(),
+        8,
+        "RAG exact call context should expose all current parse_attrs incoming edges: {context:#?}"
+    );
+
+    let expected_site_ids = callers
+        .iter()
+        .map(|caller| caller.site.id)
+        .collect::<BTreeSet<_>>();
+    let incoming_site_ids = incoming
+        .iter()
+        .map(|call| call.site_id)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        incoming_site_ids, expected_site_ids,
+        "RAG call context should preserve the DB parse_attrs caller site identities"
+    );
+
+    let mut path_counts = BTreeMap::<Vec<String>, usize>::new();
+    for call in incoming {
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(call.targets.len(), 1);
+        assert_eq!(call.targets[0].target_id, target);
+        assert_eq!(call.targets[0].relation, CallTargetKind::Function);
+        let CallCalleeInfo::Path { path } = &call.callee else {
+            panic!("parse_attrs incoming caller should be a path call: {call:#?}");
+        };
+        *path_counts.entry(path.clone()).or_default() += 1;
+    }
+    assert_eq!(
+        path_counts,
+        BTreeMap::from([
+            (path(&["crate", "attr_parsing", "parse_attrs"]), 1),
+            (path(&["parse_attrs"]), 7),
+        ]),
+        "RAG call context should preserve explicit and imported parse_attrs path shapes"
+    );
+
+    Ok(())
+}
+
 fn method_id_by_name_and_body_substring(
     db: &Database,
     name: &str,
@@ -121,6 +211,39 @@ fn method_id_by_name_and_body_substring(
     );
 
     to_uuid(&matching[0]).map_err(Error::from)
+}
+
+fn function_id_by_name_in_module(
+    db: &Database,
+    module_path: &[&str],
+    name: &str,
+) -> Result<Uuid, Error> {
+    let mut params = BTreeMap::new();
+    params.insert("name".to_string(), DataValue::from(name));
+    params.insert(
+        "path".to_string(),
+        DataValue::List(
+            module_path
+                .iter()
+                .map(|part| DataValue::from(*part))
+                .collect(),
+        ),
+    );
+
+    let rows = db.raw_query_params(
+        r#"?[id] :=
+            *function { id, name: $name, module_id @ 'NOW' },
+            *module { id: module_id, path: $path @ 'NOW' }"#,
+        params,
+    )?;
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "expected exactly one function named {name:?} in module {module_path:?}; rows: {:#?}",
+        rows.rows
+    );
+
+    to_uuid(&rows.rows[0][0]).map_err(Error::from)
 }
 
 fn body_key(value: &str) -> String {

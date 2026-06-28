@@ -47,6 +47,20 @@ pub(crate) struct AxumBodyEmptyToolFixture {
     pub(crate) callers: Vec<Uuid>,
 }
 
+pub(crate) struct AxumParseAttrsToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) target: Uuid,
+    pub(crate) callers: Vec<ExpectedCallSite>,
+}
+
+pub(crate) struct ExpectedCallSite {
+    pub(crate) owner: Uuid,
+    pub(crate) site: Uuid,
+    pub(crate) path: Vec<String>,
+}
+
 impl CallGraphToolFixture {
     pub(crate) async fn new() -> Self {
         let db = Arc::new(Database::new(
@@ -101,27 +115,13 @@ impl CallGraphToolFixture {
     }
 
     pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
-        Ctx {
-            state: Arc::clone(&self.state),
-            event_bus: Arc::new(EventBus::new(EventBusCaps::default())),
-            request_id: Uuid::new_v4(),
-            parent_id: Uuid::new_v4(),
-            call_id: ArcStr::from(call_id),
-        }
+        ctx_for_state(&self.state, call_id)
     }
 }
 
 impl AxumBodyEmptyToolFixture {
     pub(crate) async fn new() -> Self {
-        let db = Arc::new(
-            fresh_backup_fixture_db(&CORPUS_AXUM_CALL_GRAPH).expect("corpus axum call graph db"),
-        );
-        assert!(
-            db.has_call_graph_relations()
-                .expect("check call graph relations"),
-            "corpus_axum_call_graph should expose call graph relations"
-        );
-
+        let db = axum_call_graph_db();
         let target = axum_body_empty_target(&db);
         let callers = db
             .callers_for_target(target.id)
@@ -140,14 +140,7 @@ impl AxumBodyEmptyToolFixture {
                 >= callers.len(),
             "Body::empty should project target-scoped proof rows for real-corpus callers"
         );
-
-        let crate_root = target
-            .file_path
-            .parent()
-            .and_then(|src_dir| src_dir.parent())
-            .expect("Body::empty file should live under axum-core/src")
-            .to_path_buf();
-        let state = app_state_with_rag(Arc::clone(&db), crate_root).await;
+        let state = axum_state_for_target(Arc::clone(&db), &target, "Body::empty").await;
 
         Self {
             state,
@@ -163,14 +156,92 @@ impl AxumBodyEmptyToolFixture {
     }
 
     pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
-        Ctx {
-            state: Arc::clone(&self.state),
-            event_bus: Arc::new(EventBus::new(EventBusCaps::default())),
-            request_id: Uuid::new_v4(),
-            parent_id: Uuid::new_v4(),
-            call_id: ArcStr::from(call_id),
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl AxumParseAttrsToolFixture {
+    pub(crate) async fn new() -> Self {
+        let db = axum_call_graph_db();
+        let target = axum_parse_attrs_target(&db);
+        let callers = db
+            .callers_for_target(target.id)
+            .expect("parse_attrs incoming callers")
+            .into_iter()
+            .map(|caller| ExpectedCallSite {
+                owner: caller.site.owner_id,
+                site: caller.site.id,
+                path: caller
+                    .site
+                    .path
+                    .expect("parse_attrs caller should carry a path"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            callers.len(),
+            8,
+            "current axum fixture should resolve the eight parse_attrs caller sites"
+        );
+        assert!(
+            db.project_call_proof_facts_for_node(target.id, "bd:corpus-axum-call-graph")
+                .expect("project axum parse_attrs proof facts")
+                >= callers.len(),
+            "parse_attrs should project target-scoped proof rows for real-corpus callers"
+        );
+        let state = axum_state_for_target(Arc::clone(&db), &target, "parse_attrs").await;
+
+        Self {
+            state,
+            file_path: target.file_path,
+            module_path: target.module_path,
+            target: target.id,
+            callers,
         }
     }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+fn ctx_for_state(state: &Arc<AppState>, call_id: &'static str) -> Ctx {
+    Ctx {
+        state: Arc::clone(state),
+        event_bus: Arc::new(EventBus::new(EventBusCaps::default())),
+        request_id: Uuid::new_v4(),
+        parent_id: Uuid::new_v4(),
+        call_id: ArcStr::from(call_id),
+    }
+}
+
+fn axum_call_graph_db() -> Arc<Database> {
+    let db = Arc::new(
+        fresh_backup_fixture_db(&CORPUS_AXUM_CALL_GRAPH).expect("corpus axum call graph db"),
+    );
+    assert!(
+        db.has_call_graph_relations()
+            .expect("check call graph relations"),
+        "corpus_axum_call_graph should expose call graph relations"
+    );
+    db
+}
+
+async fn axum_state_for_target(
+    db: Arc<Database>,
+    target: &TargetInfo,
+    label: &str,
+) -> Arc<AppState> {
+    let crate_root = target
+        .file_path
+        .parent()
+        .and_then(|src_dir| src_dir.parent())
+        .unwrap_or_else(|| panic!("{label} file should live under a crate src directory"))
+        .to_path_buf();
+    app_state_with_rag(db, crate_root).await
 }
 
 async fn app_state_with_rag(db: Arc<Database>, crate_root: PathBuf) -> Arc<AppState> {
@@ -218,13 +289,13 @@ async fn app_state_with_rag(db: Arc<Database>, crate_root: PathBuf) -> Arc<AppSt
     state
 }
 
-struct MethodTarget {
+struct TargetInfo {
     id: Uuid,
     file_path: PathBuf,
     module_path: Vec<String>,
 }
 
-fn axum_body_empty_target(db: &Database) -> MethodTarget {
+fn axum_body_empty_target(db: &Database) -> TargetInfo {
     let mut params = BTreeMap::new();
     params.insert("name".to_string(), DataValue::from("empty"));
 
@@ -265,8 +336,54 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
     );
     let row = matching[0];
 
-    MethodTarget {
+    TargetInfo {
         id: to_uuid(&row[0]).expect("Body::empty uuid"),
+        file_path: PathBuf::from(data_str(&row[2], "file_path")),
+        module_path: data_path(&row[3], "module path"),
+    }
+}
+
+fn axum_parse_attrs_target(db: &Database) -> TargetInfo {
+    let mut params = BTreeMap::new();
+    params.insert("name".to_string(), DataValue::from("parse_attrs"));
+
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[id, body, file_path, mod_path] :=
+    *function {{ id, name: $name, body, module_id @ 'NOW' }},
+    *module{{ id: module_id, path: mod_path @ 'NOW' }},
+    file_owner_for_module[module_id, file_id],
+    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+    let rows = db
+        .raw_query_params(&script, params)
+        .expect("query axum parse_attrs target");
+    let matching = rows
+        .rows
+        .iter()
+        .filter(|row| {
+            body_key(data_str(&row[1], "function body")).contains("parse_args::<T>()")
+                && data_str(&row[2], "file_path").ends_with("axum-macros/src/attr_parsing.rs")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one axum-macros parse_attrs target; rows: {:#?}",
+        rows.rows
+    );
+    let row = matching[0];
+
+    TargetInfo {
+        id: to_uuid(&row[0]).expect("parse_attrs uuid"),
         file_path: PathBuf::from(data_str(&row[2], "file_path")),
         module_path: data_path(&row[3], "module path"),
     }
@@ -358,6 +475,60 @@ pub(crate) fn assert_body_empty_incoming_context(
                         })
             }),
             "{label} should return Body::empty incoming caller context for {owner}: {calls:#?}"
+        );
+    }
+}
+
+pub(crate) fn assert_parse_attrs_incoming_context(
+    calls: &[serde_json::Value],
+    callers: &[ExpectedCallSite],
+    target: Uuid,
+    label: &str,
+) {
+    let target = target.to_string();
+    let matching = calls
+        .iter()
+        .filter(|call| {
+            call.get("kind").and_then(serde_json::Value::as_str) == Some("path")
+                && call
+                    .get("targets")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|targets| {
+                        targets.iter().any(|candidate| {
+                            candidate
+                                .get("target_id")
+                                .and_then(serde_json::Value::as_str)
+                                == Some(target.as_str())
+                        })
+                    })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        callers.len(),
+        "{label} should return all parse_attrs incoming caller-site rows: {calls:#?}"
+    );
+
+    for expected in callers {
+        let owner = expected.owner.to_string();
+        let site = expected.site.to_string();
+        assert!(
+            matching.iter().any(|call| {
+                call.get("owner_id").and_then(serde_json::Value::as_str) == Some(owner.as_str())
+                    && call.get("site_id").and_then(serde_json::Value::as_str)
+                        == Some(site.as_str())
+                    && call
+                        .get("callee")
+                        .and_then(|callee| callee.get("path"))
+                        .and_then(|path_variant| path_variant.get("path"))
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(|path| {
+                            path.iter()
+                                .filter_map(serde_json::Value::as_str)
+                                .eq(expected.path.iter().map(String::as_str))
+                        })
+            }),
+            "{label} should return parse_attrs incoming caller site {site}: {calls:#?}"
         );
     }
 }
