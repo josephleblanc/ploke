@@ -376,6 +376,58 @@ async fn call_context_exact_reads_axum_handler_call_trait_method_caller() -> Res
     Ok(())
 }
 
+#[tokio::test]
+async fn call_context_collection_reads_axum_await_result_receiver_gap() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    let owner = method_id_by_name_and_body_substring(
+        &db,
+        "accept",
+        "self.sem.clone().acquire_owned().await.unwrap()",
+    )?;
+
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let context = call_context
+        .get(&owner)
+        .unwrap_or_else(|| panic!("ConnLimiter::accept should receive outgoing call context"));
+    let expected_callee = CallCalleeInfo::Method {
+        name: "unwrap".to_string(),
+        receiver: Some(CallReceiverInfo::AwaitResult),
+    };
+    let await_unwrap = context
+        .iter()
+        .filter(|call| call.kind == CallSiteKind::Method && call.callee == expected_callee)
+        .collect::<Vec<_>>();
+
+    // Matrix: awaited-result receiver row.
+    // Source chain:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   axum/src/serve/listener.rs:142 owns `ConnLimiter<T>::accept`.
+    //   axum/src/serve/listener.rs:143 calls
+    //   `self.sem.clone().acquire_owned().await.unwrap()`.
+    // Current contract: RAG owner-seeded call context preserves the DB-pinned
+    // `AwaitResult.unwrap` row as unsupported and targetless. It must expose
+    // zero traversal targets rather than guessing the concrete awaited result
+    // type or a local `unwrap` callee.
+    assert_eq!(
+        await_unwrap.len(),
+        1,
+        "RAG call context should expose exactly the listener AwaitResult unwrap row: {context:#?}"
+    );
+
+    let call = await_unwrap[0];
+    assert_eq!(call.owner_id, owner);
+    assert_eq!(call.status, CallStatusKind::Unsupported);
+    assert_eq!(call.resolution, None);
+    assert!(
+        call.targets.is_empty(),
+        "AwaitResult unwrap should remain targetless in RAG call context: {call:#?}"
+    );
+
+    Ok(())
+}
+
 fn method_id_by_name_and_body_substring(
     db: &Database,
     name: &str,
