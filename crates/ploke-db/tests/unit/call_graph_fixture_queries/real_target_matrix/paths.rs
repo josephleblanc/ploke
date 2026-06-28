@@ -146,13 +146,13 @@ fn axum_real_target_parse_attrs_reaches_helper_current_fanout() -> Result<(), Db
             2,
         ),
         (
-            "from_request/mod.rs:592 extract_fields -> parse_attrs",
+            "from_request/mod.rs:598 extract_fields -> parse_attrs",
             function_id_by_name_in_module(&db, &["crate", "from_request"], "extract_fields")?,
             &["parse_attrs"][..],
             1,
         ),
         (
-            "from_request/mod.rs:715 impl_struct_by_extracting_all_at_once -> parse_attrs",
+            "from_request/mod.rs:727 impl_struct_by_extracting_all_at_once -> parse_attrs",
             function_id_by_name_in_module(
                 &db,
                 &["crate", "from_request"],
@@ -162,7 +162,7 @@ fn axum_real_target_parse_attrs_reaches_helper_current_fanout() -> Result<(), Db
             1,
         ),
         (
-            "from_request/mod.rs:{880,896} impl_enum_by_extracting_all_at_once -> parse_attrs",
+            "from_request/mod.rs:{892,908} impl_enum_by_extracting_all_at_once -> parse_attrs",
             function_id_by_name_in_module(
                 &db,
                 &["crate", "from_request"],
@@ -302,7 +302,7 @@ fn axum_real_target_parse_attrs_projects_proof_facts() -> Result<(), DbError> {
     //   axum-macros/src/attr_parsing.rs:59 defines `parse_attrs`.
     //   axum-macros/src/typed_path.rs:23 calls
     //   `crate::attr_parsing::parse_attrs(...)`.
-    //   from_ref.rs:30 and from_request/mod.rs:{112,196,592,715,880,896}
+    //   from_ref.rs:30 and from_request/mod.rs:{112,196,598,727,892,908}
     //   call imported `parse_attrs(...)`.
     // Expected proof traversal: all eight current caller sites project
     // call_site, call_resolution, call_edge, and per-source provenance facts.
@@ -824,6 +824,10 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
         (
             "content_type_with_encoding",
             "axum/src/extract/multipart.rs:381",
+        ),
+        (
+            "_multipart_from_request_limited",
+            "axum/src/extract/multipart.rs:404",
         ),
         ("body_too_large", "axum/src/extract/multipart.rs:420"),
         ("optional_multipart", "axum/src/extract/multipart.rs:448"),

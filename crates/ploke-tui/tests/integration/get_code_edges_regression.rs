@@ -592,7 +592,7 @@ async fn code_item_edges_returns_real_corpus_parse_attrs_callers() {
     //   axum-macros/src/attr_parsing.rs:59 defines `parse_attrs`.
     //   axum-macros/src/typed_path.rs:23 calls
     //   `crate::attr_parsing::parse_attrs(...)`.
-    //   from_ref.rs:30 and from_request/mod.rs:{112,196,592,715,880,896}
+    //   from_ref.rs:30 and from_request/mod.rs:{112,196,598,727,892,908}
     //   call imported `parse_attrs(...)`.
     // Expected tool traversal: exact edge lookup of the callee function exposes
     // all eight incoming caller-site edges and projected proof rows.

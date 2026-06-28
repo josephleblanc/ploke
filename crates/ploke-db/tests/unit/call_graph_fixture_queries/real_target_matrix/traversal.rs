@@ -39,7 +39,7 @@ fn axum_real_target_supported_callers_are_one_hop_traversable() -> Result<(), Db
         ResolvedTraversalCase {
             // axum-macros/src/typed_path.rs:23 calls
             // `crate::attr_parsing::parse_attrs(...)`; from_ref.rs:30 and
-            // from_request/mod.rs:{112,196,592,715,880,896} call the imported
+            // from_request/mod.rs:{112,196,598,727,892,908} call the imported
             // helper. Callee: axum-macros/src/attr_parsing.rs:59.
             label: "axum-macros parse_attrs current resolved fanout",
             target: function_id_by_name_in_module(&db, &["crate", "attr_parsing"], "parse_attrs")?,

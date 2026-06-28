@@ -49,7 +49,7 @@ High-fanout targets are grouped by identical evidence chain. Before turning high
 
 | Target | Callsites | Owner(s) | Evidence chain |
 | --- | --- | --- | --- |
-| `parse_attrs` | `axum-macros/src/typed_path.rs:23`; `from_ref.rs:30`; `from_request/mod.rs:112,196,471,592,715,880,896,1017,1027` | `expand`; `expand_field`; `extract_fields`; `impl_struct_by_extracting_all_at_once`; `impl_enum_by_extracting_all_at_once`; `infer_state_type_from_field_attributes` | explicit `crate::attr_parsing::parse_attrs` or local import at `from_ref.rs:9` / `from_request/mod.rs:3` -> `attr_parsing.rs:59`. |
+| `parse_attrs` | `axum-macros/src/typed_path.rs:23`; `from_ref.rs:30`; `from_request/mod.rs:112,196,471,598,727,892,908,1029,1039` | `expand`; `expand_field`; `extract_fields`; `impl_struct_by_extracting_all_at_once`; `impl_enum_by_extracting_all_at_once`; `infer_state_type_from_field_attributes` | explicit `crate::attr_parsing::parse_attrs` or local import at `from_ref.rs:9` / `from_request/mod.rs:3` -> `attr_parsing.rs:59`. |
 | `run_ui_tests` | `axum-macros/src/debug_handler.rs:885,890`; `typed_path.rs:443`; `from_ref.rs:104`; `from_request/mod.rs:1050` | UI test helper functions | `crate::run_ui_tests(...)` -> crate-root helper `lib.rs:797`. |
 | `take_route_or_internal_error` | `axum/src/routing/mod.rs:410,430`; `routing/tests/mod.rs:56,59` | `Router<S>::fallback_endpoint`; `take_route_or_internal_error_panics_on_second_call` | same-module call or `super::take_route_or_internal_error` -> parent module definition `routing/mod.rs:63`. |
 | `serde_json::Deserializer::from_slice` | `axum/src/json.rs:184` | `Json<T>::from_bytes` | `serde_json::...` path -> external dependency root in `axum/Cargo.toml:135` and dev dependency `:189`. |
