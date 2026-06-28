@@ -244,3 +244,117 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
 
     Ok(())
 }
+
+#[test]
+fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: generated `routing::post` handler fanout.
+    // Source chain:
+    //   axum/src/routing/method_routing.rs:165 template; macro invocation :445.
+    //   JSON, multipart, method_routing, and routing tests call `post(...)`.
+    // Current model gap: this corpus fixture does not expose a generated
+    // top-level function named `post`, so target-centered traversal cannot bind
+    // these real callsites yet.
+    let rows = db.raw_query(
+        r#"?[id] :=
+            *function { id, name: "post" @ 'NOW' }"#,
+    )?;
+    assert!(
+        rows.rows.is_empty(),
+        "generated routing::post should remain absent until macro-generated handler functions are modeled: {rows:#?}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn axum_real_target_try_downcast_helpers_reach_current_resolved_subset() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: same-named `try_downcast` helpers.
+    // Source chain:
+    //   axum-core/src/body.rs:23 defines the axum-core helper; body.rs callsites
+    //   at :20, :48, :224, and :225 are the source oracle.
+    //   axum/src/util.rs:99 defines the axum helper; routing/mod.rs:205 and
+    //   util.rs:114,115 are the source oracle.
+    // Expected traversal for the current fixture: two resolved callers for the
+    // axum-core helper and one resolved caller for the axum helper.
+    let cases = [
+        (
+            "axum-core try_downcast",
+            function_id_by_name_in_module(&db, &["crate", "body"], "try_downcast")?,
+            2,
+        ),
+        (
+            "axum try_downcast",
+            function_id_by_name_in_module(&db, &["crate", "util"], "try_downcast")?,
+            1,
+        ),
+    ];
+
+    for (label, target, expected_edges) in cases {
+        let callers = db.callers_for_target(target)?;
+        assert_eq!(
+            callers.len(),
+            expected_edges,
+            "{label} should expose the current resolved subset of callers: {callers:#?}"
+        );
+        for caller in &callers {
+            assert_eq!(caller.status.status, CallStatusKind::Resolved);
+            assert_eq!(
+                caller.status.resolution,
+                Some(CallResolutionKind::LocalExact)
+            );
+            assert_eq!(caller.target.relation, CallRelationKind::Function);
+            assert_eq!(caller.target.source_kind, CallSiteKind::Path);
+            assert_eq!(caller.target.target_kind, CallTargetKind::Function);
+        }
+
+        let incoming = db.expand_call_context(
+            CallContextSeed::Target(target),
+            CallContextOptions {
+                include_outgoing_targets: false,
+                max_candidates: 512,
+                ..CallContextOptions::default()
+            },
+        )?;
+        assert_eq!(
+            incoming.len(),
+            expected_edges,
+            "{label} should traverse the same number of one-hop incoming edges: {incoming:#?}"
+        );
+        for caller in callers {
+            assert_incoming_candidate(
+                &incoming,
+                caller.site.owner_id,
+                caller.site.id,
+                target,
+                label,
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn axum_real_target_position_first_variant_is_documented_gap() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: `Position::First` enum variant constructor row.
+    // Source chain:
+    //   axum-macros/src/with_position.rs:65 defines `Position`.
+    //   with_position.rs:66 defines variant `First`.
+    //   with_position.rs:92 calls `Position::First(item)`.
+    // Current model gap: the variant exists, but this constructor call does not
+    // produce a resolved target-centered edge yet.
+    let position = variant_id_by_enum_and_variant_names(&db, "Position", "First")?;
+    let callers = db.callers_for_target(position)?;
+    assert!(
+        callers.is_empty(),
+        "Position::First should remain targetless until enum variant constructor resolution covers this corpus row: {callers:#?}"
+    );
+
+    Ok(())
+}
