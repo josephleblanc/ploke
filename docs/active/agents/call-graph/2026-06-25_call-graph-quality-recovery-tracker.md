@@ -924,6 +924,9 @@ Progress note, 2026-06-28:
   `real_target_matrix` suite. Supported cases assert target-centered callers,
   call-site parity, and one-hop owner/callee traversal counts; unsupported and
   fallback cases assert targetless or absent projections with zero traversal.
+- `request_code_context` compact UI summaries now surface nonzero call and
+  proof blocker counts, matching the structured UI payload fields so collapsed
+  tool output still exposes fail-closed context.
 - `code_item_lookup` and `code_item_edges` now share an exact `owner_type`
   disambiguator for inherent methods, mirroring the existing `owner_trait`
   path. The real-corpus TUI matrix now covers `HandleError::new` and
@@ -945,6 +948,22 @@ For the `ploke-db` real-corpus call-site oracle matrix:
 
 - `cargo test -p ploke-db real_target_matrix -- --nocapture`
   - passed: 53 passed, 0 failed.
+
+For `request_code_context` compact blocker summaries:
+
+- Red check before implementation:
+  `cargo test -p ploke-tui request_code_context_preserves_multiple_proof_blockers_for_one_fact -- --nocapture`
+  failed because the compact summary omitted the nonzero proof blocker count.
+- `cargo test -p ploke-tui request_code_context_preserves_multiple_proof_blockers_for_one_fact -- --nocapture`
+  - passed: 1 passed, 0 failed.
+- Red check while tightening call blocker coverage:
+  `cargo test -p ploke-tui request_code_context_returns_targetless_special_form_call_context -- --nocapture`
+  failed on the initial singular/plural expectation, then passed after the test
+  asserted the production summary wording.
+- `cargo test -p ploke-tui request_code_context_returns_targetless_special_form_call_context -- --nocapture`
+  - passed: 1 passed, 0 failed.
+- `cargo test -p ploke-tui request_code_context::gat_tests -- --nocapture`
+  - passed: 37 passed, 0 failed, 2 ignored.
 
 For `67981c03 Block missing proof build domains` and
 `0dfe6a7f Block incomplete proof build domains`:
