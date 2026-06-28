@@ -42,6 +42,10 @@ use uuid::Uuid;
 mod real_corpus_remaining;
 pub(crate) use real_corpus_remaining::*;
 
+#[path = "call_graph_tool_support/targetless.rs"]
+mod targetless;
+pub(crate) use targetless::*;
+
 pub(crate) struct CallGraphToolFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,
