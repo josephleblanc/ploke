@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use cozo::DataValue;
 use ploke_db::multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE};
@@ -181,6 +181,32 @@ pub(super) fn assert_no_traversal_candidates_for_site(
     site_id: Uuid,
     label: &str,
 ) -> Result<(), DbError> {
+    assert_no_traversal_candidates_for_sites(db, &[(owner, site_id)], label)
+}
+
+pub(super) fn assert_no_traversal_candidates_for_sites(
+    db: &Database,
+    sites: &[(Uuid, Uuid)],
+    label: &str,
+) -> Result<(), DbError> {
+    let mut by_owner = BTreeMap::<Uuid, BTreeSet<Uuid>>::new();
+    for (owner, site) in sites {
+        by_owner.entry(*owner).or_default().insert(*site);
+    }
+
+    for (owner, blocked) in by_owner {
+        assert_no_traversal_candidates_for_owner_sites(db, owner, &blocked, label)?;
+    }
+
+    Ok(())
+}
+
+fn assert_no_traversal_candidates_for_owner_sites(
+    db: &Database,
+    owner: Uuid,
+    blocked: &BTreeSet<Uuid>,
+    label: &str,
+) -> Result<(), DbError> {
     let outgoing = db.expand_call_context(
         CallContextSeed::Owner(owner),
         CallContextOptions {
@@ -192,8 +218,8 @@ pub(super) fn assert_no_traversal_candidates_for_site(
     assert!(
         outgoing
             .iter()
-            .all(|candidate| candidate.call_site_id != site_id),
-        "{label} should have zero traversable call edges for targetless site {site_id}: {outgoing:#?}"
+            .all(|candidate| !blocked.contains(&candidate.call_site_id)),
+        "{label} should have zero traversable call edges for targetless sites {blocked:#?}: {outgoing:#?}"
     );
 
     Ok(())
@@ -397,14 +423,22 @@ pub(super) fn assert_targetless_path_rows(
         "expected {expected_count} {status:?} targetless path rows for {path_parts:?}: {:#?}",
         rows.rows
     );
+    let mut sites = Vec::new();
     for row in &rows.rows {
         assert_eq!(row[2], DataValue::Null);
         let site_id = to_uuid(&row[0])?;
+        let owner = to_uuid(&row[1])?;
         assert!(
             relations_for_site(db, site_id)?.rows.is_empty(),
             "{path_parts:?} row should not have call_relation targets"
         );
+        sites.push((owner, site_id));
     }
+    assert_no_traversal_candidates_for_sites(
+        db,
+        &sites,
+        &format!("{status:?} path rows for {path_parts:?}"),
+    )?;
 
     Ok(())
 }
@@ -540,14 +574,22 @@ pub(super) fn assert_targetless_method_rows(
         "expected {expected_count} {status:?} targetless method rows for {method}.{receiver_path:?}: {:#?}",
         rows.rows
     );
+    let mut sites = Vec::new();
     for row in &rows.rows {
         assert_eq!(row[2], DataValue::Null);
         let site_id = to_uuid(&row[0])?;
+        let owner = to_uuid(&row[1])?;
         assert!(
             relations_for_site(db, site_id)?.rows.is_empty(),
             "{method}.{receiver_path:?} row should not have call_relation targets"
         );
+        sites.push((owner, site_id));
     }
+    assert_no_traversal_candidates_for_sites(
+        db,
+        &sites,
+        &format!("{status:?} method rows for {method}.{receiver_path:?}"),
+    )?;
 
     Ok(())
 }
@@ -595,7 +637,7 @@ pub(super) fn assert_targetless_dynamic_rows_by_method_name(
             relations_for_site(db, site_id)?.rows.is_empty(),
             "dynamic row owned by {method:?} should not have call_relation targets"
         );
-        assert_no_traversal_candidates_for_site(db, owner_id, site_id, method)?;
+        assert_no_traversal_candidates_for_sites(db, &[(owner_id, site_id)], method)?;
         let DataValue::Num(cozo::Num::Int(arg_count)) = &row[2] else {
             panic!("dynamic row arg_count should be numeric: {row:#?}");
         };
