@@ -167,7 +167,12 @@ The same regeneration resolves `axum/src/routing/mod.rs:109` `Self::new()` from
 `Default for Router` to `Router::new`. The real-target receiver matrix now pins
 144 `Router::new` caller edges and 123 incoming expansion candidates, including
 the explicit `axum/src/routing/method_routing.rs:1494`
-`crate::Router::new()` row.
+`crate::Router::new()` row. TUI `code_item_lookup` and `code_item_edges` now
+accept `owner_type` for exact inherent-method disambiguation, so the downstream
+real-corpus matrix asserts both `HandleError::new` caller rows and all 144
+`Router::new` caller rows with target-centered proof rows. Enum variant
+constructor lookup remains a separate exact-tool addressability gap because
+variants are secondary nodes, not `NodeKind` primary items.
 
 ## Receiver And Method Oracles
 

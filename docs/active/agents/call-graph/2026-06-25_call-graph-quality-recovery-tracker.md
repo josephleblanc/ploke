@@ -918,6 +918,16 @@ next likely slices are:
 3. Keep splitting/table-driving any large helper or projection test touched by
    that batch before adding cases.
 
+Progress note, 2026-06-28:
+
+- `code_item_lookup` and `code_item_edges` now share an exact `owner_type`
+  disambiguator for inherent methods, mirroring the existing `owner_trait`
+  path. The real-corpus TUI matrix now covers `HandleError::new` and
+  `Router::new` through the same table-driven fixture as the remaining
+  supported axum targets.
+- Focused checks passed for the new DB helper, owner qualifier unit tests,
+  TUI schema regression, and remaining real-corpus TUI lookup/edge matrix.
+
 Rollout note, 2026-06-27:
 
 - The DB projection rollout gate has been removed from production/test code.
