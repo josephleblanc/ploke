@@ -19,6 +19,7 @@ pub(super) struct TraversalExpectation {
     pub(super) owner: Uuid,
     pub(super) target: Uuid,
     pub(super) site_id: Uuid,
+    pub(super) expected_edge_count: usize,
 }
 
 pub(super) fn setup_axum_call_graph_db() -> Result<Database, DbError> {
@@ -40,6 +41,12 @@ pub(super) fn assert_one_edge_traversal(
     db: &Database,
     expected: TraversalExpectation,
 ) -> Result<(), DbError> {
+    assert_eq!(
+        expected.expected_edge_count, 1,
+        "{} should declare the direct call-edge count explicitly",
+        expected.label
+    );
+
     let outgoing = db.expand_call_context(
         CallContextSeed::Owner(expected.owner),
         CallContextOptions {
@@ -48,6 +55,15 @@ pub(super) fn assert_one_edge_traversal(
             ..CallContextOptions::default()
         },
     )?;
+    assert_matching_traversal_count(
+        &outgoing,
+        expected.target,
+        expected.target,
+        ploke_db::CallContextRelation::OutgoingTarget,
+        expected.site_id,
+        expected.expected_edge_count,
+        expected.label,
+    );
     assert_outgoing_candidate(&outgoing, expected.target, expected.site_id, expected.label);
 
     let incoming = db.expand_call_context(
@@ -58,6 +74,15 @@ pub(super) fn assert_one_edge_traversal(
             ..CallContextOptions::default()
         },
     )?;
+    assert_matching_traversal_count(
+        &incoming,
+        expected.owner,
+        expected.target,
+        ploke_db::CallContextRelation::IncomingCaller,
+        expected.site_id,
+        expected.expected_edge_count,
+        expected.label,
+    );
     assert_incoming_candidate(
         &incoming,
         expected.owner,
@@ -67,6 +92,37 @@ pub(super) fn assert_one_edge_traversal(
     );
 
     Ok(())
+}
+
+fn assert_matching_traversal_count(
+    candidates: &[ploke_db::CallContextCandidate],
+    node_id: Uuid,
+    target_id: Uuid,
+    relation: ploke_db::CallContextRelation,
+    site_id: Uuid,
+    expected_edge_count: usize,
+    label: &str,
+) {
+    let matching = candidates
+        .iter()
+        .filter(|candidate| {
+            candidate.node_id == node_id
+                && candidate.target_id == target_id
+                && candidate.relation == relation
+                && candidate.call_site_id == site_id
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        expected_edge_count,
+        "{label} should traverse exactly {expected_edge_count} matching call edge(s): {candidates:#?}"
+    );
+    for candidate in matching {
+        assert_eq!(
+            candidate.distance, expected_edge_count as u32,
+            "{label} should expose the expected direct traversal distance"
+        );
+    }
 }
 
 pub(super) fn assert_external_targetless(row: &ploke_db::CallContextRow) {

@@ -193,6 +193,7 @@ fn axum_real_target_boxed_into_route_explicit_constructor_reaches_struct() -> Re
             owner,
             target,
             site_id: row.site.id,
+            expected_edge_count: 1,
         },
     )
 }
@@ -280,6 +281,7 @@ fn axum_real_target_handle_error_extension_reaches_constructor() -> Result<(), D
                 owner,
                 target,
                 site_id: row.site.id,
+                expected_edge_count: 1,
             },
         )?;
     }

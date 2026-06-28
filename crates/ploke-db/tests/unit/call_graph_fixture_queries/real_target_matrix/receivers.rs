@@ -48,6 +48,7 @@ fn axum_core_extract_self_methods_reach_same_impl_methods() -> Result<(), DbErro
                 owner,
                 target: row.targets[0].target_id,
                 site_id: row.site.id,
+                expected_edge_count: 1,
             },
         )?;
     }

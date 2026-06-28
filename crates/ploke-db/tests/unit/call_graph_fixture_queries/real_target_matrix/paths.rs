@@ -38,6 +38,7 @@ fn axum_macros_expand_helpers_reach_root_expand() -> Result<(), DbError> {
                 owner,
                 target,
                 site_id: row.site.id,
+                expected_edge_count: 1,
             },
         )?;
     }
@@ -257,6 +258,7 @@ fn axum_real_target_run_ui_tests_crate_paths_reach_helper() -> Result<(), DbErro
                 owner,
                 target,
                 site_id: row.site.id,
+                expected_edge_count: 1,
             },
         )?;
     }
