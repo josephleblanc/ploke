@@ -1033,6 +1033,25 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "reproduces post-apply BM25 actor backpressure; fails until rebuild enqueue/ack is bounded"]
+    async fn bm25_rebuild_backpressure_repro_blocks_before_ack() {
+        init_tracing_once();
+        let db = Arc::new(Database::init_with_schema().expect("in-memory schema database"));
+        let runtime = runtime_for(&db, EmbeddingProcessor::new_mock());
+        let (tx, _rx) = tokio::sync::mpsc::channel(1);
+        tx.try_send(ploke_db::bm25_index::bm25_service::Bm25Cmd::Rebuild)
+            .expect("pre-fill BM25 mailbox");
+        let rag = RagService::assemble(db, runtime, tx, crate::RagConfig::default(), None)
+            .expect("RAG service with backpressured BM25 mailbox");
+
+        let result = tokio::time::timeout(Duration::from_millis(50), rag.bm25_rebuild()).await;
+        assert!(
+            result.is_ok(),
+            "bm25_rebuild should not be able to spend the whole post-apply wait before the rebuild is even queued/acknowledged"
+        );
+    }
+
+    #[tokio::test]
     async fn test_bm25_search_basic() -> Result<(), Error> {
         init_tracing_once();
         let db_raw = fresh_backup_fixture_db(&FIXTURE_NODES_LOCAL_EMBEDDINGS)?;
