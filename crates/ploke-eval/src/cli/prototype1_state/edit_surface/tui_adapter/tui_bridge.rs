@@ -1403,7 +1403,21 @@ pub(super) async fn wait_for_refresh(
         ));
     }
 
+    let refresh_started = Instant::now();
+    tracing::info!(
+        target: "ploke_eval::post_apply_refresh",
+        turn,
+        path_count = changed_paths.len(),
+        remaining_ms = deadline.saturating_duration_since(Instant::now()).as_millis() as u64,
+        "post_apply_scan_paths_send_start"
+    );
+    observer.emit(format!(
+        "attempt {turn} post_apply_scan_paths_send_start paths={}",
+        changed_paths.len()
+    ));
+
     let (scan_tx, scan_rx) = oneshot::channel();
+    let send_started = Instant::now();
     send_state(
         &runtime.app.state_cmd_tx(),
         StateCommand::ScanPathsForChange {
@@ -1412,10 +1426,28 @@ pub(super) async fn wait_for_refresh(
         },
     )
     .await?;
+    tracing::info!(
+        target: "ploke_eval::post_apply_refresh",
+        turn,
+        send_ms = send_started.elapsed().as_millis() as u64,
+        "post_apply_scan_paths_send_done"
+    );
+
+    let scan_wait_started = Instant::now();
     let changed = scan_rx
         .await
         .map_err(|source| Error::HeadlessEvent(format!("scan barrier failed: {source}")))?;
+    let scan_wait_ms = scan_wait_started.elapsed().as_millis() as u64;
     runtime.app.pump_pending_events().await;
+    tracing::info!(
+        target: "ploke_eval::post_apply_refresh",
+        turn,
+        scan_wait_ms,
+        total_ms = refresh_started.elapsed().as_millis() as u64,
+        changed_count = changed.as_ref().map(|paths| paths.len()).unwrap_or(0),
+        changed = changed.is_some(),
+        "post_apply_scan_barrier_done"
+    );
     observer.emit(format!(
         "attempt {turn} scan_barrier changed={}",
         changed
@@ -1471,35 +1503,96 @@ async fn wait_for_sparse_search_refresh(
         ));
     };
 
+    let sparse_started = Instant::now();
+    tracing::info!(
+        target: "ploke_eval::post_apply_refresh",
+        turn,
+        changed,
+        remaining_ms = deadline.saturating_duration_since(Instant::now()).as_millis() as u64,
+        "post_apply_sparse_refresh_start"
+    );
+
     if changed {
-        observer.emit(format!("attempt {turn} sparse_refresh bm25_rebuild"));
+        observer.emit(format!(
+            "attempt {turn} sparse_refresh bm25_rebuild_send_start"
+        ));
+        tracing::info!(
+            target: "ploke_eval::post_apply_refresh",
+            turn,
+            "post_apply_bm25_rebuild_send_start"
+        );
+        let rebuild_send_started = Instant::now();
         rag.bm25_rebuild()
             .await
             .map_err(|source| Error::HeadlessEvent(format!("BM25 rebuild failed: {source}")))?;
+        tracing::info!(
+            target: "ploke_eval::post_apply_refresh",
+            turn,
+            enqueue_ms = rebuild_send_started.elapsed().as_millis() as u64,
+            "post_apply_bm25_rebuild_send_done"
+        );
+        observer.emit(format!(
+            "attempt {turn} sparse_refresh bm25_rebuild_send_done enqueue_ms={}",
+            rebuild_send_started.elapsed().as_millis()
+        ));
     } else {
         observer.emit(format!("attempt {turn} sparse_refresh bm25_status"));
     }
 
+    let mut status_polls = 0_u32;
     loop {
         runtime.app.pump_pending_events().await;
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
+            tracing::info!(
+                target: "ploke_eval::post_apply_refresh",
+                turn,
+                elapsed_ms = sparse_started.elapsed().as_millis() as u64,
+                status_polls,
+                "post_apply_bm25_ready_timeout"
+            );
             return Err(Error::HeadlessEvent(format!(
                 "timed out waiting for BM25 readiness after applying proposal batch after {}s",
                 timeouts.post_apply_index_secs
             )));
         }
 
+        status_polls = status_polls.saturating_add(1);
+        let status_started = Instant::now();
+        tracing::info!(
+            target: "ploke_eval::post_apply_refresh",
+            turn,
+            poll = status_polls,
+            remaining_ms = remaining.as_millis() as u64,
+            "post_apply_bm25_status_start"
+        );
         let status = rag
             .bm25_status_with_timeout(remaining)
             .await
             .map_err(|source| Error::HeadlessEvent(format!("BM25 status failed: {source}")))?;
+        tracing::info!(
+            target: "ploke_eval::post_apply_refresh",
+            turn,
+            poll = status_polls,
+            status_ms = status_started.elapsed().as_millis() as u64,
+            status = ?status,
+            "post_apply_bm25_status_done"
+        );
         match status {
             Bm25Status::Ready { docs } => {
                 if docs > 0 {
                     runtime.app.pump_pending_events().await;
+                    tracing::info!(
+                        target: "ploke_eval::post_apply_refresh",
+                        turn,
+                        docs,
+                        elapsed_ms = sparse_started.elapsed().as_millis() as u64,
+                        status_polls,
+                        "post_apply_bm25_ready"
+                    );
                     observer.emit(format!(
-                        "attempt {turn} sparse_refresh bm25_ready docs={docs}"
+                        "attempt {turn} sparse_refresh bm25_ready docs={docs} elapsed_ms={} polls={status_polls}",
+                        sparse_started.elapsed().as_millis()
                     ));
                     return Ok(true);
                 }

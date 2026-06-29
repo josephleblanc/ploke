@@ -2,6 +2,7 @@ use std::{
     collections::{BTreeSet, HashMap, HashSet, VecDeque},
     ops::ControlFlow,
     path::{Path, PathBuf},
+    time::Instant,
 };
 
 use cozo::DataValue;
@@ -1385,8 +1386,16 @@ async fn scan_for_change_target(
 ) -> Result<(), ploke_error::Error> {
     let crate_path = target.root_path.clone();
     let crate_name = target.crate_name.clone();
+    let scan_started = Instant::now();
 
     info!("scan_for_change in crate_name: {}", crate_name);
+    info!(
+        target: "ploke_tui::post_apply_refresh",
+        crate_name = %crate_name,
+        crate_path = %crate_path.display(),
+        emit_reindex,
+        "scan_for_change_target_start"
+    );
     // 2. get the files in the target project from the db, with hashes
     let file_data = state.db.get_crate_files(&crate_name)?;
     trace!(target: SCAN_CHANGE, "file_data: {:#?}", file_data);
@@ -1407,12 +1416,28 @@ async fn scan_for_change_target(
             error!("Error in state.io_handle.scan_changes_batch: {e}");
         })?;
     let vec_ok = result?;
+    let changed_file_count = vec_ok.iter().filter(|f| f.is_some()).count();
+    let removed_file_count = removed_file_data.len();
+    info!(
+        target: "ploke_tui::post_apply_refresh",
+        crate_name = %crate_name,
+        changed_file_count,
+        removed_file_count,
+        scan_io_ms = scan_started.elapsed().as_millis() as u64,
+        "scan_for_change_target_file_scan_done"
+    );
 
-    if !vec_ok.iter().any(|f| f.is_some()) && removed_file_data.is_empty() {
+    if changed_file_count == 0 && removed_file_data.is_empty() {
         // 4. if no changes, send complete in oneshot
         match scan_tx.send(None) {
             Ok(()) => {
                 info!("No file changes detected");
+                info!(
+                    target: "ploke_tui::post_apply_refresh",
+                    crate_name = %crate_name,
+                    total_ms = scan_started.elapsed().as_millis() as u64,
+                    "scan_for_change_target_no_changes_done"
+                );
             }
             Err(e) => {
                 error!("Error sending parse oneshot from ScanForChange");
@@ -1431,9 +1456,21 @@ async fn scan_for_change_target(
         // Extract pwd from SystemState before calling sync function
         let pwd = state.with_system_read(|sys| sys.pwd().to_path_buf()).await;
 
+        info!(
+            target: "ploke_tui::post_apply_refresh",
+            crate_name = %crate_name,
+            "scan_for_change_target_parse_start"
+        );
+        let parse_started = Instant::now();
         let mut parser_output =
             match run_parse_no_transform(Arc::clone(&state.db), Some(crate_path.clone()), &pwd) {
                 Ok(output) => {
+                    info!(
+                        target: "ploke_tui::post_apply_refresh",
+                        crate_name = %crate_name,
+                        parse_ms = parse_started.elapsed().as_millis() as u64,
+                        "scan_for_change_target_parse_done"
+                    );
                     state
                         .with_system_txn(|txn| {
                             txn.record_parse_success();
@@ -1766,9 +1803,18 @@ module tree process or run_parse_no_transform"
             );
         }
 
+        let transform_started = Instant::now();
         transform_parsed_graph(&state.db, merged, &tree).inspect_err(|e| {
             error!("Error transforming partial graph into database:\n{e}");
         })?;
+        info!(
+            target: "ploke_tui::post_apply_refresh",
+            crate_name = %crate_name,
+            module_count = module_uuids.len(),
+            retracted_count = retracted.len(),
+            transform_ms = transform_started.elapsed().as_millis() as u64,
+            "scan_for_change_target_transform_done"
+        );
 
         for file_id in module_uuids {
             for node_ty in NodeType::primary_nodes() {
@@ -1789,10 +1835,23 @@ module tree process or run_parse_no_transform"
 
         if emit_reindex {
             trace!("Finishing scanning, sending message to reindex workspace");
+            info!(
+                target: "ploke_tui::post_apply_refresh",
+                crate_name = %crate_name,
+                crate_id = ?target.crate_id,
+                "scan_for_change_target_reindex_emit"
+            );
             event_bus.send(AppEvent::System(SystemEvent::ReIndex {
                 target: IndexTarget::LoadedCrate(target.crate_id),
             }));
         }
+        info!(
+            target: "ploke_tui::post_apply_refresh",
+            crate_name = %crate_name,
+            changed_path_count = changed_filenames.len(),
+            total_ms = scan_started.elapsed().as_millis() as u64,
+            "scan_for_change_target_changed_done"
+        );
         let _ = scan_tx.send(Some(changed_filenames));
         // TODO: Add validation step here.
     }
@@ -1816,7 +1875,14 @@ pub(super) async fn scan_paths_for_change(
     paths: Vec<std::path::PathBuf>,
     scan_tx: oneshot::Sender<Option<Vec<std::path::PathBuf>>>,
 ) -> Result<(), ploke_error::Error> {
+    let scan_started = Instant::now();
     let targets = scan_targets_for_paths(state, &paths).await?;
+    info!(
+        target: "ploke_tui::post_apply_refresh",
+        path_count = paths.len(),
+        target_count = targets.len(),
+        "scan_paths_for_change_start"
+    );
     let mut changed_paths = Vec::new();
 
     for target in targets {
@@ -1844,6 +1910,12 @@ pub(super) async fn scan_paths_for_change(
     } else {
         Some(changed_paths)
     };
+    info!(
+        target: "ploke_tui::post_apply_refresh",
+        changed_path_count = result.as_ref().map(|paths| paths.len()).unwrap_or(0),
+        total_ms = scan_started.elapsed().as_millis() as u64,
+        "scan_paths_for_change_done"
+    );
     let _ = scan_tx.send(result);
     Ok(())
 }

@@ -419,21 +419,66 @@ impl RagService {
         timeout_duration: Duration,
     ) -> Result<Bm25Status, RagError> {
         let (tx, rx) = oneshot::channel();
+        tracing::info!(
+            target: "ploke_rag::bm25_freshness",
+            timeout_ms = timeout_duration.as_millis() as u64,
+            "bm25_status_send_start"
+        );
+        let send_started = std::time::Instant::now();
         self.bm_embedder
             .send(Bm25Cmd::Status { resp: tx })
             .await
             .map_err(|e| RagError::Channel(format!("failed to send BM25 status command: {}", e)))?;
+        tracing::info!(
+            target: "ploke_rag::bm25_freshness",
+            send_ms = send_started.elapsed().as_millis() as u64,
+            "bm25_status_send_done"
+        );
+
+        let response_started = std::time::Instant::now();
         match timeout(timeout_duration, rx).await {
-            Ok(Ok(Ok(status))) => Ok(status),
-            Ok(Ok(Err(db_err))) => Err(RagError::Db(db_err)),
-            Ok(Err(recv_err)) => Err(RagError::Channel(format!(
-                "BM25 status response channel closed: {}",
-                recv_err
-            ))),
-            Err(_) => Err(RagError::Channel(format!(
-                "timeout waiting for BM25 status ({} ms)",
-                timeout_duration.as_millis()
-            ))),
+            Ok(Ok(Ok(status))) => {
+                tracing::info!(
+                    target: "ploke_rag::bm25_freshness",
+                    response_ms = response_started.elapsed().as_millis() as u64,
+                    status = ?status,
+                    "bm25_status_response_done"
+                );
+                Ok(status)
+            }
+            Ok(Ok(Err(db_err))) => {
+                tracing::info!(
+                    target: "ploke_rag::bm25_freshness",
+                    response_ms = response_started.elapsed().as_millis() as u64,
+                    error = %db_err,
+                    "bm25_status_response_db_error"
+                );
+                Err(RagError::Db(db_err))
+            }
+            Ok(Err(recv_err)) => {
+                tracing::info!(
+                    target: "ploke_rag::bm25_freshness",
+                    response_ms = response_started.elapsed().as_millis() as u64,
+                    error = %recv_err,
+                    "bm25_status_response_channel_closed"
+                );
+                Err(RagError::Channel(format!(
+                    "BM25 status response channel closed: {}",
+                    recv_err
+                )))
+            }
+            Err(_) => {
+                tracing::info!(
+                    target: "ploke_rag::bm25_freshness",
+                    response_ms = response_started.elapsed().as_millis() as u64,
+                    timeout_ms = timeout_duration.as_millis() as u64,
+                    "bm25_status_response_timeout"
+                );
+                Err(RagError::Channel(format!(
+                    "timeout waiting for BM25 status ({} ms)",
+                    timeout_duration.as_millis()
+                )))
+            }
         }
     }
 
