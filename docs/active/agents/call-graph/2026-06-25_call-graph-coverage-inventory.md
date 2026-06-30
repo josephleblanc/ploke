@@ -52,7 +52,10 @@ future work can choose the next batch without rereading the diary-style notes.
   `exact_call_paths_between`, returning `CallPathInfo` with ordered edges and
   path-node source metadata for prompt/tool consumers. TUI now exposes this
   exact two-symbol query through `code_item_call_path`, with exact source and
-  target item coordinates, `reachable`, ordered path rows, and UI counts.
+  target item coordinates, `reachable`, ordered path rows, and UI counts. Call
+  path edges now also carry persisted callsite byte spans, and model-facing
+  path formatting includes `call_site_id@start..end` provenance for debugging
+  questions that need to map a path edge back to source.
   It also proves that an unsupported awaited receiver is still query-visible as
   a targetless fail-closed callsite and is excluded from traversal. Broad
   `request_code_context` coverage now returns outgoing and incoming two-hop
