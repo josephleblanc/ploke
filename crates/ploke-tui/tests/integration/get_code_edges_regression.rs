@@ -586,6 +586,26 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
         "axum-core/src/extract/mod.rs",
         "code_item_edges outgoing paths",
     );
+    assert!(
+        summary_usize(&start_payload, "calls") >= 1,
+        "RequestExt::extract summary should report outgoing direct callsites: {start_payload:#?}"
+    );
+    assert!(
+        summary_usize(&start_payload, "callees") >= 1,
+        "RequestExt::extract summary should report resolved direct callees: {start_payload:#?}"
+    );
+    assert!(
+        summary_usize(&start_payload, "outgoing_paths") >= 2,
+        "RequestExt::extract summary should report bounded outgoing call paths: {start_payload:#?}"
+    );
+    assert!(
+        summary_usize(&start_payload, "outgoing_depth") >= 2,
+        "RequestExt::extract summary should report the two-hop axum path depth: {start_payload:#?}"
+    );
+    assert!(
+        summary_usize(&start_payload, "path_nodes") >= 3,
+        "RequestExt::extract summary should report source-labeled path nodes: {start_payload:#?}"
+    );
     let start_ui = start_result.ui_payload.as_ref().expect("start ui payload");
     assert!(
         ui_field(start_ui, "call_paths_from_owner")
@@ -593,6 +613,10 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
             .expect("outgoing path count")
             >= 2,
         "code_item_edges should surface outgoing path count for RequestExt::extract"
+    );
+    assert_eq!(
+        ui_field(start_ui, "callees"),
+        summary_usize(&start_payload, "callees").to_string()
     );
 
     let target_params = EdgesParams {
@@ -656,6 +680,22 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
         "axum-core/src/extract/mod.rs",
         "code_item_edges incoming paths",
     );
+    assert!(
+        summary_usize(&target_payload, "callers") >= 1,
+        "FromRequest::from_request summary should report incoming callers: {target_payload:#?}"
+    );
+    assert!(
+        summary_usize(&target_payload, "incoming_paths") >= 2,
+        "FromRequest::from_request summary should report bounded incoming paths: {target_payload:#?}"
+    );
+    assert!(
+        summary_usize(&target_payload, "incoming_depth") >= 2,
+        "FromRequest::from_request summary should report the two-hop axum path depth: {target_payload:#?}"
+    );
+    assert!(
+        summary_usize(&target_payload, "path_nodes") >= 3,
+        "FromRequest::from_request summary should report source-labeled path nodes: {target_payload:#?}"
+    );
     let target_ui = target_result
         .ui_payload
         .as_ref()
@@ -666,6 +706,10 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
             .expect("incoming path count")
             >= 2,
         "code_item_edges should surface incoming path count for FromRequest::from_request"
+    );
+    assert_eq!(
+        ui_field(target_ui, "callers"),
+        summary_usize(&target_payload, "callers").to_string()
     );
 }
 
@@ -1099,6 +1143,14 @@ async fn code_item_edges_disambiguates_real_corpus_handler_call_by_owner_trait()
             >= 1,
         "code_item_edges should surface real-corpus Handler::call proof rows"
     );
+}
+
+fn summary_usize(payload: &serde_json::Value, field: &str) -> usize {
+    payload
+        .get("call_graph_summary")
+        .and_then(|summary| summary.get(field))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_else(|| panic!("missing call_graph_summary.{field}: {payload:#?}")) as usize
 }
 
 #[tokio::test]

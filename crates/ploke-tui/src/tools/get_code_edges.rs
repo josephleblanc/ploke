@@ -328,6 +328,12 @@ for a more fuzzy search."#
                 "failed to read snippet: {e}"
             )))
         })?;
+        let call_graph_summary = call_graph_summary(
+            resolved_item_id,
+            &call_paths.from_owner,
+            &call_paths.to_target,
+            &carriers.call_context,
+        );
         let concise_context = ConciseContext {
             id: resolved_item_id,
             file_path: NodeFilepath::new(rel_path.display().to_string()),
@@ -350,6 +356,7 @@ for a more fuzzy search."#
             call_paths_from_owner: call_paths.from_owner,
             call_paths_to_target: call_paths.to_target,
             call_path_nodes,
+            call_graph_summary,
         };
         let call_counts = lookup_support::call_context_counts(
             resolved_item_id,
@@ -364,6 +371,18 @@ for a more fuzzy search."#
             .with_field("call_context", call_counts.total.to_string())
             .with_field("call_context_outgoing", call_counts.outgoing.to_string())
             .with_field("call_context_incoming", call_counts.incoming.to_string())
+            .with_field(
+                "callers",
+                node_edge_info.call_graph_summary.callers.to_string(),
+            )
+            .with_field(
+                "callees",
+                node_edge_info.call_graph_summary.callees.to_string(),
+            )
+            .with_field(
+                "blocked_calls",
+                node_edge_info.call_graph_summary.blocked.to_string(),
+            )
             .with_field(
                 "call_paths_from_owner",
                 node_edge_info.call_paths_from_owner.len().to_string(),
@@ -396,6 +415,55 @@ pub struct NodeEdgeInfo {
     call_paths_from_owner: Vec<CallPathInfo>,
     call_paths_to_target: Vec<CallPathInfo>,
     call_path_nodes: Vec<CallPathNodeInfo>,
+    call_graph_summary: CallGraphSummary,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CallGraphSummary {
+    calls: usize,
+    callers: usize,
+    callees: usize,
+    blocked: usize,
+    outgoing_paths: usize,
+    incoming_paths: usize,
+    outgoing_depth: u32,
+    incoming_depth: u32,
+    path_nodes: usize,
+}
+
+fn call_graph_summary(
+    node_id: Uuid,
+    from_owner: &[CallPathInfo],
+    to_target: &[CallPathInfo],
+    call_context: &[ploke_core::rag_types::CallContextInfo],
+) -> CallGraphSummary {
+    let counts = lookup_support::call_context_counts(node_id, call_context);
+    let calls = counts.outgoing;
+    let callers = counts.incoming;
+    let callees = call_context
+        .iter()
+        .filter(|call| call.owner_id == node_id)
+        .map(|call| call.targets.len())
+        .sum();
+    let blocked = call_context
+        .iter()
+        .filter(|call| call.owner_id == node_id && call.targets.is_empty())
+        .count();
+    let outgoing_depth = from_owner.iter().map(|path| path.depth).max().unwrap_or(0);
+    let incoming_depth = to_target.iter().map(|path| path.depth).max().unwrap_or(0);
+    let path_nodes = call_path_nodes_for_paths(from_owner, to_target).len();
+
+    CallGraphSummary {
+        calls,
+        callers,
+        callees,
+        blocked,
+        outgoing_paths: from_owner.len(),
+        incoming_paths: to_target.len(),
+        outgoing_depth,
+        incoming_depth,
+        path_nodes,
+    }
 }
 
 fn call_path_nodes_for_paths(
