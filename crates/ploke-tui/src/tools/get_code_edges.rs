@@ -1,14 +1,12 @@
-use std::{collections::BTreeSet, ops::Deref, path::Path};
+use std::{collections::BTreeMap, ops::Deref, path::Path};
 
 use itertools::Itertools;
 use ploke_core::{
-    rag_types::{CallPathInfo, CanonPath, ConciseContext, NodeFilepath},
+    rag_types::{CallPathInfo, CallPathNodeInfo, CanonPath, ConciseContext, NodeFilepath},
     tool_descriptions::ToolDescription,
     tool_types::ToolName,
 };
 use ploke_db::{
-    Database,
-    get_by_id::{GetNodeInfo, NodePaths},
     helpers::{graph_resolve_edges, graph_resolve_edges_for_id},
     typed_rows::ResolvedEdgeData,
 };
@@ -289,11 +287,8 @@ for a more fuzzy search."#
         let resolved_item_id = resolved_item[0].id;
         let carriers = lookup_support::context_carriers_for_node(&ctx, resolved_item_id)?;
         let call_paths = lookup_support::call_path_carriers_for_node(&ctx, resolved_item_id)?;
-        let call_path_nodes = call_path_nodes_for_paths(
-            ctx.state.db.as_ref(),
-            &call_paths.from_owner,
-            &call_paths.to_target,
-        )?;
+        let call_path_nodes =
+            call_path_nodes_for_paths(&call_paths.from_owner, &call_paths.to_target);
 
         let mod_path_vec = params
             .module_path
@@ -401,47 +396,17 @@ pub struct NodeEdgeInfo {
     call_path_nodes: Vec<CallPathNodeInfo>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct CallPathNodeInfo {
-    id: Uuid,
-    canon_path: CanonPath,
-    file_path: NodeFilepath,
-}
-
 fn call_path_nodes_for_paths(
-    db: &Database,
     from_owner: &[CallPathInfo],
     to_target: &[CallPathInfo],
-) -> Result<Vec<CallPathNodeInfo>, ploke_error::Error> {
-    let mut ids = BTreeSet::new();
+) -> Vec<CallPathNodeInfo> {
+    let mut nodes = BTreeMap::new();
     for path in from_owner.iter().chain(to_target) {
-        ids.insert(path.start_id);
-        ids.insert(path.end_id);
-        for edge in &path.edges {
-            ids.insert(edge.caller_id);
-            ids.insert(edge.callee_id);
+        for node in &path.nodes {
+            nodes.entry(node.id).or_insert_with(|| node.clone());
         }
     }
-
-    ids.into_iter()
-        .map(|id| {
-            let rows = db.paths_from_id(id).map_err(|err| {
-                ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(format!(
-                    "failed to collect call path node info for {id}: {err}"
-                )))
-            })?;
-            let paths = NodePaths::try_from(rows).map_err(|err| {
-                ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(format!(
-                    "failed to decode call path node info for {id}: {err}"
-                )))
-            })?;
-            Ok(CallPathNodeInfo {
-                id,
-                canon_path: CanonPath::new(paths.canon),
-                file_path: NodeFilepath::new(paths.file),
-            })
-        })
-        .collect()
+    nodes.into_values().collect()
 }
 
 fn check_empty(

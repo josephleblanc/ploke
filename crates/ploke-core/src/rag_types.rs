@@ -346,11 +346,19 @@ pub struct CallPathEdgeInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallPathNodeInfo {
+    pub id: Uuid,
+    pub file_path: NodeFilepath,
+    pub canon_path: CanonPath,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct CallPathInfo {
     pub start_id: Uuid,
     pub end_id: Uuid,
     pub depth: u32,
     pub edges: Vec<CallPathEdgeInfo>,
+    pub nodes: Vec<CallPathNodeInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialOrd, Ord, Hash, PartialEq)]

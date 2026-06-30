@@ -433,6 +433,27 @@ async fn call_paths_exact_reads_axum_request_extract_two_hop_trait_path() -> Res
     assert_eq!(path.edges[1].caller_id, intermediate);
     assert_eq!(path.edges[1].callee_id, target);
     assert_eq!(path.edges[1].relation, CallTargetKind::AssociatedFunction);
+    assert_call_path_node(
+        path,
+        start,
+        "::extract",
+        "axum-core/src/ext_traits/request.rs",
+        "RAG outgoing two-hop path",
+    );
+    assert_call_path_node(
+        path,
+        intermediate,
+        "::extract_with_state",
+        "axum-core/src/ext_traits/request.rs",
+        "RAG outgoing two-hop path",
+    );
+    assert_call_path_node(
+        path,
+        target,
+        "::from_request",
+        "axum-core/src/extract/mod.rs",
+        "RAG outgoing two-hop path",
+    );
 
     let incoming = rag.exact_call_paths_to_target(
         target,
@@ -448,8 +469,46 @@ async fn call_paths_exact_reads_axum_request_extract_two_hop_trait_path() -> Res
             panic!("expected RAG reverse path lookup to find the same two-hop chain: {incoming:#?}")
         });
     assert_eq!(reverse_path.edges, path.edges);
+    assert_call_path_node(
+        reverse_path,
+        start,
+        "::extract",
+        "axum-core/src/ext_traits/request.rs",
+        "RAG incoming two-hop path",
+    );
+    assert_call_path_node(
+        reverse_path,
+        intermediate,
+        "::extract_with_state",
+        "axum-core/src/ext_traits/request.rs",
+        "RAG incoming two-hop path",
+    );
+    assert_call_path_node(
+        reverse_path,
+        target,
+        "::from_request",
+        "axum-core/src/extract/mod.rs",
+        "RAG incoming two-hop path",
+    );
 
     Ok(())
+}
+
+fn assert_call_path_node(
+    path: &ploke_core::rag_types::CallPathInfo,
+    id: Uuid,
+    canon_suffix: &str,
+    file_suffix: &str,
+    label: &str,
+) {
+    assert!(
+        path.nodes.iter().any(|node| {
+            node.id == id
+                && node.canon_path.as_ref().ends_with(canon_suffix)
+                && node.file_path.as_ref().ends_with(file_suffix)
+        }),
+        "{label} should include call path node {id} ending with {canon_suffix:?} in {file_suffix:?}: {path:#?}"
+    );
 }
 
 #[tokio::test]

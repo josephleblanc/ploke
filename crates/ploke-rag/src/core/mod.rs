@@ -12,9 +12,10 @@ use super::*;
 use ploke_core::rag_types::AssembledContext;
 use ploke_core::rag_types::{
     CallCalleeInfo, CallContextInfo, CallEndpointKind, CallExpansionInfo, CallExpansionKind,
-    CallPathEdgeInfo, CallPathInfo, CallReceiverInfo, CallResolutionKind as RagCallResolutionKind,
-    CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind, CallTargetInfo,
-    CallTargetKind, ProofContextInfo,
+    CallPathEdgeInfo, CallPathInfo, CallPathNodeInfo, CallReceiverInfo,
+    CallResolutionKind as RagCallResolutionKind, CallSiteKind as RagCallSiteKind,
+    CallStatusKind as RagCallStatusKind, CallTargetInfo, CallTargetKind, CanonPath, NodeFilepath,
+    ProofContextInfo,
 };
 use ploke_db::{
     CallContextOptions, CallContextRelation, CallContextRow, CallContextSeed,
@@ -25,7 +26,7 @@ use ploke_db::{
 use ploke_embed::indexer::EmbeddingProcessor;
 use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_io::IoManagerHandle;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -265,13 +266,34 @@ fn row_to_call_context(
             .collect(),
     })
 }
-fn path_info(path: DbCallPath) -> CallPathInfo {
-    CallPathInfo {
+fn path_info(db: &Database, path: DbCallPath) -> Result<CallPathInfo, RagError> {
+    let nodes = path_nodes(db, &path)?;
+    Ok(CallPathInfo {
         start_id: path.start_id,
         end_id: path.end_id,
         depth: path.depth,
         edges: path.edges.into_iter().map(edge_info).collect(),
+        nodes,
+    })
+}
+fn path_nodes(db: &Database, path: &DbCallPath) -> Result<Vec<CallPathNodeInfo>, RagError> {
+    let mut ids = BTreeSet::from([path.start_id, path.end_id]);
+    for edge in &path.edges {
+        ids.insert(edge.caller_id);
+        ids.insert(edge.callee_id);
     }
+
+    db.get_snippet_context_nodes_ordered(ids.into_iter().collect())
+        .map_err(|err| RagError::Db(ploke_db::DbError::Cozo(err.to_string())))?
+        .into_iter()
+        .map(|(node, paths)| {
+            Ok(CallPathNodeInfo {
+                id: node.id,
+                file_path: NodeFilepath::new(paths.file),
+                canon_path: CanonPath::new(paths.canon),
+            })
+        })
+        .collect()
 }
 fn edge_info(edge: DbCallPathEdge) -> CallPathEdgeInfo {
     CallPathEdgeInfo {
@@ -512,8 +534,8 @@ impl RagService {
             .db
             .call_paths_from_owner(owner_id, options)?
             .into_iter()
-            .map(path_info)
-            .collect())
+            .map(|path| path_info(self.db.as_ref(), path))
+            .collect::<Result<Vec<_>, RagError>>()?)
     }
 
     pub fn exact_call_paths_to_target(
@@ -529,8 +551,8 @@ impl RagService {
             .db
             .call_paths_to_target(target_id, options)?
             .into_iter()
-            .map(path_info)
-            .collect())
+            .map(|path| path_info(self.db.as_ref(), path))
+            .collect::<Result<Vec<_>, RagError>>()?)
     }
 
     fn call_context(
