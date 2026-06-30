@@ -75,6 +75,7 @@ async fn code_item_call_path_returns_real_corpus_two_hop_reachability() {
         .find(|path| path.get("depth").and_then(serde_json::Value::as_u64) == Some(2))
         .unwrap_or_else(|| panic!("missing two-hop path: {paths:#?}"));
     assert_edge_spans_present(path, "code_item_call_path paths");
+    assert_path_edge_proofs_present(&payload, path, "code_item_call_path proof context");
     let nodes = path
         .get("nodes")
         .and_then(serde_json::Value::as_array)
@@ -104,6 +105,13 @@ async fn code_item_call_path_returns_real_corpus_two_hop_reachability() {
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(ui_field(ui, "reachable"), "true");
     assert_eq!(ui_field(ui, "paths"), paths.len().to_string());
+    assert!(
+        ui_field(ui, "proof_context")
+            .parse::<usize>()
+            .expect("proof context count")
+            >= 2,
+        "code_item_call_path should surface path proof-context counts"
+    );
     assert_eq!(ui_field(ui, "max_depth"), "2");
 }
 
@@ -126,6 +134,37 @@ fn assert_edge_spans_present(path: &serde_json::Value, label: &str) {
         assert!(
             span.iter().all(|value| value.as_u64().is_some()),
             "{label} edge span should serialize numeric byte bounds: {edge:#?}"
+        );
+    }
+}
+
+fn assert_path_edge_proofs_present(
+    payload: &serde_json::Value,
+    path: &serde_json::Value,
+    label: &str,
+) {
+    let proof_context = payload
+        .get("proof_context")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("{label} should include proof_context: {payload:#?}"));
+    let edges = path
+        .get("edges")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("{label} should include path edges: {path:#?}"));
+    for edge in edges {
+        let site = edge
+            .get("call_site_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_else(|| panic!("{label} edge should include call_site_id: {edge:#?}"));
+        assert!(
+            proof_context.iter().any(|proof| {
+                proof.get("kind").and_then(serde_json::Value::as_str) == Some("call_edge")
+                    && proof
+                        .get("call_site_id")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(site)
+            }),
+            "{label} should include a call_edge proof row for path callsite {site}: {proof_context:#?}"
         );
     }
 }

@@ -7,6 +7,7 @@ and crate-relative `module_path` beginning with `crate`.
 
 For methods, use `owner_type` for inherent impl methods or `owner_trait` for
 trait methods when the file/module/name tuple is ambiguous. The tool returns
-`reachable`, the ordered call paths, and source metadata for path nodes. It only
-traverses resolved local call edges; targetless unsupported, external,
-unresolved, or ambiguous calls remain fail-closed and do not create paths.
+`reachable`, ordered call paths, path-node source metadata, and proof-context
+rows for the source, target, and path nodes. It only traverses resolved local
+call edges; targetless unsupported, external, unresolved, or ambiguous calls
+remain fail-closed and do not create paths.

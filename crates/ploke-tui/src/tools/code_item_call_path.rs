@@ -1,7 +1,7 @@
-use std::{borrow::Cow, ops::Deref};
+use std::{borrow::Cow, collections::BTreeMap, ops::Deref};
 
 use ploke_core::{
-    rag_types::{CallPathInfo, NodeFilepath},
+    rag_types::{CallPathInfo, NodeFilepath, ProofContextInfo},
     tool_descriptions::ToolDescription,
     tool_types::ToolName,
 };
@@ -110,6 +110,7 @@ pub struct CodeItemCallPathResult {
     pub max_depth: u32,
     pub max_paths: usize,
     pub paths: Vec<CallPathInfo>,
+    pub proof_context: Vec<ProofContextInfo>,
 }
 
 pub struct CodeItemCallPath;
@@ -234,6 +235,7 @@ impl Tool for CodeItemCallPath {
                 })?,
             _ => Vec::new(),
         };
+        let proof_context = proof_context_for_paths(&ctx, source.id, target.id, &paths)?;
         let result = CodeItemCallPathResult {
             source_id: source.id,
             target_id: target.id,
@@ -243,6 +245,7 @@ impl Tool for CodeItemCallPath {
             max_depth,
             max_paths,
             paths,
+            proof_context,
         };
         let summary = if result.reachable {
             format!("Found {} call path(s)", result.paths.len())
@@ -254,6 +257,7 @@ impl Tool for CodeItemCallPath {
             .with_field("target_id", result.target_id.to_string())
             .with_field("reachable", result.reachable.to_string())
             .with_field("paths", result.paths.len().to_string())
+            .with_field("proof_context", result.proof_context.len().to_string())
             .with_field("max_depth", result.max_depth.to_string())
             .with_field("max_paths", result.max_paths.to_string());
         let content = serde_json::to_string(&result).map_err(|err| {
@@ -318,4 +322,44 @@ fn resolve_endpoint(
             owner_type: endpoint.owner_type.as_deref(),
         },
     )
+}
+
+fn proof_context_for_paths(
+    ctx: &super::Ctx,
+    source_id: uuid::Uuid,
+    target_id: uuid::Uuid,
+    paths: &[CallPathInfo],
+) -> Result<Vec<ProofContextInfo>, ploke_error::Error> {
+    use ploke_error::InternalError;
+
+    let Some(rag) = ctx.state.rag.as_ref() else {
+        return Ok(Vec::new());
+    };
+    if rag.proof_context_degraded() {
+        return Ok(Vec::new());
+    }
+
+    let mut ids = BTreeMap::new();
+    ids.insert(source_id, ());
+    ids.insert(target_id, ());
+    for path in paths {
+        ids.insert(path.start_id, ());
+        ids.insert(path.end_id, ());
+        for node in &path.nodes {
+            ids.insert(node.id, ());
+        }
+    }
+
+    let mut rows = BTreeMap::new();
+    for node_id in ids.into_keys() {
+        for row in rag.exact_proof_context(node_id).map_err(|err| {
+            ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                "failed to collect proof context for call path node {node_id}: {err}"
+            )))
+        })? {
+            rows.entry(row.fact_id.clone()).or_insert(row);
+        }
+    }
+
+    Ok(rows.into_values().collect())
 }
