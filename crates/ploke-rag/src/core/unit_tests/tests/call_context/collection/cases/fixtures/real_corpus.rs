@@ -433,6 +433,26 @@ async fn call_paths_exact_reads_axum_request_extract_two_hop_trait_path() -> Res
     assert_eq!(path.edges[1].caller_id, intermediate);
     assert_eq!(path.edges[1].callee_id, target);
     assert_eq!(path.edges[1].relation, CallTargetKind::AssociatedFunction);
+    let db_paths = db.call_paths_between(
+        start,
+        target,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 16,
+        },
+    )?;
+    let db_path = db_paths
+        .iter()
+        .find(|path| path.start_id == start && path.end_id == target && path.depth == 2)
+        .unwrap_or_else(|| panic!("expected DB two-hop path for RAG span oracle: {db_paths:#?}"));
+    assert_eq!(
+        path.edges[0].span, db_path.edges[0].span,
+        "RAG first path edge should preserve the DB callsite span"
+    );
+    assert_eq!(
+        path.edges[1].span, db_path.edges[1].span,
+        "RAG second path edge should preserve the DB callsite span"
+    );
     assert_call_path_node(
         path,
         start,

@@ -185,6 +185,7 @@ fn reformat_context_to_system_includes_call_path_details() {
                 caller_id: start,
                 callee_id: intermediate,
                 call_site_id: first_site,
+                span: (13, 41),
                 relation: CallTargetKind::Method,
                 source_kind: CallSiteKind::Method,
                 target_kind: CallEndpointKind::Method,
@@ -193,6 +194,7 @@ fn reformat_context_to_system_includes_call_path_details() {
                 caller_id: intermediate,
                 callee_id: target,
                 call_site_id: second_site,
+                span: (42, 63),
                 relation: CallTargetKind::AssociatedFunction,
                 source_kind: CallSiteKind::Path,
                 target_kind: CallEndpointKind::Method,
@@ -239,6 +241,8 @@ fn reformat_context_to_system_includes_call_path_details() {
     assert!(rendered.contains(&format!("outgoing depth 2: {start} -> {target}")));
     assert!(rendered.contains(&first_site.to_string()));
     assert!(rendered.contains(&second_site.to_string()));
+    assert!(rendered.contains("@13..41"));
+    assert!(rendered.contains("@42..63"));
     assert!(rendered.contains("crate::RequestExt::extract @ src/request.rs"));
     assert!(rendered.contains("crate::RequestExt::extract_with_state @ src/request.rs"));
     assert!(rendered.contains("crate::FromRequest::from_request @ src/extract.rs"));

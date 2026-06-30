@@ -344,6 +344,8 @@ pub struct CallPathEdgeInfo {
     pub caller_id: Uuid,
     pub callee_id: Uuid,
     pub call_site_id: Uuid,
+    #[serde(default)]
+    pub span: (u32, u32),
     pub relation: CallTargetKind,
     pub source_kind: CallSiteKind,
     pub target_kind: CallEndpointKind,

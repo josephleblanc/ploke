@@ -157,6 +157,20 @@ fn axum_usage_questions_answer_direct_reachability_between_known_symbols() -> Re
     assert_eq!(path.edges[0].callee_id, intermediate);
     assert_eq!(path.edges[1].caller_id, intermediate);
     assert_eq!(path.edges[1].callee_id, target);
+    assert_path_edge_span_matches_site(
+        &db,
+        start,
+        path.edges[0].call_site_id,
+        path.edges[0].span,
+        "RequestExt::extract -> extract_with_state",
+    )?;
+    assert_path_edge_span_matches_site(
+        &db,
+        intermediate,
+        path.edges[1].call_site_id,
+        path.edges[1].span,
+        "RequestExt::extract_with_state -> FromRequest::from_request",
+    )?;
 
     Ok(())
 }
@@ -236,4 +250,23 @@ fn assert_path_depths(paths: &[(Uuid, u32)], expected: &[(Uuid, u32)], label: &s
             "{label} should include node {node} at depth {depth}: {actual:#?}"
         );
     }
+}
+
+fn assert_path_edge_span_matches_site(
+    db: &Database,
+    owner: Uuid,
+    site: Uuid,
+    span: (u32, u32),
+    label: &str,
+) -> Result<(), DbError> {
+    let context = db.call_context_for_owner(owner)?;
+    let row = context
+        .iter()
+        .find(|row| row.site.id == site)
+        .unwrap_or_else(|| panic!("{label} should have callsite {site}: {context:#?}"));
+    assert_eq!(
+        span, row.site.span,
+        "{label} path edge should preserve the persisted callsite span"
+    );
+    Ok(())
 }

@@ -400,7 +400,7 @@ fn format_call_path(direction: &str, path: &CallPathInfo) -> String {
     let sites = path
         .edges
         .iter()
-        .map(|edge| edge.call_site_id.to_string())
+        .map(|edge| format!("{}@{}..{}", edge.call_site_id, edge.span.0, edge.span.1))
         .collect::<Vec<_>>()
         .join(" -> ");
     format!(

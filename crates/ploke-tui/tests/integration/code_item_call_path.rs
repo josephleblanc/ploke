@@ -74,6 +74,7 @@ async fn code_item_call_path_returns_real_corpus_two_hop_reachability() {
         .iter()
         .find(|path| path.get("depth").and_then(serde_json::Value::as_u64) == Some(2))
         .unwrap_or_else(|| panic!("missing two-hop path: {paths:#?}"));
+    assert_edge_spans_present(path, "code_item_call_path paths");
     let nodes = path
         .get("nodes")
         .and_then(serde_json::Value::as_array)
@@ -104,4 +105,27 @@ async fn code_item_call_path_returns_real_corpus_two_hop_reachability() {
     assert_eq!(ui_field(ui, "reachable"), "true");
     assert_eq!(ui_field(ui, "paths"), paths.len().to_string());
     assert_eq!(ui_field(ui, "max_depth"), "2");
+}
+
+fn assert_edge_spans_present(path: &serde_json::Value, label: &str) {
+    let edges = path
+        .get("edges")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("{label} should include path edges: {path:#?}"));
+    assert_eq!(
+        edges.len(),
+        2,
+        "{label} should expose both call edges: {path:#?}"
+    );
+    for edge in edges {
+        let span = edge
+            .get("span")
+            .and_then(serde_json::Value::as_array)
+            .unwrap_or_else(|| panic!("{label} edge should include a span pair: {edge:#?}"));
+        assert_eq!(span.len(), 2, "{label} edge span should have two bounds");
+        assert!(
+            span.iter().all(|value| value.as_u64().is_some()),
+            "{label} edge span should serialize numeric byte bounds: {edge:#?}"
+        );
+    }
 }

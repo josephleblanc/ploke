@@ -344,6 +344,7 @@ fn edge_info(edge: DbCallPathEdge) -> CallPathEdgeInfo {
         caller_id: edge.caller_id,
         callee_id: edge.callee_id,
         call_site_id: edge.call_site_id,
+        span: edge.span,
         relation: target_kind(edge.relation),
         source_kind: site_kind(edge.source_kind),
         target_kind: call_target_kind(edge.target_kind),

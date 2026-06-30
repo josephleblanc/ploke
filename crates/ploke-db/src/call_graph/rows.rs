@@ -123,6 +123,7 @@ pub struct CallPathEdge {
     pub caller_id: Uuid,
     pub callee_id: Uuid,
     pub call_site_id: Uuid,
+    pub span: (u32, u32),
     pub relation: CallRelationKind,
     pub source_kind: CallSiteKind,
     pub target_kind: CallTargetKind,
