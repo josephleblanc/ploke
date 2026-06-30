@@ -47,6 +47,9 @@ mod call_graph_tool_remaining_matrix;
 #[path = "integration/call_graph_tool_targetless_matrix.rs"]
 mod call_graph_tool_targetless_matrix;
 
+#[path = "integration/request_code_context_call_graph.rs"]
+mod request_code_context_call_graph;
+
 #[path = "integration/code_item_lookup_regression.rs"]
 mod code_item_lookup_regression;
 
