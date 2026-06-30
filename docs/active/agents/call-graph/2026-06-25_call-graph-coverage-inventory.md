@@ -46,6 +46,11 @@ future work can choose the next batch without rereading the diary-style notes.
   graph can answer basic navigation and impact questions with bounded multi-hop
   traversal:
   `RequestExt::extract -> extract_with_state -> FromRequest::from_request`.
+  DB now also exposes `call_paths_between(owner, target, options)`, so callers
+  can ask whether two known symbols are connected without manually filtering
+  owner-rooted traversal. RAG exposes the same capability as
+  `exact_call_paths_between`, returning `CallPathInfo` with ordered edges and
+  path-node source metadata for prompt/tool consumers.
   It also proves that an unsupported awaited receiver is still query-visible as
   a targetless fail-closed callsite and is excluded from traversal. Broad
   `request_code_context` coverage now returns outgoing and incoming two-hop
@@ -55,6 +60,8 @@ future work can choose the next batch without rereading the diary-style notes.
   lookup can answer direct call-navigation questions without relying on prompt
   row caps. Focused verification:
   `cargo test -p ploke-db --features call_graph real_target_matrix::usage_questions -- --nocapture`,
+  `cargo test -p ploke-rag --features call_graph call_paths_exact_reads_axum_request_extract_two_hop_trait_path -- --nocapture`,
+  `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
   `cargo test -p ploke-tui --features call_graph request_code_context_returns_real_corpus -- --nocapture`,
   and
   `cargo test -p ploke-tui --features call_graph code_item_lookup_regression -- --nocapture`.
