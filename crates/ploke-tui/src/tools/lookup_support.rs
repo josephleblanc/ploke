@@ -10,12 +10,14 @@ use ploke_db::{
         graph_resolve_exact_variant,
     },
 };
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 use crate::rag::utils::NodeKind;
 
-use super::{ToolError, ToolErrorCode, ToolInvocationError, ToolRetryContext};
+use super::{
+    ToolError, ToolErrorCode, ToolInvocationError, ToolRetryContext, ValidatesAbolutePath,
+};
 
 pub(super) const MODULE_PATH_DESC: &str = r#"crate-relative module path, e.g. "crate" or "crate::mod_one::nested_mod".
 Do not use the Cargo package/crate name, and do not include the target item's identifier.
@@ -161,6 +163,125 @@ pub(super) fn resolve_exact_item(
         }
         None => graph_resolve_exact(db, node_kind.as_relation(), abs_path, mod_path, item_name),
     }
+}
+
+pub(super) struct ResolvedToolItem {
+    pub(super) id: Uuid,
+    pub(super) rel_path: PathBuf,
+}
+
+pub(super) struct ExactItemRequest<'a> {
+    pub(super) item_name: &'a str,
+    pub(super) file_path: &'a str,
+    pub(super) node_kind: &'a str,
+    pub(super) module_path: &'a str,
+    pub(super) owner_trait: Option<&'a str>,
+    pub(super) owner_type: Option<&'a str>,
+}
+
+impl<'a> ValidatesAbolutePath for ExactItemRequest<'a> {
+    fn get_file_path(&self) -> impl AsRef<std::path::Path> {
+        Path::new(self.file_path)
+    }
+}
+
+pub(super) fn resolve_exact_tool_item(
+    db: &Database,
+    primary_root: &Path,
+    policy: &ploke_io::path_policy::PathPolicy,
+    request: ExactItemRequest<'_>,
+) -> Result<ResolvedToolItem, ploke_error::Error> {
+    use ploke_error::{DomainError, InternalError};
+
+    let node_kind = request.node_kind.parse::<NodeKind>().map_err(|_| {
+        ploke_error::Error::Domain(DomainError::Ui {
+            message: format!(
+                "Invalid node_kind `{}`. Allowed: {}",
+                request.node_kind,
+                NodeKind::allowed_values().join(", ")
+            ),
+        })
+    })?;
+    let owner = normalize_owner_qualifier(request.owner_trait, request.owner_type, node_kind)?;
+    let abs_path = request
+        .validate_to_abs_path(primary_root, policy)
+        .map_err(|err| {
+            ploke_error::Error::Domain(DomainError::Ui {
+                message: format!(
+                    r#"The target file could not be found at the resolved absolute path.
+Original error message: {err} This indicates an incorrect file path.
+Tip: consider using `request_code_context` with the item name, signature, or anticipated contents
+for a more fuzzy search."#
+                )
+                .to_string(),
+            })
+        })?;
+    let rel_path = abs_path
+        .strip_prefix(primary_root)
+        .map_err(|_| ploke_error::Error::Internal(InternalError::InvalidState("Error stripping relative path from absolute path. This indicates an error with the ploke application itself. Please consider filing an issue at the ploke github.")))?;
+    let mod_path = request
+        .module_path
+        .split("::")
+        .filter(|part| !part.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if mod_path.is_empty() || mod_path.first().map(|part| part.as_str()) != Some("crate") {
+        return Err(ploke_error::Error::Domain(DomainError::Ui {
+            message: module_path_error_message(request.module_path),
+        }));
+    }
+
+    let resolved = match resolve_exact_item(
+        db,
+        node_kind,
+        &abs_path,
+        &mod_path,
+        request.item_name,
+        owner.as_ref(),
+    ) {
+        Ok(items) if items.len() == 1 => items,
+        Ok(items) if items.is_empty() => {
+            let hint = node_kind
+                .lookup_hint()
+                .map(|hint| format!(" {hint}"))
+                .unwrap_or_default();
+            return Err(ploke_error::Error::Domain(DomainError::Ui {
+                message: format!(
+                    "No code item named `{}` found in {} with module_path {} and node_kind {}{}.{}",
+                    request.item_name,
+                    rel_path.display(),
+                    request.module_path,
+                    node_kind.as_str(),
+                    owner_message(owner.as_ref()),
+                    hint
+                ),
+            }));
+        }
+        Ok(_) => {
+            return Err(ploke_error::Error::Domain(DomainError::Ui {
+                message: format!(
+                    "Multiple items matched `{}` in {} with module_path {} and node_kind {}{}; expected a single match.",
+                    request.item_name,
+                    rel_path.display(),
+                    request.module_path,
+                    node_kind.as_str(),
+                    owner_message(owner.as_ref())
+                ),
+            }));
+        }
+        Err(err) => {
+            return Err(ploke_error::Error::Internal(InternalError::CompilerError(
+                format!(
+                    "Database lookup failed: {err}. This indicates an issue with the ploke application itself, not an error in the search input. Please consider filing an issue at the ploke github."
+                ),
+            )));
+        }
+    };
+
+    Ok(ResolvedToolItem {
+        id: resolved[0].id,
+        rel_path: rel_path.to_path_buf(),
+    })
 }
 
 pub(super) fn owner_message(owner: Option<&OwnerQualifier>) -> String {

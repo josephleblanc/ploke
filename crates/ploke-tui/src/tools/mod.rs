@@ -49,6 +49,7 @@ pub use request_code_context::{
 pub mod code_edit;
 pub use code_edit::{CanonicalEdit, CodeEdit, CodeEditInput, GatCodeEdit};
 pub mod cargo;
+pub mod code_item_call_path;
 pub mod code_item_lookup;
 pub mod create_file;
 pub mod error;
@@ -220,6 +221,9 @@ fn validate_tool_args(tool_name: ToolName, args: &str) -> Result<(), ToolError> 
             validate_tool_args_with::<code_item_lookup::CodeItemLookup>(args)
         }
         ToolName::CodeItemEdges => validate_tool_args_with::<get_code_edges::CodeItemEdges>(args),
+        ToolName::CodeItemCallPath => {
+            validate_tool_args_with::<code_item_call_path::CodeItemCallPath>(args)
+        }
         ToolName::Cargo => validate_tool_args_with::<cargo::CargoTool>(args),
         ToolName::ListDir => validate_tool_args_with::<list_dir::ListDir>(args),
     }
@@ -488,6 +492,37 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 format_args!("{:#?}", &content),
             );
             get_code_edges::CodeItemEdges::emit_completed(&ctx, content, ui_payload);
+            Ok(())
+        }
+        ToolName::CodeItemCallPath => {
+            let params = code_item_call_path::CodeItemCallPath::deserialize_params(&args).map_err(
+                |err| {
+                    let terr = code_item_call_path::CodeItemCallPath::adapt_error(err);
+                    code_item_call_path::CodeItemCallPath::emit_err(&ctx, terr.clone());
+                    eyre!(terr.format_for_audience(Audience::System))
+                },
+            )?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "params: {}\n",
+                format_args!("{:#?}", &params),
+            );
+            let ToolResult {
+                content,
+                ui_payload,
+            } = code_item_call_path::CodeItemCallPath::execute(params, ctx.clone())
+                .await
+                .map_err(|e| {
+                    let terr = code_item_call_path::CodeItemCallPath::adapt_error(
+                        ToolInvocationError::Exec(e),
+                    );
+                    code_item_call_path::CodeItemCallPath::emit_err(&ctx, terr.clone());
+                    eyre!(terr.format_for_audience(Audience::System))
+                })?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "content: {}\n",
+                format_args!("{:#?}", &content),
+            );
+            code_item_call_path::CodeItemCallPath::emit_completed(&ctx, content, ui_payload);
             Ok(())
         }
         ToolName::ListDir => {

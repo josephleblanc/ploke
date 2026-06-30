@@ -53,6 +53,9 @@ mod request_code_context_call_graph;
 #[path = "integration/code_item_lookup_regression.rs"]
 mod code_item_lookup_regression;
 
+#[path = "integration/code_item_call_path.rs"]
+mod code_item_call_path;
+
 #[path = "integration/commands_parser_m1.rs"]
 mod commands_parser_m1;
 

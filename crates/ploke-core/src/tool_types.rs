@@ -23,6 +23,8 @@ pub enum ToolName {
     CodeItemLookup,
     #[serde(rename = "code_item_edges")]
     CodeItemEdges,
+    #[serde(rename = "code_item_call_path")]
+    CodeItemCallPath,
     #[serde(rename = "cargo")]
     Cargo,
     #[serde(rename = "list_dir")]
@@ -30,7 +32,7 @@ pub enum ToolName {
 }
 
 impl ToolName {
-    pub const ALL: [ToolName; 10] = [
+    pub const ALL: [ToolName; 11] = [
         ToolName::RequestCodeContext,
         ToolName::ApplyCodeEdit,
         ToolName::InsertRustItem,
@@ -39,6 +41,7 @@ impl ToolName {
         ToolName::NsRead,
         ToolName::CodeItemLookup,
         ToolName::CodeItemEdges,
+        ToolName::CodeItemCallPath,
         ToolName::Cargo,
         ToolName::ListDir,
     ];
@@ -54,6 +57,7 @@ impl ToolName {
             NsRead => "read_file",
             CodeItemLookup => "code_item_lookup",
             CodeItemEdges => "code_item_edges",
+            CodeItemCallPath => "code_item_call_path",
             Cargo => "cargo",
             ListDir => "list_dir",
         }
