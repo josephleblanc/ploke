@@ -944,6 +944,12 @@ Progress note, 2026-06-28:
 - Exact TUI `code_item_lookup` and `code_item_edges` now cover the same
   dependency-root `FromRef::from_ref` targetless path rows, including the
   `canonical_identity_mismatch` proof boundary for the nested local-owner row.
+- Method-call resolver orchestration and receiver/result helper logic now live
+  in `resolve/call_resolution/method.rs`, following the existing
+  `path.rs`/`dynamic.rs`/`constructors.rs` sibling split. This reduces the
+  root resolver to the shared resolver/type/scope helpers while preserving
+  behavior; focused `syn_parser call_sites` checks stayed green at 215 passing
+  tests for each split commit.
 - Focused checks passed for the new DB helper, owner qualifier unit tests,
   TUI schema regression, and remaining real-corpus TUI lookup/edge matrix.
 
