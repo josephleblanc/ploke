@@ -66,7 +66,14 @@ future work can choose the next batch without rereading the diary-style notes.
   row caps. Exact `code_item_call_path` responses now include proof-context
   rows for the source, target, and path nodes, and the axum tool regression
   asserts that every returned path edge has a matching `call_edge` proof row
-  for its persisted callsite ID. Focused verification:
+  for its persisted callsite ID. DB now also exposes
+  `call_impact_for_target(target, options)`, a target-centered usage summary
+  that returns the target node metadata, bounded incoming paths, eventual
+  callers, direct callers, and directly stored-public callers. RAG exposes the
+  same resolved-only surface through `exact_call_impact_for_target`, and the
+  axum real-corpus regression proves both the `FromRequest::from_request`
+  two-hop caller summary and the fail-closed proc-macro public-entrypoint gap
+  for `expand_with`. Focused verification:
   `cargo test -p ploke-db --features call_graph real_target_matrix::usage_questions -- --nocapture`,
   `cargo test -p ploke-rag --features call_graph call_paths_exact_reads_axum_request_extract_two_hop_trait_path -- --nocapture`,
   `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
