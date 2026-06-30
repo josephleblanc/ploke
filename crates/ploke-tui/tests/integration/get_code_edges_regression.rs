@@ -495,6 +495,10 @@ async fn code_item_edges_returns_real_corpus_await_receiver_targetless_row() {
     let site_id =
         assert_await_result_unwrap_context(call_context, fixture.owner, "code_item_edges");
     assert_await_result_unwrap_proof(proof_context, fixture.owner, site_id, "code_item_edges");
+    assert!(
+        summary_usize(&payload, "blocked") >= 1,
+        "code_item_edges summary should report the unsupported targetless await receiver row: {payload:#?}"
+    );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert!(
@@ -503,6 +507,13 @@ async fn code_item_edges_returns_real_corpus_await_receiver_targetless_row() {
             .expect("outgoing count")
             >= 1,
         "code_item_edges should surface outgoing targetless call-context count"
+    );
+    assert!(
+        ui_field(ui, "blocked_calls")
+            .parse::<usize>()
+            .expect("blocked call count")
+            >= 1,
+        "code_item_edges should surface blocked callsite count in the UI payload"
     );
     let proof_count = proof_context.len().to_string();
     assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
