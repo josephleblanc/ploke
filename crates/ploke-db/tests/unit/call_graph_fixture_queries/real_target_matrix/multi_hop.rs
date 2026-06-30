@@ -1,4 +1,4 @@
-use ploke_db::CallPathOptions;
+use ploke_db::{CallContextRelation, CallContextSeed, CallPathOptions};
 
 use super::super::*;
 use super::common::*;
@@ -80,6 +80,98 @@ fn axum_request_extract_reaches_from_request_trait_method_in_two_hops() -> Resul
             panic!("expected reverse lookup to find the same two-hop source chain: {incoming:#?}")
         });
     assert_eq!(reverse_path.edges, path.edges);
+
+    Ok(())
+}
+
+#[test]
+fn axum_request_extract_expands_call_path_context_in_two_hops() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Source-oracle chain:
+    //   axum-core/src/ext_traits/request.rs:268
+    //     `RequestExt::extract` calls `self.extract_with_state(&())`.
+    //   axum-core/src/ext_traits/request.rs:279
+    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
+    //   axum-core/src/extract/mod.rs:85
+    //     defines the `FromRequest::from_request` trait method binding.
+    //
+    // This is the DB query primitive for usage questions such as "from this
+    // function, which local callees can I reach within N hops?" and "which
+    // callers can reach this target within N hops?" It returns the same
+    // candidate shape as one-hop `expand_call_context`, but with real path
+    // distance from the persisted call graph.
+    let start = method_id_by_name_body_and_file_suffix(
+        &db,
+        "extract",
+        "self.extract_with_state(&())",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let intermediate = method_id_by_name_body_and_file_suffix(
+        &db,
+        "extract_with_state",
+        "E::from_request(self, state)",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
+
+    let outgoing = db.expand_call_path_context(
+        CallContextSeed::Owner(start),
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 16,
+        },
+    )?;
+    let outgoing_target = outgoing
+        .iter()
+        .find(|candidate| {
+            candidate.node_id == target
+                && candidate.relation == CallContextRelation::OutgoingTarget
+                && candidate.distance == 2
+        })
+        .unwrap_or_else(|| {
+            panic!("expected two-hop outgoing target candidate for FromRequest::from_request: {outgoing:#?}")
+        });
+    assert_eq!(outgoing_target.target_id, target);
+
+    let direct_target = outgoing
+        .iter()
+        .find(|candidate| {
+            candidate.node_id == intermediate
+                && candidate.relation == CallContextRelation::OutgoingTarget
+                && candidate.distance == 1
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "expected one-hop outgoing target candidate for extract_with_state: {outgoing:#?}"
+            )
+        });
+    assert_eq!(direct_target.target_id, intermediate);
+    assert_ne!(
+        outgoing_target.call_site_id, direct_target.call_site_id,
+        "multi-hop candidate should retain the terminal edge call-site, not collapse to the first edge"
+    );
+
+    let incoming = db.expand_call_path_context(
+        CallContextSeed::Target(target),
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 16,
+        },
+    )?;
+    let incoming_start = incoming
+        .iter()
+        .find(|candidate| {
+            candidate.node_id == start
+                && candidate.relation == CallContextRelation::IncomingCaller
+                && candidate.distance == 2
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "expected two-hop incoming caller candidate for RequestExt::extract: {incoming:#?}"
+            )
+        });
+    assert_eq!(incoming_start.target_id, target);
 
     Ok(())
 }
