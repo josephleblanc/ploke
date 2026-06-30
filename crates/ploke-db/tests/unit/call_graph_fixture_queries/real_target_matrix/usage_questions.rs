@@ -92,6 +92,76 @@ fn axum_usage_questions_have_multi_hop_navigation_and_impact_answers() -> Result
 }
 
 #[test]
+fn axum_usage_questions_answer_direct_reachability_between_known_symbols() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security analysis / Performance work / Debugging:
+    //   "Can this entrypoint reach this sink/helper/error-producing function?"
+    //   "What ordered call path connects the two known symbols?"
+    //
+    // Source-oracle chain:
+    //   axum-core/src/ext_traits/request.rs:268
+    //     `RequestExt::extract` calls `self.extract_with_state(&())`.
+    //   axum-core/src/ext_traits/request.rs:279
+    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
+    //   axum-core/src/extract/mod.rs:85
+    //     defines the `FromRequest::from_request` trait method binding.
+    let start = method_id_by_name_body_and_file_suffix(
+        &db,
+        "extract",
+        "self.extract_with_state(&())",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let intermediate = method_id_by_name_body_and_file_suffix(
+        &db,
+        "extract_with_state",
+        "E::from_request(self, state)",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
+
+    let one_hop = db.call_paths_between(
+        start,
+        target,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 16,
+        },
+    )?;
+    assert!(
+        one_hop.is_empty(),
+        "direct reachability must not collapse the intermediate method: {one_hop:#?}"
+    );
+
+    let paths = db.call_paths_between(
+        start,
+        target,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 16,
+        },
+    )?;
+    let path = paths
+        .iter()
+        .find(|path| path.start_id == start && path.end_id == target && path.depth == 2)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected a two-hop RequestExt::extract -> FromRequest::from_request path: {paths:#?}"
+            )
+        });
+    assert_eq!(path.edges.len(), 2);
+    assert_eq!(path.edges[0].caller_id, start);
+    assert_eq!(path.edges[0].callee_id, intermediate);
+    assert_eq!(path.edges[1].caller_id, intermediate);
+    assert_eq!(path.edges[1].callee_id, target);
+
+    Ok(())
+}
+
+#[test]
 fn axum_usage_questions_surface_fail_closed_debugging_context() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
