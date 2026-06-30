@@ -3,15 +3,18 @@ use crate::{
     parser::{
         graph::GraphAccess,
         nodes::{
-            AnyCallSiteId, CallBodyOwnerId, MethodCallNode, MethodCallReceiver, OrdinaryTypeUseId,
-            StructNodeId,
+            AnyCallSiteId, CallBodyOwnerId, CallNode, MethodCallNode, MethodCallReceiver,
+            OrdinaryTypeUseId, StructNodeId,
         },
         relations::{CallRelation, CallResolutionKind, CallResolutionStatus, TypeRelation},
         types::TypeNode,
     },
 };
 
-use super::{AssocPathResolution, CallRelationResolver};
+use super::{
+    AssocPathResolution, CallRelationResolver, LocalFunctionPathResolution, LocalTraitResolution,
+    LocalTypeResolution,
+};
 
 impl CallRelationResolver<'_> {
     pub(super) fn resolve_method_call(
@@ -393,6 +396,238 @@ impl CallRelationResolver<'_> {
             TypeNode::Reference(node) => Ok(Some(node.referenced)),
             TypeNode::Paren(node) => self.dereferenced_type_use(node.inner),
             _ => Ok(None),
+        }
+    }
+
+    fn resolve_typed_local_method_call(
+        &self,
+        call: &MethodCallNode,
+        type_path: &[String],
+        type_relations: &[TypeRelation],
+    ) -> Result<AssocPathResolution, SynParserError> {
+        if type_path.is_empty() || self.is_external_path(type_path) {
+            return Ok(AssocPathResolution::Unsupported);
+        }
+
+        let resolution = if type_path.len() == 1 || self.is_explicit_local_path(type_path) {
+            self.resolve_local_type_path(call.owner, type_path)?
+        } else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+
+        match resolution {
+            LocalTypeResolution::Resolved(target) => self
+                .resolve_type_instance_method(
+                    call.owner,
+                    target,
+                    &call.method_name,
+                    type_relations,
+                )?
+                .map_or(Ok(AssocPathResolution::Unsupported), Ok),
+            LocalTypeResolution::Unresolved => {
+                self.resolve_typed_local_trait_method_call(call.owner, type_path, &call.method_name)
+            }
+            LocalTypeResolution::Ambiguous => Ok(AssocPathResolution::Ambiguous),
+        }
+    }
+
+    fn resolve_typed_local_trait_method_call(
+        &self,
+        owner: CallBodyOwnerId,
+        trait_path: &[String],
+        method_name: &str,
+    ) -> Result<AssocPathResolution, SynParserError> {
+        let [trait_segment] = trait_path else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+
+        match self.resolve_local_trait_segment(owner, trait_segment)? {
+            LocalTraitResolution::Resolved(trait_id) => {
+                let trait_node = self.graph.get_trait_checked(trait_id)?;
+                Ok(self.resolve_instance_method_in_trait(trait_node, method_name))
+            }
+            LocalTraitResolution::Unresolved => Ok(AssocPathResolution::Unresolved),
+            LocalTraitResolution::Ambiguous => Ok(AssocPathResolution::Ambiguous),
+        }
+    }
+
+    fn resolve_path_result_method_call(
+        &self,
+        call: &MethodCallNode,
+        path: &[String],
+        type_relations: &[TypeRelation],
+    ) -> Result<AssocPathResolution, SynParserError> {
+        if path.is_empty()
+            || self.is_external_path(path)
+            || self.is_external_import_path(call.owner, path)?
+        {
+            return Ok(AssocPathResolution::Unsupported);
+        }
+
+        let resolution = if self.is_unqualified_path(path) {
+            self.resolve_unqualified_local_function_path(call.owner, path)?
+        } else if self.is_explicit_local_path(path) {
+            self.resolve_local_function_path(call.owner, path)?
+        } else {
+            self.resolve_implicit_local_function_path(call.owner, path)?
+        };
+
+        match resolution {
+            LocalFunctionPathResolution::Resolved(function_id) => self
+                .resolve_function_return_type_method(
+                    call.owner,
+                    function_id,
+                    &call.method_name,
+                    type_relations,
+                ),
+            LocalFunctionPathResolution::Unresolved => Ok(AssocPathResolution::Unresolved),
+            LocalFunctionPathResolution::Ambiguous => Ok(AssocPathResolution::Ambiguous),
+            LocalFunctionPathResolution::Unsupported => Ok(AssocPathResolution::Unsupported),
+        }
+    }
+
+    fn resolve_try_path_result_method_call(
+        &self,
+        call: &MethodCallNode,
+        path: &[String],
+        type_relations: &[TypeRelation],
+    ) -> Result<AssocPathResolution, SynParserError> {
+        if path.is_empty()
+            || self.is_external_path(path)
+            || self.is_external_import_path(call.owner, path)?
+        {
+            return Ok(AssocPathResolution::Unsupported);
+        }
+
+        let resolution = if self.is_unqualified_path(path) {
+            self.resolve_unqualified_local_function_path(call.owner, path)?
+        } else if self.is_explicit_local_path(path) {
+            self.resolve_local_function_path(call.owner, path)?
+        } else {
+            self.resolve_implicit_local_function_path(call.owner, path)?
+        };
+
+        match resolution {
+            LocalFunctionPathResolution::Resolved(function_id) => self
+                .resolve_result_ok_return_type_method(
+                    call.owner,
+                    function_id,
+                    &call.method_name,
+                    type_relations,
+                ),
+            LocalFunctionPathResolution::Unresolved => Ok(AssocPathResolution::Unresolved),
+            LocalFunctionPathResolution::Ambiguous => Ok(AssocPathResolution::Ambiguous),
+            LocalFunctionPathResolution::Unsupported => Ok(AssocPathResolution::Unsupported),
+        }
+    }
+
+    fn resolve_method_result_method_call(
+        &self,
+        call: &MethodCallNode,
+        inner_method_name: &str,
+        type_relations: &[TypeRelation],
+    ) -> Result<AssocPathResolution, SynParserError> {
+        let Some(inner_call) = self.direct_inner_method_call(call, inner_method_name) else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+
+        let inner_resolution = self.resolve_method_call_target(inner_call, type_relations)?;
+        match inner_resolution {
+            AssocPathResolution::Resolved(method_id) => self.resolve_method_return_type_method(
+                call.owner,
+                method_id,
+                &call.method_name,
+                type_relations,
+            ),
+            AssocPathResolution::Unresolved => Ok(AssocPathResolution::Unresolved),
+            AssocPathResolution::Ambiguous => Ok(AssocPathResolution::Ambiguous),
+            AssocPathResolution::Unsupported => Ok(AssocPathResolution::Unsupported),
+        }
+    }
+
+    fn direct_inner_method_call(
+        &self,
+        call: &MethodCallNode,
+        inner_method_name: &str,
+    ) -> Option<&MethodCallNode> {
+        let mut candidates = self
+            .graph
+            .call_sites()
+            .iter()
+            .filter_map(|candidate| match candidate {
+                CallNode::MethodCall(inner)
+                    if inner.owner == call.owner
+                        && inner.method_name == inner_method_name
+                        && inner.span.0 == call.span.0
+                        && inner.span.1 < call.span.1 =>
+                {
+                    Some(inner)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        let max_end = candidates.iter().map(|inner| inner.span.1).max()?;
+        candidates.retain(|inner| inner.span.1 == max_end);
+        match candidates.as_slice() {
+            [inner] => Some(*inner),
+            _ => None,
+        }
+    }
+
+    fn resolve_method_call_target(
+        &self,
+        call: &MethodCallNode,
+        type_relations: &[TypeRelation],
+    ) -> Result<AssocPathResolution, SynParserError> {
+        match &call.receiver {
+            MethodCallReceiver::SelfValue => self.resolve_self_method_call(call),
+            MethodCallReceiver::SelfField { .. } => Ok(AssocPathResolution::Unsupported),
+            MethodCallReceiver::LocalBinding { name } => {
+                self.resolve_param_method_call(call, name, type_relations)
+            }
+            MethodCallReceiver::TypedLocalBinding { type_path, .. } => {
+                self.resolve_typed_local_method_call(call, type_path, type_relations)
+            }
+            MethodCallReceiver::InitializedLocalBinding { init_path, .. } => {
+                self.resolve_typed_local_method_call(call, init_path, type_relations)
+            }
+            MethodCallReceiver::BorrowedTypedLocalBinding { type_path, .. } => {
+                self.resolve_typed_local_method_call(call, type_path, type_relations)
+            }
+            MethodCallReceiver::DereferencedInitializedLocalBinding { init_path, .. } => {
+                self.resolve_typed_local_method_call(call, init_path, type_relations)
+            }
+            MethodCallReceiver::PathCallResult { path } => {
+                self.resolve_path_result_method_call(call, path, type_relations)
+            }
+            MethodCallReceiver::AwaitPathCallResult { path } => {
+                self.resolve_path_result_method_call(call, path, type_relations)
+            }
+            MethodCallReceiver::TryPathCallResult { path } => {
+                self.resolve_try_path_result_method_call(call, path, type_relations)
+            }
+            MethodCallReceiver::MethodCallResult { method_name } => {
+                self.resolve_method_result_method_call(call, method_name, type_relations)
+            }
+            MethodCallReceiver::FieldTypedLocalBinding {
+                type_path,
+                field_path,
+                ..
+            } => self.resolve_field_local_method_call(call, type_path, field_path, type_relations),
+            MethodCallReceiver::FieldInitializedLocalBinding {
+                init_path,
+                field_path,
+                ..
+            } => self.resolve_field_local_method_call(call, init_path, field_path, type_relations),
+            MethodCallReceiver::DereferencedLocalBinding { name } => {
+                self.resolve_dereferenced_param_method_call(call, name, type_relations)
+            }
+            MethodCallReceiver::BorrowedLocalBinding { .. }
+            | MethodCallReceiver::FieldLocalBinding { .. }
+            | MethodCallReceiver::AwaitResult
+            | MethodCallReceiver::TryResult
+            | MethodCallReceiver::Literal => Ok(AssocPathResolution::Unsupported),
         }
     }
 }
