@@ -63,7 +63,10 @@ future work can choose the next batch without rereading the diary-style notes.
   `code_item_lookup` now attaches `ConciseContext.call_paths_from_owner` and
   `ConciseContext.call_paths_to_target`, plus UI path counts, so exact symbol
   lookup can answer direct call-navigation questions without relying on prompt
-  row caps. Focused verification:
+  row caps. Exact `code_item_call_path` responses now include proof-context
+  rows for the source, target, and path nodes, and the axum tool regression
+  asserts that every returned path edge has a matching `call_edge` proof row
+  for its persisted callsite ID. Focused verification:
   `cargo test -p ploke-db --features call_graph real_target_matrix::usage_questions -- --nocapture`,
   `cargo test -p ploke-rag --features call_graph call_paths_exact_reads_axum_request_extract_two_hop_trait_path -- --nocapture`,
   `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
