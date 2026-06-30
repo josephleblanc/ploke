@@ -8,12 +8,12 @@ use ploke_tui::tools::{
 use crate::call_graph_tool_support::{
     AxumAwaitReceiverToolFixture, AxumBodyEmptyToolFixture, AxumBoxedIntoRouteToolFixture,
     AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture,
-    AxumRunUiTestsToolFixture, CallGraphToolFixture, assert_await_result_unwrap_context,
-    assert_await_result_unwrap_proof, assert_body_empty_incoming_context,
-    assert_boxed_into_route_incoming_context, assert_handler_call_incoming_context,
-    assert_incoming_context, assert_json_from_bytes_incoming_context,
-    assert_parse_attrs_incoming_context, assert_run_ui_tests_incoming_context, assert_target_proof,
-    ui_field,
+    AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture, CallGraphToolFixture,
+    assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
+    assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
+    assert_call_path_node, assert_handler_call_incoming_context, assert_incoming_context,
+    assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
+    assert_run_ui_tests_incoming_context, assert_target_proof, assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -134,6 +134,131 @@ async fn code_item_lookup_returns_real_corpus_await_receiver_targetless_row() {
             .expect("proof count")
             >= 2,
         "code_item_lookup should surface targetless AwaitResult proof rows"
+    );
+}
+
+#[tokio::test]
+async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
+    let fixture = AxumRequestExtractPathToolFixture::new().await;
+    let start_params = LookupParams {
+        item_name: Cow::Borrowed("extract"),
+        file_path: Cow::Owned(fixture.start_file_path.display().to_string()),
+        node_kind: Cow::Borrowed("method"),
+        module_path: Cow::Owned(fixture.start_module_path_arg()),
+        owner_trait: None,
+        owner_type: Some(Cow::Borrowed("Request")),
+    };
+
+    let start_result = CodeItemLookup::execute(
+        start_params,
+        fixture.ctx("axum-request-extract-lookup-paths"),
+    )
+    .await
+    .expect("RequestExt::extract lookup");
+    let start_payload: serde_json::Value =
+        serde_json::from_str(&start_result.content).expect("deserialize start ConciseContext");
+    let outgoing_paths = start_payload
+        .get("call_paths_from_owner")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_paths_from_owner array");
+
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    // Source-oracle chain:
+    //   axum-core/src/ext_traits/request.rs:268
+    //     `RequestExt::extract` calls `self.extract_with_state(&())`.
+    //   axum-core/src/ext_traits/request.rs:279
+    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
+    //   axum-core/src/extract/mod.rs:85
+    //     defines the `FromRequest::from_request` trait method binding.
+    // Exact lookup should expose the same call-path fields as request context
+    // and code-item edges, so an exact-coordinate lookup can answer navigation
+    // questions without requiring a second edge-tool call.
+    assert_two_hop_call_path(
+        outgoing_paths,
+        fixture.start,
+        fixture.intermediate,
+        fixture.target,
+        "code_item_lookup outgoing paths",
+    );
+    let target_id = fixture.target.to_string();
+    let outgoing_path = outgoing_paths
+        .iter()
+        .find(|path| {
+            path.get("end_id").and_then(serde_json::Value::as_str) == Some(target_id.as_str())
+                && path.get("depth").and_then(serde_json::Value::as_u64) == Some(2)
+        })
+        .unwrap_or_else(|| panic!("missing outgoing two-hop path: {outgoing_paths:#?}"));
+    let outgoing_nodes = outgoing_path
+        .get("nodes")
+        .and_then(serde_json::Value::as_array)
+        .expect("outgoing path nodes");
+    assert_call_path_node(
+        outgoing_nodes,
+        fixture.start,
+        "::extract",
+        "axum-core/src/ext_traits/request.rs",
+        "code_item_lookup outgoing paths",
+    );
+    assert_call_path_node(
+        outgoing_nodes,
+        fixture.intermediate,
+        "::extract_with_state",
+        "axum-core/src/ext_traits/request.rs",
+        "code_item_lookup outgoing paths",
+    );
+    assert_call_path_node(
+        outgoing_nodes,
+        fixture.target,
+        "::from_request",
+        "axum-core/src/extract/mod.rs",
+        "code_item_lookup outgoing paths",
+    );
+    let start_ui = start_result.ui_payload.as_ref().expect("start UI payload");
+    assert!(
+        ui_field(start_ui, "call_paths_from_owner")
+            .parse::<usize>()
+            .expect("outgoing path count")
+            >= 1,
+        "code_item_lookup should surface outgoing call-path carrier counts"
+    );
+
+    let target_params = LookupParams {
+        item_name: Cow::Borrowed("from_request"),
+        file_path: Cow::Owned(fixture.target_file_path.display().to_string()),
+        node_kind: Cow::Borrowed("method"),
+        module_path: Cow::Owned(fixture.target_module_path_arg()),
+        owner_trait: Some(Cow::Borrowed("FromRequest")),
+        owner_type: None,
+    };
+    let target_result =
+        CodeItemLookup::execute(target_params, fixture.ctx("axum-from-request-lookup-paths"))
+            .await
+            .expect("FromRequest::from_request lookup");
+    let target_payload: serde_json::Value =
+        serde_json::from_str(&target_result.content).expect("deserialize target ConciseContext");
+    let incoming_paths = target_payload
+        .get("call_paths_to_target")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_paths_to_target array");
+    assert_two_hop_call_path(
+        incoming_paths,
+        fixture.start,
+        fixture.intermediate,
+        fixture.target,
+        "code_item_lookup incoming paths",
+    );
+    let target_ui = target_result
+        .ui_payload
+        .as_ref()
+        .expect("target UI payload");
+    assert!(
+        ui_field(target_ui, "call_paths_to_target")
+            .parse::<usize>()
+            .expect("incoming path count")
+            >= 1,
+        "code_item_lookup should surface incoming call-path carrier counts"
     );
 }
 

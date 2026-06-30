@@ -283,6 +283,7 @@ for a more fuzzy search."#
         };
         let resolved_item_id = resolved_item[0].id;
         let carriers = lookup_support::context_carriers_for_node(&ctx, resolved_item_id)?;
+        let call_paths = lookup_support::call_path_carriers_for_node(&ctx, resolved_item_id)?;
         let tool_results = ctx
             .state
             .io_handle
@@ -315,8 +316,8 @@ for a more fuzzy search."#
             type_context: None,
             call_expansion: None,
             call_context: carriers.call_context,
-            call_paths_from_owner: Vec::new(),
-            call_paths_to_target: Vec::new(),
+            call_paths_from_owner: call_paths.from_owner,
+            call_paths_to_target: call_paths.to_target,
             proof_context: carriers.proof_context,
         };
         let call_counts =
@@ -329,6 +330,14 @@ for a more fuzzy search."#
             .with_field("call_context", call_counts.total.to_string())
             .with_field("call_context_outgoing", call_counts.outgoing.to_string())
             .with_field("call_context_incoming", call_counts.incoming.to_string())
+            .with_field(
+                "call_paths_from_owner",
+                concise_context.call_paths_from_owner.len().to_string(),
+            )
+            .with_field(
+                "call_paths_to_target",
+                concise_context.call_paths_to_target.len().to_string(),
+            )
             .with_field(
                 "proof_context",
                 concise_context.proof_context.len().to_string(),
