@@ -941,6 +941,9 @@ Progress note, 2026-06-28:
   extractor keeps the normal blocked proof row; the nested `test_from_extractor`
   local-owner row is pinned as the current `canonical_identity_mismatch` proof
   boundary, with no fabricated call edge.
+- Exact TUI `code_item_lookup` and `code_item_edges` now cover the same
+  dependency-root `FromRef::from_ref` targetless path rows, including the
+  `canonical_identity_mismatch` proof boundary for the nested local-owner row.
 - Focused checks passed for the new DB helper, owner qualifier unit tests,
   TUI schema regression, and remaining real-corpus TUI lookup/edge matrix.
 
@@ -961,6 +964,11 @@ For the `ploke-db` real-corpus call-site oracle matrix:
 For RAG dependency-root targetless path rows:
 
 - `cargo test -p ploke-rag from_ref_dependency_root -- --nocapture`
+  - passed: 2 passed, 0 failed.
+
+For exact TUI dependency-root targetless path rows:
+
+- `cargo test -p ploke-tui --test integration from_ref_dependency_root -- --nocapture`
   - passed: 2 passed, 0 failed.
 
 For exact TUI enum-variant target addressability:

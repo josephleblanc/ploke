@@ -7,9 +7,9 @@ use ploke_tui::tools::{
 };
 
 use crate::call_graph_tool_support::{
-    DynamicToolCase, DynamicToolFixture, ReceiverToolCase, ReceiverToolFixture,
-    assert_dynamic_context, assert_dynamic_proof, assert_method_context, assert_method_proof,
-    ui_field,
+    DynamicToolCase, DynamicToolFixture, PathToolCase, PathToolFixture, ReceiverToolCase,
+    ReceiverToolFixture, assert_dynamic_context, assert_dynamic_proof, assert_method_context,
+    assert_method_proof, assert_path_context, assert_path_proof, ui_field,
 };
 
 #[tokio::test]
@@ -299,6 +299,82 @@ async fn code_item_lookup_returns_request_parts_targetless_real_corpus_row() {
 }
 
 #[tokio::test]
+async fn code_item_lookup_returns_from_ref_dependency_root_path_rows() {
+    for case in PathToolCase::FROM_REF_DEP_ROOT {
+        let fixture = PathToolFixture::new(case.clone()).await;
+        let params = LookupParams {
+            item_name: Cow::Borrowed(case.item),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed(case.node_kind()),
+            module_path: Cow::Owned(fixture.module_path_arg()),
+            owner_trait: None,
+            owner_type: case.owner_type().map(Cow::Borrowed),
+        };
+
+        let result = CodeItemLookup::execute(params, fixture.ctx("axum-from-ref-path-lookup"))
+            .await
+            .unwrap_or_else(|err| panic!("{} code_item_lookup: {err}", fixture.case.label));
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+        let call_context = payload
+            .get("call_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("call_context array");
+        let proof_context = payload
+            .get("proof_context")
+            .and_then(serde_json::Value::as_array)
+            .expect("proof_context array");
+
+        // Matrix:
+        //   docs/active/agents/call-graph/
+        //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+        //
+        // Source chains:
+        //   axum/src/extract/state.rs:314 calls
+        //   `InnerState::from_ref(state)`.
+        //   axum/src/middleware/from_extractor.rs:328 calls
+        //   `Secret::from_ref(state)`.
+        // Expected traversal: exact owner lookup exposes the unsupported,
+        // targetless dependency-root path rows with zero callee targets. The
+        // nested `test_from_extractor` proof path currently reports the same
+        // canonical-identity boundary pinned by the RAG proof-context test.
+        let callee = fixture.case.callee();
+        let site_id = assert_path_context(
+            call_context,
+            fixture.owner,
+            &callee,
+            &fixture.case.status,
+            fixture.case.label,
+            "lookup",
+        );
+        assert_path_proof(
+            proof_context,
+            fixture.owner,
+            site_id,
+            fixture.case.proof,
+            fixture.case.label,
+            "lookup",
+        );
+
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert!(
+            ui_field(ui, "call_context_outgoing")
+                .parse::<usize>()
+                .expect("outgoing count")
+                >= 1,
+            "code_item_lookup should surface outgoing FromRef targetless path context"
+        );
+        assert!(
+            ui_field(ui, "proof_context")
+                .parse::<usize>()
+                .expect("proof count")
+                >= 1,
+            "code_item_lookup should surface FromRef targetless path proof rows"
+        );
+    }
+}
+
+#[tokio::test]
 async fn code_item_edges_returns_dynamic_targetless_real_corpus_rows() {
     for case in DynamicToolCase::AXUM {
         let fixture = DynamicToolFixture::new(case).await;
@@ -470,6 +546,68 @@ async fn code_item_edges_returns_request_parts_targetless_real_corpus_row() {
                 .expect("outgoing count")
                 >= 1,
             "code_item_edges should surface outgoing request-parts targetless call context"
+        );
+        let proof_count = proof_context.len().to_string();
+        assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
+    }
+}
+
+#[tokio::test]
+async fn code_item_edges_returns_from_ref_dependency_root_path_rows() {
+    for case in PathToolCase::FROM_REF_DEP_ROOT {
+        let fixture = PathToolFixture::new(case.clone()).await;
+        let params = EdgesParams {
+            item_name: Cow::Borrowed(case.item),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed(case.node_kind()),
+            module_path: Cow::Owned(fixture.module_path_arg()),
+            owner_trait: None,
+            owner_type: case.owner_type().map(Cow::Borrowed),
+        };
+
+        let result = CodeItemEdges::execute(params, fixture.ctx("axum-from-ref-path-edges"))
+            .await
+            .unwrap_or_else(|err| panic!("{} code_item_edges: {err}", fixture.case.label));
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+        let call_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("call_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.call_context array");
+        let proof_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("proof_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.proof_context array");
+
+        // Same real-corpus dependency-root FromRef targetless oracle as the
+        // lookup test above, exercised through the edge-oriented payload.
+        let callee = fixture.case.callee();
+        let site_id = assert_path_context(
+            call_context,
+            fixture.owner,
+            &callee,
+            &fixture.case.status,
+            fixture.case.label,
+            "edges",
+        );
+        assert_path_proof(
+            proof_context,
+            fixture.owner,
+            site_id,
+            fixture.case.proof,
+            fixture.case.label,
+            "edges",
+        );
+
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert!(
+            ui_field(ui, "call_context_outgoing")
+                .parse::<usize>()
+                .expect("outgoing count")
+                >= 1,
+            "code_item_edges should surface outgoing FromRef targetless path context"
         );
         let proof_count = proof_context.len().to_string();
         assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());

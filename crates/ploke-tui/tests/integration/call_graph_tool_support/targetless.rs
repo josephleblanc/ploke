@@ -45,6 +45,44 @@ pub(crate) struct ReceiverToolFixture {
     pub(crate) owner: Uuid,
 }
 
+#[derive(Clone)]
+pub(crate) struct PathToolCase {
+    pub(crate) label: &'static str,
+    pub(crate) item: &'static str,
+    pub(crate) path: &'static [&'static str],
+    pub(crate) status: CallStatusKind,
+    pub(crate) proof: PathProof,
+    owner: PathOwner,
+}
+
+#[derive(Clone, Copy)]
+enum PathOwner {
+    Method {
+        owner_type: &'static str,
+        file_suffix: &'static str,
+        body: &'static str,
+    },
+    Function {
+        module_path: &'static [&'static str],
+        file_suffix: &'static str,
+        body: &'static str,
+    },
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum PathProof {
+    Blocked,
+    IdentityMismatch,
+}
+
+pub(crate) struct PathToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) case: PathToolCase,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) owner: Uuid,
+}
+
 impl DynamicToolCase {
     pub(crate) const AXUM: [Self; 4] = [
         Self {
@@ -147,6 +185,55 @@ impl ReceiverToolCase {
     }
 }
 
+impl PathToolCase {
+    pub(crate) const FROM_REF_DEP_ROOT: [Self; 2] = [
+        Self {
+            label: "axum/src/extract/state.rs:314 InnerState::from_ref dependency root",
+            item: "from_request_parts",
+            path: &["InnerState", "from_ref"],
+            status: CallStatusKind::Unsupported,
+            proof: PathProof::Blocked,
+            owner: PathOwner::Method {
+                owner_type: "State",
+                file_suffix: "axum/src/extract/state.rs",
+                body: "InnerState::from_ref(state)",
+            },
+        },
+        Self {
+            label: "axum/src/middleware/from_extractor.rs:328 Secret::from_ref dependency root",
+            item: "test_from_extractor",
+            path: &["Secret", "from_ref"],
+            status: CallStatusKind::Unsupported,
+            proof: PathProof::IdentityMismatch,
+            owner: PathOwner::Function {
+                module_path: &["crate", "middleware", "from_extractor", "tests"],
+                file_suffix: "axum/src/middleware/from_extractor.rs",
+                body: "Secret::from_ref(state)",
+            },
+        },
+    ];
+
+    pub(crate) fn callee(&self) -> CallCalleeInfo {
+        CallCalleeInfo::Path {
+            path: self.path.iter().map(|part| (*part).to_string()).collect(),
+        }
+    }
+
+    pub(crate) fn node_kind(&self) -> &'static str {
+        match self.owner {
+            PathOwner::Method { .. } => "method",
+            PathOwner::Function { .. } => "function",
+        }
+    }
+
+    pub(crate) fn owner_type(&self) -> Option<&'static str> {
+        match self.owner {
+            PathOwner::Method { owner_type, .. } => Some(owner_type),
+            PathOwner::Function { .. } => None,
+        }
+    }
+}
+
 impl DynamicToolFixture {
     pub(crate) async fn new(case: DynamicToolCase) -> Self {
         let db = axum_call_graph_db();
@@ -225,6 +312,56 @@ impl ReceiverToolFixture {
     }
 }
 
+impl PathToolFixture {
+    pub(crate) async fn new(case: PathToolCase) -> Self {
+        let db = axum_call_graph_db();
+        let owner = match case.owner {
+            PathOwner::Method {
+                owner_type,
+                file_suffix,
+                body,
+            } => owner_by_body(
+                &db,
+                case.item,
+                owner_type,
+                None,
+                file_suffix,
+                body,
+                case.label,
+            ),
+            PathOwner::Function {
+                module_path,
+                file_suffix,
+                body,
+            } => function_owner_by_body(&db, case.item, module_path, file_suffix, body, case.label),
+        };
+        assert!(
+            db.project_call_proof_facts_for_node(owner.id, "bd:corpus-axum-call-graph")
+                .unwrap_or_else(|err| panic!("project {} proof facts: {err}", case.label))
+                >= 2,
+            "{} should project targetless path proof rows",
+            case.label
+        );
+        let state = axum_state_for_target(Arc::clone(&db), &owner, case.label).await;
+
+        Self {
+            state,
+            case,
+            file_path: owner.file_path,
+            module_path: owner.module_path,
+            owner: owner.id,
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
 pub(crate) fn assert_dynamic_context(
     calls: &[serde_json::Value],
     owner: Uuid,
@@ -274,6 +411,36 @@ pub(crate) fn assert_method_context(
         matching.len(),
         1,
         "{tool} should return exactly one method targetless row for {label}: {calls:#?}"
+    );
+    let call = &matching[0];
+    assert_eq!(&call.status, status);
+    assert_eq!(call.resolution, None);
+    assert!(
+        call.targets.is_empty(),
+        "{tool} should not fabricate traversal targets for {label}: {call:#?}"
+    );
+    call.site_id
+}
+
+pub(crate) fn assert_path_context(
+    calls: &[serde_json::Value],
+    owner: Uuid,
+    callee: &CallCalleeInfo,
+    status: &CallStatusKind,
+    label: &str,
+    tool: &str,
+) -> Uuid {
+    let matching = calls
+        .iter()
+        .filter_map(|call| serde_json::from_value::<CallContextInfo>(call.clone()).ok())
+        .filter(|call| {
+            call.owner_id == owner && call.kind == CallSiteKind::Path && &call.callee == callee
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "{tool} should return exactly one path targetless row for {label}: {calls:#?}"
     );
     let call = &matching[0];
     assert_eq!(&call.status, status);
@@ -364,6 +531,58 @@ pub(crate) fn assert_method_proof(
     );
 }
 
+pub(crate) fn assert_path_proof(
+    proofs: &[serde_json::Value],
+    owner: Uuid,
+    site_id: Uuid,
+    proof: PathProof,
+    label: &str,
+    tool: &str,
+) {
+    let owner = owner.to_string();
+    let site_id = site_id.to_string();
+    let rows = proofs
+        .iter()
+        .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
+        .collect::<Vec<_>>();
+    match proof {
+        PathProof::Blocked => {
+            assert!(
+                rows.iter().any(|proof| {
+                    proof.kind == "call_site"
+                        && proof.caller_def_id.as_deref() == Some(owner.as_str())
+                        && proof.call_site_id.as_deref() == Some(site_id.as_str())
+                        && proof.build_domain_id.as_deref() == Some("bd:corpus-axum-call-graph")
+                }),
+                "{tool} should return the targetless path call_site proof row for {label}: {proofs:#?}"
+            );
+            assert!(
+                rows.iter().any(|proof| {
+                    proof.kind == "call_resolution"
+                        && proof.call_site_id.as_deref() == Some(site_id.as_str())
+                        && proof.resolution_state.as_deref() == Some("blocked")
+                        && proof.blocker_reason.as_deref() == Some("type_resolution_missing")
+                }),
+                "{tool} should return the targetless path blocked resolution proof row for {label}: {proofs:#?}"
+            );
+        }
+        PathProof::IdentityMismatch => {
+            assert!(
+                rows.iter().any(|proof| {
+                    proof.blocker_reason.as_deref() == Some("canonical_identity_mismatch")
+                }),
+                "{tool} should return the canonical-identity proof blocker for {label}: {proofs:#?}"
+            );
+        }
+    }
+    assert!(
+        rows.iter().all(|proof| {
+            proof.kind != "call_edge" || proof.call_site_id.as_deref() != Some(site_id.as_str())
+        }),
+        "{tool} should not fabricate a call_edge for targetless path row {label}: {proofs:#?}"
+    );
+}
+
 fn owner_by_body(
     db: &Database,
     method: &str,
@@ -442,6 +661,82 @@ impl_self_type[self_type_id] :=
         matching.len(),
         1,
         "expected exactly one owner for {label}; rows: {:#?}",
+        rows.rows
+    );
+    let row = matching[0];
+
+    TargetInfo {
+        id: to_uuid(&row[0]).unwrap_or_else(|err| panic!("{label} uuid: {err}")),
+        file_path: PathBuf::from(data_str(&row[2], "file_path")),
+        module_path: data_path(&row[3], "module path"),
+    }
+}
+
+fn function_owner_by_body(
+    db: &Database,
+    name: &str,
+    module_path: &[&str],
+    file_suffix: &str,
+    body_marker: &str,
+    label: &str,
+) -> TargetInfo {
+    let mut params = BTreeMap::new();
+    params.insert("name".to_string(), DataValue::from(name));
+    params.insert(
+        "module_path".to_string(),
+        DataValue::List(
+            module_path
+                .iter()
+                .map(|part| DataValue::from(*part))
+                .collect(),
+        ),
+    );
+
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[id, body, file_path, mod_path] :=
+    *function {{ id, name: $name, body, module_id @ 'NOW' }},
+    *module{{ id: module_id, path: $module_path @ 'NOW' }},
+    ancestor[id, mod_id],
+    *module{{ id: mod_id, path: mod_path @ 'NOW' }},
+    file_owner_for_module[mod_id, file_id],
+    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+    let rows = db
+        .raw_query_params(&script, params)
+        .unwrap_or_else(|err| panic!("query {label} owner: {err}"));
+    let marker = body_key(body_marker);
+    let mut matching = rows
+        .rows
+        .iter()
+        .filter(|row| {
+            let DataValue::Str(body) = &row[1] else {
+                return false;
+            };
+            let module_matches = data_path(&row[3], "module path")
+                .iter()
+                .map(String::as_str)
+                .eq(module_path.iter().copied());
+            body_key(body).contains(&marker)
+                && data_str(&row[2], "file_path").ends_with(file_suffix)
+                && module_matches
+        })
+        .collect::<Vec<_>>();
+    matching.sort_by_key(|row| to_uuid(&row[0]).expect("function owner uuid"));
+    matching.dedup_by_key(|row| to_uuid(&row[0]).expect("function owner uuid"));
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one function owner for {label}; rows: {:#?}",
         rows.rows
     );
     let row = matching[0];
