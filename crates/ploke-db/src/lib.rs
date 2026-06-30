@@ -22,9 +22,10 @@ pub mod type_graph;
 pub mod multi_embedding;
 pub use call_graph::{
     CallCallerRow, CallContextCandidate, CallContextOptions, CallContextRelation, CallContextRow,
-    CallContextSeed, CallNodeContext, CallReceiver, CallRelationKind, CallResolutionKind,
-    CallResolutionRow, CallSiteKind, CallSiteRow, CallStatusKind, CallTargetKind, CallTargetRow,
-    call_target_endpoint_relation, valid_call_target_family,
+    CallContextSeed, CallNodeContext, CallPath, CallPathEdge, CallPathOptions, CallReceiver,
+    CallRelationKind, CallResolutionKind, CallResolutionRow, CallSiteKind, CallSiteRow,
+    CallStatusKind, CallTargetKind, CallTargetRow, call_target_endpoint_relation,
+    valid_call_target_family,
 };
 pub use database::RestoredEmbeddingSet;
 pub use database::{

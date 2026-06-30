@@ -100,3 +100,39 @@ impl Default for CallContextOptions {
         }
     }
 }
+
+/// Controls for bounded call-path traversal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CallPathOptions {
+    pub max_depth: u32,
+    pub max_paths: usize,
+}
+
+impl Default for CallPathOptions {
+    fn default() -> Self {
+        Self {
+            max_depth: 3,
+            max_paths: 64,
+        }
+    }
+}
+
+/// One resolved call edge inside a bounded call path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CallPathEdge {
+    pub caller_id: Uuid,
+    pub callee_id: Uuid,
+    pub call_site_id: Uuid,
+    pub relation: CallRelationKind,
+    pub source_kind: CallSiteKind,
+    pub target_kind: CallTargetKind,
+}
+
+/// Ordered resolved call chain.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CallPath {
+    pub start_id: Uuid,
+    pub end_id: Uuid,
+    pub depth: u32,
+    pub edges: Vec<CallPathEdge>,
+}

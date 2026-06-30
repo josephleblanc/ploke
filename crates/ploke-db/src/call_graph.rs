@@ -12,5 +12,6 @@ pub use kinds::{
 pub use receiver::CallReceiver;
 pub use rows::{
     CallCallerRow, CallContextCandidate, CallContextOptions, CallContextRelation, CallContextRow,
-    CallContextSeed, CallNodeContext, CallResolutionRow, CallSiteRow, CallTargetRow,
+    CallContextSeed, CallNodeContext, CallPath, CallPathEdge, CallPathOptions, CallResolutionRow,
+    CallSiteRow, CallTargetRow,
 };

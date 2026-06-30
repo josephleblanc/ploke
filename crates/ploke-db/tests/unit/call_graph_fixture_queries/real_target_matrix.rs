@@ -50,6 +50,7 @@
 mod associated;
 mod common;
 mod fallback;
+mod multi_hop;
 mod paths;
 mod receivers;
 mod source_lines;
