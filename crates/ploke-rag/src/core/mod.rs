@@ -11,14 +11,16 @@ mod unit_tests;
 use super::*;
 use ploke_core::rag_types::AssembledContext;
 use ploke_core::rag_types::{
-    CallCalleeInfo, CallContextInfo, CallExpansionInfo, CallExpansionKind, CallReceiverInfo,
-    CallResolutionKind as RagCallResolutionKind, CallSiteKind as RagCallSiteKind,
-    CallStatusKind as RagCallStatusKind, CallTargetInfo, CallTargetKind, ProofContextInfo,
+    CallCalleeInfo, CallContextInfo, CallEndpointKind, CallExpansionInfo, CallExpansionKind,
+    CallPathEdgeInfo, CallPathInfo, CallReceiverInfo, CallResolutionKind as RagCallResolutionKind,
+    CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind, CallTargetInfo,
+    CallTargetKind, ProofContextInfo,
 };
 use ploke_db::{
-    CallContextOptions, CallContextRelation, CallContextRow, CallContextSeed, CallReceiver,
+    CallContextOptions, CallContextRelation, CallContextRow, CallContextSeed,
+    CallPath as DbCallPath, CallPathEdge as DbCallPathEdge, CallPathOptions, CallReceiver,
     CallRelationKind, CallResolutionKind, CallSiteKind, CallStatusKind as DbCallStatusKind,
-    ProofGraphContextRow, ProofGraphStore,
+    CallTargetKind as DbCallTargetKind, ProofGraphContextRow, ProofGraphStore,
 };
 use ploke_embed::indexer::EmbeddingProcessor;
 use ploke_embed::runtime::EmbeddingRuntime;
@@ -263,6 +265,24 @@ fn row_to_call_context(
             .collect(),
     })
 }
+fn path_info(path: DbCallPath) -> CallPathInfo {
+    CallPathInfo {
+        start_id: path.start_id,
+        end_id: path.end_id,
+        depth: path.depth,
+        edges: path.edges.into_iter().map(edge_info).collect(),
+    }
+}
+fn edge_info(edge: DbCallPathEdge) -> CallPathEdgeInfo {
+    CallPathEdgeInfo {
+        caller_id: edge.caller_id,
+        callee_id: edge.callee_id,
+        call_site_id: edge.call_site_id,
+        relation: target_kind(edge.relation),
+        source_kind: site_kind(edge.source_kind),
+        target_kind: call_target_kind(edge.target_kind),
+    }
+}
 fn row_to_proof_context(row: ProofGraphContextRow) -> ProofContextInfo {
     ProofContextInfo {
         fact_id: row.fact_id,
@@ -392,6 +412,14 @@ fn target_kind(kind: CallRelationKind) -> CallTargetKind {
         CallRelationKind::EnumVariantConstructor => CallTargetKind::EnumVariantConstructor,
     }
 }
+fn call_target_kind(kind: DbCallTargetKind) -> CallEndpointKind {
+    match kind {
+        DbCallTargetKind::Function => CallEndpointKind::Function,
+        DbCallTargetKind::Method => CallEndpointKind::Method,
+        DbCallTargetKind::Struct => CallEndpointKind::Struct,
+        DbCallTargetKind::Variant => CallEndpointKind::Variant,
+    }
+}
 fn status_kind(kind: DbCallStatusKind) -> RagCallStatusKind {
     match kind {
         DbCallStatusKind::Resolved => RagCallStatusKind::Resolved,
@@ -469,6 +497,40 @@ impl RagService {
         }
 
         self.call_context(node_id, usize::MAX, usize::MAX)
+    }
+
+    pub fn exact_call_paths_from_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Vec<CallPathInfo>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(Vec::new());
+        }
+
+        Ok(self
+            .db
+            .call_paths_from_owner(owner_id, options)?
+            .into_iter()
+            .map(path_info)
+            .collect())
+    }
+
+    pub fn exact_call_paths_to_target(
+        &self,
+        target_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Vec<CallPathInfo>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(Vec::new());
+        }
+
+        Ok(self
+            .db
+            .call_paths_to_target(target_id, options)?
+            .into_iter()
+            .map(path_info)
+            .collect())
     }
 
     fn call_context(

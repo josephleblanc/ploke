@@ -379,6 +379,80 @@ async fn call_context_exact_reads_axum_handler_call_trait_method_caller() -> Res
 }
 
 #[tokio::test]
+async fn call_paths_exact_reads_axum_request_extract_two_hop_trait_path() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    // Matrix:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    // Source-oracle chain:
+    //   axum-core/src/ext_traits/request.rs:268
+    //     `RequestExt::extract` calls `self.extract_with_state(&())`.
+    //   axum-core/src/ext_traits/request.rs:279
+    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
+    //   axum-core/src/extract/mod.rs:85
+    //     defines the `FromRequest::from_request` trait method binding.
+    //
+    // RAG should expose the DB's ordered resolved path so downstream prompt
+    // assembly and tools can answer multi-hop call-chain questions without
+    // reimplementing traversal over one-hop context rows.
+    let start = method_id_by_file(
+        &db,
+        "extract",
+        "self.extract_with_state(&())",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let intermediate = method_id_by_file(
+        &db,
+        "extract_with_state",
+        "E::from_request(self, state)",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
+
+    let outgoing = rag.exact_call_paths_from_owner(
+        start,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 16,
+        },
+    )?;
+    let path = outgoing
+        .iter()
+        .find(|path| path.end_id == target && path.depth == 2)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected RAG two-hop path from RequestExt::extract to FromRequest::from_request: {outgoing:#?}"
+            )
+        });
+    assert_eq!(path.start_id, start);
+    assert_eq!(path.edges.len(), 2);
+    assert_eq!(path.edges[0].caller_id, start);
+    assert_eq!(path.edges[0].callee_id, intermediate);
+    assert_eq!(path.edges[0].relation, CallTargetKind::Method);
+    assert_eq!(path.edges[1].caller_id, intermediate);
+    assert_eq!(path.edges[1].callee_id, target);
+    assert_eq!(path.edges[1].relation, CallTargetKind::AssociatedFunction);
+
+    let incoming = rag.exact_call_paths_to_target(
+        target,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 16,
+        },
+    )?;
+    let reverse_path = incoming
+        .iter()
+        .find(|path| path.start_id == start && path.end_id == target && path.depth == 2)
+        .unwrap_or_else(|| {
+            panic!("expected RAG reverse path lookup to find the same two-hop chain: {incoming:#?}")
+        });
+    assert_eq!(reverse_path.edges, path.edges);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_collection_reads_axum_await_result_receiver_gap() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;

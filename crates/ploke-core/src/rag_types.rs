@@ -278,6 +278,15 @@ pub struct CallTargetInfo {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
+pub enum CallEndpointKind {
+    Function,
+    Method,
+    Struct,
+    Variant,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
 pub enum CallStatusKind {
     Resolved,
     Unresolved,
@@ -324,6 +333,24 @@ pub struct CallContextInfo {
     pub resolution: Option<CallResolutionKind>,
     #[serde(default)]
     pub targets: Vec<CallTargetInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallPathEdgeInfo {
+    pub caller_id: Uuid,
+    pub callee_id: Uuid,
+    pub call_site_id: Uuid,
+    pub relation: CallTargetKind,
+    pub source_kind: CallSiteKind,
+    pub target_kind: CallEndpointKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallPathInfo {
+    pub start_id: Uuid,
+    pub end_id: Uuid,
+    pub depth: u32,
+    pub edges: Vec<CallPathEdgeInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialOrd, Ord, Hash, PartialEq)]

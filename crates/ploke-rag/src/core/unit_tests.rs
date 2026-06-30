@@ -27,10 +27,12 @@ mod tests {
     use ploke_core::{CrateId, EmbeddingData, RetrievalScope};
     use ploke_db::get_by_id::{GetNodeInfo, NodePaths};
     use ploke_db::{
+        CallPathOptions, DbError, TypeContextSeed, TypeUseCoordinate, TypeUseRoot, to_uuid,
+    };
+    use ploke_db::{
         Database, create_index_primary_with_index,
         multi_embedding::{db_ext::EmbeddingExt, debug::DebugAll, hnsw_ext::HnswExt},
     };
-    use ploke_db::{DbError, TypeContextSeed, TypeUseCoordinate, TypeUseRoot, to_uuid};
     use ploke_embed::{
         indexer::{EmbeddingProcessor, EmbeddingSource},
         local::{EmbeddingConfig, LocalEmbedder},
