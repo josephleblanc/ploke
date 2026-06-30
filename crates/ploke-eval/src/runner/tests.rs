@@ -667,6 +667,10 @@ mod tests {
         assert_eq!(cfg.chat_policy.tool_call_timeout_secs, 60);
         assert_eq!(cfg.chat_policy.timeout_base_secs, 5);
         assert_eq!(cfg.chat_policy.error_retry_limit, 3);
+        assert_eq!(
+            cfg.chat_policy.tool_loop_mode,
+            ploke_tui::user_config::ToolLoopMode::Gated
+        );
         assert!(matches!(
             cfg.chat_policy.timeout_strategy,
             ChatTimeoutStrategy::Backoff { attempts: Some(3) }

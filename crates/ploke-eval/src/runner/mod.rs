@@ -61,6 +61,7 @@ static EMBEDDING_PREFLIGHT_CACHE: OnceLock<Mutex<HashMap<String, u32>>> = OnceLo
 pub(crate) fn benchmark_chat_policy() -> ChatPolicy {
     let mut policy = ChatPolicy::default();
     policy.tool_call_timeout_secs = 60;
+    policy.tool_loop_mode = ToolLoopMode::Gated;
     policy.timeout_strategy = ChatTimeoutStrategy::Backoff { attempts: Some(3) };
     policy.timeout_base_secs = 5;
     policy.error_retry_limit = 3;
