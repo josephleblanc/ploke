@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use ploke_db::{CallContextRelation, CallContextSeed, CallPathOptions};
+use ploke_db::{CallContextRelation, CallContextSeed, CallNodeKind, CallPathOptions};
 
 use super::super::*;
 use super::common::*;
@@ -176,6 +176,122 @@ fn axum_usage_questions_answer_direct_reachability_between_known_symbols() -> Re
 }
 
 #[test]
+fn axum_usage_questions_summarize_eventual_callers_for_impact() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Impact analysis:
+    //   "Which callers eventually reach this function?"
+    // Dead code detection:
+    //   "Is this implementation truly unused, or is it only called through trait dispatch?"
+    // Refactoring support:
+    //   "Which callers need migration before this helper can be split or removed?"
+    //
+    // Source-oracle chain:
+    //   axum-core/src/ext_traits/request.rs:268
+    //     `RequestExt::extract` calls `self.extract_with_state(&())`.
+    //   axum-core/src/ext_traits/request.rs:279
+    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
+    //   axum-core/src/extract/mod.rs:85
+    //     defines the `FromRequest::from_request` trait method binding.
+    let start = method_id_by_name_body_and_file_suffix(
+        &db,
+        "extract",
+        "self.extract_with_state(&())",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let intermediate = method_id_by_name_body_and_file_suffix(
+        &db,
+        "extract_with_state",
+        "E::from_request(self, state)",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
+
+    let report = db.call_impact_for_target(
+        target,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 16,
+        },
+    )?;
+    assert_eq!(report.target.id, target);
+    assert_eq!(report.target.kind, CallNodeKind::Method);
+    assert_eq!(report.target.name, "from_request");
+
+    assert_path_depths(
+        &report
+            .paths
+            .iter()
+            .map(|path| (path.start_id, path.depth))
+            .collect::<Vec<_>>(),
+        &[(intermediate, 1), (start, 2)],
+        "FromRequest::from_request impact report incoming paths",
+    );
+    assert_node_names(
+        &report.callers,
+        &[(intermediate, "extract_with_state"), (start, "extract")],
+        "FromRequest::from_request impact report eventual callers",
+    );
+    assert_node_names(
+        &report.direct_callers,
+        &[(intermediate, "extract_with_state")],
+        "FromRequest::from_request impact report direct callers",
+    );
+    assert!(
+        report.public_callers.is_empty(),
+        "direct stored-public filtering should not infer trait-effective visibility from inherited method rows: {report:#?}"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn axum_usage_questions_keep_unsupported_proc_macro_public_gap_empty() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Dead code detection:
+    //   "Is this function reachable from any binary, test, macro entrypoint,
+    //   or exported API?"
+    // Documentation and RAG:
+    //   "What fail-closed blocker should be shown when a callsite is visible
+    //   but targetless?"
+    //
+    // Source oracle:
+    //   axum-macros/src/lib.rs:377,426,665,715 call `expand_with(...)` from
+    //   public proc-macro entrypoints.
+    // Current contract: proc-macro item bodies are not visited for structural
+    // call-site extraction yet, so usage-question summaries must not fabricate
+    // incoming callers or public reachability.
+    let target = function_id_by_name_in_module(&db, &["crate"], "expand_with")?;
+    let report = db.call_impact_for_target(
+        target,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 16,
+        },
+    )?;
+
+    assert_eq!(report.target.id, target);
+    assert_eq!(report.target.kind, CallNodeKind::Function);
+    assert_eq!(report.target.name, "expand_with");
+    assert!(
+        report.paths.is_empty()
+            && report.callers.is_empty()
+            && report.direct_callers.is_empty()
+            && report.public_callers.is_empty(),
+        "unsupported proc-macro public callers must remain fail-closed in impact summaries: {report:#?}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn axum_usage_questions_surface_fail_closed_debugging_context() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
@@ -232,6 +348,19 @@ fn axum_usage_questions_surface_fail_closed_debugging_context() -> Result<(), Db
     );
 
     Ok(())
+}
+
+fn assert_node_names(nodes: &[ploke_db::CallNodeInfo], expected: &[(Uuid, &str)], label: &str) {
+    for (id, name) in expected {
+        let node = nodes
+            .iter()
+            .find(|node| node.id == *id)
+            .unwrap_or_else(|| panic!("{label} should include node {id}: {nodes:#?}"));
+        assert_eq!(
+            node.name, *name,
+            "{label} should preserve node metadata for {id}"
+        );
+    }
 }
 
 fn assert_path_depths(paths: &[(Uuid, u32)], expected: &[(Uuid, u32)], label: &str) {

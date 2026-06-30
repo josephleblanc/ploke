@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::{
-    CallReceiver, CallRelationKind, CallResolutionKind, CallSiteKind, CallStatusKind,
+    CallNodeKind, CallReceiver, CallRelationKind, CallResolutionKind, CallSiteKind, CallStatusKind,
     CallTargetKind,
 };
 
@@ -136,4 +136,26 @@ pub struct CallPath {
     pub end_id: Uuid,
     pub depth: u32,
     pub edges: Vec<CallPathEdge>,
+}
+
+/// Stable source metadata for a node that participates in call-graph queries.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CallNodeInfo {
+    pub id: Uuid,
+    pub kind: CallNodeKind,
+    pub name: String,
+    pub visibility: String,
+    pub is_public: bool,
+    pub module_path: Vec<String>,
+    pub file_path: String,
+}
+
+/// Target-centered summary for impact/navigation usage questions.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CallImpactReport {
+    pub target: CallNodeInfo,
+    pub paths: Vec<CallPath>,
+    pub callers: Vec<CallNodeInfo>,
+    pub direct_callers: Vec<CallNodeInfo>,
+    pub public_callers: Vec<CallNodeInfo>,
 }

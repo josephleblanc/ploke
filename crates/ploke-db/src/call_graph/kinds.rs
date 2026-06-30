@@ -98,6 +98,30 @@ impl CallTargetKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum CallNodeKind {
+    Function,
+    Method,
+    Const,
+    Static,
+    Struct,
+    Variant,
+}
+
+impl CallNodeKind {
+    pub(super) fn from_str(value: &str) -> Result<Self, DbError> {
+        match value {
+            "Function" => Ok(Self::Function),
+            "Method" => Ok(Self::Method),
+            "Const" => Ok(Self::Const),
+            "Static" => Ok(Self::Static),
+            "Struct" => Ok(Self::Struct),
+            "Variant" => Ok(Self::Variant),
+            other => Err(DbError::Cozo(format!("unknown call node kind {other:?}"))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CallStatusKind {
     Resolved,
     Unresolved,
