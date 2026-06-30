@@ -18,7 +18,7 @@ use ploke_core::rag_types::{
     ProofContextInfo,
 };
 use ploke_db::{
-    CallContextOptions, CallContextRelation, CallContextRow, CallContextSeed,
+    CallContextCandidate, CallContextOptions, CallContextRelation, CallContextRow, CallContextSeed,
     CallPath as DbCallPath, CallPathEdge as DbCallPathEdge, CallPathOptions, CallReceiver,
     CallRelationKind, CallResolutionKind, CallSiteKind, CallStatusKind as DbCallStatusKind,
     CallTargetKind as DbCallTargetKind, ProofGraphContextRow, ProofGraphStore,
@@ -217,6 +217,46 @@ fn call_expansion_kind(relation: CallContextRelation) -> CallExpansionKind {
         CallContextRelation::OutgoingTarget => CallExpansionKind::OutgoingTarget,
         CallContextRelation::IncomingCaller => CallExpansionKind::IncomingCaller,
     }
+}
+fn record_call_expansion_candidate(
+    expanded: &mut HashMap<Uuid, f32>,
+    expanded_context: &mut HashMap<Uuid, CallExpansionInfo>,
+    scores: &HashMap<Uuid, f32>,
+    seed_id: Uuid,
+    seed_score: f32,
+    caller_factor: f32,
+    candidate: CallContextCandidate,
+) {
+    let candidate_id = candidate.node_id;
+    if candidate_id == seed_id || scores.contains_key(&candidate_id) {
+        return;
+    }
+
+    let distance = candidate.distance.max(1) as f32;
+    let derived = seed_score * caller_factor / distance;
+    expanded
+        .entry(candidate_id)
+        .and_modify(|existing| *existing = existing.max(derived))
+        .or_insert(derived);
+    let info = CallExpansionInfo {
+        seed_id,
+        relation: call_expansion_kind(candidate.relation),
+        call_site_id: candidate.call_site_id,
+        target_id: candidate.target_id,
+        distance: candidate.distance,
+    };
+    expanded_context
+        .entry(candidate_id)
+        .and_modify(|existing| {
+            if info.distance < existing.distance
+                || (info.distance == existing.distance
+                    && (info.relation, info.seed_id.as_u128())
+                        < (existing.relation, existing.seed_id.as_u128()))
+            {
+                *existing = info;
+            }
+        })
+        .or_insert(info);
 }
 fn row_to_call_context(
     row: CallContextRow,
@@ -1364,34 +1404,38 @@ impl RagService {
 
             for (seed, options) in seed_options {
                 for candidate in self.db.expand_call_context(seed, options)? {
-                    let candidate_id = candidate.node_id;
-                    if candidate_id == seed_id || scores.contains_key(&candidate_id) {
-                        continue;
-                    }
-                    let derived = score * cfg.caller_factor;
-                    expanded
-                        .entry(candidate_id)
-                        .and_modify(|existing| *existing = existing.max(derived))
-                        .or_insert(derived);
-                    let info = CallExpansionInfo {
+                    record_call_expansion_candidate(
+                        &mut expanded,
+                        &mut expanded_context,
+                        &scores,
                         seed_id,
-                        relation: call_expansion_kind(candidate.relation),
-                        call_site_id: candidate.call_site_id,
-                        target_id: candidate.target_id,
-                        distance: candidate.distance,
-                    };
-                    expanded_context
-                        .entry(candidate_id)
-                        .and_modify(|existing| {
-                            if info.distance < existing.distance
-                                || (info.distance == existing.distance
-                                    && (info.relation, info.seed_id.as_u128())
-                                        < (existing.relation, existing.seed_id.as_u128()))
-                            {
-                                *existing = info;
-                            }
-                        })
-                        .or_insert(info);
+                        score,
+                        cfg.caller_factor,
+                        candidate,
+                    );
+                }
+            }
+
+            if cfg.path_depth > 1 && cfg.path_limit > 0 {
+                let path_options = CallPathOptions {
+                    max_depth: cfg.path_depth,
+                    max_paths: cfg.path_limit,
+                };
+                for seed in [
+                    CallContextSeed::Owner(seed_id),
+                    CallContextSeed::Target(seed_id),
+                ] {
+                    for candidate in self.db.expand_call_path_context(seed, path_options)? {
+                        record_call_expansion_candidate(
+                            &mut expanded,
+                            &mut expanded_context,
+                            &scores,
+                            seed_id,
+                            score,
+                            cfg.caller_factor,
+                            candidate,
+                        );
+                    }
                 }
             }
         }

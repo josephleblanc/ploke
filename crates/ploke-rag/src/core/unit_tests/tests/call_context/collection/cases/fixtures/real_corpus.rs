@@ -495,6 +495,68 @@ async fn call_paths_exact_reads_axum_request_extract_two_hop_trait_path() -> Res
 }
 
 #[tokio::test]
+async fn call_context_expansion_reads_axum_two_hop_path_candidates() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    // Matrix:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    // Source-oracle chain:
+    //   axum-core/src/ext_traits/request.rs:268
+    //     `RequestExt::extract` calls `self.extract_with_state(&())`.
+    //   axum-core/src/ext_traits/request.rs:279
+    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
+    //   axum-core/src/extract/mod.rs:85
+    //     defines the `FromRequest::from_request` trait method binding.
+    //
+    // RAG expansion should use the DB's bounded path expansion so downstream
+    // context retrieval can answer multi-hop call-chain questions without
+    // requiring the terminal callee to be a direct retrieval hit.
+    let start = method_id_by_file(
+        &db,
+        "extract",
+        "self.extract_with_state(&())",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let intermediate = method_id_by_file(
+        &db,
+        "extract_with_state",
+        "E::from_request(self, state)",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
+
+    let (expanded, expansion_info) = rag.expand_hits_with_call_context_info(&[(start, 1.0)])?;
+    let expanded_ids = expanded.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+    assert!(
+        expanded_ids.contains(&start)
+            && expanded_ids.contains(&intermediate)
+            && expanded_ids.contains(&target),
+        "RAG call expansion should retain the seed, direct callee, and two-hop terminal target: expanded={expanded:#?}; expansion_info={expansion_info:#?}"
+    );
+
+    let target_info = expansion_info.get(&target).unwrap_or_else(|| {
+        panic!("two-hop terminal target should carry CallExpansionInfo: {expansion_info:#?}")
+    });
+    assert_eq!(target_info.seed_id, start);
+    assert_eq!(
+        target_info.relation,
+        ploke_core::rag_types::CallExpansionKind::OutgoingTarget
+    );
+    assert_eq!(target_info.target_id, target);
+    assert_eq!(target_info.distance, 2);
+
+    let target_score = expanded
+        .iter()
+        .find(|(id, _)| *id == target)
+        .map(|(_, score)| *score)
+        .expect("two-hop terminal target should be scored");
+    assert_eq!(target_score, 0.25);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn get_context_attaches_axum_request_extract_two_hop_call_paths() -> Result<(), Error> {
     init_tracing_once();
     let db = Arc::new(fresh_backup_fixture_db(
