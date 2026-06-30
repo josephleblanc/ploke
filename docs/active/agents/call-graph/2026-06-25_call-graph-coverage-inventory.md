@@ -40,6 +40,24 @@ future work can choose the next batch without rereading the diary-style notes.
 
 ## Recent downstream slice
 
+- 2026-06-30: The first usage-question slice now has real-corpus proofs across
+  DB and TUI surfaces. DB coverage in
+  `real_target_matrix::usage_questions` proves that the persisted axum call
+  graph can answer basic navigation and impact questions with bounded multi-hop
+  traversal:
+  `RequestExt::extract -> extract_with_state -> FromRequest::from_request`.
+  It also proves that an unsupported awaited receiver is still query-visible as
+  a targetless fail-closed callsite and is excluded from traversal. Broad
+  `request_code_context` coverage now returns outgoing and incoming two-hop
+  call paths for the same axum chain, including expansion provenance. Exact
+  `code_item_lookup` now attaches `ConciseContext.call_paths_from_owner` and
+  `ConciseContext.call_paths_to_target`, plus UI path counts, so exact symbol
+  lookup can answer direct call-navigation questions without relying on prompt
+  row caps. Focused verification:
+  `cargo test -p ploke-db --features call_graph real_target_matrix::usage_questions -- --nocapture`,
+  `cargo test -p ploke-tui --features call_graph request_code_context_returns_real_corpus -- --nocapture`,
+  and
+  `cargo test -p ploke-tui --features call_graph code_item_lookup_regression -- --nocapture`.
 - 2026-06-28: Exact TUI lookup and edge tools now address enum-variant
   constructor targets with `node_kind=variant`. Source oracle:
   `axum-macros/src/with_position.rs:66` defines `Position::First`, and
