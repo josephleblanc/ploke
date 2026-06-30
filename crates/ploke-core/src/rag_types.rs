@@ -367,6 +367,26 @@ pub struct CallPathInfo {
     pub nodes: Vec<CallPathNodeInfo>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallNodeInfo {
+    pub id: Uuid,
+    pub kind: String,
+    pub name: String,
+    pub visibility: String,
+    pub is_public: bool,
+    pub file_path: NodeFilepath,
+    pub canon_path: CanonPath,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallImpactInfo {
+    pub target: CallNodeInfo,
+    pub paths: Vec<CallPathInfo>,
+    pub callers: Vec<CallNodeInfo>,
+    pub direct_callers: Vec<CallNodeInfo>,
+    pub public_callers: Vec<CallNodeInfo>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialOrd, Ord, Hash, PartialEq)]
 pub struct ProofContextInfo {
     pub fact_id: String,

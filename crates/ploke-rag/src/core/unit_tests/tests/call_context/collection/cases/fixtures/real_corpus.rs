@@ -633,6 +633,117 @@ async fn call_context_expansion_reads_axum_two_hop_path_candidates() -> Result<(
 }
 
 #[tokio::test]
+async fn call_impact_exact_reads_axum_usage_question_summary() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Impact analysis / Refactoring support:
+    //   "Which callers eventually reach this function?"
+    //   "Which callers need migration before this helper can be split or removed?"
+    //
+    // Source-oracle chain:
+    //   axum-core/src/ext_traits/request.rs:268
+    //     `RequestExt::extract` calls `self.extract_with_state(&())`.
+    //   axum-core/src/ext_traits/request.rs:279
+    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
+    //   axum-core/src/extract/mod.rs:85
+    //     defines the `FromRequest::from_request` trait method binding.
+    let start = method_id_by_file(
+        &db,
+        "extract",
+        "self.extract_with_state(&())",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let intermediate = method_id_by_file(
+        &db,
+        "extract_with_state",
+        "E::from_request(self, state)",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
+
+    let report = rag
+        .exact_call_impact_for_target(
+            target,
+            CallPathOptions {
+                max_depth: 2,
+                max_paths: 16,
+            },
+        )?
+        .expect("call context enabled");
+    assert_eq!(report.target.id, target);
+    assert_eq!(report.target.kind, "Method");
+    assert_eq!(report.target.name, "from_request");
+    assert!(
+        report
+            .target
+            .file_path
+            .as_ref()
+            .ends_with("axum-core/src/extract/mod.rs")
+    );
+    assert!(
+        report
+            .paths
+            .iter()
+            .any(|path| path.start_id == start && path.end_id == target && path.depth == 2),
+        "RAG impact summary should preserve the two-hop incoming path: {report:#?}"
+    );
+    assert_call_node(
+        &report.callers,
+        start,
+        "extract",
+        "axum-core/src/ext_traits/request.rs",
+        "RAG impact eventual callers",
+    );
+    assert_call_node(
+        &report.callers,
+        intermediate,
+        "extract_with_state",
+        "axum-core/src/ext_traits/request.rs",
+        "RAG impact eventual callers",
+    );
+    assert_call_node(
+        &report.direct_callers,
+        intermediate,
+        "extract_with_state",
+        "axum-core/src/ext_traits/request.rs",
+        "RAG impact direct callers",
+    );
+    assert!(
+        report.public_callers.is_empty(),
+        "RAG impact summary should preserve the DB's direct stored-public predicate: {report:#?}"
+    );
+
+    // Source oracle:
+    //   axum-macros/src/lib.rs:377,426,665,715 call `expand_with(...)` from
+    //   public proc-macro entrypoints. Proc-macro bodies are not visited yet,
+    //   so the exact impact surface must remain fail-closed.
+    let unsupported_target = function_id_by_name_in_module(&db, &["crate"], "expand_with")?;
+    let unsupported = rag
+        .exact_call_impact_for_target(
+            unsupported_target,
+            CallPathOptions {
+                max_depth: 2,
+                max_paths: 16,
+            },
+        )?
+        .expect("call context enabled");
+    assert_eq!(unsupported.target.name, "expand_with");
+    assert!(
+        unsupported.paths.is_empty()
+            && unsupported.callers.is_empty()
+            && unsupported.direct_callers.is_empty()
+            && unsupported.public_callers.is_empty(),
+        "RAG impact summary must not fabricate unsupported proc-macro public callers: {unsupported:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn get_context_attaches_axum_request_extract_two_hop_call_paths() -> Result<(), Error> {
     init_tracing_once();
     let db = Arc::new(fresh_backup_fixture_db(
@@ -767,6 +878,21 @@ fn assert_call_path_node(
                 && node.file_path.as_ref().ends_with(file_suffix)
         }),
         "{label} should include call path node {id} ending with {canon_suffix:?} in {file_suffix:?}: {path:#?}"
+    );
+}
+
+fn assert_call_node(
+    nodes: &[ploke_core::rag_types::CallNodeInfo],
+    id: Uuid,
+    name: &str,
+    file_suffix: &str,
+    label: &str,
+) {
+    assert!(
+        nodes.iter().any(|node| {
+            node.id == id && node.name == name && node.file_path.as_ref().ends_with(file_suffix)
+        }),
+        "{label} should include call node {id} named {name:?} in {file_suffix:?}: {nodes:#?}"
     );
 }
 

@@ -12,15 +12,16 @@ use super::*;
 use ploke_core::rag_types::AssembledContext;
 use ploke_core::rag_types::{
     CallCalleeInfo, CallContextInfo, CallEndpointKind, CallExpansionInfo, CallExpansionKind,
-    CallPathEdgeInfo, CallPathInfo, CallPathNodeInfo, CallReceiverInfo,
-    CallResolutionKind as RagCallResolutionKind, CallSiteKind as RagCallSiteKind,
+    CallImpactInfo, CallNodeInfo, CallPathEdgeInfo, CallPathInfo, CallPathNodeInfo,
+    CallReceiverInfo, CallResolutionKind as RagCallResolutionKind, CallSiteKind as RagCallSiteKind,
     CallStatusKind as RagCallStatusKind, CallTargetInfo, CallTargetKind, CanonPath, NodeFilepath,
     ProofContextInfo,
 };
 use ploke_db::{
     CallContextCandidate, CallContextOptions, CallContextRelation, CallContextRow, CallContextSeed,
-    CallPath as DbCallPath, CallPathEdge as DbCallPathEdge, CallPathOptions, CallReceiver,
-    CallRelationKind, CallResolutionKind, CallSiteKind, CallStatusKind as DbCallStatusKind,
+    CallImpactReport as DbCallImpactReport, CallNodeInfo as DbCallNodeInfo, CallPath as DbCallPath,
+    CallPathEdge as DbCallPathEdge, CallPathOptions, CallReceiver, CallRelationKind,
+    CallResolutionKind, CallSiteKind, CallStatusKind as DbCallStatusKind,
     CallTargetKind as DbCallTargetKind, ProofGraphContextRow, ProofGraphStore,
 };
 use ploke_embed::indexer::EmbeddingProcessor;
@@ -320,6 +321,41 @@ fn path_info(db: &Database, path: DbCallPath) -> Result<CallPathInfo, RagError> 
         nodes,
     })
 }
+
+fn impact_info(db: &Database, report: DbCallImpactReport) -> Result<CallImpactInfo, RagError> {
+    Ok(CallImpactInfo {
+        target: call_node_info(report.target),
+        paths: report
+            .paths
+            .into_iter()
+            .map(|path| path_info(db, path))
+            .collect::<Result<Vec<_>, RagError>>()?,
+        callers: report.callers.into_iter().map(call_node_info).collect(),
+        direct_callers: report
+            .direct_callers
+            .into_iter()
+            .map(call_node_info)
+            .collect(),
+        public_callers: report
+            .public_callers
+            .into_iter()
+            .map(call_node_info)
+            .collect(),
+    })
+}
+
+fn call_node_info(row: DbCallNodeInfo) -> CallNodeInfo {
+    CallNodeInfo {
+        id: row.id,
+        kind: format!("{:?}", row.kind),
+        name: row.name,
+        visibility: row.visibility,
+        is_public: row.is_public,
+        file_path: NodeFilepath::new(row.file_path),
+        canon_path: CanonPath::new(row.module_path.join("::")),
+    }
+}
+
 fn path_nodes(db: &Database, path: &DbCallPath) -> Result<Vec<CallPathNodeInfo>, RagError> {
     let mut ids = BTreeSet::from([path.start_id, path.end_id]);
     for edge in &path.edges {
@@ -616,6 +652,21 @@ impl RagService {
             .into_iter()
             .map(|path| path_info(self.db.as_ref(), path))
             .collect::<Result<Vec<_>, RagError>>()?)
+    }
+
+    pub fn exact_call_impact_for_target(
+        &self,
+        target_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Option<CallImpactInfo>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(impact_info(
+            self.db.as_ref(),
+            self.db.call_impact_for_target(target_id, options)?,
+        )?))
     }
 
     fn call_context(
