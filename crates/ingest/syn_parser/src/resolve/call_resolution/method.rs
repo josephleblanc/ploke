@@ -4,7 +4,7 @@ use crate::{
         graph::GraphAccess,
         nodes::{
             AnyCallSiteId, CallBodyOwnerId, CallNode, MethodCallNode, MethodCallReceiver,
-            OrdinaryTypeUseId, StructNodeId,
+            OrdinaryTypeSourceId, OrdinaryTypeTargetId, OrdinaryTypeUseId, StructNodeId,
         },
         relations::{CallRelation, CallResolutionKind, CallResolutionStatus, TypeRelation},
         types::TypeNode,
@@ -209,6 +209,17 @@ impl CallRelationResolver<'_> {
             [type_id] => Some(*type_id),
             _ => None,
         })
+    }
+
+    fn struct_field_name_matches(actual: &str, expected: &str, struct_name: &str) -> bool {
+        if actual == expected {
+            return true;
+        }
+
+        let marker = format!("unnamed_field{struct_name}");
+        actual
+            .rsplit_once(&marker)
+            .is_some_and(|(prefix, _)| prefix == expected)
     }
 
     fn is_external_type_method(
@@ -629,5 +640,111 @@ impl CallRelationResolver<'_> {
             | MethodCallReceiver::TryResult
             | MethodCallReceiver::Literal => Ok(AssocPathResolution::Unsupported),
         }
+    }
+
+    fn resolve_field_local_method_call(
+        &self,
+        call: &MethodCallNode,
+        root_path: &[String],
+        field_path: &[String],
+        type_relations: &[TypeRelation],
+    ) -> Result<AssocPathResolution, SynParserError> {
+        if root_path.is_empty()
+            || self.is_external_path(root_path)
+            || self.is_external_import_path(call.owner, root_path)?
+        {
+            return Ok(AssocPathResolution::Unsupported);
+        }
+
+        let root_resolution = if root_path.len() == 1 || self.is_explicit_local_path(root_path) {
+            self.resolve_local_type_path(call.owner, root_path)?
+        } else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+
+        match root_resolution {
+            LocalTypeResolution::Resolved(root_target) => self.resolve_field_type_method(
+                call.owner,
+                root_target,
+                field_path,
+                &call.method_name,
+                type_relations,
+            ),
+            LocalTypeResolution::Unresolved => Ok(AssocPathResolution::Unresolved),
+            LocalTypeResolution::Ambiguous => Ok(AssocPathResolution::Ambiguous),
+        }
+    }
+
+    fn resolve_field_type_method(
+        &self,
+        owner: CallBodyOwnerId,
+        root_target: OrdinaryTypeTargetId,
+        field_path: &[String],
+        method_name: &str,
+        type_relations: &[TypeRelation],
+    ) -> Result<AssocPathResolution, SynParserError> {
+        let Some(field_type) = self.field_type(root_target, field_path)? else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+        let Ok(source) = OrdinaryTypeSourceId::try_from(field_type) else {
+            return Ok(AssocPathResolution::Unsupported);
+        };
+
+        let mut targets = type_relations
+            .iter()
+            .filter_map(|relation| match relation {
+                TypeRelation::Ordinary {
+                    source: relation_source,
+                    target,
+                } if *relation_source == source => Some(*target),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        targets.sort_unstable();
+        targets.dedup();
+
+        match targets.as_slice() {
+            [target] => self
+                .resolve_type_instance_method(owner, *target, method_name, type_relations)?
+                .map_or(Ok(AssocPathResolution::Unsupported), Ok),
+            [] => Ok(AssocPathResolution::Unsupported),
+            _ => Ok(AssocPathResolution::Ambiguous),
+        }
+    }
+
+    fn field_type(
+        &self,
+        root_target: OrdinaryTypeTargetId,
+        field_path: &[String],
+    ) -> Result<Option<OrdinaryTypeUseId>, SynParserError> {
+        let [field_name] = field_path else {
+            return Ok(None);
+        };
+        let Ok(struct_id) = StructNodeId::try_from(root_target) else {
+            return Ok(None);
+        };
+        let struct_node = self.graph.get_struct_checked(struct_id)?;
+
+        if let Ok(field_idx) = field_name.parse::<usize>() {
+            return Ok(struct_node.fields.get(field_idx).map(|field| field.type_id));
+        }
+
+        let mut matches = struct_node
+            .fields
+            .iter()
+            .filter(|field| {
+                field.name.as_deref().is_some_and(|name| {
+                    Self::struct_field_name_matches(name, field_name, &struct_node.name)
+                })
+            })
+            .map(|field| field.type_id)
+            .collect::<Vec<_>>();
+        matches.sort_unstable();
+        matches.dedup();
+
+        Ok(match matches.as_slice() {
+            [type_id] => Some(*type_id),
+            _ => None,
+        })
     }
 }
