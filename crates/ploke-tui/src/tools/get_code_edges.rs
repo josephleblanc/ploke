@@ -1,4 +1,4 @@
-use std::{ops::Deref, path::Path};
+use std::{collections::BTreeSet, ops::Deref, path::Path};
 
 use itertools::Itertools;
 use ploke_core::{
@@ -7,11 +7,14 @@ use ploke_core::{
     tool_types::ToolName,
 };
 use ploke_db::{
+    Database,
+    get_by_id::{GetNodeInfo, NodePaths},
     helpers::{graph_resolve_edges, graph_resolve_edges_for_id},
     typed_rows::ResolvedEdgeData,
 };
 use ploke_error::DomainError;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::rag::utils::NodeKind;
 use crate::tools::{
@@ -286,6 +289,11 @@ for a more fuzzy search."#
         let resolved_item_id = resolved_item[0].id;
         let carriers = lookup_support::context_carriers_for_node(&ctx, resolved_item_id)?;
         let call_paths = lookup_support::call_path_carriers_for_node(&ctx, resolved_item_id)?;
+        let call_path_nodes = call_path_nodes_for_paths(
+            ctx.state.db.as_ref(),
+            &call_paths.from_owner,
+            &call_paths.to_target,
+        )?;
 
         let mod_path_vec = params
             .module_path
@@ -344,6 +352,7 @@ for a more fuzzy search."#
             edge_info: resolved_edges,
             call_paths_from_owner: call_paths.from_owner,
             call_paths_to_target: call_paths.to_target,
+            call_path_nodes,
         };
         let call_counts = lookup_support::call_context_counts(
             resolved_item_id,
@@ -389,6 +398,50 @@ pub struct NodeEdgeInfo {
     edge_info: Vec<ResolvedEdgeData>,
     call_paths_from_owner: Vec<CallPathInfo>,
     call_paths_to_target: Vec<CallPathInfo>,
+    call_path_nodes: Vec<CallPathNodeInfo>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CallPathNodeInfo {
+    id: Uuid,
+    canon_path: CanonPath,
+    file_path: NodeFilepath,
+}
+
+fn call_path_nodes_for_paths(
+    db: &Database,
+    from_owner: &[CallPathInfo],
+    to_target: &[CallPathInfo],
+) -> Result<Vec<CallPathNodeInfo>, ploke_error::Error> {
+    let mut ids = BTreeSet::new();
+    for path in from_owner.iter().chain(to_target) {
+        ids.insert(path.start_id);
+        ids.insert(path.end_id);
+        for edge in &path.edges {
+            ids.insert(edge.caller_id);
+            ids.insert(edge.callee_id);
+        }
+    }
+
+    ids.into_iter()
+        .map(|id| {
+            let rows = db.paths_from_id(id).map_err(|err| {
+                ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(format!(
+                    "failed to collect call path node info for {id}: {err}"
+                )))
+            })?;
+            let paths = NodePaths::try_from(rows).map_err(|err| {
+                ploke_error::Error::Internal(ploke_error::InternalError::CompilerError(format!(
+                    "failed to decode call path node info for {id}: {err}"
+                )))
+            })?;
+            Ok(CallPathNodeInfo {
+                id,
+                canon_path: CanonPath::new(paths.canon),
+                file_path: NodeFilepath::new(paths.file),
+            })
+        })
+        .collect()
 }
 
 fn check_empty(

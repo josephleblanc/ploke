@@ -29,7 +29,7 @@ use crate::call_graph_tool_support::{
     AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture, CallGraphToolFixture,
     assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
     assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
-    assert_handler_call_incoming_context, assert_incoming_context,
+    assert_call_path_node, assert_handler_call_incoming_context, assert_incoming_context,
     assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
     assert_run_ui_tests_incoming_context, assert_target_proof, assert_two_hop_call_path, ui_field,
 };
@@ -541,6 +541,10 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
         .get("call_paths_from_owner")
         .and_then(serde_json::Value::as_array)
         .expect("call_paths_from_owner array");
+    let start_path_nodes = start_payload
+        .get("call_path_nodes")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_path_nodes array");
 
     // Matrix:
     //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
@@ -559,6 +563,27 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
         fixture.start,
         fixture.intermediate,
         fixture.target,
+        "code_item_edges outgoing paths",
+    );
+    assert_call_path_node(
+        start_path_nodes,
+        fixture.start,
+        "::extract",
+        "axum-core/src/ext_traits/request.rs",
+        "code_item_edges outgoing paths",
+    );
+    assert_call_path_node(
+        start_path_nodes,
+        fixture.intermediate,
+        "::extract_with_state",
+        "axum-core/src/ext_traits/request.rs",
+        "code_item_edges outgoing paths",
+    );
+    assert_call_path_node(
+        start_path_nodes,
+        fixture.target,
+        "::from_request",
+        "axum-core/src/extract/mod.rs",
         "code_item_edges outgoing paths",
     );
     let start_ui = start_result.ui_payload.as_ref().expect("start ui payload");
@@ -599,11 +624,36 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
         .get("call_paths_to_target")
         .and_then(serde_json::Value::as_array)
         .expect("call_paths_to_target array");
+    let target_path_nodes = target_payload
+        .get("call_path_nodes")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_path_nodes array");
     assert_two_hop_call_path(
         incoming_paths,
         fixture.start,
         fixture.intermediate,
         fixture.target,
+        "code_item_edges incoming paths",
+    );
+    assert_call_path_node(
+        target_path_nodes,
+        fixture.start,
+        "::extract",
+        "axum-core/src/ext_traits/request.rs",
+        "code_item_edges incoming paths",
+    );
+    assert_call_path_node(
+        target_path_nodes,
+        fixture.intermediate,
+        "::extract_with_state",
+        "axum-core/src/ext_traits/request.rs",
+        "code_item_edges incoming paths",
+    );
+    assert_call_path_node(
+        target_path_nodes,
+        fixture.target,
+        "::from_request",
+        "axum-core/src/extract/mod.rs",
         "code_item_edges incoming paths",
     );
     let target_ui = target_result

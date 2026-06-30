@@ -1374,6 +1374,30 @@ pub(crate) fn assert_two_hop_call_path(
     );
 }
 
+pub(crate) fn assert_call_path_node(
+    nodes: &[serde_json::Value],
+    id: Uuid,
+    canon_suffix: &str,
+    file_suffix: &str,
+    label: &str,
+) {
+    let id = id.to_string();
+    assert!(
+        nodes.iter().any(|node| {
+            node.get("id").and_then(serde_json::Value::as_str) == Some(id.as_str())
+                && node
+                    .get("canon_path")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|canon| canon.ends_with(canon_suffix))
+                && node
+                    .get("file_path")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|file| file.ends_with(file_suffix))
+        }),
+        "{label} should include call path node {id} ending with {canon_suffix:?} in {file_suffix:?}: {nodes:#?}"
+    );
+}
+
 pub(crate) fn assert_await_result_unwrap_proof(
     proofs: &[serde_json::Value],
     owner: Uuid,
