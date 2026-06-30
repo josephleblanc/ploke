@@ -478,6 +478,10 @@ impl AxumHandlerCallToolFixture {
 
 impl AxumRequestExtractPathToolFixture {
     pub(crate) async fn new() -> Self {
+        Self::new_with_rag_config(RagConfig::default()).await
+    }
+
+    pub(crate) async fn new_with_rag_config(rag_config: RagConfig) -> Self {
         let db = axum_call_graph_db();
         let start = axum_method_target_by_body_and_file(
             &db,
@@ -521,7 +525,13 @@ impl AxumRequestExtractPathToolFixture {
                 node.id
             );
         }
-        let state = axum_state_for_target(Arc::clone(&db), &start, "RequestExt::extract").await;
+        let state = axum_state_for_target_with_rag_config(
+            Arc::clone(&db),
+            &start,
+            "RequestExt::extract",
+            rag_config,
+        )
+        .await;
 
         Self {
             state,
@@ -604,21 +614,38 @@ async fn axum_state_for_target(
     target: &TargetInfo,
     label: &str,
 ) -> Arc<AppState> {
+    axum_state_for_target_with_rag_config(db, target, label, RagConfig::default()).await
+}
+
+async fn axum_state_for_target_with_rag_config(
+    db: Arc<Database>,
+    target: &TargetInfo,
+    label: &str,
+    rag_config: RagConfig,
+) -> Arc<AppState> {
     let crate_root = target
         .file_path
         .parent()
         .and_then(|src_dir| src_dir.parent())
         .unwrap_or_else(|| panic!("{label} file should live under a crate src directory"))
         .to_path_buf();
-    app_state_with_rag(db, crate_root).await
+    app_state_with_rag_config(db, crate_root, rag_config).await
 }
 
 async fn app_state_with_rag(db: Arc<Database>, crate_root: PathBuf) -> Arc<AppState> {
-    let cfg = UserConfig::default();
-    let runtime_cfg = RuntimeConfig::from(cfg.clone());
+    app_state_with_rag_config(db, crate_root, RagConfig::default()).await
+}
+
+async fn app_state_with_rag_config(
+    db: Arc<Database>,
+    crate_root: PathBuf,
+    rag_config: RagConfig,
+) -> Arc<AppState> {
+    let user_cfg = UserConfig::default();
+    let runtime_cfg = RuntimeConfig::from(user_cfg.clone());
     let embedder = Arc::new(EmbeddingRuntime::from_shared_set(
         Arc::clone(&db.active_embedding_set),
-        cfg.load_embedding_processor().expect("embedder"),
+        user_cfg.load_embedding_processor().expect("embedder"),
     ));
     let io_handle = IoManagerHandle::new();
     let rag = Arc::new(
@@ -626,7 +653,7 @@ async fn app_state_with_rag(db: Arc<Database>, crate_root: PathBuf) -> Arc<AppSt
             Arc::clone(&db),
             Arc::clone(&embedder),
             io_handle.clone(),
-            RagConfig::default(),
+            rag_config,
         )
         .expect("rag service"),
     );
