@@ -26,12 +26,12 @@ use uuid::Uuid;
 use crate::call_graph_tool_support::{
     AxumAwaitReceiverToolFixture, AxumBodyEmptyToolFixture, AxumBoxedIntoRouteToolFixture,
     AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture,
-    AxumRunUiTestsToolFixture, CallGraphToolFixture, assert_await_result_unwrap_context,
-    assert_await_result_unwrap_proof, assert_body_empty_incoming_context,
-    assert_boxed_into_route_incoming_context, assert_handler_call_incoming_context,
-    assert_incoming_context, assert_json_from_bytes_incoming_context,
-    assert_parse_attrs_incoming_context, assert_run_ui_tests_incoming_context, assert_target_proof,
-    ui_field,
+    AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture, CallGraphToolFixture,
+    assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
+    assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
+    assert_handler_call_incoming_context, assert_incoming_context,
+    assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
+    assert_run_ui_tests_incoming_context, assert_target_proof, assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -506,6 +506,117 @@ async fn code_item_edges_returns_real_corpus_await_receiver_targetless_row() {
     );
     let proof_count = proof_context.len().to_string();
     assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
+}
+
+#[tokio::test]
+async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
+    let fixture = AxumRequestExtractPathToolFixture::new().await;
+    let start_params = EdgesParams {
+        item_name: Cow::Borrowed("extract"),
+        file_path: Cow::Owned(fixture.start_file_path.display().to_string()),
+        node_kind: Cow::Borrowed("method"),
+        module_path: Cow::Owned(fixture.start_module_path_arg()),
+        owner_trait: None,
+        owner_type: Some(Cow::Borrowed("Request")),
+    };
+
+    let start_result = CodeItemEdges::execute(
+        start_params,
+        fixture.ctx("axum-request-extract-start-paths"),
+    )
+    .await
+    .expect("RequestExt::extract edge lookup");
+    let start_payload: serde_json::Value =
+        serde_json::from_str(&start_result.content).expect("deserialize start NodeEdgeInfo");
+    let start_id = fixture.start.to_string();
+    assert_eq!(
+        start_payload
+            .get("node_info")
+            .and_then(|node| node.get("id"))
+            .and_then(serde_json::Value::as_str),
+        Some(start_id.as_str()),
+        "code_item_edges should resolve the same RequestExt::extract method used by the path oracle: {start_payload:#?}"
+    );
+    let outgoing_paths = start_payload
+        .get("call_paths_from_owner")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_paths_from_owner array");
+
+    // Matrix:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    // Source-oracle chain:
+    //   axum-core/src/ext_traits/request.rs:268
+    //     `RequestExt::extract` calls `self.extract_with_state(&())`.
+    //   axum-core/src/ext_traits/request.rs:279
+    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
+    //   axum-core/src/extract/mod.rs:85
+    //     defines the `FromRequest::from_request` trait method binding.
+    // The graph-oriented exact tool should expose the same ordered multi-hop
+    // path as DB and RAG traversal, so a tool caller can answer call-chain
+    // questions without manually joining one-hop call context rows.
+    assert_two_hop_call_path(
+        outgoing_paths,
+        fixture.start,
+        fixture.intermediate,
+        fixture.target,
+        "code_item_edges outgoing paths",
+    );
+    let start_ui = start_result.ui_payload.as_ref().expect("start ui payload");
+    assert!(
+        ui_field(start_ui, "call_paths_from_owner")
+            .parse::<usize>()
+            .expect("outgoing path count")
+            >= 2,
+        "code_item_edges should surface outgoing path count for RequestExt::extract"
+    );
+
+    let target_params = EdgesParams {
+        item_name: Cow::Borrowed("from_request"),
+        file_path: Cow::Owned(fixture.target_file_path.display().to_string()),
+        node_kind: Cow::Borrowed("method"),
+        module_path: Cow::Owned(fixture.target_module_path_arg()),
+        owner_trait: Some(Cow::Borrowed("FromRequest")),
+        owner_type: None,
+    };
+    let target_result = CodeItemEdges::execute(
+        target_params,
+        fixture.ctx("axum-request-extract-target-paths"),
+    )
+    .await
+    .expect("FromRequest::from_request edge lookup");
+    let target_payload: serde_json::Value =
+        serde_json::from_str(&target_result.content).expect("deserialize target NodeEdgeInfo");
+    let target_id = fixture.target.to_string();
+    assert_eq!(
+        target_payload
+            .get("node_info")
+            .and_then(|node| node.get("id"))
+            .and_then(serde_json::Value::as_str),
+        Some(target_id.as_str()),
+        "code_item_edges should resolve the same FromRequest::from_request method used by the path oracle: {target_payload:#?}"
+    );
+    let incoming_paths = target_payload
+        .get("call_paths_to_target")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_paths_to_target array");
+    assert_two_hop_call_path(
+        incoming_paths,
+        fixture.start,
+        fixture.intermediate,
+        fixture.target,
+        "code_item_edges incoming paths",
+    );
+    let target_ui = target_result
+        .ui_payload
+        .as_ref()
+        .expect("target ui payload");
+    assert!(
+        ui_field(target_ui, "call_paths_to_target")
+            .parse::<usize>()
+            .expect("incoming path count")
+            >= 2,
+        "code_item_edges should surface incoming path count for FromRequest::from_request"
+    );
 }
 
 #[tokio::test]

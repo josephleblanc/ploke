@@ -2,7 +2,7 @@ use std::{ops::Deref, path::Path};
 
 use itertools::Itertools;
 use ploke_core::{
-    rag_types::{CanonPath, ConciseContext, NodeFilepath},
+    rag_types::{CallPathInfo, CanonPath, ConciseContext, NodeFilepath},
     tool_descriptions::ToolDescription,
     tool_types::ToolName,
 };
@@ -285,6 +285,7 @@ for a more fuzzy search."#
         };
         let resolved_item_id = resolved_item[0].id;
         let carriers = lookup_support::context_carriers_for_node(&ctx, resolved_item_id)?;
+        let call_paths = lookup_support::call_path_carriers_for_node(&ctx, resolved_item_id)?;
 
         let mod_path_vec = params
             .module_path
@@ -341,6 +342,8 @@ for a more fuzzy search."#
         let node_edge_info = NodeEdgeInfo {
             node_info: concise_context,
             edge_info: resolved_edges,
+            call_paths_from_owner: call_paths.from_owner,
+            call_paths_to_target: call_paths.to_target,
         };
         let call_counts = lookup_support::call_context_counts(
             resolved_item_id,
@@ -355,6 +358,14 @@ for a more fuzzy search."#
             .with_field("call_context", call_counts.total.to_string())
             .with_field("call_context_outgoing", call_counts.outgoing.to_string())
             .with_field("call_context_incoming", call_counts.incoming.to_string())
+            .with_field(
+                "call_paths_from_owner",
+                node_edge_info.call_paths_from_owner.len().to_string(),
+            )
+            .with_field(
+                "call_paths_to_target",
+                node_edge_info.call_paths_to_target.len().to_string(),
+            )
             .with_field(
                 "proof_context",
                 node_edge_info.node_info.proof_context.len().to_string(),
@@ -376,6 +387,8 @@ for a more fuzzy search."#
 pub struct NodeEdgeInfo {
     node_info: ConciseContext,
     edge_info: Vec<ResolvedEdgeData>,
+    call_paths_from_owner: Vec<CallPathInfo>,
+    call_paths_to_target: Vec<CallPathInfo>,
 }
 
 fn check_empty(

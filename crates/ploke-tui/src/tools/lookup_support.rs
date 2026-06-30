@@ -1,10 +1,10 @@
 use ploke_core::{
     io_types::EmbeddingData,
-    rag_types::{CallContextInfo, ProofContextInfo},
+    rag_types::{CallContextInfo, CallPathInfo, ProofContextInfo},
     tool_types::ToolName,
 };
 use ploke_db::{
-    Database, DbError,
+    CallPathOptions, Database, DbError,
     helpers::{
         graph_resolve_exact, graph_resolve_exact_impl_method, graph_resolve_exact_trait_method,
         graph_resolve_exact_variant,
@@ -172,6 +172,11 @@ pub(super) struct ContextCarriers {
     pub(super) proof_context: Vec<ProofContextInfo>,
 }
 
+pub(super) struct CallPathCarriers {
+    pub(super) from_owner: Vec<CallPathInfo>,
+    pub(super) to_target: Vec<CallPathInfo>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct CallContextCounts {
     pub(super) total: usize,
@@ -228,10 +233,46 @@ pub(super) fn context_carriers_for_node(
         }
         _ => Vec::new(),
     };
-
     Ok(ContextCarriers {
         call_context,
         proof_context,
+    })
+}
+
+pub(super) fn call_path_carriers_for_node(
+    ctx: &super::Ctx,
+    node_id: Uuid,
+) -> Result<CallPathCarriers, ploke_error::Error> {
+    use ploke_error::InternalError;
+
+    let path_options = CallPathOptions {
+        max_depth: 3,
+        max_paths: 64,
+    };
+    let from_owner = match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.call_context_degraded() => rag
+            .exact_call_paths_from_owner(node_id, path_options)
+            .map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect outgoing call paths for code item {node_id}: {err}"
+                )))
+            })?,
+        _ => Vec::new(),
+    };
+    let to_target = match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.call_context_degraded() => rag
+            .exact_call_paths_to_target(node_id, path_options)
+            .map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect incoming call paths for code item {node_id}: {err}"
+                )))
+            })?,
+        _ => Vec::new(),
+    };
+
+    Ok(CallPathCarriers {
+        from_owner,
+        to_target,
     })
 }
 

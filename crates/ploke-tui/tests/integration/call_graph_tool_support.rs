@@ -8,8 +8,8 @@ use cozo::DataValue;
 use ploke_core::{
     ArcStr,
     rag_types::{
-        CallCalleeInfo, CallContextInfo, CallReceiverInfo, CallSiteKind, CallStatusKind,
-        ProofContextInfo,
+        CallCalleeInfo, CallContextInfo, CallPathInfo, CallReceiverInfo, CallSiteKind,
+        CallStatusKind, ProofContextInfo,
     },
 };
 use ploke_db::{
@@ -99,6 +99,17 @@ pub(crate) struct AxumHandlerCallToolFixture {
     pub(crate) module_path: Vec<String>,
     pub(crate) target: Uuid,
     pub(crate) caller: ExpectedCallSite,
+}
+
+pub(crate) struct AxumRequestExtractPathToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) start_file_path: PathBuf,
+    pub(crate) start_module_path: Vec<String>,
+    pub(crate) target_file_path: PathBuf,
+    pub(crate) target_module_path: Vec<String>,
+    pub(crate) start: Uuid,
+    pub(crate) intermediate: Uuid,
+    pub(crate) target: Uuid,
 }
 
 pub(crate) struct AxumAwaitReceiverToolFixture {
@@ -458,6 +469,78 @@ impl AxumHandlerCallToolFixture {
 
     pub(crate) fn module_path_arg(&self) -> String {
         self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl AxumRequestExtractPathToolFixture {
+    pub(crate) async fn new() -> Self {
+        let db = axum_call_graph_db();
+        let start = axum_method_target_by_body_and_file(
+            &db,
+            "extract",
+            "self.extract_with_state(&())",
+            "axum-core/src/ext_traits/request.rs",
+        );
+        let intermediate = axum_method_target_by_body_and_file(
+            &db,
+            "extract_with_state",
+            "E::from_request(self, state)",
+            "axum-core/src/ext_traits/request.rs",
+        );
+        let target = axum_trait_method_target_by_name_and_file(
+            &db,
+            "FromRequest",
+            "from_request",
+            "axum-core/src/extract/mod.rs",
+        );
+        let outgoing = db
+            .call_paths_from_owner(
+                start.id,
+                ploke_db::CallPathOptions {
+                    max_depth: 2,
+                    max_paths: 16,
+                },
+            )
+            .expect("RequestExt::extract outgoing call paths");
+        assert!(
+            outgoing
+                .iter()
+                .any(|path| path.end_id == target.id && path.depth == 2),
+            "current axum fixture should expose RequestExt::extract -> FromRequest::from_request: {outgoing:#?}"
+        );
+        for node in [&start, &intermediate, &target] {
+            assert!(
+                db.project_call_proof_facts_for_node(node.id, "bd:corpus-axum-call-graph")
+                    .unwrap_or_else(|err| panic!("project {} proof facts: {err}", node.id))
+                    >= 1,
+                "call path fixture node {} should project proof rows",
+                node.id
+            );
+        }
+        let state = axum_state_for_target(Arc::clone(&db), &start, "RequestExt::extract").await;
+
+        Self {
+            state,
+            start_file_path: start.file_path,
+            start_module_path: start.module_path,
+            target_file_path: target.file_path,
+            target_module_path: target.module_path,
+            start: start.id,
+            intermediate: intermediate.id,
+            target: target.id,
+        }
+    }
+
+    pub(crate) fn start_module_path_arg(&self) -> String {
+        self.start_module_path.join("::")
+    }
+
+    pub(crate) fn target_module_path_arg(&self) -> String {
+        self.target_module_path.join("::")
     }
 
     pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
@@ -848,6 +931,114 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
     }
 }
 
+fn axum_method_target_by_body_and_file(
+    db: &Database,
+    method_name: &str,
+    body_needle: &str,
+    file_suffix: &str,
+) -> TargetInfo {
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[id, body, file_path, mod_path] :=
+    *method {{ id, name: $method_name, body @ 'NOW' }},
+    ancestor[id, mod_id],
+    *module{{ id: mod_id, path: mod_path @ 'NOW' }},
+    file_owner_for_module[mod_id, file_id],
+    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+    let mut params = BTreeMap::new();
+    params.insert("method_name".to_string(), DataValue::from(method_name));
+
+    let rows = db
+        .raw_query_params(&script, params)
+        .unwrap_or_else(|err| panic!("query axum method {method_name}: {err}"));
+    let matching = rows
+        .rows
+        .iter()
+        .filter(|row| {
+            let DataValue::Str(body) = &row[1] else {
+                return false;
+            };
+            body_key(body).contains(&body_key(body_needle))
+                && data_str(&row[2], "file_path").ends_with(file_suffix)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one axum method {method_name:?} in {file_suffix:?} containing {body_needle:?}; rows: {:#?}",
+        rows.rows
+    );
+    let row = matching[0];
+
+    TargetInfo {
+        id: to_uuid(&row[0]).expect("axum method uuid"),
+        file_path: PathBuf::from(data_str(&row[2], "file_path")),
+        module_path: data_path(&row[3], "module path"),
+    }
+}
+
+fn axum_trait_method_target_by_name_and_file(
+    db: &Database,
+    trait_name: &str,
+    method_name: &str,
+    file_suffix: &str,
+) -> TargetInfo {
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[id, file_path, mod_path] :=
+    *trait {{ id: trait_id, name: $trait_name @ 'NOW' }},
+    *method {{ id, name: $method_name, owner_id: trait_id @ 'NOW' }},
+    ancestor[id, mod_id],
+    *module{{ id: mod_id, path: mod_path @ 'NOW' }},
+    file_owner_for_module[mod_id, file_id],
+    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+    let mut params = BTreeMap::new();
+    params.insert("trait_name".to_string(), DataValue::from(trait_name));
+    params.insert("method_name".to_string(), DataValue::from(method_name));
+
+    let rows = db
+        .raw_query_params(&script, params)
+        .unwrap_or_else(|err| panic!("query axum trait method {trait_name}::{method_name}: {err}"));
+    let matching = rows
+        .rows
+        .iter()
+        .filter(|row| data_str(&row[1], "file_path").ends_with(file_suffix))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one axum trait method {trait_name}::{method_name} in {file_suffix:?}; rows: {:#?}",
+        rows.rows
+    );
+    let row = matching[0];
+
+    TargetInfo {
+        id: to_uuid(&row[0]).expect("axum trait method uuid"),
+        file_path: PathBuf::from(data_str(&row[1], "file_path")),
+        module_path: data_path(&row[2], "module path"),
+    }
+}
+
 fn axum_await_receiver_owner(db: &Database) -> TargetInfo {
     let mut params = BTreeMap::new();
     params.insert("name".to_string(), DataValue::from("accept"));
@@ -1155,6 +1346,32 @@ pub(crate) fn assert_await_result_unwrap_context(
         "{label} should not fabricate a target for AwaitResult unwrap: {call:#?}"
     );
     call.site_id
+}
+
+pub(crate) fn assert_two_hop_call_path(
+    paths: &[serde_json::Value],
+    start: Uuid,
+    intermediate: Uuid,
+    target: Uuid,
+    label: &str,
+) {
+    let paths = paths
+        .iter()
+        .filter_map(|path| serde_json::from_value::<CallPathInfo>(path.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        paths.iter().any(|path| {
+            path.start_id == start
+                && path.end_id == target
+                && path.depth == 2
+                && path.edges.len() == 2
+                && path.edges[0].caller_id == start
+                && path.edges[0].callee_id == intermediate
+                && path.edges[1].caller_id == intermediate
+                && path.edges[1].callee_id == target
+        }),
+        "{label} should expose the two-hop RequestExt::extract -> FromRequest::from_request path: {paths:#?}"
+    );
 }
 
 pub(crate) fn assert_await_result_unwrap_proof(

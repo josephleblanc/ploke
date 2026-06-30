@@ -1,4 +1,4 @@
-Shows all syntax edges for the target item and, when available, call graph and proof graph context for the same item. Useful for discovering nearby code items, outgoing calls, incoming callers, and proof blockers.
+Shows all syntax edges for the target item and, when available, call graph and proof graph context for the same item. Useful for discovering nearby code items, outgoing calls, incoming callers, bounded multi-hop call paths, and proof blockers.
 
 Use this tool when you know the file path, item name, node kind, and crate-relative module path. `module_path` must start with `crate`, for example `crate` or `crate::module::submodule`; it is not the Cargo package name and it does not include the target item name.
 
