@@ -491,6 +491,62 @@ async fn call_paths_exact_reads_axum_request_extract_two_hop_trait_path() -> Res
         "RAG incoming two-hop path",
     );
 
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security analysis / Performance work / Debugging:
+    //   "Can this entrypoint reach this sink/helper/error-producing function?"
+    //   "What ordered call path connects the two known symbols?"
+    let one_hop = rag.exact_call_paths_between(
+        start,
+        target,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 16,
+        },
+    )?;
+    assert!(
+        one_hop.is_empty(),
+        "RAG direct reachability should not skip the intermediate method: {one_hop:#?}"
+    );
+
+    let direct = rag.exact_call_paths_between(
+        start,
+        target,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 16,
+        },
+    )?;
+    let direct_path = direct
+        .iter()
+        .find(|path| path.start_id == start && path.end_id == target && path.depth == 2)
+        .unwrap_or_else(|| {
+            panic!("expected RAG direct reachability to return the two-hop chain: {direct:#?}")
+        });
+    assert_eq!(direct_path.edges, path.edges);
+    assert_call_path_node(
+        direct_path,
+        start,
+        "::extract",
+        "axum-core/src/ext_traits/request.rs",
+        "RAG direct two-hop path",
+    );
+    assert_call_path_node(
+        direct_path,
+        intermediate,
+        "::extract_with_state",
+        "axum-core/src/ext_traits/request.rs",
+        "RAG direct two-hop path",
+    );
+    assert_call_path_node(
+        direct_path,
+        target,
+        "::from_request",
+        "axum-core/src/extract/mod.rs",
+        "RAG direct two-hop path",
+    );
+
     Ok(())
 }
 

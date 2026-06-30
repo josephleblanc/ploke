@@ -599,6 +599,24 @@ impl RagService {
             .collect::<Result<Vec<_>, RagError>>()?)
     }
 
+    pub fn exact_call_paths_between(
+        &self,
+        owner_id: Uuid,
+        target_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Vec<CallPathInfo>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(Vec::new());
+        }
+
+        Ok(self
+            .db
+            .call_paths_between(owner_id, target_id, options)?
+            .into_iter()
+            .map(|path| path_info(self.db.as_ref(), path))
+            .collect::<Result<Vec<_>, RagError>>()?)
+    }
+
     fn call_context(
         &self,
         node_id: Uuid,
