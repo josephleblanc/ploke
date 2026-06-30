@@ -50,7 +50,9 @@ future work can choose the next batch without rereading the diary-style notes.
   can ask whether two known symbols are connected without manually filtering
   owner-rooted traversal. RAG exposes the same capability as
   `exact_call_paths_between`, returning `CallPathInfo` with ordered edges and
-  path-node source metadata for prompt/tool consumers.
+  path-node source metadata for prompt/tool consumers. TUI now exposes this
+  exact two-symbol query through `code_item_call_path`, with exact source and
+  target item coordinates, `reachable`, ordered path rows, and UI counts.
   It also proves that an unsupported awaited receiver is still query-visible as
   a targetless fail-closed callsite and is excluded from traversal. Broad
   `request_code_context` coverage now returns outgoing and incoming two-hop
@@ -62,6 +64,8 @@ future work can choose the next batch without rereading the diary-style notes.
   `cargo test -p ploke-db --features call_graph real_target_matrix::usage_questions -- --nocapture`,
   `cargo test -p ploke-rag --features call_graph call_paths_exact_reads_axum_request_extract_two_hop_trait_path -- --nocapture`,
   `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
+  `cargo test -p ploke-tui --features call_graph code_item_call_path_returns_real_corpus_two_hop_reachability -- --nocapture`,
+  `cargo test -p ploke-tui --features call_graph code_item -- --nocapture`,
   `cargo test -p ploke-tui --features call_graph request_code_context_returns_real_corpus -- --nocapture`,
   and
   `cargo test -p ploke-tui --features call_graph code_item_lookup_regression -- --nocapture`.
