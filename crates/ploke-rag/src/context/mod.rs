@@ -16,7 +16,7 @@ use itertools::Itertools;
 use ploke_core::{
     EmbeddingData,
     rag_types::{
-        AssembledContext, CallContextInfo, CallExpansionInfo, CanonPath, ContextPart,
+        AssembledContext, CallContextInfo, CallExpansionInfo, CallPathInfo, CanonPath, ContextPart,
         ContextPartKind, ContextStats, Modality, NodeFilepath, ProofContextInfo, TypeContextInfo,
     },
 };
@@ -202,6 +202,8 @@ pub async fn assemble_context_with_type_context(
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
+        &HashMap::new(),
+        &HashMap::new(),
     )
     .await
 }
@@ -217,6 +219,8 @@ pub(crate) async fn assemble_context_with_context_maps(
     type_context: &HashMap<Uuid, TypeContextInfo>,
     call_context: &HashMap<Uuid, Vec<CallContextInfo>>,
     call_expansion: &HashMap<Uuid, CallExpansionInfo>,
+    call_paths_from_owner: &HashMap<Uuid, Vec<CallPathInfo>>,
+    call_paths_to_target: &HashMap<Uuid, Vec<CallPathInfo>>,
     proof_context: &HashMap<Uuid, Vec<ProofContextInfo>>,
 ) -> Result<AssembledContext, RagError> {
     // Build score map and preserve incoming order.
@@ -277,6 +281,14 @@ pub(crate) async fn assemble_context_with_context_maps(
                     type_context: type_context.get(&id).copied(),
                     call_expansion: call_expansion.get(&id).copied(),
                     call_context: call_context.get(&id).cloned().unwrap_or_default(),
+                    call_paths_from_owner: call_paths_from_owner
+                        .get(&id)
+                        .cloned()
+                        .unwrap_or_default(),
+                    call_paths_to_target: call_paths_to_target
+                        .get(&id)
+                        .cloned()
+                        .unwrap_or_default(),
                     proof_context: proof_context.get(&id).cloned().unwrap_or_default(),
                 };
                 prelim_parts.push(part);
@@ -481,6 +493,8 @@ mod tests {
             type_context: None,
             call_expansion: None,
             call_context: Vec::new(),
+            call_paths_from_owner: Vec::new(),
+            call_paths_to_target: Vec::new(),
             proof_context: Vec::new(),
         }
     }

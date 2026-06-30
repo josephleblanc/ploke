@@ -17,10 +17,10 @@ use crate::chat_history::{
 };
 use crate::tools::{ToolName, ToolUiPayload};
 use ploke_core::rag_types::{
-    CallCalleeInfo, CallContextInfo, CallExpansionInfo, CallExpansionKind, CallReceiverInfo,
-    CallResolutionKind, CallSiteKind, CallStatusKind, CallTargetInfo, CallTargetKind, CanonPath,
-    ContextPartKind, ContextStats, Modality, NodeFilepath, ProofContextInfo, TypeContextInfo,
-    TypeContextKind,
+    CallCalleeInfo, CallContextInfo, CallEndpointKind, CallExpansionInfo, CallExpansionKind,
+    CallPathEdgeInfo, CallPathInfo, CallPathNodeInfo, CallReceiverInfo, CallResolutionKind,
+    CallSiteKind, CallStatusKind, CallTargetInfo, CallTargetKind, CanonPath, ContextPartKind,
+    ContextStats, Modality, NodeFilepath, ProofContextInfo, TypeContextInfo, TypeContextKind,
 };
 use std::collections::HashMap;
 
@@ -53,6 +53,8 @@ fn context_plan_is_stable_for_fixed_inputs() {
             type_context: None,
             call_expansion: None,
             call_context: Vec::new(),
+            call_paths_from_owner: Vec::new(),
+            call_paths_to_target: Vec::new(),
             proof_context: Vec::new(),
         }],
         stats: ContextStats {
@@ -103,6 +105,8 @@ fn reformat_context_to_system_truncates_and_includes_meta() {
         }),
         call_expansion: None,
         call_context: Vec::new(),
+        call_paths_from_owner: Vec::new(),
+        call_paths_to_target: Vec::new(),
         proof_context: Vec::new(),
     };
 
@@ -150,6 +154,8 @@ fn reformat_context_to_system_includes_call_context_details() {
                 relation: CallTargetKind::DynamicFunction,
             }],
         }],
+        call_paths_from_owner: Vec::new(),
+        call_paths_to_target: Vec::new(),
         proof_context: Vec::new(),
     };
 
@@ -161,6 +167,81 @@ fn reformat_context_to_system_includes_call_context_details() {
     assert!(rendered.contains("Dynamic @ 20..29: dynamic"));
     assert!(rendered.contains("Resolved(LocalExact)"));
     assert!(rendered.contains(&format!("DynamicFunction:{target}")));
+}
+
+#[test]
+fn reformat_context_to_system_includes_call_path_details() {
+    let start = Uuid::from_u128(40);
+    let intermediate = Uuid::from_u128(41);
+    let target = Uuid::from_u128(42);
+    let first_site = Uuid::from_u128(43);
+    let second_site = Uuid::from_u128(44);
+    let path = CallPathInfo {
+        start_id: start,
+        end_id: target,
+        depth: 2,
+        edges: vec![
+            CallPathEdgeInfo {
+                caller_id: start,
+                callee_id: intermediate,
+                call_site_id: first_site,
+                relation: CallTargetKind::Method,
+                source_kind: CallSiteKind::Method,
+                target_kind: CallEndpointKind::Method,
+            },
+            CallPathEdgeInfo {
+                caller_id: intermediate,
+                callee_id: target,
+                call_site_id: second_site,
+                relation: CallTargetKind::AssociatedFunction,
+                source_kind: CallSiteKind::Path,
+                target_kind: CallEndpointKind::Method,
+            },
+        ],
+        nodes: vec![
+            CallPathNodeInfo {
+                id: start,
+                file_path: NodeFilepath::new("src/request.rs".to_string()),
+                canon_path: CanonPath::new("crate::RequestExt::extract".to_string()),
+            },
+            CallPathNodeInfo {
+                id: intermediate,
+                file_path: NodeFilepath::new("src/request.rs".to_string()),
+                canon_path: CanonPath::new("crate::RequestExt::extract_with_state".to_string()),
+            },
+            CallPathNodeInfo {
+                id: target,
+                file_path: NodeFilepath::new("src/extract.rs".to_string()),
+                canon_path: CanonPath::new("crate::FromRequest::from_request".to_string()),
+            },
+        ],
+    };
+    let part = ContextPart {
+        id: start,
+        file_path: NodeFilepath::new("src/request.rs".to_string()),
+        canon_path: CanonPath::new("crate::RequestExt::extract".to_string()),
+        ranges: vec![],
+        kind: ContextPartKind::Code,
+        text: "fn extract() { self.extract_with_state(&()) }".to_string(),
+        score: 0.42,
+        modality: Modality::Sparse,
+        type_context: None,
+        call_expansion: None,
+        call_context: Vec::new(),
+        call_paths_from_owner: vec![path],
+        call_paths_to_target: Vec::new(),
+        proof_context: Vec::new(),
+    };
+
+    let rendered = reformat_context_to_system(part);
+
+    assert!(rendered.contains("call_paths: 1 outgoing, 0 incoming"));
+    assert!(rendered.contains(&format!("outgoing depth 2: {start} -> {target}")));
+    assert!(rendered.contains(&first_site.to_string()));
+    assert!(rendered.contains(&second_site.to_string()));
+    assert!(rendered.contains("crate::RequestExt::extract @ src/request.rs"));
+    assert!(rendered.contains("crate::RequestExt::extract_with_state @ src/request.rs"));
+    assert!(rendered.contains("crate::FromRequest::from_request @ src/extract.rs"));
 }
 
 #[test]
@@ -177,6 +258,8 @@ fn reformat_context_to_system_includes_proof_context_details() {
         type_context: None,
         call_expansion: None,
         call_context: Vec::new(),
+        call_paths_from_owner: Vec::new(),
+        call_paths_to_target: Vec::new(),
         proof_context: vec![ProofContextInfo {
             fact_id: "call-edge:1".to_string(),
             kind: "call_edge".to_string(),
@@ -292,6 +375,8 @@ fn reformat_context_to_system_includes_expansion_metadata() {
         type_context: None,
         call_expansion: None,
         call_context: Vec::new(),
+        call_paths_from_owner: Vec::new(),
+        call_paths_to_target: Vec::new(),
         proof_context: vec![ProofContextInfo {
             fact_id: "expanded:item:macro".to_string(),
             kind: "expanded_item".to_string(),
@@ -369,6 +454,8 @@ fn reformat_context_to_system_includes_build_domain_metadata() {
         type_context: None,
         call_expansion: None,
         call_context: Vec::new(),
+        call_paths_from_owner: Vec::new(),
+        call_paths_to_target: Vec::new(),
         proof_context: vec![ProofContextInfo {
             fact_id: "bd:fixture-call-graph".to_string(),
             kind: "build_domain".to_string(),
@@ -448,6 +535,8 @@ fn reformat_context_to_system_includes_cfg_and_rustc_metadata() {
         type_context: None,
         call_expansion: None,
         call_context: Vec::new(),
+        call_paths_from_owner: Vec::new(),
+        call_paths_to_target: Vec::new(),
         proof_context: vec![ProofContextInfo {
             fact_id: "rustc:main".to_string(),
             kind: "rustc_invocation".to_string(),
@@ -528,6 +617,8 @@ fn reformat_context_to_system_includes_effect_seed_metadata() {
         type_context: None,
         call_expansion: None,
         call_context: Vec::new(),
+        call_paths_from_owner: Vec::new(),
+        call_paths_to_target: Vec::new(),
         proof_context: vec![ProofContextInfo {
             fact_id: "effect:spawn".to_string(),
             kind: "effect_seed".to_string(),
@@ -604,6 +695,8 @@ fn reformat_context_to_system_includes_external_summary_metadata() {
         type_context: None,
         call_expansion: None,
         call_context: Vec::new(),
+        call_paths_from_owner: Vec::new(),
+        call_paths_to_target: Vec::new(),
         proof_context: vec![ProofContextInfo {
             fact_id: "external-summary:dep:serde".to_string(),
             kind: "external_summary".to_string(),
@@ -1262,6 +1355,8 @@ fn context_plan_golden_snapshot_from_chat_history() {
                 }),
                 call_expansion: None,
                 call_context: Vec::new(),
+                call_paths_from_owner: Vec::new(),
+                call_paths_to_target: Vec::new(),
                 proof_context: Vec::new(),
             },
             ContextPart {
@@ -1282,6 +1377,8 @@ fn context_plan_golden_snapshot_from_chat_history() {
                     distance: 1,
                 }),
                 call_context: Vec::new(),
+                call_paths_from_owner: Vec::new(),
+                call_paths_to_target: Vec::new(),
                 proof_context: Vec::new(),
             },
         ],

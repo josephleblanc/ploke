@@ -117,6 +117,8 @@ pub struct CallContextConfig {
     pub max_targets_per_site: usize,
     pub max_caller_hits: usize,
     pub caller_factor: f32,
+    pub path_depth: u32,
+    pub path_limit: usize,
 }
 impl Default for CallContextConfig {
     fn default() -> Self {
@@ -127,6 +129,8 @@ impl Default for CallContextConfig {
             max_targets_per_site: 8,
             max_caller_hits: 12,
             caller_factor: 0.5,
+            path_depth: 3,
+            path_limit: 16,
         }
     }
 }
@@ -1215,6 +1219,63 @@ impl RagService {
         }
         Ok(out)
     }
+    fn collect_call_paths(
+        &self,
+        hits: &[(Uuid, f32)],
+        required: &HashSet<Uuid>,
+    ) -> Result<
+        (
+            HashMap<Uuid, Vec<CallPathInfo>>,
+            HashMap<Uuid, Vec<CallPathInfo>>,
+        ),
+        RagError,
+    > {
+        let cfg = self.cfg.call_context;
+        if !cfg.enabled
+            || cfg.max_owner_hits == 0
+            || cfg.path_depth == 0
+            || cfg.path_limit == 0
+            || hits.is_empty()
+        {
+            return Ok((HashMap::new(), HashMap::new()));
+        }
+
+        let hit_ids = hits.iter().map(|(id, _)| *id).collect::<HashSet<_>>();
+        let mut seen = HashSet::new();
+        let mut nodes = Vec::new();
+        for &(node_id, _) in hits.iter().take(cfg.max_owner_hits) {
+            if seen.insert(node_id) {
+                nodes.push(node_id);
+            }
+        }
+        for node_id in required
+            .iter()
+            .copied()
+            .filter(|node_id| hit_ids.contains(node_id))
+        {
+            if seen.insert(node_id) {
+                nodes.push(node_id);
+            }
+        }
+
+        let options = CallPathOptions {
+            max_depth: cfg.path_depth,
+            max_paths: cfg.path_limit,
+        };
+        let mut from_owner = HashMap::new();
+        let mut to_target = HashMap::new();
+        for node_id in nodes {
+            let outgoing = self.exact_call_paths_from_owner(node_id, options)?;
+            if !outgoing.is_empty() {
+                from_owner.insert(node_id, outgoing);
+            }
+            let incoming = self.exact_call_paths_to_target(node_id, options)?;
+            if !incoming.is_empty() {
+                to_target.insert(node_id, incoming);
+            }
+        }
+        Ok((from_owner, to_target))
+    }
     fn collect_proof_context(
         &self,
         hits: &[(Uuid, f32)],
@@ -1460,6 +1521,8 @@ impl RagService {
         };
         let required = call_expansion.keys().copied().collect::<HashSet<_>>();
         let call_context = self.collect_call_context_with_required(&final_hits, &required)?;
+        let (call_paths_from_owner, call_paths_to_target) =
+            self.collect_call_paths(&final_hits, &required)?;
         let proof_context = self.collect_proof_context_with_required(&final_hits, &required)?;
 
         // 2) Assemble context
@@ -1479,6 +1542,8 @@ impl RagService {
             &type_context,
             &call_context,
             &call_expansion,
+            &call_paths_from_owner,
+            &call_paths_to_target,
             &proof_context,
         )
         .await

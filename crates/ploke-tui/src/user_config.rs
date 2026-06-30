@@ -763,6 +763,10 @@ pub struct CallContextUserConfig {
     pub max_caller_hits: usize,
     #[serde(default = "default_call_context_caller_factor")]
     pub caller_factor: f32,
+    #[serde(default = "default_call_context_path_depth")]
+    pub path_depth: u32,
+    #[serde(default = "default_call_context_path_limit")]
+    pub path_limit: usize,
 }
 impl Default for CallContextUserConfig {
     fn default() -> Self {
@@ -774,6 +778,8 @@ impl Default for CallContextUserConfig {
             max_targets_per_site: defaults.max_targets_per_site,
             max_caller_hits: defaults.max_caller_hits,
             caller_factor: defaults.caller_factor,
+            path_depth: defaults.path_depth,
+            path_limit: defaults.path_limit,
         }
     }
 }
@@ -786,6 +792,8 @@ impl CallContextUserConfig {
             max_targets_per_site: self.max_targets_per_site.min(1024),
             max_caller_hits: self.max_caller_hits.min(4096),
             caller_factor: self.caller_factor.clamp(0.0, 10.0),
+            path_depth: self.path_depth.min(16),
+            path_limit: self.path_limit.min(4096),
         }
     }
 
@@ -798,6 +806,8 @@ impl CallContextUserConfig {
             max_targets_per_site: cfg.max_targets_per_site,
             max_caller_hits: cfg.max_caller_hits,
             caller_factor: cfg.caller_factor,
+            path_depth: cfg.path_depth,
+            path_limit: cfg.path_limit,
         }
     }
 }
@@ -1089,6 +1099,12 @@ fn default_call_context_max_caller_hits() -> usize {
 fn default_call_context_caller_factor() -> f32 {
     ploke_rag::CallContextConfig::default().caller_factor
 }
+fn default_call_context_path_depth() -> u32 {
+    ploke_rag::CallContextConfig::default().path_depth
+}
+fn default_call_context_path_limit() -> usize {
+    ploke_rag::CallContextConfig::default().path_limit
+}
 fn default_proof_context_enabled() -> bool {
     ploke_rag::ProofContextConfig::default().enabled
 }
@@ -1197,6 +1213,8 @@ mod tests {
             max_targets_per_site = 12
             max_caller_hits = 2048
             caller_factor = 0.75
+            path_depth = 4
+            path_limit = 128
 
             [rag.proof_context]
             enabled = true
@@ -1213,6 +1231,8 @@ mod tests {
         assert_eq!(validated.max_targets_per_site, 12);
         assert_eq!(validated.max_caller_hits, 2048);
         assert!((validated.caller_factor - 0.75).abs() < f32::EPSILON);
+        assert_eq!(validated.path_depth, 4);
+        assert_eq!(validated.path_limit, 128);
 
         let rag_cfg = validated.to_rag_config();
         assert_eq!(rag_cfg.max_owner_hits, 64);
@@ -1220,6 +1240,8 @@ mod tests {
         assert_eq!(rag_cfg.max_targets_per_site, 12);
         assert_eq!(rag_cfg.max_caller_hits, 2048);
         assert!((rag_cfg.caller_factor - 0.75).abs() < f32::EPSILON);
+        assert_eq!(rag_cfg.path_depth, 4);
+        assert_eq!(rag_cfg.path_limit, 128);
 
         let proof = validated_rag.proof_context;
         assert!(proof.enabled);

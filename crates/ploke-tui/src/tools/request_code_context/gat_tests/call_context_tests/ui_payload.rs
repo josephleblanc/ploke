@@ -38,6 +38,16 @@ async fn request_code_context_ui_payload_reports_context_carrier_counts() -> col
         .iter()
         .filter(|part| part.call_expansion.is_some())
         .count();
+    let expected_paths_from_owner = result
+        .context
+        .iter()
+        .map(|part| part.call_paths_from_owner.len())
+        .sum::<usize>();
+    let expected_paths_to_target = result
+        .context
+        .iter()
+        .map(|part| part.call_paths_to_target.len())
+        .sum::<usize>();
     let expected_proof_context = result
         .context
         .iter()
@@ -65,6 +75,14 @@ async fn request_code_context_ui_payload_reports_context_carrier_counts() -> col
     assert_eq!(
         ui_field(payload, "call_expansion"),
         expected_call_expansion.to_string()
+    );
+    assert_eq!(
+        ui_field(payload, "call_paths_from_owner"),
+        expected_paths_from_owner.to_string()
+    );
+    assert_eq!(
+        ui_field(payload, "call_paths_to_target"),
+        expected_paths_to_target.to_string()
     );
     assert_eq!(
         ui_field(payload, "proof_context"),

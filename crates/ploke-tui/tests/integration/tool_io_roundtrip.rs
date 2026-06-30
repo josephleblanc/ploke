@@ -278,6 +278,8 @@ fn serde_roundtrip_request_code_context() {
         type_context: Some(type_context),
         call_expansion: Some(call_expansion),
         call_context: call_context.clone(),
+        call_paths_from_owner: Vec::new(),
+        call_paths_to_target: Vec::new(),
         proof_context: proof_context.clone(),
     };
     let path_site = Uuid::from_u128(19);
@@ -315,6 +317,8 @@ fn serde_roundtrip_request_code_context() {
         type_context: None,
         call_expansion: Some(path_expansion),
         call_context: vec![path_call.clone()],
+        call_paths_from_owner: Vec::new(),
+        call_paths_to_target: Vec::new(),
         proof_context: Vec::new(),
     };
     let mut result = RequestCodeContextResult::from_assembled(
@@ -338,6 +342,8 @@ fn serde_roundtrip_request_code_context() {
         type_context: Some(type_context),
         call_expansion: Some(call_expansion),
         call_context,
+        call_paths_from_owner: Vec::new(),
+        call_paths_to_target: Vec::new(),
         proof_context,
     };
     let path_expected = ConciseContext {
@@ -348,6 +354,8 @@ fn serde_roundtrip_request_code_context() {
         type_context: None,
         call_expansion: Some(path_expansion),
         call_context: vec![path_call],
+        call_paths_from_owner: Vec::new(),
+        call_paths_to_target: Vec::new(),
         proof_context: Vec::new(),
     };
     assert_eq!(

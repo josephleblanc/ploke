@@ -18,6 +18,10 @@ pub struct ContextPart {
     #[serde(default)]
     pub call_context: Vec<CallContextInfo>,
     #[serde(default)]
+    pub call_paths_from_owner: Vec<CallPathInfo>,
+    #[serde(default)]
+    pub call_paths_to_target: Vec<CallPathInfo>,
+    #[serde(default)]
     pub proof_context: Vec<ProofContextInfo>,
 }
 
@@ -523,6 +527,8 @@ impl From<ContextPart> for ConciseContext {
             type_context: value.type_context,
             call_expansion: value.call_expansion,
             call_context: value.call_context,
+            call_paths_from_owner: value.call_paths_from_owner,
+            call_paths_to_target: value.call_paths_to_target,
             proof_context: value.proof_context,
         }
     }
@@ -572,6 +578,10 @@ pub struct ConciseContext {
     pub call_expansion: Option<CallExpansionInfo>,
     #[serde(default)]
     pub call_context: Vec<CallContextInfo>,
+    #[serde(default)]
+    pub call_paths_from_owner: Vec<CallPathInfo>,
+    #[serde(default)]
+    pub call_paths_to_target: Vec<CallPathInfo>,
     #[serde(default)]
     pub proof_context: Vec<ProofContextInfo>,
 }

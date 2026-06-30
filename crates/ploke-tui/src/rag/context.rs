@@ -11,12 +11,13 @@ use crate::{
 use ploke_rag::{TokenCounter as _, context::ApproxCharTokenizer};
 use std::{ops::ControlFlow, path::PathBuf};
 
+use itertools::Itertools;
 use once_cell::sync::Lazy;
 use ploke_core::{
     ArcStr, RetrievalScope,
     rag_types::{
-        AssembledContext, CallCalleeInfo, CallContextInfo, CallExpansionInfo, CallReceiverInfo,
-        CallTargetInfo, ContextPart, ProofContextInfo,
+        AssembledContext, CallCalleeInfo, CallContextInfo, CallExpansionInfo, CallPathInfo,
+        CallReceiverInfo, CallTargetInfo, ContextPart, ProofContextInfo,
     },
 };
 use tokio::sync::oneshot;
@@ -338,6 +339,10 @@ fn reformat_context_to_system(ctx_part: ContextPart) -> String {
             format_call_context_block_for_part(ctx_part.id, &ctx_part.call_context, "  ", 8)
         )
     };
+    let call_paths = format_call_paths_block(
+        &ctx_part.call_paths_from_owner,
+        &ctx_part.call_paths_to_target,
+    );
     let proof_context = if ctx_part.proof_context.is_empty() {
         String::new()
     } else {
@@ -347,7 +352,7 @@ fn reformat_context_to_system(ctx_part: ContextPart) -> String {
         )
     };
     format!(
-        "file_path: {}\ncanon_path: {}\nkind: {}\nscore: {:.3}{}{}{}{}\ncode_snippet:\n{}",
+        "file_path: {}\ncanon_path: {}\nkind: {}\nscore: {:.3}{}{}{}{}{}\ncode_snippet:\n{}",
         ctx_part.file_path.as_ref(),
         ctx_part.canon_path.as_ref(),
         ctx_part.kind.to_static_str(),
@@ -355,9 +360,70 @@ fn reformat_context_to_system(ctx_part: ContextPart) -> String {
         type_context,
         call_expansion,
         call_context,
+        call_paths,
         proof_context,
         snippet
     )
+}
+
+fn format_call_paths_block(from_owner: &[CallPathInfo], to_target: &[CallPathInfo]) -> String {
+    if from_owner.is_empty() && to_target.is_empty() {
+        return String::new();
+    }
+
+    let mut out = format!(
+        "\ncall_paths: {} outgoing, {} incoming",
+        from_owner.len(),
+        to_target.len()
+    );
+    for path in from_owner.iter().take(4) {
+        out.push('\n');
+        out.push_str("  - ");
+        out.push_str(&format_call_path("outgoing", path));
+    }
+    for path in to_target.iter().take(4) {
+        out.push('\n');
+        out.push_str("  - ");
+        out.push_str(&format_call_path("incoming", path));
+    }
+    let hidden = from_owner.len().saturating_sub(4) + to_target.len().saturating_sub(4);
+    if hidden > 0 {
+        out.push('\n');
+        out.push_str("  - ... ");
+        out.push_str(&hidden.to_string());
+        out.push_str(" more call path(s)");
+    }
+    out
+}
+
+fn format_call_path(direction: &str, path: &CallPathInfo) -> String {
+    let sites = path
+        .edges
+        .iter()
+        .map(|edge| edge.call_site_id.to_string())
+        .collect::<Vec<_>>()
+        .join(" -> ");
+    format!(
+        "{direction} depth {}: {} -> {} via [{}]; nodes [{}]",
+        path.depth,
+        path.start_id,
+        path.end_id,
+        sites,
+        format_call_path_nodes(path)
+    )
+}
+
+fn format_call_path_nodes(path: &CallPathInfo) -> String {
+    let mut ids = vec![path.start_id];
+    ids.extend(path.edges.iter().map(|edge| edge.callee_id));
+    ids.into_iter()
+        .filter_map(|id| {
+            path.nodes
+                .iter()
+                .find(|node| node.id == id)
+                .map(|node| format!("{} @ {}", node.canon_path.as_ref(), node.file_path.as_ref()))
+        })
+        .join(" -> ")
 }
 
 pub(crate) fn format_call_expansion(ctx: &CallExpansionInfo) -> String {

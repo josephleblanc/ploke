@@ -191,6 +191,8 @@ struct ContextCarrierCounts {
     call_context: usize,
     call_blockers: usize,
     call_expansion: usize,
+    call_paths_from_owner: usize,
+    call_paths_to_target: usize,
     proof_context: usize,
     proof_blockers: usize,
 }
@@ -217,6 +219,16 @@ fn context_carrier_counts(result: &RequestCodeContextResult) -> ContextCarrierCo
         .iter()
         .filter(|part| part.call_expansion.is_some())
         .count();
+    let call_paths_from_owner = result
+        .context
+        .iter()
+        .map(|part| part.call_paths_from_owner.len())
+        .sum();
+    let call_paths_to_target = result
+        .context
+        .iter()
+        .map(|part| part.call_paths_to_target.len())
+        .sum();
     let proof_context = result
         .context
         .iter()
@@ -233,6 +245,8 @@ fn context_carrier_counts(result: &RequestCodeContextResult) -> ContextCarrierCo
         call_context,
         call_blockers,
         call_expansion,
+        call_paths_from_owner,
+        call_paths_to_target,
         proof_context,
         proof_blockers,
     }
@@ -437,6 +451,14 @@ impl super::Tool for RequestCodeContextGat {
             .with_field("call_context", counts.call_context.to_string())
             .with_field("call_blockers", counts.call_blockers.to_string())
             .with_field("call_expansion", counts.call_expansion.to_string())
+            .with_field(
+                "call_paths_from_owner",
+                counts.call_paths_from_owner.to_string(),
+            )
+            .with_field(
+                "call_paths_to_target",
+                counts.call_paths_to_target.to_string(),
+            )
             .with_field("proof_context", counts.proof_context.to_string())
             .with_field("proof_blockers", counts.proof_blockers.to_string());
         if let Some(note) = result.note.as_ref() {

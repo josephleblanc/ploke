@@ -494,6 +494,127 @@ async fn call_paths_exact_reads_axum_request_extract_two_hop_trait_path() -> Res
     Ok(())
 }
 
+#[tokio::test]
+async fn get_context_attaches_axum_request_extract_two_hop_call_paths() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(fresh_backup_fixture_db(
+        &ploke_test_utils::CORPUS_AXUM_CALL_GRAPH,
+    )?);
+    assert!(
+        db.has_call_graph_relations()?,
+        "corpus_axum_call_graph must include call graph relations for assembled call-path tests"
+    );
+
+    // Matrix:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    // Source-oracle chain:
+    //   axum-core/src/ext_traits/request.rs:268
+    //     `RequestExt::extract` calls `self.extract_with_state(&())`.
+    //   axum-core/src/ext_traits/request.rs:279
+    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
+    //   axum-core/src/extract/mod.rs:85
+    //     defines the `FromRequest::from_request` trait method binding.
+    //
+    // This test exercises the public `get_context` path, proving RAG answers can
+    // carry bounded multi-hop path context for a real target crate rather than
+    // requiring a second exact edge-tool lookup.
+    let start = method_id_by_file(
+        &db,
+        "extract",
+        "self.extract_with_state(&())",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let intermediate = method_id_by_file(
+        &db,
+        "extract_with_state",
+        "E::from_request(self, state)",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
+    let top_k = 64;
+
+    let mut cfg = crate::RagConfig::default();
+    cfg.type_context.enabled = false;
+    cfg.proof_context.enabled = false;
+    cfg.call_context.max_owner_hits = top_k;
+    cfg.call_context.path_depth = 2;
+    cfg.call_context.path_limit = 16;
+    let rag = RagService::new_full(
+        Arc::clone(&db),
+        runtime_for(&db, EmbeddingProcessor::new_mock()),
+        IoManagerHandle::new(),
+        cfg,
+    )?;
+    rag.bm25_rebuild().await?;
+
+    let query = "self.extract_with_state";
+    let sparse_hits = rag
+        .search_bm25_strict(query, top_k, LOADED_WORKSPACE_SCOPE)
+        .await?;
+    assert!(
+        sparse_hits.iter().any(|(id, _)| *id == start),
+        "source-level axum query should retrieve RequestExt::extract as a RAG seed: {sparse_hits:#?}"
+    );
+
+    let assembled = rag
+        .get_context(
+            query,
+            top_k,
+            &TokenBudget {
+                max_total: 131072,
+                per_file_max: 131072,
+                per_part_max: 8192,
+            },
+            &RetrievalStrategy::Sparse { strict: Some(true) },
+            LOADED_WORKSPACE_SCOPE,
+        )
+        .await?;
+    let part = assembled
+        .parts
+        .iter()
+        .find(|part| part.id == start)
+        .unwrap_or_else(|| {
+            panic!("assembled context should include RequestExt::extract: {assembled:#?}")
+        });
+    let path = part
+        .call_paths_from_owner
+        .iter()
+        .find(|path| path.end_id == target && path.depth == 2)
+        .unwrap_or_else(|| {
+            panic!(
+                "RequestExt::extract context part should carry the two-hop path to FromRequest::from_request: {part:#?}"
+            )
+        });
+    assert_eq!(path.edges.len(), 2);
+    assert_eq!(path.edges[0].caller_id, start);
+    assert_eq!(path.edges[0].callee_id, intermediate);
+    assert_eq!(path.edges[1].caller_id, intermediate);
+    assert_eq!(path.edges[1].callee_id, target);
+    assert_call_path_node(
+        path,
+        start,
+        "::extract",
+        "axum-core/src/ext_traits/request.rs",
+        "RAG assembled outgoing two-hop path",
+    );
+    assert_call_path_node(
+        path,
+        intermediate,
+        "::extract_with_state",
+        "axum-core/src/ext_traits/request.rs",
+        "RAG assembled outgoing two-hop path",
+    );
+    assert_call_path_node(
+        path,
+        target,
+        "::from_request",
+        "axum-core/src/extract/mod.rs",
+        "RAG assembled outgoing two-hop path",
+    );
+
+    Ok(())
+}
+
 fn assert_call_path_node(
     path: &ploke_core::rag_types::CallPathInfo,
     id: Uuid,
