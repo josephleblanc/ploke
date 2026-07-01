@@ -951,6 +951,10 @@ async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Erro
             )
         });
     assert_eq!(direct_site.status, CallStatusKind::Resolved);
+    assert!(
+        report.boundary_call_sites.is_empty(),
+        "RAG RequestExt::extract reach should not mark the same-module direct call as a module-boundary row: {report:#?}"
+    );
     assert_call_node(
         &report.public_callees,
         target,
@@ -967,6 +971,38 @@ async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Erro
         &report.source_files,
         "axum-core/src/extract/mod.rs",
         "RAG reach source files",
+    );
+
+    let boundary = rag
+        .exact_call_reach_for_owner(
+            intermediate,
+            CallPathOptions {
+                max_depth: 1,
+                max_paths: 16,
+            },
+        )?
+        .expect("call context enabled");
+    assert_eq!(
+        boundary.boundary_call_sites.len(),
+        1,
+        "RAG RequestExt::extract_with_state should expose its direct cross-module FromRequest callsite: {boundary:#?}"
+    );
+    let boundary_call = &boundary.boundary_call_sites[0];
+    assert_eq!(boundary_call.owner_id, intermediate);
+    assert!(
+        matches!(
+            &boundary_call.callee,
+            CallCalleeInfo::Path { path: call_path }
+                if call_path == &path(&["E", "from_request"])
+        ),
+        "RAG module-boundary row should preserve the E::from_request path call: {boundary:#?}"
+    );
+    assert!(
+        boundary_call
+            .targets
+            .iter()
+            .any(|target_row| target_row.target_id == target),
+        "RAG module-boundary row should target FromRequest::from_request: {boundary:#?}"
     );
 
     // Source oracle:

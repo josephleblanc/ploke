@@ -262,8 +262,12 @@ fn axum_usage_questions_summarize_owner_reach_for_navigation() -> Result<(), DbE
             panic!(
                 "RequestExt::extract reach report should include the extract_with_state callsite row: {report:#?}"
             )
-        });
+    });
     assert_eq!(direct_site.status.status, CallStatusKind::Resolved);
+    assert!(
+        report.boundary_call_sites.is_empty(),
+        "RequestExt::extract direct call stays inside ext_traits::request and should not be a module-boundary row: {report:#?}"
+    );
     assert_node_names(
         &report.public_callees,
         &[(target, "from_request")],
@@ -278,6 +282,32 @@ fn axum_usage_questions_summarize_owner_reach_for_navigation() -> Result<(), DbE
         &report.source_files,
         "axum-core/src/extract/mod.rs",
         "RequestExt::extract reach report source files",
+    );
+
+    let boundary_report = db.call_reach_for_owner(
+        intermediate,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 16,
+        },
+    )?;
+    assert_eq!(
+        boundary_report.boundary_call_sites.len(),
+        1,
+        "RequestExt::extract_with_state should expose its direct cross-module FromRequest callsite: {boundary_report:#?}"
+    );
+    let boundary = &boundary_report.boundary_call_sites[0];
+    assert_eq!(boundary.site.owner_id, intermediate);
+    assert_eq!(
+        boundary.site.path.as_ref(),
+        Some(&path(&["E", "from_request"]))
+    );
+    assert!(
+        boundary
+            .targets
+            .iter()
+            .any(|target_row| target_row.target_id == target),
+        "module-boundary row should target FromRequest::from_request: {boundary_report:#?}"
     );
 
     Ok(())

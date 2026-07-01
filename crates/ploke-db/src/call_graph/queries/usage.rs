@@ -93,6 +93,7 @@ impl Database {
             (path.depth == 1).then_some(path.end_id)
         })?;
         let direct_call_sites = resolved_direct_call_sites_for_owner(self, owner_id)?;
+        let boundary_call_sites = boundary_call_sites(self, &owner, &direct_call_sites)?;
         let public_callees: Vec<CallNodeInfo> = callees
             .iter()
             .filter(|callee| callee.is_public)
@@ -124,6 +125,7 @@ impl Database {
             callees,
             direct_callees,
             direct_call_sites,
+            boundary_call_sites,
             public_callees,
             frontier_calls,
             external_frontier_calls,
@@ -173,6 +175,33 @@ owner[id] := id = $node_id, *static{{ id @ 'NOW' }}
         }
     }
     Ok(false)
+}
+
+fn boundary_call_sites(
+    db: &Database,
+    owner: &CallNodeInfo,
+    rows: &[CallContextRow],
+) -> Result<Vec<CallContextRow>, DbError> {
+    let mut out = Vec::new();
+    for row in rows {
+        let mut crosses = false;
+        for target in &row.targets {
+            let Some(callee) = db.call_node_info(target.target_id)? else {
+                return Err(DbError::Cozo(format!(
+                    "missing call graph node metadata for boundary target {}",
+                    target.target_id
+                )));
+            };
+            if callee.module_path != owner.module_path {
+                crosses = true;
+                break;
+            }
+        }
+        if crosses {
+            out.push(row.clone());
+        }
+    }
+    Ok(out)
 }
 
 fn frontier_calls_for_paths(

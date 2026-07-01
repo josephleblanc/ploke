@@ -213,6 +213,10 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         .get("direct_call_sites")
         .and_then(serde_json::Value::as_array)
         .expect("call_reach direct_call_sites array");
+    let reach_boundary_call_sites = reach
+        .get("boundary_call_sites")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_reach boundary_call_sites array");
     let reach_public_callees = reach
         .get("public_callees")
         .and_then(serde_json::Value::as_array)
@@ -295,6 +299,10 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         }),
         "code_item_lookup reach should include the extract_with_state callsite row: {reach_direct_sites:#?}"
     );
+    assert!(
+        reach_boundary_call_sites.is_empty(),
+        "code_item_lookup reach should not mark the same-module extract -> extract_with_state call as a module-boundary row: {reach_boundary_call_sites:#?}"
+    );
     assert_impact_node(
         reach_public_callees,
         fixture.target,
@@ -371,6 +379,10 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         ui_field(start_ui, "reach_direct_call_sites"),
         reach_direct_sites.len().to_string()
     );
+    assert_eq!(
+        ui_field(start_ui, "reach_boundary_call_sites"),
+        reach_boundary_call_sites.len().to_string()
+    );
     assert!(
         ui_field(start_ui, "reach_public_callees")
             .parse::<usize>()
@@ -381,6 +393,66 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
     assert_eq!(
         ui_field(start_ui, "reach_source_files"),
         reach_source_files.len().to_string()
+    );
+
+    let boundary_params = LookupParams {
+        item_name: Cow::Borrowed("extract_with_state"),
+        file_path: Cow::Owned(fixture.start_file_path.display().to_string()),
+        node_kind: Cow::Borrowed("method"),
+        module_path: Cow::Owned(fixture.start_module_path_arg()),
+        owner_trait: None,
+        owner_type: Some(Cow::Borrowed("Request")),
+    };
+    let boundary_result = CodeItemLookup::execute(
+        boundary_params,
+        fixture.ctx("axum-request-extract-boundary-lookup"),
+    )
+    .await
+    .expect("RequestExt::extract_with_state lookup");
+    let boundary_payload: serde_json::Value = serde_json::from_str(&boundary_result.content)
+        .expect("deserialize boundary ConciseContext");
+    let boundary_reach = boundary_payload
+        .get("call_reach")
+        .and_then(serde_json::Value::as_object)
+        .expect("boundary call_reach object");
+    let boundary_calls = boundary_reach
+        .get("boundary_call_sites")
+        .and_then(serde_json::Value::as_array)
+        .expect("boundary call_reach boundary_call_sites array")
+        .iter()
+        .map(|call| serde_json::from_value::<CallContextInfo>(call.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("typed boundary callsite rows");
+    assert_eq!(
+        boundary_calls.len(),
+        1,
+        "code_item_lookup should surface the exact cross-module E::from_request callsite row: {boundary_calls:#?}"
+    );
+    assert!(
+        boundary_calls.iter().any(|call| {
+            call.owner_id == fixture.intermediate
+                && call.kind == CallSiteKind::Path
+                && matches!(
+                    &call.callee,
+                    CallCalleeInfo::Path { path } if path == &vec![
+                        "E".to_string(),
+                        "from_request".to_string()
+                    ]
+                )
+                && call
+                    .targets
+                    .iter()
+                    .any(|target| target.target_id == fixture.target)
+        }),
+        "code_item_lookup should include the cross-module FromRequest boundary row: {boundary_calls:#?}"
+    );
+    let boundary_ui = boundary_result
+        .ui_payload
+        .as_ref()
+        .expect("boundary UI payload");
+    assert_eq!(
+        ui_field(boundary_ui, "reach_boundary_call_sites"),
+        boundary_calls.len().to_string()
     );
 
     let target_params = LookupParams {
