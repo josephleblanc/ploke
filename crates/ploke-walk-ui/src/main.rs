@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::mpsc, thread, time::Duration};
+use std::{collections::BTreeMap, path::PathBuf, sync::mpsc, thread, time::Duration};
 
 use eframe::egui::{
     self, Color32, ComboBox, Grid, RichText, ScrollArea, TextEdit, TextStyle, Ui, ViewportBuilder,
@@ -44,6 +44,12 @@ struct WalkUiApp {
     query_pending: bool,
     debug_panel: bool,
     debug_hover: bool,
+    buttons: UiButtonState,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct UiButtonState {
+    run_details: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -108,6 +114,7 @@ impl WalkUiApp {
             query_pending: false,
             debug_panel: false,
             debug_hover: false,
+            buttons: UiButtonState::default(),
         };
         app.refresh_runs();
         app.refresh_health(None);
@@ -344,27 +351,6 @@ impl eframe::App for WalkUiApp {
                 ui.separator();
                 ui.label("socket");
                 ui.add_sized([260.0, 22.0], TextEdit::singleline(&mut self.socket_input));
-                if ui.button("Resolve").clicked() {
-                    self.resolve_selected_client();
-                    self.refresh_health(Some(ui.ctx().clone()));
-                }
-                let walk_idle = self.walk_pending.is_none();
-                if ui
-                    .add_enabled(walk_idle, egui::Button::new("Health"))
-                    .clicked()
-                {
-                    self.refresh_health(Some(ui.ctx().clone()));
-                }
-                let show_response = ui.add_enabled(
-                    self.client.is_some() && walk_idle,
-                    egui::Button::new("Show"),
-                );
-                if show_response.clicked() {
-                    self.show_state(Some(ui.ctx().clone()));
-                }
-                if let Some(kind) = self.walk_pending {
-                    ui.label(RichText::new(format!("{}...", kind.label())).color(Color32::YELLOW));
-                }
                 ui.toggle_value(&mut self.debug_panel, "Debug");
             });
         });
@@ -444,45 +430,79 @@ impl WalkUiApp {
     }
 
     fn details_panel(&mut self, ui: &mut Ui) {
-        ui.heading("Run");
-        ui.add_space(6.0);
-        if let Some(run) = self.selected_run() {
-            ui.label(&run.campaign_id);
-            ui.label(format!("campaign: {}", run.campaign_dir.display()));
-            ui.label(format!("prototype1: {}", run.prototype1_root.display()));
-            if let Some(worktree) = run.worktree_root.as_deref() {
-                ui.label(format!("worktree: {}", worktree.display()));
-            } else {
-                ui.label(RichText::new("worktree: missing").color(Color32::YELLOW));
-            }
-            ui.label(format!(
-                "db: {}",
-                if run.has_owner_db {
-                    "present"
-                } else {
-                    "missing"
+        ui.horizontal_top(|ui| {
+            ui.heading("Run");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                if ui.button("Details").clicked() {
+                    self.buttons.run_details = !self.buttons.run_details;
                 }
-            ));
-            ui.label(format!(
-                "parent identity: {}",
-                if run.has_parent_identity {
-                    "present"
-                } else {
-                    "missing"
-                }
-            ));
-        } else {
-            ui.label("No run selected");
-        }
-        if self.runs.is_empty() {
-            ui.label("No Prototype 1 runs found under the ploke-eval home");
-        }
-        if let Some(error) = self.run_error.as_deref() {
-            ui.label(RichText::new(error).color(Color32::LIGHT_RED));
-        }
+            });
+        });
 
+        if self.buttons.run_details {
+            ui.add_space(6.0);
+            if let Some(run) = self.selected_run() {
+                ui.label(&run.campaign_id);
+                ui.label(format!("campaign: {}", run.campaign_dir.display()));
+                ui.label(format!("prototype1: {}", run.prototype1_root.display()));
+                if let Some(worktree) = run.worktree_root.as_deref() {
+                    ui.label(format!("worktree: {}", worktree.display()));
+                } else {
+                    ui.label(RichText::new("worktree: missing").color(Color32::YELLOW));
+                }
+                ui.label(format!(
+                    "db: {}",
+                    if run.has_owner_db {
+                        "present"
+                    } else {
+                        "missing"
+                    }
+                ));
+                ui.label(format!(
+                    "parent identity: {}",
+                    if run.has_parent_identity {
+                        "present"
+                    } else {
+                        "missing"
+                    }
+                ));
+            } else {
+                ui.label("No run selected");
+            }
+            if self.runs.is_empty() {
+                ui.label("No Prototype 1 runs found under the ploke-eval home");
+            }
+            if let Some(error) = self.run_error.as_deref() {
+                ui.label(RichText::new(error).color(Color32::LIGHT_RED));
+            }
+        }
         ui.separator();
-        ui.heading("Walk");
+
+        ui.horizontal_wrapped(|ui| {
+            ui.horizontal_top(|ui| {
+                ui.heading("Walk");
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                let walk_idle = self.walk_pending.is_none();
+                if ui
+                    .add_enabled(walk_idle, egui::Button::new("Health"))
+                    .clicked()
+                {
+                    self.refresh_health(Some(ui.ctx().clone()));
+                }
+                let show_response = ui.add_enabled(
+                    self.client.is_some() && walk_idle,
+                    egui::Button::new("Show"),
+                );
+                if show_response.clicked() {
+                    self.show_state(Some(ui.ctx().clone()));
+                }
+                if let Some(kind) = self.walk_pending {
+                    ui.label(RichText::new(format!("{}...", kind.label())).color(Color32::YELLOW));
+                }
+            });
+        });
+
         ui.add_space(6.0);
         if let Some(snapshot) = &self.snapshot {
             ui.label(format!(
