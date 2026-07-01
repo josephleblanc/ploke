@@ -70,6 +70,10 @@ Current matrix posture:
   outside the conservative classifier now persist as targetless
   `Unsupported` receiver rows instead of being dropped before status/proof
   projection.
+- Executable-local const initializer boundaries: function-local const
+  initializer calls are no longer flattened into the enclosing function owner;
+  true local const owner rows remain blocked on an executable-scope identity
+  model.
 - Dynamic/receiver/closure/import gaps: future semantic expansion buckets, not reasons to keep polishing already-proven method paths.
 
 ## Phase Transition Rule
@@ -131,7 +135,7 @@ For the current state, that should be:
 ```text
 Root plan: .hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md
 Current phase: binding/type-aware semantic resolution
-Current completed bucket: unsupported receiver visibility fallback
-Completed proof: fixture-backed `if` expression receiver method calls persist as `Unsupported` receiver rows across parser, transform, DB context/proof, RAG call-context collection, and lightweight TUI formatting; no target edge is fabricated
+Current completed bucket: executable-local const initializer boundary
+Completed proof: fixture-backed local const initializer calls are not attributed to the enclosing function owner in parser extraction or DB owner context; top-level/associated initializer owners remain covered separately
 Next phase if this bucket is done: return to the coverage matrix and select the next real-corpus DB query or downstream usage-query gap
 ```

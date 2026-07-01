@@ -49,39 +49,30 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current Bucket
 
-Current bucket: unsupported method receiver visibility fallback.
+Current bucket: executable-local const initializer boundary.
 
 Exit criteria:
 
-- Preserve method-call visibility when the receiver expression is outside the
-  conservative classifier, instead of dropping the call site before status
-  projection.
-- Store the fallback as a typed receiver kind (`Unsupported`) that carries no
-  target proof and no receiver path.
-- Prove parser extraction, transform projection, DB decoding/context/proof,
-  RAG propagation, and lightweight TUI formatting all preserve the visible
-  targetless unsupported method row.
+- Do not flatten calls from a function-local `const` initializer into the
+  enclosing function owner.
+- Preserve existing top-level, static, and associated const initializer owner
+  behavior.
+- Prove parser extraction and DB owner queries fail closed: no synthetic edge
+  is fabricated and no outer-owner row leaks through projection.
 
 Completed evidence:
 
 - Parser:
-  `fixture_call_graph_call_if_expression_receiver_method_records_unsupported_method_call_site`.
+  `fixture_call_graph_local_const_initializer_call_is_not_recorded_as_outer_call_site`.
 - Transform:
   `cargo test -p ploke-transform --features call_graph call_graph`.
 - DB:
-  `unit::call_graph_queries::receiver_decode`,
-  `fixture_context_reads_unsupported_receiver_method_status_without_targets`,
-  and
-  `fixture_projection_marks_real_unsupported_receiver_method_without_edges`.
-- RAG:
-  `call_context_collection_reads_real_fixture_blocker_rows`.
-- TUI/tool:
-  `format_call_context_block_renders_external_rows`.
+  `fixture_context_does_not_project_local_const_initializer_calls_to_outer_owner`.
 
-Reason to switch after this bucket: this improves visibility without changing
-resolver precision. The fallback row is intentionally targetless and
-unsupported, so broader receiver resolution still requires binding/type-aware
-proof rather than relaxed semantics.
+Reason to switch after this bucket: ADR-024 still prevents executable-path
+local items from becoming graph nodes. True local const owner rows need an
+expression/block scope identity model; until then the correct behavior is a
+boundary, not outer-owner flattening.
 
 ## Coverage Matrix
 
@@ -98,7 +89,7 @@ proof rather than relaxed semantics.
 | Unsupported receiver shapes | Stronger blocker visibility | Targetless/unsupported rows remain for generic field/result/await/local receiver gaps; exact local `Router::clone` receiver rows traverse; initialized `Request::new` local receiver rows classify as external frontiers; unknown receiver expressions now persist as `Unsupported` receiver rows instead of being dropped | RAG preserves blocker/frontier rows, the exact positive subset, and fixture-backed unsupported receiver rows | Tool tests surface unsupported rows/counts and `RouterClone` positives; lightweight TUI formatting preserves the `Unsupported` receiver label | axum plus local fixture fallback | Switch buckets; future implementation should add exact receiver proof, not weaken unsupported rows. |
 | Dynamic callable values | Stronger fixture-backed subset | Fixture-backed direct, alias, same-target branch/match, and single-expression block initialized callable values resolve; mixed-target branches remain targetless | RAG preserves resolved direct/branch/block initialized rows and blocker rows | `code_item_lookup` covers resolved dynamic-function callable bindings, including the block-initialized form, and the targetless matrix covers unsupported rows | local fixture; no representative found in checked-out axum/serde/memchr corpora | Switch buckets; broader callable trait objects/returned closures still need binding/body ownership work. |
 | Proc-macro entrypoint body owners | Met for now | `CallBodyOwnerId::Macro` owners project through axum `expand_with` and `expand_attr_with` real-corpus helper calls | Exact impact summaries expose public proc-macro callers and direct helper callsites | `code_item_lookup` surfaces four public macro callers for `expand_with` | axum | Switch buckets; callback arguments and closure/IIFE body calls remain fail-closed. |
-| Closures / nested body ownership | Partial/gap documented | Some nested rows intentionally absent to avoid flattening outer owners | RAG follows current DB surface | Tool coverage follows current DB surface | axum `parse_attrs` closure-body rows | Future bucket: closure/async body ownership before multi-hop closure traversal. |
+| Closures / executable-local body ownership | Partial/gap documented | Closure/async body calls and function-local const initializer calls are intentionally absent rather than flattened into enclosing owners | RAG follows current DB surface | Tool coverage follows current DB surface | axum `parse_attrs` closure-body rows; axum local const initializer rows remain future until fixtures are regenerated and scoped local owners exist | Future bucket: closure/async/local-item body ownership after executable-scope identity design. |
 | Import / re-export / glob completeness | Partial, nested-glob subset improved | Explicit and some imported path calls work; chrono alias constructor path calls resolve through typed alias evidence; axum `TestClient::new` now resolves 98 nested `test_helpers::* -> pub use test_client::*` rows while 69 direct/other import rows remain targetless; axum `Request::new` through imported `Request = http::Request` is classified external and targetless; broader import completeness remains partial | RAG exact context preserves alias rows and the 98 `TestClient::new` nested-glob caller rows | Tool coverage includes chrono alias rows plus dedicated high-fanout lookup/edges tests for `AxumRemainingTarget::TestClientNew` | axum, chrono | Switch buckets; keep strict source oracles for remaining fanout. |
 | Dead-code / private zero-incoming | Met for now | `private_uncalled_nodes` lists axum `error_handling::traits`, excludes called `parse_attrs`, and exact impact reports no incoming source calls | Exact impact reports the same private target and empty caller/path/bucket sets | `code_item_lookup` reports zero incoming paths and zero impact caller counts | axum | Switch buckets; do not widen to generated/dynamic reachability here. |
 | DB usage summaries | Strong current surface | `call_impact_for_target`, `call_reach_for_owner`, paths, source files/modules, buckets, boundary/frontier rows | N/A | N/A | axum | Add fields only when they answer a matrix question, not opportunistically. |

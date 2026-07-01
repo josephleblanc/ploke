@@ -30,7 +30,7 @@ This matrix is Ploke-native, not a copy of RA behavior. RA is a reference for ca
 | `ExprMacro` / statement-position `StmtMacro` | `CallNode::MacroCall` | Current implementation. Invocation site only, no expansion. |
 | Calls inside top-level const/static initializers | `CallBodyOwnerId::{Const, Static}` | Current implementation records initializer expression call sites in both `syn` and legacy `syn1` visitor paths. |
 | Calls inside associated const initializers | `CallBodyOwnerId::Const` | Current implementation records trait default and inherent impl associated const initializer call sites under the associated const's existing `ConstNodeId`. |
-| Calls inside closure/async/block bodies | Future owner/nesting model | Closure and async block bodies are explicit extraction boundaries today; inner calls are not attributed to the enclosing owner until closure/body-owner IDs or nested-body metadata exist. |
+| Calls inside closure/async/block bodies | Future owner/nesting model | Closure, async, and executable-local item initializer bodies are explicit extraction boundaries today; inner calls are not attributed to the enclosing owner until closure/body-owner IDs or nested-body metadata exist. |
 | Desugared/implicit calls | Separate future effect/call layer | Operators, `for`, `?`, `.await`, drop, deref coercions, etc. should be explicit matrix rows, not silently ignored. |
 
 ## Resolver status policy
@@ -638,6 +638,7 @@ This section maps the exhaustive rows below to concrete fixtures we can use. Pre
 | Const item initializer | `const X: i32 = f();` | yes | Calls owned by `CallBodyOwnerId::Const` | Add more call-shape rows beyond the current path-call fixture. |
 | Static initializer | `static X: T = T::new();` | yes | Calls owned by `CallBodyOwnerId::Static` | Covered by `fixture_nodes::STATIC_FN_CALL`. |
 | Associated const initializer | `impl T { const X: U = f(); }` | yes | Calls owned by the associated const's `CallBodyOwnerId::Const` | Add more call-shape rows beyond the current path-call fixture. |
+| Function-local const initializer | `fn f() { const X: i32 = g(); }` | explicit extraction boundary | Inner calls are not attributed to the enclosing function owner | Needs executable-scope local item owner design; see ADR-024. |
 | Enum discriminant | `A = f()` if const-call legal | no | Future const-expression owner | Need legality-focused fixture. |
 | Closure body | `let c = || f();` | explicit extraction boundary | Inner calls are not attributed to the enclosing owner | Needs closure ID design. |
 | Async block/body | `async { f().await }` | explicit extraction boundary | Inner calls are not attributed to the enclosing owner | Also `.await` effect rows. |

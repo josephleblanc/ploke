@@ -281,6 +281,10 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
         visit::visit_expr_method_call(self, call);
     }
 
+    // Local executable const items need scoped owner identity; do not flatten
+    // initializer calls into the enclosing body owner.
+    fn visit_item_const(&mut self, _item_const: &'ast syn::ItemConst) {}
+
     fn visit_expr_closure(&mut self, _closure: &'ast syn::ExprClosure) {}
 
     fn visit_expr_async(&mut self, _async_block: &'ast syn::ExprAsync) {}

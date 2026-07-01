@@ -1367,3 +1367,8 @@ pub fn call_parenthesized_block_initialized_function_item_binding() -> i32 {
 pub fn call_if_expression_receiver_method(flag: bool) -> i32 {
     (if flag { LocalAssoc } else { LocalAssoc }).instance_value()
 }
+
+pub fn local_const_initializer_call_is_not_outer_call_site() -> i32 {
+    const LOCAL_INITIALIZER_VALUE: i32 = assoc_const_value();
+    LOCAL_INITIALIZER_VALUE
+}
