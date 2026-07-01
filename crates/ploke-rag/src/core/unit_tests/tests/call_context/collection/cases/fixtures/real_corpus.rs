@@ -712,6 +712,26 @@ async fn call_impact_exact_reads_axum_usage_question_summary() -> Result<(), Err
         "axum-core/src/ext_traits/request.rs",
         "RAG impact direct callers",
     );
+    assert_eq!(
+        report.direct_call_sites.len(),
+        2,
+        "RAG impact summary should preserve both direct target-centered callsite rows: {report:#?}"
+    );
+    assert!(
+        report.direct_call_sites.iter().any(|call| {
+            call.owner_id == intermediate
+                && matches!(
+                    &call.callee,
+                    CallCalleeInfo::Path { path: call_path }
+                        if call_path == &path(&["E", "from_request"])
+                )
+                && call
+                    .targets
+                    .iter()
+                    .any(|target_row| target_row.target_id == target)
+        }),
+        "RAG impact summary should include the E::from_request callsite row: {report:#?}"
+    );
     assert!(
         report.public_callers.is_empty(),
         "RAG impact summary should preserve the DB's direct stored-public predicate: {report:#?}"
@@ -746,6 +766,7 @@ async fn call_impact_exact_reads_axum_usage_question_summary() -> Result<(), Err
         unsupported.paths.is_empty()
             && unsupported.callers.is_empty()
             && unsupported.direct_callers.is_empty()
+            && unsupported.direct_call_sites.is_empty()
             && unsupported.public_callers.is_empty(),
         "RAG impact summary must not fabricate unsupported proc-macro public callers: {unsupported:#?}"
     );

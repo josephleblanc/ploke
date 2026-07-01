@@ -384,6 +384,7 @@ pub struct CallImpactInfo {
     pub paths: Vec<CallPathInfo>,
     pub callers: Vec<CallNodeInfo>,
     pub direct_callers: Vec<CallNodeInfo>,
+    pub direct_call_sites: Vec<CallContextInfo>,
     pub public_callers: Vec<CallNodeInfo>,
     pub source_files: Vec<NodeFilepath>,
 }

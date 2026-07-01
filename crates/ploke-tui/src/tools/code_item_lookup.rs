@@ -361,6 +361,15 @@ for a more fuzzy search."#
                     .to_string(),
             )
             .with_field(
+                "impact_direct_call_sites",
+                concise_context
+                    .call_impact
+                    .as_ref()
+                    .map(|impact| impact.direct_call_sites.len())
+                    .unwrap_or_default()
+                    .to_string(),
+            )
+            .with_field(
                 "impact_public_callers",
                 concise_context
                     .call_impact

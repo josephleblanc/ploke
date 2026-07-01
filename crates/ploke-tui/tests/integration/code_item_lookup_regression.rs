@@ -353,6 +353,10 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         .get("direct_callers")
         .and_then(serde_json::Value::as_array)
         .expect("call_impact direct_callers array");
+    let impact_direct_call_sites = impact
+        .get("direct_call_sites")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_impact direct_call_sites array");
     let impact_public_callers = impact
         .get("public_callers")
         .and_then(serde_json::Value::as_array)
@@ -396,6 +400,31 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         "axum-core/src/ext_traits/request.rs",
         "code_item_lookup impact direct callers",
     );
+    let direct_call_sites = impact_direct_call_sites
+        .iter()
+        .map(|call| serde_json::from_value::<CallContextInfo>(call.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("typed impact direct callsite rows");
+    assert_eq!(
+        direct_call_sites.len(),
+        2,
+        "code_item_lookup impact should surface both direct target-centered callsite rows: {direct_call_sites:#?}"
+    );
+    assert!(
+        direct_call_sites.iter().any(|call| {
+            call.owner_id == fixture.intermediate
+                && matches!(
+                    &call.callee,
+                    CallCalleeInfo::Path { path }
+                        if path.iter().map(String::as_str).eq(["E", "from_request"])
+                )
+                && call
+                    .targets
+                    .iter()
+                    .any(|target| target.target_id == fixture.target)
+        }),
+        "code_item_lookup impact should include the E::from_request callsite row: {direct_call_sites:#?}"
+    );
     assert!(
         impact_public_callers.is_empty(),
         "direct stored-public impact bucket should remain empty for inherited method callers: {impact_public_callers:#?}"
@@ -434,6 +463,10 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
             .expect("direct impact caller count")
             >= 2,
         "code_item_lookup should surface all direct impact caller counts"
+    );
+    assert_eq!(
+        ui_field(target_ui, "impact_direct_call_sites"),
+        direct_call_sites.len().to_string()
     );
     assert_eq!(ui_field(target_ui, "impact_public_callers"), "0");
     assert_eq!(
@@ -485,7 +518,13 @@ async fn code_item_lookup_surfaces_fail_closed_proc_macro_impact_gap() {
             .and_then(serde_json::Value::as_str),
         Some(target_id.as_str())
     );
-    for field in ["paths", "callers", "direct_callers", "public_callers"] {
+    for field in [
+        "paths",
+        "callers",
+        "direct_callers",
+        "direct_call_sites",
+        "public_callers",
+    ] {
         let rows = impact
             .get(field)
             .and_then(serde_json::Value::as_array)
@@ -499,6 +538,7 @@ async fn code_item_lookup_surfaces_fail_closed_proc_macro_impact_gap() {
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(ui_field(ui, "impact_callers"), "0");
     assert_eq!(ui_field(ui, "impact_direct_callers"), "0");
+    assert_eq!(ui_field(ui, "impact_direct_call_sites"), "0");
     assert_eq!(ui_field(ui, "impact_public_callers"), "0");
 }
 

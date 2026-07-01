@@ -407,6 +407,22 @@ fn axum_usage_questions_summarize_eventual_callers_for_impact() -> Result<(), Db
         &[(intermediate, "extract_with_state")],
         "FromRequest::from_request impact report direct callers",
     );
+    assert_eq!(
+        report.direct_call_sites.len(),
+        2,
+        "FromRequest::from_request impact report should expose both direct caller-site rows: {report:#?}"
+    );
+    assert!(
+        report.direct_call_sites.iter().any(|row| {
+            row.site.owner_id == intermediate
+                && row.site.path.as_ref() == Some(&path(&["E", "from_request"]))
+                && row
+                    .targets
+                    .iter()
+                    .any(|target_row| target_row.target_id == target)
+        }),
+        "FromRequest::from_request impact report should include the E::from_request callsite row: {report:#?}"
+    );
     assert!(
         report.public_callers.is_empty(),
         "direct stored-public filtering should not infer trait-effective visibility from inherited method rows: {report:#?}"
@@ -461,6 +477,7 @@ fn axum_usage_questions_keep_unsupported_proc_macro_public_gap_empty() -> Result
         report.paths.is_empty()
             && report.callers.is_empty()
             && report.direct_callers.is_empty()
+            && report.direct_call_sites.is_empty()
             && report.public_callers.is_empty(),
         "unsupported proc-macro public callers must remain fail-closed in impact summaries: {report:#?}"
     );

@@ -30,6 +30,7 @@ impl Database {
         let direct_callers = node_info_for_paths(self, &paths, "caller", |path| {
             (path.depth == 1).then_some(path.start_id)
         })?;
+        let direct_call_sites = self.call_context_for_target(target_id)?;
         let public_callers: Vec<CallNodeInfo> = callers
             .iter()
             .filter(|caller| caller.is_public)
@@ -49,6 +50,7 @@ impl Database {
             paths,
             callers,
             direct_callers,
+            direct_call_sites,
             public_callers,
             source_files,
         })
