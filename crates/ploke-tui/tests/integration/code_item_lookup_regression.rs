@@ -1,6 +1,8 @@
 use std::borrow::Cow;
 
-use ploke_core::rag_types::{CallCalleeInfo, CallContextInfo, CallSiteKind, CallStatusKind};
+use ploke_core::rag_types::{
+    CallCalleeInfo, CallContextInfo, CallPathEdgeInfo, CallSiteKind, CallStatusKind, CallTargetKind,
+};
 use ploke_tui::tools::{
     Tool,
     code_item_lookup::{CodeItemLookup, LookupParams},
@@ -217,6 +219,10 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         .get("boundary_call_sites")
         .and_then(serde_json::Value::as_array)
         .expect("call_reach boundary_call_sites array");
+    let reach_boundary_edges = reach
+        .get("boundary_edges")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_reach boundary_edges array");
     let reach_public_callees = reach
         .get("public_callees")
         .and_then(serde_json::Value::as_array)
@@ -304,6 +310,21 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         reach_boundary_call_sites.is_empty(),
         "code_item_lookup reach should not mark the same-module extract -> extract_with_state call as a module-boundary row: {reach_boundary_call_sites:#?}"
     );
+    let boundary_edges = reach_boundary_edges
+        .iter()
+        .map(|edge| serde_json::from_value::<CallPathEdgeInfo>(edge.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("typed reach boundary edges");
+    assert_eq!(
+        boundary_edges.len(),
+        1,
+        "code_item_lookup reach should expose the transitive cross-module FromRequest edge: {boundary_edges:#?}"
+    );
+    let boundary_edge = &boundary_edges[0];
+    assert_eq!(boundary_edge.caller_id, fixture.intermediate);
+    assert_eq!(boundary_edge.callee_id, fixture.target);
+    assert_eq!(boundary_edge.source_kind, CallSiteKind::Path);
+    assert_eq!(boundary_edge.relation, CallTargetKind::AssociatedFunction);
     assert_impact_node(
         reach_public_callees,
         fixture.target,
@@ -383,6 +404,10 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
     assert_eq!(
         ui_field(start_ui, "reach_boundary_call_sites"),
         reach_boundary_call_sites.len().to_string()
+    );
+    assert_eq!(
+        ui_field(start_ui, "reach_boundary_edges"),
+        boundary_edges.len().to_string()
     );
     assert!(
         ui_field(start_ui, "reach_public_callees")

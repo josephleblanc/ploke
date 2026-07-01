@@ -273,6 +273,15 @@ fn axum_usage_questions_summarize_owner_reach_for_navigation() -> Result<(), DbE
         report.boundary_call_sites.is_empty(),
         "RequestExt::extract direct call stays inside ext_traits::request and should not be a module-boundary row: {report:#?}"
     );
+    assert_eq!(
+        report.boundary_edges.len(),
+        1,
+        "RequestExt::extract reach should expose the transitive cross-module edge to FromRequest: {report:#?}"
+    );
+    let boundary_edge = report.boundary_edges[0];
+    assert_eq!(boundary_edge.caller_id, intermediate);
+    assert_eq!(boundary_edge.callee_id, target);
+    assert_eq!(boundary_edge.source_kind, CallSiteKind::Path);
     assert_node_names(
         &report.public_callees,
         &[(target, "from_request")],

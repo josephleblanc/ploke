@@ -408,6 +408,11 @@ fn reach_info(db: &Database, report: DbCallReachReport) -> Result<CallReachInfo,
         .into_iter()
         .map(|row| row_to_call_context(row, usize::MAX))
         .collect::<Result<Vec<_>, RagError>>()?;
+    let boundary_edges = report
+        .boundary_edges
+        .into_iter()
+        .map(edge_info)
+        .collect::<Vec<_>>();
     let public_callees = report
         .public_callees
         .into_iter()
@@ -441,6 +446,7 @@ fn reach_info(db: &Database, report: DbCallReachReport) -> Result<CallReachInfo,
         direct_callees,
         direct_call_sites,
         boundary_call_sites,
+        boundary_edges,
         public_callees,
         frontier_calls,
         external_frontier_calls,

@@ -1048,6 +1048,16 @@ async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Erro
         report.boundary_call_sites.is_empty(),
         "RAG RequestExt::extract reach should not mark the same-module direct call as a module-boundary row: {report:#?}"
     );
+    assert_eq!(
+        report.boundary_edges.len(),
+        1,
+        "RAG RequestExt::extract reach should expose the transitive cross-module FromRequest edge: {report:#?}"
+    );
+    let boundary_edge = report.boundary_edges[0].clone();
+    assert_eq!(boundary_edge.caller_id, intermediate);
+    assert_eq!(boundary_edge.callee_id, target);
+    assert_eq!(boundary_edge.source_kind, CallSiteKind::Path);
+    assert_eq!(boundary_edge.relation, CallTargetKind::AssociatedFunction);
     assert_call_node(
         &report.public_callees,
         target,

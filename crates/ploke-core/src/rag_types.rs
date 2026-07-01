@@ -403,6 +403,8 @@ pub struct CallReachInfo {
     pub direct_callees: Vec<CallNodeInfo>,
     pub direct_call_sites: Vec<CallContextInfo>,
     pub boundary_call_sites: Vec<CallContextInfo>,
+    #[serde(default)]
+    pub boundary_edges: Vec<CallPathEdgeInfo>,
     pub public_callees: Vec<CallNodeInfo>,
     pub frontier_calls: Vec<CallContextInfo>,
     pub external_frontier_calls: Vec<CallContextInfo>,

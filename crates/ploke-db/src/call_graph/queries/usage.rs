@@ -10,8 +10,8 @@ use crate::{
 };
 
 use super::super::{
-    CallContextRow, CallImpactReport, CallNodeInfo, CallPath, CallPathOptions, CallReachReport,
-    CallStatusKind,
+    CallContextRow, CallImpactReport, CallNodeInfo, CallPath, CallPathEdge, CallPathOptions,
+    CallReachReport, CallStatusKind,
 };
 
 impl Database {
@@ -94,6 +94,7 @@ impl Database {
         })?;
         let direct_call_sites = resolved_direct_call_sites_for_owner(self, owner_id)?;
         let boundary_call_sites = boundary_call_sites(self, &owner, &direct_call_sites)?;
+        let boundary_edges = boundary_edges_for_paths(self, &paths)?;
         let public_callees: Vec<CallNodeInfo> = callees
             .iter()
             .filter(|callee| callee.is_public)
@@ -126,6 +127,7 @@ impl Database {
             direct_callees,
             direct_call_sites,
             boundary_call_sites,
+            boundary_edges,
             public_callees,
             frontier_calls,
             external_frontier_calls,
@@ -202,6 +204,33 @@ fn boundary_call_sites(
         }
     }
     Ok(out)
+}
+
+fn boundary_edges_for_paths(
+    db: &Database,
+    paths: &[CallPath],
+) -> Result<Vec<CallPathEdge>, DbError> {
+    let mut out = BTreeMap::new();
+    for path in paths {
+        for edge in &path.edges {
+            let caller = db.call_node_info(edge.caller_id)?.ok_or_else(|| {
+                DbError::Cozo(format!(
+                    "missing call graph node metadata for boundary caller {}",
+                    edge.caller_id
+                ))
+            })?;
+            let callee = db.call_node_info(edge.callee_id)?.ok_or_else(|| {
+                DbError::Cozo(format!(
+                    "missing call graph node metadata for boundary callee {}",
+                    edge.callee_id
+                ))
+            })?;
+            if caller.module_path != callee.module_path {
+                out.entry(edge.call_site_id).or_insert(*edge);
+            }
+        }
+    }
+    Ok(out.into_values().collect())
 }
 
 fn frontier_calls_for_paths(
