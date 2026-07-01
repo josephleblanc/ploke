@@ -1,4 +1,8 @@
-use std::{borrow::Cow, collections::BTreeMap, ops::Deref};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, BTreeSet},
+    ops::Deref,
+};
 
 use ploke_core::{
     rag_types::{CallPathInfo, NodeFilepath, ProofContextInfo},
@@ -110,6 +114,7 @@ pub struct CodeItemCallPathResult {
     pub max_depth: u32,
     pub max_paths: usize,
     pub paths: Vec<CallPathInfo>,
+    pub source_files: Vec<NodeFilepath>,
     pub proof_context: Vec<ProofContextInfo>,
 }
 
@@ -236,6 +241,7 @@ impl Tool for CodeItemCallPath {
             _ => Vec::new(),
         };
         let proof_context = proof_context_for_paths(&ctx, source.id, target.id, &paths)?;
+        let source_files = source_files_for_paths(&source, &target, &paths);
         let result = CodeItemCallPathResult {
             source_id: source.id,
             target_id: target.id,
@@ -245,6 +251,7 @@ impl Tool for CodeItemCallPath {
             max_depth,
             max_paths,
             paths,
+            source_files,
             proof_context,
         };
         let summary = if result.reachable {
@@ -257,6 +264,7 @@ impl Tool for CodeItemCallPath {
             .with_field("target_id", result.target_id.to_string())
             .with_field("reachable", result.reachable.to_string())
             .with_field("paths", result.paths.len().to_string())
+            .with_field("source_files", result.source_files.len().to_string())
             .with_field("proof_context", result.proof_context.len().to_string())
             .with_field("max_depth", result.max_depth.to_string())
             .with_field("max_paths", result.max_paths.to_string());
@@ -322,6 +330,22 @@ fn resolve_endpoint(
             owner_type: endpoint.owner_type.as_deref(),
         },
     )
+}
+
+fn source_files_for_paths(
+    source: &lookup_support::ResolvedToolItem,
+    target: &lookup_support::ResolvedToolItem,
+    paths: &[CallPathInfo],
+) -> Vec<NodeFilepath> {
+    let mut files = BTreeSet::new();
+    files.insert(source.rel_path.display().to_string());
+    files.insert(target.rel_path.display().to_string());
+    for path in paths {
+        for node in &path.nodes {
+            files.insert(node.file_path.as_ref().to_string());
+        }
+    }
+    files.into_iter().map(NodeFilepath::new).collect()
 }
 
 fn proof_context_for_paths(

@@ -49,6 +49,10 @@ async fn code_item_call_path_returns_real_corpus_two_hop_reachability() {
         .get("paths")
         .and_then(serde_json::Value::as_array)
         .expect("paths array");
+    let source_files = payload
+        .get("source_files")
+        .and_then(serde_json::Value::as_array)
+        .expect("source_files array");
 
     // Usage questions:
     //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
@@ -63,6 +67,9 @@ async fn code_item_call_path_returns_real_corpus_two_hop_reachability() {
     // This tool-call surface should answer the direct usage question:
     // "Can this known source symbol reach this known target symbol, and what
     // ordered call path connects them?"
+    // It should also answer the documentation/RAG question:
+    // "Which source files should be retrieved to answer a question about this
+    // call chain?"
     assert_two_hop_call_path(
         paths,
         fixture.start,
@@ -101,10 +108,21 @@ async fn code_item_call_path_returns_real_corpus_two_hop_reachability() {
         "axum-core/src/extract/mod.rs",
         "code_item_call_path paths",
     );
+    assert_source_file(
+        source_files,
+        "axum-core/src/ext_traits/request.rs",
+        "code_item_call_path source files",
+    );
+    assert_source_file(
+        source_files,
+        "axum-core/src/extract/mod.rs",
+        "code_item_call_path source files",
+    );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(ui_field(ui, "reachable"), "true");
     assert_eq!(ui_field(ui, "paths"), paths.len().to_string());
+    assert_eq!(ui_field(ui, "source_files"), source_files.len().to_string());
     assert!(
         ui_field(ui, "proof_context")
             .parse::<usize>()
@@ -113,6 +131,15 @@ async fn code_item_call_path_returns_real_corpus_two_hop_reachability() {
         "code_item_call_path should surface path proof-context counts"
     );
     assert_eq!(ui_field(ui, "max_depth"), "2");
+}
+
+fn assert_source_file(files: &[serde_json::Value], suffix: &str, label: &str) {
+    assert!(
+        files
+            .iter()
+            .any(|file| { file.as_str().is_some_and(|path| path.ends_with(suffix)) }),
+        "{label} should include source file ending with {suffix:?}: {files:#?}"
+    );
 }
 
 fn assert_edge_spans_present(path: &serde_json::Value, label: &str) {
