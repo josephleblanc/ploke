@@ -40,6 +40,21 @@ future work can choose the next batch without rereading the diary-style notes.
 
 ## Recent downstream slice
 
+- 2026-07-01: RAG/TUI `CallContextInfo` rows now preserve existing DB
+  callsite `arg_count` and `generic_arg_count` metadata. This exposes a
+  conservative API-understanding answer for "what argument shapes do existing
+  callers pass?" without parsing or storing argument expressions. The real
+  axum proof asserts one explicit argument for
+  `RequestExt::extract -> self.extract_with_state(&())`, two explicit
+  arguments for `E::from_request(self, state)`, and zero explicit arguments for
+  public `MethodRouter::new()` caller sites. The serialized
+  `code_item_lookup` payload carries the same counts through direct reach,
+  boundary, and impact callsite rows. Focused verification:
+  `cargo test -p ploke-db --features call_graph real_target_matrix::usage_questions -- --nocapture`,
+  `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
+  `cargo test -p ploke-tui --features call_graph serde_roundtrip_request_code_context -- --nocapture`,
+  and
+  `cargo test -p ploke-tui --features call_graph code_item -- --nocapture`.
 - 2026-07-01: Existing target-centered impact summaries now have a
   real-corpus public-API caller proof for the `public_callers` bucket. The
   axum source oracle is `MethodRouter::new` in
