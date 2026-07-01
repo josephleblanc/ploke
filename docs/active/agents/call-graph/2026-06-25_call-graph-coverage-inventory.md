@@ -40,6 +40,20 @@ future work can choose the next batch without rereading the diary-style notes.
 
 ## Recent downstream slice
 
+- 2026-07-01: Downstream `CallNodeInfo` payloads now preserve the DB
+  `module_path` alongside file and canon path metadata. RAG maps the existing
+  DB module path into impact/reach node summaries, and exact
+  `code_item_lookup` serializes it in the `call_impact` and `call_reach`
+  payloads. The axum proof case is the same
+  `RequestExt::extract -> extract_with_state -> FromRequest::from_request`
+  chain: `RequestExt::extract` carries
+  `crate::ext_traits::request`, while `FromRequest::from_request` carries
+  `crate::extract`. This supports build/deployment, architecture-review, and
+  refactoring questions such as "which components are affected by this API?"
+  without clients having to parse `canon_path` strings. Focused verification:
+  `cargo test -p ploke-rag --features call_graph call_impact_exact_reads_axum_usage_question_summary -- --nocapture`
+  and
+  `cargo test -p ploke-tui --features call_graph code_item_lookup_returns_real_corpus_two_hop_call_paths -- --nocapture`.
 - 2026-07-01: Target-centered impact summaries now expose
   `callsite_buckets`, derived from the same exact direct callsite rows returned
   by `direct_call_sites`. The DB summary groups direct rows by source
