@@ -76,7 +76,10 @@ future work can choose the next batch without rereading the diary-style notes.
   for `expand_with`. `code_item_lookup` now includes this impact summary in
   exact target lookup payloads and UI counts, so exact-coordinate tool calls can
   answer "who eventually reaches this item?" without reassembling incoming path
-  rows client-side. Focused verification:
+  rows client-side. The TUI lookup regression also pins the `expand_with`
+  proc-macro-body gap as an empty impact summary with zero public callers, so
+  unsupported public-entrypoint reachability stays fail-closed in tool output.
+  Focused verification:
   `cargo test -p ploke-db --features call_graph real_target_matrix::usage_questions -- --nocapture`,
   `cargo test -p ploke-rag --features call_graph call_paths_exact_reads_axum_request_extract_two_hop_trait_path -- --nocapture`,
   `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
