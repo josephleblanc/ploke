@@ -138,8 +138,13 @@ impl WalkClient {
         discover_walk_runs()
     }
 
-    /// Resolve a client endpoint for a discovered run without consulting the
-    /// saved CLI walk context or the current working directory.
+    /// Resolve a client endpoint for a discovered run.
+    ///
+    /// The UI starts from a selected campaign instead of the operator's
+    /// current directory, but socket selection still needs to honor `walk use`
+    /// so the CLI and UI do not disagree about a live server. An explicit UI
+    /// socket override wins; otherwise the saved context socket is used only
+    /// when it names the same parent checkout as the selected run.
     pub fn resolve_for_run(
         run: &WalkRunEntry,
         socket: Option<&Path>,
@@ -153,7 +158,18 @@ impl WalkClient {
             });
         };
         let repo_root = paths::resolve_repo_root(Some(repo_root))?;
-        let socket = paths::socket_path(&repo_root, socket)?;
+        let context = if socket.is_none() {
+            paths::load_context()?
+        } else {
+            None
+        };
+        let socket_override = socket.or_else(|| {
+            context
+                .as_ref()
+                .filter(|context| context.repo_root == repo_root)
+                .and_then(|context| context.socket.as_deref())
+        });
+        let socket = paths::socket_path(&repo_root, socket_override)?;
         Ok(Self { repo_root, socket })
     }
 
@@ -547,5 +563,85 @@ fn data_value_json(value: &DataValue) -> serde_json::Value {
     match value {
         DataValue::Bot => serde_json::json!({ "cozo": "bot" }),
         other => serde_json::Value::from(other.clone()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsString;
+
+    use super::*;
+
+    #[test]
+    fn resolve_for_run_uses_saved_context_socket_for_matching_run() {
+        let tmp = tempfile::tempdir().expect("temp eval home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            OsString::from(tmp.path()),
+        )]);
+        let repo_root = tmp.path().join("worktrees").join("campaign-a");
+        fs::create_dir_all(&repo_root).expect("create worktree root");
+        let repo_root = paths::resolve_repo_root(Some(&repo_root)).expect("resolve repo root");
+        let socket = tmp.path().join("run").join("walk").join("selected.sock");
+        paths::save_context(&paths::WalkContext {
+            repo_root: repo_root.clone(),
+            socket: Some(socket.clone()),
+        })
+        .expect("save walk context");
+
+        let run = test_run_entry(tmp.path(), "campaign-a", Some(repo_root));
+        let client = WalkClient::resolve_for_run(&run, None).expect("resolve client");
+
+        assert_eq!(client.socket(), socket.as_path());
+    }
+
+    #[test]
+    fn resolve_for_run_prefers_explicit_socket_over_saved_context() {
+        let tmp = tempfile::tempdir().expect("temp eval home");
+        let _env = crate::test_support::env_guard_os(vec![(
+            "PLOKE_EVAL_HOME",
+            OsString::from(tmp.path()),
+        )]);
+        let repo_root = tmp.path().join("worktrees").join("campaign-a");
+        fs::create_dir_all(&repo_root).expect("create worktree root");
+        let repo_root = paths::resolve_repo_root(Some(&repo_root)).expect("resolve repo root");
+        let context_socket = tmp.path().join("run").join("walk").join("context.sock");
+        paths::save_context(&paths::WalkContext {
+            repo_root: repo_root.clone(),
+            socket: Some(context_socket),
+        })
+        .expect("save walk context");
+
+        let explicit_socket = tmp.path().join("run").join("walk").join("explicit.sock");
+        let run = test_run_entry(tmp.path(), "campaign-a", Some(repo_root));
+        let client = WalkClient::resolve_for_run(&run, Some(&explicit_socket))
+            .expect("resolve client with explicit socket");
+
+        assert_eq!(client.socket(), explicit_socket.as_path());
+    }
+
+    fn test_run_entry(
+        eval_home: &Path,
+        campaign_id: &str,
+        worktree_root: Option<PathBuf>,
+    ) -> WalkRunEntry {
+        let campaign_dir = eval_home.join("campaigns").join(campaign_id);
+        let prototype1_root = campaign_dir.join("prototype1");
+        WalkRunEntry {
+            campaign_id: campaign_id.to_string(),
+            campaign_dir,
+            prototype1_root,
+            worktree_root,
+            owner_db_path: eval_home
+                .join("campaigns")
+                .join(campaign_id)
+                .join("prototype1")
+                .join("owner.cozo.sqlite"),
+            modified_unix_ms: None,
+            has_manifest: true,
+            has_closure_state: true,
+            has_owner_db: false,
+            has_parent_identity: true,
+        }
     }
 }
