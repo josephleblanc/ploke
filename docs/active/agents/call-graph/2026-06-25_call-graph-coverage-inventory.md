@@ -57,6 +57,23 @@ future work can choose the next batch without rereading the diary-style notes.
   `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
   and
   `cargo test -p ploke-tui --features call_graph code_item -- --nocapture`.
+- 2026-07-01: Owner reach summaries now also include non-resolved frontier
+  callsites from the owner cone. `CallReachReport.frontier_calls` and
+  `CallReachInfo.frontier_calls` reuse the existing call-context row/payload
+  shape and carry external, unsupported, unresolved, or ambiguous rows without
+  promoting them into local traversal edges. The real-corpus proof case is
+  `Json::from_bytes` in `axum/src/json.rs`: the owner has no local outgoing
+  reach edges, but the reach summary exposes
+  `serde_json::Deserializer::from_slice(bytes)` as an external, targetless
+  frontier call. Exact `code_item_lookup` now reports
+  `reach_frontier_calls` in the UI payload and includes the typed frontier row
+  in `ConciseContext.call_reach`, which supports dependency, performance, and
+  debugging questions without weakening fail-closed traversal semantics.
+  Focused verification:
+  `cargo test -p ploke-db --features call_graph real_target_matrix::usage_questions -- --nocapture`,
+  `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
+  and
+  `cargo test -p ploke-tui --features call_graph code_item -- --nocapture`.
 - 2026-06-30: The first usage-question slice now has real-corpus proofs across
   DB and TUI surfaces. DB coverage in
   `real_target_matrix::usage_questions` proves that the persisted axum call
