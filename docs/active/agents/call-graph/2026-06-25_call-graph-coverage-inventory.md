@@ -47,12 +47,17 @@ future work can choose the next batch without rereading the diary-style notes.
   axum proof asserts one explicit argument for
   `RequestExt::extract -> self.extract_with_state(&())`, two explicit
   arguments for `E::from_request(self, state)`, and zero explicit arguments for
-  public `MethodRouter::new()` caller sites. The serialized
+  public `MethodRouter::new()` caller sites. It also asserts one turbofish
+  generic argument for the external targetless
+  `std::any::type_name::<K>()` call in
+  `axum-macros/src/attr_parsing.rs`. The serialized
   `code_item_lookup` payload carries the same counts through direct reach,
-  boundary, and impact callsite rows. Focused verification:
+  boundary, impact, and owner exact-lookup callsite rows. Focused verification:
   `cargo test -p ploke-db --features call_graph real_target_matrix::usage_questions -- --nocapture`,
   `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
   `cargo test -p ploke-tui --features call_graph serde_roundtrip_request_code_context -- --nocapture`,
+  `cargo test -p ploke-rag --features call_graph call_context_collection_preserves_axum_turbofish_generic_counts -- --nocapture`,
+  `cargo test -p ploke-tui --features call_graph code_item_lookup_returns_real_corpus_parse_attrs_callers -- --nocapture`,
   and
   `cargo test -p ploke-tui --features call_graph code_item -- --nocapture`.
 - 2026-07-01: Existing target-centered impact summaries now have a
