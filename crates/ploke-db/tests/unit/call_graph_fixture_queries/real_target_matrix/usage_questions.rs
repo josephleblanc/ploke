@@ -320,6 +320,19 @@ fn axum_usage_questions_surface_external_frontier_for_dependency_calls() -> Resu
         });
     assert_external_targetless(frontier);
     assert_eq!(frontier.site.owner_id, owner);
+    let external_frontier = report
+        .external_frontier_calls
+        .iter()
+        .find(|row| {
+            row.site.path.as_ref() == Some(&path(&["serde_json", "Deserializer", "from_slice"]))
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "Json::from_bytes reach report should include serde_json in external frontier rows: {report:#?}"
+            )
+        });
+    assert_external_targetless(external_frontier);
+    assert_eq!(external_frontier.site.owner_id, owner);
     assert_source_file(
         &report.source_files,
         "axum/src/json.rs",

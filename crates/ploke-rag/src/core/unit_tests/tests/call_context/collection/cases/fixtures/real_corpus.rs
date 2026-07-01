@@ -904,6 +904,27 @@ async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Erro
         frontier.targets.is_empty(),
         "external frontier call should remain targetless: {frontier:#?}"
     );
+    let external_frontier = json_report
+        .external_frontier_calls
+        .iter()
+        .find(|call| {
+            matches!(
+                &call.callee,
+                CallCalleeInfo::Path { path: call_path }
+                    if call_path == &path(&["serde_json", "Deserializer", "from_slice"])
+            )
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "RAG reach should include serde_json in external frontier rows: {json_report:#?}"
+            )
+        });
+    assert_eq!(external_frontier.owner_id, json_owner);
+    assert_eq!(external_frontier.status, CallStatusKind::External);
+    assert!(
+        external_frontier.targets.is_empty(),
+        "external-only frontier call should remain targetless: {external_frontier:#?}"
+    );
     assert_call_source_file(
         &json_report.source_files,
         "axum/src/json.rs",

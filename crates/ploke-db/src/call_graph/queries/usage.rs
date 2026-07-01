@@ -81,6 +81,11 @@ impl Database {
             .cloned()
             .collect();
         let frontier_calls = frontier_calls_for_paths(self, owner_id, &paths)?;
+        let external_frontier_calls = frontier_calls
+            .iter()
+            .filter(|row| row.status.status == CallStatusKind::External)
+            .cloned()
+            .collect();
         let source_files = source_files_for_summary(
             self,
             &paths,
@@ -97,6 +102,7 @@ impl Database {
             direct_callees,
             public_callees,
             frontier_calls,
+            external_frontier_calls,
             source_files,
         })
     }

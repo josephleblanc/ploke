@@ -170,5 +170,6 @@ pub struct CallReachReport {
     pub direct_callees: Vec<CallNodeInfo>,
     pub public_callees: Vec<CallNodeInfo>,
     pub frontier_calls: Vec<CallContextRow>,
+    pub external_frontier_calls: Vec<CallContextRow>,
     pub source_files: Vec<String>,
 }

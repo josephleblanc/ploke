@@ -711,6 +711,10 @@ async fn code_item_lookup_returns_real_corpus_json_from_bytes_callers() {
         .get("frontier_calls")
         .and_then(serde_json::Value::as_array)
         .expect("call_reach frontier_calls array");
+    let external_frontier = reach
+        .get("external_frontier_calls")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_reach external_frontier_calls array");
     let reach_source_files = reach
         .get("source_files")
         .and_then(serde_json::Value::as_array)
@@ -767,6 +771,33 @@ async fn code_item_lookup_returns_real_corpus_json_from_bytes_callers() {
             )
     });
     assert_eq!(serde_frontier.owner_id, fixture.target);
+    let external_frontier_calls = external_frontier
+        .iter()
+        .map(|call| serde_json::from_value::<CallContextInfo>(call.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("typed external frontier call rows");
+    let external_serde_frontier = external_frontier_calls
+        .iter()
+        .find(|call| {
+            call.owner_id == fixture.target
+                && call.kind == CallSiteKind::Path
+                && call.status == CallStatusKind::External
+                && call.targets.is_empty()
+                && matches!(
+                    &call.callee,
+                    CallCalleeInfo::Path { path }
+                        if path
+                            .iter()
+                            .map(String::as_str)
+                            .eq(["serde_json", "Deserializer", "from_slice"])
+                )
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "code_item_lookup should surface serde_json in external frontier rows: {external_frontier_calls:#?}"
+            )
+        });
+    assert_eq!(external_serde_frontier.owner_id, fixture.target);
     assert_source_file(
         reach_source_files,
         "axum/src/json.rs",
@@ -781,6 +812,13 @@ async fn code_item_lookup_returns_real_corpus_json_from_bytes_callers() {
             .expect("reach frontier count")
             >= 1,
         "code_item_lookup should surface reach frontier call counts"
+    );
+    assert!(
+        ui_field(ui, "reach_external_frontier_calls")
+            .parse::<usize>()
+            .expect("external frontier count")
+            >= 1,
+        "code_item_lookup should surface external reach frontier call counts"
     );
     assert_eq!(
         ui_field(ui, "reach_source_files"),
