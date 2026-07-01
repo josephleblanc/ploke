@@ -568,6 +568,22 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
         .get("callees")
         .and_then(serde_json::Value::as_array)
         .expect("node_info.call_reach.callees array");
+    let start_reach_direct_call_sites = start_reach
+        .get("direct_call_sites")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_reach.direct_call_sites array");
+    let start_reach_boundary_edges = start_reach
+        .get("boundary_edges")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_reach.boundary_edges array");
+    let start_reach_source_files = start_reach
+        .get("source_files")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_reach.source_files array");
+    let start_reach_source_modules = start_reach
+        .get("source_modules")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_reach.source_modules array");
 
     // Matrix:
     //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
@@ -616,6 +632,53 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
         "axum-core/src/extract/mod.rs",
         "code_item_edges outgoing paths",
     );
+    assert_eq!(
+        start_reach_direct_call_sites.len(),
+        1,
+        "code_item_edges reach should expose the exact direct callsite made by RequestExt::extract: {start_reach_direct_call_sites:#?}"
+    );
+    assert_eq!(
+        start_reach_boundary_edges.len(),
+        1,
+        "code_item_edges reach should expose the transitive cross-module FromRequest edge: {start_reach_boundary_edges:#?}"
+    );
+    let boundary_edge = &start_reach_boundary_edges[0];
+    let intermediate_id = fixture.intermediate.to_string();
+    let target_id = fixture.target.to_string();
+    assert_eq!(
+        boundary_edge
+            .get("caller_id")
+            .and_then(serde_json::Value::as_str),
+        Some(intermediate_id.as_str()),
+        "code_item_edges reach boundary edge should start at extract_with_state: {boundary_edge:#?}"
+    );
+    assert_eq!(
+        boundary_edge
+            .get("callee_id")
+            .and_then(serde_json::Value::as_str),
+        Some(target_id.as_str()),
+        "code_item_edges reach boundary edge should target FromRequest::from_request: {boundary_edge:#?}"
+    );
+    assert_source_file_json(
+        start_reach_source_files,
+        "axum-core/src/ext_traits/request.rs",
+        "code_item_edges reach source files",
+    );
+    assert_source_file_json(
+        start_reach_source_files,
+        "axum-core/src/extract/mod.rs",
+        "code_item_edges reach source files",
+    );
+    assert_source_module_json(
+        start_reach_source_modules,
+        &["crate", "ext_traits", "request"],
+        "code_item_edges reach source modules",
+    );
+    assert_source_module_json(
+        start_reach_source_modules,
+        &["crate", "extract"],
+        "code_item_edges reach source modules",
+    );
     assert!(
         summary_usize(&start_payload, "calls") >= 1,
         "RequestExt::extract summary should report outgoing direct callsites: {start_payload:#?}"
@@ -651,6 +714,22 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
     assert_eq!(
         ui_field(start_ui, "reach_callees"),
         start_reach_callees.len().to_string()
+    );
+    assert_eq!(
+        ui_field(start_ui, "reach_direct_call_sites"),
+        start_reach_direct_call_sites.len().to_string()
+    );
+    assert_eq!(
+        ui_field(start_ui, "reach_boundary_edges"),
+        start_reach_boundary_edges.len().to_string()
+    );
+    assert_eq!(
+        ui_field(start_ui, "reach_source_files"),
+        start_reach_source_files.len().to_string()
+    );
+    assert_eq!(
+        ui_field(start_ui, "reach_source_modules"),
+        start_reach_source_modules.len().to_string()
     );
 
     let target_params = EdgesParams {
@@ -698,6 +777,26 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
         .get("callers")
         .and_then(serde_json::Value::as_array)
         .expect("node_info.call_impact.callers array");
+    let target_impact_direct_call_sites = target_impact
+        .get("direct_call_sites")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_impact.direct_call_sites array");
+    let target_impact_callsite_buckets = target_impact
+        .get("callsite_buckets")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_impact.callsite_buckets array");
+    let target_impact_public_callers = target_impact
+        .get("public_callers")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_impact.public_callers array");
+    let target_impact_source_files = target_impact
+        .get("source_files")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_impact.source_files array");
+    let target_impact_source_modules = target_impact
+        .get("source_modules")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_impact.source_modules array");
     assert_two_hop_call_path(
         incoming_paths,
         fixture.start,
@@ -733,6 +832,44 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
         "axum-core/src/extract/mod.rs",
         "code_item_edges incoming paths",
     );
+    assert_eq!(
+        target_impact_direct_call_sites.len(),
+        2,
+        "code_item_edges impact should expose both direct FromRequest::from_request callsite rows: {target_impact_direct_call_sites:#?}"
+    );
+    assert!(
+        target_impact_callsite_buckets.iter().any(|bucket| {
+            bucket.get("kind").and_then(serde_json::Value::as_str) == Some("path")
+                && bucket.get("relation").and_then(serde_json::Value::as_str)
+                    == Some("associated_function")
+                && bucket.get("count").and_then(serde_json::Value::as_u64) == Some(2)
+        }),
+        "code_item_edges impact should summarize direct path/associated-function callsites: {target_impact_callsite_buckets:#?}"
+    );
+    assert!(
+        target_impact_public_callers.is_empty(),
+        "code_item_edges impact should preserve the DB-owned public caller bucket without inventing trait-effective visibility: {target_impact_public_callers:#?}"
+    );
+    assert_source_file_json(
+        target_impact_source_files,
+        "axum-core/src/ext_traits/request.rs",
+        "code_item_edges impact source files",
+    );
+    assert_source_file_json(
+        target_impact_source_files,
+        "axum-core/src/extract/mod.rs",
+        "code_item_edges impact source files",
+    );
+    assert_source_module_json(
+        target_impact_source_modules,
+        &["crate", "ext_traits", "request"],
+        "code_item_edges impact source modules",
+    );
+    assert_source_module_json(
+        target_impact_source_modules,
+        &["crate", "extract"],
+        "code_item_edges impact source modules",
+    );
     assert!(
         summary_usize(&target_payload, "callers") >= 1,
         "FromRequest::from_request summary should report incoming callers: {target_payload:#?}"
@@ -767,6 +904,26 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
     assert_eq!(
         ui_field(target_ui, "impact_callers"),
         target_impact_callers.len().to_string()
+    );
+    assert_eq!(
+        ui_field(target_ui, "impact_direct_call_sites"),
+        target_impact_direct_call_sites.len().to_string()
+    );
+    assert_eq!(
+        ui_field(target_ui, "impact_callsite_buckets"),
+        target_impact_callsite_buckets.len().to_string()
+    );
+    assert_eq!(
+        ui_field(target_ui, "impact_public_callers"),
+        target_impact_public_callers.len().to_string()
+    );
+    assert_eq!(
+        ui_field(target_ui, "impact_source_files"),
+        target_impact_source_files.len().to_string()
+    );
+    assert_eq!(
+        ui_field(target_ui, "impact_source_modules"),
+        target_impact_source_modules.len().to_string()
     );
 }
 
@@ -1208,6 +1365,30 @@ fn summary_usize(payload: &serde_json::Value, field: &str) -> usize {
         .and_then(|summary| summary.get(field))
         .and_then(serde_json::Value::as_u64)
         .unwrap_or_else(|| panic!("missing call_graph_summary.{field}: {payload:#?}")) as usize
+}
+
+fn assert_source_file_json(files: &[serde_json::Value], suffix: &str, label: &str) {
+    assert!(
+        files
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .any(|path| path.ends_with(suffix)),
+        "{label} should include source file ending with {suffix:?}: {files:#?}"
+    );
+}
+
+fn assert_source_module_json(modules: &[serde_json::Value], expected: &[&str], label: &str) {
+    assert!(
+        modules.iter().any(|module| {
+            module.as_array().is_some_and(|actual| {
+                actual
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .eq(expected.iter().copied())
+            })
+        }),
+        "{label} should include source module {expected:?}: {modules:#?}"
+    );
 }
 
 #[tokio::test]
