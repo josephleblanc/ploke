@@ -121,6 +121,7 @@ const PARENTHESIZED_MATCH_INITIALIZED_FUNCTION_ITEM_BINDING_CALL_SPAN: (usize, u
     (28529, 28534);
 const IF_AMBIGUOUS_INITIALIZED_FUNCTION_ITEM_BINDING_CALL_SPAN: (usize, usize) = (28695, 28698);
 const IMPORTED_EXTERNAL_TYPE_ALIAS_CONSTRUCTOR_CALL_SPAN: (usize, usize) = (28935, 28961);
+const IMPORTED_EXTERNAL_TYPE_ALIAS_INITIALIZED_METHOD_CALL_SPAN: (usize, usize) = (29086, 29097);
 const TYPED_FUNCTION_POINTER_BINDING_CALL_SPAN: (usize, usize) = (3756, 3759);
 const TYPED_FUNCTION_POINTER_ALIAS_BINDING_CALL_SPAN: (usize, usize) = (9123, 9126);
 const PARENTHESIZED_TYPED_FUNCTION_POINTER_ALIAS_BINDING_CALL_SPAN: (usize, usize) = (9275, 9280);
@@ -2556,6 +2557,27 @@ paranoid_call_site_test!(
     expected: ExpectedCallSite::path(
         &["ImportedExternalVec", "new"],
         IMPORTED_EXTERNAL_TYPE_ALIAS_CONSTRUCTOR_CALL_SPAN,
+        0,
+        0,
+        &[],
+        ExpectedCallOutcome::External,
+    ),
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_imported_external_type_alias_initialized_method_records_external_method_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_imported_external_type_alias_initialized_method"
+    },
+    expected: ExpectedCallSite::method(
+        "len",
+        ExpectedMethodReceiver::InitializedLocalBinding {
+            name: "value",
+            init_path: &["ImportedExternalVec", "new"],
+        },
+        IMPORTED_EXTERNAL_TYPE_ALIAS_INITIALIZED_METHOD_CALL_SPAN,
         0,
         0,
         &[],

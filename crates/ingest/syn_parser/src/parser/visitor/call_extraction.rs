@@ -1100,6 +1100,14 @@ fn local_binding_proof(
                         })
                 })
                 .or_else(|| {
+                    path_call_init_path(init_expr)
+                        .and_then(|path| init_target_path(&path, param_names, local_scopes))
+                        .map(|init_path| LocalBindingProof::Initialized {
+                            name: name.clone(),
+                            init_path,
+                        })
+                })
+                .or_else(|| {
                     branch_init_path(init_expr, param_names, local_scopes).map(|init_path| {
                         LocalBindingProof::Initialized {
                             name: name.clone(),
@@ -1144,6 +1152,10 @@ fn local_binding_proof(
             }
             let init_path = inferred_init_path(init_expr)
                 .and_then(|path| init_target_path(&path, param_names, local_scopes))
+                .or_else(|| {
+                    path_call_init_path(init_expr)
+                        .and_then(|path| init_target_path(&path, param_names, local_scopes))
+                })
                 .or_else(|| branch_init_path(init_expr, param_names, local_scopes));
             if let Some(trait_path) = typed_local_trait_object_path_segments(typed.ty.as_ref()) {
                 return Some(LocalBindingProof::TraitObject {
@@ -1178,6 +1190,28 @@ fn inferred_init_path(expr: Option<&syn::Expr>) -> Option<Vec<String>> {
     };
     let path = path_segments(path);
     (!path.is_empty()).then_some(path)
+}
+
+fn path_call_init_path(expr: Option<&syn::Expr>) -> Option<Vec<String>> {
+    let syn::Expr::Call(call) = unparen_expr(expr?) else {
+        return None;
+    };
+    let syn::Expr::Path(path) = unparen_expr(call.func.as_ref()) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+    if !call.args.iter().all(is_unit_initializer_arg) {
+        return None;
+    }
+
+    let path = path_segments(&path.path);
+    (path.len() > 1).then_some(path)
+}
+
+fn is_unit_initializer_arg(expr: &syn::Expr) -> bool {
+    matches!(unparen_expr(expr), syn::Expr::Tuple(tuple) if tuple.elems.is_empty())
 }
 
 fn branch_init_path(

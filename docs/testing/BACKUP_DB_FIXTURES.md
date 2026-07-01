@@ -659,6 +659,9 @@ Expected searchable corpus embedding config:
     `expand_attr_with` callers
   - imported external type aliases stay targetless but classify as external,
     including axum-core `Request::new` through `Request = http::Request`
+  - initialized local receivers whose initializer path is externally
+    classified stay targetless but classify external, including
+    axum-core `req.extensions_mut()` after `Request::new(())`
   - selected closure body and dynamic callable field shapes are documented as
     unsupported contracts until nested owner/callable proof improves
 

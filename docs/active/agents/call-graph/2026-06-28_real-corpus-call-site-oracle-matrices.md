@@ -243,11 +243,12 @@ state extractor and pin the current `canonical_identity_mismatch` proof blocker
 for the nested `test_from_extractor` local-owner boundary, without fabricating a
 `call_edge`.
 Receiver tests now assert exact owner-count buckets and source-line
-fanout for the six projected `req.extensions_mut()` local-binding rows, the
-seven projected `self.inner.poll_ready(cx)` forwarding rows, and the three
-projected `self.0.poll_ready(cx)` tuple-field rows. The tuple-field coverage
-includes the nested local `impl Service` rows currently owned by their enclosing
-test functions in `routing/tests/mod.rs` and `routing/tests/nest.rs`.
+fanout for the six projected `req.extensions_mut()` local-binding rows plus
+the initialized external `Request::new` receiver row, the seven projected
+`self.inner.poll_ready(cx)` forwarding rows, and the three projected
+`self.0.poll_ready(cx)` tuple-field rows. The tuple-field coverage includes the
+nested local `impl Service` rows currently owned by their enclosing test
+functions in `routing/tests/mod.rs` and `routing/tests/nest.rs`.
 The result-chain coverage also pins all 14 projected `Request::builder()` rows
 by owner and source line: eight external rows and six unsupported rows, including
 the matrix chain in `middleware/from_fn.rs:411`.

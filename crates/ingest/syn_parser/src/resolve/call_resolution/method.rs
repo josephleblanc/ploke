@@ -51,6 +51,12 @@ impl CallRelationResolver<'_> {
             statuses.push(CallResolutionStatus::External { source });
             return Ok(());
         }
+        if let MethodCallReceiver::InitializedLocalBinding { init_path, .. } = &call.receiver
+            && self.is_external_type_path_method(call.owner, init_path, &call.method_name)?
+        {
+            statuses.push(CallResolutionStatus::External { source });
+            return Ok(());
+        }
 
         let resolution = match &call.receiver {
             MethodCallReceiver::SelfValue => self.resolve_self_method_call(call)?,
@@ -232,7 +238,7 @@ impl CallRelationResolver<'_> {
             return Ok(false);
         };
 
-        if !matches!(method_name, "len") {
+        if !matches!(method_name, "extensions_mut" | "len") {
             return Ok(false);
         }
 
@@ -254,7 +260,7 @@ impl CallRelationResolver<'_> {
         type_path: &[String],
         method_name: &str,
     ) -> Result<bool, SynParserError> {
-        if !matches!(method_name, "len") {
+        if !matches!(method_name, "extensions_mut" | "len") {
             return Ok(false);
         }
 

@@ -109,6 +109,18 @@ fn axum_real_target_request_extensions_mut_receivers_are_documented_gaps() -> Re
         request_new.site.id,
         "axum-core/src/ext_traits/request.rs:297 Request::new setup for req.extensions_mut",
     )?;
+    let initialized_req_receiver = CallReceiver::InitializedLocalBinding {
+        name: "req".to_string(),
+        init_path: path(&["Request", "new"]),
+    };
+    assert_owner_method_targetless(
+        &db,
+        owner,
+        "extensions_mut",
+        &initialized_req_receiver,
+        CallStatusKind::External,
+        "axum-core/src/ext_traits/request.rs:302",
+    )?;
 
     let req_receiver = CallReceiver::LocalBinding {
         name: "req".to_string(),
@@ -223,6 +235,26 @@ fn axum_real_target_request_extensions_mut_receivers_are_documented_gaps() -> Re
                 lines: &[336],
             },
         ],
+    )?;
+    assert_targetless_method_rows(
+        &db,
+        "extensions_mut",
+        "InitializedLocalBinding",
+        Some(&["req", "Request", "new"]),
+        CallStatusKind::External,
+        1,
+    )?;
+    assert_targetless_method_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        "extensions_mut",
+        "InitializedLocalBinding",
+        Some(&["req", "Request", "new"]),
+        CallStatusKind::External,
+        &[SourceLineFanout {
+            file_suffix: "axum-core/src/ext_traits/request.rs",
+            lines: &[302],
+        }],
     )?;
 
     Ok(())

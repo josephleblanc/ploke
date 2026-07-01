@@ -49,6 +49,43 @@ fn fixture_context_reads_projected_external_and_shadowed_method_calls() -> Resul
         ),
     );
 
+    let owner = function_id_by_name(&db, "call_imported_external_type_alias_initialized_method")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        2,
+        "imported external alias initialized method rows: {context:#?}"
+    );
+    assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::path(
+            &["ImportedExternalVec", "new"],
+            0,
+            CallStatusKind::External,
+            "ImportedExternalVec::new",
+        ),
+    );
+
+    let receiver = CallReceiver::InitializedLocalBinding {
+        name: "value".to_string(),
+        init_path: path(&["ImportedExternalVec", "new"]),
+    };
+    let row = assert_targetless_method_row(
+        &context,
+        owner,
+        TargetlessMethodCase::method(
+            "len",
+            &receiver,
+            CallStatusKind::External,
+            "initialized imported external alias len",
+        ),
+    );
+    assert!(
+        relations_for_site(&db, row.site.id)?.rows.is_empty(),
+        "initialized imported external alias method must not fabricate call_relation targets"
+    );
+
     let owner = function_id_by_name_in_module(
         &db,
         &["crate", "local_prelude_shadow"],

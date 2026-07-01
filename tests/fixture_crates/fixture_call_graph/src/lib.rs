@@ -1326,3 +1326,8 @@ use external_type_alias_target::ImportedExternalVec;
 pub fn call_imported_external_type_alias_constructor() -> ImportedExternalVec {
     ImportedExternalVec::new()
 }
+
+pub fn call_imported_external_type_alias_initialized_method() -> usize {
+    let value = ImportedExternalVec::new();
+    value.len()
+}
