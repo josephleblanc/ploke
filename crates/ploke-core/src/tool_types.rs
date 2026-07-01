@@ -193,6 +193,7 @@ mod tests {
         assert!(description.contains("call_impact"));
         assert!(description.contains("call_reach"));
         assert!(description.contains("direct_call_sites"));
+        assert!(description.contains("callsite_buckets"));
         assert!(description.contains("arg_count"));
         assert!(description.contains("generic_arg_count"));
         assert!(description.contains("boundary_call_sites"));

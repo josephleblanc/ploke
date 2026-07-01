@@ -40,6 +40,23 @@ future work can choose the next batch without rereading the diary-style notes.
 
 ## Recent downstream slice
 
+- 2026-07-01: Target-centered impact summaries now expose
+  `callsite_buckets`, derived from the same exact direct callsite rows returned
+  by `direct_call_sites`. The DB summary groups direct rows by source
+  `CallSiteKind` and target `CallRelationKind`, RAG maps those buckets into
+  `CallImpactInfo`, and exact `code_item_lookup` reports
+  `impact_callsite_buckets` in its UI payload. The axum proof case is
+  `FromRequest::from_request` in `axum-core/src/extract/mod.rs`, whose direct
+  callers include two `Path`/`AssociatedFunction` rows from
+  `RequestExt::extract_with_state` using `E::from_request(self, state)`. This
+  answers API-understanding/refactoring questions such as "is this trait method
+  usually called through method syntax, path/UFCS syntax, or another target
+  relation?" without requiring clients to re-bucket raw callsite rows. Focused
+  verification:
+  `cargo test -p ploke-db --features call_graph axum_usage_questions_summarize_eventual_callers_for_impact -- --nocapture`,
+  `cargo test -p ploke-rag --features call_graph call_impact_exact_reads_axum_usage_question_summary -- --nocapture`,
+  and
+  `cargo test -p ploke-tui --features call_graph code_item_lookup_returns_real_corpus_two_hop_call_paths -- --nocapture`.
 - 2026-07-01: Owner reach summaries now expose transitive
   `boundary_edges` in addition to direct `boundary_call_sites`. DB derives the
   edge subset from already resolved bounded call paths by comparing caller and
