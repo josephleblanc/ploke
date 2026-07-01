@@ -81,6 +81,16 @@ fn context_for_owner_decodes_structured_method_receivers() -> Result<(), DbError
                 path: vec!["try_local_assoc".to_string()],
             },
         ),
+        structured_receiver(
+            "IfBranchPaths",
+            vec!["LocalAssoc", "", "LocalAssoc"],
+            CallReceiver::IfBranchPaths {
+                paths: vec![
+                    vec!["LocalAssoc".to_string()],
+                    vec!["LocalAssoc".to_string()],
+                ],
+            },
+        ),
     ];
 
     assert_receiver_cases(&cases)

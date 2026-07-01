@@ -435,6 +435,9 @@ fn classify_method_receiver(
         syn::Expr::Try(try_expr) => {
             receiver_try_path_call(try_expr).unwrap_or(MethodCallReceiver::TryResult)
         }
+        syn::Expr::If(_) => if_branch_paths(receiver, param_names, local_scopes)
+            .map(|paths| MethodCallReceiver::IfBranchPaths { paths })
+            .unwrap_or(MethodCallReceiver::Unsupported),
         syn::Expr::Lit(_) => MethodCallReceiver::Literal,
         _ => MethodCallReceiver::Unsupported,
     }

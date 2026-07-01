@@ -359,6 +359,11 @@ pub enum MethodCallReceiver {
         /// Path used as the tried receiver call's callee.
         path: Vec<String>,
     },
+    /// The receiver is an if expression with path-valued branches.
+    IfBranchPaths {
+        /// Structural type paths from each branch expression.
+        paths: Vec<Vec<String>>,
+    },
     /// The receiver is a literal expression, such as `"x"`.
     Literal,
     /// The receiver expression is visible but outside this conservative

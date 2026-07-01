@@ -210,6 +210,10 @@ impl CallReceiver {
                     Ok(Some(Self::TryPathCallResult { path }))
                 }
             }
+            "IfBranchPaths" => {
+                let paths = split_branch_receiver_paths(&to_string_list(path)?)?;
+                Ok(Some(Self::IfBranchPaths { paths }))
+            }
             "Literal" => match path {
                 DataValue::Null => Ok(Some(Self::Literal)),
                 other => Err(DbError::Cozo(format!(
@@ -252,4 +256,35 @@ fn split_field_receiver_path(
     }
 
     Ok((name.clone(), root_path, field_path))
+}
+
+fn split_branch_receiver_paths(path: &[String]) -> Result<Vec<Vec<String>>, DbError> {
+    if path.is_empty() {
+        return Err(DbError::Cozo(
+            "if-branch receiver should store at least one branch path".to_string(),
+        ));
+    }
+
+    let mut paths = Vec::new();
+    let mut current = Vec::new();
+    for segment in path {
+        if segment.is_empty() {
+            if current.is_empty() {
+                return Err(DbError::Cozo(format!(
+                    "if-branch receiver should not store an empty branch path, got {path:?}"
+                )));
+            }
+            paths.push(std::mem::take(&mut current));
+        } else {
+            current.push(segment.clone());
+        }
+    }
+
+    if current.is_empty() {
+        return Err(DbError::Cozo(format!(
+            "if-branch receiver should not end with an empty branch path, got {path:?}"
+        )));
+    }
+    paths.push(current);
+    Ok(paths)
 }

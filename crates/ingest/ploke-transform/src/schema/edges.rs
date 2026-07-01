@@ -457,6 +457,18 @@ fn field_receiver_path(name: &str, root_path: &[String], field_path: &[String]) 
     path
 }
 
+fn branch_receiver_path(paths: &[Vec<String>]) -> Vec<String> {
+    let total_len = paths.iter().map(Vec::len).sum::<usize>() + paths.len().saturating_sub(1);
+    let mut encoded = Vec::with_capacity(total_len);
+    for (idx, path) in paths.iter().enumerate() {
+        if idx > 0 {
+            encoded.push(String::new());
+        }
+        encoded.extend(path.iter().cloned());
+    }
+    encoded
+}
+
 fn span_to_cozo(span: (usize, usize)) -> cozo::DataValue {
     cozo::DataValue::List(vec![
         cozo::DataValue::from(span.0 as i64),
@@ -618,6 +630,10 @@ fn method_receiver_to_cozo(receiver: &MethodCallReceiver) -> (cozo::DataValue, c
         MethodCallReceiver::TryPathCallResult { path } => (
             cozo::DataValue::from("TryPathCallResult"),
             string_list(path),
+        ),
+        MethodCallReceiver::IfBranchPaths { paths } => (
+            cozo::DataValue::from("IfBranchPaths"),
+            string_list(&branch_receiver_path(paths)),
         ),
         MethodCallReceiver::Literal => (cozo::DataValue::from("Literal"), cozo::DataValue::Null),
         MethodCallReceiver::Unsupported => {

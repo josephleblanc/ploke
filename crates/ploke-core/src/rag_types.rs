@@ -235,6 +235,9 @@ pub enum CallReceiverInfo {
     TryPathCallResult {
         path: Vec<String>,
     },
+    IfBranchPaths {
+        paths: Vec<Vec<String>>,
+    },
     Literal,
     Unsupported,
 }

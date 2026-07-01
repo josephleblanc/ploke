@@ -728,6 +728,14 @@ fn format_receiver(receiver: &CallReceiverInfo) -> String {
         }
         CallReceiverInfo::TryResult => "?".to_string(),
         CallReceiverInfo::TryPathCallResult { path } => format!("{}()?", path.join("::")),
+        CallReceiverInfo::IfBranchPaths { paths } => {
+            let branches = paths
+                .iter()
+                .map(|path| path.join("::"))
+                .collect::<Vec<_>>()
+                .join(" | ");
+            format!("if {branches}")
+        }
         CallReceiverInfo::Literal => "literal".to_string(),
         CallReceiverInfo::Unsupported => "unsupported receiver".to_string(),
     }

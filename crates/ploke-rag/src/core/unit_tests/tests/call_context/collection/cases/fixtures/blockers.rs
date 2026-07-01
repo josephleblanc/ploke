@@ -14,9 +14,12 @@ async fn call_context_collection_reads_real_fixture_blocker_rows() -> Result<(),
         &db,
         &function_in_module_query(&["crate"], "call_ambiguous_trait_method"),
     )?;
-    let unsupported_receiver_owner = one_uuid(
+    let unsupported_method_owner = one_uuid(
         &db,
-        &function_in_module_query(&["crate"], "call_if_expression_receiver_method"),
+        &function_in_module_query(
+            &["crate", "trait_scope", "without_trait_import"],
+            "call_unimported_trait_method",
+        ),
     )?;
     let rag = init_test_rag_mock(Arc::clone(&db));
     assert!(
@@ -27,7 +30,7 @@ async fn call_context_collection_reads_real_fixture_blocker_rows() -> Result<(),
     let call_context = rag.collect_call_context(&[
         (macro_owner, 1.0),
         (ambiguous_owner, 1.0),
-        (unsupported_receiver_owner, 1.0),
+        (unsupported_method_owner, 1.0),
     ])?;
     let macro_context = call_context
         .get(&macro_owner)
@@ -78,31 +81,30 @@ async fn call_context_collection_reads_real_fixture_blocker_rows() -> Result<(),
         "ambiguous blocker rows must not fabricate RAG targets: {ambiguous_call:#?}"
     );
 
-    let unsupported_receiver_context = call_context
-        .get(&unsupported_receiver_owner)
-        .expect("unsupported receiver owner should receive outgoing call context");
+    let unsupported_method_context = call_context
+        .get(&unsupported_method_owner)
+        .expect("unsupported method owner should receive outgoing call context");
     assert_eq!(
-        unsupported_receiver_context.len(),
+        unsupported_method_context.len(),
         1,
-        "unsupported receiver owner context: {unsupported_receiver_context:#?}"
+        "unsupported method owner context: {unsupported_method_context:#?}"
     );
-    let unsupported_receiver_call = &unsupported_receiver_context[0];
-    assert_eq!(unsupported_receiver_call.kind, CallSiteKind::Method);
+    let unsupported_method_call = &unsupported_method_context[0];
+    assert_eq!(unsupported_method_call.kind, CallSiteKind::Method);
     assert_eq!(
-        unsupported_receiver_call.callee,
+        unsupported_method_call.callee,
         CallCalleeInfo::Method {
-            name: "instance_value".to_string(),
-            receiver: Some(CallReceiverInfo::Unsupported),
+            name: "scoped_value".to_string(),
+            receiver: Some(CallReceiverInfo::LocalBinding {
+                name: "value".to_string(),
+            }),
         }
     );
-    assert_eq!(
-        unsupported_receiver_call.status,
-        CallStatusKind::Unsupported
-    );
-    assert!(unsupported_receiver_call.resolution.is_none());
+    assert_eq!(unsupported_method_call.status, CallStatusKind::Unsupported);
+    assert!(unsupported_method_call.resolution.is_none());
     assert!(
-        unsupported_receiver_call.targets.is_empty(),
-        "unsupported receiver blocker rows must not fabricate RAG targets: {unsupported_receiver_call:#?}"
+        unsupported_method_call.targets.is_empty(),
+        "unsupported method blocker rows must not fabricate RAG targets: {unsupported_method_call:#?}"
     );
 
     Ok(())

@@ -50,6 +50,16 @@ fn context_for_owner_decodes_raw_method_receivers() -> Result<(), DbError> {
                 method_name: "clone_assoc".to_string(),
             },
         ),
+        raw_receiver(
+            "IfBranchPaths",
+            list(&["LocalAssoc", "", "LocalAssoc"]),
+            CallReceiver::IfBranchPaths {
+                paths: vec![
+                    vec!["LocalAssoc".to_string()],
+                    vec!["LocalAssoc".to_string()],
+                ],
+            },
+        ),
         raw_receiver("AwaitResult", DataValue::Null, CallReceiver::AwaitResult),
         raw_receiver("TryResult", DataValue::Null, CallReceiver::TryResult),
         raw_receiver("Literal", DataValue::Null, CallReceiver::Literal),

@@ -2836,21 +2836,30 @@ paranoid_call_site_test!(
 );
 
 paranoid_call_site_test!(
-    fixture_call_graph_call_if_expression_receiver_method_records_unsupported_method_call_site,
+    fixture_call_graph_call_if_expression_receiver_method_resolves_branch_receiver_method_call_site,
     fixture: "fixture_call_graph",
     owner: function {
         module_path: &["crate"],
         name: "call_if_expression_receiver_method"
     },
-    expected: ExpectedCallSite::method(
-        "instance_value",
-        ExpectedMethodReceiver::Unsupported,
-        IF_EXPRESSION_RECEIVER_METHOD_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::Unsupported,
-    ),
+    expected: {
+        let target_args = fixture_call_graph_instance_method_args("instance_value");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_method_pid(&parsed_graphs)?;
+        ExpectedCallSite::method(
+            "instance_value",
+            ExpectedMethodReceiver::IfBranchPaths {
+                paths: &[&["LocalAssoc"], &["LocalAssoc"]],
+            },
+            IF_EXPRESSION_RECEIVER_METHOD_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedMethodLocalExact {
+                target: target_info.test_method_id(),
+            },
+        )
+    },
 );
 
 paranoid_call_site_test!(

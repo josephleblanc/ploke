@@ -1195,6 +1195,41 @@ call_context: 7 call site(s)
 }
 
 #[test]
+fn format_call_context_block_renders_if_branch_receiver() {
+    let target = Uuid::from_u128(0x905);
+    let calls = vec![CallContextInfo {
+        site_id: Uuid::from_u128(0x705),
+        owner_id: Uuid::from_u128(0x705),
+        kind: CallSiteKind::Method,
+        span: (120, 180),
+        arg_count: Some(0),
+        generic_arg_count: Some(0),
+        callee: CallCalleeInfo::Method {
+            name: "instance_value".to_string(),
+            receiver: Some(CallReceiverInfo::IfBranchPaths {
+                paths: vec![
+                    vec!["LocalAssoc".to_string()],
+                    vec!["LocalAssoc".to_string()],
+                ],
+            }),
+        },
+        status: CallStatusKind::Resolved,
+        resolution: Some(CallResolutionKind::LocalExact),
+        targets: vec![CallTargetInfo {
+            target_id: target,
+            relation: CallTargetKind::Method,
+        }],
+    }];
+
+    let rendered = format_call_context_block(&calls, "  ", 8);
+    let expected = "\
+call_context: 1 call site(s)
+  - Method @ 120..180: method instance_value on if LocalAssoc | LocalAssoc => Resolved(LocalExact), targets [Method:00000000-0000-0000-0000-000000000905], owner 00000000-0000-0000-0000-000000000705";
+
+    assert_eq!(rendered, expected);
+}
+
+#[test]
 fn format_call_context_block_renders_trait_dispatch_initialized_local_receiver() {
     let target = Uuid::from_u128(0xa01);
     let calls = vec![CallContextInfo {
