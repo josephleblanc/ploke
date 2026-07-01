@@ -33,6 +33,7 @@ pub mod spec;
 pub(crate) mod successor_selection;
 pub mod target_registry;
 pub mod tracing_setup;
+pub mod walk_client;
 
 /// Non-secret Google Cloud project identifier used as the default direct
 /// Vertex AI route for ploke-eval live tests.

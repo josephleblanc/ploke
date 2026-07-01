@@ -39,6 +39,7 @@ members = [
     "crates/ploke-protocol",
     "crates/ploke-records",
     "crates/ploke-egui",
+    "crates/ploke-walk-ui",
     "crates/ploke-tree",
     "crates/ploke-tree-browser",
     "crates/ploke-tree-egui",

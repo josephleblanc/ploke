@@ -7245,6 +7245,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ploke-walk-ui"
+version = "0.1.0"
+dependencies = [
+ "eframe 0.34.2",
+ "egui 0.34.2",
+ "ploke-eval",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "plotters"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
