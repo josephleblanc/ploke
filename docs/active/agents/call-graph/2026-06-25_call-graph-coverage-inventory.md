@@ -120,6 +120,20 @@ future work can choose the next batch without rereading the diary-style notes.
   `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
   and
   `cargo test -p ploke-tui --features call_graph code_item -- --nocapture`.
+- 2026-07-01: Target-centered impact summaries now include
+  `direct_call_sites`, carrying the exact target-centered `CallContextRow` /
+  `CallContextInfo` rows for direct callers. This lets DB, RAG, and exact
+  `code_item_lookup` answer API-understanding and debugging questions like
+  "what are the callsites for this trait method binding?" from the impact
+  summary itself, including callsite shape, span, and resolved targets. The
+  axum proof remains the `RequestExt::extract_with_state` call to
+  `E::from_request(self, state)`, which appears as a direct callsite for
+  `FromRequest::from_request`; the proc-macro `expand_with` gap remains
+  fail-closed with no fabricated direct callsites. Focused verification:
+  `cargo test -p ploke-db --features call_graph real_target_matrix::usage_questions -- --nocapture`,
+  `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
+  and
+  `cargo test -p ploke-tui --features call_graph code_item -- --nocapture`.
 - 2026-06-30: The first usage-question slice now has real-corpus proofs across
   DB and TUI surfaces. DB coverage in
   `real_target_matrix::usage_questions` proves that the persisted axum call
