@@ -40,6 +40,25 @@ future work can choose the next batch without rereading the diary-style notes.
 
 ## Recent downstream slice
 
+- 2026-07-01: Owner reach summaries now split resolved direct callsites that
+  cross displayed module paths into `boundary_call_sites`, while preserving the
+  full `direct_call_sites` list. DB derives the subset from already resolved
+  direct owner-context rows, RAG maps the same rows into `CallReachInfo`, and
+  exact `code_item_lookup` reports `reach_boundary_call_sites` in its UI
+  payload. The real-corpus proof case is
+  `RequestExt::extract_with_state` in
+  `axum-core/src/ext_traits/request.rs`, whose `E::from_request(self, state)`
+  call resolves to `FromRequest::from_request` in
+  `axum-core/src/extract/mod.rs`; the same-module
+  `RequestExt::extract -> extract_with_state` call remains excluded from the
+  boundary subset. This answers architecture-review questions such as "which
+  modules call across a boundary that should be one-way?" without changing the
+  resolved-only traversal contract. Focused verification:
+  `cargo test -p ploke-db --features call_graph real_target_matrix::usage_questions -- --nocapture`,
+  `cargo test -p ploke-rag --features call_graph call_reach_exact_reads_axum_usage_question_summary -- --nocapture`,
+  `cargo test -p ploke-rag --features call_graph get_context_attaches_axum_request_extract_two_hop_call_paths -- --nocapture`,
+  and
+  `cargo test -p ploke-tui --features call_graph code_item -- --nocapture`.
 - 2026-07-01: Target-centered impact summaries now partition eventual callers
   into `test_callers` and `non_test_callers` in addition to preserving the full
   `callers` list. DB derives the test bucket from the node's module/file

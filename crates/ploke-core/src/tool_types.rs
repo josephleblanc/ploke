@@ -193,6 +193,7 @@ mod tests {
         assert!(description.contains("call_impact"));
         assert!(description.contains("call_reach"));
         assert!(description.contains("direct_call_sites"));
+        assert!(description.contains("boundary_call_sites"));
         assert!(description.contains("test_callers"));
         assert!(description.contains("non_test_callers"));
         assert!(description.contains("external_frontier_calls"));
