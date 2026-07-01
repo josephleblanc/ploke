@@ -40,6 +40,22 @@ future work can choose the next batch without rereading the diary-style notes.
 
 ## Recent downstream slice
 
+- 2026-07-01: Owner reach summaries now split unsupported resolver blockers
+  into an explicit `unsupported_frontier_calls` subset while preserving the
+  full fail-closed `frontier_calls` list. DB, RAG, and exact
+  `code_item_lookup` now answer the debugging/RAG usage question "what
+  fail-closed blocker should be shown when a callsite is visible but
+  targetless?" without clients needing to re-filter external, unresolved, or
+  ambiguous frontier rows. The real-corpus proof case is
+  `ConnLimiter<T>::accept` in `axum/src/serve/listener.rs`, where
+  `self.sem.clone().acquire_owned().await.unwrap()` produces an unsupported
+  awaited-result receiver callsite that remains targetless, excluded from local
+  traversal, and visible in the unsupported frontier summary. Focused
+  verification:
+  `cargo test -p ploke-db --features call_graph real_target_matrix::usage_questions -- --nocapture`,
+  `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
+  and
+  `cargo test -p ploke-tui --features call_graph code_item -- --nocapture`.
 - 2026-07-01: Owner-centered usage-question summaries now mirror the existing
   target-centered impact summaries. DB exposes
   `call_reach_for_owner(owner, options)`, returning owner metadata, bounded

@@ -10,6 +10,6 @@ When call graph data is available, the result also includes node-scoped `call_co
 
 Use `call_impact` to answer target-centered questions such as who calls this item, which callers eventually reach it, and what direct callsites resolve to it. The impact summary includes direct and eventual callers, `direct_call_sites`, public direct callers under the stored visibility predicate, and `source_files`.
 
-Use `call_reach` to answer owner-centered questions such as what this item calls directly, which callees are reachable through resolved local call paths, what exact resolved `direct_call_sites` this owner makes, which nonresolved `frontier_calls` are visible but fail closed, and which `external_frontier_calls` represent dependency calls. Its `source_files` list identifies files to retrieve for explaining the call chain.
+Use `call_reach` to answer owner-centered questions such as what this item calls directly, which callees are reachable through resolved local call paths, what exact resolved `direct_call_sites` this owner makes, which nonresolved `frontier_calls` are visible but fail closed, which `external_frontier_calls` represent dependency calls, and which `unsupported_frontier_calls` represent visible resolver blockers. Its `source_files` list identifies files to retrieve for explaining the call chain.
 
 Pro tip: use it with parallel tool calls to look up as many code items as you want.

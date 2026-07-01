@@ -194,6 +194,7 @@ mod tests {
         assert!(description.contains("call_reach"));
         assert!(description.contains("direct_call_sites"));
         assert!(description.contains("external_frontier_calls"));
+        assert!(description.contains("unsupported_frontier_calls"));
         assert!(description.contains("source_files"));
     }
 
