@@ -7,9 +7,9 @@ use ploke_tui::tools::{
 
 use crate::call_graph_tool_support::{
     AxumAwaitReceiverToolFixture, AxumBodyEmptyToolFixture, AxumBoxedIntoRouteToolFixture,
-    AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture,
-    AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture, CallGraphToolFixture,
-    assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
+    AxumExpandWithToolFixture, AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture,
+    AxumParseAttrsToolFixture, AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture,
+    CallGraphToolFixture, assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
     assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
     assert_call_path_node, assert_handler_call_incoming_context, assert_incoming_context,
     assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
@@ -327,6 +327,66 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         "code_item_lookup should surface all direct impact caller counts"
     );
     assert_eq!(ui_field(target_ui, "impact_public_callers"), "0");
+}
+
+#[tokio::test]
+async fn code_item_lookup_surfaces_fail_closed_proc_macro_impact_gap() {
+    let fixture = AxumExpandWithToolFixture::new().await;
+    let params = LookupParams {
+        item_name: Cow::Borrowed("expand_with"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: None,
+        owner_type: None,
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("axum-expand-with-impact-lookup"))
+        .await
+        .expect("expand_with lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Dead code detection:
+    //   "Is this function reachable from any binary, test, macro entrypoint,
+    //   or exported API?"
+    //
+    // Source oracle:
+    //   axum-macros/src/lib.rs:377,426,665,715 call `expand_with(...)` from
+    //   public proc-macro entrypoints.
+    // Current contract: proc-macro item bodies are not visited for structural
+    // call-site extraction yet, so exact lookup must report the impact summary
+    // as fail-closed instead of fabricating public callers.
+    let impact = payload
+        .get("call_impact")
+        .and_then(serde_json::Value::as_object)
+        .expect("call_impact object");
+    let target_id = fixture.target.to_string();
+    assert_eq!(
+        impact
+            .get("target")
+            .and_then(|target| target.get("id"))
+            .and_then(serde_json::Value::as_str),
+        Some(target_id.as_str())
+    );
+    for field in ["paths", "callers", "direct_callers", "public_callers"] {
+        let rows = impact
+            .get(field)
+            .and_then(serde_json::Value::as_array)
+            .unwrap_or_else(|| panic!("call_impact {field} array: {impact:#?}"));
+        assert!(
+            rows.is_empty(),
+            "expand_with impact {field} should remain empty until proc-macro bodies are modeled: {rows:#?}"
+        );
+    }
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "impact_callers"), "0");
+    assert_eq!(ui_field(ui, "impact_direct_callers"), "0");
+    assert_eq!(ui_field(ui, "impact_public_callers"), "0");
 }
 
 #[tokio::test]

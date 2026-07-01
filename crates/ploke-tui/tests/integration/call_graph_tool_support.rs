@@ -93,6 +93,13 @@ pub(crate) struct AxumRunUiTestsToolFixture {
     pub(crate) callers: Vec<ExpectedCallSite>,
 }
 
+pub(crate) struct AxumExpandWithToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) target: Uuid,
+}
+
 pub(crate) struct AxumHandlerCallToolFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,
@@ -411,6 +418,52 @@ impl AxumRunUiTestsToolFixture {
             module_path: target.module_path,
             target: target.id,
             callers,
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl AxumExpandWithToolFixture {
+    pub(crate) async fn new() -> Self {
+        let db = axum_call_graph_db();
+        let target =
+            axum_function_target_by_name_and_file(&db, "expand_with", "axum-macros/src/lib.rs");
+        let report = db
+            .call_impact_for_target(
+                target.id,
+                ploke_db::CallPathOptions {
+                    max_depth: 2,
+                    max_paths: 16,
+                },
+            )
+            .expect("expand_with impact report");
+        assert!(
+            report.paths.is_empty()
+                && report.callers.is_empty()
+                && report.direct_callers.is_empty()
+                && report.public_callers.is_empty(),
+            "current axum fixture should keep proc-macro-body expand_with callers fail-closed: {report:#?}"
+        );
+        assert!(
+            db.project_call_proof_facts_for_node(target.id, "bd:corpus-axum-call-graph")
+                .expect("project axum expand_with proof facts")
+                >= 1,
+            "expand_with should project node-scoped proof rows"
+        );
+        let state = axum_state_for_target(Arc::clone(&db), &target, "expand_with").await;
+
+        Self {
+            state,
+            file_path: target.file_path,
+            module_path: target.module_path,
+            target: target.id,
         }
     }
 
@@ -873,8 +926,16 @@ fn axum_boxed_into_route_target(db: &Database) -> TargetInfo {
 }
 
 fn axum_run_ui_tests_target(db: &Database) -> TargetInfo {
+    axum_function_target_by_name_and_file(db, "run_ui_tests", "axum-macros/src/lib.rs")
+}
+
+fn axum_function_target_by_name_and_file(
+    db: &Database,
+    name: &'static str,
+    file_suffix: &'static str,
+) -> TargetInfo {
     let mut params = BTreeMap::new();
-    params.insert("name".to_string(), DataValue::from("run_ui_tests"));
+    params.insert("name".to_string(), DataValue::from(name));
 
     let script = format!(
         r#"
@@ -894,22 +955,22 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
     );
     let rows = db
         .raw_query_params(&script, params)
-        .expect("query axum run_ui_tests target");
+        .unwrap_or_else(|err| panic!("query axum {name} target: {err}"));
     let matching = rows
         .rows
         .iter()
-        .filter(|row| data_str(&row[1], "file_path").ends_with("axum-macros/src/lib.rs"))
+        .filter(|row| data_str(&row[1], "file_path").ends_with(file_suffix))
         .collect::<Vec<_>>();
     assert_eq!(
         matching.len(),
         1,
-        "expected exactly one axum-macros run_ui_tests target; rows: {:#?}",
+        "expected exactly one axum function target {name:?} in {file_suffix:?}; rows: {:#?}",
         rows.rows
     );
     let row = matching[0];
 
     TargetInfo {
-        id: to_uuid(&row[0]).expect("run_ui_tests uuid"),
+        id: to_uuid(&row[0]).unwrap_or_else(|err| panic!("{name} uuid: {err}")),
         file_path: PathBuf::from(data_str(&row[1], "file_path")),
         module_path: data_path(&row[2], "module path"),
     }
