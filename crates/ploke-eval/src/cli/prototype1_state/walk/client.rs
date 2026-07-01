@@ -1,8 +1,9 @@
 //! Short-lived CLI client for the typestate walk server.
 //!
-//! Client commands connect to one Unix socket, send one framed request, print
-//! one framed response, and exit. `start` is the only command that auto-spawns
-//! the server when health probing reports it offline.
+//! Client commands connect to one Unix socket, send framed requests, print
+//! server responses, and exit. Live `start`/`step` requests are submitted as
+//! server jobs; `step --watch` follows the accepted job by polling status until
+//! it reaches a terminal state.
 
 use std::{
     collections::BTreeMap,
@@ -34,7 +35,7 @@ use super::{
     args,
     epoch::ServerEpoch,
     ipc, paths,
-    protocol::{WalkRequest, WalkRequestBody, WalkResponse},
+    protocol::{WalkJobSnapshot, WalkJobStatus, WalkRequest, WalkRequestBody, WalkResponse},
     summary,
 };
 
@@ -70,6 +71,9 @@ pub(crate) async fn run(command: Prototype1StateWalkSubcommand) -> Result<(), Pr
             )
             .await?;
             print_response(&response, format, with_version)?;
+            if watch {
+                return watch_active_job(&socket, format, with_version, response).await;
+            }
             response_result(response)
         }
         Prototype1StateWalkSubcommand::Reset(command) => {
@@ -429,6 +433,83 @@ async fn start(command: Prototype1StateWalkStartCommand) -> Result<(), PrepareEr
     response_result(response)
 }
 
+async fn watch_active_job(
+    socket: &Path,
+    format: InspectOutputFormat,
+    with_version: bool,
+    initial: WalkResponse,
+) -> Result<(), PrepareError> {
+    let Some(job_id) = active_job(&initial).map(|job| job.job_id) else {
+        return response_result(initial);
+    };
+    let mut last = response_fingerprint(&initial);
+    loop {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let response = match health(socket).await? {
+            Health::Online(response) => response,
+            Health::Offline => {
+                return Err(PrepareError::DatabaseSetup {
+                    phase: "prototype1_state_walk_watch",
+                    detail: format!(
+                        "walk server went offline while watching job {job_id} at '{}'",
+                        socket.display()
+                    ),
+                });
+            }
+        };
+        let fingerprint = response_fingerprint(&response);
+        if fingerprint != last {
+            print_response(&response, format, with_version)?;
+            last = fingerprint;
+        }
+        match active_job(&response) {
+            Some(job) if job.job_id == job_id => {}
+            _ => return watched_job_result(response, job_id),
+        }
+    }
+}
+
+fn watched_job_result(response: WalkResponse, job_id: u64) -> Result<(), PrepareError> {
+    if let Some(job) = job_by_id(&response, job_id) {
+        match job.status {
+            WalkJobStatus::Succeeded => return response_result(response),
+            WalkJobStatus::Failed | WalkJobStatus::Cancelled => {
+                return Err(PrepareError::InvalidBatchSelection {
+                    detail: job
+                        .message
+                        .clone()
+                        .unwrap_or_else(|| format!("walk job {job_id} ended as {:?}", job.status)),
+                });
+            }
+            WalkJobStatus::Running | WalkJobStatus::CancelRequested => {}
+        }
+    }
+    response_result(response)
+}
+
+fn active_job(response: &WalkResponse) -> Option<&WalkJobSnapshot> {
+    match response {
+        WalkResponse::Job { job, .. } if job.status.is_active() => Some(job),
+        WalkResponse::Status { job: Some(job), .. } if job.status.is_active() => Some(job),
+        _ => None,
+    }
+}
+
+fn job_by_id(response: &WalkResponse, job_id: u64) -> Option<&WalkJobSnapshot> {
+    match response {
+        WalkResponse::Job { job, .. } | WalkResponse::Status { job: Some(job), .. }
+            if job.job_id == job_id =>
+        {
+            Some(job)
+        }
+        _ => None,
+    }
+}
+
+fn response_fingerprint(response: &WalkResponse) -> String {
+    serde_json::to_string(response).unwrap_or_else(|_| format!("{response:?}"))
+}
+
 fn default_idle_ttl() -> Option<Duration> {
     Some(Duration::from_secs(args::DEFAULT_IDLE_TTL_SECS))
 }
@@ -766,6 +847,57 @@ fn print_response(
             }
             WalkResponse::Audit { report, epoch, .. } => {
                 println!("{}", report.render_table());
+                if with_version {
+                    println!("protocol_version: {}", epoch.protocol_version);
+                    println!(
+                        "transition_graph_version: {}",
+                        epoch.transition_graph_version
+                    );
+                }
+            }
+            WalkResponse::Job {
+                phase,
+                job,
+                message,
+                epoch,
+            } => {
+                println!("walk");
+                println!("{}", "-".repeat(40));
+                println!("status: job");
+                println!("phase: {phase} - {}", phase.detail());
+                println!("job_id: {}", job.job_id);
+                println!("job_command: {}", job.command);
+                println!("job_status: {:?}", job.status);
+                print_multiline("message", message);
+                if let Some(job_message) = &job.message {
+                    print_multiline("job_message", job_message);
+                }
+                if with_version {
+                    println!("protocol_version: {}", epoch.protocol_version);
+                    println!(
+                        "transition_graph_version: {}",
+                        epoch.transition_graph_version
+                    );
+                }
+            }
+            WalkResponse::Status {
+                phase,
+                message,
+                job,
+                epoch,
+            } => {
+                println!("walk");
+                println!("{}", "-".repeat(40));
+                println!("status: ok");
+                println!("phase: {phase} - {}", phase.detail());
+                if let Some(job) = job {
+                    println!("job_id: {}", job.job_id);
+                    println!("job_command: {}", job.command);
+                    println!("job_status: {:?}", job.status);
+                } else {
+                    println!("job_status: idle");
+                }
+                print_multiline("message", message);
                 if with_version {
                     println!("protocol_version: {}", epoch.protocol_version);
                     println!(

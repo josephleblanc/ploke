@@ -88,7 +88,7 @@ pub(crate) enum WalkRequestBody {
     Step {
         /// If present, advance repeatedly until this phase; otherwise one step.
         until: Option<WalkPhase>,
-        /// Allow long live edges to run to completion instead of stopping at a safe boundary.
+        /// Ask the short-lived client to follow the accepted server job.
         #[serde(default)]
         watch: bool,
         /// Admit typed edges that mutate the active checkout during handoff.
@@ -294,6 +294,50 @@ pub(crate) enum WalkRequestBody {
     Stop,
 }
 
+/// Server-side lifecycle for a live walk command submitted as a background job.
+///
+/// `start` and `step` can take minutes because they may build child binaries,
+/// spawn child runtimes, wait for LLM/tool loops, or perform successor handoff.
+/// The socket protocol reports that work as a job so status/health requests can
+/// remain non-blocking while the controller owns the actual typestate edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum WalkJobStatus {
+    Running,
+    Succeeded,
+    Failed,
+    CancelRequested,
+    Cancelled,
+}
+
+impl WalkJobStatus {
+    /// True while a duplicate live mutation must not be admitted.
+    pub(crate) fn is_active(self) -> bool {
+        matches!(self, Self::Running | Self::CancelRequested)
+    }
+}
+
+/// Observable state for the server's one supervised live walk job.
+///
+/// The server intentionally permits only one active job at a time because there
+/// is one `WalkController`, one active checkout, and one in-memory typestate
+/// position. Parallel mutation requests would otherwise race the parent loop.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct WalkJobSnapshot {
+    pub(crate) job_id: u64,
+    pub(crate) command: String,
+    pub(crate) status: WalkJobStatus,
+    pub(crate) phase_before: WalkPhase,
+    pub(crate) phase_after: Option<WalkPhase>,
+    pub(crate) target_phase: Option<WalkPhase>,
+    pub(crate) watch: Option<bool>,
+    pub(crate) allow_git_changes: Option<bool>,
+    pub(crate) started_at: String,
+    pub(crate) updated_at: String,
+    pub(crate) finished_at: Option<String>,
+    pub(crate) message: Option<String>,
+}
+
 /// One framed server-to-client response.
 ///
 /// Every response carries the server epoch so clients and humans can see which
@@ -316,6 +360,28 @@ pub(crate) enum WalkResponse {
         phase: WalkPhase,
         /// Read-only audit payload.
         report: WalkAuditReport,
+        /// Server freshness identity.
+        epoch: ServerEpoch,
+    },
+    /// Accepted or duplicate-suppressed background job.
+    Job {
+        /// Best known phase while the job is active or after it has completed.
+        phase: WalkPhase,
+        /// Machine-readable live command status.
+        job: WalkJobSnapshot,
+        /// Human-readable explanation for table output.
+        message: String,
+        /// Server freshness identity.
+        epoch: ServerEpoch,
+    },
+    /// Non-mutating status/health snapshot.
+    Status {
+        /// Best known current phase.
+        phase: WalkPhase,
+        /// Human-readable summary for table output.
+        message: String,
+        /// Active or most recent live command job, if one exists.
+        job: Option<WalkJobSnapshot>,
         /// Server freshness identity.
         epoch: ServerEpoch,
     },
@@ -351,6 +417,36 @@ impl WalkResponse {
         }
     }
 
+    /// Build a job response at the job's best known phase.
+    pub(crate) fn job(
+        phase: WalkPhase,
+        job: WalkJobSnapshot,
+        message: impl Into<String>,
+        epoch: ServerEpoch,
+    ) -> Self {
+        Self::Job {
+            phase,
+            job,
+            message: message.into(),
+            epoch,
+        }
+    }
+
+    /// Build a non-mutating status response.
+    pub(crate) fn status(
+        phase: WalkPhase,
+        message: impl Into<String>,
+        job: Option<WalkJobSnapshot>,
+        epoch: ServerEpoch,
+    ) -> Self {
+        Self::Status {
+            phase,
+            message: message.into(),
+            job,
+            epoch,
+        }
+    }
+
     /// Build an error response with optional current phase.
     pub(crate) fn error(
         code: impl Into<String>,
@@ -369,13 +465,22 @@ impl WalkResponse {
     /// Return the response phase, if one was available.
     pub(crate) fn phase(&self) -> Option<WalkPhase> {
         match self {
-            WalkResponse::Ok { phase, .. } | WalkResponse::Audit { phase, .. } => Some(*phase),
+            WalkResponse::Ok { phase, .. }
+            | WalkResponse::Audit { phase, .. }
+            | WalkResponse::Job { phase, .. }
+            | WalkResponse::Status { phase, .. } => Some(*phase),
             WalkResponse::Error { phase, .. } => *phase,
         }
     }
 
     /// Return whether this response is `Ok`.
     pub(crate) fn is_ok(&self) -> bool {
-        matches!(self, WalkResponse::Ok { .. } | WalkResponse::Audit { .. })
+        matches!(
+            self,
+            WalkResponse::Ok { .. }
+                | WalkResponse::Audit { .. }
+                | WalkResponse::Job { .. }
+                | WalkResponse::Status { .. }
+        )
     }
 }

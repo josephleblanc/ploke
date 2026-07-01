@@ -37,8 +37,8 @@ pub enum LoopSubcommand {
     #[command(
         name = "walk",
         about = "Debug-step Prototype 1 typestate transitions through a local walk server",
-        long_about = "Debug-step Prototype 1 typestate transitions through a local walk server.\n\nThe walk server is a local debugging harness over live Prototype 1 transition edges. It is not production loop authority. By default it uses the active walk context if one was set with `walk use`, otherwise the current directory, and a repo-hashed socket under the runtime directory.",
-        after_help = "Common workflows:\n  Set context:       ploke-eval loop walk use /path/to/parent-worktree\n  Start live walk:   ploke-eval loop walk start\n  Inspect progress:  ploke-eval loop walk summary -v\n  Replay history:    ploke-eval loop walk replay --index 0\n  Query eval DB:     ploke-eval loop walk db_query --script '::relations'\n  Move replay:       ploke-eval loop walk forward --steps 10 --tail 20\n  Live step:         ploke-eval loop walk step --until r6\n\nSafety notes:\n  replay/back/forward and db_query are read-only inspection commands.\n  step drives live typestate edges; long live edges require --watch.\n  R12 -> R13b successor handoff mutates checkout state and requires --allow git-changes.\n  branch-live writes only explicit provenance and requires --allow provenance-record."
+        long_about = "Debug-step Prototype 1 typestate transitions through a local walk server.\n\nThe walk server is a local debugging harness over live Prototype 1 transition edges. It is not production loop authority. By default it uses the active walk context if one was set with `walk use`, otherwise the current directory, and a repo-hashed socket under the runtime directory.\n\nLive start/step requests are submitted as one supervised server job. A second live start/step request returns the active job instead of starting a duplicate attempt. Use `walk status` to query the server while a job is running, and `walk step --watch` to follow the accepted step job until it finishes.",
+        after_help = "Common workflows:\n  Set context:       ploke-eval loop walk use /path/to/parent-worktree\n  Start live walk:   ploke-eval loop walk start\n  Inspect server:    ploke-eval loop walk status\n  Inspect progress:  ploke-eval loop walk summary -v\n  Replay history:    ploke-eval loop walk replay --index 0\n  Query eval DB:     ploke-eval loop walk db_query --script '::relations'\n  Move replay:       ploke-eval loop walk forward --steps 10 --tail 20\n  Live step:         ploke-eval loop walk step --until r6\n\nSafety notes:\n  replay/back/forward and db_query are read-only inspection commands.\n  step submits a live typestate job; --watch follows that job instead of changing admission.\n  R12 -> R13b successor handoff mutates checkout state and requires --allow git-changes.\n  stop cancels the active server job, signals recorded child/successor process groups, then stops the server.\n  branch-live writes only explicit provenance and requires --allow provenance-record."
     )]
     Prototype1StateWalk(Prototype1StateWalkCommand),
     // ANCHOR_END: prototype1_walk_command_safety_help
@@ -156,9 +156,9 @@ pub enum Prototype1StateWalkSubcommand {
     Serve(Prototype1StateWalkServeCommand),
     /// Save the active parent checkout for later walk commands.
     Use(Prototype1StateWalkUseCommand),
-    /// Start a new in-memory walk, defaulting to R0.
+    /// Submit a new in-memory walk job, defaulting to R0.
     Start(Prototype1StateWalkStartCommand),
-    /// Advance the current in-memory walk by one step or until a target phase.
+    /// Submit one live typestate job by one step or until a target phase.
     Step(Prototype1StateWalkStepCommand),
     /// Reset the current in-memory walk without stopping the server.
     Reset(Prototype1StateWalkControlCommand),
@@ -183,9 +183,9 @@ pub enum Prototype1StateWalkSubcommand {
     Forward(Prototype1StateWalkReplayMoveCommand),
     /// Record explicit provenance before branching from replay toward live work.
     BranchLive(Prototype1StateWalkBranchLiveCommand),
-    /// Check whether the local walk server is alive.
+    /// Query server liveness, phase, and active or most recent job.
     Status(Prototype1StateWalkControlCommand),
-    /// Stop the local walk server.
+    /// Cancel the active job, signal recorded child jobs, and stop the server.
     Stop(Prototype1StateWalkControlCommand),
 }
 
@@ -711,8 +711,8 @@ pub struct Prototype1StateWalkBranchLiveCommand {
 // ANCHOR: prototype1_walk_step_live_edge_admission
 #[derive(Debug, Clone, Parser)]
 #[command(
-    about = "Advance the current in-memory walk by one live typestate edge",
-    after_help = "Examples:\n  ploke-eval loop walk step\n  ploke-eval loop walk step --until r6\n  ploke-eval loop walk step --until r8 --watch\n  ploke-eval loop walk step --until r13b --watch --allow git-changes\n\nUse replay/back/forward for read-only historical inspection. Use step only when you intend to drive live typestate edges. Long live edges require --watch; checkout-mutating successor handoff requires --allow git-changes."
+    about = "Submit one live typestate step job to the walk server",
+    after_help = "Examples:\n  ploke-eval loop walk step\n  ploke-eval loop walk step --until r6\n  ploke-eval loop walk step --until r8 --watch\n  ploke-eval loop walk step --until r13b --watch --allow git-changes\n\nUse replay/back/forward for read-only historical inspection. Use step only when you intend to drive live typestate edges. Without --watch the command returns after the server accepts the job; with --watch it follows status until the job finishes. Checkout-mutating successor handoff requires --allow git-changes."
 )]
 pub struct Prototype1StateWalkStepCommand {
     /// Parent checkout root. Defaults to active walk context, then current directory.
@@ -727,7 +727,7 @@ pub struct Prototype1StateWalkStepCommand {
     #[arg(long, value_enum)]
     pub until: Option<WalkPhase>,
 
-    /// Wait for a long live edge instead of returning at the safe boundary.
+    /// Follow the accepted server job until it reaches a terminal state.
     #[arg(long)]
     pub watch: bool,
 
@@ -747,8 +747,8 @@ pub struct Prototype1StateWalkStepCommand {
 
 #[derive(Debug, Clone, Parser)]
 #[command(
-    about = "Start a live in-memory walk, defaulting to R0",
-    after_help = "Examples:\n  ploke-eval loop walk start\n  ploke-eval loop walk start --until r6\n  ploke-eval loop walk start --no-ttl\n\nStart creates or contacts the local walk server for the selected parent checkout. Use summary/replay when you only need to inspect a completed historical run."
+    about = "Submit a live in-memory walk start job, defaulting to R0",
+    after_help = "Examples:\n  ploke-eval loop walk start\n  ploke-eval loop walk start --until r6\n  ploke-eval loop walk start --no-ttl\n\nStart creates or contacts the local walk server for the selected parent checkout, submits one start job, and returns the accepted job. Use `walk status` to inspect an active or completed server job. Use summary/replay when you only need to inspect a completed historical run."
 )]
 pub struct Prototype1StateWalkStartCommand {
     /// Campaign id. Defaults to parent identity, then active `select campaign`.
