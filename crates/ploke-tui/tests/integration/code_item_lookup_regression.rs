@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 
 use ploke_core::rag_types::{
-    CallCalleeInfo, CallContextInfo, CallPathEdgeInfo, CallSiteBucketInfo, CallSiteKind,
-    CallStatusKind, CallTargetKind,
+    CallCalleeInfo, CallContextInfo, CallPathEdgeInfo, CallResolutionKind, CallSiteBucketInfo,
+    CallSiteKind, CallStatusKind, CallTargetKind, ProofContextInfo,
 };
 use ploke_tui::tools::{
     Tool,
@@ -14,12 +14,13 @@ use crate::call_graph_tool_support::{
     AxumErrorHandlingTraitsToolFixture, AxumExpandWithToolFixture, AxumHandlerCallToolFixture,
     AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture, AxumRequestExtractPathToolFixture,
     AxumRunUiTestsToolFixture, CallGraphToolFixture, ChronoAliasConstructorToolFixture,
-    assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
-    assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
-    assert_call_path_node, assert_expected_path_incoming_context,
-    assert_handler_call_incoming_context, assert_incoming_context,
-    assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
-    assert_run_ui_tests_incoming_context, assert_target_proof, assert_two_hop_call_path, ui_field,
+    FixtureDynamicCallableToolFixture, assert_await_result_unwrap_context,
+    assert_await_result_unwrap_proof, assert_body_empty_incoming_context,
+    assert_boxed_into_route_incoming_context, assert_call_path_node,
+    assert_expected_path_incoming_context, assert_handler_call_incoming_context,
+    assert_incoming_context, assert_json_from_bytes_incoming_context,
+    assert_parse_attrs_incoming_context, assert_run_ui_tests_incoming_context, assert_target_proof,
+    assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -82,6 +83,112 @@ async fn code_item_lookup_returns_call_and_proof_context_for_call_graph_item() {
             .expect("outgoing count")
             >= 1,
         "code_item_lookup should surface outgoing call-context count for owner lookups"
+    );
+}
+
+#[tokio::test]
+async fn code_item_lookup_returns_resolved_dynamic_callable_context() {
+    let fixture = FixtureDynamicCallableToolFixture::new().await;
+    let params = LookupParams {
+        item_name: Cow::Borrowed("call_parenthesized_function_item_binding"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Borrowed("crate"),
+        owner_trait: None,
+        owner_type: None,
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("dynamic-callable-lookup"))
+        .await
+        .expect("dynamic callable lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let call_context = payload
+        .get("call_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_context array");
+    let proof_context = payload
+        .get("proof_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("proof_context array");
+
+    // Fixture source:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:269
+    //     `call_parenthesized_function_item_binding` binds
+    //     `let f = local_target;` and calls `(f)()`.
+    // Parser/DB/RAG already prove this as a resolved dynamic-function edge.
+    // This pins the same fact at the TUI tool boundary.
+    let calls = call_context
+        .iter()
+        .filter_map(|call| serde_json::from_value::<CallContextInfo>(call.clone()).ok())
+        .filter(|call| {
+            call.owner_id == fixture.owner
+                && call.kind == CallSiteKind::Dynamic
+                && call.callee == CallCalleeInfo::Dynamic
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        calls.len(),
+        1,
+        "code_item_lookup should expose exactly one resolved dynamic callable row: {call_context:#?}"
+    );
+    let call = calls[0].clone();
+    assert_eq!(call.status, CallStatusKind::Resolved);
+    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(call.targets.len(), 1, "{call:#?}");
+    assert_eq!(call.targets[0].target_id, fixture.target);
+    assert_eq!(call.targets[0].relation, CallTargetKind::DynamicFunction);
+
+    let owner = fixture.owner.to_string();
+    let site = call.site_id.to_string();
+    let target = fixture.target.to_string();
+    let proof_rows = proof_context
+        .iter()
+        .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        proof_rows.iter().any(|proof| {
+            proof.kind == "call_site"
+                && proof.caller_def_id.as_deref() == Some(owner.as_str())
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.build_domain_id.as_deref() == Some("bd:fixture-call-graph")
+        }),
+        "code_item_lookup should return the dynamic call_site proof row: {proof_context:#?}"
+    );
+    assert!(
+        proof_rows.iter().any(|proof| {
+            proof.kind == "call_edge"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.caller_def_id.as_deref() == Some(owner.as_str())
+                && proof.callee_def_id.as_deref() == Some(target.as_str())
+                && proof.resolution_state.as_deref() == Some("resolved")
+        }),
+        "code_item_lookup should return the resolved dynamic call_edge proof row: {proof_context:#?}"
+    );
+    assert!(
+        proof_rows.iter().any(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site.as_str())
+                && proof.resolution_state.as_deref() == Some("resolved")
+                && proof.resolved_def_id.as_deref() == Some(target.as_str())
+        }),
+        "code_item_lookup should return the resolved dynamic call_resolution proof row: {proof_context:#?}"
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert!(
+        ui_field(ui, "call_context_outgoing")
+            .parse::<usize>()
+            .expect("outgoing count")
+            >= 1,
+        "code_item_lookup should surface outgoing dynamic callable call context"
+    );
+    assert!(
+        ui_field(ui, "proof_context")
+            .parse::<usize>()
+            .expect("proof count")
+            >= 3,
+        "code_item_lookup should surface resolved dynamic callable proof rows"
     );
 }
 
