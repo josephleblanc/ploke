@@ -492,6 +492,68 @@ fn axum_usage_questions_summarize_eventual_callers_for_impact() -> Result<(), Db
 }
 
 #[test]
+fn axum_usage_questions_summarize_public_api_callers_for_impact() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Impact analysis:
+    //   "Which public APIs eventually call this helper?"
+    // API understanding:
+    //   "How is this library function used in real target code?"
+    //
+    // Source oracle:
+    //   axum/src/routing/method_routing.rs:799 defines
+    //     `MethodRouter::new`.
+    //   axum/src/routing/method_routing.rs:375,434,472,514 call
+    //     `MethodRouter::new()` from public top-level routing functions.
+    let target = method_id_by_name_body_and_file_suffix(
+        &db,
+        "new",
+        "let fallback = Route::new",
+        "axum/src/routing/method_routing.rs",
+    )?;
+    let on_service =
+        function_id_by_name_in_module(&db, &["crate", "routing", "method_routing"], "on_service")?;
+    let any_service =
+        function_id_by_name_in_module(&db, &["crate", "routing", "method_routing"], "any_service")?;
+    let on = function_id_by_name_in_module(&db, &["crate", "routing", "method_routing"], "on")?;
+    let any = function_id_by_name_in_module(&db, &["crate", "routing", "method_routing"], "any")?;
+
+    let report = db.call_impact_for_target(
+        target,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 64,
+        },
+    )?;
+    assert_eq!(report.target.id, target);
+    assert_eq!(report.target.name, "new");
+    assert_node_names(
+        &report.public_callers,
+        &[
+            (on_service, "on_service"),
+            (any_service, "any_service"),
+            (on, "on"),
+            (any, "any"),
+        ],
+        "MethodRouter::new public API impact callers",
+    );
+    assert!(
+        report.public_callers.iter().all(|caller| caller.is_public),
+        "public_callers should only include stored-public nodes: {report:#?}"
+    );
+    assert_source_file(
+        &report.source_files,
+        "axum/src/routing/method_routing.rs",
+        "MethodRouter::new impact report source files",
+    );
+
+    Ok(())
+}
+
+#[test]
 fn axum_usage_questions_bucket_impact_callers_by_test_source() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 

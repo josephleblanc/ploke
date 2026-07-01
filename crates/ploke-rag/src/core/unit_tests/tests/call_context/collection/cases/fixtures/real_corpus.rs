@@ -776,6 +776,81 @@ async fn call_impact_exact_reads_axum_usage_question_summary() -> Result<(), Err
         "RAG unsupported impact source files",
     );
 
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Impact analysis / API understanding:
+    //   "Which public APIs eventually call this helper?"
+    //   "How is this library function used in real target code?"
+    //
+    // Source oracle:
+    //   axum/src/routing/method_routing.rs:799 defines
+    //     `MethodRouter::new`.
+    //   axum/src/routing/method_routing.rs:375,434,472,514 call
+    //     `MethodRouter::new()` from public top-level routing functions.
+    let method_router_new = method_id_by_file(
+        &db,
+        "new",
+        "let fallback = Route::new",
+        "axum/src/routing/method_routing.rs",
+    )?;
+    let on_service =
+        function_id_by_name_in_module(&db, &["crate", "routing", "method_routing"], "on_service")?;
+    let any_service =
+        function_id_by_name_in_module(&db, &["crate", "routing", "method_routing"], "any_service")?;
+    let on = function_id_by_name_in_module(&db, &["crate", "routing", "method_routing"], "on")?;
+    let any = function_id_by_name_in_module(&db, &["crate", "routing", "method_routing"], "any")?;
+
+    let public_report = rag
+        .exact_call_impact_for_target(
+            method_router_new,
+            CallPathOptions {
+                max_depth: 1,
+                max_paths: 64,
+            },
+        )?
+        .expect("call context enabled");
+    assert_call_node(
+        &public_report.public_callers,
+        on_service,
+        "on_service",
+        "axum/src/routing/method_routing.rs",
+        "RAG MethodRouter::new public impact callers",
+    );
+    assert_call_node(
+        &public_report.public_callers,
+        any_service,
+        "any_service",
+        "axum/src/routing/method_routing.rs",
+        "RAG MethodRouter::new public impact callers",
+    );
+    assert_call_node(
+        &public_report.public_callers,
+        on,
+        "on",
+        "axum/src/routing/method_routing.rs",
+        "RAG MethodRouter::new public impact callers",
+    );
+    assert_call_node(
+        &public_report.public_callers,
+        any,
+        "any",
+        "axum/src/routing/method_routing.rs",
+        "RAG MethodRouter::new public impact callers",
+    );
+    assert!(
+        public_report
+            .public_callers
+            .iter()
+            .all(|caller| caller.is_public),
+        "RAG public_callers should only include stored-public nodes: {public_report:#?}"
+    );
+    assert_call_source_file(
+        &public_report.source_files,
+        "axum/src/routing/method_routing.rs",
+        "RAG MethodRouter::new impact source files",
+    );
+
     Ok(())
 }
 
