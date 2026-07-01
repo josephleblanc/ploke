@@ -49,31 +49,29 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current Bucket
 
-Current bucket: `Self(...)` tuple-struct constructor resolution.
+Current bucket: executable-local body ownership.
 
 Exit criteria:
 
-- Reuse the existing `Self::...` associated-function owner pattern and the
-  existing tuple-struct constructor resolver.
-- Do not broaden constructor handling into arbitrary type/trait dispatch.
-- Prove a method-owned `Self(value)` tuple-struct constructor resolves to the
-  enclosing impl self type and propagates through DB/proof/RAG/TUI surfaces.
+- Preserve the existing fail-closed invariant that closure, async-block, and
+  function-local item bodies are not flattened into their enclosing owner.
+- Define the typed nested-owner identity and metadata contract before parser or
+  DB code starts projecting nested executable-body rows.
+- Avoid adding nested owners to `AnyNodeId` or using raw `Uuid` parser
+  endpoints.
+- Do not touch registered backup fixture schemas until the nested-owner
+  projection is intentionally scheduled for fixture review/regeneration.
 
 Completed evidence:
 
-- Parser:
-  `fixture_call_graph_self_tuple_constructor_method_resolves_self_constructor_call_site`.
-- DB:
-  `fixture_context_reads_projected_self_tuple_struct_constructor_call` plus the
-  shared constructor proof/caller table.
-- RAG/TUI:
-  constructor call-context, expansion, public get-context, and proof-payload
-  tests now include `SelfTupleConstructor::make -> Self(value)`.
+- Design checkpoint:
+  [`2026-07-01_executable-local-owner-plan.md`](2026-07-01_executable-local-owner-plan.md).
+- Existing parser and DB tests assert nested closure/async/local-const body
+  calls are not currently attributed to the outer owner.
 
-Reason to switch after this bucket: immutable axum backups still pin
-`BoxedIntoRoute` `Self(...)` constructor rows as unsupported until fixture
-regeneration/review, but the parser/DB/RAG/TUI capability is fixture-backed and
-does not justify adding unrelated constructor breadth here.
+Reason to stay in this bucket: it is the next foundational semantic-expansion
+gap after the constructor bucket; several real-corpus unsupported rows are
+explicitly blocked by missing nested executable-body owners.
 
 ## Coverage Matrix
 
