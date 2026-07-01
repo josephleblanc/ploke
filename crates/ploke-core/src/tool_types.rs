@@ -196,6 +196,7 @@ mod tests {
         assert!(description.contains("arg_count"));
         assert!(description.contains("generic_arg_count"));
         assert!(description.contains("boundary_call_sites"));
+        assert!(description.contains("boundary_edges"));
         assert!(description.contains("test_callers"));
         assert!(description.contains("non_test_callers"));
         assert!(description.contains("external_frontier_calls"));

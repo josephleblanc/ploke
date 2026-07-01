@@ -40,6 +40,24 @@ future work can choose the next batch without rereading the diary-style notes.
 
 ## Recent downstream slice
 
+- 2026-07-01: Owner reach summaries now expose transitive
+  `boundary_edges` in addition to direct `boundary_call_sites`. DB derives the
+  edge subset from already resolved bounded call paths by comparing caller and
+  callee displayed module paths; RAG maps the edges into `CallReachInfo`, and
+  exact `code_item_lookup` reports `reach_boundary_edges` in its UI payload.
+  The axum proof case is the two-hop
+  `RequestExt::extract -> extract_with_state -> FromRequest::from_request`
+  chain: the owner's direct callsite stays in
+  `axum-core/src/ext_traits/request.rs` and therefore is not a direct boundary
+  callsite, while the second resolved edge crosses into
+  `axum-core/src/extract/mod.rs`. This answers architecture-review questions
+  such as "do any call chains bypass or cross the intended abstraction layer?"
+  without making clients reconstruct edge/module metadata from full paths.
+  Focused verification:
+  `cargo test -p ploke-db --features call_graph axum_usage_questions_summarize_owner_reach_for_navigation -- --nocapture`,
+  `cargo test -p ploke-rag --features call_graph call_reach_exact_reads_axum_usage_question_summary -- --nocapture`,
+  and
+  `cargo test -p ploke-tui --features call_graph code_item_lookup_returns_real_corpus_two_hop_call_paths -- --nocapture`.
 - 2026-07-01: RAG/TUI `CallContextInfo` rows now preserve existing DB
   callsite `arg_count` and `generic_arg_count` metadata. This exposes a
   conservative API-understanding answer for "what argument shapes do existing
