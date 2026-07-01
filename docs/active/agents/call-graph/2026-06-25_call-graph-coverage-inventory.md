@@ -40,6 +40,23 @@ future work can choose the next batch without rereading the diary-style notes.
 
 ## Recent downstream slice
 
+- 2026-07-01: Owner-centered usage-question summaries now mirror the existing
+  target-centered impact summaries. DB exposes
+  `call_reach_for_owner(owner, options)`, returning owner metadata, bounded
+  outgoing paths, eventual callees, direct callees, and directly stored-public
+  callees over the same resolved-only traversal contract as
+  `call_impact_for_target`. RAG exposes the same payload as
+  `exact_call_reach_for_owner`, and exact `code_item_lookup` now includes
+  `ConciseContext.call_reach` plus UI counts for eventual, direct, and public
+  callees. The axum source oracle remains
+  `RequestExt::extract -> extract_with_state -> FromRequest::from_request`,
+  proving navigation questions like "what does this owner call directly?" and
+  reachability questions like "which local callees can I traverse to from this
+  owner?" through DB, RAG, and TUI payloads. Focused verification:
+  `cargo test -p ploke-db --features call_graph real_target_matrix::usage_questions -- --nocapture`,
+  `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
+  and
+  `cargo test -p ploke-tui --features call_graph code_item -- --nocapture`.
 - 2026-06-30: The first usage-question slice now has real-corpus proofs across
   DB and TUI surfaces. DB coverage in
   `real_target_matrix::usage_questions` proves that the persisted axum call
