@@ -87,6 +87,28 @@ fn fixture_context_reads_projected_generic_unsafe_extern_and_chained_calls() -> 
         TargetlessRowCase::path(&["abs"], 1, CallStatusKind::External, "extern C abs"),
     );
 
+    let owner = function_id_by_name(&db, "call_imported_external_type_alias_constructor")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        1,
+        "imported external type alias constructor context rows: {context:#?}"
+    );
+    let row = assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::path(
+            &["ImportedExternalVec", "new"],
+            0,
+            CallStatusKind::External,
+            "imported external type alias constructor",
+        ),
+    );
+    assert!(
+        relations_for_site(&db, row.site.id)?.rows.is_empty(),
+        "imported external type alias constructor must not fabricate local call_relation targets"
+    );
+
     let owner = function_id_by_name(&db, "call_chained_returned_function")?;
     let target = function_id_by_name(&db, "make_unary_fn")?;
     let context = db.call_context_for_owner(owner)?;

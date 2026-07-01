@@ -657,6 +657,8 @@ Expected searchable corpus embedding config:
   - selected proc-macro entrypoint bodies reach local helper functions through
     `CallBodyOwnerId::Macro` owner edges, including `expand_with` and active
     `expand_attr_with` callers
+  - imported external type aliases stay targetless but classify as external,
+    including axum-core `Request::new` through `Request = http::Request`
   - selected closure body and dynamic callable field shapes are documented as
     unsupported contracts until nested owner/callable proof improves
 

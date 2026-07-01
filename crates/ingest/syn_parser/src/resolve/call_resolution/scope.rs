@@ -4,9 +4,10 @@ use crate::{
         graph::GraphAccess,
         nodes::{
             AnyNodeId, AsAnyNodeId, CallBodyOwnerId, FunctionNodeId, ImportKind, ImportNodeId,
-            ModuleNodeId,
+            ModuleNodeId, OrdinaryTypeUseId, TypeAliasNodeId,
         },
         relations::SyntacticRelation,
+        types::TypeNode,
     },
     resolve::RelationIndexer,
 };
@@ -178,11 +179,18 @@ impl CallRelationResolver<'_> {
                 continue;
             }
             had_sources = true;
-            let Ok(source_import) = ImportNodeId::try_from(source.as_any()) else {
+            if let Ok(source_import) = ImportNodeId::try_from(source.as_any()) {
+                if !self.import_binding_is_external(source_import, depth + 1)? {
+                    all_sources_external = false;
+                }
+                continue;
+            }
+
+            let Ok(source_alias) = TypeAliasNodeId::try_from(source.as_any()) else {
                 all_sources_external = false;
                 continue;
             };
-            if !self.import_binding_is_external(source_import, depth + 1)? {
+            if !self.type_alias_binding_is_external(source_alias, depth + 1)? {
                 all_sources_external = false;
             }
         }
@@ -192,6 +200,43 @@ impl CallRelationResolver<'_> {
         }
 
         Ok(false)
+    }
+
+    fn type_alias_binding_is_external(
+        &self,
+        alias_id: TypeAliasNodeId,
+        depth: usize,
+    ) -> Result<bool, SynParserError> {
+        if depth > MAX_IMPORT_CHAIN_DEPTH {
+            return Err(SynParserError::InternalState(format!(
+                "call resolution exceeded import chain depth limit of {MAX_IMPORT_CHAIN_DEPTH} at {}",
+                alias_id.as_any()
+            )));
+        }
+
+        let alias_node = self.graph.get_type_alias_checked(alias_id)?;
+        self.ordinary_type_binding_is_external(alias_node.type_id, depth + 1)
+    }
+
+    fn ordinary_type_binding_is_external(
+        &self,
+        type_id: OrdinaryTypeUseId,
+        depth: usize,
+    ) -> Result<bool, SynParserError> {
+        if depth > MAX_IMPORT_CHAIN_DEPTH {
+            return Err(SynParserError::InternalState(format!(
+                "call resolution exceeded import chain depth limit of {MAX_IMPORT_CHAIN_DEPTH} at {type_id:?}"
+            )));
+        }
+
+        match self.type_node(type_id)? {
+            TypeNode::Named(node) => Ok(self.is_external_path(&node.path)),
+            TypeNode::Reference(node) => {
+                self.ordinary_type_binding_is_external(node.referenced, depth + 1)
+            }
+            TypeNode::Paren(node) => self.ordinary_type_binding_is_external(node.inner, depth + 1),
+            _ => Ok(false),
+        }
     }
 
     pub(super) fn resolve_unqualified_local_function_path(

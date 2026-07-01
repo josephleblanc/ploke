@@ -1316,3 +1316,13 @@ pub fn call_if_ambiguous_initialized_function_item_binding(flag: bool) -> i32 {
     let f: fn() -> i32 = if flag { local_target } else { other_target };
     f()
 }
+
+pub mod external_type_alias_target {
+    pub type ImportedExternalVec = std::vec::Vec<i32>;
+}
+
+use external_type_alias_target::ImportedExternalVec;
+
+pub fn call_imported_external_type_alias_constructor() -> ImportedExternalVec {
+    ImportedExternalVec::new()
+}

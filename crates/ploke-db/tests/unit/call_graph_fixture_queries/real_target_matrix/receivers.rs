@@ -89,14 +89,14 @@ fn axum_real_target_request_extensions_mut_receivers_are_documented_gaps() -> Re
     //   `let mut req = Request::new(())`.
     //   axum-core/src/ext_traits/request.rs:302 calls `req.extensions_mut()`.
     //   axum/src/extension.rs:184 calls `req.extensions_mut()`.
-    // Current model gap: the initializer path is unresolved and targetless; the
-    // receiver calls are projected on a local binding named `req`, but they
-    // remain unresolved external receiver calls.
+    // The initializer path is an imported alias to external `http::Request`
+    // and remains targetless. The receiver calls are projected on a local
+    // binding named `req`, but they remain unresolved external receiver calls.
     let owner =
         method_id_by_name_and_body_substring(&db, "extract_parts_with_state", "Request::new(())")?;
     let context = db.call_context_for_owner(owner)?;
     let request_new = row_by_path(&context, &["Request", "new"]);
-    assert_targetless_status(request_new, CallStatusKind::Unresolved);
+    assert_targetless_status(request_new, CallStatusKind::External);
     assert!(
         relations_for_site(&db, request_new.site.id)?
             .rows
