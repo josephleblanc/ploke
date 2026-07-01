@@ -264,6 +264,11 @@ fn axum_usage_questions_summarize_owner_reach_for_navigation() -> Result<(), DbE
             )
     });
     assert_eq!(direct_site.status.status, CallStatusKind::Resolved);
+    assert_eq!(
+        direct_site.site.arg_count,
+        Some(1),
+        "RequestExt::extract should preserve the one explicit argument to extract_with_state: {direct_site:#?}"
+    );
     assert!(
         report.boundary_call_sites.is_empty(),
         "RequestExt::extract direct call stays inside ext_traits::request and should not be a module-boundary row: {report:#?}"
@@ -301,6 +306,11 @@ fn axum_usage_questions_summarize_owner_reach_for_navigation() -> Result<(), DbE
     assert_eq!(
         boundary.site.path.as_ref(),
         Some(&path(&["E", "from_request"]))
+    );
+    assert_eq!(
+        boundary.site.arg_count,
+        Some(2),
+        "E::from_request should preserve the two explicit source arguments: {boundary:#?}"
     );
     assert!(
         boundary
@@ -466,6 +476,7 @@ fn axum_usage_questions_summarize_eventual_callers_for_impact() -> Result<(), Db
         report.direct_call_sites.iter().any(|row| {
             row.site.owner_id == intermediate
                 && row.site.path.as_ref() == Some(&path(&["E", "from_request"]))
+                && row.site.arg_count == Some(2)
                 && row
                     .targets
                     .iter()
@@ -543,6 +554,14 @@ fn axum_usage_questions_summarize_public_api_callers_for_impact() -> Result<(), 
     assert!(
         report.public_callers.iter().all(|caller| caller.is_public),
         "public_callers should only include stored-public nodes: {report:#?}"
+    );
+    assert!(
+        report.direct_call_sites.iter().any(|row| {
+            row.site.owner_id == on_service
+                && row.site.path.as_ref() == Some(&path(&["MethodRouter", "new"]))
+                && row.site.arg_count == Some(0)
+        }),
+        "MethodRouter::new impact report should preserve zero-argument public caller sites: {report:#?}"
     );
     assert_source_file(
         &report.source_files,

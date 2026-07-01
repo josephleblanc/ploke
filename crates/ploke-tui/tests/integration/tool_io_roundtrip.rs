@@ -47,6 +47,8 @@ fn serde_roundtrip_request_code_context() {
             owner_id: Uuid::from_u128(4),
             kind: CallSiteKind::Method,
             span: (11, 32),
+            arg_count: None,
+            generic_arg_count: None,
             callee: CallCalleeInfo::Method {
                 name: "instance_value".to_string(),
                 receiver: Some(CallReceiverInfo::TryPathCallResult {
@@ -65,6 +67,8 @@ fn serde_roundtrip_request_code_context() {
             owner_id: Uuid::from_u128(14),
             kind: CallSiteKind::Method,
             span: (34, 53),
+            arg_count: None,
+            generic_arg_count: None,
             callee: CallCalleeInfo::Method {
                 name: "trait_value".to_string(),
                 receiver: Some(CallReceiverInfo::InitializedLocalBinding {
@@ -84,6 +88,8 @@ fn serde_roundtrip_request_code_context() {
             owner_id: Uuid::from_u128(16),
             kind: CallSiteKind::Path,
             span: (54, 92),
+            arg_count: None,
+            generic_arg_count: None,
             callee: CallCalleeInfo::Path {
                 path: vec![
                     "LocalAssocFunctionTrait".to_string(),
@@ -102,6 +108,8 @@ fn serde_roundtrip_request_code_context() {
             owner_id: Uuid::from_u128(18),
             kind: CallSiteKind::Path,
             span: (94, 142),
+            arg_count: None,
+            generic_arg_count: None,
             callee: CallCalleeInfo::Path {
                 path: vec![
                     "VisibleAssocFunctionTrait".to_string(),
@@ -120,6 +128,8 @@ fn serde_roundtrip_request_code_context() {
             owner_id: Uuid::from_u128(6),
             kind: CallSiteKind::Dynamic,
             span: (40, 57),
+            arg_count: None,
+            generic_arg_count: None,
             callee: CallCalleeInfo::Dynamic,
             status: CallStatusKind::Resolved,
             resolution: Some(CallResolutionKind::LocalExact),
@@ -133,6 +143,8 @@ fn serde_roundtrip_request_code_context() {
             owner_id: Uuid::from_u128(8),
             kind: CallSiteKind::Path,
             span: (60, 72),
+            arg_count: None,
+            generic_arg_count: None,
             callee: CallCalleeInfo::Path {
                 path: vec!["NewType".to_string()],
             },
@@ -148,6 +160,8 @@ fn serde_roundtrip_request_code_context() {
             owner_id: Uuid::from_u128(10),
             kind: CallSiteKind::Path,
             span: (74, 98),
+            arg_count: None,
+            generic_arg_count: None,
             callee: CallCalleeInfo::Path {
                 path: vec!["EnumWithData".to_string(), "Variant1".to_string()],
             },
@@ -163,6 +177,8 @@ fn serde_roundtrip_request_code_context() {
             owner_id: Uuid::from_u128(11),
             kind: CallSiteKind::Macro,
             span: (100, 124),
+            arg_count: None,
+            generic_arg_count: None,
             callee: CallCalleeInfo::Macro {
                 name: "crate::crate_scoped_macro".to_string(),
             },
@@ -175,6 +191,8 @@ fn serde_roundtrip_request_code_context() {
             owner_id: Uuid::from_u128(12),
             kind: CallSiteKind::Method,
             span: (126, 140),
+            arg_count: None,
+            generic_arg_count: None,
             callee: CallCalleeInfo::Method {
                 name: "overlap".to_string(),
                 receiver: Some(CallReceiverInfo::LocalBinding {
@@ -190,6 +208,8 @@ fn serde_roundtrip_request_code_context() {
             owner_id: Uuid::from_u128(13),
             kind: CallSiteKind::Method,
             span: (142, 153),
+            arg_count: None,
+            generic_arg_count: None,
             callee: CallCalleeInfo::Method {
                 name: "len".to_string(),
                 receiver: Some(CallReceiverInfo::TypedLocalBinding {
@@ -288,6 +308,8 @@ fn serde_roundtrip_request_code_context() {
         owner_id: path_site,
         kind: CallSiteKind::Path,
         span: (160, 181),
+        arg_count: None,
+        generic_arg_count: None,
         callee: CallCalleeInfo::Path {
             path: vec!["crate".to_string(), "local_target".to_string()],
         },

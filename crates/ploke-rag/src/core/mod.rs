@@ -298,6 +298,8 @@ fn row_to_call_context(
         owner_id: row.site.owner_id,
         kind: site_kind(row.site.kind),
         span: row.site.span,
+        arg_count: row.site.arg_count,
+        generic_arg_count: row.site.generic_arg_count,
         callee,
         status: status_kind(row.status.status),
         resolution: row.status.resolution.map(resolution_kind),

@@ -725,6 +725,7 @@ async fn call_impact_exact_reads_axum_usage_question_summary() -> Result<(), Err
                     CallCalleeInfo::Path { path: call_path }
                         if call_path == &path(&["E", "from_request"])
                 )
+                && call.arg_count == Some(2)
                 && call
                     .targets
                     .iter()
@@ -844,6 +845,18 @@ async fn call_impact_exact_reads_axum_usage_question_summary() -> Result<(), Err
             .iter()
             .all(|caller| caller.is_public),
         "RAG public_callers should only include stored-public nodes: {public_report:#?}"
+    );
+    assert!(
+        public_report.direct_call_sites.iter().any(|call| {
+            call.owner_id == on_service
+                && matches!(
+                    &call.callee,
+                    CallCalleeInfo::Path { path: call_path }
+                        if call_path == &path(&["MethodRouter", "new"])
+                )
+                && call.arg_count == Some(0)
+        }),
+        "RAG MethodRouter::new impact should preserve zero-argument public caller sites: {public_report:#?}"
     );
     assert_call_source_file(
         &public_report.source_files,
@@ -1026,6 +1039,11 @@ async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Erro
             )
         });
     assert_eq!(direct_site.status, CallStatusKind::Resolved);
+    assert_eq!(
+        direct_site.arg_count,
+        Some(1),
+        "RAG reach should preserve the one explicit argument to extract_with_state: {direct_site:#?}"
+    );
     assert!(
         report.boundary_call_sites.is_empty(),
         "RAG RequestExt::extract reach should not mark the same-module direct call as a module-boundary row: {report:#?}"
@@ -1064,6 +1082,11 @@ async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Erro
     );
     let boundary_call = &boundary.boundary_call_sites[0];
     assert_eq!(boundary_call.owner_id, intermediate);
+    assert_eq!(
+        boundary_call.arg_count,
+        Some(2),
+        "RAG boundary row should preserve the two explicit E::from_request source arguments: {boundary_call:#?}"
+    );
     assert!(
         matches!(
             &boundary_call.callee,

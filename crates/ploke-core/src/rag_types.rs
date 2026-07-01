@@ -331,6 +331,10 @@ pub struct CallContextInfo {
     pub owner_id: Uuid,
     pub kind: CallSiteKind,
     pub span: (u32, u32),
+    #[serde(default)]
+    pub arg_count: Option<u32>,
+    #[serde(default)]
+    pub generic_arg_count: Option<u32>,
     pub callee: CallCalleeInfo,
     pub status: CallStatusKind,
     #[serde(default)]

@@ -292,6 +292,7 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
                     &call.callee,
                     CallCalleeInfo::Method { name, .. } if name == "extract_with_state"
                 )
+                && call.arg_count == Some(1)
                 && call
                     .targets
                     .iter()
@@ -439,6 +440,7 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
                         "from_request".to_string()
                     ]
                 )
+                && call.arg_count == Some(2)
                 && call
                     .targets
                     .iter()
@@ -554,6 +556,7 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
                     CallCalleeInfo::Path { path }
                         if path.iter().map(String::as_str).eq(["E", "from_request"])
                 )
+                && call.arg_count == Some(2)
                 && call
                     .targets
                     .iter()

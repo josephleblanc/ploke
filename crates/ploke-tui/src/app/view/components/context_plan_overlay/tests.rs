@@ -48,6 +48,8 @@ fn expanded_rag_part_displays_call_context_details() {
                     owner_id: Uuid::from_u128(0x601),
                     kind: CallSiteKind::Path,
                     span: (10, 12),
+                    arg_count: None,
+                    generic_arg_count: None,
                     callee: CallCalleeInfo::Path {
                         path: vec!["Ok".to_string()],
                     },
@@ -60,6 +62,8 @@ fn expanded_rag_part_displays_call_context_details() {
                     owner_id: Uuid::from_u128(0x602),
                     kind: CallSiteKind::Path,
                     span: (13, 28),
+                    arg_count: None,
+                    generic_arg_count: None,
                     callee: CallCalleeInfo::Path {
                         path: vec!["try_local_assoc".to_string()],
                     },
@@ -75,6 +79,8 @@ fn expanded_rag_part_displays_call_context_details() {
                     owner_id: Uuid::from_u128(0x603),
                     kind: CallSiteKind::Method,
                     span: (13, 46),
+                    arg_count: None,
+                    generic_arg_count: None,
                     callee: CallCalleeInfo::Method {
                         name: "instance_value".to_string(),
                         receiver: Some(CallReceiverInfo::TryPathCallResult {
@@ -93,6 +99,8 @@ fn expanded_rag_part_displays_call_context_details() {
                     owner_id: Uuid::from_u128(0x604),
                     kind: CallSiteKind::Path,
                     span: (50, 62),
+                    arg_count: None,
+                    generic_arg_count: None,
                     callee: CallCalleeInfo::Path {
                         path: vec!["Self".to_string(), "make".to_string()],
                     },
@@ -108,6 +116,8 @@ fn expanded_rag_part_displays_call_context_details() {
                     owner_id: Uuid::from_u128(0x605),
                     kind: CallSiteKind::Path,
                     span: (64, 74),
+                    arg_count: None,
+                    generic_arg_count: None,
                     callee: CallCalleeInfo::Path {
                         path: vec!["NewType".to_string()],
                     },
@@ -123,6 +133,8 @@ fn expanded_rag_part_displays_call_context_details() {
                     owner_id: Uuid::from_u128(0x606),
                     kind: CallSiteKind::Path,
                     span: (75, 99),
+                    arg_count: None,
+                    generic_arg_count: None,
                     callee: CallCalleeInfo::Path {
                         path: vec!["EnumWithData".to_string(), "Variant1".to_string()],
                     },
@@ -138,6 +150,8 @@ fn expanded_rag_part_displays_call_context_details() {
                     owner_id: Uuid::from_u128(0x608),
                     kind: CallSiteKind::Macro,
                     span: (120, 144),
+                    arg_count: None,
+                    generic_arg_count: None,
                     callee: CallCalleeInfo::Macro {
                         name: "crate::crate_scoped_macro".to_string(),
                     },
@@ -150,6 +164,8 @@ fn expanded_rag_part_displays_call_context_details() {
                     owner_id: Uuid::from_u128(0x609),
                     kind: CallSiteKind::Method,
                     span: (145, 160),
+                    arg_count: None,
+                    generic_arg_count: None,
                     callee: CallCalleeInfo::Method {
                         name: "overlap".to_string(),
                         receiver: Some(CallReceiverInfo::LocalBinding {
@@ -165,6 +181,8 @@ fn expanded_rag_part_displays_call_context_details() {
                     owner_id: Uuid::from_u128(0x607),
                     kind: CallSiteKind::Dynamic,
                     span: (100, 119),
+                    arg_count: None,
+                    generic_arg_count: None,
                     callee: CallCalleeInfo::Dynamic,
                     status: CallStatusKind::Resolved,
                     resolution: Some(CallResolutionKind::LocalExact),
@@ -346,6 +364,8 @@ fn expanded_rag_part_displays_external_call_context_details() {
                     owner_id: Uuid::from_u128(0x901),
                     kind: CallSiteKind::Path,
                     span: (10, 23),
+                    arg_count: None,
+                    generic_arg_count: None,
                     callee: CallCalleeInfo::Path {
                         path: vec!["String".to_string(), "new".to_string()],
                     },
@@ -358,6 +378,8 @@ fn expanded_rag_part_displays_external_call_context_details() {
                     owner_id: Uuid::from_u128(0x902),
                     kind: CallSiteKind::Method,
                     span: (24, 45),
+                    arg_count: None,
+                    generic_arg_count: None,
                     callee: CallCalleeInfo::Method {
                         name: "to_string".to_string(),
                         receiver: Some(CallReceiverInfo::Literal),
@@ -371,6 +393,8 @@ fn expanded_rag_part_displays_external_call_context_details() {
                     owner_id: Uuid::from_u128(0x903),
                     kind: CallSiteKind::Method,
                     span: (46, 57),
+                    arg_count: None,
+                    generic_arg_count: None,
                     callee: CallCalleeInfo::Method {
                         name: "len".to_string(),
                         receiver: Some(CallReceiverInfo::TypedLocalBinding {
@@ -460,6 +484,8 @@ fn expanded_rag_part_displays_trait_dispatch_call_context_details() {
                 owner_id: site_id,
                 kind: CallSiteKind::Method,
                 span: (20, 39),
+                arg_count: None,
+                generic_arg_count: None,
                 callee: CallCalleeInfo::Method {
                     name: "trait_value".to_string(),
                     receiver: Some(CallReceiverInfo::InitializedLocalBinding {
@@ -540,6 +566,8 @@ fn expanded_rag_part_displays_callable_path_call_context_details() {
                     owner_id: Uuid::from_u128(0x913),
                     kind: CallSiteKind::Path,
                     span: (10, 19),
+                    arg_count: None,
+                    generic_arg_count: None,
                     callee: CallCalleeInfo::Path {
                         path: vec!["make_fn".to_string()],
                     },
@@ -555,6 +583,8 @@ fn expanded_rag_part_displays_callable_path_call_context_details() {
                     owner_id: Uuid::from_u128(0x914),
                     kind: CallSiteKind::Dynamic,
                     span: (10, 21),
+                    arg_count: None,
+                    generic_arg_count: None,
                     callee: CallCalleeInfo::Dynamic,
                     status: CallStatusKind::Unsupported,
                     resolution: None,
@@ -565,6 +595,8 @@ fn expanded_rag_part_displays_callable_path_call_context_details() {
                     owner_id: Uuid::from_u128(0x915),
                     kind: CallSiteKind::Path,
                     span: (30, 33),
+                    arg_count: None,
+                    generic_arg_count: None,
                     callee: CallCalleeInfo::Path {
                         path: vec!["f".to_string()],
                     },
@@ -577,6 +609,8 @@ fn expanded_rag_part_displays_callable_path_call_context_details() {
                     owner_id: Uuid::from_u128(0x916),
                     kind: CallSiteKind::Path,
                     span: (40, 51),
+                    arg_count: None,
+                    generic_arg_count: None,
                     callee: CallCalleeInfo::Path {
                         path: vec!["generic_f".to_string()],
                     },
@@ -589,6 +623,8 @@ fn expanded_rag_part_displays_callable_path_call_context_details() {
                     owner_id: Uuid::from_u128(0x917),
                     kind: CallSiteKind::Path,
                     span: (60, 68),
+                    arg_count: None,
+                    generic_arg_count: None,
                     callee: CallCalleeInfo::Path {
                         path: vec!["boxed_fn".to_string()],
                     },
@@ -601,6 +637,8 @@ fn expanded_rag_part_displays_callable_path_call_context_details() {
                     owner_id: Uuid::from_u128(0x918),
                     kind: CallSiteKind::Path,
                     span: (70, 85),
+                    arg_count: None,
+                    generic_arg_count: None,
                     callee: CallCalleeInfo::Path {
                         path: vec!["Box".to_string(), "new".to_string()],
                     },
@@ -613,6 +651,8 @@ fn expanded_rag_part_displays_callable_path_call_context_details() {
                     owner_id: Uuid::from_u128(0x919),
                     kind: CallSiteKind::Path,
                     span: (90, 100),
+                    arg_count: None,
+                    generic_arg_count: None,
                     callee: CallCalleeInfo::Path {
                         path: vec!["Vec".to_string(), "new".to_string()],
                     },
