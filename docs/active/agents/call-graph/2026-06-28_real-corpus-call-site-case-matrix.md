@@ -17,7 +17,7 @@ This inventory is source evidence for future real-target DB query tests. It was 
 
 Primary target:
 
-- `corpus_axum_call_graph_2026-06-28.sqlite`
+- `corpus_axum_call_graph_2026-07-01.sqlite`
 - `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1`
 - Selected workspace members for the current call-graph fixture: `axum`, `axum-core`, `axum-macros`
 
@@ -66,7 +66,7 @@ Status values:
 | --- | --- | --- | --- | --- | --- |
 | Same-impl `self.method()` | `axum-fixture` | axum-core | `axum-core/src/ext_traits/request.rs:268` | `self.extract_with_state(&())` | Method edge should resolve to same impl method when exact. |
 | Structural `self.field.method()` | `axum-fixture` | axum | `axum/src/extension.rs:180` | `self.inner.poll_ready(cx)` | Structural method site should be persisted; semantic target may be external/unsupported depending receiver proof. |
-| Explicitly typed local receiver | `axum-fixture` | axum | `axum/src/serve/mod.rs:561`, `axum/src/serve/mod.rs:574` | `let router: Router = Router::new();` then `router.clone()` | Receiver type proof should let the query classify/resolve `clone` conservatively. |
+| Explicitly typed local receiver | `axum-fixture` | axum | `axum/src/serve/mod.rs:756`, `axum/src/serve/mod.rs:769` | `let router: Router = Router::new();` then `router.clone()` | Covered in `receivers.rs`: exact local external-trait impl proof resolves typed-local `Router::clone` rows to `impl<S> Clone for Router<S>::clone`. |
 | Path-initialized local receiver | `axum-fixture` | axum-core | `axum-core/src/ext_traits/request.rs:297`, `axum-core/src/ext_traits/request.rs:302` | `let mut req = Request::new(());` then `req.extensions_mut()` | Local binding initializer proof should attach the method site to `Request`. |
 | Parameter receiver | `axum-fixture` | axum | `axum/src/extension.rs:184` | `req.extensions_mut().insert(...)` | Parameter type proof should classify/resolve method calls on `req`. |
 | Tuple-field receiver | `axum-fixture` | axum-core | `axum-core/src/body.rs:127` | `self.0.size_hint()` | Structural site should persist; exact semantic resolution depends tuple-field type proof. |

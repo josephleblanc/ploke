@@ -1189,6 +1189,113 @@ async fn call_impact_exact_buckets_axum_callers_by_test_source() -> Result<(), E
 }
 
 #[tokio::test]
+async fn call_context_exact_reads_axum_router_clone_typed_local_callers() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    // Source oracle:
+    //   axum/src/routing/mod.rs:90 defines `impl<S> Clone for Router<S>`.
+    //   axum/src/serve/mod.rs projects ten `router.clone()` rows from typed
+    //     `let router: Router = Router::new()` bindings across
+    //     `if_it_compiles_it_works` and the local-address tests.
+    //   axum/src/routing/tests/mod.rs:804 calls `app.clone()` from an
+    //     explicitly typed `Router` local.
+    //   axum/src/boxed.rs:134 and axum/src/routing/mod.rs:673 call
+    //     `self.router.clone()` from wrapper clone impls.
+    let target = method_id_by_file(
+        &db,
+        "clone",
+        "inner: Arc::clone(&self.inner)",
+        "axum/src/routing/mod.rs",
+    )?;
+
+    let callers = db.callers_for_target(target)?;
+    assert_eq!(
+        callers.len(),
+        13,
+        "current axum fixture should resolve the typed-local Router::clone caller sites: {callers:#?}"
+    );
+
+    let context = rag.exact_call_context(target)?;
+    let incoming = context
+        .iter()
+        .filter(|call| {
+            call.kind == CallSiteKind::Method
+                && call
+                    .targets
+                    .iter()
+                    .any(|candidate| candidate.target_id == target)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        incoming.len(),
+        13,
+        "RAG exact call context should expose all current Router::clone incoming edges: {context:#?}"
+    );
+
+    let expected_site_ids = callers
+        .iter()
+        .map(|caller| caller.site.id)
+        .collect::<BTreeSet<_>>();
+    let incoming_site_ids = incoming
+        .iter()
+        .map(|call| call.site_id)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        incoming_site_ids, expected_site_ids,
+        "RAG call context should preserve the DB Router::clone caller site identities"
+    );
+
+    let mut receiver_counts = BTreeMap::<String, usize>::new();
+    for call in incoming {
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(call.targets.len(), 1);
+        assert_eq!(call.targets[0].target_id, target);
+        assert_eq!(call.targets[0].relation, CallTargetKind::Method);
+        let CallCalleeInfo::Method {
+            name: method_name,
+            receiver,
+        } = &call.callee
+        else {
+            panic!("Router::clone incoming caller should be a method call: {call:#?}");
+        };
+        assert_eq!(method_name, "clone");
+        match receiver {
+            Some(CallReceiverInfo::TypedLocalBinding {
+                name: receiver_name,
+                type_path,
+            }) => {
+                assert_eq!(type_path, &path(&["Router"]));
+                *receiver_counts
+                    .entry(format!("typed:{receiver_name}"))
+                    .or_default() += 1;
+            }
+            Some(CallReceiverInfo::SelfField { path: field_path }) => {
+                assert_eq!(field_path, &path(&["router"]));
+                *receiver_counts
+                    .entry("self_field:router".to_string())
+                    .or_default() += 1;
+            }
+            _ => {
+                panic!("Router::clone caller should preserve a supported receiver: {call:#?}");
+            }
+        };
+    }
+    assert_eq!(
+        receiver_counts,
+        BTreeMap::from([
+            ("self_field:router".to_string(), 2),
+            ("typed:app".to_string(), 1),
+            ("typed:router".to_string(), 10),
+        ]),
+        "RAG call context should preserve typed-local and self-field receiver buckets"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;

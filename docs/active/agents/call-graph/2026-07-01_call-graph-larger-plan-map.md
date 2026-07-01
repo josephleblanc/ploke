@@ -45,7 +45,7 @@ The larger implementation has been progressing through these phases:
 | Real-corpus proof | Prove query behavior against real Rust targets, especially axum | Active and partially covered |
 | RAG/TUI/tool surfaces | Expose exact call context, paths, impact, reach, and proof blockers downstream | Strong current surface |
 | Proof/authority integration | Explain trusted edges and fail-closed blockers | Partial but substantial |
-| Semantic expansion | Add binding/type-aware capabilities for remaining gaps | Next larger phase |
+| Semantic expansion | Add binding/type-aware capabilities for remaining gaps | Started with exact local external-trait impl receiver methods |
 
 ## Where The Coverage Matrix Fits
 
@@ -58,22 +58,24 @@ Current matrix posture:
 - Method/trait-method multi-hop: met for now.
 - Regular free-function one-hop: covered.
 - Regular free-function multi-hop: met for now.
-- Import/type-alias constructor completeness: current bucket, met for the
+- Import/type-alias constructor completeness: met for the
   chrono `MappedLocalTime::Single -> LocalResult::Single` alias-constructor
   path across parser, DB, RAG, and TUI.
+- Exact local external-trait impl receiver methods: met for axum
+  `Router::clone` rows across DB, RAG, and TUI.
 - Dynamic/receiver/closure/import gaps: future semantic expansion buckets, not reasons to keep polishing already-proven method paths.
 
 ## Phase Transition Rule
 
 Once the coverage matrix is complete enough that every current representative bucket has either a positive proof or a fail-closed proof, stop adding breadth to the coverage phase and switch to semantic expansion.
 
-The next larger implementation phase should be:
+The current larger implementation phase is:
 
 ```text
 binding/type-aware semantic resolution
 ```
 
-This phase should connect existing syntax-body ownership, local binding evidence, and typed type graph facts so the resolver can prove more receiver and callable-value cases without weakening fail-closed semantics.
+This phase should connect existing syntax-body ownership, local binding evidence, and typed type graph facts so the resolver can prove more receiver and callable-value cases without weakening fail-closed semantics. The first completed slice resolves exact local external-trait impl receiver methods such as axum `Router::clone`; broader dispatch remains out of scope until the required binding/type evidence is explicit.
 
 ## Next Larger Phase
 

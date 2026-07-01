@@ -200,7 +200,7 @@ shape and target-centered proof rows.
 | --- | --- | --- | --- |
 | `self.extract_with_state` | `axum-core/src/ext_traits/request.rs:268` | `RequestExt::extract` | impl `RequestExt for Request` at `request.rs:262`; `Request` alias at `extract/mod.rs:29`; same impl method `extract_with_state` at `request.rs:271`; trait declaration `:122`. |
 | `self.inner.poll_ready` | `axum/src/extension.rs:180` | `AddExtension::poll_ready` | field `inner: S` at `extension.rs:164-166`; impl bound `S: Service<Request<ResBody>>` at `:171`; imported `tower_service::Service` at `:12`; external trait method. |
-| `Router::new` / `router.clone` | `Router::new` at `axum/src/serve/mod.rs:561`; `crate::Router::new` at `axum/src/routing/method_routing.rs:1494`; `router.clone` span-starts at `serve/mod.rs:574,575,577,581,585,590,595,601,692,704` | `if_it_compiles_it_works`; `building_complex_router`; serve local address tests | typed local `let router: Router = Router::new()` -> `Router` import `serve/mod.rs:525` -> re-export `lib.rs:470` -> struct `routing/mod.rs:86` -> `Router::new` `:162`; explicit `crate::Router::new()` also targets the same inherent method; clone target `Clone for Router` at `routing/mod.rs:90`. |
+| `Router::new` / `Router::clone` | `Router::new` at `axum/src/serve/mod.rs:756`; `crate::Router::new` at `axum/src/routing/method_routing.rs:1494`; `router.clone` in `serve/mod.rs`, `app.clone` at `routing/tests/mod.rs:804`, and `self.router.clone` at `boxed.rs:134` / `routing/mod.rs:673` | `if_it_compiles_it_works`; `building_complex_router`; serve local address tests; wrapper clone impls | typed local `let router: Router = Router::new()` -> `Router` import/re-export -> struct `routing/mod.rs:86` -> `Router::new` `:162`; explicit `crate::Router::new()` also targets the same inherent method; exact local external-trait impl receiver proof now resolves 13 `Router::clone` rows to `impl<S> Clone for Router<S>::clone` at `routing/mod.rs:90`. |
 | local `req.extensions_mut` | `axum-core/src/ext_traits/request.rs:302` | `RequestExt::extract_parts_with_state` | `let mut req = Request::new(())` at `:297`; `Request` alias to `http::Request` at `extract/mod.rs:29`; external `http::Request::extensions_mut`. |
 | parameter `req.extensions_mut` | `axum/src/extension.rs:184` | `AddExtension::call` | parameter `mut req: Request<ResBody>` at `:183`; `Request` imported from `http` at `:7`; external method. |
 | `self.0.size_hint` | `axum-core/src/body.rs:127` | `impl http_body::Body for Body::size_hint` | tuple field `Body(BoxBody)` at `:39`; `BoxBody` alias at `:13`; external `http_body::Body` trait method. |
@@ -269,10 +269,13 @@ request-parts row remains `Unresolved` with a `type_resolution_missing` proof
 reason, while the self-field row remains `Unsupported`/blocked. Exact TUI
 `code_item_lookup` and `code_item_edges` tests assert the same owner-seeded
 rows and targetless proof facts.
-The typed-local clone coverage pins all 11 projected `Router` receiver rows:
-ten `router.clone()` rows across `serve/mod.rs` and one `app.clone()` row in
-`routing/tests/mod.rs`, with exact source-line fanout for both typed local
-bindings.
+The exact local external-trait impl receiver coverage now pins all 13 projected
+`Router::clone` rows: ten typed-local `router.clone()` rows across
+`serve/mod.rs`, one typed-local `app.clone()` row in `routing/tests/mod.rs`,
+and two `self.router.clone()` field receiver rows in `boxed.rs` and
+`routing/mod.rs`. DB target traversal, RAG exact call context, and TUI
+`code_item_lookup` / `code_item_edges` preserve the same caller-site identities
+and receiver buckets.
 It also pins both projected `Route` `oneshot` receiver rows in
 `routing/route.rs`: the method-call-result receiver at `:51` and the tuple-field
 receiver at `:57`. RAG call-context and proof-context tests now preserve those

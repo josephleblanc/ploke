@@ -37,7 +37,15 @@ impl CallRelationResolver<'_> {
             let Some(self_target) = self.impl_self_target(impl_node, type_relations)? else {
                 continue;
             };
-            if !self.exact_trait_impl_self_type_applies(impl_node, self_target, &receiver_targets)
+            let exact_receiver_impl =
+                self.exact_trait_impl_self_type_applies(impl_node, self_target, &receiver_targets)
+                    || Self::unconstrained_generic_self_impl_applies(
+                        impl_node,
+                        self_target,
+                        &receiver_targets,
+                    );
+
+            if !exact_receiver_impl
                 && !Self::is_unconstrained_blanket_impl(impl_node, self_target)
                 && !self.constrained_blanket_impl_applies(
                     impl_node,
@@ -49,14 +57,17 @@ impl CallRelationResolver<'_> {
                 continue;
             }
 
-            let Some(trait_node) = self.local_trait_node_for_impl(impl_node, type_relations)?
-            else {
-                continue;
-            };
-            if !trait_declares_instance_method(trait_node, method_name) {
-                continue;
-            }
-            if !self.trait_is_visible_from_owner(owner, trait_node.id)? {
+            let trait_node = self.local_trait_node_for_impl(impl_node, type_relations)?;
+            if let Some(trait_node) = trait_node {
+                if !trait_declares_instance_method(trait_node, method_name) {
+                    continue;
+                }
+                if !self.trait_is_visible_from_owner(owner, trait_node.id)? {
+                    continue;
+                }
+            } else if !exact_receiver_impl
+                || !Self::impl_defines_instance_method(impl_node, method_name)
+            {
                 continue;
             }
 
@@ -91,6 +102,30 @@ impl CallRelationResolver<'_> {
             && receiver_targets.contains(&self_target)
     }
 
+    fn unconstrained_generic_self_impl_applies(
+        impl_node: &ImplNode,
+        self_target: OrdinaryTypeTargetId,
+        receiver_targets: &[OrdinaryTypeTargetId],
+    ) -> bool {
+        if !receiver_targets.contains(&self_target)
+            || impl_node.generic_params.is_empty()
+            || !impl_node.where_predicates.is_empty()
+        {
+            return false;
+        }
+
+        impl_node.generic_params.iter().all(|param| {
+            matches!(
+                &param.kind,
+                crate::parser::types::GenericParamKind::Type {
+                    bounds,
+                    default,
+                    ..
+                } if bounds.is_empty() && default.is_none()
+            )
+        })
+    }
+
     fn is_unconstrained_blanket_impl(
         impl_node: &ImplNode,
         self_target: OrdinaryTypeTargetId,
@@ -116,6 +151,12 @@ impl CallRelationResolver<'_> {
             crate::parser::types::GenericParamKind::Lifetime { .. }
             | crate::parser::types::GenericParamKind::Const { .. } => false,
         }
+    }
+
+    fn impl_defines_instance_method(impl_node: &ImplNode, method_name: &str) -> bool {
+        impl_node.methods.iter().any(|method| {
+            method.name == method_name && method.parameters.iter().any(|param| param.is_self)
+        })
     }
 
     fn constrained_blanket_impl_applies(

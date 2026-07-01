@@ -596,12 +596,14 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
     //   axum/src/serve/mod.rs:756 calls `Router::new()`.
     //   axum/src/routing/method_routing.rs:1494 calls
     //   `crate::Router::new()`.
-    //   serve/mod.rs:769,770,772,776,780,785 call `router.clone...`.
+    //   serve/mod.rs calls `router.clone...` in the router examples and
+    //   local-address tests. `boxed.rs:134` and `routing/mod.rs:673` call
+    //   `self.router.clone()` from local wrapper clone impls.
     // Expected traversal: the current caller API exposes 142 resolved
     // `Router::new` rows, one explicit `crate::Router::new` row, and one
     // `Self::new` row, while target expansion traverses 123 incoming candidates
-    // for the same target. Typed router clone receiver rows remain targetless
-    // because Clone dispatch is not modeled yet.
+    // for the same target. Typed router clone receiver rows now reach the
+    // local `impl<S> Clone for Router<S>` method at routing/mod.rs:90.
     let target = method_id_by_name_and_body_substring(&db, "new", "default_fallback: true")?;
     let callers = db.callers_for_target(target)?;
     assert_eq!(
@@ -690,18 +692,24 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
         },
     )?;
 
-    // Matrix source: axum/src/serve/mod.rs:574,575,577,581,585,590,595,601
-    // call `router.clone...` from the same typed local binding. The clone
-    // dispatch itself is still targetless and must not traverse to `Router`.
+    let clone_target = method_id_by_name_body_and_file_suffix(
+        &db,
+        "clone",
+        "inner: Arc::clone(&self.inner)",
+        "axum/src/routing/mod.rs",
+    )?;
+
+    // Matrix source: axum/src/serve/mod.rs:769,770,772,776,780,785,791,797
+    // call `router.clone...` from the same typed local binding.
     let router_receiver = CallReceiver::TypedLocalBinding {
         name: "router".to_string(),
         type_path: path(&["Router"]),
     };
     let router_clone_cases = [
         (
-            // axum/src/serve/mod.rs:574,575,577,581,585,590,595,601
+            // axum/src/serve/mod.rs:769,770,772,776,780,785,791,797
             // `if_it_compiles_it_works` projects eight `router.clone` rows.
-            "axum/src/serve/mod.rs:574,575,577,581,585,590,595,601",
+            "axum/src/serve/mod.rs:769,770,772,776,780,785,791,797",
             compile_owner,
             8,
         ),
@@ -726,16 +734,39 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
             1,
         ),
     ];
+    let mut clone_sites = std::collections::BTreeSet::new();
+    let mut clone_owners = std::collections::BTreeSet::new();
     for (label, owner, count) in router_clone_cases {
-        assert_owner_method_targetless_count(
-            &db,
-            owner,
-            "clone",
-            &router_receiver,
-            CallStatusKind::Unresolved,
+        let context = db.call_context_for_owner(owner)?;
+        let rows = context
+            .iter()
+            .filter(|row| {
+                row.site.kind == CallSiteKind::Method
+                    && row.site.method.as_deref() == Some("clone")
+                    && row.site.receiver.as_ref() == Some(&router_receiver)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            rows.len(),
             count,
-            label,
-        )?;
+            "{label} should expose exactly {count} resolved Router::clone method row(s): {context:#?}"
+        );
+        for row in rows {
+            assert_resolved_target(
+                row,
+                clone_target,
+                CallRelationKind::Method,
+                CallSiteKind::Method,
+                CallTargetKind::Method,
+            );
+            assert_eq!(
+                relations_for_site(&db, row.site.id)?.rows.len(),
+                1,
+                "{label} should preserve exactly one raw call_relation edge per Router::clone site"
+            );
+            clone_sites.insert(row.site.id);
+            clone_owners.insert(owner);
+        }
     }
 
     let app_owner = function_id_by_name_in_module(
@@ -743,19 +774,69 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
         &["crate", "routing", "tests"],
         "merging_with_overlapping_method_routes",
     )?;
-    assert_owner_method_targetless_count(
-        &db,
-        app_owner,
-        "clone",
-        &CallReceiver::TypedLocalBinding {
-            name: "app".to_string(),
-            type_path: path(&["Router"]),
-        },
-        CallStatusKind::Unresolved,
+    let app_receiver = CallReceiver::TypedLocalBinding {
+        name: "app".to_string(),
+        type_path: path(&["Router"]),
+    };
+    let app_context = db.call_context_for_owner(app_owner)?;
+    let app_clone = row_by_method_receiver(&app_context, "clone", &app_receiver);
+    assert_resolved_target(
+        app_clone,
+        clone_target,
+        CallRelationKind::Method,
+        CallSiteKind::Method,
+        CallTargetKind::Method,
+    );
+    assert_eq!(
+        relations_for_site(&db, app_clone.site.id)?.rows.len(),
         1,
-        // axum/src/routing/tests/mod.rs:804
-        "axum/src/routing/tests/mod.rs:804",
-    )?;
+        "axum/src/routing/tests/mod.rs:804 should preserve exactly one raw call_relation edge for Router::clone"
+    );
+    clone_sites.insert(app_clone.site.id);
+    clone_owners.insert(app_owner);
+
+    let self_router_receiver = CallReceiver::SelfField {
+        path: vec!["router".to_string()],
+    };
+    for (label, owner) in [
+        (
+            // axum/src/boxed.rs:134
+            "axum/src/boxed.rs:134",
+            method_id_by_name_body_and_file_suffix(
+                &db,
+                "clone",
+                "router: self.router.clone()",
+                "axum/src/boxed.rs",
+            )?,
+        ),
+        (
+            // axum/src/routing/mod.rs:673
+            "axum/src/routing/mod.rs:673",
+            method_id_by_name_body_and_file_suffix(
+                &db,
+                "clone",
+                "router: self.router.clone()",
+                "axum/src/routing/mod.rs",
+            )?,
+        ),
+    ] {
+        let context = db.call_context_for_owner(owner)?;
+        let row = row_by_method_receiver(&context, "clone", &self_router_receiver);
+        assert_resolved_target(
+            row,
+            clone_target,
+            CallRelationKind::Method,
+            CallSiteKind::Method,
+            CallTargetKind::Method,
+        );
+        assert_eq!(
+            relations_for_site(&db, row.site.id)?.rows.len(),
+            1,
+            "{label} should preserve exactly one raw call_relation edge for Router::clone"
+        );
+        clone_sites.insert(row.site.id);
+        clone_owners.insert(owner);
+    }
 
     let incoming = db.expand_call_context(
         CallContextSeed::Target(target),
@@ -834,46 +915,60 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
             },
         ],
     )?;
-    assert_targetless_method_rows(
+    let clone_callers = db.callers_for_target(clone_target)?;
+    assert_eq!(
+        clone_callers.len(),
+        13,
+        "Router::clone should expose the projected typed-local and self-field caller rows: {clone_callers:#?}"
+    );
+    assert_sites_match_callers(
         &db,
-        "clone",
-        "TypedLocalBinding",
-        Some(&["router", "Router"]),
-        CallStatusKind::Unresolved,
-        10,
+        clone_target,
+        &clone_callers,
+        "Router::clone typed-local callers",
     )?;
-    assert_targetless_method_line_fanout(
-        &db,
-        &CORPUS_AXUM_CALL_GRAPH,
-        "clone",
-        "TypedLocalBinding",
-        Some(&["router", "Router"]),
-        CallStatusKind::Unresolved,
-        &[SourceLineFanout {
-            file_suffix: "axum/src/serve/mod.rs",
-            lines: &[574, 575, 577, 581, 585, 590, 595, 601, 692, 704],
-        }],
+    let caller_sites = clone_callers
+        .iter()
+        .map(|row| row.site.id)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(
+        caller_sites, clone_sites,
+        "target-centered Router::clone callers should match the owner-scoped source oracle"
+    );
+    for caller in clone_callers {
+        assert_eq!(caller.status.status, CallStatusKind::Resolved);
+        assert_eq!(
+            caller.status.resolution,
+            Some(CallResolutionKind::LocalExact)
+        );
+        assert_eq!(caller.target.target_id, clone_target);
+        assert_eq!(caller.target.relation, CallRelationKind::Method);
+        assert_eq!(caller.target.source_kind, CallSiteKind::Method);
+        assert_eq!(caller.target.target_kind, CallTargetKind::Method);
+    }
+
+    let clone_incoming = db.expand_call_context(
+        CallContextSeed::Target(clone_target),
+        CallContextOptions {
+            include_outgoing_targets: false,
+            max_candidates: 64,
+            ..CallContextOptions::default()
+        },
     )?;
-    assert_targetless_method_rows(
-        &db,
-        "clone",
-        "TypedLocalBinding",
-        Some(&["app", "Router"]),
-        CallStatusKind::Unresolved,
-        1,
-    )?;
-    assert_targetless_method_line_fanout(
-        &db,
-        &CORPUS_AXUM_CALL_GRAPH,
-        "clone",
-        "TypedLocalBinding",
-        Some(&["app", "Router"]),
-        CallStatusKind::Unresolved,
-        &[SourceLineFanout {
-            file_suffix: "axum/src/routing/tests/mod.rs",
-            lines: &[660],
-        }],
-    )
+    for owner in clone_owners {
+        assert!(
+            clone_incoming.iter().any(|candidate| {
+                candidate.node_id == owner
+                    && candidate.relation == ploke_db::CallContextRelation::IncomingCaller
+                    && candidate.target_id == clone_target
+                    && candidate.distance == 1
+                    && clone_sites.contains(&candidate.call_site_id)
+            }),
+            "Router::clone target expansion should include owner {owner}: {clone_incoming:#?}"
+        );
+    }
+
+    Ok(())
 }
 
 #[test]

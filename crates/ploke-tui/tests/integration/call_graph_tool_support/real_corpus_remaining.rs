@@ -12,6 +12,7 @@ pub(crate) enum AxumRemainingTarget {
     FromRequestParts,
     FromRef,
     RouterNew,
+    RouterClone,
 }
 
 pub(crate) struct AxumRemainingToolFixture {
@@ -35,7 +36,7 @@ pub(crate) struct ExpectedRemainingCallSite {
 }
 
 impl AxumRemainingTarget {
-    pub(crate) const TOOL_REACHABLE_CASES: [Self; 10] = [
+    pub(crate) const TOOL_REACHABLE_CASES: [Self; 11] = [
         Self::CoreTryDowncast,
         Self::AxumTryDowncast,
         Self::PositionFirst,
@@ -46,6 +47,7 @@ impl AxumRemainingTarget {
         Self::FromRequestParts,
         Self::FromRef,
         Self::RouterNew,
+        Self::RouterClone,
     ];
 
     fn label(self) -> &'static str {
@@ -60,6 +62,7 @@ impl AxumRemainingTarget {
             Self::FromRequestParts => "axum-core FromRequestParts::from_request_parts",
             Self::FromRef => "axum-core FromRef::from_ref",
             Self::RouterNew => "axum Router::new",
+            Self::RouterClone => "axum Router::clone",
         }
     }
 
@@ -68,6 +71,7 @@ impl AxumRemainingTarget {
             Self::CoreTryDowncast | Self::AxumTryDowncast => "try_downcast",
             Self::PositionFirst => "First",
             Self::HandleErrorNew | Self::RouterNew => "new",
+            Self::RouterClone => "clone",
             Self::RequestExtExtract | Self::RequestPartsExtExtract => "extract_with_state",
             Self::FromRequest => "from_request",
             Self::FromRequestParts => "from_request_parts",
@@ -86,14 +90,15 @@ impl AxumRemainingTarget {
             | Self::HandleErrorNew
             | Self::RequestExtExtract
             | Self::RequestPartsExtExtract
-            | Self::RouterNew => None,
+            | Self::RouterNew
+            | Self::RouterClone => None,
         }
     }
 
     fn owner_type(self) -> Option<&'static str> {
         match self {
             Self::HandleErrorNew => Some("HandleError"),
-            Self::RouterNew => Some("Router"),
+            Self::RouterNew | Self::RouterClone => Some("Router"),
             Self::RequestExtExtract => Some("Request"),
             Self::RequestPartsExtExtract => Some("Parts"),
             Self::CoreTryDowncast
@@ -115,6 +120,7 @@ impl AxumRemainingTarget {
             | Self::FromRequest
             | Self::FromRequestParts
             | Self::FromRef
+            | Self::RouterClone
             | Self::RouterNew => "method",
         }
     }
@@ -131,6 +137,7 @@ impl AxumRemainingTarget {
             Self::FromRequestParts => 3,
             Self::FromRef => 2,
             Self::RouterNew => 144,
+            Self::RouterClone => 13,
         }
     }
 
@@ -184,6 +191,12 @@ impl AxumRemainingTarget {
             Self::RouterNew => {
                 inherent_method_target(db, "Router", "new", "axum/src/routing/mod.rs")
             }
+            Self::RouterClone => method_target_by_body_and_file(
+                db,
+                "clone",
+                "inner: Arc::clone(&self.inner)",
+                "axum/src/routing/mod.rs",
+            ),
         }
     }
 }
@@ -286,22 +299,26 @@ fn callee_for_site(site: ploke_db::CallSiteRow, label: &str) -> CallCalleeInfo {
             name: site
                 .method
                 .unwrap_or_else(|| panic!("{label} method caller should carry a method name")),
-            receiver: same_impl_receiver_info(site.receiver, label),
+            receiver: supported_receiver_info(site.receiver, label),
         },
         kind => panic!("{label} remaining supported caller should be path or method, got {kind:?}"),
     }
 }
 
-fn same_impl_receiver_info(
+fn supported_receiver_info(
     receiver: Option<ploke_db::CallReceiver>,
     label: &str,
 ) -> Option<CallReceiverInfo> {
     match receiver {
         Some(ploke_db::CallReceiver::SelfValue) => Some(CallReceiverInfo::SelfValue),
+        Some(ploke_db::CallReceiver::TypedLocalBinding { name, type_path }) => {
+            Some(CallReceiverInfo::TypedLocalBinding { name, type_path })
+        }
+        Some(ploke_db::CallReceiver::SelfField { path }) => {
+            Some(CallReceiverInfo::SelfField { path })
+        }
         other => {
-            panic!(
-                "{label} remaining supported method caller should use self receiver, got {other:?}"
-            )
+            panic!("{label} remaining supported method caller has unexpected receiver {other:?}")
         }
     }
 }
