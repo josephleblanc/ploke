@@ -192,16 +192,22 @@ async fn call_context_exact_reads_remaining_axum_supported_matrix_targets() -> R
         },
         ExactShapeCase {
             // axum/src/test_helpers/test_client.rs:19 defines
-            // TestClient::new. The current fixture resolves the nested
-            // `test_helpers::* -> pub use test_client::*` subset documented in
-            // the oracle matrix, while the remaining unexpanded import fanout
-            // stays targetless in the DB tests.
-            label: "axum TestClient::new nested-glob resolved subset",
-            target: resolved_path_target_count(&db, &["TestClient", "new"], 98, "TestClient::new")?,
+            // TestClient::new. The current fixture resolves nested
+            // `test_helpers::* -> pub use test_client::*` rows plus direct
+            // `test_helpers::TestClient` imports through the same public glob
+            // re-export. The remaining import fanout stays targetless in the
+            // DB tests.
+            label: "axum TestClient::new resolved re-export subset",
+            target: resolved_path_target_count(
+                &db,
+                &["TestClient", "new"],
+                105,
+                "TestClient::new",
+            )?,
             expected: vec![path_shape(
                 &["TestClient", "new"],
                 CallTargetKind::AssociatedFunction,
-                98,
+                105,
             )],
         },
     ];

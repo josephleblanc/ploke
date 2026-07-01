@@ -1372,3 +1372,11 @@ pub fn local_const_initializer_call_is_not_outer_call_site() -> i32 {
     const LOCAL_INITIALIZER_VALUE: i32 = assoc_const_value();
     LOCAL_INITIALIZER_VALUE
 }
+
+pub mod direct_reexport_assoc_scope {
+    use super::nested_glob_assoc_reexport::NestedGlobAssoc;
+
+    pub fn call_direct_reexported_type_assoc_make() -> NestedGlobAssoc {
+        NestedGlobAssoc::make()
+    }
+}

@@ -166,21 +166,22 @@ fn axum_real_target_test_client_new_high_fanout_is_documented_gap() -> Result<()
     //   626,643,668,685,700,717,738,748,775,798,815,846,905,952,967,
     //   984,1027,1047,1073,1164,1201}; plus the other file groups
     //   listed in the oracle matrix.
-    // Current DB contract: recursive `cfg(test)` inclusion and nested glob
-    // re-export traversal make 98 projected rows resolve to the gated local
-    // test helper target. The remaining 69 rows stay unsupported and
-    // targetless because their import evidence is still outside this exact
-    // glob-reexport path.
+    // Current DB contract: recursive `cfg(test)` inclusion, nested glob
+    // re-export traversal, and direct imports through the public
+    // `test_helpers` glob re-export make 105 projected rows resolve to the
+    // gated local test helper target. The remaining 62 rows stay unsupported
+    // and targetless because their import evidence is still outside these
+    // exact re-export paths.
     let target =
-        assert_resolved_path_target_count(&db, &["TestClient", "new"], 98, "TestClient::new")?;
+        assert_resolved_path_target_count(&db, &["TestClient", "new"], 105, "TestClient::new")?;
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        98,
+        105,
         "TestClient::new should expose the resolved real-corpus caller subset: {callers:#?}"
     );
     assert_sites_match_callers(&db, target, &callers, "TestClient::new resolved subset")?;
-    assert_targetless_path_rows(&db, &["TestClient", "new"], CallStatusKind::Unsupported, 69)?;
+    assert_targetless_path_rows(&db, &["TestClient", "new"], CallStatusKind::Unsupported, 62)?;
 
     // Matrix immediate candidate:
     //   axum/src/json.rs:237 imports `test_helpers::*`.
@@ -216,13 +217,7 @@ fn axum_real_target_test_client_new_high_fanout_is_documented_gap() -> Result<()
         &["TestClient", "new"],
         CallStatusKind::Unsupported,
         &[
-            (&["crate", "extension", "tests"], 1),
-            (&["crate", "extract", "connect_info", "tests"], 1),
-            (&["crate", "extract", "query", "tests"], 1),
             (&["crate", "extract", "request_parts", "tests"], 1),
-            (&["crate", "form", "tests"], 1),
-            (&["crate", "middleware", "map_request", "tests"], 2),
-            (&["crate", "middleware", "map_response", "tests"], 1),
             (&["crate", "routing", "tests", "fallback"], 25),
             (&["crate", "routing", "tests", "handle_error"], 5),
             (&["crate", "routing", "tests", "merge"], 16),
@@ -234,19 +229,14 @@ fn axum_real_target_test_client_new_high_fanout_is_documented_gap() -> Result<()
     //   projects 167 structural rows. The absent source rows are
     //   axum/src/extract/multipart.rs:{383,423,449},
     //   one routing/tests/mod.rs row, and one routing/tests/nest.rs row.
-    //   Every projected row is targetless, so traversal edge count is 0.
+    //   The remaining unsupported projected rows are targetless, so traversal
+    //   edge count is 0 for this subset.
     assert_path_file_fanout(
         &db,
         &["TestClient", "new"],
         CallStatusKind::Unsupported,
         &[
             ("axum-core/src/extract/request_parts.rs", 1),
-            ("axum/src/extension.rs", 1),
-            ("axum/src/extract/connect_info.rs", 1),
-            ("axum/src/extract/query.rs", 1),
-            ("axum/src/form.rs", 1),
-            ("axum/src/middleware/map_request.rs", 2),
-            ("axum/src/middleware/map_response.rs", 1),
             ("axum/src/routing/tests/fallback.rs", 25),
             ("axum/src/routing/tests/handle_error.rs", 5),
             ("axum/src/routing/tests/merge.rs", 16),
@@ -258,9 +248,9 @@ fn axum_real_target_test_client_new_high_fanout_is_documented_gap() -> Result<()
     //   2026-06-28_real-corpus-call-site-oracle-matrices.md
     //
     // These projected rows remain unsupported boundaries after the exact
-    // nested-glob subset above resolves. The three multipart rows at
-    // axum/src/extract/multipart.rs:{383,423,449} are still absent in the
-    // current fixture, as are the closure-body row at
+    // nested-glob and direct re-export-import subsets above resolve. The three
+    // multipart rows at axum/src/extract/multipart.rs:{383,423,449} are still
+    // absent in the current fixture, as are the closure-body row at
     // axum/src/routing/tests/mod.rs:1073 and the macro-template row at
     // axum/src/routing/tests/nest.rs:371.
     assert_targetless_path_line_fanout(
@@ -272,30 +262,6 @@ fn axum_real_target_test_client_new_high_fanout_is_documented_gap() -> Result<()
             SourceLineFanout {
                 file_suffix: "axum-core/src/extract/request_parts.rs",
                 lines: &[193],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/extension.rs",
-                lines: &[228],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/extract/connect_info.rs",
-                lines: &[386],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/extract/query.rs",
-                lines: &[158],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/form.rs",
-                lines: &[262],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/middleware/map_request.rs",
-                lines: &[412, 432],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/middleware/map_response.rs",
-                lines: &[357],
             },
             SourceLineFanout {
                 file_suffix: "axum/src/routing/tests/fallback.rs",
@@ -324,6 +290,51 @@ fn axum_real_target_test_client_new_high_fanout_is_documented_gap() -> Result<()
     )?;
 
     Ok(())
+}
+
+#[test]
+fn axum_real_target_test_client_new_direct_grouped_import_resolves() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix: axum/src/form.rs:262 calls `TestClient::new(app)`.
+    // Source chain:
+    //   axum/src/form.rs:136-140 imports
+    //   `crate::{ routing::{...}, test_helpers::TestClient, Router }`.
+    //   axum/src/test_helpers/mod.rs re-exports `test_client::TestClient`.
+    //   axum/src/test_helpers/test_client.rs:36 defines `TestClient::new`.
+    // Expected traversal: the grouped direct import should resolve this
+    // associated-function path in one local-exact edge.
+    let owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "form", "tests"],
+        "deserialize_error_status_codes",
+    )?;
+    let target = method_id_by_name_body_and_file_suffix(
+        &db,
+        "new",
+        "spawn_service(svc)",
+        "axum/src/test_helpers/test_client.rs",
+    )?;
+    let context = db.call_context_for_owner(owner)?;
+    let row = row_by_path(&context, &["TestClient", "new"]);
+
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::AssociatedFunction,
+        CallSiteKind::Path,
+        CallTargetKind::Method,
+    );
+    assert_one_edge_traversal(
+        &db,
+        TraversalExpectation {
+            label: "axum/src/form.rs:262 grouped-import TestClient::new",
+            owner,
+            target,
+            site_id: row.site.id,
+            expected_edge_count: 1,
+        },
+    )
 }
 
 #[test]

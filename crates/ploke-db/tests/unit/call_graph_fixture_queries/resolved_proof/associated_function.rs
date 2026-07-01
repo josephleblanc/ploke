@@ -77,6 +77,16 @@ fn fixture_projection_stores_real_associated_function_call_proof_facts() -> Resu
         nested_glob_reexported_make,
     ));
     cases.push(assoc_case(
+        "call_direct_reexported_type_assoc_make",
+        function_id_by_name_in_module(
+            &db,
+            &["crate", "direct_reexport_assoc_scope"],
+            "call_direct_reexported_type_assoc_make",
+        )?,
+        &["NestedGlobAssoc", "make"],
+        nested_glob_reexported_make,
+    ));
+    cases.push(assoc_case(
         "call_type_alias_assoc_make",
         function_id_by_name(&db, "call_type_alias_assoc_make")?,
         &["LocalAssocTypeAlias", "make"],

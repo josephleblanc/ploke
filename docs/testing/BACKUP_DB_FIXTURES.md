@@ -652,9 +652,9 @@ Expected searchable corpus embedding config:
   - `Router` `Default::default` reaches `Router::new` through a local-exact
     `Self::new()` associated-function edge
   - axum `TestClient::new` reaches the cfg-gated local test helper target for
-    the exact nested glob-re-export subset
-    (`test_helpers::* -> pub use test_client::*`), while remaining direct/other
-    import rows stay targetless
+    nested glob re-export rows and direct `test_helpers::TestClient` imports
+    through `test_helpers::* -> pub use test_client::*`, while remaining
+    other-import rows stay targetless
   - typed local `Router` receiver `.clone()` rows reach the local
     `impl<S> Clone for Router<S>` method through exact local external-trait impl
     receiver resolution

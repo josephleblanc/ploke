@@ -143,7 +143,7 @@ impl AxumRemainingTarget {
             Self::FromRef => 2,
             Self::RouterNew => 144,
             Self::RouterClone => 13,
-            Self::TestClientNew => 98,
+            Self::TestClientNew => 105,
         }
     }
 
@@ -206,7 +206,7 @@ impl AxumRemainingTarget {
             Self::TestClientNew => associated_path_target_by_resolved_rows(
                 db,
                 &["TestClient", "new"],
-                98,
+                105,
                 "axum/src/test_helpers/test_client.rs",
             ),
         }
