@@ -166,6 +166,10 @@ impl<'a> CallRelationResolver<'a> {
             super::type_resolution_v2::resolve_type_relations_after_tree(self.graph, self.tree)?;
 
         for call in self.graph.call_sites() {
+            if matches!(call.owner(), CallBodyOwnerId::Executable(_)) {
+                continue;
+            }
+
             match call {
                 CallNode::MethodCall(method_call) => {
                     self.resolve_method_call(
@@ -1242,9 +1246,10 @@ impl<'a> CallRelationResolver<'a> {
 
                 Ok(scopes)
             }
-            CallBodyOwnerId::Macro(_) | CallBodyOwnerId::Const(_) | CallBodyOwnerId::Static(_) => {
-                Ok(Vec::new())
-            }
+            CallBodyOwnerId::Macro(_)
+            | CallBodyOwnerId::Const(_)
+            | CallBodyOwnerId::Static(_)
+            | CallBodyOwnerId::Executable(_) => Ok(Vec::new()),
         }
     }
 
@@ -1472,9 +1477,10 @@ impl<'a> CallRelationResolver<'a> {
                             ))
                         })
                 }),
-            CallBodyOwnerId::Macro(_) | CallBodyOwnerId::Const(_) | CallBodyOwnerId::Static(_) => {
-                Ok(None)
-            }
+            CallBodyOwnerId::Macro(_)
+            | CallBodyOwnerId::Const(_)
+            | CallBodyOwnerId::Static(_)
+            | CallBodyOwnerId::Executable(_) => Ok(None),
         }
     }
 }

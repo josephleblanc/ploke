@@ -35,7 +35,10 @@ pub use internal::{
     VariantNodeId,
 };
 // --- call-site ids ---
-pub use internal::{DynamicCallSiteId, MacroCallSiteId, MethodCallSiteId, PathCallSiteId};
+pub use internal::{
+    ClosureBodyId, DynamicCallSiteId, ExecutableBodyId, ExecutableBodyKind, MacroCallSiteId,
+    MethodCallSiteId, PathCallSiteId,
+};
 // --- traits ---
 // Re-export marker traits (adjust list as needed)
 pub use internal::{AssociatedItemNodeIdTrait, PrimaryNodeIdTrait, SecondaryNodeIdTrait, TypedId};
@@ -74,8 +77,8 @@ pub(in crate::parser) use internal::{GenerateTypeId, GeneratesAnyNodeId};
     reason = "call-site extraction will use this parser-internal constructor"
 )]
 pub(in crate::parser) use internal::{
-    generate_dynamic_call_site_id, generate_macro_call_site_id, generate_method_call_site_id,
-    generate_path_call_site_id,
+    generate_closure_body_id, generate_dynamic_call_site_id, generate_macro_call_site_id,
+    generate_method_call_site_id, generate_path_call_site_id,
 };
 
 // Tests

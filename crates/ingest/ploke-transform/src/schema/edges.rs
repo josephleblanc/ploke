@@ -492,6 +492,9 @@ fn call_body_owner_to_cozo(owner: CallBodyOwnerId) -> cozo::DataValue {
         CallBodyOwnerId::Method(id) => id.into(),
         CallBodyOwnerId::Const(id) => id.into(),
         CallBodyOwnerId::Static(id) => id.into(),
+        CallBodyOwnerId::Executable(_) => {
+            unreachable!("executable-local call owners are not projected without owner metadata")
+        }
     }
 }
 
@@ -502,6 +505,9 @@ fn call_body_owner_kind(owner: CallBodyOwnerId) -> &'static str {
         CallBodyOwnerId::Method(_) => "Method",
         CallBodyOwnerId::Const(_) => "Const",
         CallBodyOwnerId::Static(_) => "Static",
+        CallBodyOwnerId::Executable(_) => {
+            unreachable!("executable-local call owners are not projected without owner metadata")
+        }
     }
 }
 

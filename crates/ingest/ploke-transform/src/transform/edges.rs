@@ -79,7 +79,7 @@
 //
 
 use cozo::{Db, MemStorage};
-use syn_parser::parser::nodes::CallNode;
+use syn_parser::parser::nodes::{CallBodyOwnerId, CallNode};
 use syn_parser::parser::relations::{CallSiteRelation, SyntacticRelation};
 use syn_parser::resolve::call_resolution::CallResolutionReport;
 use syn_parser::resolve::type_resolution_v2::TypeRelationReport;
@@ -125,6 +125,9 @@ pub(super) fn transform_call_sites(
     call_sites: &[CallNode],
 ) -> Result<(), TransformError> {
     for call_site in call_sites {
+        if call_body_owner_projection_pending(call_site.owner()) {
+            continue;
+        }
         CallSiteSchema::insert_call_site(db, call_site)?;
     }
     Ok(())
@@ -137,6 +140,9 @@ pub(super) fn transform_call_site_relations(
 ) -> Result<(), TransformError> {
     let schema = &CallSiteRelationSchema::SCHEMA;
     for relation in relations {
+        if call_site_relation_projection_pending(relation) {
+            continue;
+        }
         schema.insert_relation(db, relation)?;
     }
     Ok(())
@@ -160,6 +166,18 @@ pub(super) fn transform_call_resolution_report(
     Ok(())
 }
 // do stuff
+
+fn call_body_owner_projection_pending(owner: CallBodyOwnerId) -> bool {
+    matches!(owner, CallBodyOwnerId::Executable(_))
+}
+
+fn call_site_relation_projection_pending(relation: &CallSiteRelation) -> bool {
+    match relation {
+        CallSiteRelation::BodyContainsCall { source, .. } => {
+            call_body_owner_projection_pending(*source)
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {

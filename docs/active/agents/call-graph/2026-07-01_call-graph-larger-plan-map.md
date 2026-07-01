@@ -152,7 +152,7 @@ For the current state, that should be:
 ```text
 Root plan: .hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md
 Current phase: binding/type-aware semantic resolution
-Current completed bucket: executable-local const initializer boundary
-Completed proof: fixture-backed local const initializer calls are not attributed to the enclosing function owner in parser extraction or DB owner context; top-level/associated initializer owners remain covered separately
-Next phase if this bucket is done: return to the coverage matrix and select the next real-corpus DB query or downstream usage-query gap
+Current completed bucket: parser-side closure body owner facts
+Completed proof: fixture-backed ordinary and move closure body calls are owned by `CallBodyOwnerId::Executable(ClosureBodyId)` in parser facts and are not attributed to the enclosing function owner; transform projection remains fail-closed until DB owner metadata exists
+Next phase if this bucket is done: either design/persist executable owner metadata as the next explicit schema slice, or return to the coverage matrix and select the next DB/RAG/TUI usage-query gap before adding more parser breadth
 ```

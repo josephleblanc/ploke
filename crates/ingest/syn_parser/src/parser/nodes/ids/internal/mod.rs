@@ -218,12 +218,12 @@ use std::error::Error;
 use std::fmt::Display;
 
 pub use call_ids::{
-    AnyCallSiteId, CallBodyOwnerId, CallSiteKind, DynamicCallSiteId, MacroCallSiteId,
-    MethodCallSiteId, PathCallSiteId,
+    AnyCallSiteId, CallBodyOwnerId, CallSiteKind, ClosureBodyId, DynamicCallSiteId,
+    ExecutableBodyId, ExecutableBodyKind, MacroCallSiteId, MethodCallSiteId, PathCallSiteId,
 };
 pub(in crate::parser) use call_ids::{
-    generate_dynamic_call_site_id, generate_macro_call_site_id, generate_method_call_site_id,
-    generate_path_call_site_id,
+    generate_closure_body_id, generate_dynamic_call_site_id, generate_macro_call_site_id,
+    generate_method_call_site_id, generate_path_call_site_id,
 };
 
 pub use type_families::{

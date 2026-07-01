@@ -112,6 +112,11 @@ impl ParsedCodeGraph {
                     .chain(self.traits().iter().flat_map(|tr| tr.methods.iter()))
                     .map(|method| CallBodyOwnerId::Method(method.id)),
             )
+            .chain(
+                self.executable_bodies()
+                    .iter()
+                    .map(|body| CallBodyOwnerId::Executable(body.id)),
+            )
             .collect()
     }
 
@@ -342,6 +347,9 @@ impl ParsedCodeGraph {
         self.graph
             .call_site_relations
             .append(&mut other.graph.call_site_relations);
+        self.graph
+            .executable_bodies
+            .append(&mut other.graph.executable_bodies);
         self.graph.modules.append(&mut other.graph.modules);
         self.graph.consts.append(&mut other.graph.consts); // Use consts
         self.graph.statics.append(&mut other.graph.statics); // Use statics
@@ -699,6 +707,11 @@ impl ParsedCodeGraph {
             .chain(self.traits().iter().flat_map(|tr| tr.methods.iter()))
             .count();
         prune_counts.methods = methods_count_pre - methods_count_post;
+
+        let live_parents = self.live_call_owners();
+        self.graph
+            .executable_bodies
+            .retain(|body| live_parents.contains(&body.parent));
 
         let live_call_owners = self.live_call_owners();
         self.call_sites_mut()
@@ -1064,6 +1077,11 @@ impl ParsedCodeGraph {
         self.graph.macros.retain(|n| set.contains(&n.any_id()));
         self.graph.statics.retain(|n| set.contains(&n.any_id()));
 
+        let live_parents = self.live_call_owners();
+        self.graph
+            .executable_bodies
+            .retain(|body| live_parents.contains(&body.parent));
+
         let live_call_owners = self.live_call_owners();
         self.graph
             .call_sites
@@ -1112,6 +1130,10 @@ impl GraphAccess for ParsedCodeGraph {
 
     fn call_site_relations(&self) -> &[CallSiteRelation] {
         &self.graph.call_site_relations
+    }
+
+    fn executable_bodies(&self) -> &[ExecutableBodyNode] {
+        &self.graph.executable_bodies
     }
 
     fn modules(&self) -> &[ModuleNode] {
@@ -1168,6 +1190,10 @@ impl GraphAccess for ParsedCodeGraph {
 
     fn call_site_relations_mut(&mut self) -> &mut Vec<CallSiteRelation> {
         &mut self.graph.call_site_relations
+    }
+
+    fn executable_bodies_mut(&mut self) -> &mut Vec<ExecutableBodyNode> {
+        &mut self.graph.executable_bodies
     }
 
     fn modules_mut(&mut self) -> &mut Vec<ModuleNode> {

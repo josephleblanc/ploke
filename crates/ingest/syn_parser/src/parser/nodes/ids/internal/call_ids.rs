@@ -187,6 +187,152 @@ define_call_site_id!(
     MacroCallSiteId
 );
 
+/// Structural class for a parser-owned executable-local body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub enum ExecutableBodyKind {
+    /// A closure body, such as `|| local_target()`.
+    Closure,
+}
+
+impl ExecutableBodyKind {
+    #[inline]
+    pub(in crate::parser) fn tag(self) -> &'static str {
+        match self {
+            Self::Closure => "closure",
+        }
+    }
+}
+
+impl Display for ExecutableBodyKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.tag())
+    }
+}
+
+/// Shared bounds and base-ID access for executable-local body IDs.
+pub(in crate::parser) trait ExecutableBodyTypedId: AnyTypedId {
+    fn base_id(self) -> NodeId;
+
+    #[inline]
+    fn uuid(self) -> Uuid {
+        self.base_id().uuid()
+    }
+}
+
+macro_rules! define_executable_body_id {
+    ($(#[$outer:meta])* $Name:ident) => {
+        $(#[$outer])*
+        #[derive(
+            Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord,
+        )]
+        pub struct $Name(NodeId);
+
+        impl $Name {
+            #[inline]
+            pub(in crate::parser) fn create(id: NodeId) -> Self {
+                Self(id)
+            }
+        }
+
+        impl ExecutableBodyTypedId for $Name {
+            #[inline]
+            fn base_id(self) -> NodeId {
+                self.0
+            }
+        }
+
+        impl IdTrait for $Name {
+            #[inline]
+            fn uuid(&self) -> Uuid {
+                self.0.uuid()
+            }
+
+            #[inline]
+            fn is_resolved(&self) -> bool {
+                self.0.is_resolved()
+            }
+
+            #[inline]
+            fn is_synthetic(&self) -> bool {
+                self.0.is_synthetic()
+            }
+        }
+
+        impl AnyTypedId for $Name {}
+
+        impl ToCozoUuid for $Name {
+            #[inline]
+            fn to_cozo_uuid(self) -> DataValue {
+                DataValue::Uuid(UuidWrapper(self.uuid()))
+            }
+        }
+
+        impl Display for $Name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "{}({})", stringify!($Name), self.0)
+            }
+        }
+    };
+}
+
+define_executable_body_id!(
+    /// Typed ID for a closure body that can own nested call sites.
+    ClosureBodyId
+);
+
+/// Finite union of parser-owned executable-local body IDs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub enum ExecutableBodyId {
+    /// Closure body owner.
+    Closure(ClosureBodyId),
+}
+
+impl ExecutableBodyId {
+    #[inline]
+    pub fn uuid(self) -> Uuid {
+        self.base_id().uuid()
+    }
+
+    #[inline]
+    pub fn kind(self) -> ExecutableBodyKind {
+        match self {
+            Self::Closure(_) => ExecutableBodyKind::Closure,
+        }
+    }
+
+    #[inline]
+    pub(in crate::parser) fn base_id(self) -> NodeId {
+        match self {
+            Self::Closure(id) => id.base_id(),
+        }
+    }
+}
+
+impl AnyTypedId for ExecutableBodyId {}
+impl CategoricalTypedId for ExecutableBodyId {}
+
+impl ToCozoUuid for ExecutableBodyId {
+    #[inline]
+    fn to_cozo_uuid(self) -> DataValue {
+        DataValue::Uuid(UuidWrapper(self.uuid()))
+    }
+}
+
+impl Display for ExecutableBodyId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match *self {
+            ExecutableBodyId::Closure(id) => write!(f, "ExecutableBodyId::Closure({})", id),
+        }
+    }
+}
+
+impl From<ClosureBodyId> for ExecutableBodyId {
+    #[inline]
+    fn from(id: ClosureBodyId) -> Self {
+        ExecutableBodyId::Closure(id)
+    }
+}
+
 /// Item body or initializer expression that can own call-site expressions.
 ///
 /// This endpoint family stays in the node universe because owners are real code
@@ -207,6 +353,8 @@ pub enum CallBodyOwnerId {
     Const(ConstNodeId),
     /// A static item initializer expression, identified by its typed node ID.
     Static(StaticNodeId),
+    /// An executable-local body, such as a closure body.
+    Executable(ExecutableBodyId),
 }
 
 impl CallBodyOwnerId {
@@ -223,6 +371,7 @@ impl CallBodyOwnerId {
             CallBodyOwnerId::Method(id) => id.base_id(),
             CallBodyOwnerId::Const(id) => id.base_id(),
             CallBodyOwnerId::Static(id) => id.base_id(),
+            CallBodyOwnerId::Executable(id) => id.base_id(),
         }
     }
 }
@@ -235,6 +384,9 @@ impl Display for CallBodyOwnerId {
             CallBodyOwnerId::Method(id) => write!(f, "CallBodyOwnerId::Method({})", id),
             CallBodyOwnerId::Const(id) => write!(f, "CallBodyOwnerId::Const({})", id),
             CallBodyOwnerId::Static(id) => write!(f, "CallBodyOwnerId::Static({})", id),
+            CallBodyOwnerId::Executable(id) => {
+                write!(f, "CallBodyOwnerId::Executable({})", id)
+            }
         }
     }
 }
@@ -271,6 +423,13 @@ impl From<StaticNodeId> for CallBodyOwnerId {
     #[inline]
     fn from(id: StaticNodeId) -> Self {
         CallBodyOwnerId::Static(id)
+    }
+}
+
+impl From<ExecutableBodyId> for CallBodyOwnerId {
+    #[inline]
+    fn from(id: ExecutableBodyId) -> Self {
+        CallBodyOwnerId::Executable(id)
     }
 }
 
@@ -389,6 +548,29 @@ pub(super) fn generate_call_id(
         synthetic_data.extend_from_slice(cfg.as_bytes());
     }
     CallId::Synthetic(Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &synthetic_data))
+}
+
+/// Generates deterministic parser-local identity for a closure body owner.
+#[inline]
+pub(in crate::parser) fn generate_closure_body_id(
+    parent: CallBodyOwnerId,
+    span: (usize, usize),
+    cfgs: &[String],
+) -> ClosureBodyId {
+    let mut synthetic_data = Vec::new();
+    synthetic_data.extend_from_slice(b"syn_parser.executable_body.v1");
+    synthetic_data.extend_from_slice(parent.base_id().uuid().as_bytes());
+    synthetic_data.extend_from_slice(ExecutableBodyKind::Closure.tag().as_bytes());
+    synthetic_data.extend_from_slice(&span.0.to_le_bytes());
+    synthetic_data.extend_from_slice(&span.1.to_le_bytes());
+    for cfg in cfgs {
+        synthetic_data.push(0);
+        synthetic_data.extend_from_slice(cfg.as_bytes());
+    }
+    ClosureBodyId::create(NodeId::Synthetic(Uuid::new_v5(
+        &PROJECT_NAMESPACE_UUID,
+        &synthetic_data,
+    )))
 }
 
 /// Parser-internal constructor for path-call site IDs.

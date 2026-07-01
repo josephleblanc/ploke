@@ -173,13 +173,17 @@ impl<'a> CodeVisitor<'a> {
         cfgs: &[String],
         receiver_names: &[String],
     ) {
-        let (mut calls, mut relations) =
+        let (mut calls, mut relations, mut executable_bodies) =
             extract_body_call_sites(owner, block, cfgs, receiver_names);
         self.state.code_graph.call_sites.append(&mut calls);
         self.state
             .code_graph
             .call_site_relations
             .append(&mut relations);
+        self.state
+            .code_graph
+            .executable_bodies
+            .append(&mut executable_bodies);
     }
 
     fn record_expr_call_sites(
@@ -188,12 +192,17 @@ impl<'a> CodeVisitor<'a> {
         expr: &syn::Expr,
         cfgs: &[String],
     ) {
-        let (mut calls, mut relations) = extract_expr_call_sites(owner, expr, cfgs);
+        let (mut calls, mut relations, mut executable_bodies) =
+            extract_expr_call_sites(owner, expr, cfgs);
         self.state.code_graph.call_sites.append(&mut calls);
         self.state
             .code_graph
             .call_site_relations
             .append(&mut relations);
+        self.state
+            .code_graph
+            .executable_bodies
+            .append(&mut executable_bodies);
     }
 
     fn trait_associated_const_node(

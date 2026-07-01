@@ -15,7 +15,11 @@ use crate::common::{
 use crate::paranoid_call_site_test;
 use ploke_core::ItemKind;
 use syn_parser::parser::graph::GraphAccess;
-use syn_parser::parser::nodes::{FunctionNodeId, StructNodeId, TypeDefNode, VariantNodeId};
+use syn_parser::parser::nodes::{
+    CallBodyOwnerId, CallNode, ExecutableBodyKind, FunctionNodeId, StructNodeId, TypeDefNode,
+    VariantNodeId,
+};
+use syn_parser::parser::relations::CallSiteRelation;
 
 const IMPLS_RS: &str = "src/impls.rs";
 const CONST_STATIC_RS: &str = "src/const_static.rs";
@@ -4245,6 +4249,12 @@ fn fixture_call_graph_closure_body_call_is_not_recorded_as_outer_call_site() {
     );
 
     assert_no_call_site_owned_at_span(&graph, &owner, CLOSURE_BODY_LOCAL_TARGET_CALL_SPAN);
+    assert_closure_body_path_call_owned_at_span(
+        &graph,
+        &owner,
+        CLOSURE_BODY_LOCAL_TARGET_CALL_SPAN,
+        &["local_target"],
+    );
 }
 
 #[test]
@@ -4257,6 +4267,12 @@ fn fixture_call_graph_move_closure_body_call_is_not_recorded_as_outer_call_site(
     );
 
     assert_no_call_site_owned_at_span(&graph, &owner, MOVE_CLOSURE_BODY_LOCAL_TARGET_CALL_SPAN);
+    assert_closure_body_path_call_owned_at_span(
+        &graph,
+        &owner,
+        MOVE_CLOSURE_BODY_LOCAL_TARGET_CALL_SPAN,
+        &["local_target"],
+    );
 }
 
 #[test]
@@ -4313,6 +4329,68 @@ fn assert_no_call_site_owned_at_span(
         matches.is_empty(),
         "expected no call site owned by {} at {span:?}, found {matches:#?}",
         owner.label
+    );
+}
+
+fn assert_closure_body_path_call_owned_at_span(
+    graph: &impl GraphAccess,
+    parent: &CallOwnerContext,
+    span: (usize, usize),
+    path: &[&str],
+) {
+    let bodies = graph
+        .executable_bodies()
+        .iter()
+        .filter(|body| {
+            body.parent == parent.id
+                && body.kind == ExecutableBodyKind::Closure
+                && body.span.0 <= span.0
+                && span.1 <= body.span.1
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        bodies.len(),
+        1,
+        "expected one closure body owned by {} containing {span:?}, found {bodies:#?}",
+        parent.label
+    );
+
+    let owner = CallBodyOwnerId::Executable(bodies[0].id);
+    let calls = graph
+        .call_sites()
+        .iter()
+        .filter(|call| call.owner() == owner && call.span() == span)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        calls.len(),
+        1,
+        "expected one closure-owned call site at {span:?}, found {calls:#?}"
+    );
+
+    let CallNode::PathCall(call) = calls[0] else {
+        panic!(
+            "expected closure-owned path call at {span:?}, found {:#?}",
+            calls[0]
+        );
+    };
+    let expected_path = path.iter().copied().map(String::from).collect::<Vec<_>>();
+    assert_eq!(call.path, expected_path);
+
+    let relations = graph
+        .call_site_relations()
+        .iter()
+        .filter(|relation| {
+            matches!(
+                relation,
+                CallSiteRelation::BodyContainsCall { source, target }
+                    if *source == owner && *target == calls[0].id()
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        relations.len(),
+        1,
+        "expected one closure BodyContainsCall relation for {span:?}, found {relations:#?}"
     );
 }
 

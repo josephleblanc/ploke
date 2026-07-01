@@ -29,6 +29,19 @@ Done-for-now threshold:
   calls as traversable context.
 - Keep targetless unsupported rows visible until exact target proof exists.
 
+Current slice status:
+
+- Parser-side closure body owners now exist as typed executable-body facts:
+  `ClosureBodyId` inside `ExecutableBodyId`, carried by
+  `CallBodyOwnerId::Executable`.
+- `CodeGraph` stores `ExecutableBodyNode` rows with parent owner, span, cfgs,
+  and structural label.
+- Closure bodies are visited under their own executable owner, so
+  `|| local_target()` and `(move || local_target())()` produce inner
+  closure-owned `PathCall` rows without fabricating an outer-owner call row.
+- Resolver and transform projection deliberately skip executable-owned call
+  sites until DB owner metadata exists.
+
 ## Existing Pattern Constraints
 
 The existing call graph follows the typed endpoint-family style used by the
@@ -53,20 +66,22 @@ flatten the graph. Reusing `AnyNodeId` would weaken the endpoint family.
 
 Already covered:
 
-- Parser extraction intentionally does not descend into `ExprClosure` or
-  `ExprAsync`.
+- Parser extraction descends into ordinary closure bodies under typed
+  executable-local owners.
+- Parser extraction intentionally does not descend into `ExprAsync`.
 - Parser extraction intentionally skips function-local const initializers as
   ownerless for now.
-- DB tests assert closure/async/local-const body calls do not leak into the
-  enclosing owner.
+- Parser and DB tests assert closure/async/local-const body calls do not leak
+  into the enclosing owner.
 - Real-corpus axum tests document closure-body and async-block rows as absent
   until nested owners exist.
 
 Current gap:
 
-- There is no stable nested executable owner identity.
-- There is no relation that says a nested executable owner is contained by a
-  parent function/method/macro/const/static owner.
+- There is a parser-side closure owner identity, but no persisted owner
+  metadata relation yet.
+- Async blocks, async closures, and function-local executable items still do
+  not have nested executable owner records.
 - There is no DB metadata surface for source file, span, parent owner, or owner
   kind for nested executable bodies.
 
@@ -120,20 +135,26 @@ Recommended first code slice:
 
 1. Add `ClosureBodyId` and `ExecutableBodyId` typed wrappers using the same
    call-site/type-family style, backed by a new stable base identity if needed.
+   Status: done for parser-side closure owners.
 2. Add a parser-side closure owner record with parent owner, span, cfgs, and
-   body call extraction.
+   body call extraction. Status: done for ordinary closure bodies.
 3. Add a fixture-backed closure body:
    `let closure = || local_target(); closure()`.
+   Status: covered by `fixture_call_graph`.
 4. Assert parser facts:
    - the outer function owns the dynamic `closure()` call;
    - the closure owner owns the inner `local_target()` path call;
    - no outer `local_target()` row is fabricated.
-5. Project the closure owner relation and DB rows.
+   Status: parser assertions exist for ordinary and `move` closure bodies.
+5. Project the closure owner relation and DB rows. Status: future; transform
+   skips executable-owned rows until owner metadata exists.
 6. Assert DB facts:
    - `call_context_for_owner(outer)` still excludes the inner path call;
    - `call_context_for_owner(closure_owner)` includes the inner path call;
    - target-centered callers for `local_target` include the closure owner only
      when the DB owner metadata can describe that owner.
+   Status: future; current DB coverage remains the outer-owner exclusion
+   contract.
 
 Do not add RAG/TUI coverage until the DB context row has a stable nested-owner
 metadata contract.

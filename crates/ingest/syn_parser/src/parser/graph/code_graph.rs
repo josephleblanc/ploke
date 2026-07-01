@@ -5,8 +5,8 @@ use crate::error::SynParserError;
 use crate::parser::{
     // Updated node types
     nodes::{
-        CallNode, ConstNode, FunctionNode, ImplNode, ImportNode, MacroNode, ModuleNode, StaticNode,
-        TraitNode, TypeDefNode, UnresolvedNode,
+        CallNode, ConstNode, ExecutableBodyNode, FunctionNode, ImplNode, ImportNode, MacroNode,
+        ModuleNode, StaticNode, TraitNode, TypeDefNode, UnresolvedNode,
     },
     relations::{CallSiteRelation, SyntacticRelation}, // Use new relation enum
     types::TypeNode,
@@ -36,6 +36,9 @@ pub struct CodeGraph {
     // Relations between function-like bodies and call-site records
     #[serde(default)]
     pub call_site_relations: Vec<CallSiteRelation>,
+    // Parser-owned executable-local body records.
+    #[serde(default)]
+    pub executable_bodies: Vec<ExecutableBodyNode>,
     // Modules defined in the code
     pub modules: Vec<ModuleNode>,
     // Constants defined in the code
@@ -81,6 +84,10 @@ impl GraphAccess for CodeGraph {
 
     fn call_site_relations(&self) -> &[CallSiteRelation] {
         &self.call_site_relations
+    }
+
+    fn executable_bodies(&self) -> &[ExecutableBodyNode] {
+        &self.executable_bodies
     }
 
     fn modules(&self) -> &[ModuleNode] {
@@ -141,6 +148,10 @@ impl GraphAccess for CodeGraph {
         &mut self.call_site_relations
     }
 
+    fn executable_bodies_mut(&mut self) -> &mut Vec<ExecutableBodyNode> {
+        &mut self.executable_bodies
+    }
+
     fn modules_mut(&mut self) -> &mut Vec<ModuleNode> {
         &mut self.modules
     }
@@ -194,6 +205,7 @@ impl CodeGraph {
         self.call_sites.append(&mut other.call_sites);
         self.call_site_relations
             .append(&mut other.call_site_relations);
+        self.executable_bodies.append(&mut other.executable_bodies);
         self.modules.append(&mut other.modules);
         self.consts.append(&mut other.consts); // Added
         self.statics.append(&mut other.statics); // Added

@@ -626,7 +626,7 @@ This section maps the exhaustive rows below to concrete fixtures we can use. Pre
 | Function pointer and `Fn` trait calls beyond exact initializer-path aliases and fail-closed generic/boxed/opaque binding coverage | P26/P27/D10-D13 | Add remaining nested/member dynamic callee fixtures and broader Fn-flow forms; closure-binding cast/deref and field/index guardrails are green. |
 | Raw identifier calls/methods | P28/M24 | Add if not found in `fixture_edge_cases`. |
 | Ambiguous trait methods | M21 | Covered by `fixture_call_graph::call_ambiguous_trait_method`; fail-closed resolver coverage is green. |
-| Closure body ownership | owner matrix closure | Add after closure owner/nesting design. |
+| Closure body ownership | owner matrix closure | Parser-side ordinary and `move` closure owners are partial; DB owner metadata remains future. |
 
 ## Body-owner coverage matrix
 
@@ -641,7 +641,7 @@ This section maps the exhaustive rows below to concrete fixtures we can use. Pre
 | Associated const initializer | `impl T { const X: U = f(); }` | yes | Calls owned by the associated const's `CallBodyOwnerId::Const` | Add more call-shape rows beyond the current path-call fixture. |
 | Function-local const initializer | `fn f() { const X: i32 = g(); }` | explicit extraction boundary | Inner calls are not attributed to the enclosing function owner | Needs executable-scope local item owner design; see ADR-024. |
 | Enum discriminant | `A = f()` if const-call legal | no | Future const-expression owner | Need legality-focused fixture. |
-| Closure body | `let c = || f();` | explicit extraction boundary | Inner calls are not attributed to the enclosing owner | Needs closure ID design. |
+| Closure body | `let c = || f();` | parser-side partial | Inner calls are owned by `CallBodyOwnerId::Executable(ClosureBodyId)` and are not attributed to the enclosing owner | Needs persisted executable owner metadata before DB/RAG/TUI traversal. |
 | Async block/body | `async { f().await }` | explicit extraction boundary | Inner calls are not attributed to the enclosing owner | Also `.await` effect rows. |
 | Macro-expanded body | `macro_rules! m { () => { f() } }` | no expansion | Record invocation only | Rustc/RA backend phase. |
 | Build script/proc macro generated code | `build.rs` / proc macro output | no | Detached process/backend phase | Formal sequencing docs. |
@@ -739,7 +739,7 @@ This section maps the exhaustive rows below to concrete fixtures we can use. Pre
 |---|---|---|---|---|
 | D01 | `(f)()` | `fixture_call_graph::{call_parenthesized_local_target, call_parenthesized_function_item_binding}` | `DynamicCall` | `Resolved(LocalExact)` when the parenthesized callee path is proven to be a local function or an initialized binding whose initializer path resolves to one local function; opaque visible bindings remain unsupported |
 | D02 | `(|| 1)()` | `fixture_call_graph::dynamic_calls` | `DynamicCall` | closure literals are structurally visible and remain `Unsupported`, no edge until closure target modeling exists |
-| D03 | `(move || f())()` | `fixture_call_graph::call_move_closure_literal_with_body_call` | `DynamicCall`; nested closure body calls are not attributed to the enclosing owner | outer call is `Unsupported`, no edge; closure-body ownership remains future |
+| D03 | `(move || f())()` | `fixture_call_graph::call_move_closure_literal_with_body_call` | Outer expression remains `DynamicCall`; nested closure body path calls are owned by `CallBodyOwnerId::Executable(ClosureBodyId)` and are not attributed to the enclosing owner | outer call is `Unsupported`, no edge; closure-body target invocation remains future |
 | D04 | `make_fn()()` | `fixture_call_graph::call_returned_function` | inner `PathCall`, outer `DynamicCall` | inner resolved if local function, outer unsupported |
 | D05 | `(if cond { f } else { g })()` | `fixture_call_graph::{call_if_same_function_item, call_if_ambiguous_function_item, call_if_closure_branch, call_if_function_pointer_param_branch, call_if_nested_branch_expression}` | `DynamicCall` with `IfBranchPaths` for unshadowed item-path branch leaves, including nested branch expressions; opaque or non-path branches remain plain dynamic calls | `Resolved(LocalExact)` when all branch paths prove the same local function; `Ambiguous` with no edge when branch paths prove different local functions; opaque/non-path branches remain unsupported |
 | D06 | `(match x { A => f, B => g })()` | `fixture_call_graph::{call_match_same_function_item, call_match_ambiguous_function_item, call_match_guarded_function_item, call_match_closure_arm, call_match_function_pointer_param_arm, call_match_nested_arm_expression}` | `DynamicCall` with `MatchArmPaths` for unshadowed item-path arm leaves, including nested and guarded arm expressions; opaque or non-path arms remain plain dynamic calls | `Resolved(LocalExact)` when all arm paths prove the same local function; `Ambiguous` with no edge when arm paths prove different local functions; opaque/non-path arms remain unsupported |

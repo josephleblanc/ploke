@@ -8,8 +8,9 @@ use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
 
 use crate::parser::nodes::{
-    CallBodyOwnerId, CallNode, DynamicCallCallee, DynamicCallNode, MacroCallNode, MethodCallNode,
-    MethodCallReceiver, PathCallCallee, PathCallNode, generate_dynamic_call_site_id,
+    CallBodyOwnerId, CallNode, DynamicCallCallee, DynamicCallNode, ExecutableBodyId,
+    ExecutableBodyNode, MacroCallNode, MethodCallNode, MethodCallReceiver, PathCallCallee,
+    PathCallNode, generate_closure_body_id, generate_dynamic_call_site_id,
     generate_macro_call_site_id, generate_method_call_site_id, generate_path_call_site_id,
 };
 use crate::parser::relations::CallSiteRelation;
@@ -24,7 +25,11 @@ pub(super) fn extract_body_call_sites(
     block: &syn::Block,
     cfgs: &[String],
     receiver_names: &[String],
-) -> (Vec<CallNode>, Vec<CallSiteRelation>) {
+) -> (
+    Vec<CallNode>,
+    Vec<CallSiteRelation>,
+    Vec<ExecutableBodyNode>,
+) {
     let mut visitor = BodyCallVisitor {
         owner,
         cfgs,
@@ -32,9 +37,10 @@ pub(super) fn extract_body_call_sites(
         local_scopes: Vec::new(),
         calls: Vec::new(),
         relations: Vec::new(),
+        executable_bodies: Vec::new(),
     };
     visitor.visit_block(block);
-    (visitor.calls, visitor.relations)
+    (visitor.calls, visitor.relations, visitor.executable_bodies)
 }
 
 /// Extracts structural call-site facts from one item initializer expression.
@@ -42,7 +48,11 @@ pub(super) fn extract_expr_call_sites(
     owner: CallBodyOwnerId,
     expr: &syn::Expr,
     cfgs: &[String],
-) -> (Vec<CallNode>, Vec<CallSiteRelation>) {
+) -> (
+    Vec<CallNode>,
+    Vec<CallSiteRelation>,
+    Vec<ExecutableBodyNode>,
+) {
     let mut visitor = BodyCallVisitor {
         owner,
         cfgs,
@@ -50,9 +60,10 @@ pub(super) fn extract_expr_call_sites(
         local_scopes: Vec::new(),
         calls: Vec::new(),
         relations: Vec::new(),
+        executable_bodies: Vec::new(),
     };
     visitor.visit_expr(expr);
-    (visitor.calls, visitor.relations)
+    (visitor.calls, visitor.relations, visitor.executable_bodies)
 }
 
 struct BodyCallVisitor<'a> {
@@ -62,6 +73,7 @@ struct BodyCallVisitor<'a> {
     local_scopes: Vec<Vec<LocalBindingProof>>,
     calls: Vec<CallNode>,
     relations: Vec<CallSiteRelation>,
+    executable_bodies: Vec<ExecutableBodyNode>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -285,7 +297,35 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
     // initializer calls into the enclosing body owner.
     fn visit_item_const(&mut self, _item_const: &'ast syn::ItemConst) {}
 
-    fn visit_expr_closure(&mut self, _closure: &'ast syn::ExprClosure) {}
+    fn visit_expr_closure(&mut self, closure: &'ast syn::ExprClosure) {
+        let byte_range = closure.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
+        let closure_id = generate_closure_body_id(self.owner, span, self.cfgs);
+        let owner = CallBodyOwnerId::Executable(ExecutableBodyId::Closure(closure_id));
+        self.executable_bodies.push(ExecutableBodyNode::new(
+            closure_id.into(),
+            self.owner,
+            span,
+            self.cfgs.to_vec(),
+            Some("closure".to_string()),
+        ));
+
+        let params = closure_param_names(closure);
+        let mut visitor = BodyCallVisitor {
+            owner,
+            cfgs: self.cfgs,
+            param_names: &params,
+            local_scopes: Vec::new(),
+            calls: Vec::new(),
+            relations: Vec::new(),
+            executable_bodies: Vec::new(),
+        };
+        visitor.visit_expr(closure.body.as_ref());
+        self.calls.append(&mut visitor.calls);
+        self.relations.append(&mut visitor.relations);
+        self.executable_bodies
+            .append(&mut visitor.executable_bodies);
+    }
 
     fn visit_expr_async(&mut self, _async_block: &'ast syn::ExprAsync) {}
 }
@@ -1600,6 +1640,10 @@ fn pat_ident_name(pat: &syn::Pat) -> Option<String> {
         syn::Pat::Ident(ident) => Some(ident.ident.to_string()),
         _ => None,
     }
+}
+
+fn closure_param_names(closure: &syn::ExprClosure) -> Vec<String> {
+    closure.inputs.iter().filter_map(pat_ident_name).collect()
 }
 
 fn type_path_segments(ty: &syn::Type) -> Option<Vec<String>> {
