@@ -22,7 +22,8 @@ use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_io::IoManagerHandle;
 use ploke_rag::{RagConfig, RagService, TokenBudget};
 use ploke_test_utils::{
-    CORPUS_AXUM_CALL_GRAPH, fresh_backup_fixture_db, setup_db_full_multi_embedding, workspace_root,
+    CORPUS_AXUM_CALL_GRAPH, CORPUS_CHRONO_CALL_GRAPH, fresh_backup_fixture_db,
+    setup_db_full_multi_embedding, workspace_root,
 };
 use ploke_tui::{
     EventBus,
@@ -86,6 +87,14 @@ pub(crate) struct AxumBoxedIntoRouteToolFixture {
 }
 
 pub(crate) struct AxumRunUiTestsToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) target: Uuid,
+    pub(crate) callers: Vec<ExpectedCallSite>,
+}
+
+pub(crate) struct ChronoAliasConstructorToolFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,
     pub(crate) module_path: Vec<String>,
@@ -439,6 +448,60 @@ impl AxumRunUiTestsToolFixture {
     }
 }
 
+impl ChronoAliasConstructorToolFixture {
+    pub(crate) async fn new() -> Self {
+        let db = chrono_call_graph_db();
+        let target = chrono_local_result_single_target(&db);
+        let callers = db
+            .callers_for_target(target.id)
+            .expect("LocalResult::Single incoming callers")
+            .into_iter()
+            .map(|caller| ExpectedCallSite {
+                owner: caller.site.owner_id,
+                site: caller.site.id,
+                path: caller
+                    .site
+                    .path
+                    .expect("MappedLocalTime::Single caller should carry a path"),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            callers.len(),
+            11,
+            "chrono LocalResult::Single should expose all alias constructor caller rows"
+        );
+        assert!(
+            db.project_call_proof_facts_for_node(target.id, "bd:corpus-chrono-call-graph")
+                .expect("project LocalResult::Single proof facts")
+                >= callers.len(),
+            "LocalResult::Single should project target-scoped proof rows for real-corpus callers"
+        );
+        let crate_root = target
+            .file_path
+            .parent()
+            .and_then(|src_dir| src_dir.parent())
+            .unwrap_or_else(|| panic!("chrono LocalResult::Single file should live under src"))
+            .to_path_buf();
+        let state = app_state_with_rag(Arc::clone(&db), crate_root).await;
+
+        Self {
+            state,
+            file_path: target.file_path,
+            module_path: target.module_path,
+            target: target.id,
+            callers,
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
 impl AxumExpandWithToolFixture {
     pub(crate) async fn new() -> Self {
         let db = axum_call_graph_db();
@@ -728,6 +791,18 @@ fn axum_call_graph_db() -> Arc<Database> {
     db
 }
 
+fn chrono_call_graph_db() -> Arc<Database> {
+    let db = Arc::new(
+        fresh_backup_fixture_db(&CORPUS_CHRONO_CALL_GRAPH).expect("corpus chrono call graph db"),
+    );
+    assert!(
+        db.has_call_graph_relations()
+            .expect("check call graph relations"),
+        "corpus_chrono_call_graph should expose call graph relations"
+    );
+    db
+}
+
 async fn axum_state_for_target(
     db: Arc<Database>,
     target: &TargetInfo,
@@ -986,6 +1061,48 @@ fn axum_boxed_into_route_target(db: &Database) -> TargetInfo {
 
     TargetInfo {
         id: to_uuid(&row[0]).expect("BoxedIntoRoute uuid"),
+        file_path: PathBuf::from(data_str(&row[1], "file_path")),
+        module_path: data_path(&row[2], "module path"),
+    }
+}
+
+fn chrono_local_result_single_target(db: &Database) -> TargetInfo {
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[id, file_path, mod_path] :=
+    *enum {{ id: enum_id, name: "LocalResult" @ 'NOW' }},
+    *variant {{ id, name: "Single", owner_id: enum_id @ 'NOW' }},
+    ancestor[enum_id, module_id],
+    *module{{ id: module_id, path: mod_path @ 'NOW' }},
+    file_owner_for_module[module_id, file_id],
+    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+    let rows = db
+        .raw_query(&script)
+        .expect("query chrono LocalResult::Single target");
+    let matching = rows
+        .rows
+        .iter()
+        .filter(|row| data_str(&row[1], "file_path").ends_with("src/offset/mod.rs"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one chrono LocalResult::Single target; rows: {:#?}",
+        rows.rows
+    );
+    let row = matching[0];
+
+    TargetInfo {
+        id: to_uuid(&row[0]).expect("LocalResult::Single uuid"),
         file_path: PathBuf::from(data_str(&row[1], "file_path")),
         module_path: data_path(&row[2], "module path"),
     }

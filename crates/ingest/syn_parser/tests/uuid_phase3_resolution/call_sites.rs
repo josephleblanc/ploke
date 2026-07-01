@@ -205,6 +205,7 @@ const TYPE_ALIAS_CHAIN_ASSOC_MAKE_CALL_SPAN: (usize, usize) = (20733, 20761);
 const TYPE_ALIAS_CHAIN_INSTANCE_CALL_SPAN: (usize, usize) = (20875, 20897);
 const IMPORTED_TYPE_ALIAS_ASSOC_MAKE_CALL_SPAN: (usize, usize) = (21133, 21164);
 const IMPORTED_TYPE_ALIAS_INSTANCE_CALL_SPAN: (usize, usize) = (21284, 21306);
+const ALIAS_CASE_SPAN: (usize, usize) = (28167, 28200);
 const INLINE_BOUND_BLANKET_TRAIT_IMPL_SPAN: (usize, usize) = (21465, 21580);
 const INLINE_BOUND_BLANKET_TRAIT_METHOD_CALL_SPAN: (usize, usize) = (21671, 21697);
 const WHERE_BOUND_BLANKET_TRAIT_IMPL_SPAN: (usize, usize) = (21779, 21905);
@@ -5771,6 +5772,26 @@ paranoid_call_site_test!(
             ExpectedCallOutcome::ResolvedMethodLocalExact {
                 target: target_info.test_method_id(),
             },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_alias_enum_case_resolves_constructor_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_type_alias_enum_variant_constructor"
+    },
+    expected: {
+        let target = fixture_call_graph_enum_variant_id("AliasConstructorEnum", "Case");
+        ExpectedCallSite::path(
+            &["AliasConstructorType", "Case"],
+            ALIAS_CASE_SPAN,
+            1,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedEnumVariantConstructorLocalExact { target },
         )
     },
 );

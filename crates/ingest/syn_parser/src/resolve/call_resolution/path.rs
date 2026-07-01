@@ -41,7 +41,7 @@ impl CallRelationResolver<'_> {
         }
 
         let mut constructor_unresolved = false;
-        if let Some(resolution) = self.resolve_constructor_path(call)? {
+        if let Some(resolution) = self.resolve_constructor_path(call, type_relations)? {
             match resolution {
                 ConstructorPathResolution::TupleStruct(target) => {
                     relations.push(CallRelation::TupleStructConstructor {

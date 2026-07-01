@@ -27,6 +27,24 @@ fn setup_axum_call_graph_rag() -> Result<(Arc<Database>, RagService), Error> {
     Ok((db, rag))
 }
 
+fn setup_chrono_call_graph_rag() -> Result<(Arc<Database>, RagService), Error> {
+    let db = Arc::new(fresh_backup_fixture_db(
+        &ploke_test_utils::CORPUS_CHRONO_CALL_GRAPH,
+    )?);
+    assert!(
+        db.has_call_graph_relations()?,
+        "corpus_chrono_call_graph must include call graph relations for RAG call-context tests"
+    );
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.call_context_degraded(),
+        "chrono call graph backup should enable RAG call context"
+    );
+
+    Ok((db, rag))
+}
+
 #[tokio::test]
 async fn call_context_exact_reads_axum_body_empty_incoming_callers() -> Result<(), Error> {
     init_tracing_once();
@@ -317,6 +335,80 @@ async fn call_context_exact_reads_axum_boxed_into_route_constructor_callers() ->
         call.targets[0].relation,
         CallTargetKind::TupleStructConstructor
     );
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn call_context_exact_reads_chrono_alias_constructor_callers() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_chrono_call_graph_rag()?;
+
+    let target = variant_id_by_enum_and_variant_names(&db, "LocalResult", "Single")?;
+    let callers = db.callers_for_target(target)?;
+    assert_eq!(
+        callers.len(),
+        11,
+        "current chrono fixture should resolve all MappedLocalTime::Single alias constructor callers: {callers:#?}"
+    );
+
+    let context = rag.exact_call_context(target)?;
+    let expected_callee = CallCalleeInfo::Path {
+        path: path(&["MappedLocalTime", "Single"]),
+    };
+    let incoming = context
+        .iter()
+        .filter(|call| {
+            call.kind == CallSiteKind::Path
+                && call.callee == expected_callee
+                && call
+                    .targets
+                    .iter()
+                    .any(|candidate| candidate.target_id == target)
+        })
+        .collect::<Vec<_>>();
+
+    // Matrix: chrono `MappedLocalTime::Single` alias constructor row.
+    // Source chain:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   chrono/src/offset/mod.rs:77 aliases
+    //   `MappedLocalTime<T> = LocalResult<T>`.
+    //   chrono/src/offset/mod.rs:81-83 defines `LocalResult::Single(T)`.
+    //   chrono/src/offset/mod.rs:{143,156,468,502,535},
+    //   offset/{fixed.rs:135,138,utc.rs:122,125}, and
+    //   datetime/tests.rs:{75,79} call `MappedLocalTime::Single(...)`.
+    // Expected traversal: RAG exact call context preserves every resolved
+    // alias constructor caller-site identity exposed by
+    // `Database::callers_for_target`.
+    assert_eq!(
+        incoming.len(),
+        11,
+        "RAG exact call context should expose all chrono alias constructor edges: {context:#?}"
+    );
+
+    let expected_site_ids = callers
+        .iter()
+        .map(|caller| caller.site.id)
+        .collect::<BTreeSet<_>>();
+    let incoming_site_ids = incoming
+        .iter()
+        .map(|call| call.site_id)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        incoming_site_ids, expected_site_ids,
+        "RAG call context should preserve the DB chrono alias constructor site identities"
+    );
+
+    for call in incoming {
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(call.targets.len(), 1);
+        assert_eq!(call.targets[0].target_id, target);
+        assert_eq!(
+            call.targets[0].relation,
+            CallTargetKind::EnumVariantConstructor
+        );
+    }
 
     Ok(())
 }
@@ -1833,6 +1925,31 @@ fn struct_id_by_name(db: &Database, name: &str) -> Result<Uuid, Error> {
         rows.rows.len(),
         1,
         "expected exactly one struct named {name:?}; rows: {:#?}",
+        rows.rows
+    );
+
+    to_uuid(&rows.rows[0][0]).map_err(Error::from)
+}
+
+fn variant_id_by_enum_and_variant_names(
+    db: &Database,
+    enum_name: &str,
+    variant_name: &str,
+) -> Result<Uuid, Error> {
+    let mut params = BTreeMap::new();
+    params.insert("enum_name".to_string(), DataValue::from(enum_name));
+    params.insert("variant_name".to_string(), DataValue::from(variant_name));
+
+    let rows = db.raw_query_params(
+        r#"?[id] :=
+            *enum { id: enum_id, name: $enum_name @ 'NOW' },
+            *variant { id, name: $variant_name, owner_id: enum_id @ 'NOW' }"#,
+        params,
+    )?;
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "expected exactly one enum variant {enum_name}::{variant_name}; rows: {:#?}",
         rows.rows
     );
 

@@ -315,7 +315,7 @@ in `crates/ploke-db/tests/unit/call_graph_fixture_queries/real_target_matrix/fal
 
 | Fixture crate | Target / case | Callsites | Definition or binding | Evidence chain |
 | --- | --- | --- | --- | --- |
-| chrono | `MappedLocalTime::Single` alias constructor | `src/offset/mod.rs:143,156,468,502,535`; `src/offset/fixed.rs:135,138`; `src/offset/utc.rs:122,125`; `src/datetime/tests.rs:75,79` | alias `src/offset/mod.rs:77`; enum `LocalResult` at `:81`; variant `Single(T)` at `:83` | `corpus_chrono_call_graph` currently projects these 11 targetless `MappedLocalTime::Single` rows with `Unresolved` status; no `LocalResult::Single` traversal edge is fabricated. The `map_or(..., MappedLocalTime::Single)` rows in `offset/mod.rs` are function-item arguments, not projected callsites in the current fixture. |
+| chrono | `MappedLocalTime::Single` alias constructor | `src/offset/mod.rs:143,156,468,502,535`; `src/offset/fixed.rs:135,138`; `src/offset/utc.rs:122,125`; `src/datetime/tests.rs:75,79` | alias `src/offset/mod.rs:77`; enum `LocalResult` at `:81`; variant `Single(T)` at `:83` | `corpus_chrono_call_graph` now resolves these 11 alias constructor rows to `LocalResult::Single` through the typed alias relation, preserving the literal `MappedLocalTime::Single` callsite path and one `EnumVariantConstructor` edge per callsite. The `map_or(..., MappedLocalTime::Single)` rows in `offset/mod.rs` are function-item arguments, not projected callsites in the current fixture. |
 | chrono | `DateTime...?.naive_utc()` try receiver | `src/format/parsed.rs:836,953`; macro-equivalent `src/naive/datetime/mod.rs:140,157,174,195` | `DateTime<Tz>::naive_utc` at `src/datetime/mod.rs:563`; constructors return `Option<Self>` at `:768,:803` | `corpus_chrono_call_graph` currently projects two `TryResult` receiver method rows for `naive_utc` with `Unsupported` status and no traversal edge to the method. |
 | chrono | guarded match arm method guard | `src/format/strftime.rs:635` | `StrftimeItems.queue` field `src/format/strftime.rs:198` | `corpus_chrono_call_graph` currently projects one targetless `SelfField(["queue"]).is_empty()` row with `Unsupported` status. |
 | memchr | arbitrary-expression dynamic callee | macro source `src/arch/x86_64/memchr.rs:153`; macro instantiations at `:180,203,227,252,278,305,326` | macro-local aliases `type Fn = *mut ()`, `type RealFn = $fnty` at `:72-73`; static pointer `FN` at `:74` | `corpus_memchr_call_graph` currently does not project the `core::mem::transmute::<Fn, RealFn>(fun)(...)` path or outer dynamic call, so the test asserts absence rather than guessed callees. |
@@ -324,10 +324,12 @@ in `crates/ploke-db/tests/unit/call_graph_fixture_queries/real_target_matrix/fal
 | generic-array | guarded match arm | `src/lib.rs:1241,1243,1278,1280` | `ArrayLength` bound at `src/lib.rs:245`; `LengthError` at `:1197` | `corpus_generic_array_call_graph` currently does not project `iter.size_hint()` for these guarded match-arm checks. |
 
 Current executable coverage: `fallback.rs` now pins the chrono alias rows by
-exact source owner and source-line fanout, pins chrono try-receiver and
-guarded-receiver rows by owner and source-line fanout, and pins the memchr
-function-pointer rows by owner and source-line fanout. It also pins memchr
-callable trait-object cases by explicit owner-scoped absence. The generic-array
+exact source owner and resolved traversal to `LocalResult::Single`, pins chrono
+try-receiver and guarded-receiver rows by owner and source-line fanout, and
+pins the memchr function-pointer rows by owner and source-line fanout. RAG exact
+call-context and TUI `code_item_lookup` tests also preserve the 11 chrono alias
+constructor caller-site identities. It also pins memchr callable trait-object
+cases by explicit owner-scoped absence. The generic-array
 guarded match-arm case remains a fixture-wide absence assertion because the
 source checkout is not present in `tests/fixture_github_clones/corpus`.
 

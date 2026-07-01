@@ -57,7 +57,7 @@ Status values:
 | `Self::associated_function()` | `axum-fixture` | axum | `axum/src/json.rs:112` | `Self::from_bytes(&bytes)` | Associated-function edge should target `Json<T>::from_bytes`. |
 | `Type::associated_function()` | `axum-fixture` | axum | `axum/src/error_handling/mod.rs:65` | `HandleError::new(inner, self.f.clone())` | Associated-function edge should target local inherent `HandleError::new`. |
 | Method as associated function / UFCS-like call | `axum-fixture` | axum | `axum/src/handler/service.rs:171` | `Handler::call(handler, req, self.state.clone())` | Query should preserve this as associated/path-call syntax and resolve through trait/inherent proof only when exact. |
-| Type-alias associated constructor | `fallback-source` | chrono | `src/offset/mod.rs:77`, `src/offset/mod.rs:143` | `type MappedLocalTime<T> = LocalResult<T>;` then `MappedLocalTime::Single(...)` | Covered in `fallback.rs`: chrono rows are projected as targetless `MappedLocalTime::Single` calls with no fabricated `LocalResult::Single` edge. |
+| Type-alias associated constructor | `fallback-source` | chrono | `src/offset/mod.rs:77`, `src/offset/mod.rs:143` | `type MappedLocalTime<T> = LocalResult<T>;` then `MappedLocalTime::Single(...)` | Covered in `fallback.rs`: chrono rows now resolve to `LocalResult::Single` while preserving the literal `MappedLocalTime::Single` callsite path. |
 | Raw identifier call | `not-found` | n/a | n/a | Searched selected axum members and fallback real corpus for `r#name(...)`. | Keep synthetic coverage for raw identifier function/method calls. |
 
 ## Receiver And Method Cases

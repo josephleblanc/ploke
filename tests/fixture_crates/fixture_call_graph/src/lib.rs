@@ -1288,3 +1288,13 @@ where
 {
     T::make(11)
 }
+
+pub enum AliasConstructorEnum {
+    Case(i32),
+}
+
+pub type AliasConstructorType = AliasConstructorEnum;
+
+pub fn call_type_alias_enum_variant_constructor(value: i32) -> AliasConstructorType {
+    AliasConstructorType::Case(value)
+}

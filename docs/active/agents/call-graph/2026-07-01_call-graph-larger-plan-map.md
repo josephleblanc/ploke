@@ -57,7 +57,10 @@ Current matrix posture:
 
 - Method/trait-method multi-hop: met for now.
 - Regular free-function one-hop: covered.
-- Regular free-function multi-hop: current bucket.
+- Regular free-function multi-hop: met for now.
+- Import/type-alias constructor completeness: current bucket, met for the
+  chrono `MappedLocalTime::Single -> LocalResult::Single` alias-constructor
+  path across parser, DB, RAG, and TUI.
 - Dynamic/receiver/closure/import gaps: future semantic expansion buckets, not reasons to keep polishing already-proven method paths.
 
 ## Phase Transition Rule
@@ -119,7 +122,7 @@ For the current state, that should be:
 ```text
 Root plan: .hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md
 Current phase: real-corpus proof and downstream usage-query coverage
-Current completed bucket: regular free-function multi-hop traversal
-Completed proof: axum `from_request::expand -> impl_struct_by_extracting_each_field -> extract_fields` across DB, RAG, and TUI exact call-path surfaces
+Current completed bucket: import/type-alias constructor completeness
+Completed proof: chrono `MappedLocalTime::Single -> LocalResult::Single` alias constructors across parser, regenerated DB fixture, RAG exact call context, and TUI exact lookup surfaces
 Next phase if matrix buckets are complete: binding/type-aware semantic resolution
 ```

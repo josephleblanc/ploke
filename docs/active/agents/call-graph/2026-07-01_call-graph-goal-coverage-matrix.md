@@ -49,23 +49,28 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current Bucket
 
-Current bucket: regular free-function multi-hop traversal.
+Current bucket: import/type-alias constructor completeness.
 
 Exit criteria:
 
-- Identify a real axum chain shaped like `free_fn_a -> free_fn_b -> free_fn_c`, or record that axum lacks a suitable current-fixture chain and select another real GitHub fixture from `docs/testing/BACKUP_DB_FIXTURES.md`.
-- Add a DB path assertion proving `call_paths_between(..., max_depth: 2)` preserves both ordered edges.
-- If exposed downstream, add RAG and TUI/tool assertions that the same path is visible through existing exact call-path or summary surfaces.
+- Use an existing typed alias proof rather than string guessing to resolve an
+  enum-variant constructor path through a type alias.
+- Add a parser fixture/test for alias constructor resolution.
+- Regenerate the relevant real-corpus call-graph fixture when persisted rows
+  must change.
+- Convert the real-corpus fallback row from targetless to resolved traversal
+  with DB, RAG, and TUI/tool assertions.
 - Record the source oracle and verification in one consolidated doc update.
 
 Completed evidence:
 
-- Real source oracle: `axum-macros/src/from_request/mod.rs:145` and `:342` prove `from_request::expand -> impl_struct_by_extracting_each_field -> extract_fields`.
-- DB: `axum_from_request_expand_reaches_extract_fields_in_two_free_function_hops` proves ordered `call_paths_between` traversal and reverse/owner traversal over the same edge vector.
-- RAG: `call_paths_exact_reads_axum_from_request_free_function_two_hop_path` proves the same ordered path through exact call-path APIs.
-- TUI/tool: `code_item_call_path_returns_real_corpus_free_function_two_hop_reachability` proves the `code_item_call_path` tool can answer direct reachability for this function chain.
+- Parser: `fixture_call_graph_alias_enum_case_resolves_constructor_call_site` proves an enum type-alias path resolves to the underlying variant constructor.
+- Fixture: `corpus_chrono_call_graph` regenerated as `2026-07-01` with call graph relations populated by the alias-aware constructor resolver.
+- DB: `chrono_alias_constructor_rows_reach_local_result_single` proves all 11 real `MappedLocalTime::Single` rows resolve to `LocalResult::Single` as `EnumVariantConstructor` edges.
+- RAG: `call_context_exact_reads_chrono_alias_constructor_callers` proves exact call context preserves the 11 alias constructor caller-site identities.
+- TUI/tool: `code_item_lookup_returns_real_corpus_chrono_alias_constructor_callers` proves exact variant lookup exposes the same incoming alias constructor rows and proof facts.
 
-Reason to switch after this bucket: method/trait-method and regular free-function multi-hop now both have current real-corpus two-hop proofs. Do not add more function breadth unless a regression or usage question requires it.
+Reason to switch after this bucket: alias constructor completeness now has parser, DB, RAG, and TUI proof. Do not add more alias-constructor breadth unless a regression appears.
 
 ## Coverage Matrix
 
@@ -76,12 +81,12 @@ Reason to switch after this bucket: method/trait-method and regular free-functio
 | Regular free-function multi-hop | Met for now | `from_request::expand -> impl_struct_by_extracting_each_field -> extract_fields` ordered two-hop traversal through `call_paths_between`, owner, and target path APIs | Exact call paths expose the same ordered function chain and source-node metadata | `code_item_call_path` returns the same real-corpus function reachability path | axum | Switch buckets; do not add more free-function breadth by default. |
 | Inherent method one-hop | Covered/partial | Examples include `Json::from_bytes` and related method/associated-function rows | Exact call-context propagation exists | Exact lookup regressions exist | axum | Revisit only after broader buckets have at least one proof. |
 | Associated-function path calls | Covered/partial | `Self::from_bytes`, `E::from_request`, `MethodRouter::new` style rows | Impact/reach summaries carry relation/kind | Tool payloads carry relation/kind and callsite buckets | axum | Later: separate associated-function multi-hop bucket if needed. |
-| Constructors | Covered one-hop | Tuple struct / enum variant constructor rows are asserted in real-corpus matrix | Some exact context propagation exists | Tool regressions include variant/constructor rows | axum | Later: multi-hop constructor path only if a real usage question requires it. |
+| Constructors | Stronger one-hop | Tuple struct / enum variant constructor rows are asserted in real-corpus matrix, including chrono alias constructor rows | Exact context propagation exists for direct and alias constructor rows | Tool regressions include direct and alias variant/constructor rows | axum, chrono | Later: multi-hop constructor path only if a real usage question requires it. |
 | External dependency frontier | Covered as frontier | External rows are exposed but not traversed | Reach summaries expose external frontier calls | Tool summaries count/display frontier rows | axum | Keep fail-closed; do not convert to traversal without external-summary semantics. |
 | Unsupported receiver shapes | Covered as blockers/frontier, not traversal | Targetless/unsupported rows for field receivers, await receivers, local receiver gaps | RAG preserves blocker/frontier rows | Tool tests surface unsupported rows/counts | axum | Future implementation bucket after binding/type tracking plan. |
 | Dynamic callable values | Partial/fail-closed | Fixture and real-corpus targetless rows exist; no general traversal | RAG preserves dynamic callable blockers where projected | Tool targetless matrix covers current rows | axum plus local fixture | Needs binding tracking and callable-value model before traversal. |
 | Closures / nested body ownership | Partial/gap documented | Some nested rows intentionally absent to avoid flattening outer owners | RAG follows current DB surface | Tool coverage follows current DB surface | axum `parse_attrs` closure-body rows | Future bucket: closure/async body ownership before multi-hop closure traversal. |
-| Import / re-export / glob completeness | Partial | Explicit and some imported path calls work; broader re-export/glob gaps remain | Downstream only sees DB-resolved subset | Tool coverage follows current DB-resolved subset | axum | Later resolver bucket; keep strict source oracles for missing fanout. |
+| Import / re-export / glob completeness | Partial, alias constructors improved | Explicit and some imported path calls work; chrono alias constructor path calls now resolve through typed alias evidence; broader re-export/glob gaps remain | Downstream sees the alias-resolved subset | Tool coverage follows current DB-resolved subset | axum, chrono | Switch buckets; keep strict source oracles for missing fanout. |
 | DB usage summaries | Strong current surface | `call_impact_for_target`, `call_reach_for_owner`, paths, source files/modules, buckets, boundary/frontier rows | N/A | N/A | axum | Add fields only when they answer a matrix question, not opportunistically. |
 | RAG usage summaries | Strong current surface | N/A | Exact call paths, impact, reach, source metadata | N/A | axum | Add only when DB bucket already has proof. |
 | TUI/tool usage summaries | Strong current surface | N/A | N/A | `code_item_lookup`, `code_item_edges`, and exact call-path tool coverage | axum | Keep tool changes thin; do not invent semantics outside RAG/DB. |

@@ -1,16 +1,17 @@
 use ploke_test_utils::{
     CORPUS_CHRONO_CALL_GRAPH, CORPUS_GENERIC_ARRAY_CALL_GRAPH, CORPUS_MEMCHR_CALL_GRAPH,
 };
+use uuid::Uuid;
 
 use super::super::*;
 use super::common::*;
 use super::source_lines::{
     SourceLineFanout, assert_targetless_dynamic_line_fanout_by_method,
-    assert_targetless_method_line_fanout, assert_targetless_path_line_fanout,
+    assert_targetless_method_line_fanout,
 };
 
 #[test]
-fn chrono_alias_constructor_rows_are_targetless_fallback_oracles() -> Result<(), DbError> {
+fn chrono_alias_constructor_rows_reach_local_result_single() -> Result<(), DbError> {
     let db = setup_call_graph_db(&CORPUS_CHRONO_CALL_GRAPH)?;
 
     // Matrix: `Fallback Source Oracle Matrix` in
@@ -25,46 +26,42 @@ fn chrono_alias_constructor_rows_are_targetless_fallback_oracles() -> Result<(),
     //   chrono/src/datetime/tests.rs:{75,79} are additional fixture-projected
     //   direct constructor rows.
     //
-    // Current model gap: alias constructor binding is not resolved to
-    // `LocalResult::Single`, so the fixture must preserve targetless rows
-    // rather than fabricate enum-variant traversal edges.
-    assert_targetless_path_rows(
-        &db,
-        &["MappedLocalTime", "Single"],
-        CallStatusKind::Unresolved,
-        11,
-    )?;
-    assert_targetless_path_line_fanout(
-        &db,
-        &CORPUS_CHRONO_CALL_GRAPH,
-        &["MappedLocalTime", "Single"],
-        CallStatusKind::Unresolved,
-        &[
-            SourceLineFanout {
-                file_suffix: "src/datetime/tests.rs",
-                lines: &[75, 79],
-            },
-            SourceLineFanout {
-                file_suffix: "src/offset/fixed.rs",
-                lines: &[135, 138],
-            },
-            SourceLineFanout {
-                file_suffix: "src/offset/mod.rs",
-                lines: &[143, 156, 468, 502, 535],
-            },
-            SourceLineFanout {
-                file_suffix: "src/offset/utc.rs",
-                lines: &[122, 125],
-            },
-        ],
-    )?;
+    // Expected traversal: every alias path call now reaches the underlying
+    // `LocalResult::Single` enum variant through the existing type-alias
+    // `TypeRelation::Ordinary` proof.
     let target = variant_id_by_enum_and_variant_names(&db, "LocalResult", "Single")?;
-    assert_no_incoming_traversal_to_target(
+    assert_no_path_rows(&db, &["LocalResult", "Single"])?;
+
+    let callers = db.callers_for_target(target)?;
+    assert_eq!(
+        callers.len(),
+        11,
+        "LocalResult::Single should expose all inspected alias constructor callers: {callers:#?}"
+    );
+    assert_sites_match_callers(
         &db,
         target,
-        "chrono/src/offset/mod.rs alias constructor rows",
+        &callers,
+        "chrono LocalResult::Single alias callers",
     )?;
-    assert_no_path_rows(&db, &["LocalResult", "Single"])?;
+    for caller in &callers {
+        assert_eq!(caller.site.kind, CallSiteKind::Path);
+        assert_eq!(
+            caller.site.path.as_ref(),
+            Some(&path(&["MappedLocalTime", "Single"]))
+        );
+        assert_eq!(caller.status.status, CallStatusKind::Resolved);
+        assert_eq!(
+            caller.status.resolution,
+            Some(CallResolutionKind::LocalExact)
+        );
+        assert_eq!(
+            caller.target.relation,
+            CallRelationKind::EnumVariantConstructor
+        );
+        assert_eq!(caller.target.source_kind, CallSiteKind::Path);
+        assert_eq!(caller.target.target_kind, CallTargetKind::Variant);
+    }
 
     struct AliasCase {
         owner: &'static str,
@@ -147,18 +144,26 @@ fn chrono_alias_constructor_rows_are_targetless_fallback_oracles() -> Result<(),
         },
     ];
 
+    let mut checked_sites = 0usize;
     for case in cases {
         let owner =
             method_id_by_name_body_and_file_suffix(&db, case.owner, case.marker, case.file_suffix)?;
-        assert_owner_path_targetless_count(
+        let sites = assert_owner_path_resolved_count(
             &db,
             owner,
             &["MappedLocalTime", "Single"],
-            CallStatusKind::Unresolved,
+            target,
+            CallRelationKind::EnumVariantConstructor,
+            CallTargetKind::Variant,
             case.expected_count,
             case.label,
         )?;
+        checked_sites += sites.len();
     }
+    assert_eq!(
+        checked_sites, 11,
+        "source-oracle case table should cover every resolved alias constructor edge"
+    );
 
     Ok(())
 }
@@ -430,12 +435,87 @@ fn generic_array_guarded_match_arm_method_guard_is_absent_fallback_gap() -> Resu
     assert_no_method_rows(&db, "size_hint")
 }
 
+fn assert_owner_path_resolved_count(
+    db: &Database,
+    owner: Uuid,
+    path_parts: &[&str],
+    target: Uuid,
+    relation: CallRelationKind,
+    target_kind: CallTargetKind,
+    expected_count: usize,
+    label: &str,
+) -> Result<Vec<Uuid>, DbError> {
+    let context = db.call_context_for_owner(owner)?;
+    let rows = context
+        .iter()
+        .filter(|row| {
+            row.site.kind == CallSiteKind::Path && row.site.path.as_ref() == Some(&path(path_parts))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        rows.len(),
+        expected_count,
+        "{label} should expose exactly {expected_count} resolved path row(s): {context:#?}"
+    );
+
+    let mut sites = Vec::new();
+    for row in rows {
+        assert_resolved_target(row, target, relation, CallSiteKind::Path, target_kind);
+        assert_eq!(
+            relations_for_site(db, row.site.id)?.rows.len(),
+            1,
+            "{label} should preserve exactly one raw call_relation edge per alias constructor site"
+        );
+        sites.push(row.site.id);
+    }
+
+    let outgoing = db.expand_call_context(
+        CallContextSeed::Owner(owner),
+        CallContextOptions {
+            include_incoming_callers: false,
+            max_candidates: 512,
+            ..CallContextOptions::default()
+        },
+    )?;
+    assert!(
+        outgoing.iter().any(|candidate| {
+            candidate.node_id == target
+                && candidate.relation == ploke_db::CallContextRelation::OutgoingTarget
+                && candidate.target_id == target
+                && candidate.distance == 1
+                && sites.contains(&candidate.call_site_id)
+        }),
+        "{label} should expose owner-to-target reachability for at least one matching alias constructor site: {outgoing:#?}"
+    );
+
+    let incoming = db.expand_call_context(
+        CallContextSeed::Target(target),
+        CallContextOptions {
+            include_outgoing_targets: false,
+            max_candidates: 512,
+            ..CallContextOptions::default()
+        },
+    )?;
+    assert!(
+        incoming.iter().any(|candidate| {
+            candidate.node_id == owner
+                && candidate.relation == ploke_db::CallContextRelation::IncomingCaller
+                && candidate.target_id == target
+                && candidate.distance == 1
+                && sites.contains(&candidate.call_site_id)
+        }),
+        "{label} should expose target-to-owner reachability for at least one matching alias constructor site: {incoming:#?}"
+    );
+
+    Ok(sites)
+}
+
 fn assert_owner_dynamic_targetless(
     db: &Database,
-    owner: uuid::Uuid,
+    owner: Uuid,
     expected_arg_count: u32,
     label: &str,
-) -> Result<uuid::Uuid, DbError> {
+) -> Result<Uuid, DbError> {
     let context = db.call_context_for_owner(owner)?;
     let rows = context
         .iter()
