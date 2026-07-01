@@ -40,6 +40,24 @@ future work can choose the next batch without rereading the diary-style notes.
 
 ## Recent downstream slice
 
+- 2026-07-01: Target-centered impact summaries now partition eventual callers
+  into `test_callers` and `non_test_callers` in addition to preserving the full
+  `callers` list. DB derives the test bucket from the node's module/file
+  ancestry rather than the shortest display path used by `CallNodeInfo`, so
+  inline `mod tests` callers remain classified correctly without changing node
+  metadata presentation. RAG maps the DB-owned buckets, and exact
+  `code_item_lookup` reports `impact_test_callers` and
+  `impact_non_test_callers` UI counts. The real-corpus proof case is
+  `Router::new` in `axum/src/routing/mod.rs`: `Default for Router` calls
+  `Self::new()` from non-test source, while
+  `serve::tests::if_it_compiles_it_works` calls `Router::new()` from test
+  source. This answers usage questions such as "is this function only used by
+  tests, or is it reachable from non-test code?" and "which tests should cover
+  a change to this function?" Focused verification:
+  `cargo test -p ploke-db --features call_graph real_target_matrix::usage_questions -- --nocapture`,
+  `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
+  and
+  `cargo test -p ploke-tui --features call_graph code_item -- --nocapture`.
 - 2026-07-01: Owner reach summaries now split unsupported resolver blockers
   into an explicit `unsupported_frontier_calls` subset while preserving the
   full fail-closed `frontier_calls` list. DB, RAG, and exact
