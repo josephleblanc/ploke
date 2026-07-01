@@ -677,6 +677,11 @@ async fn call_impact_exact_reads_axum_usage_question_summary() -> Result<(), Err
     assert_eq!(report.target.id, target);
     assert_eq!(report.target.kind, "Method");
     assert_eq!(report.target.name, "from_request");
+    assert_eq!(
+        report.target.module_path,
+        path(&["crate", "extract"]),
+        "RAG impact target should preserve the DB module path"
+    );
     assert!(
         report
             .target
@@ -697,6 +702,16 @@ async fn call_impact_exact_reads_axum_usage_question_summary() -> Result<(), Err
         "extract",
         "axum-core/src/ext_traits/request.rs",
         "RAG impact eventual callers",
+    );
+    let start_caller = report
+        .callers
+        .iter()
+        .find(|caller| caller.id == start)
+        .unwrap_or_else(|| panic!("RAG impact callers should include RequestExt::extract"));
+    assert_eq!(
+        start_caller.module_path,
+        path(&["crate", "ext_traits", "request"]),
+        "RAG impact caller should preserve the DB module path"
     );
     assert_call_node(
         &report.callers,
@@ -986,6 +1001,11 @@ async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Erro
     assert_eq!(report.owner.id, start);
     assert_eq!(report.owner.kind, "Method");
     assert_eq!(report.owner.name, "extract");
+    assert_eq!(
+        report.owner.module_path,
+        path(&["crate", "ext_traits", "request"]),
+        "RAG reach owner should preserve the DB module path"
+    );
     assert!(
         report
             .owner

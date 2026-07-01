@@ -281,6 +281,14 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         "axum-core/src/ext_traits/request.rs",
         "code_item_lookup reach direct callees",
     );
+    let reach_owner = reach
+        .get("owner")
+        .and_then(serde_json::Value::as_object)
+        .expect("call_reach owner object");
+    assert_eq!(
+        module_path_field(reach_owner, "code_item_lookup reach owner"),
+        vec!["crate", "ext_traits", "request"]
+    );
     let reach_direct_sites = reach_direct_call_sites
         .iter()
         .map(|call| serde_json::from_value::<CallContextInfo>(call.clone()))
@@ -513,6 +521,10 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         .get("callers")
         .and_then(serde_json::Value::as_array)
         .expect("call_impact callers array");
+    let impact_target = impact
+        .get("target")
+        .and_then(serde_json::Value::as_object)
+        .expect("call_impact target object");
     let impact_direct_callers = impact
         .get("direct_callers")
         .and_then(serde_json::Value::as_array)
@@ -553,6 +565,22 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         "extract",
         "axum-core/src/ext_traits/request.rs",
         "code_item_lookup impact callers",
+    );
+    let start_id = fixture.start.to_string();
+    let start_caller = impact_callers
+        .iter()
+        .find(|caller| {
+            caller.get("id").and_then(serde_json::Value::as_str) == Some(start_id.as_str())
+        })
+        .and_then(serde_json::Value::as_object)
+        .unwrap_or_else(|| panic!("impact callers should include RequestExt::extract"));
+    assert_eq!(
+        module_path_field(start_caller, "code_item_lookup impact caller"),
+        vec!["crate", "ext_traits", "request"]
+    );
+    assert_eq!(
+        module_path_field(impact_target, "code_item_lookup impact target"),
+        vec!["crate", "extract"]
     );
     assert_impact_node(
         impact_callers,
@@ -1376,4 +1404,20 @@ fn assert_source_file(files: &[serde_json::Value], suffix: &str, label: &str) {
             .any(|file| file.as_str().is_some_and(|path| path.ends_with(suffix))),
         "{label} should include source file ending with {suffix:?}: {files:#?}"
     );
+}
+
+fn module_path_field<'a>(
+    node: &'a serde_json::Map<String, serde_json::Value>,
+    label: &str,
+) -> Vec<&'a str> {
+    node.get("module_path")
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("{label} should include module_path array: {node:#?}"))
+        .iter()
+        .map(|segment| {
+            segment
+                .as_str()
+                .unwrap_or_else(|| panic!("{label} module_path should contain strings: {node:#?}"))
+        })
+        .collect()
 }
