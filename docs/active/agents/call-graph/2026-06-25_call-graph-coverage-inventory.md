@@ -40,6 +40,20 @@ future work can choose the next batch without rereading the diary-style notes.
 
 ## Recent downstream slice
 
+- 2026-07-01: Existing target-centered impact summaries now have a
+  real-corpus public-API caller proof for the `public_callers` bucket. The
+  axum source oracle is `MethodRouter::new` in
+  `axum/src/routing/method_routing.rs`, with public top-level routing
+  functions `on_service`, `any_service`, `on`, and `any` calling
+  `MethodRouter::new()` from the same file. DB and RAG exact-impact tests
+  assert those public functions appear in `public_callers`, prove every row in
+  the bucket is stored-public, and preserve the source-file context. This
+  answers impact/API-understanding questions such as "which public APIs
+  eventually call this helper?" using the existing resolved-only impact
+  contract. Focused verification:
+  `cargo test -p ploke-db --features call_graph axum_usage_questions_summarize_public_api_callers_for_impact -- --nocapture`
+  and
+  `cargo test -p ploke-rag --features call_graph call_impact_exact_reads_axum_usage_question_summary -- --nocapture`.
 - 2026-07-01: Owner reach summaries now split resolved direct callsites that
   cross displayed module paths into `boundary_call_sites`, while preserving the
   full `direct_call_sites` list. DB derives the subset from already resolved
