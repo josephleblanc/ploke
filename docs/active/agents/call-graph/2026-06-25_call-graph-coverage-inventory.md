@@ -96,6 +96,17 @@ future work can choose the next batch without rereading the diary-style notes.
   `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`
   and
   `cargo test -p ploke-tui --features call_graph code_item -- --nocapture`.
+- 2026-07-01: The `source_files` answer for impact/reach summaries is now owned
+  by the DB report contract instead of being recomputed only in RAG. Both
+  `CallImpactReport` and `CallReachReport` carry the deduplicated file list, and
+  the real-corpus DB usage-question suite asserts the axum two-hop,
+  external-frontier, and fail-closed empty-impact cases directly. RAG now maps
+  the DB report field into `NodeFilepath` for downstream consumers. Focused
+  verification:
+  `cargo test -p ploke-db --features call_graph real_target_matrix::usage_questions -- --nocapture`,
+  `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
+  and
+  `cargo test -p ploke-tui --features call_graph code_item -- --nocapture`.
 - 2026-06-30: The first usage-question slice now has real-corpus proofs across
   DB and TUI surfaces. DB coverage in
   `real_target_matrix::usage_questions` proves that the persisted axum call
