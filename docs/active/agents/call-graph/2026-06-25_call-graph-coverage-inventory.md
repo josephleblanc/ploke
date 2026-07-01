@@ -40,6 +40,24 @@ future work can choose the next batch without rereading the diary-style notes.
 
 ## Recent downstream slice
 
+- 2026-07-01: Procedural macro item bodies now participate in the typed
+  call-body owner family as `CallBodyOwnerId::Macro`. Parser pruning retains
+  macro-owned call sites only when the macro node remains live; transform/DB
+  owner-kind validation accepts `Macro`; RAG and exact TUI lookup surfaces map
+  the same rows into impact summaries. The real axum source oracle is
+  `axum-macros/src/lib.rs:{377,426,665,715}`, where public proc-macro
+  entrypoints call `expand_with(...)`, plus `{581,637}` for active
+  `expand_attr_with(...)` callers. Callback arguments, IIFEs, and closure-body
+  callback calls remain fail-closed until nested body ownership and callable
+  proof carriers exist. Focused verification:
+  `cargo test -p syn_parser --features call_graph call_sites -- --nocapture`,
+  `cargo test -p ploke-transform --features call_graph transform::tests -- --nocapture`,
+  `cargo test -p ploke-transform --features call_graph call_graph -- --nocapture`,
+  `cargo test -p ploke-db --features call_graph real_target_matrix -- --nocapture`,
+  `cargo test -p ploke-rag --features call_graph call_impact_exact_reads_axum_usage_question_summary -- --nocapture`,
+  `cargo test -p ploke-tui --features call_graph code_item_lookup_surfaces_proc_macro_impact_callers -- --nocapture`,
+  and
+  `cargo run -p xtask --features call_graph -- verify-backup-dbs --fixture corpus_axum_call_graph`.
 - 2026-07-01: Downstream `CallNodeInfo` payloads now preserve the DB
   `module_path` alongside file and canon path metadata. RAG maps the existing
   DB module path into impact/reach node summaries, and exact

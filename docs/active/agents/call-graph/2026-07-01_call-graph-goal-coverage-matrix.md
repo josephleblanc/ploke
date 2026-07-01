@@ -49,35 +49,39 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current Bucket
 
-Current bucket: local callable bindings initialized by branch expressions.
+Current bucket: proc-macro entrypoint body owners.
 
 Exit criteria:
 
-- Reuse existing `LocalBindingProof::Initialized` evidence instead of adding a
-  separate callable-value model for this syntax slice.
-- Resolve `if` and `match` initializers only when every supported branch/arm
-  collapses to the same unshadowed callable path.
-- Keep mixed-target, guarded, non-path, and opaque parameter branches
-  fail-closed with no invented traversal edge.
-- Add parser, DB, and RAG assertions over persisted call graph rows.
+- Model procedural macro item bodies as `CallBodyOwnerId::Macro` without
+  widening body ownership to arbitrary nodes.
+- Preserve strict pruning: macro-owned call sites must survive only when the
+  macro node itself survives the parser graph retain/prune pass.
+- Project macro owners through transform/DB/RAG/TUI summaries using the same
+  owner-kind validation path as functions, methods, consts, and statics.
+- Prove the behavior against a real axum corpus source oracle and keep callback
+  arguments/closure bodies fail-closed.
 
 Completed evidence:
 
-- Fixture source: `fixture_call_graph` has same-target `if`, same-target
-  parenthesized `match`, and mixed-target typed function pointer branch
-  initializer cases.
-- Parser: paranoid call-site tests prove branch initializers become initialized
-  local binding proof only when the target is exact.
-- DB: dynamic context and dynamic proof tests assert the resolved path/dynamic
-  rows and the mixed-target fail-closed row.
-- RAG: fixture call-context tests assert the resolved path and dynamic target
-  rows propagate through call context collection.
+- Commit: `f53f67cc0 Add proc-macro call graph owners`.
+- Fixture source: `fixture_macros` has a proc-macro body that calls a local
+  helper; the paranoid parser fixture resolves that helper through a macro
+  owner.
+- Real corpus: axum `axum-macros/src/lib.rs:{377,426,665,715}` public
+  proc-macro entrypoints call `expand_with(...)`, and lines `{581,637}` call
+  `expand_attr_with(...)`.
+- DB: `real_target_matrix::proc_macros` proves one-hop resolved macro-owner
+  paths to those helpers; usage-question impact tests expose four public macro
+  callers for `expand_with`.
+- RAG/TUI: exact impact summaries and `code_item_lookup` preserve the same
+  public proc-macro caller counts, direct callsite rows, source files, and
+  path/function bucket.
 
-Reason to switch after this bucket: the checked-out `axum`, `serde`, and
-`BurntSushi__memchr` corpora did not contain a representative same-target
-branch-initialized callable binding case. This fixture-backed syntax slice is
-enough for the branch initializer proof; switch back to real-corpus DB query
-coverage for the next bucket.
+Reason to switch after this bucket: callback arguments, IIFEs, and closure-body
+calls remain intentionally targetless or absent. The next useful bucket is
+nested closure/async body ownership, but only after adding an explicit typed
+owner model; do not flatten closure body calls onto outer functions.
 
 ## Coverage Matrix
 
@@ -93,6 +97,7 @@ coverage for the next bucket.
 | External dependency frontier | Covered as frontier | External rows are exposed but not traversed | Reach summaries expose external frontier calls | Tool summaries count/display frontier rows | axum | Keep fail-closed; do not convert to traversal without external-summary semantics. |
 | Unsupported receiver shapes | Covered as blockers/frontier, with one exact positive subset | Targetless/unsupported rows remain for generic field/result/await/local receiver gaps; exact local `Router::clone` receiver rows now traverse | RAG preserves blocker/frontier rows and the exact positive subset | Tool tests surface unsupported rows/counts and `RouterClone` positives | axum | Future implementation bucket after binding/type tracking plan. |
 | Dynamic callable values | Partial with exact local binding subset | Fixture-backed same-target branch/match initialized callable values resolve; mixed-target branches remain targetless | RAG preserves resolved branch-initialized rows and blocker rows | Tool targetless matrix covers current unsupported rows | local fixture; no representative found in checked-out axum/serde/memchr corpora | Switch buckets; broader callable trait objects/returned closures still need binding/body ownership work. |
+| Proc-macro entrypoint body owners | Met for now | `CallBodyOwnerId::Macro` owners project through axum `expand_with` and `expand_attr_with` real-corpus helper calls | Exact impact summaries expose public proc-macro callers and direct helper callsites | `code_item_lookup` surfaces four public macro callers for `expand_with` | axum | Switch buckets; callback arguments and closure/IIFE body calls remain fail-closed. |
 | Closures / nested body ownership | Partial/gap documented | Some nested rows intentionally absent to avoid flattening outer owners | RAG follows current DB surface | Tool coverage follows current DB surface | axum `parse_attrs` closure-body rows | Future bucket: closure/async body ownership before multi-hop closure traversal. |
 | Import / re-export / glob completeness | Partial, alias constructors improved | Explicit and some imported path calls work; chrono alias constructor path calls now resolve through typed alias evidence; broader re-export/glob gaps remain | Downstream sees the alias-resolved subset | Tool coverage follows current DB-resolved subset | axum, chrono | Switch buckets; keep strict source oracles for missing fanout. |
 | DB usage summaries | Strong current surface | `call_impact_for_target`, `call_reach_for_owner`, paths, source files/modules, buckets, boundary/frontier rows | N/A | N/A | axum | Add fields only when they answer a matrix question, not opportunistically. |
