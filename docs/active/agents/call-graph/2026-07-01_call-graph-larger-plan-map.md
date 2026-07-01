@@ -119,7 +119,7 @@ For the current state, that should be:
 ```text
 Root plan: .hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md
 Current phase: real-corpus proof and downstream usage-query coverage
-Current bucket: regular free-function multi-hop traversal
-Exit criteria: prove one real-corpus free-function two-hop path across needed layers
+Current completed bucket: regular free-function multi-hop traversal
+Completed proof: axum `from_request::expand -> impl_struct_by_extracting_each_field -> extract_fields` across DB, RAG, and TUI exact call-path surfaces
 Next phase if matrix buckets are complete: binding/type-aware semantic resolution
 ```

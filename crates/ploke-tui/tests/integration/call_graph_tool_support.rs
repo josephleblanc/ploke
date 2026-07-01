@@ -119,6 +119,15 @@ pub(crate) struct AxumRequestExtractPathToolFixture {
     pub(crate) target: Uuid,
 }
 
+pub(crate) struct AxumFromRequestFreeFunctionPathToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) start: Uuid,
+    pub(crate) intermediate: Uuid,
+    pub(crate) target: Uuid,
+}
+
 pub(crate) struct AxumAwaitReceiverToolFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,
@@ -604,6 +613,63 @@ impl AxumRequestExtractPathToolFixture {
 
     pub(crate) fn target_module_path_arg(&self) -> String {
         self.target_module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl AxumFromRequestFreeFunctionPathToolFixture {
+    pub(crate) async fn new() -> Self {
+        let db = axum_call_graph_db();
+        let file_suffix = "axum-macros/src/from_request/mod.rs";
+        let start = axum_function_target_by_name_and_file(&db, "expand", file_suffix);
+        let intermediate = axum_function_target_by_name_and_file(
+            &db,
+            "impl_struct_by_extracting_each_field",
+            file_suffix,
+        );
+        let target = axum_function_target_by_name_and_file(&db, "extract_fields", file_suffix);
+        let paths = db
+            .call_paths_between(
+                start.id,
+                target.id,
+                ploke_db::CallPathOptions {
+                    max_depth: 2,
+                    max_paths: 128,
+                },
+            )
+            .expect("from_request::expand free-function call paths");
+        assert!(
+            paths.iter().any(|path| {
+                path.start_id == start.id && path.end_id == target.id && path.depth == 2
+            }),
+            "current axum fixture should expose from_request::expand -> extract_fields: {paths:#?}"
+        );
+        for node in [&start, &intermediate, &target] {
+            assert!(
+                db.project_call_proof_facts_for_node(node.id, "bd:corpus-axum-call-graph")
+                    .unwrap_or_else(|err| panic!("project {} proof facts: {err}", node.id))
+                    >= 1,
+                "free-function path fixture node {} should project proof rows",
+                node.id
+            );
+        }
+        let state = axum_state_for_target(Arc::clone(&db), &start, "from_request::expand").await;
+
+        Self {
+            state,
+            file_path: start.file_path,
+            module_path: start.module_path,
+            start: start.id,
+            intermediate: intermediate.id,
+            target: target.id,
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
     }
 
     pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
@@ -1458,7 +1524,7 @@ pub(crate) fn assert_two_hop_call_path(
                 && path.edges[1].caller_id == intermediate
                 && path.edges[1].callee_id == target
         }),
-        "{label} should expose the two-hop RequestExt::extract -> FromRequest::from_request path: {paths:#?}"
+        "{label} should expose the expected two-hop call path: {paths:#?}"
     );
 }
 

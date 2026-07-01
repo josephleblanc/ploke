@@ -55,6 +55,12 @@ High-fanout targets are grouped by identical evidence chain. Before turning high
 | `serde_json::Deserializer::from_slice` | `axum/src/json.rs:184` | `Json<T>::from_bytes` | `serde_json::...` path -> external dependency root in `axum/Cargo.toml:135` and dev dependency `:189`. |
 | `std::mem::replace` | `axum/src/error_handling/mod.rs:138,181`; `middleware/map_request.rs:281`; `middleware/from_fn.rs:285`; `middleware/map_response.rs:260`; `response/sse.rs:449` | service call bodies and `EventDataWriter::write_buf` | `std::mem::replace` path -> std-root external classification. |
 
+## Free-Function Multi-Hop Oracle
+
+| Chain | Definition/binding sites | Callsites | Evidence chain |
+| --- | --- | --- | --- |
+| `from_request::expand -> impl_struct_by_extracting_each_field -> extract_fields` | `axum-macros/src/from_request/mod.rs:93`; `:330`; `:412` | `axum-macros/src/from_request/mod.rs:145`; `:342` | Both calls are unqualified local path calls between normal functions in the `crate::from_request` module. This is the current regular free-function two-hop proof case for DB/RAG/TUI reachability. |
+
 Current executable coverage: `ploke-db` real-target matrix tests assert eight
 one-hop `parse_attrs` edges, including the explicit
 `crate::attr_parsing::parse_attrs` row through the file-module declaration at

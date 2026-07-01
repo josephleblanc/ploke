@@ -571,6 +571,138 @@ async fn call_paths_exact_reads_axum_request_extract_two_hop_trait_path() -> Res
 }
 
 #[tokio::test]
+async fn call_paths_exact_reads_axum_from_request_free_function_two_hop_path() -> Result<(), Error>
+{
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    // Matrix:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    // Source-oracle chain:
+    //   axum-macros/src/from_request/mod.rs:145
+    //     `from_request::expand` calls `impl_struct_by_extracting_each_field(...)`.
+    //   axum-macros/src/from_request/mod.rs:342
+    //     `impl_struct_by_extracting_each_field` calls `extract_fields(...)`.
+    //   axum-macros/src/from_request/mod.rs:412
+    //     defines the `extract_fields` terminal helper.
+    //
+    // This covers the regular free-function multi-hop bucket for RAG: all
+    // path nodes are normal functions in one real target module, and the
+    // traversal should preserve the DB's ordered resolved path.
+    let start = function_id_by_name_in_module(&db, &["crate", "from_request"], "expand")?;
+    let intermediate = function_id_by_name_in_module(
+        &db,
+        &["crate", "from_request"],
+        "impl_struct_by_extracting_each_field",
+    )?;
+    let target = function_id_by_name_in_module(&db, &["crate", "from_request"], "extract_fields")?;
+
+    let outgoing = rag.exact_call_paths_from_owner(
+        start,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 128,
+        },
+    )?;
+    let path = outgoing
+        .iter()
+        .find(|path| path.end_id == target && path.depth == 2)
+        .unwrap_or_else(|| {
+            panic!(
+                "expected RAG free-function path from from_request::expand to extract_fields: {outgoing:#?}"
+            )
+        });
+    assert_eq!(path.start_id, start);
+    assert_eq!(path.edges.len(), 2);
+    assert_eq!(path.edges[0].caller_id, start);
+    assert_eq!(path.edges[0].callee_id, intermediate);
+    assert_eq!(path.edges[0].relation, CallTargetKind::Function);
+    assert_eq!(path.edges[1].caller_id, intermediate);
+    assert_eq!(path.edges[1].callee_id, target);
+    assert_eq!(path.edges[1].relation, CallTargetKind::Function);
+
+    let db_paths = db.call_paths_between(
+        start,
+        target,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 128,
+        },
+    )?;
+    let db_path = db_paths
+        .iter()
+        .find(|path| path.start_id == start && path.end_id == target && path.depth == 2)
+        .unwrap_or_else(|| panic!("expected DB free-function path for RAG oracle: {db_paths:#?}"));
+    assert_eq!(path.edges[0].span, db_path.edges[0].span);
+    assert_eq!(path.edges[1].span, db_path.edges[1].span);
+    assert_call_path_node(
+        path,
+        start,
+        "::expand",
+        "axum-macros/src/from_request/mod.rs",
+        "RAG free-function outgoing path",
+    );
+    assert_call_path_node(
+        path,
+        intermediate,
+        "::impl_struct_by_extracting_each_field",
+        "axum-macros/src/from_request/mod.rs",
+        "RAG free-function outgoing path",
+    );
+    assert_call_path_node(
+        path,
+        target,
+        "::extract_fields",
+        "axum-macros/src/from_request/mod.rs",
+        "RAG free-function outgoing path",
+    );
+
+    let one_hop = rag.exact_call_paths_between(
+        start,
+        target,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 128,
+        },
+    )?;
+    assert!(
+        one_hop.is_empty(),
+        "RAG free-function reachability should not skip the intermediate helper: {one_hop:#?}"
+    );
+
+    let direct = rag.exact_call_paths_between(
+        start,
+        target,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 128,
+        },
+    )?;
+    let direct_path = direct
+        .iter()
+        .find(|path| path.start_id == start && path.end_id == target && path.depth == 2)
+        .unwrap_or_else(|| {
+            panic!("expected RAG direct free-function reachability path: {direct:#?}")
+        });
+    assert_eq!(direct_path.edges, path.edges);
+
+    let incoming = rag.exact_call_paths_to_target(
+        target,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 128,
+        },
+    )?;
+    let reverse_path = incoming
+        .iter()
+        .find(|path| path.start_id == start && path.end_id == target && path.depth == 2)
+        .unwrap_or_else(|| panic!("expected RAG reverse free-function path lookup: {incoming:#?}"));
+    assert_eq!(reverse_path.edges, path.edges);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_expansion_reads_axum_two_hop_path_candidates() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;

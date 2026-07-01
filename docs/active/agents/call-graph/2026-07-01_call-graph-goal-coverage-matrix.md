@@ -58,7 +58,14 @@ Exit criteria:
 - If exposed downstream, add RAG and TUI/tool assertions that the same path is visible through existing exact call-path or summary surfaces.
 - Record the source oracle and verification in one consolidated doc update.
 
-Reason to switch here now: method/trait-method multi-hop has enough current proof for this stage, while regular free-function multi-hop is not yet proven by a real-corpus multi-hop test.
+Completed evidence:
+
+- Real source oracle: `axum-macros/src/from_request/mod.rs:145` and `:342` prove `from_request::expand -> impl_struct_by_extracting_each_field -> extract_fields`.
+- DB: `axum_from_request_expand_reaches_extract_fields_in_two_free_function_hops` proves ordered `call_paths_between` traversal and reverse/owner traversal over the same edge vector.
+- RAG: `call_paths_exact_reads_axum_from_request_free_function_two_hop_path` proves the same ordered path through exact call-path APIs.
+- TUI/tool: `code_item_call_path_returns_real_corpus_free_function_two_hop_reachability` proves the `code_item_call_path` tool can answer direct reachability for this function chain.
+
+Reason to switch after this bucket: method/trait-method and regular free-function multi-hop now both have current real-corpus two-hop proofs. Do not add more function breadth unless a regression or usage question requires it.
 
 ## Coverage Matrix
 
@@ -66,7 +73,7 @@ Reason to switch here now: method/trait-method multi-hop has enough current proo
 | --- | --- | --- | --- | --- | --- | --- |
 | Method / trait-method multi-hop | Met for now | `RequestExt::extract -> extract_with_state -> FromRequest::from_request` two-hop paths and summaries | Exact call paths, expansion, impact, reach | `code_item_lookup` two-hop payload and UI counts | axum | Do not deepen by default; switch buckets unless a regression appears. |
 | Regular free-function one-hop | Covered | `parse_attrs`, `run_ui_tests`, and related target fanout assertions | Exact call-context tests for current real-corpus function callers | `code_item_lookup` function caller regressions | axum | Use as source pool for finding a free-function multi-hop chain. |
-| Regular free-function multi-hop | Gap | Not yet proven as a real-corpus two-hop path | Not yet proven | Not yet proven | TBD | Current bucket. Find source oracle and prove ordered two-edge traversal. |
+| Regular free-function multi-hop | Met for now | `from_request::expand -> impl_struct_by_extracting_each_field -> extract_fields` ordered two-hop traversal through `call_paths_between`, owner, and target path APIs | Exact call paths expose the same ordered function chain and source-node metadata | `code_item_call_path` returns the same real-corpus function reachability path | axum | Switch buckets; do not add more free-function breadth by default. |
 | Inherent method one-hop | Covered/partial | Examples include `Json::from_bytes` and related method/associated-function rows | Exact call-context propagation exists | Exact lookup regressions exist | axum | Revisit only after broader buckets have at least one proof. |
 | Associated-function path calls | Covered/partial | `Self::from_bytes`, `E::from_request`, `MethodRouter::new` style rows | Impact/reach summaries carry relation/kind | Tool payloads carry relation/kind and callsite buckets | axum | Later: separate associated-function multi-hop bucket if needed. |
 | Constructors | Covered one-hop | Tuple struct / enum variant constructor rows are asserted in real-corpus matrix | Some exact context propagation exists | Tool regressions include variant/constructor rows | axum | Later: multi-hop constructor path only if a real usage question requires it. |
@@ -81,7 +88,6 @@ Reason to switch here now: method/trait-method multi-hop has enough current proo
 
 ## Parking Lot
 
-- Add a real-corpus regular free-function two-hop proof.
 - Decide whether associated-function multi-hop needs a distinct proof row or can stay covered by the method/trait-method chain for now.
 - Add binding tracking plan that ties syntax body ownership, local bindings, and type graph edges before attempting receiver/dynamic traversal.
 - Split future resolver work by capability: local binding, field receiver, closure body owner, import/re-export/glob, trait dispatch.

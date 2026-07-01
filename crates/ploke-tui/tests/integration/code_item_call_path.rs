@@ -6,7 +6,8 @@ use ploke_tui::tools::{
 };
 
 use crate::call_graph_tool_support::{
-    AxumRequestExtractPathToolFixture, assert_call_path_node, assert_two_hop_call_path, ui_field,
+    AxumFromRequestFreeFunctionPathToolFixture, AxumRequestExtractPathToolFixture,
+    assert_call_path_node, assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -139,6 +140,116 @@ fn assert_source_file(files: &[serde_json::Value], suffix: &str, label: &str) {
             .iter()
             .any(|file| { file.as_str().is_some_and(|path| path.ends_with(suffix)) }),
         "{label} should include source file ending with {suffix:?}: {files:#?}"
+    );
+}
+
+#[tokio::test]
+async fn code_item_call_path_returns_real_corpus_free_function_two_hop_reachability() {
+    let fixture = AxumFromRequestFreeFunctionPathToolFixture::new().await;
+    let params = CodeItemCallPathParams {
+        source: CodeItemCallPathEndpoint {
+            item_name: Cow::Borrowed("expand"),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("function"),
+            module_path: Cow::Owned(fixture.module_path_arg()),
+            owner_trait: None,
+            owner_type: None,
+        },
+        target: CodeItemCallPathEndpoint {
+            item_name: Cow::Borrowed("extract_fields"),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("function"),
+            module_path: Cow::Owned(fixture.module_path_arg()),
+            owner_trait: None,
+            owner_type: None,
+        },
+        max_depth: Some(2),
+        max_paths: Some(128),
+    };
+
+    let result = CodeItemCallPath::execute(
+        params,
+        fixture.ctx("axum-free-function-code-item-call-path"),
+    )
+    .await
+    .expect("tool execution");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize CodeItemCallPathResult");
+    assert_eq!(
+        payload
+            .get("reachable")
+            .and_then(serde_json::Value::as_bool),
+        Some(true),
+        "code_item_call_path should report the real-corpus free-function two-hop chain as reachable: {payload:#?}"
+    );
+    let paths = payload
+        .get("paths")
+        .and_then(serde_json::Value::as_array)
+        .expect("paths array");
+    let source_files = payload
+        .get("source_files")
+        .and_then(serde_json::Value::as_array)
+        .expect("source_files array");
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Source-oracle chain:
+    //   axum-macros/src/from_request/mod.rs:145
+    //     `from_request::expand` calls `impl_struct_by_extracting_each_field(...)`.
+    //   axum-macros/src/from_request/mod.rs:342
+    //     `impl_struct_by_extracting_each_field` calls `extract_fields(...)`.
+    //   axum-macros/src/from_request/mod.rs:412
+    //     defines `extract_fields`.
+    // This proves the direct tool-call question for regular free functions:
+    // "Can this known source helper reach this known target helper, and what
+    // ordered call path connects them?"
+    assert_two_hop_call_path(
+        paths,
+        fixture.start,
+        fixture.intermediate,
+        fixture.target,
+        "free-function code_item_call_path paths",
+    );
+    let path = paths
+        .iter()
+        .find(|path| path.get("depth").and_then(serde_json::Value::as_u64) == Some(2))
+        .unwrap_or_else(|| panic!("missing free-function two-hop path: {paths:#?}"));
+    assert_edge_spans_present(path, "free-function code_item_call_path paths");
+    assert_path_edge_proofs_present(
+        &payload,
+        path,
+        "free-function code_item_call_path proof context",
+    );
+    let nodes = path
+        .get("nodes")
+        .and_then(serde_json::Value::as_array)
+        .expect("path nodes");
+    assert_call_path_node(
+        nodes,
+        fixture.start,
+        "::expand",
+        "axum-macros/src/from_request/mod.rs",
+        "free-function code_item_call_path paths",
+    );
+    assert_call_path_node(
+        nodes,
+        fixture.intermediate,
+        "::impl_struct_by_extracting_each_field",
+        "axum-macros/src/from_request/mod.rs",
+        "free-function code_item_call_path paths",
+    );
+    assert_call_path_node(
+        nodes,
+        fixture.target,
+        "::extract_fields",
+        "axum-macros/src/from_request/mod.rs",
+        "free-function code_item_call_path paths",
+    );
+    assert_source_file(
+        source_files,
+        "axum-macros/src/from_request/mod.rs",
+        "free-function code_item_call_path source files",
     );
 }
 

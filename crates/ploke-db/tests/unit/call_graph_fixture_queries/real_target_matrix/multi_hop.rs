@@ -85,6 +85,128 @@ fn axum_request_extract_reaches_from_request_trait_method_in_two_hops() -> Resul
 }
 
 #[test]
+fn axum_from_request_expand_reaches_extract_fields_in_two_free_function_hops() -> Result<(), DbError>
+{
+    let db = setup_axum_call_graph_db()?;
+
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Source-oracle chain:
+    //   axum-macros/src/from_request/mod.rs:93
+    //     defines `from_request::expand`.
+    //   axum-macros/src/from_request/mod.rs:145
+    //     `expand` calls `impl_struct_by_extracting_each_field(...)`.
+    //   axum-macros/src/from_request/mod.rs:330
+    //     defines `impl_struct_by_extracting_each_field`.
+    //   axum-macros/src/from_request/mod.rs:342
+    //     `impl_struct_by_extracting_each_field` calls `extract_fields(...)`.
+    //   axum-macros/src/from_request/mod.rs:412
+    //     defines `extract_fields`.
+    //
+    // This covers the regular free-function multi-hop bucket: both edges are
+    // unqualified local path calls between normal functions, with no method,
+    // trait, closure, dynamic-call, or proc-macro body involvement.
+    let start = function_id_by_name_in_module(&db, &["crate", "from_request"], "expand")?;
+    let intermediate = function_id_by_name_in_module(
+        &db,
+        &["crate", "from_request"],
+        "impl_struct_by_extracting_each_field",
+    )?;
+    let target = function_id_by_name_in_module(&db, &["crate", "from_request"], "extract_fields")?;
+
+    let start_context = db.call_context_for_owner(start)?;
+    let first_edge = row_by_path(&start_context, &["impl_struct_by_extracting_each_field"]);
+    assert_resolved_target(
+        first_edge,
+        intermediate,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let intermediate_context = db.call_context_for_owner(intermediate)?;
+    let second_edge = row_by_path(&intermediate_context, &["extract_fields"]);
+    assert_resolved_target(
+        second_edge,
+        target,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let one_hop = db.call_paths_between(
+        start,
+        target,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 128,
+        },
+    )?;
+    assert!(
+        one_hop.is_empty(),
+        "one-hop traversal should not skip over impl_struct_by_extracting_each_field: {one_hop:#?}"
+    );
+
+    let paths = db.call_paths_between(
+        start,
+        target,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 128,
+        },
+    )?;
+    let path = paths
+        .iter()
+        .find(|path| path.start_id == start && path.end_id == target && path.depth == 2)
+        .unwrap_or_else(|| {
+            panic!("expected two-hop path from from_request::expand to extract_fields: {paths:#?}")
+        });
+    assert_eq!(path.edges.len(), 2);
+    assert_eq!(path.edges[0].caller_id, start);
+    assert_eq!(path.edges[0].callee_id, intermediate);
+    assert_eq!(path.edges[0].call_site_id, first_edge.site.id);
+    assert_eq!(path.edges[0].relation, CallRelationKind::Function);
+    assert_eq!(path.edges[0].target_kind, CallTargetKind::Function);
+    assert_eq!(path.edges[1].caller_id, intermediate);
+    assert_eq!(path.edges[1].callee_id, target);
+    assert_eq!(path.edges[1].call_site_id, second_edge.site.id);
+    assert_eq!(path.edges[1].relation, CallRelationKind::Function);
+    assert_eq!(path.edges[1].target_kind, CallTargetKind::Function);
+
+    let outgoing = db.call_paths_from_owner(
+        start,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 128,
+        },
+    )?;
+    assert!(
+        outgoing
+            .iter()
+            .any(|candidate| candidate.edges == path.edges),
+        "owner traversal should expose the same ordered free-function path: {outgoing:#?}"
+    );
+
+    let incoming = db.call_paths_to_target(
+        target,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 128,
+        },
+    )?;
+    assert!(
+        incoming
+            .iter()
+            .any(|candidate| candidate.edges == path.edges),
+        "target traversal should expose the same ordered free-function path: {incoming:#?}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn axum_request_extract_expands_call_path_context_in_two_hops() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
