@@ -84,6 +84,18 @@ future work can choose the next batch without rereading the diary-style notes.
   `axum-core/src/ext_traits/request.rs` and `axum-core/src/extract/mod.rs`, and
   the UI payload includes a `source_files` count. Focused verification:
   `cargo test -p ploke-tui --features call_graph code_item_call_path -- --nocapture`.
+- 2026-07-01: Target-centered impact summaries and owner-centered reach
+  summaries now also return deduplicated `source_files`. RAG derives the list
+  from the summary endpoint nodes plus every bounded path node, and exact
+  `code_item_lookup` exposes `impact_source_files` and `reach_source_files`
+  counts in the UI payload. The axum regressions prove the two-hop
+  `RequestExt::extract -> extract_with_state -> FromRequest::from_request`
+  summaries include `axum-core/src/ext_traits/request.rs` and
+  `axum-core/src/extract/mod.rs`, while the `Json::from_bytes` frontier case
+  includes `axum/src/json.rs`. Focused verification:
+  `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`
+  and
+  `cargo test -p ploke-tui --features call_graph code_item -- --nocapture`.
 - 2026-06-30: The first usage-question slice now has real-corpus proofs across
   DB and TUI surfaces. DB coverage in
   `real_target_matrix::usage_questions` proves that the persisted axum call
