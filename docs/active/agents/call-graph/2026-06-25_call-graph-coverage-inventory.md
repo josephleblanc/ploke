@@ -419,6 +419,17 @@ future work can choose the next batch without rereading the diary-style notes.
   `external_summary_boundary` summaries still fail closed for those boundary
   kinds. RAG and TUI proof-context artifact tests cover these effect terms in
   downstream payloads.
+- 2026-07-01: Impact and reach summaries now expose `source_modules` alongside
+  `source_files`, derived from the same endpoint and bounded-path nodes used
+  for the summary. The axum usage-question proof remains the real-corpus chain
+  `RequestExt::extract -> extract_with_state -> FromRequest::from_request`
+  across `crate::ext_traits::request` and `crate::extract`, so DB/RAG/TUI
+  consumers can answer component-level impact and navigation questions without
+  reconstructing modules from individual node payloads. Focused verification:
+  `cargo test -p ploke-db --features call_graph real_target_matrix::usage_questions -- --nocapture`,
+  `cargo test -p ploke-rag --features call_graph exact_reads_axum_usage_question_summary -- --nocapture`,
+  and
+  `cargo test -p ploke-tui --features call_graph code_item_lookup_returns_real_corpus_two_hop_call_paths -- --nocapture`.
 
 ## Next implementation batches
 
