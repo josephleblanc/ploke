@@ -36,6 +36,12 @@ fn fixture_context_reads_projected_imported_associated_function_calls() -> Resul
             path(&["NestedGlobAssoc", "make"]),
             nested_reexported_make,
         ),
+        (
+            &["crate", "inherited_glob_assoc_parent", "child"],
+            "call_inherited_glob_reexported_type_assoc_make",
+            path(&["NestedGlobAssoc", "make"]),
+            nested_reexported_make,
+        ),
     ];
 
     for (module_path, owner_name, expected_path, target) in cases {

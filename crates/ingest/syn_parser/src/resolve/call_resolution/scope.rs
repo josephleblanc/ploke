@@ -416,6 +416,8 @@ impl CallRelationResolver<'_> {
         segment: &str,
         sink: &mut impl FnMut(AnyNodeId) -> Result<(), SynParserError>,
     ) -> Result<(), SynParserError> {
+        self.visit_ancestor_glob_candidates(import_id, segment, sink)?;
+
         for relation in self.tree.get_iter_relations_to(&import_id.as_any()) {
             let SyntacticRelation::ImportedBy { source, target } = relation.rel() else {
                 continue;
@@ -428,6 +430,35 @@ impl CallRelationResolver<'_> {
         }
 
         Ok(())
+    }
+
+    fn visit_ancestor_glob_candidates(
+        &self,
+        import_id: ImportNodeId,
+        segment: &str,
+        sink: &mut impl FnMut(AnyNodeId) -> Result<(), SynParserError>,
+    ) -> Result<(), SynParserError> {
+        let import_node = self.graph.get_import_checked(import_id)?;
+        if import_node.source_path().is_empty()
+            || !import_node.source_path().iter().all(|part| part == "super")
+        {
+            return Ok(());
+        }
+
+        let Some(mut module_id) = self.containing_module(import_id.as_any()) else {
+            return Ok(());
+        };
+
+        for _ in import_node.source_path() {
+            module_id = self.tree.get_parent_module_id(module_id).ok_or_else(|| {
+                SynParserError::InternalState(format!(
+                    "call resolution could not find parent module for {module_id} while resolving glob import {}",
+                    import_node.source_path().join("::")
+                ))
+            })?;
+        }
+
+        self.visit_scope_candidates(module_id, segment, sink)
     }
 
     fn visit_named_binding_terminals(

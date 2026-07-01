@@ -1398,3 +1398,15 @@ impl SelfTupleConstructor {
         Self(value)
     }
 }
+
+pub mod inherited_glob_assoc_parent {
+    use super::nested_glob_assoc_reexport::*;
+
+    pub mod child {
+        use super::*;
+
+        pub fn call_inherited_glob_reexported_type_assoc_make() -> NestedGlobAssoc {
+            NestedGlobAssoc::make()
+        }
+    }
+}
