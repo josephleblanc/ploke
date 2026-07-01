@@ -376,6 +376,7 @@ fn impact_info(db: &Database, report: DbCallImpactReport) -> Result<CallImpactIn
         .into_iter()
         .map(NodeFilepath::new)
         .collect();
+    let source_modules = report.source_modules;
 
     Ok(CallImpactInfo {
         target,
@@ -388,6 +389,7 @@ fn impact_info(db: &Database, report: DbCallImpactReport) -> Result<CallImpactIn
         test_callers,
         non_test_callers,
         source_files,
+        source_modules,
     })
 }
 
@@ -448,6 +450,7 @@ fn reach_info(db: &Database, report: DbCallReachReport) -> Result<CallReachInfo,
         .into_iter()
         .map(NodeFilepath::new)
         .collect();
+    let source_modules = report.source_modules;
 
     Ok(CallReachInfo {
         owner,
@@ -462,6 +465,7 @@ fn reach_info(db: &Database, report: DbCallReachReport) -> Result<CallReachInfo,
         external_frontier_calls,
         unsupported_frontier_calls,
         source_files,
+        source_modules,
     })
 }
 

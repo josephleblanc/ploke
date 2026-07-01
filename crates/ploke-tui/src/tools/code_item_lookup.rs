@@ -415,6 +415,15 @@ for a more fuzzy search."#
                     .to_string(),
             )
             .with_field(
+                "impact_source_modules",
+                concise_context
+                    .call_impact
+                    .as_ref()
+                    .map(|impact| impact.source_modules.len())
+                    .unwrap_or_default()
+                    .to_string(),
+            )
+            .with_field(
                 "reach_callees",
                 concise_context
                     .call_reach
@@ -501,6 +510,15 @@ for a more fuzzy search."#
                     .call_reach
                     .as_ref()
                     .map(|reach| reach.source_files.len())
+                    .unwrap_or_default()
+                    .to_string(),
+            )
+            .with_field(
+                "reach_source_modules",
+                concise_context
+                    .call_reach
+                    .as_ref()
+                    .map(|reach| reach.source_modules.len())
                     .unwrap_or_default()
                     .to_string(),
             )

@@ -770,6 +770,16 @@ async fn call_impact_exact_reads_axum_usage_question_summary() -> Result<(), Err
         "axum-core/src/extract/mod.rs",
         "RAG impact source files",
     );
+    assert_call_source_module(
+        &report.source_modules,
+        &["crate", "ext_traits", "request"],
+        "RAG impact source modules",
+    );
+    assert_call_source_module(
+        &report.source_modules,
+        &["crate", "extract"],
+        "RAG impact source modules",
+    );
 
     // Source oracle:
     //   axum-macros/src/lib.rs:377,426,665,715 call `expand_with(...)` from
@@ -1103,6 +1113,16 @@ async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Erro
         "axum-core/src/extract/mod.rs",
         "RAG reach source files",
     );
+    assert_call_source_module(
+        &report.source_modules,
+        &["crate", "ext_traits", "request"],
+        "RAG reach source modules",
+    );
+    assert_call_source_module(
+        &report.source_modules,
+        &["crate", "extract"],
+        "RAG reach source modules",
+    );
 
     let boundary = rag
         .exact_call_reach_for_owner(
@@ -1378,6 +1398,14 @@ fn assert_call_source_file(
     assert!(
         files.iter().any(|file| file.as_ref().ends_with(suffix)),
         "{label} should include file ending with {suffix:?}: {files:#?}"
+    );
+}
+
+fn assert_call_source_module(modules: &[Vec<String>], expected: &[&str], label: &str) {
+    let expected = path(expected);
+    assert!(
+        modules.iter().any(|module| module == &expected),
+        "{label} should include module {expected:?}: {modules:#?}"
     );
 }
 

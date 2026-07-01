@@ -170,6 +170,7 @@ pub struct CallImpactReport {
     pub test_callers: Vec<CallNodeInfo>,
     pub non_test_callers: Vec<CallNodeInfo>,
     pub source_files: Vec<String>,
+    pub source_modules: Vec<Vec<String>>,
 }
 
 /// Owner-centered summary for navigation/reachability usage questions.
@@ -187,4 +188,5 @@ pub struct CallReachReport {
     pub external_frontier_calls: Vec<CallContextRow>,
     pub unsupported_frontier_calls: Vec<CallContextRow>,
     pub source_files: Vec<String>,
+    pub source_modules: Vec<Vec<String>>,
 }

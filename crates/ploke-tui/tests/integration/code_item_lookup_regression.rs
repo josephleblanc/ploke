@@ -232,6 +232,10 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         .get("source_files")
         .and_then(serde_json::Value::as_array)
         .expect("call_reach source_files array");
+    let reach_source_modules = reach
+        .get("source_modules")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_reach source_modules array");
 
     // Matrix:
     //   docs/active/agents/call-graph/
@@ -351,6 +355,16 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         "axum-core/src/extract/mod.rs",
         "code_item_lookup reach source files",
     );
+    assert_source_module(
+        reach_source_modules,
+        &["crate", "ext_traits", "request"],
+        "code_item_lookup reach source modules",
+    );
+    assert_source_module(
+        reach_source_modules,
+        &["crate", "extract"],
+        "code_item_lookup reach source modules",
+    );
     let target_id = fixture.target.to_string();
     let outgoing_path = outgoing_paths
         .iter()
@@ -428,6 +442,10 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
     assert_eq!(
         ui_field(start_ui, "reach_source_files"),
         reach_source_files.len().to_string()
+    );
+    assert_eq!(
+        ui_field(start_ui, "reach_source_modules"),
+        reach_source_modules.len().to_string()
     );
 
     let boundary_params = LookupParams {
@@ -545,6 +563,10 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         .get("source_files")
         .and_then(serde_json::Value::as_array)
         .expect("call_impact source_files array");
+    let impact_source_modules = impact
+        .get("source_modules")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_impact source_modules array");
     assert_two_hop_call_path(
         incoming_paths,
         fixture.start,
@@ -649,6 +671,16 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         "axum-core/src/extract/mod.rs",
         "code_item_lookup impact source files",
     );
+    assert_source_module(
+        impact_source_modules,
+        &["crate", "ext_traits", "request"],
+        "code_item_lookup impact source modules",
+    );
+    assert_source_module(
+        impact_source_modules,
+        &["crate", "extract"],
+        "code_item_lookup impact source modules",
+    );
     let target_ui = target_result
         .ui_payload
         .as_ref()
@@ -686,6 +718,10 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
     assert_eq!(
         ui_field(target_ui, "impact_source_files"),
         impact_source_files.len().to_string()
+    );
+    assert_eq!(
+        ui_field(target_ui, "impact_source_modules"),
+        impact_source_modules.len().to_string()
     );
 }
 
@@ -1404,6 +1440,25 @@ fn assert_source_file(files: &[serde_json::Value], suffix: &str, label: &str) {
             .any(|file| file.as_str().is_some_and(|path| path.ends_with(suffix))),
         "{label} should include source file ending with {suffix:?}: {files:#?}"
     );
+}
+
+fn assert_source_module(modules: &[serde_json::Value], expected: &[&str], label: &str) {
+    assert!(
+        modules.iter().any(|module| {
+            module
+                .as_array()
+                .is_some_and(|segments| module_segments_eq(segments, expected))
+        }),
+        "{label} should include source module {expected:?}: {modules:#?}"
+    );
+}
+
+fn module_segments_eq(segments: &[serde_json::Value], expected: &[&str]) -> bool {
+    segments.len() == expected.len()
+        && segments
+            .iter()
+            .zip(expected)
+            .all(|(segment, expected)| segment.as_str() == Some(*expected))
 }
 
 fn module_path_field<'a>(

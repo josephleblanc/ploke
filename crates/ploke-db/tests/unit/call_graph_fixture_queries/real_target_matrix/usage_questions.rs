@@ -299,6 +299,16 @@ fn axum_usage_questions_summarize_owner_reach_for_navigation() -> Result<(), DbE
         "axum-core/src/extract/mod.rs",
         "RequestExt::extract reach report source files",
     );
+    assert_source_module(
+        &report.source_modules,
+        &["crate", "ext_traits", "request"],
+        "RequestExt::extract reach report source modules",
+    );
+    assert_source_module(
+        &report.source_modules,
+        &["crate", "extract"],
+        "RequestExt::extract reach report source modules",
+    );
 
     let boundary_report = db.call_reach_for_owner(
         intermediate,
@@ -516,6 +526,16 @@ fn axum_usage_questions_summarize_eventual_callers_for_impact() -> Result<(), Db
         &report.source_files,
         "axum-core/src/extract/mod.rs",
         "FromRequest::from_request impact report source files",
+    );
+    assert_source_module(
+        &report.source_modules,
+        &["crate", "ext_traits", "request"],
+        "FromRequest::from_request impact report source modules",
+    );
+    assert_source_module(
+        &report.source_modules,
+        &["crate", "extract"],
+        "FromRequest::from_request impact report source modules",
     );
 
     Ok(())
@@ -818,6 +838,14 @@ fn assert_source_file(files: &[String], suffix: &str, label: &str) {
     assert!(
         files.iter().any(|path| path.ends_with(suffix)),
         "{label} should include source file ending with {suffix:?}: {files:#?}"
+    );
+}
+
+fn assert_source_module(modules: &[Vec<String>], expected: &[&str], label: &str) {
+    let expected = path(expected);
+    assert!(
+        modules.iter().any(|module| module == &expected),
+        "{label} should include source module {expected:?}: {modules:#?}"
     );
 }
 

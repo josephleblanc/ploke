@@ -50,7 +50,7 @@ impl Database {
                 non_test_callers.push(caller.clone());
             }
         }
-        let source_files = source_files_for_summary(
+        let sources = sources_for_summary(
             self,
             &paths,
             std::iter::once(&target)
@@ -69,7 +69,8 @@ impl Database {
             public_callers,
             test_callers,
             non_test_callers,
-            source_files,
+            source_files: sources.files,
+            source_modules: sources.modules,
         })
     }
 
@@ -113,7 +114,7 @@ impl Database {
             .filter(|row| row.status.status == CallStatusKind::Unsupported)
             .cloned()
             .collect();
-        let source_files = source_files_for_summary(
+        let sources = sources_for_summary(
             self,
             &paths,
             std::iter::once(&owner)
@@ -134,7 +135,8 @@ impl Database {
             frontier_calls,
             external_frontier_calls,
             unsupported_frontier_calls,
-            source_files,
+            source_files: sources.files,
+            source_modules: sources.modules,
         })
     }
 }
@@ -366,14 +368,21 @@ fn node_info_for_paths(
     Ok(nodes)
 }
 
-fn source_files_for_summary<'a>(
+struct SummarySources {
+    files: Vec<String>,
+    modules: Vec<Vec<String>>,
+}
+
+fn sources_for_summary<'a>(
     db: &Database,
     paths: &[CallPath],
     nodes: impl Iterator<Item = &'a CallNodeInfo>,
-) -> Result<Vec<String>, DbError> {
+) -> Result<SummarySources, DbError> {
     let mut files = BTreeSet::new();
+    let mut modules = BTreeSet::new();
     for node in nodes {
         files.insert(node.file_path.clone());
+        modules.insert(node.module_path.clone());
     }
 
     let mut path_nodes = BTreeSet::new();
@@ -393,7 +402,11 @@ fn source_files_for_summary<'a>(
             ))
         })?;
         files.insert(info.file_path);
+        modules.insert(info.module_path);
     }
 
-    Ok(files.into_iter().collect())
+    Ok(SummarySources {
+        files: files.into_iter().collect(),
+        modules: modules.into_iter().collect(),
+    })
 }

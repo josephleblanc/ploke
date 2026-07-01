@@ -404,6 +404,8 @@ pub struct CallImpactInfo {
     pub test_callers: Vec<CallNodeInfo>,
     pub non_test_callers: Vec<CallNodeInfo>,
     pub source_files: Vec<NodeFilepath>,
+    #[serde(default)]
+    pub source_modules: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
@@ -421,6 +423,8 @@ pub struct CallReachInfo {
     pub external_frontier_calls: Vec<CallContextInfo>,
     pub unsupported_frontier_calls: Vec<CallContextInfo>,
     pub source_files: Vec<NodeFilepath>,
+    #[serde(default)]
+    pub source_modules: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialOrd, Ord, Hash, PartialEq)]
