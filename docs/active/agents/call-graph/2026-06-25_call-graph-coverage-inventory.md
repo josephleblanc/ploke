@@ -74,6 +74,16 @@ future work can choose the next batch without rereading the diary-style notes.
   `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
   and
   `cargo test -p ploke-tui --features call_graph code_item -- --nocapture`.
+- 2026-07-01: `code_item_call_path` now returns an explicit
+  `source_files` list in addition to ordered path edges, path-node metadata,
+  and proof context. The list is deduplicated from the exact source endpoint,
+  exact target endpoint, and every path node, so tool callers can answer the
+  documentation/RAG usage question "which source files should be retrieved for
+  this call chain?" without reconstructing files from nested path rows. The
+  axum two-hop regression asserts that the returned source files include both
+  `axum-core/src/ext_traits/request.rs` and `axum-core/src/extract/mod.rs`, and
+  the UI payload includes a `source_files` count. Focused verification:
+  `cargo test -p ploke-tui --features call_graph code_item_call_path -- --nocapture`.
 - 2026-06-30: The first usage-question slice now has real-corpus proofs across
   DB and TUI surfaces. DB coverage in
   `real_target_matrix::usage_questions` proves that the persisted axum call
