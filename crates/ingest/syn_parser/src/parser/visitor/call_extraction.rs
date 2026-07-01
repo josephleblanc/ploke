@@ -201,11 +201,8 @@ impl BodyCallVisitor<'_> {
     }
 
     fn record_method_call(&mut self, call: &syn::ExprMethodCall) {
-        let Some(receiver) =
-            classify_method_receiver(&call.receiver, self.param_names, &self.local_scopes)
-        else {
-            return;
-        };
+        let receiver =
+            classify_method_receiver(&call.receiver, self.param_names, &self.local_scopes);
 
         let method_name = call.method.to_string();
         let byte_range = call.span().byte_range();
@@ -348,56 +345,58 @@ fn classify_method_receiver(
     receiver: &syn::Expr,
     param_names: &[String],
     local_scopes: &[Vec<LocalBindingProof>],
-) -> Option<MethodCallReceiver> {
+) -> MethodCallReceiver {
     let receiver = unparen_expr(receiver);
     match receiver {
         syn::Expr::Path(path) if path.qself.is_none() && path.path.is_ident("self") => {
-            Some(MethodCallReceiver::SelfValue)
+            MethodCallReceiver::SelfValue
         }
         syn::Expr::Path(path) if path.qself.is_none() => {
-            let name = path.path.get_ident()?.to_string();
+            let Some(name) = path.path.get_ident().map(ToString::to_string) else {
+                return MethodCallReceiver::Unsupported;
+            };
             if let Some(binding) = visible_local_binding(&name, local_scopes) {
                 return match binding {
                     LocalBindingProof::Typed {
                         name, type_path, ..
-                    } => Some(MethodCallReceiver::TypedLocalBinding {
+                    } => MethodCallReceiver::TypedLocalBinding {
                         name: name.clone(),
                         type_path: type_path.clone(),
-                    }),
+                    },
                     LocalBindingProof::TraitObject {
                         name,
                         init_path: Some(init_path),
                         ..
-                    } => Some(MethodCallReceiver::InitializedLocalBinding {
+                    } => MethodCallReceiver::InitializedLocalBinding {
                         name: name.clone(),
                         init_path: init_path.clone(),
-                    }),
+                    },
                     LocalBindingProof::TraitObject {
                         name, trait_path, ..
-                    } => Some(MethodCallReceiver::TypedLocalBinding {
+                    } => MethodCallReceiver::TypedLocalBinding {
                         name: name.clone(),
                         type_path: trait_path.clone(),
-                    }),
+                    },
                     LocalBindingProof::Initialized { name, init_path } => {
-                        Some(MethodCallReceiver::InitializedLocalBinding {
+                        MethodCallReceiver::InitializedLocalBinding {
                             name: name.clone(),
                             init_path: init_path.clone(),
-                        })
+                        }
                     }
                     LocalBindingProof::Constructed {
                         name, type_path, ..
-                    } => Some(MethodCallReceiver::InitializedLocalBinding {
+                    } => MethodCallReceiver::InitializedLocalBinding {
                         name: name.clone(),
                         init_path: type_path.clone(),
-                    }),
-                    LocalBindingProof::Array { .. } => None,
+                    },
+                    LocalBindingProof::Array { .. } => MethodCallReceiver::Unsupported,
                     LocalBindingProof::Referenced { name, type_path } => {
-                        Some(MethodCallReceiver::InitializedLocalBinding {
+                        MethodCallReceiver::InitializedLocalBinding {
                             name: name.clone(),
                             init_path: type_path.clone(),
-                        })
+                        }
                     }
-                    LocalBindingProof::Untyped { .. } => None,
+                    LocalBindingProof::Untyped { .. } => MethodCallReceiver::Unsupported,
                 };
             }
 
@@ -405,29 +404,35 @@ fn classify_method_receiver(
                 .iter()
                 .any(|candidate| candidate == &name)
                 .then_some(MethodCallReceiver::LocalBinding { name })
+                .unwrap_or(MethodCallReceiver::Unsupported)
         }
         syn::Expr::Field(_) => self_field_path(receiver)
             .filter(|field_path| !field_path.is_empty())
             .map(|field_path| MethodCallReceiver::SelfField { field_path })
-            .or_else(|| local_field_receiver(receiver, param_names, local_scopes)),
+            .or_else(|| local_field_receiver(receiver, param_names, local_scopes))
+            .unwrap_or(MethodCallReceiver::Unsupported),
         syn::Expr::Reference(reference) => {
             borrowed_local_receiver(reference.expr.as_ref(), param_names, local_scopes)
+                .unwrap_or(MethodCallReceiver::Unsupported)
         }
         syn::Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Deref(_)) => {
             dereferenced_local_receiver(unary.expr.as_ref(), param_names, local_scopes)
+                .unwrap_or(MethodCallReceiver::Unsupported)
         }
-        syn::Expr::Call(call) => receiver_path_call(call),
-        syn::Expr::MethodCall(call) => Some(MethodCallReceiver::MethodCallResult {
+        syn::Expr::Call(call) => {
+            receiver_path_call(call).unwrap_or(MethodCallReceiver::Unsupported)
+        }
+        syn::Expr::MethodCall(call) => MethodCallReceiver::MethodCallResult {
             method_name: call.method.to_string(),
-        }),
+        },
         syn::Expr::Await(await_expr) => {
-            receiver_await_path_call(await_expr).or(Some(MethodCallReceiver::AwaitResult))
+            receiver_await_path_call(await_expr).unwrap_or(MethodCallReceiver::AwaitResult)
         }
         syn::Expr::Try(try_expr) => {
-            receiver_try_path_call(try_expr).or(Some(MethodCallReceiver::TryResult))
+            receiver_try_path_call(try_expr).unwrap_or(MethodCallReceiver::TryResult)
         }
-        syn::Expr::Lit(_) => Some(MethodCallReceiver::Literal),
-        _ => None,
+        syn::Expr::Lit(_) => MethodCallReceiver::Literal,
+        _ => MethodCallReceiver::Unsupported,
     }
 }
 

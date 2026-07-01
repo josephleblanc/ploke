@@ -611,6 +611,9 @@ fn method_receiver_to_cozo(receiver: &MethodCallReceiver) -> (cozo::DataValue, c
             string_list(path),
         ),
         MethodCallReceiver::Literal => (cozo::DataValue::from("Literal"), cozo::DataValue::Null),
+        MethodCallReceiver::Unsupported => {
+            (cozo::DataValue::from("Unsupported"), cozo::DataValue::Null)
+        }
     }
 }
 

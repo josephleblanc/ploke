@@ -1045,14 +1045,30 @@ fn format_call_context_block_renders_external_rows() {
             resolution: None,
             targets: Vec::new(),
         },
+        CallContextInfo {
+            site_id: Uuid::from_u128(0x704),
+            owner_id: Uuid::from_u128(0x704),
+            kind: CallSiteKind::Method,
+            span: (58, 119),
+            arg_count: None,
+            generic_arg_count: None,
+            callee: CallCalleeInfo::Method {
+                name: "instance_value".to_string(),
+                receiver: Some(CallReceiverInfo::Unsupported),
+            },
+            status: CallStatusKind::Unsupported,
+            resolution: None,
+            targets: Vec::new(),
+        },
     ];
 
     let rendered = format_call_context_block(&calls, "  ", 8);
     let expected = "\
-call_context: 3 call site(s)
+call_context: 4 call site(s)
   - Path @ 10..23: path String::new => External, targets [], owner 00000000-0000-0000-0000-000000000701
   - Method @ 24..45: method to_string on literal => External, targets [], owner 00000000-0000-0000-0000-000000000702
-  - Method @ 46..57: method len on value: Vec => External, targets [], owner 00000000-0000-0000-0000-000000000703";
+  - Method @ 46..57: method len on value: Vec => External, targets [], owner 00000000-0000-0000-0000-000000000703
+  - Method @ 58..119: method instance_value on unsupported receiver => Unsupported, targets [], owner 00000000-0000-0000-0000-000000000704";
 
     assert_eq!(rendered, expected);
 }

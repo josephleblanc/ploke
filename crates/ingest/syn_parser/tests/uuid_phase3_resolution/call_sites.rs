@@ -153,6 +153,7 @@ const AWAIT_RESULT_INSTANCE_CALL_SPAN: (usize, usize) = (12032, 12079);
 const TRY_RESULT_INSTANCE_CALL_SPAN: (usize, usize) = (12227, 12262);
 const LITERAL_TO_STRING_CALL_SPAN: (usize, usize) = (12319, 12340);
 const TYPED_VEC_LEN_CALL_SPAN: (usize, usize) = (12434, 12445);
+const IF_EXPRESSION_RECEIVER_METHOD_CALL_SPAN: (usize, usize) = (29843, 29904);
 const LOCAL_VEC_IMPL_SPAN: (usize, usize) = (12505, 12582);
 const SHADOWED_TYPED_VEC_LEN_CALL_SPAN: (usize, usize) = (12674, 12685);
 const FUNCTION_POINTER_CAST_PATH_DYNAMIC_CALL_SPAN: (usize, usize) = (12749, 12780);
@@ -2781,6 +2782,24 @@ paranoid_call_site_test!(
         0,
         &[],
         ExpectedCallOutcome::External,
+    ),
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_if_expression_receiver_method_records_unsupported_method_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_if_expression_receiver_method"
+    },
+    expected: ExpectedCallSite::method(
+        "instance_value",
+        ExpectedMethodReceiver::Unsupported,
+        IF_EXPRESSION_RECEIVER_METHOD_CALL_SPAN,
+        0,
+        0,
+        &[],
+        ExpectedCallOutcome::Unsupported,
     ),
 );
 

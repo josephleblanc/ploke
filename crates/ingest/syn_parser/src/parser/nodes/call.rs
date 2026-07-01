@@ -352,4 +352,7 @@ pub enum MethodCallReceiver {
     },
     /// The receiver is a literal expression, such as `"x"`.
     Literal,
+    /// The receiver expression is visible but outside this conservative
+    /// structural classifier.
+    Unsupported,
 }

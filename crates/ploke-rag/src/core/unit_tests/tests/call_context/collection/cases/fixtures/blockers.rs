@@ -14,13 +14,21 @@ async fn call_context_collection_reads_real_fixture_blocker_rows() -> Result<(),
         &db,
         &function_in_module_query(&["crate"], "call_ambiguous_trait_method"),
     )?;
+    let unsupported_receiver_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_if_expression_receiver_method"),
+    )?;
     let rag = init_test_rag_mock(Arc::clone(&db));
     assert!(
         !rag.call_context_degraded(),
         "fresh fixture call_graph schema should enable blocker call context"
     );
 
-    let call_context = rag.collect_call_context(&[(macro_owner, 1.0), (ambiguous_owner, 1.0)])?;
+    let call_context = rag.collect_call_context(&[
+        (macro_owner, 1.0),
+        (ambiguous_owner, 1.0),
+        (unsupported_receiver_owner, 1.0),
+    ])?;
     let macro_context = call_context
         .get(&macro_owner)
         .expect("macro owner should receive outgoing call context");
@@ -68,6 +76,33 @@ async fn call_context_collection_reads_real_fixture_blocker_rows() -> Result<(),
     assert!(
         ambiguous_call.targets.is_empty(),
         "ambiguous blocker rows must not fabricate RAG targets: {ambiguous_call:#?}"
+    );
+
+    let unsupported_receiver_context = call_context
+        .get(&unsupported_receiver_owner)
+        .expect("unsupported receiver owner should receive outgoing call context");
+    assert_eq!(
+        unsupported_receiver_context.len(),
+        1,
+        "unsupported receiver owner context: {unsupported_receiver_context:#?}"
+    );
+    let unsupported_receiver_call = &unsupported_receiver_context[0];
+    assert_eq!(unsupported_receiver_call.kind, CallSiteKind::Method);
+    assert_eq!(
+        unsupported_receiver_call.callee,
+        CallCalleeInfo::Method {
+            name: "instance_value".to_string(),
+            receiver: Some(CallReceiverInfo::Unsupported),
+        }
+    );
+    assert_eq!(
+        unsupported_receiver_call.status,
+        CallStatusKind::Unsupported
+    );
+    assert!(unsupported_receiver_call.resolution.is_none());
+    assert!(
+        unsupported_receiver_call.targets.is_empty(),
+        "unsupported receiver blocker rows must not fabricate RAG targets: {unsupported_receiver_call:#?}"
     );
 
     Ok(())

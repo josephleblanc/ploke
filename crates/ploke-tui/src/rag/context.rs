@@ -726,6 +726,7 @@ fn format_receiver(receiver: &CallReceiverInfo) -> String {
         CallReceiverInfo::TryResult => "?".to_string(),
         CallReceiverInfo::TryPathCallResult { path } => format!("{}()?", path.join("::")),
         CallReceiverInfo::Literal => "literal".to_string(),
+        CallReceiverInfo::Unsupported => "unsupported receiver".to_string(),
     }
 }
 

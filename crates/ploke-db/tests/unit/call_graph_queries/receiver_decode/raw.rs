@@ -53,6 +53,7 @@ fn context_for_owner_decodes_raw_method_receivers() -> Result<(), DbError> {
         raw_receiver("AwaitResult", DataValue::Null, CallReceiver::AwaitResult),
         raw_receiver("TryResult", DataValue::Null, CallReceiver::TryResult),
         raw_receiver("Literal", DataValue::Null, CallReceiver::Literal),
+        raw_receiver("Unsupported", DataValue::Null, CallReceiver::Unsupported),
     ];
 
     assert_receiver_cases(&cases)

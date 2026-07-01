@@ -49,42 +49,39 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current Bucket
 
-Current bucket: local callable bindings initialized by single-expression blocks.
+Current bucket: unsupported method receiver visibility fallback.
 
 Exit criteria:
 
-- Reuse the existing local-binding proof path (`inferred_init_path`,
-  `block_path_expr`, initialized value binding call-site expectations) instead
-  of introducing a new resolver model.
-- Prove parser extraction/resolution for `let f = { local_target }; f()` as a
-  path call and `let f = { local_target }; (f)()` as a dynamic call.
-- Prove DB context and proof-fact projection for the block-initialized path and
-  dynamic call rows.
-- Prove RAG exact call-context propagation for both rows.
-- Prove `code_item_lookup` exposes the resolved dynamic-function row and proof
-  rows for the parenthesized block-initialized binding.
+- Preserve method-call visibility when the receiver expression is outside the
+  conservative classifier, instead of dropping the call site before status
+  projection.
+- Store the fallback as a typed receiver kind (`Unsupported`) that carries no
+  target proof and no receiver path.
+- Prove parser extraction, transform projection, DB decoding/context/proof,
+  RAG propagation, and lightweight TUI formatting all preserve the visible
+  targetless unsupported method row.
 
 Completed evidence:
 
 - Parser:
-  `fixture_call_graph_call_block_initialized_function_item_binding_resolves_initialized_value_binding_path_call_site`
-  and
-  `fixture_call_graph_call_parenthesized_block_initialized_function_item_binding_resolves_dynamic_function_call_site`.
+  `fixture_call_graph_call_if_expression_receiver_method_records_unsupported_method_call_site`.
+- Transform:
+  `cargo test -p ploke-transform --features call_graph call_graph`.
 - DB:
-  `fixture_context_reads_projected_function_item_binding_calls`,
-  `fixture_context_reads_projected_parenthesized_binding_dynamic_calls`, and
-  `fixture_projection_stores_real_callable_expression_dynamic_call_proof_facts`.
+  `unit::call_graph_queries::receiver_decode`,
+  `fixture_context_reads_unsupported_receiver_method_status_without_targets`,
+  and
+  `fixture_projection_marks_real_unsupported_receiver_method_without_edges`.
 - RAG:
-  `call_context_collection_reads_real_fixture_callable_path_rows` and
-  `call_context_collection_reads_real_fixture_dynamic_rows`.
+  `call_context_collection_reads_real_fixture_blocker_rows`.
 - TUI/tool:
-  `code_item_lookup_returns_resolved_dynamic_callable_context`.
+  `format_call_context_block_renders_external_rows`.
 
-Reason to switch after this bucket: this closes the single-expression block
-initializer form for the existing exact local callable-binding model. Broader
-callable trait objects, closure-return values, typed function-pointer inference,
-and closure/async body ownership still require the larger binding/body-owner
-plan before their fail-closed contracts should change.
+Reason to switch after this bucket: this improves visibility without changing
+resolver precision. The fallback row is intentionally targetless and
+unsupported, so broader receiver resolution still requires binding/type-aware
+proof rather than relaxed semantics.
 
 ## Coverage Matrix
 
@@ -98,7 +95,7 @@ plan before their fail-closed contracts should change.
 | Associated-function path calls | Covered/partial | `Self::from_bytes`, `E::from_request`, `MethodRouter::new` style rows | Impact/reach summaries carry relation/kind | Tool payloads carry relation/kind and callsite buckets | axum | Later: separate associated-function multi-hop bucket if needed. |
 | Constructors | Stronger one-hop | Tuple struct / enum variant constructor rows are asserted in real-corpus matrix, including chrono alias constructor rows | Exact context propagation exists for direct and alias constructor rows | Tool regressions include direct and alias variant/constructor rows | axum, chrono | Later: multi-hop constructor path only if a real usage question requires it. |
 | External dependency frontier | Covered as frontier | External rows are exposed but not traversed | Reach summaries expose external frontier calls | Tool summaries count/display frontier rows | axum | Keep fail-closed; do not convert to traversal without external-summary semantics. |
-| Unsupported receiver shapes | Covered as blockers/frontier, with exact positive/frontier subsets | Targetless/unsupported rows remain for generic field/result/await/local receiver gaps; exact local `Router::clone` receiver rows traverse; initialized `Request::new` local receiver rows classify as external frontiers | RAG preserves blocker/frontier rows and the exact positive subset | Tool tests surface unsupported rows/counts and `RouterClone` positives | axum | Future implementation bucket after binding/type tracking plan. |
+| Unsupported receiver shapes | Stronger blocker visibility | Targetless/unsupported rows remain for generic field/result/await/local receiver gaps; exact local `Router::clone` receiver rows traverse; initialized `Request::new` local receiver rows classify as external frontiers; unknown receiver expressions now persist as `Unsupported` receiver rows instead of being dropped | RAG preserves blocker/frontier rows, the exact positive subset, and fixture-backed unsupported receiver rows | Tool tests surface unsupported rows/counts and `RouterClone` positives; lightweight TUI formatting preserves the `Unsupported` receiver label | axum plus local fixture fallback | Switch buckets; future implementation should add exact receiver proof, not weaken unsupported rows. |
 | Dynamic callable values | Stronger fixture-backed subset | Fixture-backed direct, alias, same-target branch/match, and single-expression block initialized callable values resolve; mixed-target branches remain targetless | RAG preserves resolved direct/branch/block initialized rows and blocker rows | `code_item_lookup` covers resolved dynamic-function callable bindings, including the block-initialized form, and the targetless matrix covers unsupported rows | local fixture; no representative found in checked-out axum/serde/memchr corpora | Switch buckets; broader callable trait objects/returned closures still need binding/body ownership work. |
 | Proc-macro entrypoint body owners | Met for now | `CallBodyOwnerId::Macro` owners project through axum `expand_with` and `expand_attr_with` real-corpus helper calls | Exact impact summaries expose public proc-macro callers and direct helper callsites | `code_item_lookup` surfaces four public macro callers for `expand_with` | axum | Switch buckets; callback arguments and closure/IIFE body calls remain fail-closed. |
 | Closures / nested body ownership | Partial/gap documented | Some nested rows intentionally absent to avoid flattening outer owners | RAG follows current DB surface | Tool coverage follows current DB surface | axum `parse_attrs` closure-body rows | Future bucket: closure/async body ownership before multi-hop closure traversal. |

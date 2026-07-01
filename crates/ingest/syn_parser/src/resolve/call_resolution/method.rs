@@ -111,7 +111,8 @@ impl CallRelationResolver<'_> {
             | MethodCallReceiver::FieldLocalBinding { .. }
             | MethodCallReceiver::AwaitResult
             | MethodCallReceiver::TryResult
-            | MethodCallReceiver::Literal => AssocPathResolution::Unsupported,
+            | MethodCallReceiver::Literal
+            | MethodCallReceiver::Unsupported => AssocPathResolution::Unsupported,
         };
 
         match resolution {
@@ -644,7 +645,8 @@ impl CallRelationResolver<'_> {
             | MethodCallReceiver::FieldLocalBinding { .. }
             | MethodCallReceiver::AwaitResult
             | MethodCallReceiver::TryResult
-            | MethodCallReceiver::Literal => Ok(AssocPathResolution::Unsupported),
+            | MethodCallReceiver::Literal
+            | MethodCallReceiver::Unsupported => Ok(AssocPathResolution::Unsupported),
         }
     }
 

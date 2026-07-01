@@ -102,6 +102,8 @@ pub enum ExpectedMethodReceiver<'a> {
     TryPathCallResult { path: &'a [&'a str] },
     /// The receiver expression is a literal.
     Literal,
+    /// The receiver expression is visible but unsupported by the classifier.
+    Unsupported,
 }
 
 impl ExpectedMethodReceiver<'_> {
@@ -181,6 +183,7 @@ impl ExpectedMethodReceiver<'_> {
                 path: path.iter().copied().map(String::from).collect(),
             },
             Self::Literal => MethodCallReceiver::Literal,
+            Self::Unsupported => MethodCallReceiver::Unsupported,
         }
     }
 }

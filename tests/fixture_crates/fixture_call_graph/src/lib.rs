@@ -1363,3 +1363,7 @@ pub fn call_parenthesized_block_initialized_function_item_binding() -> i32 {
     let f = { local_target };
     (f)()
 }
+
+pub fn call_if_expression_receiver_method(flag: bool) -> i32 {
+    (if flag { LocalAssoc } else { LocalAssoc }).instance_value()
+}

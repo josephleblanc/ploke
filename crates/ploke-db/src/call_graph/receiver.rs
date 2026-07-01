@@ -62,4 +62,5 @@ pub enum CallReceiver {
         path: Vec<String>,
     },
     Literal,
+    Unsupported,
 }

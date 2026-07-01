@@ -232,6 +232,7 @@ pub enum CallReceiverInfo {
         path: Vec<String>,
     },
     Literal,
+    Unsupported,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]

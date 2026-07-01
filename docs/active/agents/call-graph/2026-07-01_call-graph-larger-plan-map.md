@@ -66,6 +66,10 @@ Current matrix posture:
 - Dynamic callable bindings: exact local function-item bindings now cover
   direct, alias, branch/match, and single-expression block initializers through
   parser, DB, RAG, and TUI proof where exposed.
+- Unsupported receiver visibility: method calls with receiver expressions
+  outside the conservative classifier now persist as targetless
+  `Unsupported` receiver rows instead of being dropped before status/proof
+  projection.
 - Dynamic/receiver/closure/import gaps: future semantic expansion buckets, not reasons to keep polishing already-proven method paths.
 
 ## Phase Transition Rule
@@ -127,7 +131,7 @@ For the current state, that should be:
 ```text
 Root plan: .hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md
 Current phase: binding/type-aware semantic resolution
-Current completed bucket: local callable bindings initialized by branch and block expressions
-Completed proof: fixture-backed same-target `if`, parenthesized `match`, and single-expression block initialized callable bindings across parser, DB dynamic context/proof, RAG call-context collection, and TUI lookup where exposed; mixed-target branch initializer remains fail-closed
+Current completed bucket: unsupported receiver visibility fallback
+Completed proof: fixture-backed `if` expression receiver method calls persist as `Unsupported` receiver rows across parser, transform, DB context/proof, RAG call-context collection, and lightweight TUI formatting; no target edge is fabricated
 Next phase if this bucket is done: return to the coverage matrix and select the next real-corpus DB query or downstream usage-query gap
 ```

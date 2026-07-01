@@ -75,6 +75,30 @@ fn fixture_context_reads_projected_unsupported_method_status_without_targets() -
 }
 
 #[test]
+fn fixture_context_reads_unsupported_receiver_method_status_without_targets() -> Result<(), DbError>
+{
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "call_if_expression_receiver_method")?;
+
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(context.len(), 1, "context rows: {context:#?}");
+
+    let receiver = CallReceiver::Unsupported;
+    assert_targetless_method_row(
+        &context,
+        owner,
+        TargetlessMethodCase::method(
+            "instance_value",
+            &receiver,
+            CallStatusKind::Unsupported,
+            "unsupported if-expression receiver",
+        ),
+    );
+
+    Ok(())
+}
+
+#[test]
 fn fixture_context_reads_function_pointer_param_cast_path_without_target() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let owner = function_id_by_name(&db, "call_function_pointer_param_cast")?;

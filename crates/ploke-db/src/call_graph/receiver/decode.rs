@@ -202,6 +202,12 @@ impl CallReceiver {
                     "literal receiver should not store a path, got {other:?}"
                 ))),
             },
+            "Unsupported" => match path {
+                DataValue::Null => Ok(Some(Self::Unsupported)),
+                other => Err(DbError::Cozo(format!(
+                    "unsupported receiver should not store a path, got {other:?}"
+                ))),
+            },
             other => Err(DbError::Cozo(format!(
                 "unknown method-call receiver kind {other:?}"
             ))),
