@@ -861,6 +861,32 @@ async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Erro
         "axum-core/src/ext_traits/request.rs",
         "RAG reach direct callees",
     );
+    assert_eq!(
+        report.direct_call_sites.len(),
+        1,
+        "RAG reach summary should preserve the exact resolved direct callsite row: {report:#?}"
+    );
+    let direct_site = report
+        .direct_call_sites
+        .iter()
+        .find(|call| {
+            call.owner_id == start
+                && call.kind == CallSiteKind::Method
+                && matches!(
+                    &call.callee,
+                    CallCalleeInfo::Method { name, .. } if name == "extract_with_state"
+                )
+                && call
+                    .targets
+                    .iter()
+                    .any(|target_row| target_row.target_id == intermediate)
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "RAG reach summary should include the extract_with_state callsite row: {report:#?}"
+            )
+        });
+    assert_eq!(direct_site.status, CallStatusKind::Resolved);
     assert_call_node(
         &report.public_callees,
         target,

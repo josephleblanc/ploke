@@ -77,6 +77,7 @@ impl Database {
         let direct_callees = node_info_for_paths(self, &paths, "callee", |path| {
             (path.depth == 1).then_some(path.end_id)
         })?;
+        let direct_call_sites = resolved_direct_call_sites_for_owner(self, owner_id)?;
         let public_callees: Vec<CallNodeInfo> = callees
             .iter()
             .filter(|callee| callee.is_public)
@@ -102,6 +103,7 @@ impl Database {
             paths,
             callees,
             direct_callees,
+            direct_call_sites,
             public_callees,
             frontier_calls,
             external_frontier_calls,
@@ -142,6 +144,17 @@ fn frontier_calls_for_paths(
         )
     });
     Ok(rows)
+}
+
+fn resolved_direct_call_sites_for_owner(
+    db: &Database,
+    owner_id: Uuid,
+) -> Result<Vec<CallContextRow>, DbError> {
+    db.call_context_for_owner(owner_id).map(|rows| {
+        rows.into_iter()
+            .filter(|row| row.status.status == CallStatusKind::Resolved)
+            .collect()
+    })
 }
 
 fn node_info_for_paths(

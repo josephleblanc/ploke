@@ -406,6 +406,15 @@ for a more fuzzy search."#
                     .to_string(),
             )
             .with_field(
+                "reach_direct_call_sites",
+                concise_context
+                    .call_reach
+                    .as_ref()
+                    .map(|reach| reach.direct_call_sites.len())
+                    .unwrap_or_default()
+                    .to_string(),
+            )
+            .with_field(
                 "reach_public_callees",
                 concise_context
                     .call_reach

@@ -178,6 +178,10 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         .get("direct_callees")
         .and_then(serde_json::Value::as_array)
         .expect("call_reach direct_callees array");
+    let reach_direct_call_sites = reach
+        .get("direct_call_sites")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_reach direct_call_sites array");
     let reach_public_callees = reach
         .get("public_callees")
         .and_then(serde_json::Value::as_array)
@@ -234,6 +238,31 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         "extract_with_state",
         "axum-core/src/ext_traits/request.rs",
         "code_item_lookup reach direct callees",
+    );
+    let reach_direct_sites = reach_direct_call_sites
+        .iter()
+        .map(|call| serde_json::from_value::<CallContextInfo>(call.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("typed reach direct callsite rows");
+    assert_eq!(
+        reach_direct_sites.len(),
+        1,
+        "code_item_lookup reach should surface the exact resolved direct callsite row: {reach_direct_sites:#?}"
+    );
+    assert!(
+        reach_direct_sites.iter().any(|call| {
+            call.owner_id == fixture.start
+                && call.kind == CallSiteKind::Method
+                && matches!(
+                    &call.callee,
+                    CallCalleeInfo::Method { name, .. } if name == "extract_with_state"
+                )
+                && call
+                    .targets
+                    .iter()
+                    .any(|target| target.target_id == fixture.intermediate)
+        }),
+        "code_item_lookup reach should include the extract_with_state callsite row: {reach_direct_sites:#?}"
     );
     assert_impact_node(
         reach_public_callees,
@@ -306,6 +335,10 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
             .expect("direct reach callee count")
             >= 1,
         "code_item_lookup should surface direct reach callee counts"
+    );
+    assert_eq!(
+        ui_field(start_ui, "reach_direct_call_sites"),
+        reach_direct_sites.len().to_string()
     );
     assert!(
         ui_field(start_ui, "reach_public_callees")

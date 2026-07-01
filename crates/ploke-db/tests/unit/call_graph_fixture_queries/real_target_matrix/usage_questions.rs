@@ -244,6 +244,26 @@ fn axum_usage_questions_summarize_owner_reach_for_navigation() -> Result<(), DbE
         &[(intermediate, "extract_with_state")],
         "RequestExt::extract reach report direct callees",
     );
+    assert_eq!(
+        report.direct_call_sites.len(),
+        1,
+        "RequestExt::extract reach report should expose its exact resolved direct callsite row: {report:#?}"
+    );
+    let direct_site = report
+        .direct_call_sites
+        .iter()
+        .find(|row| {
+            row.site.owner_id == start
+                && row.site.kind == CallSiteKind::Method
+                && row.site.method.as_deref() == Some("extract_with_state")
+                && row.targets.iter().any(|target_row| target_row.target_id == intermediate)
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "RequestExt::extract reach report should include the extract_with_state callsite row: {report:#?}"
+            )
+        });
+    assert_eq!(direct_site.status.status, CallStatusKind::Resolved);
     assert_node_names(
         &report.public_callees,
         &[(target, "from_request")],
