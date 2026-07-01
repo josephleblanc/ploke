@@ -275,6 +275,8 @@ const IMPORTED_ASSOC_IMPL_SPAN: (usize, usize) = (7164, 7249);
 const IMPORTED_TYPE_ASSOC_MAKE_CALL_SPAN: (usize, usize) = (7477, 7503);
 const GLOB_IMPORTED_TYPE_ASSOC_MAKE_CALL_SPAN: (usize, usize) = (7574, 7595);
 const REEXPORTED_TYPE_ASSOC_MAKE_CALL_SPAN: (usize, usize) = (7665, 7688);
+const NESTED_GLOB_REEXPORTED_TYPE_ASSOC_IMPL_SPAN: (usize, usize) = (29173, 29260);
+const NESTED_GLOB_REEXPORTED_TYPE_ASSOC_MAKE_CALL_SPAN: (usize, usize) = (29519, 29542);
 const DIRECT_IMPORTED_TRAIT_ASSOC_FUNCTION_CALL_SPAN: (usize, usize) = (8087, 8136);
 const ALIAS_IMPORTED_TRAIT_ASSOC_FUNCTION_CALL_SPAN: (usize, usize) = (8382, 8430);
 const GLOB_IMPORTED_TRAIT_ASSOC_FUNCTION_CALL_SPAN: (usize, usize) = (8620, 8669);
@@ -653,6 +655,21 @@ fn fixture_call_graph_imported_assoc_method_args(
         expected_path: &["crate", "assoc_import_targets"],
         owner: AssocOwner::Impl {
             span: IMPORTED_ASSOC_IMPL_SPAN,
+        },
+        ident,
+        expected_cfg: None,
+    }
+}
+
+fn fixture_call_graph_nested_glob_reexported_assoc_method_args(
+    ident: &'static str,
+) -> AssocParanoidArgs<'static> {
+    AssocParanoidArgs {
+        fixture: "fixture_call_graph",
+        relative_file_path: CALL_GRAPH_LIB_RS,
+        expected_path: &["crate", "nested_glob_assoc_source"],
+        owner: AssocOwner::Impl {
+            span: NESTED_GLOB_REEXPORTED_TYPE_ASSOC_IMPL_SPAN,
         },
         ident,
         expected_cfg: None,
@@ -3159,6 +3176,30 @@ paranoid_call_site_test!(
         ExpectedCallSite::path(
             &["ReexportedAssoc", "make"],
             REEXPORTED_TYPE_ASSOC_MAKE_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedAssociatedFunctionLocalExact {
+                target: target_info.test_method_id(),
+            },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_nested_glob_reexported_type_assoc_make_resolves_type_associated_function_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate", "nested_glob_assoc_scope"],
+        name: "call_nested_glob_reexported_type_assoc_make"
+    },
+    expected: {
+        let target_args = fixture_call_graph_nested_glob_reexported_assoc_method_args("make");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_method_pid(&parsed_graphs)?;
+        ExpectedCallSite::path(
+            &["NestedGlobAssoc", "make"],
+            NESTED_GLOB_REEXPORTED_TYPE_ASSOC_MAKE_CALL_SPAN,
             0,
             0,
             &[],

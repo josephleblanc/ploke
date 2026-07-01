@@ -424,12 +424,54 @@ impl CallRelationResolver<'_> {
                 continue;
             }
             let source_any = source.as_any();
-            let Ok(source_node) = self.graph.find_node_unique(source_any) else {
+            self.visit_named_binding_terminals(source_any, segment, 0, sink)?;
+        }
+
+        Ok(())
+    }
+
+    fn visit_named_binding_terminals(
+        &self,
+        start: AnyNodeId,
+        segment: &str,
+        depth: usize,
+        sink: &mut impl FnMut(AnyNodeId) -> Result<(), SynParserError>,
+    ) -> Result<(), SynParserError> {
+        if depth > MAX_IMPORT_CHAIN_DEPTH {
+            return Err(SynParserError::InternalState(format!(
+                "call resolution exceeded import chain depth limit of {MAX_IMPORT_CHAIN_DEPTH} at {start}"
+            )));
+        }
+
+        let Ok(import_id) = ImportNodeId::try_from(start) else {
+            let Ok(node) = self.graph.find_node_unique(start) else {
+                return Ok(());
+            };
+            if node.name() == segment {
+                sink(start)?;
+            }
+            return Ok(());
+        };
+
+        let mut had_sources = false;
+        for relation in self.tree.get_iter_relations_to(&import_id.as_any()) {
+            let SyntacticRelation::ImportedBy { source, target } = relation.rel() else {
                 continue;
             };
-            if source_node.name() == segment {
-                self.visit_binding_terminals(source_any, 0, sink)?;
+            if *target != import_id {
+                continue;
             }
+            had_sources = true;
+            self.visit_named_binding_terminals(source.as_any(), segment, depth + 1, sink)?;
+        }
+
+        if had_sources {
+            return Ok(());
+        }
+
+        let import_node = self.graph.get_import_checked(import_id)?;
+        if self.is_external_path(import_node.source_path()) {
+            return Ok(());
         }
 
         Ok(())

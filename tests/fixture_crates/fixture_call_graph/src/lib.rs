@@ -1331,3 +1331,25 @@ pub fn call_imported_external_type_alias_initialized_method() -> usize {
     let value = ImportedExternalVec::new();
     value.len()
 }
+
+pub mod nested_glob_assoc_source {
+    pub struct NestedGlobAssoc;
+
+    impl NestedGlobAssoc {
+        pub fn make() -> Self {
+            Self
+        }
+    }
+}
+
+pub mod nested_glob_assoc_reexport {
+    pub use super::nested_glob_assoc_source::*;
+}
+
+pub mod nested_glob_assoc_scope {
+    use super::nested_glob_assoc_reexport::*;
+
+    pub fn call_nested_glob_reexported_type_assoc_make() -> NestedGlobAssoc {
+        NestedGlobAssoc::make()
+    }
+}

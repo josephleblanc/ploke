@@ -547,6 +547,58 @@ pub(super) fn assert_targetless_path_rows(
     Ok(())
 }
 
+pub(super) fn assert_resolved_path_target_count(
+    db: &Database,
+    path_parts: &[&str],
+    expected_count: usize,
+    label: &str,
+) -> Result<Uuid, DbError> {
+    let mut params = BTreeMap::new();
+    params.insert("path".to_string(), path_value(path_parts));
+
+    let rows = db.raw_query_params(
+        r#"?[target_id, count(site_id)] :=
+            *call_site {
+                id: site_id,
+                call_kind: "Path",
+                path: $path @ 'NOW'
+            },
+            *call_resolution_status {
+                source_id: site_id,
+                source_kind: "Path",
+                status_kind: "Resolved",
+                resolution_kind: "LocalExact" @ 'NOW'
+            },
+            *call_relation {
+                source_id: site_id,
+                source_kind: "Path",
+                relation_kind: "AssociatedFunction",
+                target_id,
+                target_kind: "Method" @ 'NOW'
+            }"#,
+        params,
+    )?;
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "{label} should resolve to exactly one associated-function target: {:#?}",
+        rows.rows
+    );
+
+    let DataValue::Num(cozo::Num::Int(count)) = &rows.rows[0][1] else {
+        panic!(
+            "{label} resolved row count should be an integer: {:#?}",
+            rows.rows
+        );
+    };
+    assert_eq!(
+        *count as usize, expected_count,
+        "{label} should expose exactly {expected_count} resolved path rows"
+    );
+
+    to_uuid(&rows.rows[0][0])
+}
+
 pub(super) fn assert_path_module_fanout(
     db: &Database,
     path_parts: &[&str],
