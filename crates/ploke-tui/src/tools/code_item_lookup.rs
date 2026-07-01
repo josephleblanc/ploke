@@ -370,6 +370,15 @@ for a more fuzzy search."#
                     .to_string(),
             )
             .with_field(
+                "impact_callsite_buckets",
+                concise_context
+                    .call_impact
+                    .as_ref()
+                    .map(|impact| impact.callsite_buckets.len())
+                    .unwrap_or_default()
+                    .to_string(),
+            )
+            .with_field(
                 "impact_public_callers",
                 concise_context
                     .call_impact

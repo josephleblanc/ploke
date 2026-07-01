@@ -13,9 +13,9 @@ use ploke_core::rag_types::AssembledContext;
 use ploke_core::rag_types::{
     CallCalleeInfo, CallContextInfo, CallEndpointKind, CallExpansionInfo, CallExpansionKind,
     CallImpactInfo, CallNodeInfo, CallPathEdgeInfo, CallPathInfo, CallPathNodeInfo, CallReachInfo,
-    CallReceiverInfo, CallResolutionKind as RagCallResolutionKind, CallSiteKind as RagCallSiteKind,
-    CallStatusKind as RagCallStatusKind, CallTargetInfo, CallTargetKind, CanonPath, NodeFilepath,
-    ProofContextInfo,
+    CallReceiverInfo, CallResolutionKind as RagCallResolutionKind, CallSiteBucketInfo,
+    CallSiteKind as RagCallSiteKind, CallStatusKind as RagCallStatusKind, CallTargetInfo,
+    CallTargetKind, CanonPath, NodeFilepath, ProofContextInfo,
 };
 use ploke_db::{
     CallContextCandidate, CallContextOptions, CallContextRelation, CallContextRow, CallContextSeed,
@@ -347,6 +347,15 @@ fn impact_info(db: &Database, report: DbCallImpactReport) -> Result<CallImpactIn
         .into_iter()
         .map(|row| row_to_call_context(row, usize::MAX))
         .collect::<Result<Vec<_>, RagError>>()?;
+    let callsite_buckets = report
+        .callsite_buckets
+        .into_iter()
+        .map(|bucket| CallSiteBucketInfo {
+            kind: site_kind(bucket.kind),
+            relation: target_kind(bucket.relation),
+            count: bucket.count,
+        })
+        .collect::<Vec<_>>();
     let public_callers = report
         .public_callers
         .into_iter()
@@ -374,6 +383,7 @@ fn impact_info(db: &Database, report: DbCallImpactReport) -> Result<CallImpactIn
         callers,
         direct_callers,
         direct_call_sites,
+        callsite_buckets,
         public_callers,
         test_callers,
         non_test_callers,

@@ -1,7 +1,8 @@
 use std::borrow::Cow;
 
 use ploke_core::rag_types::{
-    CallCalleeInfo, CallContextInfo, CallPathEdgeInfo, CallSiteKind, CallStatusKind, CallTargetKind,
+    CallCalleeInfo, CallContextInfo, CallPathEdgeInfo, CallSiteBucketInfo, CallSiteKind,
+    CallStatusKind, CallTargetKind,
 };
 use ploke_tui::tools::{
     Tool,
@@ -520,6 +521,10 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         .get("direct_call_sites")
         .and_then(serde_json::Value::as_array)
         .expect("call_impact direct_call_sites array");
+    let impact_buckets = impact
+        .get("callsite_buckets")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_impact callsite_buckets array");
     let impact_public_callers = impact
         .get("public_callers")
         .and_then(serde_json::Value::as_array)
@@ -589,6 +594,19 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         }),
         "code_item_lookup impact should include the E::from_request callsite row: {direct_call_sites:#?}"
     );
+    let callsite_buckets = impact_buckets
+        .iter()
+        .map(|bucket| serde_json::from_value::<CallSiteBucketInfo>(bucket.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("typed impact callsite bucket rows");
+    assert!(
+        callsite_buckets.iter().any(|bucket| {
+            bucket.kind == CallSiteKind::Path
+                && bucket.relation == CallTargetKind::AssociatedFunction
+                && bucket.count == 2
+        }),
+        "code_item_lookup impact should summarize the direct path/associated-function callsites: {callsite_buckets:#?}"
+    );
     assert!(
         impact_public_callers.is_empty(),
         "direct stored-public impact bucket should remain empty for inherited method callers: {impact_public_callers:#?}"
@@ -631,6 +649,10 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
     assert_eq!(
         ui_field(target_ui, "impact_direct_call_sites"),
         direct_call_sites.len().to_string()
+    );
+    assert_eq!(
+        ui_field(target_ui, "impact_callsite_buckets"),
+        callsite_buckets.len().to_string()
     );
     assert_eq!(ui_field(target_ui, "impact_public_callers"), "0");
     assert_eq!(

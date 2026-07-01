@@ -281,6 +281,13 @@ pub struct CallTargetInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallSiteBucketInfo {
+    pub kind: CallSiteKind,
+    pub relation: CallTargetKind,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum CallEndpointKind {
     Function,
@@ -389,6 +396,8 @@ pub struct CallImpactInfo {
     pub callers: Vec<CallNodeInfo>,
     pub direct_callers: Vec<CallNodeInfo>,
     pub direct_call_sites: Vec<CallContextInfo>,
+    #[serde(default)]
+    pub callsite_buckets: Vec<CallSiteBucketInfo>,
     pub public_callers: Vec<CallNodeInfo>,
     pub test_callers: Vec<CallNodeInfo>,
     pub non_test_callers: Vec<CallNodeInfo>,

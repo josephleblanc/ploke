@@ -46,6 +46,13 @@ pub struct CallContextRow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CallSiteBucket {
+    pub kind: CallSiteKind,
+    pub relation: CallRelationKind,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct CallNodeContext {
     pub node_id: Uuid,
     pub outgoing: Vec<CallContextRow>,
@@ -158,6 +165,7 @@ pub struct CallImpactReport {
     pub callers: Vec<CallNodeInfo>,
     pub direct_callers: Vec<CallNodeInfo>,
     pub direct_call_sites: Vec<CallContextRow>,
+    pub callsite_buckets: Vec<CallSiteBucket>,
     pub public_callers: Vec<CallNodeInfo>,
     pub test_callers: Vec<CallNodeInfo>,
     pub non_test_callers: Vec<CallNodeInfo>,

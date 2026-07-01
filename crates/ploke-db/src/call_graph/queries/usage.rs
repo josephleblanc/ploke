@@ -11,7 +11,7 @@ use crate::{
 
 use super::super::{
     CallContextRow, CallImpactReport, CallNodeInfo, CallPath, CallPathEdge, CallPathOptions,
-    CallReachReport, CallStatusKind,
+    CallReachReport, CallRelationKind, CallSiteBucket, CallSiteKind, CallStatusKind,
 };
 
 impl Database {
@@ -36,6 +36,7 @@ impl Database {
             (path.depth == 1).then_some(path.start_id)
         })?;
         let direct_call_sites = self.call_context_for_target(target_id)?;
+        let callsite_buckets = callsite_buckets(target_id, &direct_call_sites)?;
         let public_callers: Vec<CallNodeInfo> = callers
             .iter()
             .filter(|caller| caller.is_public)
@@ -64,6 +65,7 @@ impl Database {
             callers,
             direct_callers,
             direct_call_sites,
+            callsite_buckets,
             public_callers,
             test_callers,
             non_test_callers,
@@ -204,6 +206,68 @@ fn boundary_call_sites(
         }
     }
     Ok(out)
+}
+
+fn callsite_buckets(
+    target_id: Uuid,
+    rows: &[CallContextRow],
+) -> Result<Vec<CallSiteBucket>, DbError> {
+    let mut buckets = Vec::<CallSiteBucket>::new();
+    for row in rows {
+        let mut matched = false;
+        for target in row
+            .targets
+            .iter()
+            .filter(|target| target.target_id == target_id)
+        {
+            matched = true;
+            if let Some(bucket) = buckets
+                .iter_mut()
+                .find(|bucket| bucket.kind == row.site.kind && bucket.relation == target.relation)
+            {
+                bucket.count += 1;
+            } else {
+                buckets.push(CallSiteBucket {
+                    kind: row.site.kind,
+                    relation: target.relation,
+                    count: 1,
+                });
+            }
+        }
+        if !matched {
+            return Err(DbError::Cozo(format!(
+                "target-centered callsite {} missing requested target {target_id}",
+                row.site.id
+            )));
+        }
+    }
+    buckets.sort_by_key(|bucket| {
+        (
+            site_kind_rank(bucket.kind),
+            relation_kind_rank(bucket.relation),
+        )
+    });
+    Ok(buckets)
+}
+
+fn site_kind_rank(kind: CallSiteKind) -> u8 {
+    match kind {
+        CallSiteKind::Path => 0,
+        CallSiteKind::Method => 1,
+        CallSiteKind::Dynamic => 2,
+        CallSiteKind::Macro => 3,
+    }
+}
+
+fn relation_kind_rank(kind: CallRelationKind) -> u8 {
+    match kind {
+        CallRelationKind::Function => 0,
+        CallRelationKind::DynamicFunction => 1,
+        CallRelationKind::Method => 2,
+        CallRelationKind::AssociatedFunction => 3,
+        CallRelationKind::TupleStructConstructor => 4,
+        CallRelationKind::EnumVariantConstructor => 5,
+    }
 }
 
 fn boundary_edges_for_paths(

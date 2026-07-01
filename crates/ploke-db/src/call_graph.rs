@@ -14,5 +14,6 @@ pub use receiver::CallReceiver;
 pub use rows::{
     CallCallerRow, CallContextCandidate, CallContextOptions, CallContextRelation, CallContextRow,
     CallContextSeed, CallImpactReport, CallNodeContext, CallNodeInfo, CallPath, CallPathEdge,
-    CallPathOptions, CallReachReport, CallResolutionRow, CallSiteRow, CallTargetRow,
+    CallPathOptions, CallReachReport, CallResolutionRow, CallSiteBucket, CallSiteRow,
+    CallTargetRow,
 };

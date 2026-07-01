@@ -734,6 +734,14 @@ async fn call_impact_exact_reads_axum_usage_question_summary() -> Result<(), Err
         "RAG impact summary should include the E::from_request callsite row: {report:#?}"
     );
     assert!(
+        report.callsite_buckets.iter().any(|bucket| {
+            bucket.kind == CallSiteKind::Path
+                && bucket.relation == CallTargetKind::AssociatedFunction
+                && bucket.count == 2
+        }),
+        "RAG impact summary should expose the direct path/associated-function callsite bucket: {report:#?}"
+    );
+    assert!(
         report.public_callers.is_empty(),
         "RAG impact summary should preserve the DB's direct stored-public predicate: {report:#?}"
     );

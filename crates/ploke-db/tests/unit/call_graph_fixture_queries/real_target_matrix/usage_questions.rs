@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use ploke_db::{CallContextRelation, CallContextSeed, CallNodeKind, CallPathOptions};
+use ploke_db::{
+    CallContextRelation, CallContextSeed, CallNodeKind, CallPathOptions, CallRelationKind,
+};
 
 use super::super::*;
 use super::common::*;
@@ -492,6 +494,14 @@ fn axum_usage_questions_summarize_eventual_callers_for_impact() -> Result<(), Db
                     .any(|target_row| target_row.target_id == target)
         }),
         "FromRequest::from_request impact report should include the E::from_request callsite row: {report:#?}"
+    );
+    assert!(
+        report.callsite_buckets.iter().any(|bucket| {
+            bucket.kind == CallSiteKind::Path
+                && bucket.relation == CallRelationKind::AssociatedFunction
+                && bucket.count == 2
+        }),
+        "FromRequest::from_request impact report should summarize direct path/associated-function callsites: {report:#?}"
     );
     assert!(
         report.public_callers.is_empty(),
