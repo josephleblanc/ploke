@@ -91,6 +91,7 @@ async fn code_item_lookup_returns_resolved_dynamic_callable_context() {
     for owner_name in [
         "call_parenthesized_function_item_binding",
         "call_parenthesized_block_initialized_function_item_binding",
+        "call_match_guarded_function_item",
     ] {
         assert_resolved_dynamic_callable_lookup(owner_name).await;
     }
@@ -128,6 +129,9 @@ async fn assert_resolved_dynamic_callable_lookup(owner_name: &'static str) {
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1362
     //     `call_parenthesized_block_initialized_function_item_binding` binds
     //     `let f = { local_target };` and calls `(f)()`.
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:657
+    //     `call_match_guarded_function_item` calls
+    //     `(match flag { true if flag => local_target, _ => local_target })()`.
     // Parser/DB/RAG already prove this as a resolved dynamic-function edge.
     // This pins the same fact at the TUI tool boundary.
     let calls = call_context

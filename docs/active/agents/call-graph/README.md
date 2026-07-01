@@ -292,8 +292,9 @@ Implemented/scaffolded:
     calls, dynamic function calls including cast/deref/block, branch, field,
     indexed, exact member/index alias callee shapes, parenthesized
     function-item / typed function-pointer alias bindings, and nested
-    same-target branch/match dynamic callees,
-    fail-closed guarded/opaque/non-path branch and opaque closure/index dynamic callees,
+    same-target branch/match dynamic callees including guarded same-target
+    match arms,
+    fail-closed opaque/non-path branch and opaque closure/index dynamic callees,
     trait-dispatch method calls,
     Rust type-alias associated-function and instance-method calls,
     method-as-associated-function calls, function-item and typed function
@@ -790,12 +791,13 @@ Post-gate evidence, 2026-06-23:
   proof coverage now projects real resolved `DynamicFunction` calls including
   parenthesized path/binding callees, function-pointer cast/deref callees,
   block callees, indexed array callees, named-field/tuple-field callees, and
-  same-target and nested same-target branch/match dynamic callees, real unsupported closure-binding
+  same-target, nested same-target, and guarded same-target branch/match dynamic
+  callees, real unsupported closure-binding
   cast and dereferenced closure-binding dynamic calls as
   `dynamic_dispatch_unbounded` blockers with no edge, real ambiguous
   branch/match dynamic calls as `type_resolution_missing` blockers, real
-  guarded/opaque/non-path branch/match dynamic calls as
-  `dynamic_dispatch_unbounded` blockers, and target-centered `local_target`
+  opaque/non-path branch/match dynamic calls as `dynamic_dispatch_unbounded`
+  blockers, and target-centered `local_target`
   proof facts that include a dynamic
   incoming caller without pulling unrelated unsupported dynamic blockers or
   closure/async body outer owners.
@@ -871,10 +873,10 @@ Post-gate evidence, 2026-06-23:
   alias dynamic rows, inherent-over-trait precedence, nested returned-function
   rows, targetless callable-value path failures, and prelude `Vec::new`.
   Proof coverage now also asserts parenthesized path/binding, cast/deref,
-  block, indexed-array, field/tuple-field, and same-target plus nested
-  same-target branch/match dynamic
+  block, indexed-array, field/tuple-field, and same-target, nested
+  same-target, and guarded same-target branch/match dynamic
   calls project as resolved proof edges, and opaque closure-binding cast/deref,
-  ambiguous branch/match, guarded/opaque/non-path branch/match, parenthesized
+  ambiguous branch/match, opaque/non-path branch/match, parenthesized
   generic `FnOnce`, and boxed `dyn Fn` dynamic call rows project as the
   expected fail-closed blockers, while external setup calls remain
   `external_dependency_summary_missing` blockers and no proof edges are
@@ -956,8 +958,8 @@ Post-gate evidence, 2026-06-23:
   passed with `1 passed` for real resolved named-field, indexed named-field,
   and indexed tuple-field dynamic proof edge projection.
 - `cargo test -p ploke-db --features call_graph branch_and_match_dynamic_failures -- --nocapture`
-  passed with `1 passed` for real ambiguous branch/match and
-  guarded/opaque/non-path branch/match dynamic blocker projection.
+  passed with `1 passed` for real opaque/non-path branch/match dynamic blocker
+  projection.
 - `cargo test -p ploke-db --features call_graph initializer_call_proof -- --nocapture`
   passed with `2 passed` for real const/static and associated-const
   initializer owner proof projection.

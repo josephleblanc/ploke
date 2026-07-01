@@ -816,9 +816,6 @@ fn match_arm_paths(
     let syn::Expr::Match(expr) = unparen_expr(callee) else {
         return None;
     };
-    if expr.arms.iter().any(|arm| arm.guard.is_some()) {
-        return None;
-    }
 
     let paths = expr
         .arms

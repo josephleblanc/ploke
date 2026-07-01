@@ -49,30 +49,35 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current Bucket
 
-Current bucket: executable-local const initializer boundary.
+Current bucket: guarded same-target match dynamic callee.
 
 Exit criteria:
 
-- Do not flatten calls from a function-local `const` initializer into the
-  enclosing function owner.
-- Preserve existing top-level, static, and associated const initializer owner
-  behavior.
-- Prove parser extraction and DB owner queries fail closed: no synthetic edge
-  is fabricated and no outer-owner row leaks through projection.
+- Admit guarded `match` arm bodies into the same exact item-path extraction
+  used for unguarded match arms.
+- Preserve fail-closed behavior for opaque parameter arms and non-path arms.
+- Prove parser extraction, DB context/proof projection, RAG propagation, and
+  TUI/tool payloads all expose one resolved `DynamicFunction` edge for the
+  guarded same-target fixture.
 
 Completed evidence:
 
 - Parser:
-  `fixture_call_graph_local_const_initializer_call_is_not_recorded_as_outer_call_site`.
-- Transform:
-  `cargo test -p ploke-transform --features call_graph call_graph`.
+  `fixture_call_graph_call_match_guarded_function_item_resolves_dynamic_function_call_site`.
 - DB:
-  `fixture_context_does_not_project_local_const_initializer_calls_to_outer_owner`.
+  `fixture_context_reads_projected_resolved_dynamic_function_shapes` and
+  `fixture_projection_stores_real_branch_and_match_dynamic_call_proof_facts`.
+- RAG:
+  `call_context_collection_reads_real_fixture_dynamic_rows` and
+  `call_context_expansion_adds_incoming_fixture_dynamic_callers`.
+- TUI/tool:
+  `request_code_context_returns_function_and_dynamic_owner_call_context` and
+  `code_item_lookup_returns_resolved_dynamic_callable_context`.
 
-Reason to switch after this bucket: ADR-024 still prevents executable-path
-local items from becoming graph nodes. True local const owner rows need an
-expression/block scope identity model; until then the correct behavior is a
-boundary, not outer-owner flattening.
+Reason to switch after this bucket: guarded same-target item-path arms are now
+part of the proven exact dynamic-function subset. Broader callable trait
+objects, returned closures, and closure-body ownership need separate binding
+and executable-owner design work.
 
 ## Coverage Matrix
 
@@ -87,7 +92,7 @@ boundary, not outer-owner flattening.
 | Constructors | Stronger one-hop | Tuple struct / enum variant constructor rows are asserted in real-corpus matrix, including chrono alias constructor rows | Exact context propagation exists for direct and alias constructor rows | Tool regressions include direct and alias variant/constructor rows | axum, chrono | Later: multi-hop constructor path only if a real usage question requires it. |
 | External dependency frontier | Covered as frontier | External rows are exposed but not traversed | Reach summaries expose external frontier calls | Tool summaries count/display frontier rows | axum | Keep fail-closed; do not convert to traversal without external-summary semantics. |
 | Unsupported receiver shapes | Stronger blocker visibility plus one semantic receiver expansion | Targetless/unsupported rows remain for generic field/result/await/local receiver gaps; exact local `Router::clone` receiver rows traverse; borrowed initialized local receivers such as `let value = LocalAssoc; (&value).instance_value()` now carry initializer proof and resolve in fixture-backed DB/proof rows; initialized `Request::new` local receiver rows classify as external frontiers; unknown receiver expressions persist as `Unsupported` receiver rows instead of being dropped | RAG preserves blocker/frontier rows, the exact positive subset, fixture-backed unsupported receiver rows, and the borrowed-initialized receiver payload | Tool tests surface unsupported rows/counts, `RouterClone` positives, and `&value = LocalAssoc` receiver formatting | axum plus local fixture fallback | Switch buckets; future implementation should add exact receiver proof by shape, not weaken unsupported rows. |
-| Dynamic callable values | Stronger fixture-backed subset | Fixture-backed direct, alias, same-target branch/match, and single-expression block initialized callable values resolve; mixed-target branches remain targetless | RAG preserves resolved direct/branch/block initialized rows and blocker rows | `code_item_lookup` covers resolved dynamic-function callable bindings, including the block-initialized form, and the targetless matrix covers unsupported rows | local fixture; no representative found in checked-out axum/serde/memchr corpora | Switch buckets; broader callable trait objects/returned closures still need binding/body ownership work. |
+| Dynamic callable values | Stronger fixture-backed subset | Fixture-backed direct, alias, same-target branch/match including guarded same-target match arms, and single-expression block initialized callable values resolve; mixed-target branches remain targetless | RAG preserves resolved direct/branch/block/guarded-match initialized rows and blocker rows | `code_item_lookup` covers resolved dynamic-function callable rows, including block-initialized and guarded same-target match forms, and the targetless matrix covers unsupported rows | local fixture; no representative found in checked-out axum/serde/memchr corpora | Switch buckets; broader callable trait objects/returned closures still need binding/body ownership work. |
 | Proc-macro entrypoint body owners | Met for now | `CallBodyOwnerId::Macro` owners project through axum `expand_with` and `expand_attr_with` real-corpus helper calls | Exact impact summaries expose public proc-macro callers and direct helper callsites | `code_item_lookup` surfaces four public macro callers for `expand_with` | axum | Switch buckets; callback arguments and closure/IIFE body calls remain fail-closed. |
 | Closures / executable-local body ownership | Partial/gap documented | Closure/async body calls and function-local const initializer calls are intentionally absent rather than flattened into enclosing owners | RAG follows current DB surface | Tool coverage follows current DB surface | axum `parse_attrs` closure-body rows; axum local const initializer rows remain future until fixtures are regenerated and scoped local owners exist | Future bucket: closure/async/local-item body ownership after executable-scope identity design. |
 | Import / re-export / glob completeness | Partial, direct re-export import subset improved | Explicit and some imported path calls work; chrono alias constructor path calls resolve through typed alias evidence; axum `TestClient::new` now resolves 105 nested/direct re-export import rows while 62 other import rows remain targetless; axum `Request::new` through imported `Request = http::Request` is classified external and targetless; broader import completeness remains partial | RAG exact context preserves alias rows and the 105 `TestClient::new` resolved caller rows | Tool coverage includes chrono alias rows plus dedicated high-fanout lookup/edges tests for `AxumRemainingTarget::TestClientNew` | axum, chrono | Switch buckets; keep strict source oracles for remaining fanout. |

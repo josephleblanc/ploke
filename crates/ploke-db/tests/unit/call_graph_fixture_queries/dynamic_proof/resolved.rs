@@ -30,6 +30,11 @@ fn fixture_projection_stores_real_branch_and_match_dynamic_call_proof_facts() ->
             expected_rows: 1,
         },
         ResolvedDynamicContextCase {
+            owner: "call_match_guarded_function_item",
+            path: &["local_target"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
             owner: "call_if_nested_branch_expression",
             path: &["local_target"],
             expected_rows: 1,

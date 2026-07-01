@@ -44,6 +44,14 @@ async fn request_code_context_returns_function_and_dynamic_owner_call_context()
             callee: CallCalleeInfo::Dynamic,
             relation: CallTargetKind::DynamicFunction,
         },
+        Case {
+            label: "guarded match dynamic function caller",
+            search_term: "call_match_guarded_function_item",
+            owner: "call_match_guarded_function_item",
+            call_kind: CallSiteKind::Dynamic,
+            callee: CallCalleeInfo::Dynamic,
+            relation: CallTargetKind::DynamicFunction,
+        },
     ];
 
     for case in cases {

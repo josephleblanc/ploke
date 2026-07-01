@@ -67,8 +67,9 @@ Current matrix posture:
   `let value = LocalAssoc; (&value).instance_value()` now carries initializer
   proof through parser, DB/proof projection, RAG, and TUI formatting.
 - Dynamic callable bindings: exact local function-item bindings now cover
-  direct, alias, branch/match, and single-expression block initializers through
-  parser, DB, RAG, and TUI proof where exposed.
+  direct, alias, branch/match including guarded same-target match arms, and
+  single-expression block initializers through parser, DB, RAG, and TUI proof
+  where exposed.
 - Unsupported receiver visibility: method calls with receiver expressions
   outside the conservative classifier now persist as targetless
   `Unsupported` receiver rows instead of being dropped before status/proof

@@ -13,6 +13,10 @@ async fn call_context_expansion_adds_incoming_fixture_dynamic_callers() -> Resul
             "call_aliased_indexed_named_field_function_binding",
         ),
     )?;
+    let guarded_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_match_guarded_function_item"),
+    )?;
 
     let mut rag = init_test_rag_mock(Arc::clone(&db));
     rag.cfg.call_context.max_owner_hits = 128;
@@ -31,6 +35,10 @@ async fn call_context_expansion_adds_incoming_fixture_dynamic_callers() -> Resul
     assert!(
         expanded_ids.contains(&dynamic_owner),
         "function target expansion should materialize a dynamic-function caller owner; expanded: {expanded:#?}"
+    );
+    assert!(
+        expanded_ids.contains(&guarded_owner),
+        "function target expansion should materialize a guarded-match dynamic caller owner; expanded: {expanded:#?}"
     );
 
     let call_context = rag.collect_call_context(&expanded)?;
