@@ -54,6 +54,19 @@ async fn request_code_context_returns_result_field_receiver_proof_context() -> c
             targets: vec![clone_target, method_target],
         },
         Case {
+            label: "self-field method-call result receiver",
+            search_term: "call_self_field_method_result_instance_method",
+            call_id: "self_field_method_result_receiver_proof_context",
+            owner: one_uuid(
+                &db,
+                &method_by_impl_self_query(
+                    "SelfFieldAssocOwner",
+                    "call_self_field_method_result_instance_method",
+                ),
+            )?,
+            targets: vec![clone_target, method_target],
+        },
+        Case {
             label: "await path-call result receiver",
             search_term: "call_await_result_instance_method",
             call_id: "await_result_receiver_proof_context",

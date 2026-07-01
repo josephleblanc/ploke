@@ -1410,3 +1410,9 @@ pub mod inherited_glob_assoc_parent {
         }
     }
 }
+
+impl SelfFieldAssocOwner {
+    pub fn call_self_field_method_result_instance_method(&self) -> i32 {
+        self.value.clone_assoc().instance_value()
+    }
+}

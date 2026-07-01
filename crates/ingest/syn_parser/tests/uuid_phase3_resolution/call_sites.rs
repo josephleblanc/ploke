@@ -234,6 +234,8 @@ const TYPED_REFERENCE_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (22457, 22479);
 const TYPED_DOUBLE_REFERENCE_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (26234, 26256);
 const SELF_FIELD_ASSOC_OWNER_IMPL_SPAN: (usize, usize) = (26319, 26448);
 const SELF_FIELD_INSTANCE_CALL_SPAN: (usize, usize) = (26413, 26440);
+const SELF_FIELD_RESULT_ASSOC_OWNER_IMPL_SPAN: (usize, usize) = (31012, 31169);
+const SELF_FIELD_METHOD_RESULT_INSTANCE_CALL_SPAN: (usize, usize) = (31120, 31161);
 const LOCAL_TRAIT_OBJECT_BINDING_METHOD_CALL_SPAN: (usize, usize) = (22620, 22639);
 const TRAIT_IMPL_BODY_CALL_IMPL_SPAN: (usize, usize) = (22765, 22964);
 const TRAIT_IMPL_BODY_SELF_METHOD_CALL_SPAN: (usize, usize) = (22931, 22956);
@@ -737,6 +739,21 @@ fn fixture_call_graph_self_field_assoc_method_args(
         expected_path: &["crate"],
         owner: AssocOwner::Impl {
             span: SELF_FIELD_ASSOC_OWNER_IMPL_SPAN,
+        },
+        ident,
+        expected_cfg: None,
+    }
+}
+
+fn fixture_call_graph_self_field_result_assoc_method_args(
+    ident: &'static str,
+) -> AssocParanoidArgs<'static> {
+    AssocParanoidArgs {
+        fixture: "fixture_call_graph",
+        relative_file_path: CALL_GRAPH_LIB_RS,
+        expected_path: &["crate"],
+        owner: AssocOwner::Impl {
+            span: SELF_FIELD_RESULT_ASSOC_OWNER_IMPL_SPAN,
         },
         ident,
         expected_cfg: None,
@@ -3609,6 +3626,34 @@ paranoid_call_site_test!(
                 field_path: &["value"],
             },
             SELF_FIELD_INSTANCE_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedMethodLocalExact {
+                target: target_info.test_method_id(),
+            },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_self_field_method_result_instance_method_resolves_returned_type_method_call_site,
+    fixture: "fixture_call_graph",
+    owner: method {
+        args: fixture_call_graph_self_field_result_assoc_method_args(
+            "call_self_field_method_result_instance_method"
+        )
+    },
+    expected: {
+        let target_args = fixture_call_graph_instance_method_args("instance_value");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_method_pid(&parsed_graphs)?;
+        ExpectedCallSite::method(
+            "instance_value",
+            ExpectedMethodReceiver::MethodCallResult {
+                method_name: "clone_assoc",
+            },
+            SELF_FIELD_METHOD_RESULT_INSTANCE_CALL_SPAN,
             0,
             0,
             &[],

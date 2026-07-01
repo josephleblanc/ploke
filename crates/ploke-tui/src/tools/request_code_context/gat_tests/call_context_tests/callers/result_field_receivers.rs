@@ -103,6 +103,42 @@ async fn request_code_context_returns_result_field_receiver_call_context() -> co
             ],
         },
         Case {
+            label: "self-field method-call result receiver",
+            search_term: "call_self_field_method_result_instance_method",
+            call_id: "self_field_method_result_receiver_call_context",
+            owner: one_uuid(
+                &db,
+                &method_by_impl_self_query(
+                    "SelfFieldAssocOwner",
+                    "call_self_field_method_result_instance_method",
+                ),
+            )?,
+            calls: vec![
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "clone_assoc",
+                        CallReceiverInfo::SelfField {
+                            path: path(&["value"]),
+                        },
+                    ),
+                    target: clone_target,
+                    relation: CallTargetKind::Method,
+                },
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "instance_value",
+                        CallReceiverInfo::MethodCallResult {
+                            method_name: "clone_assoc".to_string(),
+                        },
+                    ),
+                    target: method_target,
+                    relation: CallTargetKind::Method,
+                },
+            ],
+        },
+        Case {
             label: "await path-call result receiver",
             search_term: "call_await_result_instance_method",
             call_id: "await_result_receiver_call_context",

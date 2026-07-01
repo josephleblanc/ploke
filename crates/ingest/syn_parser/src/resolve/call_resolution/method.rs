@@ -638,7 +638,9 @@ impl CallRelationResolver<'_> {
     ) -> Result<AssocPathResolution, SynParserError> {
         match &call.receiver {
             MethodCallReceiver::SelfValue => self.resolve_self_method_call(call),
-            MethodCallReceiver::SelfField { .. } => Ok(AssocPathResolution::Unsupported),
+            MethodCallReceiver::SelfField { field_path } => {
+                self.resolve_self_field_method_call(call, field_path, type_relations)
+            }
             MethodCallReceiver::LocalBinding { name } => {
                 self.resolve_param_method_call(call, name, type_relations)
             }

@@ -85,6 +85,40 @@ async fn call_context_collection_reads_real_result_field_receiver_rows() -> Resu
             ],
         },
         CallCase {
+            label: "self-field method-call result receiver",
+            owner: one_uuid(
+                &db,
+                &method_by_impl_self_query(
+                    "SelfFieldAssocOwner",
+                    "call_self_field_method_result_instance_method",
+                ),
+            )?,
+            calls: vec![
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "clone_assoc",
+                        CallReceiverInfo::SelfField {
+                            path: path(&["value"]),
+                        },
+                    ),
+                    target: clone_target,
+                    relation: CallTargetKind::Method,
+                },
+                ExpectedCall {
+                    kind: CallSiteKind::Method,
+                    callee: method_call(
+                        "instance_value",
+                        CallReceiverInfo::MethodCallResult {
+                            method_name: "clone_assoc".to_string(),
+                        },
+                    ),
+                    target: method_target,
+                    relation: CallTargetKind::Method,
+                },
+            ],
+        },
+        CallCase {
             label: "await path-call result receiver",
             owner: one_uuid(
                 &db,
