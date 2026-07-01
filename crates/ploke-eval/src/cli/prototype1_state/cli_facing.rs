@@ -5524,7 +5524,24 @@ async fn run_broad_slot_for_admission(
     campaign_id: CampaignId,
     eval_storage_backend: profile::EvalStorageBackend,
 ) -> BroadSlotAttempt {
-    let result = if slot.published.submitted_result_path().exists() {
+    let submitted_exists = slot.published.submitted_result_path().exists();
+    info!(
+        target: EXECUTION_DEBUG_TARGET,
+        slot_index,
+        request_id = %slot.published.request_id(),
+        request_hash = %slot.published.request_hash(),
+        submitted_result_path = %slot.published.submitted_result_path().display(),
+        submitted_exists,
+        "broad_slot_admission_start"
+    );
+    let result = if submitted_exists {
+        info!(
+            target: EXECUTION_DEBUG_TARGET,
+            slot_index,
+            request_id = %slot.published.request_id(),
+            request_hash = %slot.published.request_hash(),
+            "broad_slot_existing_submission_skip_tui"
+        );
         Ok(None)
     } else {
         #[cfg(test)]
@@ -5535,9 +5552,26 @@ async fn run_broad_slot_for_admission(
                 result: Err(source),
             };
         }
-        run_broad_headless_tui_attempt(&slot, broad_tui, &campaign_id, eval_storage_backend)
-            .await
-            .map_err(PrepareError::from)
+        info!(
+            target: EXECUTION_DEBUG_TARGET,
+            slot_index,
+            request_id = %slot.published.request_id(),
+            request_hash = %slot.published.request_hash(),
+            "broad_slot_run_headless_tui_start"
+        );
+        let result =
+            run_broad_headless_tui_attempt(&slot, broad_tui, &campaign_id, eval_storage_backend)
+                .await
+                .map_err(PrepareError::from);
+        info!(
+            target: EXECUTION_DEBUG_TARGET,
+            slot_index,
+            request_id = %slot.published.request_id(),
+            request_hash = %slot.published.request_hash(),
+            ok = result.is_ok(),
+            "broad_slot_run_headless_tui_done"
+        );
+        result
     };
     cleanup_broad_slot_target(&slot);
     BroadSlotAttempt {

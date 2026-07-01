@@ -275,6 +275,10 @@ pub(super) async fn start_attempt_runtime(
 pub(super) enum AttemptEnd {
     Terminal(HeadlessTerminal),
     RetryFailure(String),
+    RetryValidation {
+        feedback: String,
+        terminal: HeadlessTerminal,
+    },
     RetryNoEdit {
         feedback: String,
         outcome: String,
@@ -428,60 +432,6 @@ pub(super) fn applied_edit_from_terminal_items(
         proposal_ids,
         changed_paths: changed_paths.to_vec(),
     })
-}
-
-/// Run request-declared validation against the candidate as soon as a tool
-/// batch settles with at least one allowed applied edit, then classify the
-/// applied candidate.
-///
-/// The harness runs the declared validation itself, so admission does not
-/// depend on the model issuing the exact declared cargo commands; those harness
-/// observations are the most recent for each command, so
-/// `classify_applied_terminal` consults the harness run rather than any earlier
-/// model-issued cargo call.
-///
-/// This returns the classified terminal but does not decide whether to stop.
-/// The caller finalizes the attempt only when validation is satisfied
-/// (`HeadlessTerminal::Applied`). When validation is not yet satisfied the
-/// caller keeps the attempt running so the model can repair the candidate
-/// across later turns, which preserves multi-turn repair flows while still
-/// letting a passing candidate stop immediately instead of burning the slot
-/// wall-clock on further tool calls.
-pub(super) async fn validate_applied_batch(
-    runtime: &crate::runner::WorkspaceTuiRuntime,
-    active_parent_id: Uuid,
-    request_id: Uuid,
-    turn: u32,
-    run: &mut HeadlessRun,
-    observer: &LiveObserver,
-    validation_commands: &[contract::Command],
-    applied: &[AppliedItem],
-    changed_paths: &[PathBuf],
-) -> Option<HeadlessTerminal> {
-    let applied_edit = applied_edit_from_terminal_items(applied, changed_paths)?;
-    observer.emit(format!(
-        "attempt {turn} validate_applied_batch proposals={} changed_paths={}",
-        applied_edit.proposal_ids().len(),
-        changed_paths.len()
-    ));
-    if !validation_commands.is_empty() {
-        run_contract_validations(
-            runtime,
-            active_parent_id,
-            request_id,
-            turn,
-            run,
-            observer,
-            validation_commands,
-        )
-        .await;
-    }
-    Some(classify_applied_terminal(
-        run,
-        validation_commands,
-        request_id,
-        applied_edit,
-    ))
 }
 
 pub(super) fn timeout_terminal_for_run(run: &HeadlessRun, secs: u64) -> HeadlessTerminal {
@@ -1465,8 +1415,22 @@ pub(super) async fn wait_for_refresh(
     )
     .await?
     {
+        tracing::info!(
+            target: "ploke_eval::post_apply_refresh",
+            turn,
+            changed = changed.is_some(),
+            elapsed_ms = refresh_started.elapsed().as_millis() as u64,
+            "post_apply_refresh_sparse_gate_satisfied_skipping_dense_wait"
+        );
         return Ok(());
     }
+    tracing::info!(
+        target: "ploke_eval::post_apply_refresh",
+        turn,
+        changed = changed.is_some(),
+        elapsed_ms = refresh_started.elapsed().as_millis() as u64,
+        "post_apply_refresh_dense_wait_start"
+    );
     wait_for_index_output(
         runtime,
         pending_events,

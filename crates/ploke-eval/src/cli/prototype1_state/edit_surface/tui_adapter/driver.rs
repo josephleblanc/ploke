@@ -17,8 +17,8 @@ use super::tui_bridge::{
     start_attempt_runtime, timeout_terminal_for_run,
 };
 use super::{
-    AttemptOutcome, Budget, Error, Feedback, HeadlessRun, HeadlessTerminal, ModelSelection, NoEdit,
-    Outcome, Reject, Step, Terminal,
+    AttemptOutcome, Budget, Error, Fail, Feedback, HeadlessRun, HeadlessTerminal, ModelSelection,
+    NoEdit, Outcome, Reject, Step, Terminal,
 };
 
 pub(crate) struct AttemptDriver {
@@ -201,6 +201,9 @@ fn retry_outcome_from_end(end: &AttemptEnd) -> Result<Outcome, Error> {
         AttemptEnd::RetryFailure(feedback) => Ok(Outcome::Rejected(Reject::Invalid {
             reason: super::tui_bridge::retry_feedback(feedback),
         })),
+        AttemptEnd::RetryValidation { feedback, .. } => Ok(Outcome::Validation(Fail::validation(
+            super::tui_bridge::retry_feedback(feedback),
+        ))),
         AttemptEnd::RetryNoEdit { feedback, .. } => Ok(Outcome::NoEdit(NoEdit::new(
             super::tui_bridge::retry_feedback(feedback),
         ))),
@@ -211,6 +214,9 @@ fn retry_outcome_from_end(end: &AttemptEnd) -> Result<Outcome, Error> {
 }
 
 fn exhausted_terminal(end: AttemptEnd, attempts: u32, last: &Outcome) -> HeadlessTerminal {
+    if let AttemptEnd::RetryValidation { terminal, .. } = end {
+        return terminal;
+    }
     if let AttemptEnd::RetryNoEdit {
         outcome, summary, ..
     } = end
@@ -427,6 +433,36 @@ mod tests {
             terminal,
             HeadlessTerminal::CompletedWithoutEdit { .. }
         ));
+    }
+
+    #[test]
+    fn retry_validation_uses_validation_outcome() {
+        let detail = "cargo check failed";
+        let end = AttemptEnd::RetryValidation {
+            feedback: detail.to_string(),
+            terminal: HeadlessTerminal::AppliedValidationFailed {
+                applied: super::super::harness_io::AppliedEdit {
+                    proposal_id: uuid::Uuid::nil(),
+                    proposal_ids: vec![uuid::Uuid::nil()],
+                    changed_paths: Vec::new(),
+                },
+                feedback: detail.to_string(),
+            },
+        };
+        let outcome = retry_outcome_from_end(&end).expect("retry outcome");
+
+        assert!(matches!(outcome, Outcome::Validation(_)));
+        let step = Budget::new(2, 30)
+            .expect("budget")
+            .retry()
+            .decide_outcome(1, &outcome);
+        let Step::Retry { feedback, .. } = step else {
+            panic!("expected retry step for validation failure, got {step:?}");
+        };
+        assert_eq!(
+            feedback.message(),
+            super::super::tui_bridge::retry_feedback(detail)
+        );
     }
 
     #[test]

@@ -2227,7 +2227,7 @@ async fn recorded_replay_runs_declared_validation_after_applied_edit() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn applied_batch_finalizes_before_completed_turn() {
+async fn applied_batch_waits_for_completed_turn_before_validation() {
     let _recorded_replay_guard = recorded_replay_test_mutex().lock().await;
     let fixture = prepare_live_canary(
         "finalize-on-applied-batch-no-completed-turn",
@@ -2272,21 +2272,21 @@ async fn applied_batch_finalizes_before_completed_turn() {
             outcome,
             AttemptEnd::Terminal(HeadlessTerminal::Applied { .. })
         ),
-        "passing applied batch should classify Applied without waiting for a completed turn, got {outcome:?}; validations={:#?}",
+        "passing completed turn should classify Applied after validation, got {outcome:?}; validations={:#?}",
         run.validations()
     );
     assert!(
-        !run.events()
+        run.events()
             .iter()
             .any(|event| matches!(event, Event::Turn { .. })),
-        "finalize must classify at the applied batch, before any completed chat turn is observed; events={:#?}",
+        "validation must wait for the completed chat turn instead of finalizing at the applied batch; events={:#?}",
         run.events()
     );
     assert!(
         run.validations()
             .iter()
             .any(|validation| validation.display_command == "cargo check" && validation.ok),
-        "expected harness-owned `cargo check` to run at finalize, got {:#?}",
+        "expected harness-owned `cargo check` to run after turn completion, got {:#?}",
         run.validations()
     );
 }
@@ -2540,13 +2540,13 @@ async fn historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_l
         "diagnostics should record an applied terminal after post-stop validation, got {:#?}",
         diagnostics.terminal
     );
-    // The harness now finalizes at the validated repair batch instead of
-    // depending on the model emitting a completed chat turn first. Admission
-    // must therefore not require a completed turn; the repaired-content and
-    // passing-declared-validation guarantees below are what gate admission.
+    // The harness waits for the model's completed turn before running the
+    // request-declared validation. Intermediate, non-compiling repair states
+    // are allowed during the tool loop; the final completed turn plus passing
+    // declared validation gates admission.
     assert_eq!(
-        completed_turn_count, 0,
-        "post-apply finalize should admit at the validated repair batch, before any completed chat turn; events={:#?}",
+        completed_turn_count, 1,
+        "declared validation should run after the completed chat turn, not at an intermediate applied batch; events={:#?}",
         diagnostics.events
     );
     assert!(
@@ -2559,12 +2559,11 @@ async fn historical_r10_near_tail_turn_live_tape_applies_ns_patch_through_tool_l
         diagnostics.validations
     );
     assert!(
-        diagnostics.validations.iter().any(|validation| {
-            validation.call_id == "declared_validation_1_0"
-                && validation.display_command == "cargo check -p ploke-eval"
-                && !validation.ok
-        }),
-        "the broken first patch must fail the buildability gate before the repair lands; got {:#?}",
+        diagnostics
+            .validations
+            .iter()
+            .all(|validation| { validation.call_id != "declared_validation_1_0" || validation.ok }),
+        "request-declared validation must not run against intermediate repair states; got {:#?}",
         diagnostics.validations
     );
 

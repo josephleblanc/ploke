@@ -544,6 +544,14 @@ async fn rescan_for_changes(
     #[cfg(feature = "test_harness")]
     RESCAN_FOR_CHANGES_CALLS.fetch_add(1, Ordering::SeqCst);
 
+    let rescan_started = Instant::now();
+    tracing::info!(
+        target: "ploke_tui::edit_rescan",
+        request_id = %request_id,
+        path_count = changed_paths.len(),
+        "edit_rescan_start"
+    );
+
     let (scan_tx, scan_rx) = tokio::sync::oneshot::channel();
     crate::app_state::handlers::db::scan_paths_for_change(
         state,
@@ -563,6 +571,13 @@ async fn rescan_for_changes(
     };
     match scan_rx.await {
         Ok(Some(files_changed)) => {
+            tracing::info!(
+                target: "ploke_tui::edit_rescan",
+                request_id = %request_id,
+                changed_count = files_changed.len(),
+                elapsed_ms = rescan_started.elapsed().as_millis() as u64,
+                "edit_rescan_done"
+            );
             let changed_string = files_changed.iter().map(|f| f.to_string_lossy()).fold(
                 String::new(),
                 |mut acc, s| {
@@ -576,11 +591,25 @@ async fn rescan_for_changes(
             add_chat_message(msg).await;
         }
         Ok(None) => {
+            tracing::info!(
+                target: "ploke_tui::edit_rescan",
+                request_id = %request_id,
+                changed_count = 0_u64,
+                elapsed_ms = rescan_started.elapsed().as_millis() as u64,
+                "edit_rescan_done"
+            );
             let msg = "No changed files detected".to_string();
             tracing::info!(target: "edit-proposals", msg);
             add_chat_message(msg).await;
         }
         Err(e) => {
+            tracing::warn!(
+                target: "ploke_tui::edit_rescan",
+                request_id = %request_id,
+                elapsed_ms = rescan_started.elapsed().as_millis() as u64,
+                error = %e,
+                "edit_rescan_error"
+            );
             let msg = format!(
                 "Error scanning workspace for changes in request id {}\nError: {}",
                 request_id, e
