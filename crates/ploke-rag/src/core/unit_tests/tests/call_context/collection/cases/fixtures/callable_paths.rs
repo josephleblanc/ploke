@@ -7,9 +7,14 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         "fixture_call_graph",
     )?));
     let make_fn = unique_id_by_name(&db, "function", "make_fn")?;
+    let local_target = unique_id_by_name(&db, "function", "local_target")?;
     let returned_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_returned_function"),
+    )?;
+    let branch_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_if_initialized_function_item_binding"),
     )?;
     let fn_param_owner = one_uuid(
         &db,
@@ -35,6 +40,7 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
 
     let call_context = rag.collect_call_context(&[
         (returned_owner, 1.0),
+        (branch_owner, 1.0),
         (fn_param_owner, 1.0),
         (generic_owner, 1.0),
         (boxed_owner, 1.0),
@@ -79,6 +85,28 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         returned_dynamic.targets.is_empty(),
         "returned-function dynamic calls must not fabricate RAG targets: {returned_dynamic:#?}"
     );
+
+    let branch_context = call_context
+        .get(&branch_owner)
+        .expect("branch-initialized function item owner should receive outgoing call context");
+    assert_eq!(
+        branch_context.len(),
+        1,
+        "branch-initialized function item context: {branch_context:#?}"
+    );
+    let branch_call = &branch_context[0];
+    assert_eq!(branch_call.kind, CallSiteKind::Path);
+    assert_eq!(
+        branch_call.callee,
+        CallCalleeInfo::Path {
+            path: vec!["f".to_string()],
+        }
+    );
+    assert_eq!(branch_call.status, CallStatusKind::Resolved);
+    assert_eq!(branch_call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(branch_call.targets.len(), 1);
+    assert_eq!(branch_call.targets[0].target_id, local_target);
+    assert_eq!(branch_call.targets[0].relation, CallTargetKind::Function);
 
     let fn_param_context = call_context
         .get(&fn_param_owner)

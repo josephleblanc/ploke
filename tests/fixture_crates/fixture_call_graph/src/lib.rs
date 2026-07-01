@@ -1298,3 +1298,21 @@ pub type AliasConstructorType = AliasConstructorEnum;
 pub fn call_type_alias_enum_variant_constructor(value: i32) -> AliasConstructorType {
     AliasConstructorType::Case(value)
 }
+
+pub fn call_if_initialized_function_item_binding(flag: bool) -> i32 {
+    let f = if flag { local_target } else { local_target };
+    f()
+}
+
+pub fn call_parenthesized_match_initialized_function_item_binding(flag: bool) -> i32 {
+    let f = match flag {
+        true => local_target,
+        false => local_target,
+    };
+    (f)()
+}
+
+pub fn call_if_ambiguous_initialized_function_item_binding(flag: bool) -> i32 {
+    let f: fn() -> i32 = if flag { local_target } else { other_target };
+    f()
+}

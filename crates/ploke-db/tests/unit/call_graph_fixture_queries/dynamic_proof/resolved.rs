@@ -73,6 +73,11 @@ fn fixture_projection_stores_real_callable_expression_dynamic_call_proof_facts()
             expected_rows: 1,
         },
         ResolvedDynamicContextCase {
+            owner: "call_parenthesized_match_initialized_function_item_binding",
+            path: &["f"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
             owner: "call_function_pointer_cast_path",
             path: &["local_target"],
             expected_rows: 1,

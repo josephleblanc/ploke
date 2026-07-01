@@ -114,6 +114,10 @@ const ASYNC_BLOCK_LOCAL_TARGET_CALL_SPAN: (usize, usize) = (3129, 3143);
 const TRAIT_ASSOC_FUNCTION_CALL_SPAN: (usize, usize) = (3394, 3461);
 const SHADOWED_LOCAL_TARGET_BINDING_CALL_SPAN: (usize, usize) = (3553, 3567);
 const LOCAL_FUNCTION_ITEM_BINDING_CALL_SPAN: (usize, usize) = (3652, 3655);
+const IF_INITIALIZED_FUNCTION_ITEM_BINDING_CALL_SPAN: (usize, usize) = (28338, 28341);
+const PARENTHESIZED_MATCH_INITIALIZED_FUNCTION_ITEM_BINDING_CALL_SPAN: (usize, usize) =
+    (28529, 28534);
+const IF_AMBIGUOUS_INITIALIZED_FUNCTION_ITEM_BINDING_CALL_SPAN: (usize, usize) = (28695, 28698);
 const TYPED_FUNCTION_POINTER_BINDING_CALL_SPAN: (usize, usize) = (3756, 3759);
 const TYPED_FUNCTION_POINTER_ALIAS_BINDING_CALL_SPAN: (usize, usize) = (9123, 9126);
 const PARENTHESIZED_TYPED_FUNCTION_POINTER_ALIAS_BINDING_CALL_SPAN: (usize, usize) = (9275, 9280);
@@ -5327,6 +5331,72 @@ paranoid_call_site_test!(
             ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
         )
     },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_if_initialized_function_item_binding_resolves_initialized_value_binding_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_if_initialized_function_item_binding"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::path_initialized_value_binding(
+            &["f"],
+            &["local_target"],
+            IF_INITIALIZED_FUNCTION_ITEM_BINDING_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_parenthesized_match_initialized_function_item_binding_resolves_dynamic_function_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_parenthesized_match_initialized_function_item_binding"
+    },
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::dynamic_initialized_local_binding(
+            &["f"],
+            &["local_target"],
+            PARENTHESIZED_MATCH_INITIALIZED_FUNCTION_ITEM_BINDING_CALL_SPAN,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_if_ambiguous_initialized_function_item_binding_fails_closed_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_if_ambiguous_initialized_function_item_binding"
+    },
+    expected: ExpectedCallSite::path_value_binding(
+        &["f"],
+        IF_AMBIGUOUS_INITIALIZED_FUNCTION_ITEM_BINDING_CALL_SPAN,
+        0,
+        0,
+        &[],
+        ExpectedCallOutcome::Unsupported,
+    ),
 );
 
 paranoid_call_site_test!(

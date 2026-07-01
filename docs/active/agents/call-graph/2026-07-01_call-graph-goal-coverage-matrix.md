@@ -49,36 +49,35 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current Bucket
 
-Current bucket: exact local external-trait impl receiver methods.
+Current bucket: local callable bindings initialized by branch expressions.
 
 Exit criteria:
 
-- Reuse existing receiver/type-relation proof instead of broad trait dispatch.
-- Resolve a real local impl method for an external/prelude trait only when the
-  receiver self type is exact and generic parameters are unconstrained.
-- Regenerate the relevant real-corpus call-graph fixture when persisted rows
-  change.
-- Convert the real-corpus `Router::clone` rows from targetless to resolved
-  traversal with DB, RAG, and TUI/tool assertions.
-- Keep field/result/dynamic receiver gaps fail-closed unless this exact proof
-  applies.
+- Reuse existing `LocalBindingProof::Initialized` evidence instead of adding a
+  separate callable-value model for this syntax slice.
+- Resolve `if` and `match` initializers only when every supported branch/arm
+  collapses to the same unshadowed callable path.
+- Keep mixed-target, guarded, non-path, and opaque parameter branches
+  fail-closed with no invented traversal edge.
+- Add parser, DB, and RAG assertions over persisted call graph rows.
 
 Completed evidence:
 
-- Fixture: `corpus_axum_call_graph` regenerated as `2026-07-01`.
-- DB: `axum_real_target_router_new_and_router_clone_contracts` proves 13 real
-  `Router::clone` rows resolve to `impl<S> Clone for Router<S>::clone`,
-  covering typed-local `router`, typed-local `app`, and `self.router` receivers.
-- RAG: `call_context_exact_reads_axum_router_clone_typed_local_callers` proves
-  exact call context preserves the 13 caller-site identities and receiver
-  buckets.
-- TUI/tool: `code_item_lookup_returns_remaining_real_corpus_supported_callers`
-  and `code_item_edges_returns_remaining_real_corpus_supported_callers` include
-  `RouterClone` and expose the same incoming rows and proof facts.
+- Fixture source: `fixture_call_graph` has same-target `if`, same-target
+  parenthesized `match`, and mixed-target typed function pointer branch
+  initializer cases.
+- Parser: paranoid call-site tests prove branch initializers become initialized
+  local binding proof only when the target is exact.
+- DB: dynamic context and dynamic proof tests assert the resolved path/dynamic
+  rows and the mixed-target fail-closed row.
+- RAG: fixture call-context tests assert the resolved path and dynamic target
+  rows propagate through call context collection.
 
-Reason to switch after this bucket: exact local external-trait impl receiver
-methods now have DB, RAG, and TUI proof. Do not broaden into general external
-trait dispatch without a separate binding/type evidence bucket.
+Reason to switch after this bucket: the checked-out `axum`, `serde`, and
+`BurntSushi__memchr` corpora did not contain a representative same-target
+branch-initialized callable binding case. This fixture-backed syntax slice is
+enough for the branch initializer proof; switch back to real-corpus DB query
+coverage for the next bucket.
 
 ## Coverage Matrix
 
@@ -93,7 +92,7 @@ trait dispatch without a separate binding/type evidence bucket.
 | Constructors | Stronger one-hop | Tuple struct / enum variant constructor rows are asserted in real-corpus matrix, including chrono alias constructor rows | Exact context propagation exists for direct and alias constructor rows | Tool regressions include direct and alias variant/constructor rows | axum, chrono | Later: multi-hop constructor path only if a real usage question requires it. |
 | External dependency frontier | Covered as frontier | External rows are exposed but not traversed | Reach summaries expose external frontier calls | Tool summaries count/display frontier rows | axum | Keep fail-closed; do not convert to traversal without external-summary semantics. |
 | Unsupported receiver shapes | Covered as blockers/frontier, with one exact positive subset | Targetless/unsupported rows remain for generic field/result/await/local receiver gaps; exact local `Router::clone` receiver rows now traverse | RAG preserves blocker/frontier rows and the exact positive subset | Tool tests surface unsupported rows/counts and `RouterClone` positives | axum | Future implementation bucket after binding/type tracking plan. |
-| Dynamic callable values | Partial/fail-closed | Fixture and real-corpus targetless rows exist; no general traversal | RAG preserves dynamic callable blockers where projected | Tool targetless matrix covers current rows | axum plus local fixture | Needs binding tracking and callable-value model before traversal. |
+| Dynamic callable values | Partial with exact local binding subset | Fixture-backed same-target branch/match initialized callable values resolve; mixed-target branches remain targetless | RAG preserves resolved branch-initialized rows and blocker rows | Tool targetless matrix covers current unsupported rows | local fixture; no representative found in checked-out axum/serde/memchr corpora | Switch buckets; broader callable trait objects/returned closures still need binding/body ownership work. |
 | Closures / nested body ownership | Partial/gap documented | Some nested rows intentionally absent to avoid flattening outer owners | RAG follows current DB surface | Tool coverage follows current DB surface | axum `parse_attrs` closure-body rows | Future bucket: closure/async body ownership before multi-hop closure traversal. |
 | Import / re-export / glob completeness | Partial, alias constructors improved | Explicit and some imported path calls work; chrono alias constructor path calls now resolve through typed alias evidence; broader re-export/glob gaps remain | Downstream sees the alias-resolved subset | Tool coverage follows current DB-resolved subset | axum, chrono | Switch buckets; keep strict source oracles for missing fanout. |
 | DB usage summaries | Strong current surface | `call_impact_for_target`, `call_reach_for_owner`, paths, source files/modules, buckets, boundary/frontier rows | N/A | N/A | axum | Add fields only when they answer a matrix question, not opportunistically. |

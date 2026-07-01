@@ -123,8 +123,8 @@ For the current state, that should be:
 
 ```text
 Root plan: .hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md
-Current phase: real-corpus proof and downstream usage-query coverage
-Current completed bucket: import/type-alias constructor completeness
-Completed proof: chrono `MappedLocalTime::Single -> LocalResult::Single` alias constructors across parser, regenerated DB fixture, RAG exact call context, and TUI exact lookup surfaces
-Next phase if matrix buckets are complete: binding/type-aware semantic resolution
+Current phase: binding/type-aware semantic resolution
+Current completed bucket: local callable bindings initialized by branch expressions
+Completed proof: fixture-backed same-target `if` and parenthesized `match` initialized callable bindings across parser, DB dynamic context/proof, and RAG call-context collection; mixed-target branch initializer remains fail-closed
+Next phase if this bucket is done: return to the coverage matrix and select the next real-corpus DB query or downstream usage-query gap
 ```

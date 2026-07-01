@@ -1100,6 +1100,14 @@ fn local_binding_proof(
                         })
                 })
                 .or_else(|| {
+                    branch_init_path(init_expr, param_names, local_scopes).map(|init_path| {
+                        LocalBindingProof::Initialized {
+                            name: name.clone(),
+                            init_path,
+                        }
+                    })
+                })
+                .or_else(|| {
                     referenced_init_path(init_expr, param_names, local_scopes).map(|type_path| {
                         LocalBindingProof::Referenced {
                             name: name.clone(),
@@ -1135,7 +1143,8 @@ fn local_binding_proof(
                 });
             }
             let init_path = inferred_init_path(init_expr)
-                .and_then(|path| init_target_path(&path, param_names, local_scopes));
+                .and_then(|path| init_target_path(&path, param_names, local_scopes))
+                .or_else(|| branch_init_path(init_expr, param_names, local_scopes));
             if let Some(trait_path) = typed_local_trait_object_path_segments(typed.ty.as_ref()) {
                 return Some(LocalBindingProof::TraitObject {
                     name,
@@ -1169,6 +1178,31 @@ fn inferred_init_path(expr: Option<&syn::Expr>) -> Option<Vec<String>> {
     };
     let path = path_segments(path);
     (!path.is_empty()).then_some(path)
+}
+
+fn branch_init_path(
+    expr: Option<&syn::Expr>,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<String>> {
+    let expr = expr?;
+    let branch_paths = match unparen_expr(expr) {
+        syn::Expr::If(_) => if_branch_paths(expr, param_names, local_scopes)?,
+        syn::Expr::Match(_) => match_arm_paths(expr, param_names, local_scopes)?,
+        _ => return None,
+    };
+
+    let mut targets = branch_paths
+        .iter()
+        .map(|path| init_target_path(path, param_names, local_scopes))
+        .collect::<Option<Vec<_>>>()?;
+    targets.sort();
+    targets.dedup();
+
+    match targets.as_slice() {
+        [target] => Some(target.clone()),
+        _ => None,
+    }
 }
 
 fn constructed_init(

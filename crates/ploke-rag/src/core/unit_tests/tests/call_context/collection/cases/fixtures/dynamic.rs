@@ -14,6 +14,13 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
             "call_aliased_indexed_named_field_function_binding",
         ),
     )?;
+    let branch_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_parenthesized_match_initialized_function_item_binding",
+        ),
+    )?;
     let unsupported_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_dereferenced_closure_binding"),
@@ -25,8 +32,11 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
         "fresh fixture call_graph schema should enable dynamic call context collection"
     );
 
-    let call_context =
-        rag.collect_call_context(&[(resolved_owner, 1.0), (unsupported_owner, 1.0)])?;
+    let call_context = rag.collect_call_context(&[
+        (resolved_owner, 1.0),
+        (branch_owner, 1.0),
+        (unsupported_owner, 1.0),
+    ])?;
     let resolved_context = call_context
         .get(&resolved_owner)
         .expect("resolved dynamic owner should receive outgoing call context");
@@ -50,6 +60,26 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
     assert_eq!(resolved_call.targets[0].target_id, target);
     assert_eq!(
         resolved_call.targets[0].relation,
+        CallTargetKind::DynamicFunction
+    );
+
+    let branch_context = call_context
+        .get(&branch_owner)
+        .expect("branch-initialized dynamic owner should receive outgoing call context");
+    assert_eq!(
+        branch_context.len(),
+        1,
+        "branch-initialized dynamic owner context: {branch_context:#?}"
+    );
+    let branch_call = &branch_context[0];
+    assert_eq!(branch_call.kind, CallSiteKind::Dynamic);
+    assert_eq!(branch_call.callee, CallCalleeInfo::Dynamic);
+    assert_eq!(branch_call.status, CallStatusKind::Resolved);
+    assert_eq!(branch_call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(branch_call.targets.len(), 1);
+    assert_eq!(branch_call.targets[0].target_id, target);
+    assert_eq!(
+        branch_call.targets[0].relation,
         CallTargetKind::DynamicFunction
     );
 

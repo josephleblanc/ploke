@@ -74,6 +74,11 @@ fn fixture_context_reads_projected_resolved_dynamic_function_shapes() -> Result<
             expected_rows: 1,
         },
         ResolvedDynamicContextCase {
+            owner: "call_parenthesized_match_initialized_function_item_binding",
+            path: &["f"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
             owner: "call_if_nested_branch_expression",
             path: &["local_target"],
             expected_rows: 1,

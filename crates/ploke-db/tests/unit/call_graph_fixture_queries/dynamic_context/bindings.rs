@@ -32,6 +32,11 @@ fn fixture_context_reads_projected_function_item_binding_calls() -> Result<(), D
             path(&["f"]),
             imported_target,
         ),
+        (
+            "call_if_initialized_function_item_binding",
+            path(&["f"]),
+            local_target,
+        ),
     ];
 
     for (owner_name, expected_path, target) in cases {
@@ -72,6 +77,24 @@ fn fixture_context_reads_projected_function_item_binding_calls() -> Result<(), D
         ),
     );
 
+    let owner = function_id_by_name(&db, "call_if_ambiguous_initialized_function_item_binding")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        1,
+        "ambiguous branch-initialized binding context rows: {context:#?}"
+    );
+    assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::path(
+            &["f"],
+            0,
+            CallStatusKind::Unsupported,
+            "ambiguous branch-initialized function pointer binding",
+        ),
+    );
+
     Ok(())
 }
 
@@ -108,6 +131,11 @@ fn fixture_context_reads_projected_parenthesized_binding_dynamic_calls() -> Resu
         ResolvedDynamicContextCase {
             owner: "call_parenthesized_typed_function_pointer_alias_binding",
             path: &["g"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_parenthesized_match_initialized_function_item_binding",
+            path: &["f"],
             expected_rows: 1,
         },
     ];
