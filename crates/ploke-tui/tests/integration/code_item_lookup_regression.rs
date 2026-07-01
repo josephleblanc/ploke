@@ -182,6 +182,10 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         .get("public_callees")
         .and_then(serde_json::Value::as_array)
         .expect("call_reach public_callees array");
+    let reach_source_files = reach
+        .get("source_files")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_reach source_files array");
 
     // Matrix:
     //   docs/active/agents/call-graph/
@@ -237,6 +241,16 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         "from_request",
         "axum-core/src/extract/mod.rs",
         "code_item_lookup reach public callees",
+    );
+    assert_source_file(
+        reach_source_files,
+        "axum-core/src/ext_traits/request.rs",
+        "code_item_lookup reach source files",
+    );
+    assert_source_file(
+        reach_source_files,
+        "axum-core/src/extract/mod.rs",
+        "code_item_lookup reach source files",
     );
     let target_id = fixture.target.to_string();
     let outgoing_path = outgoing_paths
@@ -300,6 +314,10 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
             >= 1,
         "code_item_lookup should surface public reach callee counts"
     );
+    assert_eq!(
+        ui_field(start_ui, "reach_source_files"),
+        reach_source_files.len().to_string()
+    );
 
     let target_params = LookupParams {
         item_name: Cow::Borrowed("from_request"),
@@ -339,6 +357,10 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         .get("public_callers")
         .and_then(serde_json::Value::as_array)
         .expect("call_impact public_callers array");
+    let impact_source_files = impact
+        .get("source_files")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_impact source_files array");
     assert_two_hop_call_path(
         incoming_paths,
         fixture.start,
@@ -378,6 +400,16 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         impact_public_callers.is_empty(),
         "direct stored-public impact bucket should remain empty for inherited method callers: {impact_public_callers:#?}"
     );
+    assert_source_file(
+        impact_source_files,
+        "axum-core/src/ext_traits/request.rs",
+        "code_item_lookup impact source files",
+    );
+    assert_source_file(
+        impact_source_files,
+        "axum-core/src/extract/mod.rs",
+        "code_item_lookup impact source files",
+    );
     let target_ui = target_result
         .ui_payload
         .as_ref()
@@ -404,6 +436,10 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         "code_item_lookup should surface all direct impact caller counts"
     );
     assert_eq!(ui_field(target_ui, "impact_public_callers"), "0");
+    assert_eq!(
+        ui_field(target_ui, "impact_source_files"),
+        impact_source_files.len().to_string()
+    );
 }
 
 #[tokio::test]
@@ -675,6 +711,10 @@ async fn code_item_lookup_returns_real_corpus_json_from_bytes_callers() {
         .get("frontier_calls")
         .and_then(serde_json::Value::as_array)
         .expect("call_reach frontier_calls array");
+    let reach_source_files = reach
+        .get("source_files")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_reach source_files array");
 
     // Real-corpus oracle matrix:
     //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
@@ -725,8 +765,13 @@ async fn code_item_lookup_returns_real_corpus_json_from_bytes_callers() {
             panic!(
                 "code_item_lookup should surface serde_json external frontier row: {frontier_calls:#?}"
             )
-        });
+    });
     assert_eq!(serde_frontier.owner_id, fixture.target);
+    assert_source_file(
+        reach_source_files,
+        "axum/src/json.rs",
+        "code_item_lookup Json::from_bytes reach source files",
+    );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(ui_field(ui, "call_context_incoming"), "2");
@@ -736,6 +781,10 @@ async fn code_item_lookup_returns_real_corpus_json_from_bytes_callers() {
             .expect("reach frontier count")
             >= 1,
         "code_item_lookup should surface reach frontier call counts"
+    );
+    assert_eq!(
+        ui_field(ui, "reach_source_files"),
+        reach_source_files.len().to_string()
     );
     assert!(
         ui_field(ui, "proof_context")
@@ -961,5 +1010,14 @@ fn assert_impact_node(
                     .is_some_and(|path| path.ends_with(file_suffix))
         }),
         "{label} should include impact node {id} named {name:?} in {file_suffix:?}: {nodes:#?}"
+    );
+}
+
+fn assert_source_file(files: &[serde_json::Value], suffix: &str, label: &str) {
+    assert!(
+        files
+            .iter()
+            .any(|file| file.as_str().is_some_and(|path| path.ends_with(suffix))),
+        "{label} should include source file ending with {suffix:?}: {files:#?}"
     );
 }

@@ -716,6 +716,16 @@ async fn call_impact_exact_reads_axum_usage_question_summary() -> Result<(), Err
         report.public_callers.is_empty(),
         "RAG impact summary should preserve the DB's direct stored-public predicate: {report:#?}"
     );
+    assert_call_source_file(
+        &report.source_files,
+        "axum-core/src/ext_traits/request.rs",
+        "RAG impact source files",
+    );
+    assert_call_source_file(
+        &report.source_files,
+        "axum-core/src/extract/mod.rs",
+        "RAG impact source files",
+    );
 
     // Source oracle:
     //   axum-macros/src/lib.rs:377,426,665,715 call `expand_with(...)` from
@@ -738,6 +748,11 @@ async fn call_impact_exact_reads_axum_usage_question_summary() -> Result<(), Err
             && unsupported.direct_callers.is_empty()
             && unsupported.public_callers.is_empty(),
         "RAG impact summary must not fabricate unsupported proc-macro public callers: {unsupported:#?}"
+    );
+    assert_call_source_file(
+        &unsupported.source_files,
+        "axum-macros/src/lib.rs",
+        "RAG unsupported impact source files",
     );
 
     Ok(())
@@ -832,6 +847,16 @@ async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Erro
         "axum-core/src/extract/mod.rs",
         "RAG reach public callees",
     );
+    assert_call_source_file(
+        &report.source_files,
+        "axum-core/src/ext_traits/request.rs",
+        "RAG reach source files",
+    );
+    assert_call_source_file(
+        &report.source_files,
+        "axum-core/src/extract/mod.rs",
+        "RAG reach source files",
+    );
 
     // Source oracle:
     //   axum/src/json.rs:164 defines `Json::from_bytes`.
@@ -878,6 +903,11 @@ async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Erro
     assert!(
         frontier.targets.is_empty(),
         "external frontier call should remain targetless: {frontier:#?}"
+    );
+    assert_call_source_file(
+        &json_report.source_files,
+        "axum/src/json.rs",
+        "RAG external-frontier reach source files",
     );
 
     Ok(())
@@ -1033,6 +1063,17 @@ fn assert_call_node(
             node.id == id && node.name == name && node.file_path.as_ref().ends_with(file_suffix)
         }),
         "{label} should include call node {id} named {name:?} in {file_suffix:?}: {nodes:#?}"
+    );
+}
+
+fn assert_call_source_file(
+    files: &[ploke_core::rag_types::NodeFilepath],
+    suffix: &str,
+    label: &str,
+) {
+    assert!(
+        files.iter().any(|file| file.as_ref().ends_with(suffix)),
+        "{label} should include file ending with {suffix:?}: {files:#?}"
     );
 }
 

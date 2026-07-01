@@ -324,52 +324,105 @@ fn path_info(db: &Database, path: DbCallPath) -> Result<CallPathInfo, RagError> 
 }
 
 fn impact_info(db: &Database, report: DbCallImpactReport) -> Result<CallImpactInfo, RagError> {
+    let target = call_node_info(report.target);
+    let paths = report
+        .paths
+        .into_iter()
+        .map(|path| path_info(db, path))
+        .collect::<Result<Vec<_>, RagError>>()?;
+    let callers = report
+        .callers
+        .into_iter()
+        .map(call_node_info)
+        .collect::<Vec<_>>();
+    let direct_callers = report
+        .direct_callers
+        .into_iter()
+        .map(call_node_info)
+        .collect::<Vec<_>>();
+    let public_callers = report
+        .public_callers
+        .into_iter()
+        .map(call_node_info)
+        .collect::<Vec<_>>();
+    let source_files = call_summary_files(
+        &paths,
+        std::iter::once(&target)
+            .chain(callers.iter())
+            .chain(direct_callers.iter())
+            .chain(public_callers.iter()),
+    );
+
     Ok(CallImpactInfo {
-        target: call_node_info(report.target),
-        paths: report
-            .paths
-            .into_iter()
-            .map(|path| path_info(db, path))
-            .collect::<Result<Vec<_>, RagError>>()?,
-        callers: report.callers.into_iter().map(call_node_info).collect(),
-        direct_callers: report
-            .direct_callers
-            .into_iter()
-            .map(call_node_info)
-            .collect(),
-        public_callers: report
-            .public_callers
-            .into_iter()
-            .map(call_node_info)
-            .collect(),
+        target,
+        paths,
+        callers,
+        direct_callers,
+        public_callers,
+        source_files,
     })
 }
 
 fn reach_info(db: &Database, report: DbCallReachReport) -> Result<CallReachInfo, RagError> {
+    let owner = call_node_info(report.owner);
+    let paths = report
+        .paths
+        .into_iter()
+        .map(|path| path_info(db, path))
+        .collect::<Result<Vec<_>, RagError>>()?;
+    let callees = report
+        .callees
+        .into_iter()
+        .map(call_node_info)
+        .collect::<Vec<_>>();
+    let direct_callees = report
+        .direct_callees
+        .into_iter()
+        .map(call_node_info)
+        .collect::<Vec<_>>();
+    let public_callees = report
+        .public_callees
+        .into_iter()
+        .map(call_node_info)
+        .collect::<Vec<_>>();
+    let frontier_calls = report
+        .frontier_calls
+        .into_iter()
+        .map(|row| row_to_call_context(row, usize::MAX))
+        .collect::<Result<Vec<_>, RagError>>()?;
+    let source_files = call_summary_files(
+        &paths,
+        std::iter::once(&owner)
+            .chain(callees.iter())
+            .chain(direct_callees.iter())
+            .chain(public_callees.iter()),
+    );
+
     Ok(CallReachInfo {
-        owner: call_node_info(report.owner),
-        paths: report
-            .paths
-            .into_iter()
-            .map(|path| path_info(db, path))
-            .collect::<Result<Vec<_>, RagError>>()?,
-        callees: report.callees.into_iter().map(call_node_info).collect(),
-        direct_callees: report
-            .direct_callees
-            .into_iter()
-            .map(call_node_info)
-            .collect(),
-        public_callees: report
-            .public_callees
-            .into_iter()
-            .map(call_node_info)
-            .collect(),
-        frontier_calls: report
-            .frontier_calls
-            .into_iter()
-            .map(|row| row_to_call_context(row, usize::MAX))
-            .collect::<Result<Vec<_>, RagError>>()?,
+        owner,
+        paths,
+        callees,
+        direct_callees,
+        public_callees,
+        frontier_calls,
+        source_files,
     })
+}
+
+fn call_summary_files<'a>(
+    paths: &[CallPathInfo],
+    nodes: impl Iterator<Item = &'a CallNodeInfo>,
+) -> Vec<NodeFilepath> {
+    let mut files = BTreeSet::new();
+    for node in nodes {
+        files.insert(node.file_path.as_ref().to_string());
+    }
+    for path in paths {
+        for node in &path.nodes {
+            files.insert(node.file_path.as_ref().to_string());
+        }
+    }
+    files.into_iter().map(NodeFilepath::new).collect()
 }
 
 fn call_node_info(row: DbCallNodeInfo) -> CallNodeInfo {

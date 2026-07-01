@@ -385,6 +385,7 @@ pub struct CallImpactInfo {
     pub callers: Vec<CallNodeInfo>,
     pub direct_callers: Vec<CallNodeInfo>,
     pub public_callers: Vec<CallNodeInfo>,
+    pub source_files: Vec<NodeFilepath>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
@@ -395,6 +396,7 @@ pub struct CallReachInfo {
     pub direct_callees: Vec<CallNodeInfo>,
     pub public_callees: Vec<CallNodeInfo>,
     pub frontier_calls: Vec<CallContextInfo>,
+    pub source_files: Vec<NodeFilepath>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialOrd, Ord, Hash, PartialEq)]
