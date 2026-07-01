@@ -1,0 +1,14 @@
+{
+  "type": "ok",
+  "phase": "r4a",
+  "message": "server_pid=82070\nphase: r4a - parent unchecked\nsteps: 3\nroot: /home/brasides/.ploke-eval/worktrees/p1-gated-parent-3g1x3-p3-20260630-174316/\ntracking_dir: /home/brasides/.ploke-eval/\ntracked files:\n  parent_identity: {root}/.ploke/prototype1/parent_identity.json\n  active_monitor_target: {tracking_dir}/prototype1-monitor-target.json\n  campaign_manifest: {tracking_dir}/campaigns/p1-gated-parent-3g1x3-p3-20260630-174316/campaign.json\n  transition_journal: {tracking_dir}/campaigns/p1-gated-parent-3g1x3-p3-20260630-174316/prototype1/transition-journal.jsonl\ntypestate:\n  Runtime<\n      phase::R4a,\n      parent_role::Parent<parent_role::Unchecked>,\n      Context<context::Collected<RunShape, CampaignConfig>>,\n      Plan<\n          plan::authority::None,\n          plan::schedule::None,\n      >,\n      Children<children::set::None, children::attempt::None>,\n      History<\n          history_axis::startup::Pending,\n          history_axis::head::Unobserved,\n          history_axis::epoch::None,\n      >,\n      Evidence<\n          evidence::parent_start::None,\n          evidence::baseline::None,\n          evidence::policy::None,\n          evidence::selection::None,\n          evidence::completion::None,\n      >,\n      Continuation<\n          continuation::selection::None,\n          continuation::decision::None,\n          continuation::handoff::None,\n      >,\n      Report<report::None>,\n  >;\nnext:\n  r4a_to_r4b_or_r4c -> r4b - genesis checkout validated\n  r4a_to_r4b_or_r4c -> r4c - predecessor startup ready\nprevious:\n  start: created r0 for repo_root '/home/brasides/.ploke-eval/worktrees/p1-gated-parent-3g1x3-p3-20260630-174316'\n  step 1: r0 -> r1\n  step 2: r1 -> r3\n  step 3: r3 -> r4a",
+  "epoch": {
+    "protocol_version": 3,
+    "transition_graph_version": "walk-r0-r14a-v1",
+    "repo_root": "/home/brasides/.ploke-eval/worktrees/p1-gated-parent-3g1x3-p3-20260630-174316",
+    "exe_path": "/home/brasides/.ploke-eval/worktrees/p1-gated-parent-3g1x3-p3-20260630-174316/target/debug/ploke-eval",
+    "exe_modified_unix_ms": 1782841491704,
+    "git_head": "f906d59a8b1c0ee455ca9cf22a82363c0f8d3c23",
+    "source_status_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

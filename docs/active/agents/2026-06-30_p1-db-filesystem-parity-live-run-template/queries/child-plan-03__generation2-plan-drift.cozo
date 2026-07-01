@@ -1,0 +1,20 @@
+?[plan_id, parent_node_id, child_generation, child_count, rejected_count, message_path, message_sha256, child_node_id, child_index, branch_id, candidate_id, status, node_path, runner_request_path] :=
+  *eval_child_plan{
+    plan_id,
+    parent_node_id,
+    child_generation,
+    child_count,
+    rejected_count,
+    message_path,
+    message_sha256
+  },
+  *eval_child_plan_child{
+    plan_id,
+    child_node_id,
+    child_index,
+    branch_id,
+    candidate_id,
+    status,
+    node_path,
+    runner_request_path
+  }

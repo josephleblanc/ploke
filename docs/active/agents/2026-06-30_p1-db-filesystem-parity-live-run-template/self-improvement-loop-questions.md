@@ -188,3 +188,20 @@ A run is most useful for evaluating self-improvement if it can answer these at m
 8. whether authority-bearing surfaces and History/handoff invariants were preserved;
 9. whether the DB schema made those answers easy and normalized, or forced file/log/path-string reconstruction;
 10. how the run contributes to longitudinal evidence of improvement or regression over generations.
+
+## Run answers from `p1-gated-parent-3g1x3-p3-20260630-174316`
+
+- **trace-01..12:** Partial. `eval_agent_turn` and `eval_tool_event` made broad-harness attempts queryable, but `eval_model_exchange` remained zero and mid-turn/provider facts were still mostly file/log-backed. See `trace-01__harness-agent-summary__step-09.md` and count snapshots.
+- **eval-01..12:** Partial/Yes for baseline and child treatment comparison. Baseline and two generation-1 child evaluations were normalized; both child evaluations were `reject`. The second branch evaluation required observe recovery from terminal channel. See `eval-02__baseline-readiness__step-07.md` and `child-outcome-01__runner-evaluation-selection__step-11.json`.
+- **host-02..05 / audit-06:** Strong finding. Handoff spawned a successor `prototype1-state --stop-after complete` that outlived the walk-server restart. Manual walk stepping then created concurrent controllers. Cleanup was recorded separately in `terminal-cleanup__gen1-controller-collision.md`.
+- **db-01..10:** Strong mixed result. DB queries were enough to prove parent identity, policy, baseline, harness summary, child plan, child outcomes, selection, continuation, and the terminal drift. Important gaps remain: no in-flight provider/model exchange rows, no first-class controller ownership relation, and no helper to compare file-backed row hashes to current files.
+- **audit-03 / db-file parity:** Yes, for child-plan drift. `eval_child_plan.message_sha256` caught same-key/different-content overwrite and prevented silent continuation. See `child-plan-03__generation2-plan-drift__terminal.md`.
+- **trend/self-improvement:** Not enough generations completed for longitudinal improvement claims. The run did prove a reliability regression/operational hazard: successor handoff plus manual walk restart can create duplicate controllers unless the operator model/single-writer guard is tightened.
+
+## Schema/design improvements suggested by this run
+
+1. Add a first-class controller/session relation recording live owner process, parent node, phase lease, spawned successor PID, stop-after mode, and cleanup/exit status.
+2. Add a durable handoff state that makes “successor controller is now authoritative; do not manually walk this generation” explicit after R13b.
+3. Add DB/file parity helper views: for file-backed rows with `*_path` + `*_sha256`, compute current file hash and surface drift without hand-written shell probes.
+4. Persist in-flight provider/model exchange facts, not only post-attempt bundles, so hung or killed turns can be understood from DB alone.
+5. Preserve strict hash/idempotence validation. Add recovery/quarantine tooling for duplicate-controller partial artifacts rather than making imports permissive.

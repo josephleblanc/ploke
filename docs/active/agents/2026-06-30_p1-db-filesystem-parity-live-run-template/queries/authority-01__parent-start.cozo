@@ -1,0 +1,21 @@
+?[campaign_id, parent_id, node_id, generation, branch_id, repo_root, startup_kind, pid, transition, phase, outcome, semantic_hash] :=
+  *eval_parent_start{
+    campaign_id,
+    parent_id,
+    node_id,
+    generation,
+    branch_id,
+    repo_root,
+    startup_kind,
+    pid,
+    semantic_hash
+  },
+  *eval_transition_event{
+    campaign_id,
+    parent_id,
+    node_id,
+    generation,
+    transition,
+    phase,
+    outcome
+  }

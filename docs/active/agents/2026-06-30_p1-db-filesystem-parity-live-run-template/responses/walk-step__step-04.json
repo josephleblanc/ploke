@@ -1,0 +1,14 @@
+{
+  "type": "ok",
+  "phase": "r4b",
+  "message": "from: r4a - parent unchecked\nto: r4b - genesis checked\nedge: r4a_to_r4b_or_r4c\ntypestate changes:\n  - phase: phase::R4a -> phase::R4b\n  - role: parent_role::Parent<parent_role::Unchecked> -> parent_role::Parent<parent_role::Checked>\nnext:\n  r4b_to_r4c_genesis -> r4c - converge genesis startup to ready parent",
+  "epoch": {
+    "protocol_version": 3,
+    "transition_graph_version": "walk-r0-r14a-v1",
+    "repo_root": "/home/brasides/.ploke-eval/worktrees/p1-gated-parent-3g1x3-p3-20260630-174316",
+    "exe_path": "/home/brasides/.ploke-eval/worktrees/p1-gated-parent-3g1x3-p3-20260630-174316/target/debug/ploke-eval",
+    "exe_modified_unix_ms": 1782841491704,
+    "git_head": "f906d59a8b1c0ee455ca9cf22a82363c0f8d3c23",
+    "source_status_hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

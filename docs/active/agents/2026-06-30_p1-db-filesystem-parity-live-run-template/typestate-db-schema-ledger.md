@@ -128,3 +128,12 @@ Use the first key listed by the schema. For composite keys, count the first key 
 4. Which DB rows contain path refs but no digest/hash or no semantic binding to parent/runtime/artifact?
 5. Which expected rows are written only on success paths and missing on timeout/rejection/error paths?
 6. Where does `eval_record_ref` still stand in for a missing normalized relation?
+
+## Terminal run notes
+
+- Generation 0 verified many expected relations through handoff: harness/agent/tool rows, child-plan rows, child runtime invocation/channel/result rows, evaluation rows, selection, and continuation.
+- `eval_harness_submission*` remained at zero in final counts even though harness attempts produced child plans/rejections. This needs separate interpretation: either submissions are only mirrored for a narrower submitted-result surface, or current broad-harness admission does not populate them as expected.
+- `eval_model_exchange` remained at zero despite visible provider activity, confirming the known gap for in-flight/provider-level trace persistence.
+- R10→R11 demonstrated a recovery path: if a terminal child result arrives at the timeout boundary, a later re-entry can recover a missing branch evaluation from terminal channel evidence without respawning the child.
+- R13b handoff created a successor process with `--stop-after complete`; after walk-server restart, manual stepping introduced a second controller. The resulting generation-2 `eval_child_plan` same-key/different-hash collision proves the need for a controller/session/lease relation and explicit handoff ownership state.
+- Strict `eval_child_plan.message_sha256` validation worked as intended and should not be relaxed. The safer improvement is recovery/quarantine tooling plus single-writer discipline.

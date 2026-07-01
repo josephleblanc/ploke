@@ -1,0 +1,34 @@
+{
+  "campaign_id": "p1-gated-parent-3g1x3-p3-20260630-174316",
+  "db_path": "/home/brasides/.ploke-eval/campaigns/p1-gated-parent-3g1x3-p3-20260630-174316/prototype1/eval-store.cozo.sqlite",
+  "headers": [
+    "plan_id",
+    "attempt_index",
+    "parent_node_id",
+    "producer_id",
+    "proposal_id",
+    "run_id",
+    "policy",
+    "target_relpath",
+    "outcome",
+    "reason"
+  ],
+  "repo_root": "/home/brasides/.ploke-eval/worktrees/p1-gated-parent-3g1x3-p3-20260630-174316",
+  "row_count": 1,
+  "rows": [
+    {
+      "attempt_index": 0,
+      "outcome": "rejected",
+      "parent_node_id": "node-ec383aa38762a3d4",
+      "plan_id": "2a630c6065afe51ff110cc615f93188473c43c00697b58d427aa89a1b4d81ec3",
+      "policy": "workspace_except_ploke_eval",
+      "producer_id": "prototype1:broad-headless-tui-adapter-v1",
+      "proposal_id": "broad-harness-request:node-ec383aa38762a3d4:r3",
+      "reason": "broad headless-tui slot 'broad-harness-request:node-ec383aa38762a3d4:r3' tool failed: headless runtime failed after observed activity: headless ploke-tui event stream failed: timed out waiting for BM25 readiness after applying proposal batch after 600s; diagnostics='/home/brasides/.ploke-eval/campaigns/p1-gated-parent-3g1x3-p3-20260630-174316/prototype1/messages/edit-harness-result/node-ec383aa38762a3d4-r3.headless-tui.json'",
+      "run_id": "8e890da48c138e336014d6c91b6b3d1e4dcfa5929411d75ba4181ba6cb664811",
+      "target_relpath": "."
+    }
+  ],
+  "script": "?[plan_id, attempt_index, parent_node_id, producer_id, proposal_id, run_id, policy, target_relpath, outcome, reason] :=\n  *eval_child_plan_rejected_attempt{\n    plan_id,\n    attempt_index,\n    parent_node_id,\n    producer_id,\n    proposal_id,\n    run_id,\n    policy,\n    target_relpath,\n    outcome,\n    reason\n  }",
+  "type": "walk_db_query"
+}

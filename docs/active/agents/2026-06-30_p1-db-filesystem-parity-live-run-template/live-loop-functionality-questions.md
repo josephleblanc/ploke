@@ -180,3 +180,13 @@ A live run is most convincing if it can answer **yes or intentionally not reache
 10. predecessor retirement and successor startup are observable as separate authority steps;
 11. DB/file parity is clear: normalized rows prove what they claim, filesystem authority surfaces remain explicit, and `eval_record_ref` is not used as a substitute for missing normalized facts;
 12. failures block or reject loudly rather than silently skipping expected evidence.
+
+## Run answers from `p1-gated-parent-3g1x3-p3-20260630-174316`
+
+- **Parent/policy/baseline:** Yes for generation 0 through R7. See `answers-ledger.md` rows 06–08 and queries `authority-01`, `eval-02`, `policy-01`.
+- **Broad harness / child plan:** Yes for generation 0. R7→R8 produced normalized harness request/diagnostic/agent-turn/tool-event rows and a two-child plan, with one rejected BM25 timeout preserved. See `child-plan-01`, `child-plan-02`, `trace-01`.
+- **Child runtime/evaluation:** Yes after recovery. First R10→R11 timed out as the second result arrived; a second R10→R11 recovered the missing evaluation from terminal channel evidence without respawning. See `child-outcome-01__runner-evaluation-selection` and `child-outcomes__step-10__after-timeout.md`.
+- **Selection/continuation/handoff:** Yes for generation 0. Selection recorded a rejected candidate but continuation policy allowed `continue_explore_from_rejected`; R12→R13b installed/spawned successor `node-2fe75acd9e9cf6c3`. See `continuation-01__selection-handoff`.
+- **Final report:** No. R13b→R14 was blocked by stale walk-server binary after handoff; restart reconstructed the successor at generation-1 R7 rather than the predecessor R13b final-report state.
+- **Generation-1 continuation:** Terminal failure. A full successor `prototype1-state --stop-after complete` process spawned by handoff was still running; manually driving gen1 R7 with `walk step` introduced a second controller. This caused child-plan DB/file drift: DB plan `9903062b...` stored child `node-e9be...` and hash `be1e...`, while the file at the same `message_path` was overwritten with child `node-5a...` and hash `361a...`. Strict DB validation blocked reconstruction/continuation. See `child-plan-03__generation2-plan-drift__terminal.md` and `terminal-cleanup__gen1-controller-collision.md`.
+- **DB/file parity:** The failure is a positive correctness signal: normalized DB rows detected overwritten child-plan authority and did not silently accept drift. Do not weaken this invariant; fix single-writer/controller ownership and add explicit recovery/quarantine tooling.

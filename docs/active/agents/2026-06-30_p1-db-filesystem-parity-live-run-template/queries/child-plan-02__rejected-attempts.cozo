@@ -1,0 +1,13 @@
+?[plan_id, attempt_index, parent_node_id, producer_id, proposal_id, run_id, policy, target_relpath, outcome, reason] :=
+  *eval_child_plan_rejected_attempt{
+    plan_id,
+    attempt_index,
+    parent_node_id,
+    producer_id,
+    proposal_id,
+    run_id,
+    policy,
+    target_relpath,
+    outcome,
+    reason
+  }
