@@ -641,6 +641,14 @@ fn classify_path_callee(
                     init_path: init_path.clone(),
                 }
             }
+            LocalBindingProof::TraitObject {
+                trait_path,
+                init_path: Some(init_path),
+                ..
+            } if is_callable_trait(trait_path) => PathCallCallee::InitializedValueBinding {
+                path: path.to_vec(),
+                init_path: init_path.clone(),
+            },
             LocalBindingProof::Typed {
                 init_path: None, ..
             }
@@ -765,6 +773,14 @@ fn classify_dynamic_path_expr(
                         init_path: init_path.clone(),
                     }
                 }
+                LocalBindingProof::TraitObject {
+                    trait_path,
+                    init_path: Some(init_path),
+                    ..
+                } if is_callable_trait(trait_path) => DynamicCallCallee::InitializedLocalBinding {
+                    path,
+                    init_path: init_path.clone(),
+                },
                 LocalBindingProof::Typed {
                     init_path: None, ..
                 }
@@ -1461,8 +1477,57 @@ fn trait_object_init_path(
     param_names: &[String],
     local_scopes: &[Vec<LocalBindingProof>],
 ) -> Option<Vec<String>> {
-    referenced_init_path(expr, param_names, local_scopes)
+    boxed_init_path(expr, param_names, local_scopes)
+        .or_else(|| referenced_init_path(expr, param_names, local_scopes))
         .or_else(|| referenced_alias_path(expr, param_names, local_scopes))
+}
+
+fn boxed_init_path(
+    expr: Option<&syn::Expr>,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<Vec<String>> {
+    let syn::Expr::Call(call) = unparen_expr(expr?) else {
+        return None;
+    };
+    let syn::Expr::Path(func) = unparen_expr(call.func.as_ref()) else {
+        return None;
+    };
+    if func.qself.is_some() {
+        return None;
+    }
+    let func = path_segments(&func.path);
+    if !is_box_new(&func) {
+        return None;
+    }
+
+    let mut args = call.args.iter();
+    let arg = args.next()?;
+    if args.next().is_some() {
+        return None;
+    }
+    let syn::Expr::Path(path) = unparen_expr(arg) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+
+    let path = path_segments(&path.path);
+    if path.is_empty() {
+        return None;
+    }
+    init_target_path(&path, param_names, local_scopes)
+}
+
+fn is_box_new(path: &[String]) -> bool {
+    match path {
+        [box_, new] => box_ == "Box" && new == "new",
+        [root, boxed, box_, new] => {
+            (root == "std" || root == "alloc") && boxed == "boxed" && box_ == "Box" && new == "new"
+        }
+        _ => false,
+    }
 }
 
 fn referenced_alias_path(
@@ -1553,8 +1618,9 @@ fn typed_local_trait_object_path_segments(ty: &syn::Type) -> Option<Vec<String>>
     match unparen_type(ty) {
         syn::Type::Reference(reference) => {
             trait_object_bound_path_segments(unparen_type(reference.elem.as_ref()))
+                .or_else(|| boxed_trait_path(unparen_type(reference.elem.as_ref())))
         }
-        ty => trait_object_bound_path_segments(ty),
+        ty => trait_object_bound_path_segments(ty).or_else(|| boxed_trait_path(ty)),
     }
 }
 
@@ -1593,6 +1659,42 @@ fn trait_object_bound_path_segments(ty: &syn::Type) -> Option<Vec<String>> {
         [trait_path] => Some(trait_path.clone()),
         [] | [_, ..] => None,
     }
+}
+
+fn boxed_trait_path(ty: &syn::Type) -> Option<Vec<String>> {
+    let syn::Type::Path(path) = ty else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+
+    let segment = path.path.segments.last()?;
+    if segment.ident != "Box" {
+        return None;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return None;
+    };
+    let traits = args
+        .args
+        .iter()
+        .filter_map(|arg| match arg {
+            syn::GenericArgument::Type(ty) => trait_object_bound_path_segments(unparen_type(ty)),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    match traits.as_slice() {
+        [trait_path] if is_callable_trait(trait_path) => Some(trait_path.clone()),
+        [] | [_, _, ..] => None,
+        [_] => None,
+    }
+}
+
+fn is_callable_trait(path: &[String]) -> bool {
+    path.last()
+        .is_some_and(|name| matches!(name.as_str(), "Fn" | "FnMut" | "FnOnce"))
 }
 
 fn unparen_type(ty: &syn::Type) -> &syn::Type {

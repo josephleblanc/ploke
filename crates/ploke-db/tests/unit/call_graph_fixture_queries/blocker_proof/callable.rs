@@ -29,32 +29,6 @@ fn fixture_projection_marks_real_callable_path_and_vec_external_rows_without_edg
     assert_projected_blockers(
         &db,
         &mut expected,
-        "call_boxed_dyn_fn_value_binding",
-        &[
-            TargetlessBlockerCase {
-                row: TargetlessRowCase::path(
-                    &["Box", "new"],
-                    1,
-                    CallStatusKind::External,
-                    "Box::new proof setup",
-                ),
-                blocker_reason: "external_dependency_summary_missing",
-            },
-            TargetlessBlockerCase {
-                row: TargetlessRowCase::path(
-                    &["boxed_fn"],
-                    0,
-                    CallStatusKind::Unsupported,
-                    "boxed dyn Fn proof setup",
-                ),
-                blocker_reason: "type_resolution_missing",
-            },
-        ],
-    )?;
-
-    assert_projected_blockers(
-        &db,
-        &mut expected,
         "call_prelude_vec_new",
         &[TargetlessBlockerCase {
             row: TargetlessRowCase::path(
@@ -95,31 +69,6 @@ fn fixture_projection_marks_real_parenthesized_callable_dynamic_rows_without_edg
             ),
             blocker_reason: "dynamic_dispatch_unbounded",
         }],
-    )?;
-
-    assert_projected_blockers(
-        &db,
-        &mut expected,
-        "call_parenthesized_boxed_dyn_fn_value_binding",
-        &[
-            TargetlessBlockerCase {
-                row: TargetlessRowCase::path(
-                    &["Box", "new"],
-                    1,
-                    CallStatusKind::External,
-                    "parenthesized boxed dyn Fn Box::new proof setup",
-                ),
-                blocker_reason: "external_dependency_summary_missing",
-            },
-            TargetlessBlockerCase {
-                row: TargetlessRowCase::dynamic(
-                    Some(&["boxed_fn"]),
-                    CallStatusKind::Unsupported,
-                    "parenthesized boxed dyn Fn dynamic proof setup",
-                ),
-                blocker_reason: "dynamic_dispatch_unbounded",
-            },
-        ],
     )?;
 
     assert_targetless_blocker_proofs(

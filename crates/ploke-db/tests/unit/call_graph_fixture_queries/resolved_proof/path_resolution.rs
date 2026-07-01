@@ -146,3 +146,32 @@ fn fixture_projection_stores_real_path_resolution_call_proof_facts() -> Result<(
 
     Ok(())
 }
+
+#[test]
+fn fixture_projection_stores_boxed_dyn_fn_exact_initializer_call_proof_facts() -> Result<(), DbError>
+{
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let local_target = function_id_by_name(&db, "local_target")?;
+    let owner = function_id_by_name(&db, "call_boxed_dyn_fn_value_binding")?;
+
+    let cases = [ResolvedProofCase {
+        label: "boxed dyn Fn initializer path",
+        owner,
+        rows: 2,
+        calls: vec![ResolvedProofCall::path(
+            &["boxed_fn"],
+            local_target,
+            CallRelationKind::Function,
+            CallTargetKind::Function,
+        )],
+    }];
+    let edges = resolved_proof_edges(&db, "bd:fixture-call-graph", &cases)?;
+    assert_owner_proof_edges(
+        &db,
+        "boxed dyn Fn initializer path",
+        &edges,
+        "fixture_call_graph/src/lib.rs",
+        "type_resolution_missing",
+        ProofEdgeCount::AtLeast,
+    )
+}

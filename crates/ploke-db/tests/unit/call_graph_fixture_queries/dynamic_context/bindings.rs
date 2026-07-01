@@ -63,6 +63,36 @@ fn fixture_context_reads_projected_function_item_binding_calls() -> Result<(), D
         );
     }
 
+    let owner = function_id_by_name(&db, "call_boxed_dyn_fn_value_binding")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        2,
+        "boxed dyn Fn binding context rows: {context:#?}"
+    );
+    assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::path(
+            &["Box", "new"],
+            1,
+            CallStatusKind::External,
+            "boxed dyn Fn Box::new setup call",
+        ),
+    );
+    let row = row_by_path(&context, &["boxed_fn"]);
+    assert_eq!(row.site.owner_id, owner);
+    assert_eq!(row.site.kind, CallSiteKind::Path);
+    assert_eq!(row.site.path.as_ref(), Some(&path(&["boxed_fn"])));
+    assert_eq!(row.site.arg_count, Some(0));
+    assert_resolved_target(
+        row,
+        local_target,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
     let owner = function_id_by_name(&db, "call_shadowed_local_target_binding")?;
     let context = db.call_context_for_owner(owner)?;
     assert_eq!(
@@ -148,7 +178,27 @@ fn fixture_context_reads_projected_parenthesized_binding_dynamic_calls() -> Resu
             path: &["f"],
             expected_rows: 1,
         },
+        ResolvedDynamicContextCase {
+            owner: "call_parenthesized_boxed_dyn_fn_value_binding",
+            path: &["boxed_fn"],
+            expected_rows: 2,
+        },
     ];
 
-    assert_resolved_dynamic_context_cases(&db, target, &cases)
+    assert_resolved_dynamic_context_cases(&db, target, &cases)?;
+
+    let owner = function_id_by_name(&db, "call_parenthesized_boxed_dyn_fn_value_binding")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::path(
+            &["Box", "new"],
+            1,
+            CallStatusKind::External,
+            "parenthesized boxed dyn Fn Box::new setup call",
+        ),
+    );
+
+    Ok(())
 }

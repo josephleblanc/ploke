@@ -5144,20 +5144,28 @@ paranoid_call_site_test!(
 );
 
 paranoid_call_site_test!(
-    fixture_call_graph_call_boxed_dyn_fn_value_binding_records_value_binding_path_call_site,
+    fixture_call_graph_call_boxed_dyn_fn_value_binding_resolves_initialized_value_binding_path_call_site,
     fixture: "fixture_call_graph",
     owner: function {
         module_path: &["crate"],
         name: "call_boxed_dyn_fn_value_binding"
     },
-    expected: ExpectedCallSite::path_value_binding(
-        &["boxed_fn"],
-        BOXED_DYN_FN_VALUE_BINDING_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::Unsupported,
-    ),
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::path_initialized_value_binding(
+            &["boxed_fn"],
+            &["local_target"],
+            BOXED_DYN_FN_VALUE_BINDING_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
 );
 
 paranoid_call_site_test!(
@@ -5194,19 +5202,27 @@ paranoid_call_site_test!(
 );
 
 paranoid_call_site_test!(
-    fixture_call_graph_call_parenthesized_boxed_dyn_fn_value_binding_fails_closed_dynamic_call_site,
+    fixture_call_graph_call_parenthesized_boxed_dyn_fn_value_binding_resolves_dynamic_call_site,
     fixture: "fixture_call_graph",
     owner: function {
         module_path: &["crate"],
         name: "call_parenthesized_boxed_dyn_fn_value_binding"
     },
-    expected: ExpectedCallSite::dynamic_local_binding(
-        &["boxed_fn"],
-        PARENTHESIZED_BOXED_DYN_FN_DYNAMIC_CALL_SPAN,
-        0,
-        &[],
-        ExpectedCallOutcome::Unsupported,
-    ),
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::dynamic_initialized_local_binding(
+            &["boxed_fn"],
+            &["local_target"],
+            PARENTHESIZED_BOXED_DYN_FN_DYNAMIC_CALL_SPAN,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
+        )
+    },
 );
 
 paranoid_call_site_test!(

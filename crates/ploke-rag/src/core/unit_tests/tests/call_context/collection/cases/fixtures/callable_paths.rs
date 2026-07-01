@@ -213,12 +213,11 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
                     }
         })
         .expect("boxed dyn Fn path call should stay visible");
-    assert_eq!(boxed_call.status, CallStatusKind::Unsupported);
-    assert!(boxed_call.resolution.is_none());
-    assert!(
-        boxed_call.targets.is_empty(),
-        "boxed dyn Fn path calls must not fabricate RAG targets: {boxed_call:#?}"
-    );
+    assert_eq!(boxed_call.status, CallStatusKind::Resolved);
+    assert_eq!(boxed_call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(boxed_call.targets.len(), 1);
+    assert_eq!(boxed_call.targets[0].target_id, local_target);
+    assert_eq!(boxed_call.targets[0].relation, CallTargetKind::Function);
 
     let vec_context = call_context
         .get(&vec_owner)

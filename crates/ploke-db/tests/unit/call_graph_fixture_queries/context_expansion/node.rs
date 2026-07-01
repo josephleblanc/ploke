@@ -29,7 +29,7 @@ fn fixture_call_context_for_node_combines_owner_and_target_context() -> Result<(
 
     for case in [
         NodeContextCase::new("path-call owner", path_owner, 1, 0),
-        NodeContextCase::new("function target", local_target, 0, 2),
+        NodeContextCase::new("function target", local_target, 0, 4),
         NodeContextCase::new("method target", method_target, 0, 4),
     ] {
         assert_node_context_matches_helpers(&db, case)?;

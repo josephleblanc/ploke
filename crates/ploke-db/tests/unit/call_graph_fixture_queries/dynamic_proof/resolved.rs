@@ -88,6 +88,11 @@ fn fixture_projection_stores_real_callable_expression_dynamic_call_proof_facts()
             expected_rows: 1,
         },
         ResolvedDynamicContextCase {
+            owner: "call_parenthesized_boxed_dyn_fn_value_binding",
+            path: &["boxed_fn"],
+            expected_rows: 2,
+        },
+        ResolvedDynamicContextCase {
             owner: "call_function_pointer_cast_path",
             path: &["local_target"],
             expected_rows: 1,
@@ -127,7 +132,7 @@ fn fixture_projection_stores_real_callable_expression_dynamic_call_proof_facts()
     assert_fixture_resolved_dynamic_proof_batches(&[ResolvedDynamicProofBatch {
         label: "callable dynamic",
         cases: &cases,
-        count: ProofEdgeCount::Exact,
+        count: ProofEdgeCount::AtLeast,
     }])
 }
 

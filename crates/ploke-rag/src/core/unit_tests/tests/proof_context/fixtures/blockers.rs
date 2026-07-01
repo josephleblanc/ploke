@@ -83,22 +83,16 @@ fn blocker_cases() -> [Case; 6] {
             reasons: &["type_resolution_missing"],
         },
         Case {
-            label: "boxed dyn Fn path blockers",
+            label: "boxed dyn Fn path setup blocker",
             owner: "call_boxed_dyn_fn_value_binding",
-            expected_rows: 4,
-            reasons: &[
-                "external_dependency_summary_missing",
-                "type_resolution_missing",
-            ],
+            expected_rows: 5,
+            reasons: &["external_dependency_summary_missing"],
         },
         Case {
-            label: "parenthesized boxed dyn Fn blockers",
+            label: "parenthesized boxed dyn Fn setup blocker",
             owner: "call_parenthesized_boxed_dyn_fn_value_binding",
-            expected_rows: 4,
-            reasons: &[
-                "dynamic_dispatch_unbounded",
-                "external_dependency_summary_missing",
-            ],
+            expected_rows: 5,
+            reasons: &["external_dependency_summary_missing"],
         },
     ]
 }

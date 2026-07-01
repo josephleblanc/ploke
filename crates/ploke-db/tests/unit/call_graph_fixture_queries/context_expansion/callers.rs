@@ -6,10 +6,13 @@ fn fixture_callers_for_target_reads_real_incoming_callers() -> Result<(), DbErro
     let target = function_id_by_name(&db, "local_target")?;
     let path_owner = function_id_by_name(&db, "call_crate_local_target")?;
     let dynamic_owner = function_id_by_name(&db, "call_parenthesized_local_target")?;
+    let boxed_path_owner = function_id_by_name(&db, "call_boxed_dyn_fn_value_binding")?;
+    let boxed_dynamic_owner =
+        function_id_by_name(&db, "call_parenthesized_boxed_dyn_fn_value_binding")?;
 
     let callers = db.callers_for_target(target)?;
-    assert_callers_for_target(&callers, target, 2, "local_target");
-    assert_min_resolved_callers(&callers, 2, "local_target");
+    assert_callers_for_target(&callers, target, 4, "local_target");
+    assert_min_resolved_callers(&callers, 4, "local_target");
 
     let path = caller_by_owner_kind_path(
         &callers,
@@ -37,6 +40,39 @@ fn fixture_callers_for_target_reads_real_incoming_callers() -> Result<(), DbErro
     assert_eq!(dynamic.target.relation, CallRelationKind::DynamicFunction);
     assert_eq!(dynamic.target.source_kind, CallSiteKind::Dynamic);
     assert_eq!(dynamic.target.target_kind, CallTargetKind::Function);
+
+    let boxed_path = caller_by_owner_kind_path(
+        &callers,
+        boxed_path_owner,
+        CallSiteKind::Path,
+        &["boxed_fn"],
+    );
+    assert_eq!(boxed_path.status.status, CallStatusKind::Resolved);
+    assert_eq!(
+        boxed_path.status.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(boxed_path.target.relation, CallRelationKind::Function);
+    assert_eq!(boxed_path.target.source_kind, CallSiteKind::Path);
+    assert_eq!(boxed_path.target.target_kind, CallTargetKind::Function);
+
+    let boxed_dynamic = caller_by_owner_kind_path(
+        &callers,
+        boxed_dynamic_owner,
+        CallSiteKind::Dynamic,
+        &["boxed_fn"],
+    );
+    assert_eq!(boxed_dynamic.status.status, CallStatusKind::Resolved);
+    assert_eq!(
+        boxed_dynamic.status.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(
+        boxed_dynamic.target.relation,
+        CallRelationKind::DynamicFunction
+    );
+    assert_eq!(boxed_dynamic.target.source_kind, CallSiteKind::Dynamic);
+    assert_eq!(boxed_dynamic.target.target_kind, CallTargetKind::Function);
 
     Ok(())
 }

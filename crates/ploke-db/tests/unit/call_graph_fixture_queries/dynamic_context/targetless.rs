@@ -31,26 +31,6 @@ fn fixture_context_reads_projected_targetless_dynamic_failures() -> Result<(), D
 
     assert_targetless_dynamic_context_cases(&db, &cases)?;
 
-    assert_targetless_owner_cases(
-        &db,
-        &[TargetlessOwnerCase {
-            owner: "call_parenthesized_boxed_dyn_fn_value_binding",
-            rows: &[
-                TargetlessRowCase::path(
-                    &["Box", "new"],
-                    1,
-                    CallStatusKind::External,
-                    "parenthesized Box::new setup call",
-                ),
-                TargetlessRowCase::dynamic(
-                    Some(&["boxed_fn"]),
-                    CallStatusKind::Unsupported,
-                    "parenthesized boxed dyn Fn dynamic call",
-                ),
-            ],
-        }],
-    )?;
-
     Ok(())
 }
 
@@ -78,23 +58,6 @@ fn fixture_context_reads_projected_callable_value_path_failures_and_vec_external
                     CallStatusKind::Unsupported,
                     "call_generic_fn_once_value_binding",
                 )],
-            },
-            TargetlessOwnerCase {
-                owner: "call_boxed_dyn_fn_value_binding",
-                rows: &[
-                    TargetlessRowCase::path(
-                        &["Box", "new"],
-                        1,
-                        CallStatusKind::External,
-                        "Box::new setup call",
-                    ),
-                    TargetlessRowCase::path(
-                        &["boxed_fn"],
-                        0,
-                        CallStatusKind::Unsupported,
-                        "boxed dyn Fn path call",
-                    ),
-                ],
             },
             TargetlessOwnerCase {
                 owner: "call_prelude_vec_new",

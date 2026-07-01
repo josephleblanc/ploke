@@ -132,9 +132,10 @@ Implemented/scaffolded:
   - generic `F: FnOnce` value-binding path calls are recorded and fail closed as
     `Unsupported`, preserving the boundary before future Fn/FnOnce semantic
     resolution.
-  - boxed `dyn Fn` value-binding path calls are recorded and fail closed as
-    `Unsupported`; exact unshadowed prelude-shaped `Box::new(...)` setup calls
-    are classified as `External`.
+  - boxed `dyn Fn` value-binding path and parenthesized dynamic calls resolve
+    when the binding has exact `Box::new(local_target)` initializer proof;
+    opaque boxed trait-object calls without exact initializer proof remain
+    unsupported.
   - explicitly typed local receivers whose type path is proven external or
     exact unshadowed prelude `String`/`Vec` classify `.len()` as `External`,
     while local shadowing still resolves to the local method target when proven.
@@ -275,6 +276,10 @@ Implemented/scaffolded:
   - parenthesized initialized function-item binding calls such as
     `let f = local_target; (f)()` resolve to local `DynamicFunction` edges when
     the initializer path proves one local function.
+  - parenthesized boxed `dyn Fn` local binding calls such as
+    `let f: Box<dyn Fn() -> i32> = Box::new(local_target); (f)()` resolve to
+    local `DynamicFunction` edges when the boxed initializer path proves one
+    local function.
 - Database projection in `ploke-transform`:
   - `call_site`
   - `call_site_edge`
@@ -532,7 +537,8 @@ Implemented/scaffolded:
   - `fixture_call_graph_call_parenthesized_typed_function_pointer_alias_binding_resolves_dynamic_function_call_site`
   - `fixture_call_graph_call_generic_fn_once_value_binding_records_value_binding_path_call_site`
   - `fixture_call_graph_call_boxed_dyn_fn_value_binding_records_box_new_external_path_call_site`
-  - `fixture_call_graph_call_boxed_dyn_fn_value_binding_records_value_binding_path_call_site`
+  - `fixture_call_graph_call_boxed_dyn_fn_value_binding_resolves_initialized_value_binding_path_call_site`
+  - `fixture_call_graph_call_parenthesized_boxed_dyn_fn_value_binding_resolves_dynamic_call_site`
   - `fixture_call_graph_call_generic_identity_turbofish_resolves_generic_function_path_call_site`
   - `fixture_call_graph_call_method_turbofish_resolves_generic_method_call_site`
   - `fixture_call_graph_call_prelude_drop_value_records_external_path_call_site`
@@ -808,14 +814,16 @@ Post-gate evidence, 2026-06-23:
   branch/match dynamic calls as `type_resolution_missing` blockers, real
   opaque/non-path branch/match dynamic calls as `dynamic_dispatch_unbounded`
   blockers, and target-centered `local_target`
-  proof facts that include a dynamic
-  incoming caller without pulling unrelated unsupported dynamic blockers or
-  closure/async body outer owners.
+  proof facts that include dynamic incoming callers, including exact boxed
+  `dyn Fn` initializer calls, without pulling unrelated unsupported dynamic
+  blockers or closure/async body outer owners.
   Returned-function proof coverage now projects a mixed owner with a resolved
   inner `make_fn()` edge and an unsupported outer dynamic blocker. Callable-path
-  proof coverage now projects function-pointer parameter, generic `FnOnce`,
-  boxed `dyn Fn`, and prelude `Vec::new()` targetless rows with the expected
-  `type_resolution_missing` or `external_dependency_summary_missing` reasons.
+  proof coverage now projects function-pointer parameter, generic `FnOnce`, and
+  prelude `Vec::new()` targetless rows with the expected
+  `type_resolution_missing` or `external_dependency_summary_missing` reasons,
+  while exact boxed `dyn Fn` initializer path calls project resolved proof
+  edges plus the external `Box::new` setup frontier.
   Initializer-owner proof coverage now projects top-level const/static and
   associated-const owners as resolved proof edges to their local initializer
   functions with source provenance preserved. Constructor proof coverage now
@@ -1011,8 +1019,9 @@ Post-gate evidence, 2026-06-23:
   through both the helper and public sparse `get_context` path, local and
   imported trait associated-function target expansion through public sparse
   `get_context`, and both helper and public sparse `get_context` `local_target`
-  expansion excluding closure/async body outer owners while preserving both
-  ordinary path callers and real dynamic callers, plus call-expansion
+  expansion excluding closure/async body outer owners while preserving ordinary
+  path callers, real dynamic callers, and exact boxed dyn Fn initializer
+  callers, plus call-expansion
   provenance on final assembled expansion candidates and fail-safe degradation
   when call-graph relations are absent,
   currently `23 passed`.

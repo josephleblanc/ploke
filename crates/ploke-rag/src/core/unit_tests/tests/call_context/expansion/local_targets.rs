@@ -14,6 +14,14 @@ async fn call_context_expansion_excludes_closure_async_outer_owners_for_local_ta
             "call_aliased_indexed_named_field_function_binding",
         ),
     )?;
+    let boxed_path_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_boxed_dyn_fn_value_binding"),
+    )?;
+    let boxed_dynamic_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_parenthesized_boxed_dyn_fn_value_binding"),
+    )?;
     let forbidden_owners = [
         one_uuid(
             &db,
@@ -50,6 +58,14 @@ async fn call_context_expansion_excludes_closure_async_outer_owners_for_local_ta
     assert!(
         expanded_ids.contains(&dynamic_owner),
         "local_target expansion should still materialize real dynamic callers; expanded: {expanded:#?}"
+    );
+    assert!(
+        expanded_ids.contains(&boxed_path_owner),
+        "local_target expansion should materialize boxed dyn Fn path callers; expanded: {expanded:#?}"
+    );
+    assert!(
+        expanded_ids.contains(&boxed_dynamic_owner),
+        "local_target expansion should materialize boxed dyn Fn dynamic callers; expanded: {expanded:#?}"
     );
     assert!(
         forbidden_owners
