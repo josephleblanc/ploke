@@ -1385,3 +1385,8 @@ pub fn call_borrowed_initialized_local_instance_method() -> i32 {
     let value = LocalAssoc;
     (&value).instance_value()
 }
+
+pub fn call_qualified_dyn_any_downcast_mut(mut value: Option<i32>) {
+    let erased: &mut dyn std::any::Any = &mut value;
+    let _ = <dyn std::any::Any>::downcast_mut::<Option<i32>>(erased);
+}

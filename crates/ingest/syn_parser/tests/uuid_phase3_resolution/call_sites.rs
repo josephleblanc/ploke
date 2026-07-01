@@ -144,6 +144,7 @@ const CRATE_SCOPED_MACRO_CALL_SPAN: (usize, usize) = (10598, 10626);
 const LOCAL_DROP_SHADOW_CALL_SPAN: (usize, usize) = (10772, 10779);
 const BORROWED_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (10893, 10918);
 const BORROWED_INIT_SPAN: (usize, usize) = (30382, 30407);
+const QUALIFIED_DYN_ANY_DOWNCAST_MUT_CALL_SPAN: (usize, usize) = (30545, 30601);
 const DEREFERENCED_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (11013, 11038);
 const PRELUDE_STRING_NEW_CALL_SPAN: (usize, usize) = (11091, 11104);
 const PRELUDE_VEC_NEW_CALL_SPAN: (usize, usize) = (11156, 11166);
@@ -6130,4 +6131,21 @@ paranoid_call_site_test!(
             ExpectedCallOutcome::ResolvedEnumVariantConstructorLocalExact { target },
         )
     },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_call_qualified_dyn_any_downcast_mut_projects_external_path_call_site,
+    fixture: "fixture_call_graph",
+    owner: function {
+        module_path: &["crate"],
+        name: "call_qualified_dyn_any_downcast_mut"
+    },
+    expected: ExpectedCallSite::path(
+        &["std", "any", "Any", "downcast_mut"],
+        QUALIFIED_DYN_ANY_DOWNCAST_MUT_CALL_SPAN,
+        1,
+        1,
+        &[],
+        ExpectedCallOutcome::External,
+    ),
 );

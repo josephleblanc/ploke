@@ -1537,7 +1537,7 @@ fn pat_ident_name(pat: &syn::Pat) -> Option<String> {
 fn type_path_segments(ty: &syn::Type) -> Option<Vec<String>> {
     match ty {
         syn::Type::Path(path) if path.qself.is_none() => Some(path_segments(&path.path)),
-        _ => None,
+        ty => trait_object_bound_path_segments(ty),
     }
 }
 

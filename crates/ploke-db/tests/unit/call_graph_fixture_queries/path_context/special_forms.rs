@@ -136,5 +136,28 @@ fn fixture_context_reads_projected_generic_unsafe_extern_and_chained_calls() -> 
         ),
     );
 
+    let owner = function_id_by_name(&db, "call_qualified_dyn_any_downcast_mut")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        1,
+        "qualified dyn Any path context rows: {context:#?}"
+    );
+    let row = row_by_path(&context, &["std", "any", "Any", "downcast_mut"]);
+    assert_eq!(row.site.owner_id, owner);
+    assert_eq!(row.site.kind, CallSiteKind::Path);
+    assert_eq!(row.site.arg_count, Some(1));
+    assert_eq!(row.site.generic_arg_count, Some(1));
+    assert_eq!(row.status.status, CallStatusKind::External);
+    assert_eq!(row.status.resolution, None);
+    assert!(
+        row.targets.is_empty(),
+        "qualified dyn Any downcast_mut must stay targetless: {row:#?}"
+    );
+    assert!(
+        relations_for_site(&db, row.site.id)?.rows.is_empty(),
+        "qualified dyn Any downcast_mut must stay an external frontier without local targets"
+    );
+
     Ok(())
 }

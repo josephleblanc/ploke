@@ -15,6 +15,10 @@ async fn call_context_collection_reads_real_targetless_special_form_rows() -> Re
         &db,
         &function_in_module_query(&["crate"], "call_chained_returned_function"),
     )?;
+    let qself_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_qualified_dyn_any_downcast_mut"),
+    )?;
     let chained_target = one_uuid(&db, &function_in_module_query(&["crate"], "make_unary_fn"))?;
     let rag = init_test_rag_mock(Arc::clone(&db));
     assert!(
@@ -22,7 +26,11 @@ async fn call_context_collection_reads_real_targetless_special_form_rows() -> Re
         "fresh fixture call_graph schema should enable targetless special-form call context"
     );
 
-    let call_context = rag.collect_call_context(&[(extern_owner, 1.0), (chained_owner, 1.0)])?;
+    let call_context = rag.collect_call_context(&[
+        (extern_owner, 1.0),
+        (chained_owner, 1.0),
+        (qself_owner, 1.0),
+    ])?;
 
     let extern_context = call_context
         .get(&extern_owner)
@@ -81,6 +89,34 @@ async fn call_context_collection_reads_real_targetless_special_form_rows() -> Re
     assert!(
         dynamic_call.targets.is_empty(),
         "outer chained returned-function calls must not fabricate RAG targets: {dynamic_call:#?}"
+    );
+
+    let qself_context = call_context
+        .get(&qself_owner)
+        .expect("qualified dyn Any owner should receive outgoing call context");
+    assert_eq!(
+        qself_context.len(),
+        1,
+        "qualified dyn Any owner context: {qself_context:#?}"
+    );
+    let qself_call = &qself_context[0];
+    assert_eq!(qself_call.kind, CallSiteKind::Path);
+    assert_eq!(
+        qself_call.callee,
+        CallCalleeInfo::Path {
+            path: vec![
+                "std".to_string(),
+                "any".to_string(),
+                "Any".to_string(),
+                "downcast_mut".to_string(),
+            ],
+        }
+    );
+    assert_eq!(qself_call.status, CallStatusKind::External);
+    assert!(qself_call.resolution.is_none());
+    assert!(
+        qself_call.targets.is_empty(),
+        "qualified dyn Any calls must not fabricate RAG targets: {qself_call:#?}"
     );
 
     Ok(())

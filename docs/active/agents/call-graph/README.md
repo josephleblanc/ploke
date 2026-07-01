@@ -116,6 +116,9 @@ Implemented/scaffolded:
   - conservative trait associated-function path-call resolution for fully
     qualified local `<Type as Trait>::method()` calls where the trait item has
     no `self` receiver.
+  - structural projection for qualified trait-object qself path calls such as
+    `<dyn std::any::Any>::downcast_mut::<T>(...)`, classified as external
+    targetless frontier rows rather than trait-object dispatch edges.
   - shorthand local trait associated-function path-call resolution for
     `Trait::method()` through direct, alias, glob, grouped, and local re-export
     imports where the trait item has no `self` receiver.

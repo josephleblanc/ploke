@@ -15,6 +15,10 @@ async fn request_code_context_returns_targetless_special_form_call_context()
         &db,
         &function_in_module_query(&["crate"], "call_chained_returned_function"),
     )?;
+    let qself_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_qualified_dyn_any_downcast_mut"),
+    )?;
     let chained_target = one_uuid(&db, &function_in_module_query(&["crate"], "make_unary_fn"))?;
 
     let extern_tool_result =
@@ -117,6 +121,46 @@ async fn request_code_context_returns_targetless_special_form_call_context()
         "outer chained returned-function dynamic calls must not fabricate TUI targets: {dynamic_call:#?}"
     );
     assert_call_blockers(&chained_tool_result, &chained_result);
+
+    let qself_tool_result = execute_fixture_tool_request(
+        &db,
+        "call_qualified_dyn_any_downcast_mut",
+        1,
+        "qualified_dyn_any_call_context",
+    )
+    .await?;
+    let qself_result: RequestCodeContextResult = serde_json::from_str(&qself_tool_result.content)?;
+    assert_result_ok(
+        &qself_result,
+        "call_qualified_dyn_any_downcast_mut",
+        1,
+        "fixture_call_graph",
+    );
+    let qself_part = qself_result
+        .context
+        .iter()
+        .find(|part| part.id == qself_owner)
+        .expect("request_code_context should materialize the qualified dyn Any owner");
+    assert_eq!(
+        qself_part.call_context.len(),
+        1,
+        "qualified dyn Any call context: {qself_part:#?}"
+    );
+    let qself_call = &qself_part.call_context[0];
+    assert_eq!(qself_call.kind, CallSiteKind::Path);
+    assert_eq!(
+        qself_call.callee,
+        CallCalleeInfo::Path {
+            path: path(&["std", "any", "Any", "downcast_mut"]),
+        }
+    );
+    assert_eq!(qself_call.status, CallStatusKind::External);
+    assert!(qself_call.resolution.is_none());
+    assert!(
+        qself_call.targets.is_empty(),
+        "qualified dyn Any calls must not fabricate TUI targets: {qself_call:#?}"
+    );
+    assert_call_blockers(&qself_tool_result, &qself_result);
 
     Ok(())
 }

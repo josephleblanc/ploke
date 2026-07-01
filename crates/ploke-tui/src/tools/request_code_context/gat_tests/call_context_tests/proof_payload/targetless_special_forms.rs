@@ -15,6 +15,10 @@ async fn request_code_context_returns_targetless_special_form_proof_context()
         &db,
         &function_in_module_query(&["crate"], "call_chained_returned_function"),
     )?;
+    let qself_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_qualified_dyn_any_downcast_mut"),
+    )?;
     let chained_target = one_uuid(&db, &function_in_module_query(&["crate"], "make_unary_fn"))?;
 
     assert_eq!(
@@ -26,6 +30,11 @@ async fn request_code_context_returns_targetless_special_form_proof_context()
         db.project_call_proof_facts_for_owner(chained_owner, "bd:fixture-call-graph")?,
         5,
         "chained returned-function call should project resolved and blocked proof facts"
+    );
+    assert_eq!(
+        db.project_call_proof_facts_for_owner(qself_owner, "bd:fixture-call-graph")?,
+        2,
+        "qualified dyn Any targetless call should project call_site and call_resolution facts"
     );
 
     let extern_result =
@@ -101,6 +110,44 @@ async fn request_code_context_returns_targetless_special_form_proof_context()
         "dynamic_dispatch_unbounded",
     );
     assert_proof_blockers(&chained_result, &chained_payload);
+
+    let qself_result = execute_fixture_tool_request(
+        &db,
+        "call_qualified_dyn_any_downcast_mut",
+        1,
+        "qualified_dyn_any_proof_context",
+    )
+    .await?;
+    let qself_payload: RequestCodeContextResult = serde_json::from_str(&qself_result.content)?;
+    assert_result_ok(
+        &qself_payload,
+        "call_qualified_dyn_any_downcast_mut",
+        1,
+        "fixture_call_graph",
+    );
+    assert!(
+        qself_payload
+            .note
+            .as_deref()
+            .is_none_or(|note| { !note.contains("Proof-context expansion is unavailable") }),
+        "projected qualified dyn Any proof facts should avoid degraded proof-context note: {qself_payload:#?}"
+    );
+    let qself_part = qself_payload
+        .context
+        .iter()
+        .find(|part| part.id == qself_owner)
+        .expect("request_code_context should materialize the qualified dyn Any proof owner");
+    assert_eq!(
+        qself_part.proof_context.len(),
+        2,
+        "qualified dyn Any proof context: {qself_part:#?}"
+    );
+    assert_blocked_resolution(
+        &qself_part.proof_context,
+        qself_owner,
+        "external_dependency_summary_missing",
+    );
+    assert_proof_blockers(&qself_result, &qself_payload);
 
     Ok(())
 }

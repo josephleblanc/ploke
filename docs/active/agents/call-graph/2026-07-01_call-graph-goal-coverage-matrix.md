@@ -49,29 +49,31 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current Bucket
 
-Current bucket: `CodeItemEdges` usage-summary propagation.
+Current bucket: qualified trait-object qself path projection.
 
 Exit criteria:
 
-- Reuse the existing RAG/DB impact and reach helpers; do not add new graph
-  semantics.
-- Preserve `code_item_lookup` UI fields while removing duplicated
-  impact/reach field construction.
-- Prove `code_item_edges` returns `node_info.call_reach` for source lookups and
-  `node_info.call_impact` for target lookups over the existing axum two-hop
-  path oracle.
+- Keep this as structural visibility plus external-frontier classification; do
+  not attempt trait-object dispatch resolution.
+- Reuse existing qself and trait-object bound path helpers.
+- Prove `<dyn std::any::Any>::downcast_mut::<T>(...)` projects as a path call
+  with one generic argument and remains targetless `External` in DB/RAG/TUI
+  fixture-backed surfaces.
 
 Completed evidence:
 
-- TUI/tool:
-  `code_item_edges_returns_real_corpus_two_hop_call_paths`,
-  `code_item_lookup_returns_real_corpus_two_hop_call_paths`,
-  `code_item_lookup_surfaces_proc_macro_impact_callers`, and
-  `code_item_lookup_returns_real_corpus_json_from_bytes_callers`.
+- Parser:
+  `fixture_call_graph_call_qualified_dyn_any_downcast_mut_projects_external_path_call_site`.
+- DB:
+  `fixture_context_reads_projected_generic_unsafe_extern_and_chained_calls`.
+- RAG/TUI:
+  targetless special-form call-context and proof-context fixture tests now
+  include `call_qualified_dyn_any_downcast_mut`.
 
-Reason to switch after this bucket: the missing tool carrier is a propagation
-gap, not a DB/RAG semantic gap. Once green, return to semantic expansion rather
-than adding more tool-only fields.
+Reason to switch after this bucket: the real axum `<dyn Any>::downcast_mut`
+rows remain pinned absent in immutable corpus backups until fixture
+regeneration/review, but the parser/DB/RAG/TUI capability is fixture-backed and
+does not justify adding trait-object dispatch breadth here.
 
 ## Coverage Matrix
 
@@ -85,7 +87,7 @@ than adding more tool-only fields.
 | Associated-function path calls | Covered/partial | `Self::from_bytes`, `E::from_request`, `MethodRouter::new` style rows | Impact/reach summaries carry relation/kind | Tool payloads carry relation/kind and callsite buckets | axum | Later: separate associated-function multi-hop bucket if needed. |
 | Constructors | Stronger one-hop | Tuple struct / enum variant constructor rows are asserted in real-corpus matrix, including chrono alias constructor rows | Exact context propagation exists for direct and alias constructor rows | Tool regressions include direct and alias variant/constructor rows | axum, chrono | Later: multi-hop constructor path only if a real usage question requires it. |
 | External dependency frontier | Covered as frontier | External rows are exposed but not traversed | Reach summaries expose external frontier calls | Tool summaries count/display frontier rows | axum | Keep fail-closed; do not convert to traversal without external-summary semantics. |
-| Unsupported receiver shapes | Stronger blocker visibility plus one semantic receiver expansion | Targetless/unsupported rows remain for generic field/result/await/local receiver gaps; exact local `Router::clone` receiver rows traverse; borrowed initialized local receivers such as `let value = LocalAssoc; (&value).instance_value()` now carry initializer proof and resolve in fixture-backed DB/proof rows; initialized `Request::new` local receiver rows classify as external frontiers; unknown receiver expressions persist as `Unsupported` receiver rows instead of being dropped | RAG preserves blocker/frontier rows, the exact positive subset, fixture-backed unsupported receiver rows, and the borrowed-initialized receiver payload | Tool tests surface unsupported rows/counts, `RouterClone` positives, and `&value = LocalAssoc` receiver formatting | axum plus local fixture fallback | Switch buckets; future implementation should add exact receiver proof by shape, not weaken unsupported rows. |
+| Unsupported receiver / trait-object shapes | Stronger blocker visibility plus bounded qself projection | Targetless/unsupported rows remain for generic field/result/await/local receiver gaps; exact local `Router::clone` receiver rows traverse; borrowed initialized local receivers such as `let value = LocalAssoc; (&value).instance_value()` now carry initializer proof and resolve in fixture-backed DB/proof rows; initialized `Request::new` local receiver rows classify as external frontiers; qualified trait-object qself calls such as `<dyn std::any::Any>::downcast_mut::<T>(...)` project as external targetless path rows in fixture-backed tests; unknown receiver expressions persist as `Unsupported` receiver rows instead of being dropped | RAG preserves blocker/frontier rows, the exact positive subset, fixture-backed unsupported receiver rows, borrowed-initialized receiver payloads, and qualified dyn Any external path rows | Tool tests surface unsupported rows/counts, `RouterClone` positives, `&value = LocalAssoc` receiver formatting, and qualified dyn Any external proof rows | axum plus local fixture fallback | Switch buckets; future implementation should add exact receiver proof by shape, not weaken unsupported rows; regenerate/review axum backup before turning real-corpus dyn Any rows positive. |
 | Dynamic callable values | Stronger fixture-backed subset | Fixture-backed direct, alias, same-target branch/match including guarded same-target match arms, and single-expression block initialized callable values resolve; mixed-target branches remain targetless | RAG preserves resolved direct/branch/block/guarded-match initialized rows and blocker rows | `code_item_lookup` covers resolved dynamic-function callable rows, including block-initialized and guarded same-target match forms, and the targetless matrix covers unsupported rows | local fixture; no representative found in checked-out axum/serde/memchr corpora | Switch buckets; broader callable trait objects/returned closures still need binding/body ownership work. |
 | Proc-macro entrypoint body owners | Met for now | `CallBodyOwnerId::Macro` owners project through axum `expand_with` and `expand_attr_with` real-corpus helper calls | Exact impact summaries expose public proc-macro callers and direct helper callsites | `code_item_lookup` surfaces four public macro callers for `expand_with` | axum | Switch buckets; callback arguments and closure/IIFE body calls remain fail-closed. |
 | Closures / executable-local body ownership | Partial/gap documented | Closure/async body calls and function-local const initializer calls are intentionally absent rather than flattened into enclosing owners | RAG follows current DB surface | Tool coverage follows current DB surface | axum `parse_attrs` closure-body rows; axum local const initializer rows remain future until fixtures are regenerated and scoped local owners exist | Future bucket: closure/async/local-item body ownership after executable-scope identity design. |

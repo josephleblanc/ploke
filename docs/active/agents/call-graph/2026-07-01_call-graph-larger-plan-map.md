@@ -77,6 +77,11 @@ Current matrix posture:
   outside the conservative classifier now persist as targetless
   `Unsupported` receiver rows instead of being dropped before status/proof
   projection.
+- Qualified trait-object qself path projection: fixture-backed
+  `<dyn std::any::Any>::downcast_mut::<T>(...)` calls now project as path-call
+  rows with generic argument counts and remain targetless `External` frontier
+  rows through DB/RAG/TUI proof surfaces. Immutable axum backups still pin the
+  real-corpus rows absent until fixture regeneration/review.
 - Executable-local const initializer boundaries: function-local const
   initializer calls are no longer flattened into the enclosing function owner;
   true local const owner rows remain blocked on an executable-scope identity
