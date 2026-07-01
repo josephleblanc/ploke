@@ -1347,8 +1347,9 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
     //   axum/src/serve/listener.rs:143 calls
     //   `self.sem.clone().acquire_owned().await.unwrap()`.
     // Current model gap: awaited-result receiver shapes are visible in the
-    // corpus, but they stay targetless. The test-client async block row remains
-    // part of the broader nested async-owner gap rather than a local edge.
+    // corpus, but they stay targetless. The test-client method owner is
+    // visible, but its async-block `unwrap()` row remains absent rather than
+    // being flattened into that owner.
     let listener_owner = method_id_by_name_body_and_file_suffix(
         &db,
         "accept",
@@ -1364,13 +1365,19 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
         "axum/src/serve/listener.rs:143",
     )?;
 
-    assert_no_method_owner_by_body_and_file_suffix(
+    let test_client_owner = method_id_by_name_body_and_file_suffix(
         &db,
         "into_future",
         "self.builder.send().await.unwrap()",
         "axum/src/test_helpers/test_client.rs",
-        "axum/src/test_helpers/test_client.rs:134",
     )?;
+    let test_client_context = db.call_context_for_owner(test_client_owner)?;
+    assert!(
+        test_client_context
+            .iter()
+            .all(|row| row.site.method.as_deref() != Some("unwrap")),
+        "axum/src/test_helpers/test_client.rs:134 async-block unwrap should remain absent under RequestBuilder::into_future: {test_client_context:#?}"
+    );
 
     assert_targetless_method_rows(
         &db,
@@ -1378,7 +1385,7 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
         "AwaitResult",
         None,
         CallStatusKind::Unsupported,
-        39,
+        43,
     )?;
     // Matrix: awaited-result receiver rows from
     // `docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md`.
@@ -1386,8 +1393,8 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
     //   axum/src/serve/listener.rs:143
     //     `self.sem.clone().acquire_owned().await.unwrap()`
     //   axum/src/test_helpers/test_client.rs:134
-    //     `self.builder.send().await.unwrap()` remains absent until nested
-    //     async owners are modeled.
+    //     `self.builder.send().await.unwrap()` remains absent under the
+    //     enclosing method owner until nested async owners are modeled.
     // All currently projected awaited-result `unwrap()` rows are targetless:
     // the receiver value is the result of an arbitrary awaited expression, so
     // the call graph must not fabricate a concrete callee edge.
@@ -1438,6 +1445,10 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
             SourceLineFanout {
                 file_suffix: "axum/src/serve/mod.rs",
                 lines: &[725, 747, 801],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/test_helpers/test_client.rs",
+                lines: &[156, 160, 168, 172],
             },
         ],
     )?;

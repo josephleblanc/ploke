@@ -314,9 +314,9 @@ fn axum_real_target_header_value_from_static_external_paths_are_targetless() -> 
     //   axum/src/json.rs:208,217, and axum/src/response/mod.rs:47 call the
     //   same external associated function from response conversion bodies.
     // Current DB contract: all projected rows stay external and targetless.
-    // The route local const initializer is still flattened under
-    // `set_content_length`; the websocket const initializer rows are absent.
-    // No row is owned by `CallBodyOwnerId::Const` yet.
+    // Local const initializer rows are absent rather than flattened under the
+    // enclosing function owner. No row is owned by `CallBodyOwnerId::Const`
+    // yet.
     assert_no_method_owner_by_body_and_file_suffix(
         &db,
         "on_upgrade",
@@ -327,13 +327,16 @@ fn axum_real_target_header_value_from_static_external_paths_are_targetless() -> 
 
     let route_owner =
         function_id_by_name_in_module(&db, &["crate", "routing", "route"], "set_content_length")?;
-    assert_owner_path_targetless(
-        &db,
-        route_owner,
-        &["HeaderValue", "from_static"],
-        CallStatusKind::External,
-        "axum/src/routing/route.rs:202",
-    )?;
+    let route_context = db.call_context_for_owner(route_owner)?;
+    assert!(
+        route_context.iter().all(|row| {
+            row.site
+                .path
+                .as_ref()
+                .is_none_or(|path| path != &["HeaderValue", "from_static"])
+        }),
+        "axum/src/routing/route.rs:202 local const HeaderValue::from_static should remain absent under set_content_length: {route_context:#?}"
+    );
 
     let json_owner = method_id_by_name_body_and_file_suffix(
         &db,
@@ -423,7 +426,7 @@ fn axum_real_target_header_value_from_static_external_paths_are_targetless() -> 
         &db,
         &["HeaderValue", "from_static"],
         CallStatusKind::External,
-        8,
+        7,
     )?;
     assert_targetless_path_line_fanout(
         &db,
@@ -442,10 +445,6 @@ fn axum_real_target_header_value_from_static_external_paths_are_targetless() -> 
             SourceLineFanout {
                 file_suffix: "axum/src/response/mod.rs",
                 lines: &[47],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/route.rs",
-                lines: &[202],
             },
         ],
     )
@@ -467,9 +466,9 @@ fn axum_real_target_trait_object_dispatch_rows_are_documented_gaps() -> Result<(
     //   project the current `as_mut().poll(cx)` targetless receiver bucket.
     //   axum-core/src/body.rs:32 calls
     //   `<dyn std::any::Any>::downcast_mut::<Option<T>>(&mut k)`.
-    // Current model gap: dyn Future dispatch is visible through the
-    // method-call-result `poll` row and stays targetless; the qualified
-    // `<dyn Any>::downcast_mut` syntax is not projected as a path row yet.
+    // Current model gap: dyn Future dispatch rows stay targetless; the
+    // qualified `<dyn Any>::downcast_mut` syntax is not projected as a path row
+    // yet.
     assert_targetless_method_rows(
         &db,
         "poll",
@@ -523,13 +522,18 @@ fn axum_real_target_trait_object_dispatch_rows_are_documented_gaps() -> Result<(
         project.site.id,
         "axum/src/error_handling/mod.rs:251 self.project() receiver setup",
     )?;
+    let poll = row_by_method_receiver(&context, "poll", &CallReceiver::Unsupported);
+    assert_targetless_status(poll, CallStatusKind::Unsupported);
     assert!(
-        context
-            .iter()
-            .all(|row| row.site.method.as_deref() != Some("poll")),
-        "axum/src/error_handling/mod.rs:251 final dyn Future::poll row should remain absent under the source owner: {context:#?}"
+        relations_for_site(&db, poll.site.id)?.rows.is_empty(),
+        "axum/src/error_handling/mod.rs:251 dyn Future::poll should have zero persisted call edges"
     );
-
+    assert_no_traversal_candidates_for_site(
+        &db,
+        owner,
+        poll.site.id,
+        "axum/src/error_handling/mod.rs:251 dyn Future::poll receiver dispatch",
+    )?;
     for (label, owner) in [
         (
             "axum-core/src/body.rs:29 <dyn Any>::downcast_mut",

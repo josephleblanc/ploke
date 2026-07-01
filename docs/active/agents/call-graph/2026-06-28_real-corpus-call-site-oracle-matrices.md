@@ -113,11 +113,11 @@ routing/tests/mod.rs,serve/mod.rs}` and seven unsupported rows in
 The `axum/src/routing/route.rs:161` closure-body row remains absent until nested
 closure ownership is modeled.
 
-The DB matrix also pins all eight currently projected external
+The DB matrix also pins all seven currently projected external
 `HeaderValue::from_static` rows by exact owner and source line: four `axum-core`
-response conversion rows, two JSON response rows under one owner, the HTML
-response owner, and the `set_content_length` local const row. The websocket
-const initializer rows remain absent until const body ownership is modeled.
+response conversion rows, two JSON response rows under one owner, and the HTML
+response owner. The `set_content_length` and websocket local const initializer
+rows remain absent until executable-local const body ownership is modeled.
 
 ## High-Fanout Test Helper Matrix
 
@@ -219,6 +219,7 @@ shape and target-centered proof rows.
 | path-call result receiver chain | `axum/src/middleware/from_fn.rs:411` | test `basic` | `Request` alias from `axum_core::extract` at `:1` -> external `http::Request::builder` / builder chain; nested `Body::empty` is local at `axum-core/src/body.rs:52`. |
 | method-call result receiver | `axum/src/routing/route.rs:51` | `Route::oneshot_inner` | `Route<E>(BoxCloneSyncService<...>)` at `:31`; imports `BoxCloneSyncService`, `Oneshot`, `ServiceExt` at `:20-22`; external tower trait methods. |
 | await result receiver | `axum/src/test_helpers/test_client.rs:134` | `RequestBuilder::into_future` | field `builder: reqwest::RequestBuilder` at `:90-92`; `.send()` external reqwest method; `.await.unwrap()` external result handling. |
+| await result receiver helpers | `axum/src/test_helpers/test_client.rs:156,160,168,172` | `TestResponse::{bytes,text,json,chunk}` | response helper awaited `unwrap()` rows are visible and targetless; they should not resolve to concrete callee edges. |
 | turbofish method call | `axum-core/src/ext_traits/request_parts.rs:164` | test `extract_with_state` | `parts: http::request::Parts` from `Request::new(()).into_parts()` at `:159`; impl `RequestPartsExt for Parts` at `:117`; method impl at `:125`; trait decl `:108`. |
 | shadowed callable `get` | `axum/src/routing/tests/mod.rs:423,424,425,426,427,429,430,431,432,433,434` | test `what_matches_wildcard` | module imports routing `get` at `:8-10`, but local `let get = |path| ...` at `:418` shadows it; calls target local closure, not `routing::get`. |
 
