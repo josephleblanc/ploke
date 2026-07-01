@@ -397,6 +397,15 @@ for a more fuzzy search."#
                     .to_string(),
             )
             .with_field(
+                "reach_frontier_calls",
+                concise_context
+                    .call_reach
+                    .as_ref()
+                    .map(|reach| reach.frontier_calls.len())
+                    .unwrap_or_default()
+                    .to_string(),
+            )
+            .with_field(
                 "proof_context",
                 concise_context.proof_context.len().to_string(),
             );

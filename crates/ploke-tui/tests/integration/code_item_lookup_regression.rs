@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 
+use ploke_core::rag_types::{CallCalleeInfo, CallContextInfo, CallSiteKind, CallStatusKind};
 use ploke_tui::tools::{
     Tool,
     code_item_lookup::{CodeItemLookup, LookupParams},
@@ -666,13 +667,25 @@ async fn code_item_lookup_returns_real_corpus_json_from_bytes_callers() {
         .get("proof_context")
         .and_then(serde_json::Value::as_array)
         .expect("proof_context array");
+    let reach = payload
+        .get("call_reach")
+        .and_then(serde_json::Value::as_object)
+        .expect("call_reach object");
+    let frontier = reach
+        .get("frontier_calls")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_reach frontier_calls array");
 
     // Real-corpus oracle matrix:
     //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
     //   axum/src/json.rs:164 defines `Json::from_bytes`.
     //   axum/src/json.rs:112 and :128 call `Self::from_bytes(&bytes)`.
+    //   axum/src/json.rs:184 calls
+    //     `serde_json::Deserializer::from_slice(bytes)`.
     // Expected tool traversal: exact lookup of the callee method exposes both
-    // trait-impl `Self::from_bytes` caller-site edges and proof rows.
+    // trait-impl `Self::from_bytes` caller-site edges and proof rows. Its
+    // owner reach summary also surfaces the serde_json dependency-root call as
+    // an external frontier row, not a fabricated local edge.
     assert_json_from_bytes_incoming_context(
         call_context,
         &fixture.callers,
@@ -687,9 +700,43 @@ async fn code_item_lookup_returns_real_corpus_json_from_bytes_callers() {
             "code_item_lookup",
         );
     }
+    let frontier_calls = frontier
+        .iter()
+        .map(|call| serde_json::from_value::<CallContextInfo>(call.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("typed frontier call rows");
+    let serde_frontier = frontier_calls
+        .iter()
+        .find(|call| {
+            call.owner_id == fixture.target
+                && call.kind == CallSiteKind::Path
+                && call.status == CallStatusKind::External
+                && call.targets.is_empty()
+                && matches!(
+                    &call.callee,
+                    CallCalleeInfo::Path { path }
+                        if path
+                            .iter()
+                            .map(String::as_str)
+                            .eq(["serde_json", "Deserializer", "from_slice"])
+                )
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "code_item_lookup should surface serde_json external frontier row: {frontier_calls:#?}"
+            )
+        });
+    assert_eq!(serde_frontier.owner_id, fixture.target);
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(ui_field(ui, "call_context_incoming"), "2");
+    assert!(
+        ui_field(ui, "reach_frontier_calls")
+            .parse::<usize>()
+            .expect("reach frontier count")
+            >= 1,
+        "code_item_lookup should surface reach frontier call counts"
+    );
     assert!(
         ui_field(ui, "proof_context")
             .parse::<usize>()

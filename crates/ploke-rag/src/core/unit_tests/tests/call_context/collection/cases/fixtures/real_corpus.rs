@@ -833,6 +833,53 @@ async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Erro
         "RAG reach public callees",
     );
 
+    // Source oracle:
+    //   axum/src/json.rs:164 defines `Json::from_bytes`.
+    //   axum/src/json.rs:184 calls
+    //     `serde_json::Deserializer::from_slice(bytes)`.
+    // Current contract: dependency-root path calls are visible as external
+    // frontier rows but do not become local traversal edges.
+    let json_owner = method_id_by_file(
+        &db,
+        "from_bytes",
+        "serde_json::Deserializer::from_slice(bytes)",
+        "axum/src/json.rs",
+    )?;
+    let json_report = rag
+        .exact_call_reach_for_owner(
+            json_owner,
+            CallPathOptions {
+                max_depth: 2,
+                max_paths: 16,
+            },
+        )?
+        .expect("call context enabled");
+    assert!(
+        json_report.paths.is_empty() && json_report.callees.is_empty(),
+        "RAG reach should not fabricate local edges for external dependency calls: {json_report:#?}"
+    );
+    let frontier = json_report
+        .frontier_calls
+        .iter()
+        .find(|call| {
+            matches!(
+                &call.callee,
+                CallCalleeInfo::Path { path: call_path }
+                    if call_path == &path(&["serde_json", "Deserializer", "from_slice"])
+            )
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "RAG reach should include serde_json frontier row for Json::from_bytes: {json_report:#?}"
+            )
+        });
+    assert_eq!(frontier.owner_id, json_owner);
+    assert_eq!(frontier.status, CallStatusKind::External);
+    assert!(
+        frontier.targets.is_empty(),
+        "external frontier call should remain targetless: {frontier:#?}"
+    );
+
     Ok(())
 }
 

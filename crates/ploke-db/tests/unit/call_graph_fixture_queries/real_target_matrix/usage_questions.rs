@@ -254,6 +254,67 @@ fn axum_usage_questions_summarize_owner_reach_for_navigation() -> Result<(), DbE
 }
 
 #[test]
+fn axum_usage_questions_surface_external_frontier_for_dependency_calls() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Security analysis:
+    //   "Which external dependency calls are made from this user-facing
+    //   entrypoint?"
+    // Performance work:
+    //   "Which callers trigger repeated parsing, cloning, serialization, or
+    //   database work?"
+    // Debugging:
+    //   "What source callsite corresponds to this persisted call edge or proof
+    //   blocker?"
+    //
+    // Source oracle:
+    //   axum/src/json.rs:164 defines `Json::from_bytes`.
+    //   axum/src/json.rs:184 calls
+    //     `serde_json::Deserializer::from_slice(bytes)`.
+    // Current contract: dependency-root path calls are visible as external
+    // frontier rows but do not become local traversal edges.
+    let owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "from_bytes",
+        "serde_json::Deserializer::from_slice(bytes)",
+        "axum/src/json.rs",
+    )?;
+    let report = db.call_reach_for_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 16,
+        },
+    )?;
+
+    assert_eq!(report.owner.id, owner);
+    assert_eq!(report.owner.name, "from_bytes");
+    assert!(
+        report.paths.is_empty() && report.callees.is_empty(),
+        "external dependency calls should not fabricate local reach edges: {report:#?}"
+    );
+
+    let frontier = report
+        .frontier_calls
+        .iter()
+        .find(|row| {
+            row.site.path.as_ref() == Some(&path(&["serde_json", "Deserializer", "from_slice"]))
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "Json::from_bytes reach report should include serde_json frontier row: {report:#?}"
+            )
+        });
+    assert_external_targetless(frontier);
+    assert_eq!(frontier.site.owner_id, owner);
+
+    Ok(())
+}
+
+#[test]
 fn axum_usage_questions_summarize_eventual_callers_for_impact() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 

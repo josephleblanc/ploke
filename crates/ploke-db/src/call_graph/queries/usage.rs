@@ -1,10 +1,13 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use uuid::Uuid;
 
 use crate::{Database, DbError};
 
-use super::super::{CallImpactReport, CallNodeInfo, CallPath, CallPathOptions, CallReachReport};
+use super::super::{
+    CallContextRow, CallImpactReport, CallNodeInfo, CallPath, CallPathOptions, CallReachReport,
+    CallStatusKind,
+};
 
 impl Database {
     /// Summarizes bounded incoming call paths for impact/navigation questions.
@@ -68,6 +71,7 @@ impl Database {
             .filter(|callee| callee.is_public)
             .cloned()
             .collect();
+        let frontier_calls = frontier_calls_for_paths(self, owner_id, &paths)?;
 
         Ok(CallReachReport {
             owner,
@@ -75,8 +79,43 @@ impl Database {
             callees,
             direct_callees,
             public_callees,
+            frontier_calls,
         })
     }
+}
+
+fn frontier_calls_for_paths(
+    db: &Database,
+    owner_id: Uuid,
+    paths: &[CallPath],
+) -> Result<Vec<CallContextRow>, DbError> {
+    let mut owners = BTreeSet::from([owner_id]);
+    for path in paths {
+        for edge in &path.edges {
+            owners.insert(edge.caller_id);
+            owners.insert(edge.callee_id);
+        }
+    }
+
+    let mut rows = BTreeMap::new();
+    for owner in owners {
+        for row in db.call_context_for_owner(owner)? {
+            if row.status.status == CallStatusKind::Resolved {
+                continue;
+            }
+            rows.entry(row.site.id).or_insert(row);
+        }
+    }
+
+    let mut rows = rows.into_values().collect::<Vec<_>>();
+    rows.sort_by_key(|row| {
+        (
+            row.site.owner_id.as_u128(),
+            row.site.span,
+            row.site.id.as_u128(),
+        )
+    });
+    Ok(rows)
 }
 
 fn node_info_for_paths(

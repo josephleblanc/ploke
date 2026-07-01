@@ -364,6 +364,11 @@ fn reach_info(db: &Database, report: DbCallReachReport) -> Result<CallReachInfo,
             .into_iter()
             .map(call_node_info)
             .collect(),
+        frontier_calls: report
+            .frontier_calls
+            .into_iter()
+            .map(|row| row_to_call_context(row, usize::MAX))
+            .collect::<Result<Vec<_>, RagError>>()?,
     })
 }
 

@@ -168,4 +168,5 @@ pub struct CallReachReport {
     pub callees: Vec<CallNodeInfo>,
     pub direct_callees: Vec<CallNodeInfo>,
     pub public_callees: Vec<CallNodeInfo>,
+    pub frontier_calls: Vec<CallContextRow>,
 }
