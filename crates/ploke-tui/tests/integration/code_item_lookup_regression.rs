@@ -835,7 +835,7 @@ async fn code_item_lookup_returns_real_corpus_parse_attrs_callers() {
         item_name: Cow::Borrowed("parse_attrs"),
         file_path: Cow::Owned(fixture.file_path.display().to_string()),
         node_kind: Cow::Borrowed("function"),
-        module_path: Cow::Owned(module_path),
+        module_path: Cow::Owned(module_path.clone()),
         owner_trait: None,
         owner_type: None,
     };
@@ -886,6 +886,65 @@ async fn code_item_lookup_returns_real_corpus_parse_attrs_callers() {
             .expect("proof count")
             >= fixture.callers.len(),
         "code_item_lookup should surface real-corpus parse_attrs proof rows"
+    );
+
+    let turbofish_params = LookupParams {
+        item_name: Cow::Borrowed("parse_parenthesized_attribute"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Owned(module_path),
+        owner_trait: None,
+        owner_type: None,
+    };
+    let turbofish_result = CodeItemLookup::execute(
+        turbofish_params,
+        fixture.ctx("axum-type-name-turbofish-lookup"),
+    )
+    .await
+    .expect("parse_parenthesized_attribute lookup");
+    let turbofish_payload: serde_json::Value =
+        serde_json::from_str(&turbofish_result.content).expect("deserialize turbofish context");
+    let turbofish_context = turbofish_payload
+        .get("call_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("turbofish call_context array")
+        .iter()
+        .map(|call| serde_json::from_value::<CallContextInfo>(call.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("typed turbofish call_context rows");
+    let type_name = turbofish_context
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Path
+                && matches!(
+                    &call.callee,
+                    CallCalleeInfo::Path { path }
+                        if path.iter().map(String::as_str).eq(["std", "any", "type_name"])
+                )
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "code_item_lookup should expose std::any::type_name::<K> row: {turbofish_context:#?}"
+            )
+        });
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // API understanding:
+    //   "What argument shapes do existing callers pass?"
+    //
+    // Source oracle:
+    //   axum-macros/src/attr_parsing.rs:22 calls
+    //   `std::any::type_name::<K>()`.
+    //
+    // Expected tool payload: exact lookup of the owner function exposes the
+    // external targetless call-site row with one turbofish generic argument.
+    assert_eq!(type_name.status, CallStatusKind::External);
+    assert_eq!(type_name.generic_arg_count, Some(1));
+    assert!(
+        type_name.targets.is_empty(),
+        "external type_name::<K> call should remain targetless: {type_name:#?}"
     );
 }
 

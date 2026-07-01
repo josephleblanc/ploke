@@ -1344,6 +1344,62 @@ fn assert_call_source_file(
 }
 
 #[tokio::test]
+async fn call_context_collection_preserves_axum_turbofish_generic_counts() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    let owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "attr_parsing"],
+        "parse_parenthesized_attribute",
+    )?;
+
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let context = call_context.get(&owner).unwrap_or_else(|| {
+        panic!("parse_parenthesized_attribute should receive outgoing call context")
+    });
+    let type_name = context
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Path
+                && matches!(
+                    &call.callee,
+                    CallCalleeInfo::Path { path: call_path }
+                        if call_path == &path(&["std", "any", "type_name"])
+                )
+        })
+        .unwrap_or_else(|| {
+            panic!("RAG context should include std::any::type_name::<K> row: {context:#?}")
+        });
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // API understanding:
+    //   "What argument shapes do existing callers pass?"
+    // Build/deployment optimization:
+    //   "Are there feature-gated or platform-specific call paths that should
+    //   be checked separately?"
+    //
+    // Source oracle:
+    //   axum-macros/src/attr_parsing.rs:22 calls
+    //   `std::any::type_name::<K>()`.
+    //
+    // Current contract: dependency-root calls stay external and targetless,
+    // but RAG payloads preserve the turbofish arity needed for API-shape
+    // answers.
+    assert_eq!(type_name.owner_id, owner);
+    assert_eq!(type_name.status, CallStatusKind::External);
+    assert_eq!(type_name.generic_arg_count, Some(1));
+    assert!(
+        type_name.targets.is_empty(),
+        "external type_name::<K> call should remain targetless: {type_name:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_collection_reads_axum_await_result_receiver_gap() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;
