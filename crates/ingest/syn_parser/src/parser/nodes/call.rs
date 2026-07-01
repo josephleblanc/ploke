@@ -280,6 +280,15 @@ pub enum MethodCallReceiver {
         /// Structural type path from the local binding annotation.
         type_path: Vec<String>,
     },
+    /// The receiver is a borrowed local binding whose initializer is a path
+    /// expression visible at the call site.
+    BorrowedInitializedLocalBinding {
+        /// Binding identifier inside the borrow expression.
+        name: String,
+        /// Structural initializer path carried to the resolver for exact local
+        /// type proof.
+        init_path: Vec<String>,
+    },
     /// The receiver is a dereferenced local binding, such as `*value`.
     DereferencedLocalBinding {
         /// Binding identifier inside the dereference expression.

@@ -27,6 +27,13 @@ async fn call_context_sparse_get_context_expands_method_target_hits_to_fixture_c
             "call_typed_double_reference_local_instance_method",
         ),
     )?;
+    let borrowed_init_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_borrowed_initialized_local_instance_method",
+        ),
+    )?;
     let assoc_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_method_as_associated_function"),
@@ -55,6 +62,17 @@ async fn call_context_sparse_get_context_expands_method_target_hits_to_fixture_c
                 receiver: Some(CallReceiverInfo::TypedLocalBinding {
                     name: "value".to_string(),
                     type_path: vec!["LocalAssoc".to_string()],
+                }),
+            },
+        },
+        Case {
+            owner: borrowed_init_owner,
+            label: "borrowed initialized method caller owner",
+            callee: CallCalleeInfo::Method {
+                name: "instance_value".to_string(),
+                receiver: Some(CallReceiverInfo::BorrowedInitializedLocalBinding {
+                    name: "value".to_string(),
+                    init_path: vec!["LocalAssoc".to_string()],
                 }),
             },
         },

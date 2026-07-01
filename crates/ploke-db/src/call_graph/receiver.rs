@@ -26,6 +26,10 @@ pub enum CallReceiver {
         name: String,
         type_path: Vec<String>,
     },
+    BorrowedInitializedLocalBinding {
+        name: String,
+        init_path: Vec<String>,
+    },
     DereferencedLocalBinding {
         name: String,
     },

@@ -159,6 +159,10 @@ Implemented/scaffolded:
   - borrowed explicitly typed local receivers such as `(&value).method()`
     resolve through the underlying local type when the method target is proven
     exactly.
+  - borrowed path-initialized local receivers such as
+    `let value = LocalAssoc; (&value).method()` carry the initializer path
+    through parser, DB/proof projection, RAG, and TUI formatting when the
+    method target is proven exactly.
   - dereferenced local receivers whose binding is initialized as a direct
     reference to a visible local type path, such as `let value = &LocalAssoc;
     (*value).method()`, resolve through that exact referenced type.
@@ -913,7 +917,8 @@ Post-gate evidence, 2026-06-23:
   projection.
 - `cargo test -p ploke-db --features call_graph local_receiver_method_call_proof -- --nocapture`
   passed with `1 passed` for real resolved local, initialized, typed,
-  type-alias, borrowed, and dereferenced method receiver proof edge projection.
+  type-alias, borrowed typed, borrowed initialized, and dereferenced method
+  receiver proof edge projection.
 - `cargo test -p ploke-db --features call_graph trait_family_method_call_proof -- --nocapture`
   passed with `1 passed` for real resolved generic-bound, imported-trait,
   constrained-generic-self, and blanket trait method proof edge projection.

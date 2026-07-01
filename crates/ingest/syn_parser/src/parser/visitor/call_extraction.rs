@@ -492,6 +492,14 @@ fn borrowed_local_receiver(
             type_path: type_path.clone(),
         });
     }
+    if let Some(LocalBindingProof::Initialized { name, init_path }) =
+        visible_local_binding(&name, local_scopes)
+    {
+        return Some(MethodCallReceiver::BorrowedInitializedLocalBinding {
+            name: name.clone(),
+            init_path: init_path.clone(),
+        });
+    }
 
     (visible_local_binding(&name, local_scopes).is_some()
         || param_names.iter().any(|candidate| candidate == &name))

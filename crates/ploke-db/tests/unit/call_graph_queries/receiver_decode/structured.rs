@@ -43,6 +43,14 @@ fn context_for_owner_decodes_structured_method_receivers() -> Result<(), DbError
             },
         ),
         structured_receiver(
+            "BorrowedInitializedLocalBinding",
+            vec!["borrowed", "LocalAssoc"],
+            CallReceiver::BorrowedInitializedLocalBinding {
+                name: "borrowed".to_string(),
+                init_path: vec!["LocalAssoc".to_string()],
+            },
+        ),
+        structured_receiver(
             "DereferencedInitializedLocalBinding",
             vec!["deref", "LocalAssoc"],
             CallReceiver::DereferencedInitializedLocalBinding {

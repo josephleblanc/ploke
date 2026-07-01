@@ -45,7 +45,7 @@ The larger implementation has been progressing through these phases:
 | Real-corpus proof | Prove query behavior against real Rust targets, especially axum | Active and partially covered |
 | RAG/TUI/tool surfaces | Expose exact call context, paths, impact, reach, and proof blockers downstream | Strong current surface |
 | Proof/authority integration | Explain trusted edges and fail-closed blockers | Partial but substantial |
-| Semantic expansion | Add binding/type-aware capabilities for remaining gaps | Started with exact local external-trait impl receiver methods |
+| Semantic expansion | Add binding/type-aware capabilities for remaining gaps | Started with exact local external-trait impl receiver methods and fixture-backed borrowed initialized local receivers |
 
 ## Where The Coverage Matrix Fits
 
@@ -63,6 +63,9 @@ Current matrix posture:
   path across parser, DB, RAG, and TUI.
 - Exact local external-trait impl receiver methods: met for axum
   `Router::clone` rows across DB, RAG, and TUI.
+- Borrowed initialized local receiver methods: fixture-backed
+  `let value = LocalAssoc; (&value).instance_value()` now carries initializer
+  proof through parser, DB/proof projection, RAG, and TUI formatting.
 - Dynamic callable bindings: exact local function-item bindings now cover
   direct, alias, branch/match, and single-expression block initializers through
   parser, DB, RAG, and TUI proof where exposed.
@@ -86,7 +89,7 @@ The current larger implementation phase is:
 binding/type-aware semantic resolution
 ```
 
-This phase should connect existing syntax-body ownership, local binding evidence, and typed type graph facts so the resolver can prove more receiver and callable-value cases without weakening fail-closed semantics. The first completed slice resolves exact local external-trait impl receiver methods such as axum `Router::clone`; broader dispatch remains out of scope until the required binding/type evidence is explicit.
+This phase should connect existing syntax-body ownership, local binding evidence, and typed type graph facts so the resolver can prove more receiver and callable-value cases without weakening fail-closed semantics. Completed slices include exact local external-trait impl receiver methods such as axum `Router::clone` and fixture-backed borrowed initialized local receivers such as `(&value).instance_value()` where `value` is initialized from a local type path. Broader dispatch remains out of scope until the required binding/type evidence is explicit.
 
 ## Next Larger Phase
 

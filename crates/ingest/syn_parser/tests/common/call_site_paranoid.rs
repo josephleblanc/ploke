@@ -64,6 +64,11 @@ pub enum ExpectedMethodReceiver<'a> {
         name: &'a str,
         type_path: &'a [&'a str],
     },
+    /// The receiver expression is a borrowed named local binding with path initializer proof.
+    BorrowedInitializedLocalBinding {
+        name: &'a str,
+        init_path: &'a [&'a str],
+    },
     /// The receiver expression is a dereferenced named local binding.
     DereferencedLocalBinding { name: &'a str },
     /// The receiver expression is a dereferenced named local binding with path initializer proof.
@@ -133,6 +138,12 @@ impl ExpectedMethodReceiver<'_> {
                 MethodCallReceiver::BorrowedTypedLocalBinding {
                     name: name.to_string(),
                     type_path: type_path.iter().copied().map(String::from).collect(),
+                }
+            }
+            Self::BorrowedInitializedLocalBinding { name, init_path } => {
+                MethodCallReceiver::BorrowedInitializedLocalBinding {
+                    name: name.to_string(),
+                    init_path: init_path.iter().copied().map(String::from).collect(),
                 }
             }
             Self::DereferencedLocalBinding { name } => {

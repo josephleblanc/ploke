@@ -551,6 +551,15 @@ fn method_receiver_to_cozo(receiver: &MethodCallReceiver) -> (cozo::DataValue, c
                 string_list(&path),
             )
         }
+        MethodCallReceiver::BorrowedInitializedLocalBinding { name, init_path } => {
+            let mut path = Vec::with_capacity(init_path.len() + 1);
+            path.push(name.clone());
+            path.extend(init_path.iter().cloned());
+            (
+                cozo::DataValue::from("BorrowedInitializedLocalBinding"),
+                string_list(&path),
+            )
+        }
         MethodCallReceiver::DereferencedLocalBinding { name } => (
             cozo::DataValue::from("DereferencedLocalBinding"),
             string_list(std::slice::from_ref(name)),

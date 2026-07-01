@@ -591,6 +591,9 @@ fn receiver_info(receiver: CallReceiver) -> CallReceiverInfo {
         CallReceiver::BorrowedTypedLocalBinding { name, type_path } => {
             CallReceiverInfo::BorrowedTypedLocalBinding { name, type_path }
         }
+        CallReceiver::BorrowedInitializedLocalBinding { name, init_path } => {
+            CallReceiverInfo::BorrowedInitializedLocalBinding { name, init_path }
+        }
         CallReceiver::DereferencedLocalBinding { name } => {
             CallReceiverInfo::DereferencedLocalBinding { name }
         }

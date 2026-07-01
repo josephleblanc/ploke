@@ -86,6 +86,20 @@ impl CallReceiver {
                     ))),
                 }
             }
+            "BorrowedInitializedLocalBinding" => {
+                let path = to_string_list(path)?;
+                match path.as_slice() {
+                    [name, init_path @ ..] if !init_path.is_empty() => {
+                        Ok(Some(Self::BorrowedInitializedLocalBinding {
+                            name: name.clone(),
+                            init_path: init_path.to_vec(),
+                        }))
+                    }
+                    other => Err(DbError::Cozo(format!(
+                        "borrowed initialized local binding receiver should store a name followed by an initializer path, got {other:?}"
+                    ))),
+                }
+            }
             "DereferencedLocalBinding" => {
                 let path = to_string_list(path)?;
                 match path.as_slice() {

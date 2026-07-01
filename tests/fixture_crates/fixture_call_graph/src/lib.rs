@@ -1380,3 +1380,8 @@ pub mod direct_reexport_assoc_scope {
         NestedGlobAssoc::make()
     }
 }
+
+pub fn call_borrowed_initialized_local_instance_method() -> i32 {
+    let value = LocalAssoc;
+    (&value).instance_value()
+}

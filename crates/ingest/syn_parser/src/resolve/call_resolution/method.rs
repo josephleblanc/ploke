@@ -51,7 +51,8 @@ impl CallRelationResolver<'_> {
             statuses.push(CallResolutionStatus::External { source });
             return Ok(());
         }
-        if let MethodCallReceiver::InitializedLocalBinding { init_path, .. } = &call.receiver
+        if let MethodCallReceiver::InitializedLocalBinding { init_path, .. }
+        | MethodCallReceiver::BorrowedInitializedLocalBinding { init_path, .. } = &call.receiver
             && self.is_external_type_path_method(call.owner, init_path, &call.method_name)?
         {
             statuses.push(CallResolutionStatus::External { source });
@@ -70,6 +71,9 @@ impl CallRelationResolver<'_> {
                 self.resolve_typed_local_method_call(call, type_path, type_relations)?
             }
             MethodCallReceiver::InitializedLocalBinding { init_path, .. } => {
+                self.resolve_typed_local_method_call(call, init_path, type_relations)?
+            }
+            MethodCallReceiver::BorrowedInitializedLocalBinding { init_path, .. } => {
                 self.resolve_typed_local_method_call(call, init_path, type_relations)?
             }
             MethodCallReceiver::BorrowedTypedLocalBinding { type_path, .. } => {
@@ -608,6 +612,9 @@ impl CallRelationResolver<'_> {
                 self.resolve_typed_local_method_call(call, type_path, type_relations)
             }
             MethodCallReceiver::InitializedLocalBinding { init_path, .. } => {
+                self.resolve_typed_local_method_call(call, init_path, type_relations)
+            }
+            MethodCallReceiver::BorrowedInitializedLocalBinding { init_path, .. } => {
                 self.resolve_typed_local_method_call(call, init_path, type_relations)
             }
             MethodCallReceiver::BorrowedTypedLocalBinding { type_path, .. } => {

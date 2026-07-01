@@ -76,6 +76,13 @@ fn fixture_projection_stores_real_local_receiver_method_call_proof_facts() -> Re
             },
         )?,
         method_case(
+            "call_borrowed_initialized_local_instance_method",
+            CallReceiver::BorrowedInitializedLocalBinding {
+                name: "value".to_string(),
+                init_path: path(&["LocalAssoc"]),
+            },
+        )?,
+        method_case(
             "call_dereferenced_local_instance_method",
             CallReceiver::DereferencedInitializedLocalBinding {
                 name: "value".to_string(),

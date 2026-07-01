@@ -14,6 +14,13 @@ fn fixture_context_reads_projected_borrowed_and_dereferenced_method_receivers()
             },
         ),
         (
+            "call_borrowed_initialized_local_instance_method",
+            CallReceiver::BorrowedInitializedLocalBinding {
+                name: "value".to_string(),
+                init_path: path(&["LocalAssoc"]),
+            },
+        ),
+        (
             "call_dereferenced_local_instance_method",
             CallReceiver::DereferencedInitializedLocalBinding {
                 name: "value".to_string(),
