@@ -134,6 +134,18 @@ future work can choose the next batch without rereading the diary-style notes.
   `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
   and
   `cargo test -p ploke-tui --features call_graph code_item -- --nocapture`.
+- 2026-07-01: Owner-centered reach summaries now also include
+  `direct_call_sites`, carrying the resolved owner-context callsite rows made
+  directly by the queried owner. This is the owner-side counterpart to impact
+  direct callsites and lets DB, RAG, and exact `code_item_lookup` answer "what
+  exact callsites does this function make directly?" without a second
+  owner-context query. The axum proof is `RequestExt::extract` calling
+  `self.extract_with_state(&())`; the row remains resolved, target-bearing, and
+  separate from nonresolved `frontier_calls`. Focused verification:
+  `cargo test -p ploke-db --features call_graph real_target_matrix::usage_questions -- --nocapture`,
+  `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
+  and
+  `cargo test -p ploke-tui --features call_graph code_item -- --nocapture`.
 - 2026-06-30: The first usage-question slice now has real-corpus proofs across
   DB and TUI surfaces. DB coverage in
   `real_target_matrix::usage_questions` proves that the persisted axum call
