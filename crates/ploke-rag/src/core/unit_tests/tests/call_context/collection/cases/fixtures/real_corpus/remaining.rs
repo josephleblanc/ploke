@@ -190,6 +190,20 @@ async fn call_context_exact_reads_remaining_axum_supported_matrix_targets() -> R
                 ),
             ],
         },
+        ExactShapeCase {
+            // axum/src/test_helpers/test_client.rs:19 defines
+            // TestClient::new. The current fixture resolves the nested
+            // `test_helpers::* -> pub use test_client::*` subset documented in
+            // the oracle matrix, while the remaining unexpanded import fanout
+            // stays targetless in the DB tests.
+            label: "axum TestClient::new nested-glob resolved subset",
+            target: resolved_path_target_count(&db, &["TestClient", "new"], 98, "TestClient::new")?,
+            expected: vec![path_shape(
+                &["TestClient", "new"],
+                CallTargetKind::AssociatedFunction,
+                98,
+            )],
+        },
     ];
 
     for case in cases {
@@ -219,6 +233,66 @@ fn variant_id_by_enum_and_variant_names(
         1,
         "expected exactly one enum variant {enum_name}::{variant_name}; rows: {:#?}",
         rows.rows
+    );
+
+    to_uuid(&rows.rows[0][0]).map_err(Error::from)
+}
+
+fn resolved_path_target_count(
+    db: &Database,
+    path_parts: &[&str],
+    expected_count: usize,
+    label: &str,
+) -> Result<Uuid, Error> {
+    let mut params = BTreeMap::new();
+    params.insert(
+        "path".to_string(),
+        DataValue::List(
+            path_parts
+                .iter()
+                .map(|part| DataValue::from(*part))
+                .collect(),
+        ),
+    );
+
+    let rows = db.raw_query_params(
+        r#"?[target_id, count(site_id)] :=
+            *call_site {
+                id: site_id,
+                call_kind: "Path",
+                path: $path @ 'NOW'
+            },
+            *call_resolution_status {
+                source_id: site_id,
+                source_kind: "Path",
+                status_kind: "Resolved",
+                resolution_kind: "LocalExact" @ 'NOW'
+            },
+            *call_relation {
+                source_id: site_id,
+                source_kind: "Path",
+                relation_kind: "AssociatedFunction",
+                target_id,
+                target_kind: "Method" @ 'NOW'
+            }"#,
+        params,
+    )?;
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "{label} should resolve to exactly one associated-function target: {:#?}",
+        rows.rows
+    );
+
+    let DataValue::Num(cozo::Num::Int(count)) = &rows.rows[0][1] else {
+        panic!(
+            "{label} resolved row count should be an integer: {:#?}",
+            rows.rows
+        );
+    };
+    assert_eq!(
+        *count as usize, expected_count,
+        "{label} should expose exactly {expected_count} resolved path rows"
     );
 
     to_uuid(&rows.rows[0][0]).map_err(Error::from)

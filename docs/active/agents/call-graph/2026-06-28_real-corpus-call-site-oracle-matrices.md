@@ -127,6 +127,16 @@ const initializer rows remain absent until const body ownership is modeled.
 | --- | --- | --- |
 | `TestClient::new` | `axum/src/form.rs:262`; `json.rs:250,266,281,301,320,355`; `extension.rs:228`; `response/sse.rs:714,756,793`; `response/mod.rs:529`; `middleware/from_extractor.rs:351`; `middleware/map_request.rs:412,432`; `middleware/map_response.rs:357`; `extract/query.rs:158`; `extract/connect_info.rs:386`; `extract/multipart.rs:383,423,449`; `extract/mod.rs:103`; `extract/matched_path.rs:162,178,197,217,237,254,271,291,312,326,346,361,374,394`; `extract/nested_path.rs:136,154,172,190,205,224`; `extract/path/mod.rs:619,632,645,664,687,700,716,732,751,784,798,822,854,912,946,974,989,1010,1034`; `handler/mod.rs:418,443`; `routing/tests/nest.rs:41,65,135,159,182,193,210,229,280,298,309,328,371,408,431,489`; `routing/tests/merge.rs:14,63,81,85,96,116,136,150,162,179,208,234,267,301,345,379`; `routing/tests/handle_error.rs:25,42,60,76,90`; `routing/tests/fallback.rs:10,25,40,53,69,89,101,118,134,150,171,190,207,221,241,261,280,299,314,325,338,359,377,389,402`; `routing/tests/mod.rs:90,118,150,188,217,233,242,282,307,323,339,352,365,377,396,416,454,472,489,506,527,540,572,589,599,626,643,668,685,700,717,738,748,775,798,815,846,905,952,967,984,1027,1047,1073,1164,1201`; `axum-core/src/extract/request_parts.rs:193` | common chain: callsite -> visible `TestClient` import, direct module scope, or `test_helpers::*` -> re-export `axum/src/test_helpers/mod.rs:5-6` -> struct `test_client.rs:30` -> `new` function `test_client.rs:36`. |
 
+Current executable coverage: DB target traversal and proof projection assert the
+split high-fanout contract: 98 nested-glob
+`test_helpers::* -> pub use test_client::*` rows resolve to `TestClient::new`,
+while 69 currently projected direct/other import rows remain unsupported,
+targetless, and non-traversable. RAG exact call context,
+`code_item_lookup`, and `code_item_edges` now preserve the 98 resolved
+target-centered caller rows and their `TestClient::new` associated-function
+callee shape. The five absent text rows remain tied to multipart, closure-body,
+and macro-template projection gaps.
+
 ## Constructors And Associated Calls
 
 | Target | Callsites | Owner(s) | Evidence chain |

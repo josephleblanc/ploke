@@ -49,32 +49,35 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current Bucket
 
-Current bucket: resolved dynamic callable TUI/tool propagation.
+Current bucket: import/re-export/glob downstream propagation.
 
 Exit criteria:
 
-- Reuse an already-supported parser/DB/RAG dynamic callable case instead of
-  adding new parser breadth.
-- Prove `code_item_lookup` surfaces a resolved dynamic-function call edge,
-  not only unsupported dynamic blockers.
-- Preserve projected proof rows for the dynamic callsite, resolved call edge,
-  and resolved call resolution.
+- Reuse the already-resolved `axum` `TestClient::new` nested-glob subset
+  instead of adding new parser/resolver breadth.
+- Prove RAG exact call context preserves the same 98 resolved caller-site rows
+  and `TestClient::new` callee shape as DB target-centered queries.
+- Prove `code_item_lookup` and `code_item_edges` expose the same resolved
+  incoming rows and target-centered proof rows.
 
 Completed evidence:
 
-- Fixture source: `tests/fixture_crates/fixture_call_graph/src/lib.rs:269`
-  `call_parenthesized_function_item_binding` binds `let f = local_target;` and
-  calls `(f)()`.
-- Existing parser/DB/RAG evidence already classifies that call as a resolved
-  dynamic-function edge to `local_target`.
-- TUI/tool: `code_item_lookup_returns_resolved_dynamic_callable_context`
-  asserts the dynamic call context row, target id, `DynamicFunction` relation,
-  and projected `call_site` / `call_edge` / `call_resolution` proof rows.
+- DB: `axum_real_target_test_client_new_high_fanout_is_documented_gap`
+  asserts the split contract: 98 nested-glob rows resolve to
+  `TestClient::new`; 69 currently projected direct/other import rows remain
+  unsupported, targetless, and non-traversable.
+- RAG: `call_context_exact_reads_remaining_axum_supported_matrix_targets`
+  includes `TestClient::new` and asserts the same 98 resolved caller-site rows
+  and `AssociatedFunction` callee shape.
+- TUI/tool:
+  `code_item_lookup_returns_test_client_new_high_fanout_callers` and
+  `code_item_edges_returns_test_client_new_high_fanout_callers` cover
+  `AxumRemainingTarget::TestClientNew`.
 
-Reason to switch after this bucket: this closes one downstream propagation gap
-for already-supported dynamic callable facts. Broader callable trait objects,
-returned closures, callback values, and arbitrary expression callees still need
-binding/body-ownership semantics before resolver expansion.
+Reason to switch after this bucket: this closes downstream propagation for the
+current nested-glob resolved subset. The remaining 69 projected
+`TestClient::new` rows and five absent source rows still require broader import,
+body-owner, or projection work before their fail-closed contract should change.
 
 ## Coverage Matrix
 
@@ -92,7 +95,7 @@ binding/body-ownership semantics before resolver expansion.
 | Dynamic callable values | Stronger fixture-backed subset | Fixture-backed same-target branch/match initialized callable values resolve; mixed-target branches remain targetless | RAG preserves resolved branch-initialized rows and blocker rows | `code_item_lookup` now covers a resolved dynamic-function callable binding and the targetless matrix covers unsupported rows | local fixture; no representative found in checked-out axum/serde/memchr corpora | Switch buckets; broader callable trait objects/returned closures still need binding/body ownership work. |
 | Proc-macro entrypoint body owners | Met for now | `CallBodyOwnerId::Macro` owners project through axum `expand_with` and `expand_attr_with` real-corpus helper calls | Exact impact summaries expose public proc-macro callers and direct helper callsites | `code_item_lookup` surfaces four public macro callers for `expand_with` | axum | Switch buckets; callback arguments and closure/IIFE body calls remain fail-closed. |
 | Closures / nested body ownership | Partial/gap documented | Some nested rows intentionally absent to avoid flattening outer owners | RAG follows current DB surface | Tool coverage follows current DB surface | axum `parse_attrs` closure-body rows | Future bucket: closure/async body ownership before multi-hop closure traversal. |
-| Import / re-export / glob completeness | Partial, nested-glob subset improved | Explicit and some imported path calls work; chrono alias constructor path calls resolve through typed alias evidence; axum `TestClient::new` now resolves 98 nested `test_helpers::* -> pub use test_client::*` rows while 69 direct/other import rows remain targetless; axum `Request::new` through imported `Request = http::Request` is classified external and targetless; broader import completeness remains partial | Downstream sees the alias/nested-glob resolved subsets | Tool coverage follows current DB-resolved subset | axum, chrono | Switch buckets; keep strict source oracles for remaining fanout. |
+| Import / re-export / glob completeness | Partial, nested-glob subset improved | Explicit and some imported path calls work; chrono alias constructor path calls resolve through typed alias evidence; axum `TestClient::new` now resolves 98 nested `test_helpers::* -> pub use test_client::*` rows while 69 direct/other import rows remain targetless; axum `Request::new` through imported `Request = http::Request` is classified external and targetless; broader import completeness remains partial | RAG exact context preserves alias rows and the 98 `TestClient::new` nested-glob caller rows | Tool coverage includes chrono alias rows plus dedicated high-fanout lookup/edges tests for `AxumRemainingTarget::TestClientNew` | axum, chrono | Switch buckets; keep strict source oracles for remaining fanout. |
 | Dead-code / private zero-incoming | Met for now | `private_uncalled_nodes` lists axum `error_handling::traits`, excludes called `parse_attrs`, and exact impact reports no incoming source calls | Exact impact reports the same private target and empty caller/path/bucket sets | `code_item_lookup` reports zero incoming paths and zero impact caller counts | axum | Switch buckets; do not widen to generated/dynamic reachability here. |
 | DB usage summaries | Strong current surface | `call_impact_for_target`, `call_reach_for_owner`, paths, source files/modules, buckets, boundary/frontier rows | N/A | N/A | axum | Add fields only when they answer a matrix question, not opportunistically. |
 | RAG usage summaries | Strong current surface | N/A | Exact call paths, impact, reach, source metadata | N/A | axum | Add only when DB bucket already has proof. |

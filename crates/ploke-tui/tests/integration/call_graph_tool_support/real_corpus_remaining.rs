@@ -13,6 +13,7 @@ pub(crate) enum AxumRemainingTarget {
     FromRef,
     RouterNew,
     RouterClone,
+    TestClientNew,
 }
 
 pub(crate) struct AxumRemainingToolFixture {
@@ -63,6 +64,7 @@ impl AxumRemainingTarget {
             Self::FromRef => "axum-core FromRef::from_ref",
             Self::RouterNew => "axum Router::new",
             Self::RouterClone => "axum Router::clone",
+            Self::TestClientNew => "axum TestClient::new",
         }
     }
 
@@ -70,7 +72,7 @@ impl AxumRemainingTarget {
         match self {
             Self::CoreTryDowncast | Self::AxumTryDowncast => "try_downcast",
             Self::PositionFirst => "First",
-            Self::HandleErrorNew | Self::RouterNew => "new",
+            Self::HandleErrorNew | Self::RouterNew | Self::TestClientNew => "new",
             Self::RouterClone => "clone",
             Self::RequestExtExtract | Self::RequestPartsExtExtract => "extract_with_state",
             Self::FromRequest => "from_request",
@@ -91,7 +93,8 @@ impl AxumRemainingTarget {
             | Self::RequestExtExtract
             | Self::RequestPartsExtExtract
             | Self::RouterNew
-            | Self::RouterClone => None,
+            | Self::RouterClone
+            | Self::TestClientNew => None,
         }
     }
 
@@ -99,6 +102,7 @@ impl AxumRemainingTarget {
         match self {
             Self::HandleErrorNew => Some("HandleError"),
             Self::RouterNew | Self::RouterClone => Some("Router"),
+            Self::TestClientNew => Some("TestClient"),
             Self::RequestExtExtract => Some("Request"),
             Self::RequestPartsExtExtract => Some("Parts"),
             Self::CoreTryDowncast
@@ -121,7 +125,8 @@ impl AxumRemainingTarget {
             | Self::FromRequestParts
             | Self::FromRef
             | Self::RouterClone
-            | Self::RouterNew => "method",
+            | Self::RouterNew
+            | Self::TestClientNew => "method",
         }
     }
 
@@ -138,6 +143,7 @@ impl AxumRemainingTarget {
             Self::FromRef => 2,
             Self::RouterNew => 144,
             Self::RouterClone => 13,
+            Self::TestClientNew => 98,
         }
     }
 
@@ -196,6 +202,12 @@ impl AxumRemainingTarget {
                 "clone",
                 "inner: Arc::clone(&self.inner)",
                 "axum/src/routing/mod.rs",
+            ),
+            Self::TestClientNew => associated_path_target_by_resolved_rows(
+                db,
+                &["TestClient", "new"],
+                98,
+                "axum/src/test_helpers/test_client.rs",
             ),
         }
     }
@@ -521,6 +533,92 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
         |row| data_str(&row[1], "file_path").ends_with(file_suffix),
         variant_name,
     )
+}
+
+fn associated_path_target_by_resolved_rows(
+    db: &Database,
+    path_parts: &[&str],
+    expected_count: usize,
+    file_suffix: &str,
+) -> TargetInfo {
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[target_id, file_path, mod_path, count(site_id)] :=
+    *call_site {{
+        id: site_id,
+        call_kind: "Path",
+        path: $path @ 'NOW'
+    }},
+    *call_resolution_status {{
+        source_id: site_id,
+        source_kind: "Path",
+        status_kind: "Resolved",
+        resolution_kind: "LocalExact" @ 'NOW'
+    }},
+    *call_relation {{
+        source_id: site_id,
+        source_kind: "Path",
+        relation_kind: "AssociatedFunction",
+        target_id,
+        target_kind: "Method" @ 'NOW'
+    }},
+    ancestor[target_id, mod_id],
+    *module{{ id: mod_id, path: mod_path @ 'NOW' }},
+    file_owner_for_module[mod_id, file_id],
+    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+    let mut params = BTreeMap::new();
+    params.insert(
+        "path".to_string(),
+        DataValue::List(
+            path_parts
+                .iter()
+                .map(|part| DataValue::from(*part))
+                .collect(),
+        ),
+    );
+
+    let rows = db
+        .raw_query_params(&script, params)
+        .unwrap_or_else(|err| panic!("query associated path {path_parts:?}: {err}"));
+    let matching = rows
+        .rows
+        .iter()
+        .filter(|row| data_str(&row[1], "file_path").ends_with(file_suffix))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one associated path target for {path_parts:?}; rows: {:#?}",
+        rows.rows
+    );
+    let row = matching[0];
+    let DataValue::Num(cozo::Num::Int(count)) = &row[3] else {
+        panic!(
+            "associated path {path_parts:?} row count should be an integer: {:#?}",
+            rows.rows
+        );
+    };
+    assert_eq!(
+        *count as usize, expected_count,
+        "associated path {path_parts:?} should expose exactly {expected_count} resolved rows"
+    );
+
+    TargetInfo {
+        id: to_uuid(&row[0])
+            .unwrap_or_else(|err| panic!("associated path {path_parts:?} uuid: {err}")),
+        file_path: PathBuf::from(data_str(&row[1], "file_path")),
+        module_path: data_path(&row[2], "module path"),
+    }
 }
 
 fn one_target_info(
