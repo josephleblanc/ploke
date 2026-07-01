@@ -188,6 +188,16 @@ mod tests {
     }
 
     #[test]
+    fn code_item_lookup_description_mentions_call_summaries() {
+        let description = tool_description(ToolName::CodeItemLookup).to_lowercase();
+        assert!(description.contains("call_impact"));
+        assert!(description.contains("call_reach"));
+        assert!(description.contains("direct_call_sites"));
+        assert!(description.contains("external_frontier_calls"));
+        assert!(description.contains("source_files"));
+    }
+
+    #[test]
     fn insert_rust_item_tool_name_serializes() {
         let name = serde_json::to_string(&ToolName::InsertRustItem).expect("serialize");
         assert_eq!(name, "\"insert_rust_item\"");
