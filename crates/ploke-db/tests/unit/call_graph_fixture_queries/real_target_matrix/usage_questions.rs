@@ -674,6 +674,77 @@ fn axum_usage_questions_bucket_impact_callers_by_test_source() -> Result<(), DbE
 }
 
 #[test]
+fn axum_usage_questions_list_private_nodes_without_incoming_callers() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Dead code detection:
+    //   "Which private helpers have no incoming callers?"
+    //   "Is this function reachable from any binary, test, macro entrypoint,
+    //   or exported API?"
+    //
+    // Source oracle:
+    //   axum/src/error_handling/mod.rs:257 defines `#[test] fn traits()`.
+    //   No checked-in axum source row calls `traits(...)`; any test-harness
+    //   entrypoint is generated outside the stored source call graph.
+    //   axum-macros/src/attr_parsing.rs:59 defines `parse_attrs`, which has
+    //   multiple real source callers and must not appear in this list.
+    //
+    // Current contract: this is a direct resolved-call graph query, not a full
+    // semantic reachability proof across generated harnesses or value-flow.
+    let uncalled = db.private_uncalled_nodes()?;
+    let traits = function_id_by_name_in_module(&db, &["crate", "error_handling"], "traits")?;
+    let parse_attrs =
+        function_id_by_name_in_module(&db, &["crate", "attr_parsing"], "parse_attrs")?;
+
+    let traits_row = uncalled
+        .iter()
+        .find(|node| node.id == traits)
+        .unwrap_or_else(|| {
+            panic!(
+                "private uncalled-node query should include error_handling::traits: {uncalled:#?}"
+            )
+        });
+    assert_eq!(traits_row.kind, CallNodeKind::Function);
+    assert_eq!(traits_row.name, "traits");
+    assert!(!traits_row.is_public);
+    assert_source_file(
+        std::slice::from_ref(&traits_row.file_path),
+        "axum/src/error_handling/mod.rs",
+        "private uncalled-node source file",
+    );
+
+    assert!(
+        uncalled.iter().all(|node| node.id != parse_attrs),
+        "private uncalled-node query must exclude called helper parse_attrs: {uncalled:#?}"
+    );
+    assert_no_incoming_traversal_to_target(
+        &db,
+        traits,
+        "axum/src/error_handling/mod.rs:257 traits",
+    )?;
+
+    let report = db.call_impact_for_target(
+        traits,
+        CallPathOptions {
+            max_depth: 3,
+            max_paths: 16,
+        },
+    )?;
+    assert_eq!(report.target.id, traits);
+    assert!(report.callers.is_empty(), "{report:#?}");
+    assert!(report.direct_callers.is_empty(), "{report:#?}");
+    assert!(report.direct_call_sites.is_empty(), "{report:#?}");
+    assert!(report.public_callers.is_empty(), "{report:#?}");
+    assert!(report.test_callers.is_empty(), "{report:#?}");
+    assert!(report.non_test_callers.is_empty(), "{report:#?}");
+
+    Ok(())
+}
+
+#[test]
 fn axum_usage_questions_report_proc_macro_public_entrypoint_impact() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 

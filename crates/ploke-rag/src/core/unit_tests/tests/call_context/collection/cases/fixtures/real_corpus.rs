@@ -1258,6 +1258,71 @@ async fn call_impact_exact_buckets_axum_callers_by_test_source() -> Result<(), E
 }
 
 #[tokio::test]
+async fn call_impact_exact_reports_private_target_without_incoming_callers() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Dead code detection:
+    //   "Which private helpers have no incoming callers?"
+    //   "Is this function reachable from any binary, test, macro entrypoint,
+    //   or exported API?"
+    //
+    // Source oracle:
+    //   axum/src/error_handling/mod.rs:257 defines `#[test] fn traits()`.
+    //   No checked-in axum source row calls `traits(...)`; generated test
+    //   harness entrypoints are outside the persisted source call graph.
+    let target = function_id_by_name_in_module(&db, &["crate", "error_handling"], "traits")?;
+    let uncalled = db.private_uncalled_nodes()?;
+    assert!(
+        uncalled.iter().any(|node| node.id == target),
+        "DB private uncalled-node helper should list error_handling::traits: {uncalled:#?}"
+    );
+
+    let report = rag
+        .exact_call_impact_for_target(
+            target,
+            CallPathOptions {
+                max_depth: 3,
+                max_paths: 16,
+            },
+        )?
+        .expect("call context enabled");
+    assert_eq!(report.target.id, target);
+    assert_eq!(report.target.name, "traits");
+    assert_eq!(report.target.kind, "Function");
+    assert_eq!(
+        report.target.module_path,
+        path(&["crate", "error_handling"])
+    );
+    assert!(!report.target.is_public);
+    assert!(
+        report
+            .target
+            .file_path
+            .as_ref()
+            .ends_with("axum/src/error_handling/mod.rs")
+    );
+    assert!(report.paths.is_empty(), "{report:#?}");
+    assert!(report.callers.is_empty(), "{report:#?}");
+    assert!(report.direct_callers.is_empty(), "{report:#?}");
+    assert!(report.direct_call_sites.is_empty(), "{report:#?}");
+    assert!(report.callsite_buckets.is_empty(), "{report:#?}");
+    assert!(report.public_callers.is_empty(), "{report:#?}");
+    assert!(report.test_callers.is_empty(), "{report:#?}");
+    assert!(report.non_test_callers.is_empty(), "{report:#?}");
+    assert_call_source_file(
+        &report.source_files,
+        "axum/src/error_handling/mod.rs",
+        "RAG zero-caller impact source files",
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_exact_reads_axum_router_clone_typed_local_callers() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;

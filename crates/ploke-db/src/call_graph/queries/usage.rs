@@ -13,6 +13,7 @@ use super::super::{
     CallContextRow, CallImpactReport, CallNodeInfo, CallPath, CallPathEdge, CallPathOptions,
     CallReachReport, CallRelationKind, CallSiteBucket, CallSiteKind, CallStatusKind,
 };
+use super::metadata::{call_node_info_rank, decode_call_node_info};
 
 impl Database {
     /// Summarizes bounded incoming call paths for impact/navigation questions.
@@ -138,6 +139,82 @@ impl Database {
             source_files: sources.files,
             source_modules: sources.modules,
         })
+    }
+
+    /// Lists private executable call-graph nodes with no direct resolved incoming call edge.
+    ///
+    /// This is a conservative source-call graph query for dead-code triage. It
+    /// does not model generated entrypoints, dynamic dispatch, callback
+    /// value-flow, or external callers; those remain separate proof/frontier
+    /// questions instead of being inferred here.
+    pub fn private_uncalled_nodes(&self) -> Result<Vec<CallNodeInfo>, DbError> {
+        let script = format!(
+            r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
+file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
+
+private_node[id, kind, name, vis_kind, module_path, file_path] :=
+  *function{{ id, name, vis_kind @ 'NOW' }},
+  vis_kind != "public",
+  kind = "Function",
+  ancestor[id, mod_id],
+  *module{{ id: mod_id, path: module_path @ 'NOW' }},
+  file_owner_for_module[mod_id, file_owner_id],
+  *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
+
+private_node[id, kind, name, vis_kind, module_path, file_path] :=
+  *macro{{ id, name, vis_kind @ 'NOW' }},
+  vis_kind != "public",
+  kind = "Macro",
+  ancestor[id, mod_id],
+  *module{{ id: mod_id, path: module_path @ 'NOW' }},
+  file_owner_for_module[mod_id, file_owner_id],
+  *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
+
+private_node[id, kind, name, vis_kind, module_path, file_path] :=
+  *method{{ id, name, vis_kind @ 'NOW' }},
+  vis_kind != "public",
+  kind = "Method",
+  ancestor[id, mod_id],
+  *module{{ id: mod_id, path: module_path @ 'NOW' }},
+  file_owner_for_module[mod_id, file_owner_id],
+  *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
+
+incoming[id] := *call_relation {{ target_id: id @ 'NOW' }}
+
+?[id, kind, name, vis_kind, module_path, file_path] :=
+  private_node[id, kind, name, vis_kind, module_path, file_path],
+  not incoming[id]
+
+:sort kind, file_path, module_path, name, id
+"#
+        );
+        let rows = self.run_script(&script, BTreeMap::new(), ScriptMutability::Immutable)?;
+
+        let mut nodes_by_id = BTreeMap::<Uuid, CallNodeInfo>::new();
+        for row in &rows.rows {
+            let info = decode_call_node_info(row)?;
+            let entry = nodes_by_id.entry(info.id).or_insert_with(|| info.clone());
+            if call_node_info_rank(&info) < call_node_info_rank(entry) {
+                *entry = info;
+            }
+        }
+        let mut nodes = nodes_by_id.into_values().collect::<Vec<_>>();
+        nodes.sort_by_key(|node| {
+            (
+                node.kind,
+                node.file_path.clone(),
+                node.module_path.clone(),
+                node.name.clone(),
+                node.id.as_u128(),
+            )
+        });
+        Ok(nodes)
     }
 }
 

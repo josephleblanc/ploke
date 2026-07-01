@@ -109,6 +109,13 @@ pub(crate) struct AxumExpandWithToolFixture {
     pub(crate) target: Uuid,
 }
 
+pub(crate) struct AxumErrorHandlingTraitsToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) target: Uuid,
+}
+
 pub(crate) struct AxumHandlerCallToolFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,
@@ -567,6 +574,48 @@ impl AxumExpandWithToolFixture {
             "expand_with should project node-scoped proof rows"
         );
         let state = axum_state_for_target(Arc::clone(&db), &target, "expand_with").await;
+
+        Self {
+            state,
+            file_path: target.file_path,
+            module_path: target.module_path,
+            target: target.id,
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl AxumErrorHandlingTraitsToolFixture {
+    pub(crate) async fn new() -> Self {
+        let db = axum_call_graph_db();
+        let target =
+            axum_function_target_by_name_and_file(&db, "traits", "axum/src/error_handling/mod.rs");
+        let callers = db
+            .callers_for_target(target.id)
+            .expect("error_handling::traits incoming callers");
+        assert!(
+            callers.is_empty(),
+            "error_handling::traits should have zero persisted source callers: {callers:#?}"
+        );
+        let uncalled = db.private_uncalled_nodes().expect("private uncalled nodes");
+        assert!(
+            uncalled.iter().any(|node| node.id == target.id),
+            "private uncalled-node helper should include error_handling::traits: {uncalled:#?}"
+        );
+        assert!(
+            db.project_call_proof_facts_for_node(target.id, "bd:corpus-axum-call-graph")
+                .expect("project axum error_handling::traits proof facts")
+                >= 3,
+            "error_handling::traits should project node-scoped proof rows for its outgoing source calls"
+        );
+        let state = axum_state_for_target(Arc::clone(&db), &target, "error_handling::traits").await;
 
         Self {
             state,

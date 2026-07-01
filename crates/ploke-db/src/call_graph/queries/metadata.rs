@@ -119,7 +119,9 @@ node_info[id, kind, name, vis_kind, module_path, file_path] :=
     }
 }
 
-fn call_node_info_rank(row: &CallNodeInfo) -> (usize, u128, CallNodeKind, String, String, String) {
+pub(super) fn call_node_info_rank(
+    row: &CallNodeInfo,
+) -> (usize, u128, CallNodeKind, String, String, String) {
     (
         row.module_path.len(),
         row.id.as_u128(),
@@ -130,7 +132,7 @@ fn call_node_info_rank(row: &CallNodeInfo) -> (usize, u128, CallNodeKind, String
     )
 }
 
-fn decode_call_node_info(row: &[DataValue]) -> Result<CallNodeInfo, DbError> {
+pub(super) fn decode_call_node_info(row: &[DataValue]) -> Result<CallNodeInfo, DbError> {
     let visibility = to_string(&row[3])?;
     Ok(CallNodeInfo {
         id: to_uuid(&row[0])?,

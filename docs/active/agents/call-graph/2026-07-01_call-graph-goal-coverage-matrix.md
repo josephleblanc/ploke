@@ -49,39 +49,37 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current Bucket
 
-Current bucket: proc-macro entrypoint body owners.
+Current bucket: dead-code/private zero-incoming query surface.
 
 Exit criteria:
 
-- Model procedural macro item bodies as `CallBodyOwnerId::Macro` without
-  widening body ownership to arbitrary nodes.
-- Preserve strict pruning: macro-owned call sites must survive only when the
-  macro node itself survives the parser graph retain/prune pass.
-- Project macro owners through transform/DB/RAG/TUI summaries using the same
-  owner-kind validation path as functions, methods, consts, and statics.
-- Prove the behavior against a real axum corpus source oracle and keep callback
-  arguments/closure bodies fail-closed.
+- Add a DB helper for private executable call-graph nodes with no direct
+  resolved incoming source call edge.
+- Prove the helper against a real axum source oracle with both a positive
+  private zero-incoming target and a negative called-helper control.
+- Propagate the same zero-caller impact semantics through exact RAG and TUI
+  lookup surfaces.
+- Keep the query explicitly scoped to persisted source calls; do not infer
+  generated test harnesses, external callers, dynamic dispatch, callback
+  value-flow, or full semantic reachability.
 
 Completed evidence:
 
-- Commit: `f53f67cc0 Add proc-macro call graph owners`.
-- Fixture source: `fixture_macros` has a proc-macro body that calls a local
-  helper; the paranoid parser fixture resolves that helper through a macro
-  owner.
-- Real corpus: axum `axum-macros/src/lib.rs:{377,426,665,715}` public
-  proc-macro entrypoints call `expand_with(...)`, and lines `{581,637}` call
-  `expand_attr_with(...)`.
-- DB: `real_target_matrix::proc_macros` proves one-hop resolved macro-owner
-  paths to those helpers; usage-question impact tests expose four public macro
-  callers for `expand_with`.
-- RAG/TUI: exact impact summaries and `code_item_lookup` preserve the same
-  public proc-macro caller counts, direct callsite rows, source files, and
-  path/function bucket.
+- DB: `private_uncalled_nodes` lists axum
+  `axum/src/error_handling/mod.rs:257` `error_handling::traits` and excludes
+  called helper `axum-macros/src/attr_parsing.rs:59` `parse_attrs`.
+- DB: `call_impact_for_target` for `error_handling::traits` returns the target
+  metadata with no callers, direct callers, direct callsites, public callers,
+  test callers, or non-test callers.
+- RAG: exact impact collection preserves the same private target metadata,
+  source file, and empty caller/path/bucket sets.
+- TUI/tool: `code_item_lookup` preserves the same zero incoming path and
+  impact counts in JSON and UI payload fields.
 
-Reason to switch after this bucket: callback arguments, IIFEs, and closure-body
-calls remain intentionally targetless or absent. The next useful bucket is
-nested closure/async body ownership, but only after adding an explicit typed
-owner model; do not flatten closure body calls onto outer functions.
+Reason to switch after this bucket: this answers the direct persisted-source
+dead-code question. Full reachability from generated harnesses, exported APIs,
+dynamic dispatch, callback values, and trait-object calls belongs to later
+binding/type-aware semantic buckets, not to this helper.
 
 ## Coverage Matrix
 
@@ -100,6 +98,7 @@ owner model; do not flatten closure body calls onto outer functions.
 | Proc-macro entrypoint body owners | Met for now | `CallBodyOwnerId::Macro` owners project through axum `expand_with` and `expand_attr_with` real-corpus helper calls | Exact impact summaries expose public proc-macro callers and direct helper callsites | `code_item_lookup` surfaces four public macro callers for `expand_with` | axum | Switch buckets; callback arguments and closure/IIFE body calls remain fail-closed. |
 | Closures / nested body ownership | Partial/gap documented | Some nested rows intentionally absent to avoid flattening outer owners | RAG follows current DB surface | Tool coverage follows current DB surface | axum `parse_attrs` closure-body rows | Future bucket: closure/async body ownership before multi-hop closure traversal. |
 | Import / re-export / glob completeness | Partial, alias constructors/frontiers improved | Explicit and some imported path calls work; chrono alias constructor path calls now resolve through typed alias evidence; axum `Request::new` through imported `Request = http::Request` is classified external and targetless; broader re-export/glob gaps remain | Downstream sees the alias-resolved subset | Tool coverage follows current DB-resolved subset | axum, chrono | Switch buckets; keep strict source oracles for missing fanout. |
+| Dead-code / private zero-incoming | Current slice | `private_uncalled_nodes` lists axum `error_handling::traits`, excludes called `parse_attrs`, and exact impact reports no incoming source calls | Exact impact reports the same private target and empty caller/path/bucket sets | `code_item_lookup` reports zero incoming paths and zero impact caller counts | axum | Switch buckets after focused/broad checks and commit; do not widen to generated/dynamic reachability here. |
 | DB usage summaries | Strong current surface | `call_impact_for_target`, `call_reach_for_owner`, paths, source files/modules, buckets, boundary/frontier rows | N/A | N/A | axum | Add fields only when they answer a matrix question, not opportunistically. |
 | RAG usage summaries | Strong current surface | N/A | Exact call paths, impact, reach, source metadata | N/A | axum | Add only when DB bucket already has proof. |
 | TUI/tool usage summaries | Strong current surface | N/A | N/A | `code_item_lookup`, `code_item_edges`, and exact call-path tool coverage | axum | Keep tool changes thin; do not invent semantics outside RAG/DB. |

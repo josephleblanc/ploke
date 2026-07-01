@@ -11,15 +11,15 @@ use ploke_tui::tools::{
 
 use crate::call_graph_tool_support::{
     AxumAwaitReceiverToolFixture, AxumBodyEmptyToolFixture, AxumBoxedIntoRouteToolFixture,
-    AxumExpandWithToolFixture, AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture,
-    AxumParseAttrsToolFixture, AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture,
-    CallGraphToolFixture, ChronoAliasConstructorToolFixture, assert_await_result_unwrap_context,
-    assert_await_result_unwrap_proof, assert_body_empty_incoming_context,
-    assert_boxed_into_route_incoming_context, assert_call_path_node,
-    assert_expected_path_incoming_context, assert_handler_call_incoming_context,
-    assert_incoming_context, assert_json_from_bytes_incoming_context,
-    assert_parse_attrs_incoming_context, assert_run_ui_tests_incoming_context, assert_target_proof,
-    assert_two_hop_call_path, ui_field,
+    AxumErrorHandlingTraitsToolFixture, AxumExpandWithToolFixture, AxumHandlerCallToolFixture,
+    AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture, AxumRequestExtractPathToolFixture,
+    AxumRunUiTestsToolFixture, CallGraphToolFixture, ChronoAliasConstructorToolFixture,
+    assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
+    assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
+    assert_call_path_node, assert_expected_path_incoming_context,
+    assert_handler_call_incoming_context, assert_incoming_context,
+    assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
+    assert_run_ui_tests_incoming_context, assert_target_proof, assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -845,6 +845,104 @@ async fn code_item_lookup_surfaces_proc_macro_impact_callers() {
     assert_eq!(ui_field(ui, "impact_direct_callers"), "4");
     assert_eq!(ui_field(ui, "impact_direct_call_sites"), "4");
     assert_eq!(ui_field(ui, "impact_public_callers"), "4");
+}
+
+#[tokio::test]
+async fn code_item_lookup_reports_private_target_without_incoming_callers() {
+    let fixture = AxumErrorHandlingTraitsToolFixture::new().await;
+    let params = LookupParams {
+        item_name: Cow::Borrowed("traits"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: None,
+        owner_type: None,
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("axum-traits-zero-impact-lookup"))
+        .await
+        .expect("error_handling::traits lookup");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Dead code detection:
+    //   "Which private helpers have no incoming callers?"
+    //   "Is this function reachable from any binary, test, macro entrypoint,
+    //   or exported API?"
+    //
+    // Source oracle:
+    //   axum/src/error_handling/mod.rs:257 defines `#[test] fn traits()`.
+    //   No checked-in axum source row calls `traits(...)`; generated test
+    //   harness entrypoints are outside the persisted source call graph.
+    let incoming_paths = payload
+        .get("call_paths_to_target")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_paths_to_target array");
+    assert!(
+        incoming_paths.is_empty(),
+        "code_item_lookup should expose zero incoming call paths: {incoming_paths:#?}"
+    );
+
+    let impact = payload
+        .get("call_impact")
+        .and_then(serde_json::Value::as_object)
+        .expect("call_impact object");
+    let target_id = fixture.target.to_string();
+    assert_eq!(
+        impact
+            .get("target")
+            .and_then(|target| target.get("id"))
+            .and_then(serde_json::Value::as_str),
+        Some(target_id.as_str())
+    );
+    assert_eq!(
+        impact
+            .get("target")
+            .and_then(|target| target.get("is_public"))
+            .and_then(serde_json::Value::as_bool),
+        Some(false)
+    );
+    for field in [
+        "paths",
+        "callers",
+        "direct_callers",
+        "direct_call_sites",
+        "callsite_buckets",
+        "public_callers",
+        "test_callers",
+        "non_test_callers",
+    ] {
+        let rows = impact
+            .get(field)
+            .and_then(serde_json::Value::as_array)
+            .unwrap_or_else(|| panic!("call_impact {field} array: {impact:#?}"));
+        assert!(
+            rows.is_empty(),
+            "code_item_lookup zero-caller impact {field} should be empty: {rows:#?}"
+        );
+    }
+    let source_files = impact
+        .get("source_files")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_impact source_files array");
+    assert_source_file(
+        source_files,
+        "axum/src/error_handling/mod.rs",
+        "code_item_lookup zero-caller impact source files",
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "call_context_incoming"), "0");
+    assert_eq!(ui_field(ui, "call_paths_to_target"), "0");
+    assert_eq!(ui_field(ui, "impact_callers"), "0");
+    assert_eq!(ui_field(ui, "impact_direct_callers"), "0");
+    assert_eq!(ui_field(ui, "impact_direct_call_sites"), "0");
+    assert_eq!(ui_field(ui, "impact_public_callers"), "0");
+    assert_eq!(ui_field(ui, "impact_test_callers"), "0");
+    assert_eq!(ui_field(ui, "impact_non_test_callers"), "0");
 }
 
 #[tokio::test]
