@@ -73,7 +73,10 @@ future work can choose the next batch without rereading the diary-style notes.
   same resolved-only surface through `exact_call_impact_for_target`, and the
   axum real-corpus regression proves both the `FromRequest::from_request`
   two-hop caller summary and the fail-closed proc-macro public-entrypoint gap
-  for `expand_with`. Focused verification:
+  for `expand_with`. `code_item_lookup` now includes this impact summary in
+  exact target lookup payloads and UI counts, so exact-coordinate tool calls can
+  answer "who eventually reaches this item?" without reassembling incoming path
+  rows client-side. Focused verification:
   `cargo test -p ploke-db --features call_graph real_target_matrix::usage_questions -- --nocapture`,
   `cargo test -p ploke-rag --features call_graph call_paths_exact_reads_axum_request_extract_two_hop_trait_path -- --nocapture`,
   `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
