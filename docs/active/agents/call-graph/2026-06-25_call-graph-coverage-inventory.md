@@ -107,6 +107,19 @@ future work can choose the next batch without rereading the diary-style notes.
   `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
   and
   `cargo test -p ploke-tui --features call_graph code_item -- --nocapture`.
+- 2026-07-01: Owner reach summaries now split external dependency frontier
+  rows into an explicit `external_frontier_calls` subset while preserving the
+  full fail-closed `frontier_calls` list. DB, RAG, and exact
+  `code_item_lookup` now answer the security/performance usage question
+  "which external dependency calls are made from this entrypoint?" without
+  requiring clients to re-filter unsupported, unresolved, or ambiguous frontier
+  rows. The axum proof case remains `Json::from_bytes` in `axum/src/json.rs`,
+  where `serde_json::Deserializer::from_slice(bytes)` is external and targetless
+  but visible in both frontier lists. Focused verification:
+  `cargo test -p ploke-db --features call_graph real_target_matrix::usage_questions -- --nocapture`,
+  `cargo test -p ploke-rag --features call_graph real_corpus -- --nocapture`,
+  and
+  `cargo test -p ploke-tui --features call_graph code_item -- --nocapture`.
 - 2026-06-30: The first usage-question slice now has real-corpus proofs across
   DB and TUI surfaces. DB coverage in
   `real_target_matrix::usage_questions` proves that the persisted axum call
