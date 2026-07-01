@@ -14,7 +14,10 @@ use crate::call_graph_tool_support::{
 
 #[tokio::test]
 async fn code_item_lookup_returns_dynamic_targetless_real_corpus_rows() {
-    for case in DynamicToolCase::AXUM {
+    for case in DynamicToolCase::AXUM
+        .into_iter()
+        .chain(DynamicToolCase::MEMCHR)
+    {
         let fixture = DynamicToolFixture::new(case).await;
         let params = LookupParams {
             item_name: Cow::Borrowed(case.method),
@@ -25,7 +28,7 @@ async fn code_item_lookup_returns_dynamic_targetless_real_corpus_rows() {
             owner_type: Some(Cow::Borrowed(case.owner_type)),
         };
 
-        let result = CodeItemLookup::execute(params, fixture.ctx("axum-dynamic-lookup"))
+        let result = CodeItemLookup::execute(params, fixture.ctx("dynamic-targetless-lookup"))
             .await
             .unwrap_or_else(|err| panic!("{} code_item_lookup: {err}", fixture.case.label));
         let payload: serde_json::Value =
@@ -48,15 +51,25 @@ async fn code_item_lookup_returns_dynamic_targetless_real_corpus_rows() {
         //   axum/src/boxed.rs:120 calls `(self.into_route)(self.router, state)`.
         //   axum/src/boxed.rs:159 calls `(self.layer)(self.inner.into_route(state))`.
         //   axum/src/serve/listener.rs:236 calls `(self.tap_fn)(&mut io)`.
+        //   memchr/src/memmem/searcher.rs:222 calls
+        //   `(self.call)(self, prestate, haystack, needle)`.
+        //   memchr/src/memmem/searcher.rs:718 calls `(self.call)(self, haystack)`.
         // Expected traversal: exact owner lookup exposes the structural
         // dynamic call_site and blocked call_resolution rows, with zero callee
-        // targets until callable-field, closure, and trait-object proof exists.
-        let site_id =
-            assert_dynamic_context(call_context, fixture.owner, fixture.case.label, "lookup");
+        // targets until callable-field, closure, function-pointer, and
+        // trait-object proof exists.
+        let site_id = assert_dynamic_context(
+            call_context,
+            fixture.owner,
+            fixture.case.expected_arg_count,
+            fixture.case.label,
+            "lookup",
+        );
         assert_dynamic_proof(
             proof_context,
             fixture.owner,
             site_id,
+            fixture.case.build_domain(),
             fixture.case.label,
             "lookup",
         );
@@ -376,7 +389,10 @@ async fn code_item_lookup_returns_from_ref_dependency_root_path_rows() {
 
 #[tokio::test]
 async fn code_item_edges_returns_dynamic_targetless_real_corpus_rows() {
-    for case in DynamicToolCase::AXUM {
+    for case in DynamicToolCase::AXUM
+        .into_iter()
+        .chain(DynamicToolCase::MEMCHR)
+    {
         let fixture = DynamicToolFixture::new(case).await;
         let params = EdgesParams {
             item_name: Cow::Borrowed(case.method),
@@ -387,7 +403,7 @@ async fn code_item_edges_returns_dynamic_targetless_real_corpus_rows() {
             owner_type: Some(Cow::Borrowed(case.owner_type)),
         };
 
-        let result = CodeItemEdges::execute(params, fixture.ctx("axum-dynamic-edges"))
+        let result = CodeItemEdges::execute(params, fixture.ctx("dynamic-targetless-edges"))
             .await
             .unwrap_or_else(|err| panic!("{} code_item_edges: {err}", fixture.case.label));
         let payload: serde_json::Value =
@@ -405,12 +421,18 @@ async fn code_item_edges_returns_dynamic_targetless_real_corpus_rows() {
 
         // Same real-corpus dynamic targetless oracle as the lookup test above,
         // exercised through the edge-oriented exact tool payload.
-        let site_id =
-            assert_dynamic_context(call_context, fixture.owner, fixture.case.label, "edges");
+        let site_id = assert_dynamic_context(
+            call_context,
+            fixture.owner,
+            fixture.case.expected_arg_count,
+            fixture.case.label,
+            "edges",
+        );
         assert_dynamic_proof(
             proof_context,
             fixture.owner,
             site_id,
+            fixture.case.build_domain(),
             fixture.case.label,
             "edges",
         );

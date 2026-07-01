@@ -22,8 +22,8 @@ use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_io::IoManagerHandle;
 use ploke_rag::{RagConfig, RagService, TokenBudget};
 use ploke_test_utils::{
-    CORPUS_AXUM_CALL_GRAPH, CORPUS_CHRONO_CALL_GRAPH, fresh_backup_fixture_db,
-    setup_db_full_multi_embedding, workspace_root,
+    CORPUS_AXUM_CALL_GRAPH, CORPUS_CHRONO_CALL_GRAPH, CORPUS_MEMCHR_CALL_GRAPH,
+    fresh_backup_fixture_db, setup_db_full_multi_embedding, workspace_root,
 };
 use ploke_tui::{
     EventBus,
@@ -946,6 +946,18 @@ fn chrono_call_graph_db() -> Arc<Database> {
         db.has_call_graph_relations()
             .expect("check call graph relations"),
         "corpus_chrono_call_graph should expose call graph relations"
+    );
+    db
+}
+
+fn memchr_call_graph_db() -> Arc<Database> {
+    let db = Arc::new(
+        fresh_backup_fixture_db(&CORPUS_MEMCHR_CALL_GRAPH).expect("corpus memchr call graph db"),
+    );
+    assert!(
+        db.has_call_graph_relations()
+            .expect("check call graph relations"),
+        "corpus_memchr_call_graph should expose call graph relations"
     );
     db
 }

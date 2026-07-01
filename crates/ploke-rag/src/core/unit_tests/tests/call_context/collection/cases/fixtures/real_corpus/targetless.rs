@@ -6,6 +6,13 @@ struct DynamicCase {
     body: &'static str,
 }
 
+struct MemchrDynamicCase {
+    label: &'static str,
+    method: &'static str,
+    body: &'static str,
+    expected_arg_count: u32,
+}
+
 struct MethodCase {
     label: &'static str,
     method: &'static str,
@@ -97,6 +104,76 @@ async fn call_context_collection_reads_axum_dynamic_callable_field_gaps() -> Res
 
         let call = dynamic[0];
         assert_eq!(call.owner_id, owner);
+        assert_eq!(call.status, CallStatusKind::Unsupported);
+        assert_eq!(call.resolution, None);
+        assert!(
+            call.targets.is_empty(),
+            "{} should remain targetless in RAG call context: {call:#?}",
+            case.label
+        );
+    }
+
+    Ok(())
+}
+
+#[tokio::test]
+async fn call_context_collection_reads_memchr_function_pointer_field_gaps() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_memchr_call_graph_rag()?;
+
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Source chains:
+    //   memchr/src/memmem/searcher.rs:33-35 defines `Searcher.call`.
+    //   memchr/src/memmem/searcher.rs:222 calls
+    //   `(self.call)(self, prestate, haystack, needle)`.
+    //   memchr/src/memmem/searcher.rs:604-605 defines `Prefilter.call`.
+    //   memchr/src/memmem/searcher.rs:718 calls `(self.call)(self, haystack)`.
+    //
+    // Expected traversal: these function-pointer fields are structurally
+    // visible dynamic callsites, but have zero traversable edges until field
+    // binding and function-pointer dispatch proof is modeled. DB tests own
+    // source-line fanout; RAG must preserve the targetless unsupported rows
+    // and argument counts without guessing.
+    let cases = [
+        MemchrDynamicCase {
+            label: "memchr/src/memmem/searcher.rs:222 Searcher.call",
+            method: "find",
+            body: "(self.call)(self, prestate, haystack, needle)",
+            expected_arg_count: 4,
+        },
+        MemchrDynamicCase {
+            label: "memchr/src/memmem/searcher.rs:718 Prefilter.call",
+            method: "find",
+            body: "(self.call)(self, haystack)",
+            expected_arg_count: 2,
+        },
+    ];
+
+    for case in cases {
+        let owner = method_id_by_name_and_body_substring(&db, case.method, case.body)?;
+        let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+        let context = call_context
+            .get(&owner)
+            .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
+        let dynamic = context
+            .iter()
+            .filter(|call| {
+                call.kind == CallSiteKind::Dynamic && call.callee == CallCalleeInfo::Dynamic
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            dynamic.len(),
+            1,
+            "{} should expose one function-pointer field row: {context:#?}",
+            case.label
+        );
+
+        let call = dynamic[0];
+        assert_eq!(call.owner_id, owner);
+        assert_eq!(call.arg_count, Some(case.expected_arg_count));
         assert_eq!(call.status, CallStatusKind::Unsupported);
         assert_eq!(call.resolution, None);
         assert!(

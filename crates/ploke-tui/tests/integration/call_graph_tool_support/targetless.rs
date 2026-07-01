@@ -7,6 +7,8 @@ pub(crate) struct DynamicToolCase {
     pub(crate) owner_type: &'static str,
     pub(crate) file_suffix: &'static str,
     pub(crate) body: &'static str,
+    pub(crate) expected_arg_count: Option<u32>,
+    corpus: DynamicToolCorpus,
 }
 
 pub(crate) struct DynamicToolFixture {
@@ -15,6 +17,12 @@ pub(crate) struct DynamicToolFixture {
     pub(crate) file_path: PathBuf,
     pub(crate) module_path: Vec<String>,
     pub(crate) owner: Uuid,
+}
+
+#[derive(Clone, Copy)]
+enum DynamicToolCorpus {
+    Axum,
+    Memchr,
 }
 
 #[derive(Clone)]
@@ -91,6 +99,8 @@ impl DynamicToolCase {
             owner_type: "MakeErasedHandler",
             file_suffix: "axum/src/boxed.rs",
             body: "(self.into_route)(self.handler, state)",
+            expected_arg_count: None,
+            corpus: DynamicToolCorpus::Axum,
         },
         Self {
             label: "axum/src/boxed.rs:120 MakeErasedRouter::into_route callable field",
@@ -98,6 +108,8 @@ impl DynamicToolCase {
             owner_type: "MakeErasedRouter",
             file_suffix: "axum/src/boxed.rs",
             body: "(self.into_route)(self.router, state)",
+            expected_arg_count: None,
+            corpus: DynamicToolCorpus::Axum,
         },
         Self {
             label: "axum/src/boxed.rs:159 Map::into_route layer trait object",
@@ -105,6 +117,8 @@ impl DynamicToolCase {
             owner_type: "Map",
             file_suffix: "axum/src/boxed.rs",
             body: "(self.layer)(self.inner.into_route(state))",
+            expected_arg_count: None,
+            corpus: DynamicToolCorpus::Axum,
         },
         Self {
             label: "axum/src/serve/listener.rs:236 TapIo::accept callable field",
@@ -112,8 +126,51 @@ impl DynamicToolCase {
             owner_type: "TapIo",
             file_suffix: "axum/src/serve/listener.rs",
             body: "(self.tap_fn)(&mut io)",
+            expected_arg_count: None,
+            corpus: DynamicToolCorpus::Axum,
         },
     ];
+
+    pub(crate) const MEMCHR: [Self; 2] = [
+        Self {
+            label: "memchr/src/memmem/searcher.rs:222 Searcher.call",
+            method: "find",
+            owner_type: "Searcher",
+            file_suffix: "src/memmem/searcher.rs",
+            body: "(self.call)(self, prestate, haystack, needle)",
+            expected_arg_count: Some(4),
+            corpus: DynamicToolCorpus::Memchr,
+        },
+        Self {
+            label: "memchr/src/memmem/searcher.rs:718 Prefilter.call",
+            method: "find",
+            owner_type: "Prefilter",
+            file_suffix: "src/memmem/searcher.rs",
+            body: "(self.call)(self, haystack)",
+            expected_arg_count: Some(2),
+            corpus: DynamicToolCorpus::Memchr,
+        },
+    ];
+
+    pub(crate) fn build_domain(self) -> &'static str {
+        self.corpus.build_domain()
+    }
+}
+
+impl DynamicToolCorpus {
+    fn db(self) -> Arc<Database> {
+        match self {
+            Self::Axum => axum_call_graph_db(),
+            Self::Memchr => memchr_call_graph_db(),
+        }
+    }
+
+    fn build_domain(self) -> &'static str {
+        match self {
+            Self::Axum => "bd:corpus-axum-call-graph",
+            Self::Memchr => "bd:corpus-memchr-call-graph",
+        }
+    }
 }
 
 impl ReceiverToolCase {
@@ -236,7 +293,7 @@ impl PathToolCase {
 
 impl DynamicToolFixture {
     pub(crate) async fn new(case: DynamicToolCase) -> Self {
-        let db = axum_call_graph_db();
+        let db = case.corpus.db();
         let owner = owner_by_body(
             &db,
             case.method,
@@ -247,7 +304,7 @@ impl DynamicToolFixture {
             case.label,
         );
         assert!(
-            db.project_call_proof_facts_for_node(owner.id, "bd:corpus-axum-call-graph")
+            db.project_call_proof_facts_for_node(owner.id, case.build_domain())
                 .unwrap_or_else(|err| panic!("project {} proof facts: {err}", case.label))
                 >= 2,
             "{} should project targetless dynamic call-site proof rows",
@@ -365,6 +422,7 @@ impl PathToolFixture {
 pub(crate) fn assert_dynamic_context(
     calls: &[serde_json::Value],
     owner: Uuid,
+    expected_arg_count: Option<u32>,
     label: &str,
     tool: &str,
 ) -> Uuid {
@@ -383,6 +441,13 @@ pub(crate) fn assert_dynamic_context(
         "{tool} should return exactly one dynamic targetless row for {label}: {calls:#?}"
     );
     let call = &matching[0];
+    if let Some(expected) = expected_arg_count {
+        assert_eq!(
+            call.arg_count,
+            Some(expected),
+            "{tool} should preserve dynamic argument count for {label}: {call:#?}"
+        );
+    }
     assert_eq!(call.status, CallStatusKind::Unsupported);
     assert_eq!(call.resolution, None);
     assert!(
@@ -456,6 +521,7 @@ pub(crate) fn assert_dynamic_proof(
     proofs: &[serde_json::Value],
     owner: Uuid,
     site_id: Uuid,
+    build_domain: &str,
     label: &str,
     tool: &str,
 ) {
@@ -470,7 +536,7 @@ pub(crate) fn assert_dynamic_proof(
             proof.kind == "call_site"
                 && proof.caller_def_id.as_deref() == Some(owner.as_str())
                 && proof.call_site_id.as_deref() == Some(site_id.as_str())
-                && proof.build_domain_id.as_deref() == Some("bd:corpus-axum-call-graph")
+                && proof.build_domain_id.as_deref() == Some(build_domain)
         }),
         "{tool} should return the dynamic call_site proof row for {label}: {proofs:#?}"
     );

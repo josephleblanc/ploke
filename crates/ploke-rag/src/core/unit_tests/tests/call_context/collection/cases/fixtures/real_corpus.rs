@@ -45,6 +45,24 @@ fn setup_chrono_call_graph_rag() -> Result<(Arc<Database>, RagService), Error> {
     Ok((db, rag))
 }
 
+fn setup_memchr_call_graph_rag() -> Result<(Arc<Database>, RagService), Error> {
+    let db = Arc::new(fresh_backup_fixture_db(
+        &ploke_test_utils::CORPUS_MEMCHR_CALL_GRAPH,
+    )?);
+    assert!(
+        db.has_call_graph_relations()?,
+        "corpus_memchr_call_graph must include call graph relations for RAG call-context tests"
+    );
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.call_context_degraded(),
+        "memchr call graph backup should enable RAG call context"
+    );
+
+    Ok((db, rag))
+}
+
 #[tokio::test]
 async fn call_context_exact_reads_axum_body_empty_incoming_callers() -> Result<(), Error> {
     init_tracing_once();
