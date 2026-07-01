@@ -399,6 +399,7 @@ pub struct CallReachInfo {
     pub public_callees: Vec<CallNodeInfo>,
     pub frontier_calls: Vec<CallContextInfo>,
     pub external_frontier_calls: Vec<CallContextInfo>,
+    pub unsupported_frontier_calls: Vec<CallContextInfo>,
     pub source_files: Vec<NodeFilepath>,
 }
 

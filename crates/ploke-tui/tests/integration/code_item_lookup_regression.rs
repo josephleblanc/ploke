@@ -106,6 +106,14 @@ async fn code_item_lookup_returns_real_corpus_await_receiver_targetless_row() {
         .get("proof_context")
         .and_then(serde_json::Value::as_array)
         .expect("proof_context array");
+    let reach = payload
+        .get("call_reach")
+        .and_then(serde_json::Value::as_object)
+        .expect("call_reach object");
+    let unsupported_frontier = reach
+        .get("unsupported_frontier_calls")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_reach unsupported_frontier_calls array");
 
     // Matrix:
     //   docs/active/agents/call-graph/
@@ -120,6 +128,25 @@ async fn code_item_lookup_returns_real_corpus_await_receiver_targetless_row() {
     let site_id =
         assert_await_result_unwrap_context(call_context, fixture.owner, "code_item_lookup");
     assert_await_result_unwrap_proof(proof_context, fixture.owner, site_id, "code_item_lookup");
+    let unsupported_calls = unsupported_frontier
+        .iter()
+        .map(|call| serde_json::from_value::<CallContextInfo>(call.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("typed unsupported frontier rows");
+    let unsupported = unsupported_calls
+        .iter()
+        .find(|call| call.site_id == site_id)
+        .unwrap_or_else(|| {
+            panic!(
+                "code_item_lookup should expose AwaitResult unwrap in unsupported frontier rows: {unsupported_calls:#?}"
+            )
+        });
+    assert_eq!(unsupported.owner_id, fixture.owner);
+    assert_eq!(unsupported.status, CallStatusKind::Unsupported);
+    assert!(
+        unsupported.targets.is_empty(),
+        "unsupported frontier call should remain targetless: {unsupported:#?}"
+    );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert!(
@@ -128,6 +155,10 @@ async fn code_item_lookup_returns_real_corpus_await_receiver_targetless_row() {
             .expect("outgoing count")
             >= 1,
         "code_item_lookup should surface outgoing targetless call-context count"
+    );
+    assert_eq!(
+        ui_field(ui, "reach_unsupported_frontier_calls"),
+        unsupported_calls.len().to_string()
     );
     assert!(
         ui_field(ui, "proof_context")

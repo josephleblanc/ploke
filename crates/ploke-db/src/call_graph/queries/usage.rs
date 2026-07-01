@@ -89,6 +89,11 @@ impl Database {
             .filter(|row| row.status.status == CallStatusKind::External)
             .cloned()
             .collect();
+        let unsupported_frontier_calls = frontier_calls
+            .iter()
+            .filter(|row| row.status.status == CallStatusKind::Unsupported)
+            .cloned()
+            .collect();
         let source_files = source_files_for_summary(
             self,
             &paths,
@@ -107,6 +112,7 @@ impl Database {
             public_callees,
             frontier_calls,
             external_frontier_calls,
+            unsupported_frontier_calls,
             source_files,
         })
     }

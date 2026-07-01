@@ -1193,6 +1193,30 @@ async fn call_context_collection_reads_axum_await_result_receiver_gap() -> Resul
         call.targets.is_empty(),
         "AwaitResult unwrap should remain targetless in RAG call context: {call:#?}"
     );
+    let reach = rag
+        .exact_call_reach_for_owner(
+            owner,
+            CallPathOptions {
+                max_depth: 2,
+                max_paths: 128,
+            },
+        )?
+        .expect("call context enabled");
+    let unsupported = reach
+        .unsupported_frontier_calls
+        .iter()
+        .find(|frontier| frontier.site_id == call.site_id)
+        .unwrap_or_else(|| {
+            panic!(
+                "RAG reach should expose AwaitResult unwrap in unsupported frontier rows: {reach:#?}"
+            )
+        });
+    assert_eq!(unsupported.owner_id, owner);
+    assert_eq!(unsupported.status, CallStatusKind::Unsupported);
+    assert!(
+        unsupported.targets.is_empty(),
+        "RAG unsupported frontier call should remain targetless: {unsupported:#?}"
+    );
 
     Ok(())
 }

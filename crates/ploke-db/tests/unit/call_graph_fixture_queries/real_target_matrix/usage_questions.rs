@@ -565,6 +565,28 @@ fn axum_usage_questions_surface_fail_closed_debugging_context() -> Result<(), Db
             .all(|path| path.edges.iter().all(|edge| edge.call_site_id != site_id)),
         "targetless unsupported receiver rows must not appear in call paths: {paths:#?}"
     );
+    let report = db.call_reach_for_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 128,
+        },
+    )?;
+    let unsupported = report
+        .unsupported_frontier_calls
+        .iter()
+        .find(|row| row.site.id == site_id)
+        .unwrap_or_else(|| {
+            panic!(
+                "reach report should expose awaited-result unwrap in unsupported frontier rows: {report:#?}"
+            )
+        });
+    assert_eq!(unsupported.site.owner_id, owner);
+    assert_eq!(unsupported.status.status, CallStatusKind::Unsupported);
+    assert!(
+        unsupported.targets.is_empty(),
+        "unsupported frontier call should remain targetless: {unsupported:#?}"
+    );
 
     Ok(())
 }

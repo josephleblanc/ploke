@@ -442,6 +442,15 @@ for a more fuzzy search."#
                     .to_string(),
             )
             .with_field(
+                "reach_unsupported_frontier_calls",
+                concise_context
+                    .call_reach
+                    .as_ref()
+                    .map(|reach| reach.unsupported_frontier_calls.len())
+                    .unwrap_or_default()
+                    .to_string(),
+            )
+            .with_field(
                 "reach_source_files",
                 concise_context
                     .call_reach
