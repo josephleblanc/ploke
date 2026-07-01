@@ -150,6 +150,8 @@ Implemented/scaffolded:
     initializer-path proof.
   - tuple struct and tuple enum variant constructor resolution for visible local
     type bindings with matching tuple-field arity.
+  - method-owned `Self(...)` tuple-struct constructor resolution through the
+    enclosing impl self type when tuple-field arity matches exactly.
   - conservative non-`self` method-call resolution for named owner parameters
     plus explicitly typed and path-initialized local bindings whose local type
     and inherent instance method are proven exactly.
@@ -366,14 +368,15 @@ Implemented/scaffolded:
     `LocalAssoc::make` associated-function target and asserts both
     method-owner `Self::make` and qualified function-owner `LocalAssoc::make`
     callers are materialized with outgoing `AssociatedFunction` call context.
-  - fresh RAG expansion coverage also seeds retrieval with tuple-struct and
-    enum-variant constructor targets and asserts real caller owners are
-    materialized with outgoing constructor-family call context.
+  - fresh RAG expansion coverage also seeds retrieval with tuple-struct,
+    method-owned `Self(...)` tuple-struct, and enum-variant constructor targets
+    and asserts real caller owners are materialized with outgoing
+    constructor-family call context.
   - public `get_context` coverage also proves sparse retrieval seeded by tuple
-    struct and enum variant constructor targets materializes the constructor
-    target seed and caller owner while preserving the outgoing constructor
-    edge and incoming-caller expansion provenance through final context
-    assembly.
+    struct, method-owned `Self(...)` tuple-struct, and enum variant constructor
+    targets materializes the constructor target seed and caller owner while
+    preserving the outgoing constructor edge and incoming-caller expansion
+    provenance through final context assembly.
   - public `get_context` coverage proves sparse retrieval seeded by
     `try_local_assoc` materializes the incoming caller owner and preserves that
     outgoing call-context edge through final context assembly, with
@@ -434,11 +437,11 @@ Implemented/scaffolded:
     `fixture_call_graph` database returns an incoming method caller part with
     both `call_expansion` provenance and the matching outgoing method
     call-context row in the model-visible JSON payload.
-    It also asserts the production-style payload returns tuple-struct and enum
-    variant constructor callers with matching outgoing constructor rows when
-    sparse retrieval is seeded by those constructor targets; production
-    type-context expansion may materialize tuple callers before call-context
-    expansion adds provenance.
+    It also asserts the production-style payload returns tuple-struct,
+    method-owned `Self(...)` tuple-struct, and enum variant constructor callers
+    with matching outgoing constructor rows when sparse retrieval is seeded by
+    those constructor targets; production type-context expansion may
+    materialize tuple callers before call-context expansion adds provenance.
 - GREEN fixture tests now use a call-site paranoid harness and cover 206 concrete call expressions:
   - `fixture_nodes_public_method_records_and_resolves_self_private_method_call_site`
   - `fixture_nodes_get_secret_len_records_self_field_len_external_method_call_site`
@@ -815,10 +818,11 @@ Post-gate evidence, 2026-06-23:
   Initializer-owner proof coverage now projects top-level const/static and
   associated-const owners as resolved proof edges to their local initializer
   functions with source provenance preserved. Constructor proof coverage now
-  uses shared fixture cases to project real tuple struct and enum variant
-  constructor targets as resolved proof edges to `StructNodeId` and
-  `VariantNodeId` callees, both owner-scoped and target-centered. Macro proof coverage
-  now projects real targetless macro calls as `macro_expansion_not_available`
+  uses shared fixture cases to project real tuple struct, method-owned
+  `Self(...)` tuple struct, and enum variant constructor targets as resolved
+  proof edges to `StructNodeId` and `VariantNodeId` callees, both owner-scoped
+  and target-centered. Macro proof coverage now projects real targetless macro
+  calls as `macro_expansion_not_available`
   blockers, and ambiguous proof coverage projects a real targetless ambiguous
   method call as a `type_resolution_missing` blocker.
   Synthetic proof coverage now rejects owner-scoped and target-centered local
@@ -970,8 +974,10 @@ Post-gate evidence, 2026-06-23:
   passed with `2 passed` for real const/static and associated-const
   initializer owner proof projection.
 - Exact constructor fixture/proof batch passed after the shared-case
-  consolidation; each command passed with `1 passed`:
+  consolidation and now includes method-owned `Self(...)` tuple-struct
+  constructors; each DB proof command passed with `1 passed`:
   ```bash
+  cargo test -p ploke-db --features call_graph fixture_context_reads_projected_self_tuple_struct_constructor_call -- --nocapture
   cargo test -p ploke-db --features call_graph fixture_expand_call_context_target_seed_preserves_constructor_callers -- --nocapture
   cargo test -p ploke-db --features call_graph fixture_projection_stores_real_constructor_call_proof_facts -- --nocapture
   cargo test -p ploke-db --features call_graph fixture_projection_stores_real_target_centered_constructor_call_proof_facts -- --nocapture

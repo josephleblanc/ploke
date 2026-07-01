@@ -10,8 +10,7 @@ async fn call_context_sparse_get_context_expands_constructor_target_hits_to_fixt
         query: &'a str,
         top_k: usize,
         target: ConstructorTarget<'a>,
-        owner_module: &'a [&'a str],
-        owner: &'a str,
+        owner: Owner<'a>,
         path: &'a [&'a str],
         relation: CallTargetKind,
     }
@@ -27,6 +26,17 @@ async fn call_context_sparse_get_context_expands_constructor_target_hits_to_fixt
         },
     }
 
+    enum Owner<'a> {
+        Function {
+            module: &'a [&'a str],
+            name: &'a str,
+        },
+        Method {
+            self_type: &'a str,
+            name: &'a str,
+        },
+    }
+
     let cases = [
         Case {
             label: "tuple-struct constructor",
@@ -37,9 +47,27 @@ async fn call_context_sparse_get_context_expands_constructor_target_hits_to_fixt
                 module: &["crate"],
                 name: "NewType",
             },
-            owner_module: &["crate"],
-            owner: "call_new_type_constructor",
+            owner: Owner::Function {
+                module: &["crate"],
+                name: "call_new_type_constructor",
+            },
             path: &["NewType"],
+            relation: CallTargetKind::TupleStructConstructor,
+        },
+        Case {
+            label: "Self tuple-struct constructor",
+            fixture: "fixture_call_graph",
+            query: "pub struct SelfTupleConstructor",
+            top_k: 1,
+            target: ConstructorTarget::Struct {
+                module: &["crate"],
+                name: "SelfTupleConstructor",
+            },
+            owner: Owner::Method {
+                self_type: "SelfTupleConstructor",
+                name: "make",
+            },
+            path: &["Self"],
             relation: CallTargetKind::TupleStructConstructor,
         },
         Case {
@@ -51,8 +79,10 @@ async fn call_context_sparse_get_context_expands_constructor_target_hits_to_fixt
                 enum_name: "EnumWithData",
                 name: "Variant1",
             },
-            owner_module: &["crate", "imports"],
-            owner: "use_imported_items",
+            owner: Owner::Function {
+                module: &["crate", "imports"],
+                name: "use_imported_items",
+            },
             path: &["EnumWithData", "Variant1"],
             relation: CallTargetKind::EnumVariantConstructor,
         },
@@ -68,10 +98,14 @@ async fn call_context_sparse_get_context_expands_constructor_target_hits_to_fixt
                 one_uuid(&db, &variant_by_enum_query(enum_name, name))?
             }
         };
-        let owner = one_uuid(
-            &db,
-            &function_in_module_query(case.owner_module, case.owner),
-        )?;
+        let owner = match case.owner {
+            Owner::Function { module, name } => {
+                one_uuid(&db, &function_in_module_query(module, name))?
+            }
+            Owner::Method { self_type, name } => {
+                one_uuid(&db, &method_by_impl_self_query(self_type, name))?
+            }
+        };
 
         let mut cfg = crate::RagConfig::default();
         cfg.type_context.enabled = false;

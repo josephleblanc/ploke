@@ -537,7 +537,38 @@ fn axum_real_target_handle_error_extension_reaches_constructor() -> Result<(), D
     //   axum/src/routing/tests/handle_error.rs:86 calls
     //   `fallible_service.handle_error(...)`.
     // Current model gap: the user-facing `.handle_error(...)` receiver row is
-    // not projected yet, even though the trait default body reaches
-    // `HandleError::new`.
-    assert_no_method_rows(&db, "handle_error")
+    // visible but remains unsupported/targetless; the trait default body above
+    // still reaches `HandleError::new`.
+    let service_ext_owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "routing", "tests", "handle_error"],
+        "handler_service_ext",
+    )?;
+    let service_ext_context = db.call_context_for_owner(service_ext_owner)?;
+    let service_ext_rows = service_ext_context
+        .iter()
+        .filter(|row| {
+            row.site.kind == CallSiteKind::Method
+                && row.site.method.as_deref() == Some("handle_error")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        service_ext_rows.len(),
+        1,
+        "handler_service_ext should expose one targetless .handle_error(...) row: {service_ext_context:#?}"
+    );
+    let service_ext_row = service_ext_rows[0];
+    assert_targetless_status(service_ext_row, CallStatusKind::Unsupported);
+    assert!(
+        relations_for_site(&db, service_ext_row.site.id)?
+            .rows
+            .is_empty(),
+        "user-facing .handle_error(...) row should have zero persisted call edges"
+    );
+    assert_no_traversal_candidates_for_site(
+        &db,
+        service_ext_owner,
+        service_ext_row.site.id,
+        "axum/src/routing/tests/handle_error.rs:86 fallible_service.handle_error",
+    )
 }

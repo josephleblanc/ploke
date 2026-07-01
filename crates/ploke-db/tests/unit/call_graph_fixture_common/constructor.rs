@@ -5,13 +5,24 @@ pub(in crate::unit) struct ConstructorCase {
     pub(in crate::unit) label: &'static str,
     pub(in crate::unit) fixture: &'static str,
     pub(in crate::unit) domain: &'static str,
-    pub(in crate::unit) owner_module: &'static [&'static str],
-    pub(in crate::unit) owner: &'static str,
+    pub(in crate::unit) owner: ConstructorOwner,
     pub(in crate::unit) path: &'static [&'static str],
     pub(in crate::unit) target: ConstructorTarget,
     pub(in crate::unit) relation: CallRelationKind,
     pub(in crate::unit) endpoint: CallTargetKind,
     pub(in crate::unit) source_suffix: &'static str,
+}
+
+#[derive(Clone, Copy)]
+pub(in crate::unit) enum ConstructorOwner {
+    FunctionInModule {
+        module: &'static [&'static str],
+        name: &'static str,
+    },
+    InherentMethod {
+        self_type: &'static str,
+        name: &'static str,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -41,10 +52,28 @@ const CONSTRUCTOR_CASES: &[ConstructorCase] = &[
         label: "tuple-struct constructor",
         fixture: "fixture_call_graph",
         domain: "bd:fixture-call-graph",
-        owner_module: &["crate"],
-        owner: "call_new_type_constructor",
+        owner: ConstructorOwner::FunctionInModule {
+            module: &["crate"],
+            name: "call_new_type_constructor",
+        },
         path: &["NewType"],
         target: ConstructorTarget::Struct { name: "NewType" },
+        relation: CallRelationKind::TupleStructConstructor,
+        endpoint: CallTargetKind::Struct,
+        source_suffix: "fixture_call_graph/src/lib.rs",
+    },
+    ConstructorCase {
+        label: "Self tuple-struct constructor",
+        fixture: "fixture_call_graph",
+        domain: "bd:fixture-call-graph",
+        owner: ConstructorOwner::InherentMethod {
+            self_type: "SelfTupleConstructor",
+            name: "make",
+        },
+        path: &["Self"],
+        target: ConstructorTarget::Struct {
+            name: "SelfTupleConstructor",
+        },
         relation: CallRelationKind::TupleStructConstructor,
         endpoint: CallTargetKind::Struct,
         source_suffix: "fixture_call_graph/src/lib.rs",
@@ -53,8 +82,10 @@ const CONSTRUCTOR_CASES: &[ConstructorCase] = &[
         label: "enum-variant constructor",
         fixture: "fixture_nodes",
         domain: "bd:fixture-nodes",
-        owner_module: &["crate", "imports"],
-        owner: "use_imported_items",
+        owner: ConstructorOwner::FunctionInModule {
+            module: &["crate", "imports"],
+            name: "use_imported_items",
+        },
         path: &["EnumWithData", "Variant1"],
         target: ConstructorTarget::Variant {
             enum_name: "EnumWithData",
@@ -68,6 +99,19 @@ const CONSTRUCTOR_CASES: &[ConstructorCase] = &[
 
 pub(in crate::unit) fn constructor_cases() -> &'static [ConstructorCase] {
     CONSTRUCTOR_CASES
+}
+
+impl ConstructorOwner {
+    fn id(self, db: &Database) -> Result<Uuid, DbError> {
+        match self {
+            Self::FunctionInModule { module, name } => {
+                function_id_by_name_in_module(db, module, name)
+            }
+            Self::InherentMethod { self_type, name } => {
+                method_id_by_impl_self_type_name(db, self_type, name)
+            }
+        }
+    }
 }
 
 impl ConstructorTarget {
@@ -86,7 +130,7 @@ pub(in crate::unit) fn assert_constructor_context(
     db: &Database,
     case: &ConstructorCase,
 ) -> Result<ResolvedConstructor, DbError> {
-    let owner = function_id_by_name_in_module(db, case.owner_module, case.owner)?;
+    let owner = case.owner.id(db)?;
     let target = case.target.id(db)?;
     let context = db.call_context_for_owner(owner)?;
     let proof_count = context

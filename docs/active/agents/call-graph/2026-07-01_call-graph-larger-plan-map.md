@@ -82,6 +82,11 @@ Current matrix posture:
   rows with generic argument counts and remain targetless `External` frontier
   rows through DB/RAG/TUI proof surfaces. Immutable axum backups still pin the
   real-corpus rows absent until fixture regeneration/review.
+- Constructor semantic expansion: fixture-backed method-owned `Self(value)`
+  tuple-struct constructor calls now resolve through the enclosing impl self
+  type and project through DB/proof/RAG/TUI constructor surfaces. Immutable axum
+  backups still pin the real-corpus `BoxedIntoRoute` `Self(...)` constructor
+  rows unsupported until fixture regeneration/review.
 - Executable-local const initializer boundaries: function-local const
   initializer calls are no longer flattened into the enclosing function owner;
   true local const owner rows remain blocked on an executable-scope identity

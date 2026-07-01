@@ -145,6 +145,8 @@ const LOCAL_DROP_SHADOW_CALL_SPAN: (usize, usize) = (10772, 10779);
 const BORROWED_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (10893, 10918);
 const BORROWED_INIT_SPAN: (usize, usize) = (30382, 30407);
 const QUALIFIED_DYN_ANY_DOWNCAST_MUT_CALL_SPAN: (usize, usize) = (30545, 30601);
+const SELF_TUPLE_CONSTRUCTOR_IMPL_SPAN: (usize, usize) = (30649, 30742);
+const SELF_TUPLE_CONSTRUCTOR_CALL_SPAN: (usize, usize) = (30723, 30734);
 const DEREFERENCED_LOCAL_INSTANCE_CALL_SPAN: (usize, usize) = (11013, 11038);
 const PRELUDE_STRING_NEW_CALL_SPAN: (usize, usize) = (11091, 11104);
 const PRELUDE_VEC_NEW_CALL_SPAN: (usize, usize) = (11156, 11166);
@@ -633,6 +635,21 @@ fn fixture_call_graph_assoc_method_args(ident: &'static str) -> AssocParanoidArg
         expected_path: &["crate"],
         owner: AssocOwner::Impl {
             span: LOCAL_ASSOC_IMPL_SPAN,
+        },
+        ident,
+        expected_cfg: None,
+    }
+}
+
+fn fixture_call_graph_self_tuple_constructor_method_args(
+    ident: &'static str,
+) -> AssocParanoidArgs<'static> {
+    AssocParanoidArgs {
+        fixture: "fixture_call_graph",
+        relative_file_path: CALL_GRAPH_LIB_RS,
+        expected_path: &["crate"],
+        owner: AssocOwner::Impl {
+            span: SELF_TUPLE_CONSTRUCTOR_IMPL_SPAN,
         },
         ident,
         expected_cfg: None,
@@ -3026,6 +3043,29 @@ paranoid_call_site_test!(
         ExpectedCallSite::path(
             &["NewType"],
             NEW_TYPE_CONSTRUCTOR_CALL_SPAN,
+            1,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedTupleStructConstructorLocalExact { target },
+        )
+    },
+);
+
+paranoid_call_site_test!(
+    fixture_call_graph_self_tuple_constructor_method_resolves_self_constructor_call_site,
+    fixture: "fixture_call_graph",
+    owner: method {
+        args: fixture_call_graph_self_tuple_constructor_method_args("make")
+    },
+    expected: {
+        let target_args = fixture_call_graph_struct_args("SelfTupleConstructor");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = StructNodeId::try_from(target_info.test_pid())
+            .expect("SelfTupleConstructor should regenerate a StructNodeId");
+        ExpectedCallSite::path(
+            &["Self"],
+            SELF_TUPLE_CONSTRUCTOR_CALL_SPAN,
             1,
             0,
             &[],

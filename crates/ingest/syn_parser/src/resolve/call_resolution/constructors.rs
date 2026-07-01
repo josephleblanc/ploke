@@ -2,7 +2,7 @@ use crate::{
     error::SynParserError,
     parser::{
         graph::GraphAccess,
-        nodes::{EnumNodeId, OrdinaryTypeTargetId, PathCallNode, StructNodeId},
+        nodes::{CallBodyOwnerId, EnumNodeId, OrdinaryTypeTargetId, PathCallNode, StructNodeId},
         relations::TypeRelation,
     },
 };
@@ -16,6 +16,18 @@ impl CallRelationResolver<'_> {
         type_relations: &[TypeRelation],
     ) -> Result<Option<ConstructorPathResolution>, SynParserError> {
         match call.path.as_slice() {
+            [name] if name == "Self" => {
+                let Some(target) =
+                    self.resolve_self_constructor_target(call.owner, type_relations)?
+                else {
+                    return Ok(None);
+                };
+                Ok(Some(self.resolve_tuple_struct_constructor(
+                    target,
+                    type_relations,
+                    call.arg_count,
+                )?))
+            }
             [struct_name] => {
                 let resolution = match self.resolve_local_type_segment(call.owner, struct_name)? {
                     LocalTypeResolution::Resolved(target) => self
@@ -41,6 +53,23 @@ impl CallRelationResolver<'_> {
             }
             _ => Ok(None),
         }
+    }
+
+    fn resolve_self_constructor_target(
+        &self,
+        owner: CallBodyOwnerId,
+        type_relations: &[TypeRelation],
+    ) -> Result<Option<OrdinaryTypeTargetId>, SynParserError> {
+        let CallBodyOwnerId::Method(owner_method_id) = owner else {
+            return Ok(None);
+        };
+        let Some(impl_id) = self.impl_for_owner_method(owner_method_id)? else {
+            return Ok(None);
+        };
+        let Some(impl_node) = self.maybe_impl_node(impl_id) else {
+            return Ok(None);
+        };
+        self.impl_self_target(impl_node, type_relations)
     }
 
     fn resolve_tuple_struct_constructor(

@@ -8,9 +8,19 @@ struct Case {
     search_term: &'static str,
     top_k: usize,
     call_id: &'static str,
-    owner_module: &'static [&'static str],
-    owner: &'static str,
+    owner: Owner,
     path: &'static [&'static str],
+}
+
+enum Owner {
+    Function {
+        module: &'static [&'static str],
+        name: &'static str,
+    },
+    Method {
+        self_type: &'static str,
+        name: &'static str,
+    },
 }
 
 #[tokio::test]
@@ -23,9 +33,24 @@ async fn request_code_context_returns_constructor_proof_context() -> color_eyre:
             search_term: "pub struct NewType",
             top_k: 1,
             call_id: "tuple_constructor_proof_context",
-            owner_module: &["crate"],
-            owner: "call_new_type_constructor",
+            owner: Owner::Function {
+                module: &["crate"],
+                name: "call_new_type_constructor",
+            },
             path: &["NewType"],
+        },
+        Case {
+            label: "Self tuple-struct constructor",
+            fixture: "fixture_call_graph",
+            domain: "bd:fixture-call-graph",
+            search_term: "pub struct SelfTupleConstructor",
+            top_k: 1,
+            call_id: "self_tuple_constructor_proof_context",
+            owner: Owner::Method {
+                self_type: "SelfTupleConstructor",
+                name: "make",
+            },
+            path: &["Self"],
         },
         Case {
             label: "enum-variant constructor",
@@ -34,18 +59,24 @@ async fn request_code_context_returns_constructor_proof_context() -> color_eyre:
             search_term: "Variant1",
             top_k: 10,
             call_id: "variant_constructor_proof_context",
-            owner_module: &["crate", "imports"],
-            owner: "use_imported_items",
+            owner: Owner::Function {
+                module: &["crate", "imports"],
+                name: "use_imported_items",
+            },
             path: &["EnumWithData", "Variant1"],
         },
     ];
 
     for case in cases {
         let db = Arc::new(Database::new(setup_db_full_multi_embedding(case.fixture)?));
-        let owner = one_uuid(
-            &db,
-            &function_in_module_query(case.owner_module, case.owner),
-        )?;
+        let owner = match case.owner {
+            Owner::Function { module, name } => {
+                one_uuid(&db, &function_in_module_query(module, name))?
+            }
+            Owner::Method { self_type, name } => {
+                one_uuid(&db, &method_by_impl_self_query(self_type, name))?
+            }
+        };
         let target = projected_constructor_target(&db, owner, case.path, case.label)?;
         assert!(
             db.project_call_proof_facts_for_target(target, case.domain)? >= 3,

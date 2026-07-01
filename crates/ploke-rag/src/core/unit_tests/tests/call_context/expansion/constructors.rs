@@ -54,6 +54,49 @@ async fn call_context_expansion_adds_incoming_fixture_constructor_callers() -> R
         CallTargetKind::TupleStructConstructor
     );
 
+    let self_target = one_uuid(
+        &tuple_db,
+        &struct_in_module_query(&["crate"], "SelfTupleConstructor"),
+    )?;
+    let self_owner = one_uuid(
+        &tuple_db,
+        &method_by_impl_self_query("SelfTupleConstructor", "make"),
+    )?;
+
+    let self_hits = tuple_rag.expand_hits_with_call_context(&[(self_target, 1.0)])?;
+    let self_ids = self_hits.iter().map(|(id, _)| *id).collect::<Vec<_>>();
+    assert!(
+        self_ids.contains(&self_target),
+        "incoming Self tuple-constructor expansion must preserve the seed target; expanded: {self_hits:#?}"
+    );
+    assert!(
+        self_ids.contains(&self_owner),
+        "Self tuple-struct constructor target expansion should materialize the caller owner; expanded: {self_hits:#?}"
+    );
+
+    let self_context = tuple_rag.collect_call_context(&self_hits)?;
+    let self_owner_context = self_context
+        .get(&self_owner)
+        .expect("Self tuple constructor caller should receive outgoing call context");
+    let self_call = self_owner_context
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["Self".to_string()],
+                    }
+        })
+        .expect("caller should preserve the Self constructor edge");
+    assert_eq!(self_call.status, CallStatusKind::Resolved);
+    assert_eq!(self_call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(self_call.targets.len(), 1);
+    assert_eq!(self_call.targets[0].target_id, self_target);
+    assert_eq!(
+        self_call.targets[0].relation,
+        CallTargetKind::TupleStructConstructor
+    );
+
     let variant_db = Arc::new(Database::new(setup_db_full_multi_embedding(
         "fixture_nodes",
     )?));

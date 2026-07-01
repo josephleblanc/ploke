@@ -44,6 +44,40 @@ async fn call_context_collection_reads_real_fixture_constructor_rows() -> Result
         CallTargetKind::TupleStructConstructor
     );
 
+    let self_owner = one_uuid(
+        &tuple_db,
+        &method_by_impl_self_query("SelfTupleConstructor", "make"),
+    )?;
+    let self_target = one_uuid(
+        &tuple_db,
+        &struct_in_module_query(&["crate"], "SelfTupleConstructor"),
+    )?;
+    let self_context = tuple_rag.collect_call_context(&[(self_owner, 1.0)])?;
+    let self_owner_context = self_context
+        .get(&self_owner)
+        .expect("Self tuple constructor owner should receive outgoing call context");
+    assert_eq!(
+        self_owner_context.len(),
+        1,
+        "Self tuple constructor context: {self_owner_context:#?}"
+    );
+    let self_call = &self_owner_context[0];
+    assert_eq!(self_call.kind, CallSiteKind::Path);
+    assert_eq!(
+        self_call.callee,
+        CallCalleeInfo::Path {
+            path: vec!["Self".to_string()],
+        }
+    );
+    assert_eq!(self_call.status, CallStatusKind::Resolved);
+    assert_eq!(self_call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(self_call.targets.len(), 1);
+    assert_eq!(self_call.targets[0].target_id, self_target);
+    assert_eq!(
+        self_call.targets[0].relation,
+        CallTargetKind::TupleStructConstructor
+    );
+
     let variant_db = Arc::new(Database::new(setup_db_full_multi_embedding(
         "fixture_nodes",
     )?));

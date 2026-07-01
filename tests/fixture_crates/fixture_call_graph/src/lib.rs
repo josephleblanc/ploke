@@ -1390,3 +1390,11 @@ pub fn call_qualified_dyn_any_downcast_mut(mut value: Option<i32>) {
     let erased: &mut dyn std::any::Any = &mut value;
     let _ = <dyn std::any::Any>::downcast_mut::<Option<i32>>(erased);
 }
+
+pub struct SelfTupleConstructor(pub i32);
+
+impl SelfTupleConstructor {
+    pub fn make(value: i32) -> Self {
+        Self(value)
+    }
+}

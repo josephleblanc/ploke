@@ -49,31 +49,31 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current Bucket
 
-Current bucket: qualified trait-object qself path projection.
+Current bucket: `Self(...)` tuple-struct constructor resolution.
 
 Exit criteria:
 
-- Keep this as structural visibility plus external-frontier classification; do
-  not attempt trait-object dispatch resolution.
-- Reuse existing qself and trait-object bound path helpers.
-- Prove `<dyn std::any::Any>::downcast_mut::<T>(...)` projects as a path call
-  with one generic argument and remains targetless `External` in DB/RAG/TUI
-  fixture-backed surfaces.
+- Reuse the existing `Self::...` associated-function owner pattern and the
+  existing tuple-struct constructor resolver.
+- Do not broaden constructor handling into arbitrary type/trait dispatch.
+- Prove a method-owned `Self(value)` tuple-struct constructor resolves to the
+  enclosing impl self type and propagates through DB/proof/RAG/TUI surfaces.
 
 Completed evidence:
 
 - Parser:
-  `fixture_call_graph_call_qualified_dyn_any_downcast_mut_projects_external_path_call_site`.
+  `fixture_call_graph_self_tuple_constructor_method_resolves_self_constructor_call_site`.
 - DB:
-  `fixture_context_reads_projected_generic_unsafe_extern_and_chained_calls`.
+  `fixture_context_reads_projected_self_tuple_struct_constructor_call` plus the
+  shared constructor proof/caller table.
 - RAG/TUI:
-  targetless special-form call-context and proof-context fixture tests now
-  include `call_qualified_dyn_any_downcast_mut`.
+  constructor call-context, expansion, public get-context, and proof-payload
+  tests now include `SelfTupleConstructor::make -> Self(value)`.
 
-Reason to switch after this bucket: the real axum `<dyn Any>::downcast_mut`
-rows remain pinned absent in immutable corpus backups until fixture
+Reason to switch after this bucket: immutable axum backups still pin
+`BoxedIntoRoute` `Self(...)` constructor rows as unsupported until fixture
 regeneration/review, but the parser/DB/RAG/TUI capability is fixture-backed and
-does not justify adding trait-object dispatch breadth here.
+does not justify adding unrelated constructor breadth here.
 
 ## Coverage Matrix
 
@@ -85,7 +85,7 @@ does not justify adding trait-object dispatch breadth here.
 | Inherent method one-hop | Covered/partial | Examples include `Json::from_bytes` and related method/associated-function rows | Exact call-context propagation exists | Exact lookup regressions exist | axum | Revisit only after broader buckets have at least one proof. |
 | Exact local external-trait impl receiver methods | Met for now | 13 `Router::clone` typed-local/self-field receiver rows resolve to `impl<S> Clone for Router<S>::clone` | Exact call context preserves the same caller-site identities and receiver buckets | Remaining real-corpus TUI matrix includes `RouterClone` | axum | Switch buckets; do not broaden to arbitrary external trait dispatch by default. |
 | Associated-function path calls | Covered/partial | `Self::from_bytes`, `E::from_request`, `MethodRouter::new` style rows | Impact/reach summaries carry relation/kind | Tool payloads carry relation/kind and callsite buckets | axum | Later: separate associated-function multi-hop bucket if needed. |
-| Constructors | Stronger one-hop | Tuple struct / enum variant constructor rows are asserted in real-corpus matrix, including chrono alias constructor rows | Exact context propagation exists for direct and alias constructor rows | Tool regressions include direct and alias variant/constructor rows | axum, chrono | Later: multi-hop constructor path only if a real usage question requires it. |
+| Constructors | Stronger one-hop | Tuple struct / enum variant constructor rows are asserted in real-corpus matrix, including chrono alias constructor rows; fixture-backed method-owned `Self(...)` tuple constructors now resolve through the enclosing impl self type | Exact context propagation exists for direct, alias, and fixture-backed `Self(...)` constructor rows | Tool regressions include direct, alias, variant, and fixture-backed `Self(...)` constructor rows | axum, chrono plus local fixture fallback | Switch buckets; regenerate/review axum backup before turning real-corpus `BoxedIntoRoute` `Self(...)` rows positive. |
 | External dependency frontier | Covered as frontier | External rows are exposed but not traversed | Reach summaries expose external frontier calls | Tool summaries count/display frontier rows | axum | Keep fail-closed; do not convert to traversal without external-summary semantics. |
 | Unsupported receiver / trait-object shapes | Stronger blocker visibility plus bounded qself projection | Targetless/unsupported rows remain for generic field/result/await/local receiver gaps; exact local `Router::clone` receiver rows traverse; borrowed initialized local receivers such as `let value = LocalAssoc; (&value).instance_value()` now carry initializer proof and resolve in fixture-backed DB/proof rows; initialized `Request::new` local receiver rows classify as external frontiers; qualified trait-object qself calls such as `<dyn std::any::Any>::downcast_mut::<T>(...)` project as external targetless path rows in fixture-backed tests; unknown receiver expressions persist as `Unsupported` receiver rows instead of being dropped | RAG preserves blocker/frontier rows, the exact positive subset, fixture-backed unsupported receiver rows, borrowed-initialized receiver payloads, and qualified dyn Any external path rows | Tool tests surface unsupported rows/counts, `RouterClone` positives, `&value = LocalAssoc` receiver formatting, and qualified dyn Any external proof rows | axum plus local fixture fallback | Switch buckets; future implementation should add exact receiver proof by shape, not weaken unsupported rows; regenerate/review axum backup before turning real-corpus dyn Any rows positive. |
 | Dynamic callable values | Stronger fixture-backed subset | Fixture-backed direct, alias, same-target branch/match including guarded same-target match arms, and single-expression block initialized callable values resolve; mixed-target branches remain targetless | RAG preserves resolved direct/branch/block/guarded-match initialized rows and blocker rows | `code_item_lookup` covers resolved dynamic-function callable rows, including block-initialized and guarded same-target match forms, and the targetless matrix covers unsupported rows | local fixture; no representative found in checked-out axum/serde/memchr corpora | Switch buckets; broader callable trait objects/returned closures still need binding/body ownership work. |

@@ -5,9 +5,19 @@ struct Case {
     label: &'static str,
     fixture: &'static str,
     domain: &'static str,
-    owner_module: &'static [&'static str],
-    owner: &'static str,
+    owner: Owner,
     path: &'static [&'static str],
+}
+
+enum Owner {
+    Function {
+        module: &'static [&'static str],
+        name: &'static str,
+    },
+    Method {
+        self_type: &'static str,
+        name: &'static str,
+    },
 }
 
 #[tokio::test]
@@ -18,26 +28,44 @@ async fn proof_context_collection_preserves_projected_constructor_rows() -> Resu
             label: "tuple-struct constructor",
             fixture: "fixture_call_graph",
             domain: "bd:fixture-call-graph",
-            owner_module: &["crate"],
-            owner: "call_new_type_constructor",
+            owner: Owner::Function {
+                module: &["crate"],
+                name: "call_new_type_constructor",
+            },
             path: &["NewType"],
+        },
+        Case {
+            label: "Self tuple-struct constructor",
+            fixture: "fixture_call_graph",
+            domain: "bd:fixture-call-graph",
+            owner: Owner::Method {
+                self_type: "SelfTupleConstructor",
+                name: "make",
+            },
+            path: &["Self"],
         },
         Case {
             label: "enum-variant constructor",
             fixture: "fixture_nodes",
             domain: "bd:fixture-nodes",
-            owner_module: &["crate", "imports"],
-            owner: "use_imported_items",
+            owner: Owner::Function {
+                module: &["crate", "imports"],
+                name: "use_imported_items",
+            },
             path: &["EnumWithData", "Variant1"],
         },
     ];
 
     for case in cases {
         let db = Arc::new(Database::new(setup_db_full_multi_embedding(case.fixture)?));
-        let owner = one_uuid(
-            &db,
-            &function_in_module_query(case.owner_module, case.owner),
-        )?;
+        let owner = match case.owner {
+            Owner::Function { module, name } => {
+                one_uuid(&db, &function_in_module_query(module, name))?
+            }
+            Owner::Method { self_type, name } => {
+                one_uuid(&db, &method_by_impl_self_query(self_type, name))?
+            }
+        };
         let target = projected_constructor_target(&db, owner, case.path, case.label)?;
         let count = db.project_call_proof_facts_for_target(target, case.domain)?;
         assert!(
