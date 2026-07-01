@@ -462,6 +462,68 @@ fn axum_usage_questions_summarize_eventual_callers_for_impact() -> Result<(), Db
 }
 
 #[test]
+fn axum_usage_questions_bucket_impact_callers_by_test_source() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Dead code detection / Test planning:
+    //   "Is this function only used by tests, or is it reachable from
+    //   production entrypoints?"
+    //   "Which tests should cover a change to this function?"
+    //
+    // Source oracle:
+    //   axum/src/routing/mod.rs:162 defines `Router::new`.
+    //   axum/src/routing/mod.rs:109 calls `Self::new()` from
+    //   `Default for Router`.
+    //   axum/src/serve/mod.rs:756 calls `Router::new()` from the
+    //   `serve::tests::if_it_compiles_it_works` test helper.
+    let target = method_id_by_name_and_body_substring(&db, "new", "default_fallback: true")?;
+    let non_test_owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "default",
+        "Self::new()",
+        "axum/src/routing/mod.rs",
+    )?;
+    let test_owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "serve", "tests"],
+        "if_it_compiles_it_works",
+    )?;
+
+    let report = db.call_impact_for_target(
+        target,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 256,
+        },
+    )?;
+    assert_eq!(report.target.id, target);
+    assert!(
+        !report.test_callers.is_empty() && !report.non_test_callers.is_empty(),
+        "Router::new should prove both test and non-test impact buckets: {report:#?}"
+    );
+    assert_eq!(
+        report.test_callers.len() + report.non_test_callers.len(),
+        report.callers.len(),
+        "test/non-test impact buckets should partition eventual callers: {report:#?}"
+    );
+    assert_node_names(
+        &report.test_callers,
+        &[(test_owner, "if_it_compiles_it_works")],
+        "Router::new test impact callers",
+    );
+    assert_node_names(
+        &report.non_test_callers,
+        &[(non_test_owner, "default")],
+        "Router::new non-test impact callers",
+    );
+
+    Ok(())
+}
+
+#[test]
 fn axum_usage_questions_keep_unsupported_proc_macro_public_gap_empty() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 

@@ -379,6 +379,24 @@ for a more fuzzy search."#
                     .to_string(),
             )
             .with_field(
+                "impact_test_callers",
+                concise_context
+                    .call_impact
+                    .as_ref()
+                    .map(|impact| impact.test_callers.len())
+                    .unwrap_or_default()
+                    .to_string(),
+            )
+            .with_field(
+                "impact_non_test_callers",
+                concise_context
+                    .call_impact
+                    .as_ref()
+                    .map(|impact| impact.non_test_callers.len())
+                    .unwrap_or_default()
+                    .to_string(),
+            )
+            .with_field(
                 "impact_source_files",
                 concise_context
                     .call_impact

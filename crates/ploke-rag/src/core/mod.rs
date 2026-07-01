@@ -350,6 +350,16 @@ fn impact_info(db: &Database, report: DbCallImpactReport) -> Result<CallImpactIn
         .into_iter()
         .map(call_node_info)
         .collect::<Vec<_>>();
+    let test_callers = report
+        .test_callers
+        .into_iter()
+        .map(call_node_info)
+        .collect::<Vec<_>>();
+    let non_test_callers = report
+        .non_test_callers
+        .into_iter()
+        .map(call_node_info)
+        .collect::<Vec<_>>();
     let source_files = report
         .source_files
         .into_iter()
@@ -363,6 +373,8 @@ fn impact_info(db: &Database, report: DbCallImpactReport) -> Result<CallImpactIn
         direct_callers,
         direct_call_sites,
         public_callers,
+        test_callers,
+        non_test_callers,
         source_files,
     })
 }

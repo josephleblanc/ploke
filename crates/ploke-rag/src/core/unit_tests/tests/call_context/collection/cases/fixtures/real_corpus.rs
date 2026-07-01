@@ -780,6 +780,70 @@ async fn call_impact_exact_reads_axum_usage_question_summary() -> Result<(), Err
 }
 
 #[tokio::test]
+async fn call_impact_exact_buckets_axum_callers_by_test_source() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Dead code detection / Test planning:
+    //   "Is this function only used by tests, or is it reachable from
+    //   production entrypoints?"
+    //   "Which tests should cover a change to this function?"
+    //
+    // Source oracle:
+    //   axum/src/routing/mod.rs:162 defines `Router::new`.
+    //   axum/src/routing/mod.rs:109 calls `Self::new()` from
+    //   `Default for Router`.
+    //   axum/src/serve/mod.rs:756 calls `Router::new()` from the
+    //   `serve::tests::if_it_compiles_it_works` test helper.
+    let target = method_id_by_name_and_body_substring(&db, "new", "default_fallback: true")?;
+    let non_test_owner =
+        method_id_by_file(&db, "default", "Self::new()", "axum/src/routing/mod.rs")?;
+    let test_owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "serve", "tests"],
+        "if_it_compiles_it_works",
+    )?;
+
+    let report = rag
+        .exact_call_impact_for_target(
+            target,
+            CallPathOptions {
+                max_depth: 1,
+                max_paths: 256,
+            },
+        )?
+        .expect("call context enabled");
+    assert!(
+        !report.test_callers.is_empty() && !report.non_test_callers.is_empty(),
+        "RAG Router::new impact should expose both test and non-test caller buckets: {report:#?}"
+    );
+    assert_eq!(
+        report.test_callers.len() + report.non_test_callers.len(),
+        report.callers.len(),
+        "RAG test/non-test impact buckets should partition eventual callers: {report:#?}"
+    );
+    assert_call_node(
+        &report.test_callers,
+        test_owner,
+        "if_it_compiles_it_works",
+        "axum/src/serve/mod.rs",
+        "RAG Router::new test impact callers",
+    );
+    assert_call_node(
+        &report.non_test_callers,
+        non_test_owner,
+        "default",
+        "axum/src/routing/mod.rs",
+        "RAG Router::new non-test impact callers",
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;

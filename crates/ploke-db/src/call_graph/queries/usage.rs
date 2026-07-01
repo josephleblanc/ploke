@@ -1,8 +1,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use cozo::{DataValue, ScriptMutability, UuidWrapper};
 use uuid::Uuid;
 
-use crate::{Database, DbError};
+use crate::{
+    Database, DbError,
+    database::{to_string, to_string_list},
+    multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE},
+};
 
 use super::super::{
     CallContextRow, CallImpactReport, CallNodeInfo, CallPath, CallPathOptions, CallReachReport,
@@ -36,6 +41,14 @@ impl Database {
             .filter(|caller| caller.is_public)
             .cloned()
             .collect();
+        let (mut test_callers, mut non_test_callers) = (Vec::new(), Vec::new());
+        for caller in &callers {
+            if is_test_node(self, caller.id)? {
+                test_callers.push(caller.clone());
+            } else {
+                non_test_callers.push(caller.clone());
+            }
+        }
         let source_files = source_files_for_summary(
             self,
             &paths,
@@ -52,6 +65,8 @@ impl Database {
             direct_callers,
             direct_call_sites,
             public_callers,
+            test_callers,
+            non_test_callers,
             source_files,
         })
     }
@@ -116,6 +131,48 @@ impl Database {
             source_files,
         })
     }
+}
+
+fn is_test_node(db: &Database, node_id: Uuid) -> Result<bool, DbError> {
+    let mut params = BTreeMap::new();
+    params.insert("node_id".to_string(), DataValue::Uuid(UuidWrapper(node_id)));
+
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+owner[id] := id = $node_id, *function{{ id @ 'NOW' }}
+owner[id] := id = $node_id, *method{{ id @ 'NOW' }}
+owner[id] := id = $node_id, *const{{ id @ 'NOW' }}
+owner[id] := id = $node_id, *static{{ id @ 'NOW' }}
+
+?[module_path, file_path] :=
+  owner[id],
+  ancestor[id, mod_id],
+  *module{{ id: mod_id, path: module_path @ 'NOW' }},
+  file_owner_for_module[mod_id, file_id],
+  *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+
+    let rows = db.run_script(&script, params, ScriptMutability::Immutable)?;
+    for row in rows.rows {
+        let module_path = to_string_list(&row[0])?;
+        let file_path = to_string(&row[1])?;
+        if module_path.iter().any(|segment| segment == "tests")
+            || file_path.contains("/tests/")
+            || file_path.contains("\\tests\\")
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn frontier_calls_for_paths(

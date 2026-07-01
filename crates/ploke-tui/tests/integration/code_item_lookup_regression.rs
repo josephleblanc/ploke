@@ -684,6 +684,22 @@ async fn code_item_lookup_returns_real_corpus_body_empty_callers() {
         .get("proof_context")
         .and_then(serde_json::Value::as_array)
         .expect("proof_context array");
+    let impact = payload
+        .get("call_impact")
+        .and_then(serde_json::Value::as_object)
+        .expect("call_impact object");
+    let impact_callers = impact
+        .get("callers")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_impact callers array");
+    let impact_test_callers = impact
+        .get("test_callers")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_impact test_callers array");
+    let impact_non_test_callers = impact
+        .get("non_test_callers")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_impact non_test_callers array");
 
     // Real-corpus oracle matrix:
     //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
@@ -707,9 +723,26 @@ async fn code_item_lookup_returns_real_corpus_body_empty_callers() {
             "code_item_lookup",
         );
     }
+    assert_eq!(
+        impact_test_callers.len() + impact_non_test_callers.len(),
+        impact_callers.len(),
+        "code_item_lookup impact test/non-test buckets should partition eventual callers: {impact:#?}"
+    );
+    assert!(
+        !impact_non_test_callers.is_empty(),
+        "Body::empty resolved impact subset should expose non-test callers: {impact:#?}"
+    );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(ui_field(ui, "call_context_incoming"), "4");
+    assert_eq!(
+        ui_field(ui, "impact_test_callers"),
+        impact_test_callers.len().to_string()
+    );
+    assert_eq!(
+        ui_field(ui, "impact_non_test_callers"),
+        impact_non_test_callers.len().to_string()
+    );
     assert!(
         ui_field(ui, "proof_context")
             .parse::<usize>()
