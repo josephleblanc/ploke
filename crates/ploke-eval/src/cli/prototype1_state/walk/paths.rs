@@ -12,7 +12,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::spec::PrepareError;
+use crate::{layout::ploke_eval_home, spec::PrepareError};
 
 #[cfg(target_os = "macos")]
 const UNIX_SOCKET_PATH_MAX: usize = 104;
@@ -78,10 +78,22 @@ pub(crate) fn resolve_use_repo_root(repo_root: Option<&Path>) -> Result<PathBuf,
 
 /// Load the saved walk context, if one exists.
 pub(crate) fn load_context() -> Result<Option<WalkContext>, PrepareError> {
-    let path = context_path();
-    let text = match fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+    let path = context_path()?;
+    let (path, text) = match fs::read_to_string(&path) {
+        Ok(text) => (path, text),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let legacy_path = legacy_context_path();
+            match fs::read_to_string(&legacy_path) {
+                Ok(text) => (legacy_path, text),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+                Err(source) => {
+                    return Err(PrepareError::ReadManifest {
+                        path: legacy_path,
+                        source,
+                    });
+                }
+            }
+        }
         Err(source) => {
             return Err(PrepareError::ReadManifest { path, source });
         }
@@ -109,8 +121,8 @@ pub(crate) fn load_context() -> Result<Option<WalkContext>, PrepareError> {
 
 /// Save the active walk context used by later commands.
 pub(crate) fn save_context(context: &WalkContext) -> Result<PathBuf, PrepareError> {
-    let path = context_path();
-    ensure_socket_parent(&path)?;
+    let path = context_path()?;
+    ensure_private_parent(&path, "prototype1_state_walk_context_dir", "context")?;
     let file = WalkContextFile::from(context);
     let body = serde_json::to_string_pretty(&file).map_err(PrepareError::Serialize)?;
     fs::write(&path, body).map_err(|source| PrepareError::DatabaseSetup {
@@ -124,7 +136,11 @@ pub(crate) fn save_context(context: &WalkContext) -> Result<PathBuf, PrepareErro
 }
 
 /// Path to the saved walk context file.
-pub(crate) fn context_path() -> PathBuf {
+pub(crate) fn context_path() -> Result<PathBuf, PrepareError> {
+    Ok(ploke_eval_home()?.join("walk").join("context.json"))
+}
+
+fn legacy_context_path() -> PathBuf {
     socket_dir().join("context.json")
 }
 
@@ -149,16 +165,24 @@ pub(crate) fn socket_path(
 
 /// Create the socket parent directory and restrict it to the current user.
 pub(crate) fn ensure_socket_parent(path: &Path) -> Result<(), PrepareError> {
+    ensure_private_parent(path, "prototype1_state_walk_socket_dir", "socket")
+}
+
+fn ensure_private_parent(
+    path: &Path,
+    phase: &'static str,
+    noun: &'static str,
+) -> Result<(), PrepareError> {
     let Some(parent) = path.parent() else {
         return Err(PrepareError::DatabaseSetup {
-            phase: "prototype1_state_walk_socket_parent",
-            detail: format!("socket path '{}' has no parent directory", path.display()),
+            phase,
+            detail: format!("{noun} path '{}' has no parent directory", path.display()),
         });
     };
     fs::create_dir_all(parent).map_err(|source| PrepareError::DatabaseSetup {
-        phase: "prototype1_state_walk_socket_dir",
+        phase,
         detail: format!(
-            "failed to create socket dir '{}': {source}",
+            "failed to create {noun} dir '{}': {source}",
             parent.display()
         ),
     })?;
