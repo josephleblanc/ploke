@@ -242,12 +242,64 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         .get("call_paths_to_target")
         .and_then(serde_json::Value::as_array)
         .expect("call_paths_to_target array");
+    let impact = target_payload
+        .get("call_impact")
+        .and_then(serde_json::Value::as_object)
+        .expect("call_impact object");
+    let impact_paths = impact
+        .get("paths")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_impact paths array");
+    let impact_callers = impact
+        .get("callers")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_impact callers array");
+    let impact_direct_callers = impact
+        .get("direct_callers")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_impact direct_callers array");
+    let impact_public_callers = impact
+        .get("public_callers")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_impact public_callers array");
     assert_two_hop_call_path(
         incoming_paths,
         fixture.start,
         fixture.intermediate,
         fixture.target,
         "code_item_lookup incoming paths",
+    );
+    assert_two_hop_call_path(
+        impact_paths,
+        fixture.start,
+        fixture.intermediate,
+        fixture.target,
+        "code_item_lookup impact paths",
+    );
+    assert_impact_node(
+        impact_callers,
+        fixture.start,
+        "extract",
+        "axum-core/src/ext_traits/request.rs",
+        "code_item_lookup impact callers",
+    );
+    assert_impact_node(
+        impact_callers,
+        fixture.intermediate,
+        "extract_with_state",
+        "axum-core/src/ext_traits/request.rs",
+        "code_item_lookup impact callers",
+    );
+    assert_impact_node(
+        impact_direct_callers,
+        fixture.intermediate,
+        "extract_with_state",
+        "axum-core/src/ext_traits/request.rs",
+        "code_item_lookup impact direct callers",
+    );
+    assert!(
+        impact_public_callers.is_empty(),
+        "direct stored-public impact bucket should remain empty for inherited method callers: {impact_public_callers:#?}"
     );
     let target_ui = target_result
         .ui_payload
@@ -260,6 +312,21 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
             >= 1,
         "code_item_lookup should surface incoming call-path carrier counts"
     );
+    assert!(
+        ui_field(target_ui, "impact_callers")
+            .parse::<usize>()
+            .expect("impact caller count")
+            >= 2,
+        "code_item_lookup should surface impact caller counts"
+    );
+    assert!(
+        ui_field(target_ui, "impact_direct_callers")
+            .parse::<usize>()
+            .expect("direct impact caller count")
+            >= 2,
+        "code_item_lookup should surface all direct impact caller counts"
+    );
+    assert_eq!(ui_field(target_ui, "impact_public_callers"), "0");
 }
 
 #[tokio::test]
@@ -690,5 +757,26 @@ async fn code_item_lookup_disambiguates_real_corpus_handler_call_by_owner_trait(
             .expect("proof context count")
             >= 1,
         "code_item_lookup should surface real-corpus Handler::call proof rows"
+    );
+}
+
+fn assert_impact_node(
+    nodes: &[serde_json::Value],
+    id: uuid::Uuid,
+    name: &str,
+    file_suffix: &str,
+    label: &str,
+) {
+    let id = id.to_string();
+    assert!(
+        nodes.iter().any(|node| {
+            node.get("id").and_then(serde_json::Value::as_str) == Some(id.as_str())
+                && node.get("name").and_then(serde_json::Value::as_str) == Some(name)
+                && node
+                    .get("file_path")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|path| path.ends_with(file_suffix))
+        }),
+        "{label} should include impact node {id} named {name:?} in {file_suffix:?}: {nodes:#?}"
     );
 }

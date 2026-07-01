@@ -551,6 +551,7 @@ impl From<ContextPart> for ConciseContext {
             call_context: value.call_context,
             call_paths_from_owner: value.call_paths_from_owner,
             call_paths_to_target: value.call_paths_to_target,
+            call_impact: None,
             proof_context: value.proof_context,
         }
     }
@@ -604,6 +605,9 @@ pub struct ConciseContext {
     pub call_paths_from_owner: Vec<CallPathInfo>,
     #[serde(default)]
     pub call_paths_to_target: Vec<CallPathInfo>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_impact: Option<CallImpactInfo>,
     #[serde(default)]
     pub proof_context: Vec<ProofContextInfo>,
 }

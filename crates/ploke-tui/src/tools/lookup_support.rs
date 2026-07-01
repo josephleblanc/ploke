@@ -1,6 +1,6 @@
 use ploke_core::{
     io_types::EmbeddingData,
-    rag_types::{CallContextInfo, CallPathInfo, ProofContextInfo},
+    rag_types::{CallContextInfo, CallImpactInfo, CallPathInfo, ProofContextInfo},
     tool_types::ToolName,
 };
 use ploke_db::{
@@ -395,6 +395,28 @@ pub(super) fn call_path_carriers_for_node(
         from_owner,
         to_target,
     })
+}
+
+pub(super) fn call_impact_for_node(
+    ctx: &super::Ctx,
+    node_id: Uuid,
+) -> Result<Option<CallImpactInfo>, ploke_error::Error> {
+    use ploke_error::InternalError;
+
+    let path_options = CallPathOptions {
+        max_depth: 3,
+        max_paths: 64,
+    };
+    match ctx.state.rag.as_ref() {
+        Some(rag) if !rag.call_context_degraded() => rag
+            .exact_call_impact_for_target(node_id, path_options)
+            .map_err(|err| {
+                ploke_error::Error::Internal(InternalError::CompilerError(format!(
+                    "failed to collect impact summary for code item {node_id}: {err}"
+                )))
+            }),
+        _ => Ok(None),
+    }
 }
 
 fn display_received(received: &str) -> &str {

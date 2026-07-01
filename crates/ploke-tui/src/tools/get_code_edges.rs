@@ -347,6 +347,7 @@ for a more fuzzy search."#
             call_context: carriers.call_context,
             call_paths_from_owner: Vec::new(),
             call_paths_to_target: Vec::new(),
+            call_impact: None,
             proof_context: carriers.proof_context,
         };
 

@@ -95,15 +95,30 @@ node_info[id, kind, name, vis_kind, module_path, file_path] :=
         );
 
         let rows = self.run_script(&script, params, ScriptMutability::Immutable)?;
-        match rows.rows.as_slice() {
-            [] => Ok(None),
-            [row] => Ok(Some(decode_call_node_info(row)?)),
-            rows => Err(DbError::Cozo(format!(
-                "expected at most one call node info row for {node_id}, found {}",
-                rows.len()
-            ))),
-        }
+        let mut infos = rows
+            .rows
+            .iter()
+            .map(|row| decode_call_node_info(row))
+            .collect::<Result<Vec<_>, DbError>>()?;
+        // Exact node identity is authoritative here; module/file path are
+        // descriptive metadata. Some associated items can reach nested test
+        // modules through ancestor rules, so choose a stable shortest path
+        // instead of failing an otherwise valid call-graph query.
+        infos.sort_by_key(call_node_info_rank);
+        infos.dedup();
+        Ok(infos.into_iter().next())
     }
+}
+
+fn call_node_info_rank(row: &CallNodeInfo) -> (usize, u128, CallNodeKind, String, String, String) {
+    (
+        row.module_path.len(),
+        row.id.as_u128(),
+        row.kind,
+        row.name.clone(),
+        row.visibility.clone(),
+        row.file_path.clone(),
+    )
 }
 
 fn decode_call_node_info(row: &[DataValue]) -> Result<CallNodeInfo, DbError> {
