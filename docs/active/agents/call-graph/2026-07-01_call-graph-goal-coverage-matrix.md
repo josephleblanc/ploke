@@ -49,35 +49,29 @@ No bucket should receive more than four consecutive commits without re-checking 
 
 ## Current Bucket
 
-Current bucket: guarded same-target match dynamic callee.
+Current bucket: `CodeItemEdges` usage-summary propagation.
 
 Exit criteria:
 
-- Admit guarded `match` arm bodies into the same exact item-path extraction
-  used for unguarded match arms.
-- Preserve fail-closed behavior for opaque parameter arms and non-path arms.
-- Prove parser extraction, DB context/proof projection, RAG propagation, and
-  TUI/tool payloads all expose one resolved `DynamicFunction` edge for the
-  guarded same-target fixture.
+- Reuse the existing RAG/DB impact and reach helpers; do not add new graph
+  semantics.
+- Preserve `code_item_lookup` UI fields while removing duplicated
+  impact/reach field construction.
+- Prove `code_item_edges` returns `node_info.call_reach` for source lookups and
+  `node_info.call_impact` for target lookups over the existing axum two-hop
+  path oracle.
 
 Completed evidence:
 
-- Parser:
-  `fixture_call_graph_call_match_guarded_function_item_resolves_dynamic_function_call_site`.
-- DB:
-  `fixture_context_reads_projected_resolved_dynamic_function_shapes` and
-  `fixture_projection_stores_real_branch_and_match_dynamic_call_proof_facts`.
-- RAG:
-  `call_context_collection_reads_real_fixture_dynamic_rows` and
-  `call_context_expansion_adds_incoming_fixture_dynamic_callers`.
 - TUI/tool:
-  `request_code_context_returns_function_and_dynamic_owner_call_context` and
-  `code_item_lookup_returns_resolved_dynamic_callable_context`.
+  `code_item_edges_returns_real_corpus_two_hop_call_paths`,
+  `code_item_lookup_returns_real_corpus_two_hop_call_paths`,
+  `code_item_lookup_surfaces_proc_macro_impact_callers`, and
+  `code_item_lookup_returns_real_corpus_json_from_bytes_callers`.
 
-Reason to switch after this bucket: guarded same-target item-path arms are now
-part of the proven exact dynamic-function subset. Broader callable trait
-objects, returned closures, and closure-body ownership need separate binding
-and executable-owner design work.
+Reason to switch after this bucket: the missing tool carrier is a propagation
+gap, not a DB/RAG semantic gap. Once green, return to semantic expansion rather
+than adding more tool-only fields.
 
 ## Coverage Matrix
 
@@ -99,7 +93,7 @@ and executable-owner design work.
 | Dead-code / private zero-incoming | Met for now | `private_uncalled_nodes` lists axum `error_handling::traits`, excludes called `parse_attrs`, and exact impact reports no incoming source calls | Exact impact reports the same private target and empty caller/path/bucket sets | `code_item_lookup` reports zero incoming paths and zero impact caller counts | axum | Switch buckets; do not widen to generated/dynamic reachability here. |
 | DB usage summaries | Strong current surface | `call_impact_for_target`, `call_reach_for_owner`, paths, source files/modules, buckets, boundary/frontier rows | N/A | N/A | axum | Add fields only when they answer a matrix question, not opportunistically. |
 | RAG usage summaries | Strong current surface | N/A | Exact call paths, impact, reach, source metadata | N/A | axum | Add only when DB bucket already has proof. |
-| TUI/tool usage summaries | Strong current surface | N/A | N/A | `code_item_lookup`, `code_item_edges`, and exact call-path tool coverage | axum | Keep tool changes thin; do not invent semantics outside RAG/DB. |
+| TUI/tool usage summaries | Strong current surface | N/A | N/A | `code_item_lookup`, `code_item_edges`, and exact call-path tool coverage; `code_item_edges` now carries the same existing impact/reach summaries in `node_info` that lookup exposes | axum | Keep tool changes thin; do not invent semantics outside RAG/DB. |
 
 ## Parking Lot
 

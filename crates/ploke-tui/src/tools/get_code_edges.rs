@@ -287,6 +287,8 @@ for a more fuzzy search."#
         let resolved_item_id = resolved_item[0].id;
         let carriers = lookup_support::context_carriers_for_node(&ctx, resolved_item_id)?;
         let call_paths = lookup_support::call_path_carriers_for_node(&ctx, resolved_item_id)?;
+        let call_impact = lookup_support::call_impact_for_node(&ctx, resolved_item_id)?;
+        let call_reach = lookup_support::call_reach_for_node(&ctx, resolved_item_id)?;
         let call_path_nodes =
             call_path_nodes_for_paths(&call_paths.from_owner, &call_paths.to_target);
 
@@ -347,8 +349,8 @@ for a more fuzzy search."#
             call_context: carriers.call_context,
             call_paths_from_owner: Vec::new(),
             call_paths_to_target: Vec::new(),
-            call_impact: None,
-            call_reach: None,
+            call_impact,
+            call_reach,
             proof_context: carriers.proof_context,
         };
 
@@ -392,11 +394,16 @@ for a more fuzzy search."#
             .with_field(
                 "call_paths_to_target",
                 node_edge_info.call_paths_to_target.len().to_string(),
-            )
-            .with_field(
-                "proof_context",
-                node_edge_info.node_info.proof_context.len().to_string(),
             );
+        let ui_payload = lookup_support::with_call_usage_fields(
+            ui_payload,
+            node_edge_info.node_info.call_impact.as_ref(),
+            node_edge_info.node_info.call_reach.as_ref(),
+        )
+        .with_field(
+            "proof_context",
+            node_edge_info.node_info.proof_context.len().to_string(),
+        );
         let content = serde_json::to_string(&node_edge_info).map_err(|err| {
             ploke_error::Error::Internal(InternalError::CompilerError(format!(
                 "failed to serialize NodeEdgeInfo: {err}. This indicates an error in the ploke application itself, not due to incorrect search terms. Please consider filing an issue on the ploke github."

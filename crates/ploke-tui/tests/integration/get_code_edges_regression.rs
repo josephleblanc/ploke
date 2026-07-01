@@ -556,6 +556,18 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
         .get("call_path_nodes")
         .and_then(serde_json::Value::as_array)
         .expect("call_path_nodes array");
+    let start_reach = start_payload
+        .get("node_info")
+        .and_then(|node| node.get("call_reach"))
+        .expect("node_info.call_reach should be present for source edge lookup");
+    let start_reach_paths = start_reach
+        .get("paths")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_reach.paths array");
+    let start_reach_callees = start_reach
+        .get("callees")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_reach.callees array");
 
     // Matrix:
     //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
@@ -575,6 +587,13 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
         fixture.intermediate,
         fixture.target,
         "code_item_edges outgoing paths",
+    );
+    assert_two_hop_call_path(
+        start_reach_paths,
+        fixture.start,
+        fixture.intermediate,
+        fixture.target,
+        "code_item_edges node_info.call_reach paths",
     );
     assert_call_path_node(
         start_path_nodes,
@@ -629,6 +648,10 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
         ui_field(start_ui, "callees"),
         summary_usize(&start_payload, "callees").to_string()
     );
+    assert_eq!(
+        ui_field(start_ui, "reach_callees"),
+        start_reach_callees.len().to_string()
+    );
 
     let target_params = EdgesParams {
         item_name: Cow::Borrowed("from_request"),
@@ -663,12 +686,31 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
         .get("call_path_nodes")
         .and_then(serde_json::Value::as_array)
         .expect("call_path_nodes array");
+    let target_impact = target_payload
+        .get("node_info")
+        .and_then(|node| node.get("call_impact"))
+        .expect("node_info.call_impact should be present for target edge lookup");
+    let target_impact_paths = target_impact
+        .get("paths")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_impact.paths array");
+    let target_impact_callers = target_impact
+        .get("callers")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_impact.callers array");
     assert_two_hop_call_path(
         incoming_paths,
         fixture.start,
         fixture.intermediate,
         fixture.target,
         "code_item_edges incoming paths",
+    );
+    assert_two_hop_call_path(
+        target_impact_paths,
+        fixture.start,
+        fixture.intermediate,
+        fixture.target,
+        "code_item_edges node_info.call_impact paths",
     );
     assert_call_path_node(
         target_path_nodes,
@@ -721,6 +763,10 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
     assert_eq!(
         ui_field(target_ui, "callers"),
         summary_usize(&target_payload, "callers").to_string()
+    );
+    assert_eq!(
+        ui_field(target_ui, "impact_callers"),
+        target_impact_callers.len().to_string()
     );
 }
 

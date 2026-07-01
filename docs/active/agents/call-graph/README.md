@@ -424,6 +424,9 @@ Implemented/scaffolded:
     `ContextPart -> ConciseContext` conversion, including local and imported
     trait associated-function, dynamic-function, constructor, external
     targetless, macro blocker, and ambiguous blocker rows.
+  - Tool usage-summary coverage asserts `code_item_edges` carries the existing
+    `call_impact` and `call_reach` summaries in `node_info`, matching
+    `code_item_lookup` while retaining its graph-oriented path carriers.
   - Direct production-tool coverage asserts `request_code_context` over a fresh
     `fixture_call_graph` database returns an incoming method caller part with
     both `call_expansion` provenance and the matching outgoing method

@@ -70,6 +70,9 @@ Current matrix posture:
   direct, alias, branch/match including guarded same-target match arms, and
   single-expression block initializers through parser, DB, RAG, and TUI proof
   where exposed.
+- Tool usage summaries: `code_item_edges` now propagates the existing
+  impact/reach summaries in `node_info`, matching `code_item_lookup` instead
+  of exposing only lower-level path carriers.
 - Unsupported receiver visibility: method calls with receiver expressions
   outside the conservative classifier now persist as targetless
   `Unsupported` receiver rows instead of being dropped before status/proof

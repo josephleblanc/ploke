@@ -441,6 +441,95 @@ pub(super) fn call_reach_for_node(
     }
 }
 
+pub(super) fn with_call_usage_fields(
+    payload: super::ToolUiPayload,
+    impact: Option<&CallImpactInfo>,
+    reach: Option<&CallReachInfo>,
+) -> super::ToolUiPayload {
+    payload
+        .with_field(
+            "impact_callers",
+            count(impact.map(|info| info.callers.len())),
+        )
+        .with_field(
+            "impact_direct_callers",
+            count(impact.map(|info| info.direct_callers.len())),
+        )
+        .with_field(
+            "impact_direct_call_sites",
+            count(impact.map(|info| info.direct_call_sites.len())),
+        )
+        .with_field(
+            "impact_callsite_buckets",
+            count(impact.map(|info| info.callsite_buckets.len())),
+        )
+        .with_field(
+            "impact_public_callers",
+            count(impact.map(|info| info.public_callers.len())),
+        )
+        .with_field(
+            "impact_test_callers",
+            count(impact.map(|info| info.test_callers.len())),
+        )
+        .with_field(
+            "impact_non_test_callers",
+            count(impact.map(|info| info.non_test_callers.len())),
+        )
+        .with_field(
+            "impact_source_files",
+            count(impact.map(|info| info.source_files.len())),
+        )
+        .with_field(
+            "impact_source_modules",
+            count(impact.map(|info| info.source_modules.len())),
+        )
+        .with_field("reach_callees", count(reach.map(|info| info.callees.len())))
+        .with_field(
+            "reach_direct_callees",
+            count(reach.map(|info| info.direct_callees.len())),
+        )
+        .with_field(
+            "reach_direct_call_sites",
+            count(reach.map(|info| info.direct_call_sites.len())),
+        )
+        .with_field(
+            "reach_boundary_call_sites",
+            count(reach.map(|info| info.boundary_call_sites.len())),
+        )
+        .with_field(
+            "reach_boundary_edges",
+            count(reach.map(|info| info.boundary_edges.len())),
+        )
+        .with_field(
+            "reach_public_callees",
+            count(reach.map(|info| info.public_callees.len())),
+        )
+        .with_field(
+            "reach_frontier_calls",
+            count(reach.map(|info| info.frontier_calls.len())),
+        )
+        .with_field(
+            "reach_external_frontier_calls",
+            count(reach.map(|info| info.external_frontier_calls.len())),
+        )
+        .with_field(
+            "reach_unsupported_frontier_calls",
+            count(reach.map(|info| info.unsupported_frontier_calls.len())),
+        )
+        .with_field(
+            "reach_source_files",
+            count(reach.map(|info| info.source_files.len())),
+        )
+        .with_field(
+            "reach_source_modules",
+            count(reach.map(|info| info.source_modules.len())),
+        )
+}
+
+fn count(value: Option<usize>) -> String {
+    value.unwrap_or_default().to_string()
+}
+
 fn display_received(received: &str) -> &str {
     if received.trim().is_empty() {
         "<empty>"
