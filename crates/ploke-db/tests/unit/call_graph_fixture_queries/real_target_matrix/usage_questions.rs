@@ -249,6 +249,16 @@ fn axum_usage_questions_summarize_owner_reach_for_navigation() -> Result<(), DbE
         &[(target, "from_request")],
         "RequestExt::extract reach report public callees",
     );
+    assert_source_file(
+        &report.source_files,
+        "axum-core/src/ext_traits/request.rs",
+        "RequestExt::extract reach report source files",
+    );
+    assert_source_file(
+        &report.source_files,
+        "axum-core/src/extract/mod.rs",
+        "RequestExt::extract reach report source files",
+    );
 
     Ok(())
 }
@@ -310,6 +320,11 @@ fn axum_usage_questions_surface_external_frontier_for_dependency_calls() -> Resu
         });
     assert_external_targetless(frontier);
     assert_eq!(frontier.site.owner_id, owner);
+    assert_source_file(
+        &report.source_files,
+        "axum/src/json.rs",
+        "Json::from_bytes reach report source files",
+    );
 
     Ok(())
 }
@@ -383,6 +398,16 @@ fn axum_usage_questions_summarize_eventual_callers_for_impact() -> Result<(), Db
         report.public_callers.is_empty(),
         "direct stored-public filtering should not infer trait-effective visibility from inherited method rows: {report:#?}"
     );
+    assert_source_file(
+        &report.source_files,
+        "axum-core/src/ext_traits/request.rs",
+        "FromRequest::from_request impact report source files",
+    );
+    assert_source_file(
+        &report.source_files,
+        "axum-core/src/extract/mod.rs",
+        "FromRequest::from_request impact report source files",
+    );
 
     Ok(())
 }
@@ -425,6 +450,11 @@ fn axum_usage_questions_keep_unsupported_proc_macro_public_gap_empty() -> Result
             && report.direct_callers.is_empty()
             && report.public_callers.is_empty(),
         "unsupported proc-macro public callers must remain fail-closed in impact summaries: {report:#?}"
+    );
+    assert_source_file(
+        &report.source_files,
+        "axum-macros/src/lib.rs",
+        "expand_with empty impact report source files",
     );
 
     Ok(())
@@ -518,6 +548,13 @@ fn assert_path_depths(paths: &[(Uuid, u32)], expected: &[(Uuid, u32)], label: &s
             "{label} should include node {node} at depth {depth}: {actual:#?}"
         );
     }
+}
+
+fn assert_source_file(files: &[String], suffix: &str, label: &str) {
+    assert!(
+        files.iter().any(|path| path.ends_with(suffix)),
+        "{label} should include source file ending with {suffix:?}: {files:#?}"
+    );
 }
 
 fn assert_path_edge_span_matches_site(

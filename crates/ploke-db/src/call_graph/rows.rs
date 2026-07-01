@@ -158,6 +158,7 @@ pub struct CallImpactReport {
     pub callers: Vec<CallNodeInfo>,
     pub direct_callers: Vec<CallNodeInfo>,
     pub public_callers: Vec<CallNodeInfo>,
+    pub source_files: Vec<String>,
 }
 
 /// Owner-centered summary for navigation/reachability usage questions.
@@ -169,4 +170,5 @@ pub struct CallReachReport {
     pub direct_callees: Vec<CallNodeInfo>,
     pub public_callees: Vec<CallNodeInfo>,
     pub frontier_calls: Vec<CallContextRow>,
+    pub source_files: Vec<String>,
 }

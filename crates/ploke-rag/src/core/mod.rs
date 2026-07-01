@@ -345,13 +345,11 @@ fn impact_info(db: &Database, report: DbCallImpactReport) -> Result<CallImpactIn
         .into_iter()
         .map(call_node_info)
         .collect::<Vec<_>>();
-    let source_files = call_summary_files(
-        &paths,
-        std::iter::once(&target)
-            .chain(callers.iter())
-            .chain(direct_callers.iter())
-            .chain(public_callers.iter()),
-    );
+    let source_files = report
+        .source_files
+        .into_iter()
+        .map(NodeFilepath::new)
+        .collect();
 
     Ok(CallImpactInfo {
         target,
@@ -390,13 +388,11 @@ fn reach_info(db: &Database, report: DbCallReachReport) -> Result<CallReachInfo,
         .into_iter()
         .map(|row| row_to_call_context(row, usize::MAX))
         .collect::<Result<Vec<_>, RagError>>()?;
-    let source_files = call_summary_files(
-        &paths,
-        std::iter::once(&owner)
-            .chain(callees.iter())
-            .chain(direct_callees.iter())
-            .chain(public_callees.iter()),
-    );
+    let source_files = report
+        .source_files
+        .into_iter()
+        .map(NodeFilepath::new)
+        .collect();
 
     Ok(CallReachInfo {
         owner,
@@ -407,22 +403,6 @@ fn reach_info(db: &Database, report: DbCallReachReport) -> Result<CallReachInfo,
         frontier_calls,
         source_files,
     })
-}
-
-fn call_summary_files<'a>(
-    paths: &[CallPathInfo],
-    nodes: impl Iterator<Item = &'a CallNodeInfo>,
-) -> Vec<NodeFilepath> {
-    let mut files = BTreeSet::new();
-    for node in nodes {
-        files.insert(node.file_path.as_ref().to_string());
-    }
-    for path in paths {
-        for node in &path.nodes {
-            files.insert(node.file_path.as_ref().to_string());
-        }
-    }
-    files.into_iter().map(NodeFilepath::new).collect()
 }
 
 fn call_node_info(row: DbCallNodeInfo) -> CallNodeInfo {

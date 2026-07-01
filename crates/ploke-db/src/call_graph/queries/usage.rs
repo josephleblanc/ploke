@@ -30,11 +30,19 @@ impl Database {
         let direct_callers = node_info_for_paths(self, &paths, "caller", |path| {
             (path.depth == 1).then_some(path.start_id)
         })?;
-        let public_callers = callers
+        let public_callers: Vec<CallNodeInfo> = callers
             .iter()
             .filter(|caller| caller.is_public)
             .cloned()
             .collect();
+        let source_files = source_files_for_summary(
+            self,
+            &paths,
+            std::iter::once(&target)
+                .chain(callers.iter())
+                .chain(direct_callers.iter())
+                .chain(public_callers.iter()),
+        )?;
 
         Ok(CallImpactReport {
             target,
@@ -42,6 +50,7 @@ impl Database {
             callers,
             direct_callers,
             public_callers,
+            source_files,
         })
     }
 
@@ -66,12 +75,20 @@ impl Database {
         let direct_callees = node_info_for_paths(self, &paths, "callee", |path| {
             (path.depth == 1).then_some(path.end_id)
         })?;
-        let public_callees = callees
+        let public_callees: Vec<CallNodeInfo> = callees
             .iter()
             .filter(|callee| callee.is_public)
             .cloned()
             .collect();
         let frontier_calls = frontier_calls_for_paths(self, owner_id, &paths)?;
+        let source_files = source_files_for_summary(
+            self,
+            &paths,
+            std::iter::once(&owner)
+                .chain(callees.iter())
+                .chain(direct_callees.iter())
+                .chain(public_callees.iter()),
+        )?;
 
         Ok(CallReachReport {
             owner,
@@ -80,6 +97,7 @@ impl Database {
             direct_callees,
             public_callees,
             frontier_calls,
+            source_files,
         })
     }
 }
@@ -140,4 +158,36 @@ fn node_info_for_paths(
     let mut nodes = nodes.into_values().collect::<Vec<_>>();
     nodes.sort_by_key(|node| (!node.is_public, node.name.clone(), node.id.as_u128()));
     Ok(nodes)
+}
+
+fn source_files_for_summary<'a>(
+    db: &Database,
+    paths: &[CallPath],
+    nodes: impl Iterator<Item = &'a CallNodeInfo>,
+) -> Result<Vec<String>, DbError> {
+    let mut files = BTreeSet::new();
+    for node in nodes {
+        files.insert(node.file_path.clone());
+    }
+
+    let mut path_nodes = BTreeSet::new();
+    for path in paths {
+        path_nodes.insert(path.start_id);
+        path_nodes.insert(path.end_id);
+        for edge in &path.edges {
+            path_nodes.insert(edge.caller_id);
+            path_nodes.insert(edge.callee_id);
+        }
+    }
+
+    for node_id in path_nodes {
+        let info = db.call_node_info(node_id)?.ok_or_else(|| {
+            DbError::Cozo(format!(
+                "missing call graph node metadata for summary source file {node_id}"
+            ))
+        })?;
+        files.insert(info.file_path);
+    }
+
+    Ok(files.into_iter().collect())
 }
