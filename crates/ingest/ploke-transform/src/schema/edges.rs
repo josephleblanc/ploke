@@ -476,6 +476,7 @@ fn call_site_id_to_cozo(id: AnyCallSiteId) -> cozo::DataValue {
 fn call_body_owner_to_cozo(owner: CallBodyOwnerId) -> cozo::DataValue {
     match owner {
         CallBodyOwnerId::Function(id) => id.into(),
+        CallBodyOwnerId::Macro(id) => id.into(),
         CallBodyOwnerId::Method(id) => id.into(),
         CallBodyOwnerId::Const(id) => id.into(),
         CallBodyOwnerId::Static(id) => id.into(),
@@ -485,6 +486,7 @@ fn call_body_owner_to_cozo(owner: CallBodyOwnerId) -> cozo::DataValue {
 fn call_body_owner_kind(owner: CallBodyOwnerId) -> &'static str {
     match owner {
         CallBodyOwnerId::Function(_) => "Function",
+        CallBodyOwnerId::Macro(_) => "Macro",
         CallBodyOwnerId::Method(_) => "Method",
         CallBodyOwnerId::Const(_) => "Const",
         CallBodyOwnerId::Static(_) => "Static",

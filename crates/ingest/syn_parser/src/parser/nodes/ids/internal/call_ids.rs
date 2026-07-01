@@ -23,8 +23,8 @@
 //! payloads or relation facts, not by minting IDs from owner/name/span data.
 
 use super::{
-    AnyTypedId, CategoricalTypedId, ConstNodeId, FunctionNodeId, MethodNodeId, StaticNodeId,
-    ToCozoUuid,
+    AnyTypedId, CategoricalTypedId, ConstNodeId, FunctionNodeId, MacroNodeId, MethodNodeId,
+    StaticNodeId, ToCozoUuid,
 };
 use cozo::{DataValue, UuidWrapper};
 use ploke_core::{CallId, IdTrait, NodeId, PROJECT_NAMESPACE_UUID};
@@ -191,13 +191,16 @@ define_call_site_id!(
 ///
 /// This endpoint family stays in the node universe because owners are real code
 /// graph nodes. It is intentionally narrower than `AnyNodeId`: arbitrary
-/// modules, structs, impls, or fields cannot own body call sites. If future
-/// extraction supports closure bodies, this family should be extended
-/// deliberately with the corresponding owner proof.
+/// modules, structs, impls, or fields cannot own body call sites. Procedure
+/// macro entrypoints are macro definition nodes whose bodies can contain
+/// ordinary source calls. If future extraction supports closure bodies, this
+/// family should be extended deliberately with the corresponding owner proof.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub enum CallBodyOwnerId {
     /// A standalone function body, identified by its typed node ID.
     Function(FunctionNodeId),
+    /// A procedural macro body, identified by its typed macro node ID.
+    Macro(MacroNodeId),
     /// An associated function or method body, identified by its typed node ID.
     Method(MethodNodeId),
     /// A const item initializer expression, identified by its typed node ID.
@@ -216,6 +219,7 @@ impl CallBodyOwnerId {
     pub(in crate::parser) fn base_id(self) -> NodeId {
         match self {
             CallBodyOwnerId::Function(id) => id.base_id(),
+            CallBodyOwnerId::Macro(id) => id.base_id(),
             CallBodyOwnerId::Method(id) => id.base_id(),
             CallBodyOwnerId::Const(id) => id.base_id(),
             CallBodyOwnerId::Static(id) => id.base_id(),
@@ -227,6 +231,7 @@ impl Display for CallBodyOwnerId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             CallBodyOwnerId::Function(id) => write!(f, "CallBodyOwnerId::Function({})", id),
+            CallBodyOwnerId::Macro(id) => write!(f, "CallBodyOwnerId::Macro({})", id),
             CallBodyOwnerId::Method(id) => write!(f, "CallBodyOwnerId::Method({})", id),
             CallBodyOwnerId::Const(id) => write!(f, "CallBodyOwnerId::Const({})", id),
             CallBodyOwnerId::Static(id) => write!(f, "CallBodyOwnerId::Static({})", id),
@@ -238,6 +243,13 @@ impl From<FunctionNodeId> for CallBodyOwnerId {
     #[inline]
     fn from(id: FunctionNodeId) -> Self {
         CallBodyOwnerId::Function(id)
+    }
+}
+
+impl From<MacroNodeId> for CallBodyOwnerId {
+    #[inline]
+    fn from(id: MacroNodeId) -> Self {
+        CallBodyOwnerId::Macro(id)
     }
 }
 

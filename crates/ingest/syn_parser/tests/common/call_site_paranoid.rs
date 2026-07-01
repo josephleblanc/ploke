@@ -1022,6 +1022,47 @@ pub fn function_owner_context(
     }
 }
 
+/// Builds a macro owner context from module path and macro name.
+pub fn macro_owner_context(
+    graph: &impl GraphAccess,
+    module_path: &[&str],
+    macro_name: &str,
+) -> CallOwnerContext {
+    let module_path_vec = module_path
+        .iter()
+        .copied()
+        .map(String::from)
+        .collect::<Vec<_>>();
+    let module = graph
+        .find_module_by_path_checked(&module_path_vec)
+        .expect("call-site test fixture module should exist");
+    let matches = graph
+        .macros()
+        .iter()
+        .filter(|macro_node| {
+            macro_node.name == macro_name
+                && graph.module_contains_node(module.id, macro_node.id.into())
+        })
+        .collect::<Vec<_>>();
+    let macro_node = match matches.as_slice() {
+        [macro_node] => macro_node,
+        [] => panic!(
+            "expected macro {macro_name:?} in module path {}",
+            module_path_vec.join("::")
+        ),
+        many => panic!(
+            "expected exactly one macro {macro_name:?} in module path {}, found {}",
+            module_path_vec.join("::"),
+            many.len()
+        ),
+    };
+    CallOwnerContext {
+        id: CallBodyOwnerId::Macro(macro_node.id),
+        span: macro_node.span,
+        label: format!("macro {}::{}", module_path_vec.join("::"), macro_node.name),
+    }
+}
+
 /// Builds a method owner context from associated-item paranoid args.
 pub fn method_owner_context(
     graph: &impl GraphAccess,
@@ -1127,12 +1168,25 @@ pub fn assert_paranoid_call_site(
         .iter()
         .filter(|call| call.id() == expected_id)
         .collect::<Vec<_>>();
+    let owner_candidates = graph
+        .call_sites()
+        .iter()
+        .filter(|call| call.owner() == owner.id)
+        .map(describe_call)
+        .collect::<Vec<_>>();
+    let all_candidates = graph
+        .call_sites()
+        .iter()
+        .map(describe_call)
+        .collect::<Vec<_>>();
     assert_eq!(
         id_matches.len(),
         1,
-        "expected exactly one call site with regenerated ID {expected_id:?} for {}. Matches: {:#?}",
+        "expected exactly one call site with regenerated ID {expected_id:?} for {}. Matches: {:#?}. Owner candidates: {:#?}. All candidates: {:#?}",
         expected.label(),
-        id_matches
+        id_matches,
+        owner_candidates,
+        all_candidates
     );
     let call_by_id = id_matches[0];
     expected.assert_fields(call_by_id, owner, &expected_cfgs, expected_id);

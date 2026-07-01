@@ -654,9 +654,11 @@ Expected searchable corpus embedding config:
   - typed local `Router` receiver `.clone()` rows reach the local
     `impl<S> Clone for Router<S>` method through exact local external-trait impl
     receiver resolution
-  - selected proc-macro body, closure body, and dynamic callable field shapes
-    are documented as unsupported contracts until parser/resolver ownership
-    improves
+  - selected proc-macro entrypoint bodies reach local helper functions through
+    `CallBodyOwnerId::Macro` owner edges, including `expand_with` and active
+    `expand_attr_with` callers
+  - selected closure body and dynamic callable field shapes are documented as
+    unsupported contracts until nested owner/callable proof improves
 
 ### `corpus_axum_openrouter_embeddings_2026-05-17.sqlite`
 

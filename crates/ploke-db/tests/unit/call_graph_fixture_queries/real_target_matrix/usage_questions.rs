@@ -674,7 +674,7 @@ fn axum_usage_questions_bucket_impact_callers_by_test_source() -> Result<(), DbE
 }
 
 #[test]
-fn axum_usage_questions_keep_unsupported_proc_macro_public_gap_empty() -> Result<(), DbError> {
+fn axum_usage_questions_report_proc_macro_public_entrypoint_impact() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
     // Usage questions:
@@ -683,17 +683,30 @@ fn axum_usage_questions_keep_unsupported_proc_macro_public_gap_empty() -> Result
     // Dead code detection:
     //   "Is this function reachable from any binary, test, macro entrypoint,
     //   or exported API?"
-    // Documentation and RAG:
-    //   "What fail-closed blocker should be shown when a callsite is visible
-    //   but targetless?"
+    // Impact analysis:
+    //   "Which public macro entrypoints reach this helper?"
     //
     // Source oracle:
     //   axum-macros/src/lib.rs:377,426,665,715 call `expand_with(...)` from
     //   public proc-macro entrypoints.
-    // Current contract: proc-macro item bodies are not visited for structural
-    // call-site extraction yet, so usage-question summaries must not fabricate
-    // incoming callers or public reachability.
+    // Expected traversal: each public proc-macro entrypoint reaches
+    // `expand_with` in one path-call edge.
     let target = function_id_by_name_in_module(&db, &["crate"], "expand_with")?;
+    let expected = [
+        (
+            macro_id_by_name(&db, "derive_from_request")?,
+            "derive_from_request",
+        ),
+        (
+            macro_id_by_name(&db, "derive_from_request_parts")?,
+            "derive_from_request_parts",
+        ),
+        (
+            macro_id_by_name(&db, "derive_typed_path")?,
+            "derive_typed_path",
+        ),
+        (macro_id_by_name(&db, "derive_from_ref")?, "derive_from_ref"),
+    ];
     let report = db.call_impact_for_target(
         target,
         CallPathOptions {
@@ -705,18 +718,51 @@ fn axum_usage_questions_keep_unsupported_proc_macro_public_gap_empty() -> Result
     assert_eq!(report.target.id, target);
     assert_eq!(report.target.kind, CallNodeKind::Function);
     assert_eq!(report.target.name, "expand_with");
-    assert!(
-        report.paths.is_empty()
-            && report.callers.is_empty()
-            && report.direct_callers.is_empty()
-            && report.direct_call_sites.is_empty()
-            && report.public_callers.is_empty(),
-        "unsupported proc-macro public callers must remain fail-closed in impact summaries: {report:#?}"
+
+    assert_eq!(report.paths.len(), expected.len(), "{report:#?}");
+    assert_eq!(report.callers.len(), expected.len(), "{report:#?}");
+    assert_eq!(report.direct_callers.len(), expected.len(), "{report:#?}");
+    assert_eq!(
+        report.direct_call_sites.len(),
+        expected.len(),
+        "{report:#?}"
     );
+    assert_eq!(report.public_callers.len(), expected.len(), "{report:#?}");
+    assert_eq!(report.test_callers.len(), 0, "{report:#?}");
+    assert_eq!(report.non_test_callers.len(), expected.len(), "{report:#?}");
+
+    assert_node_names(&report.callers, &expected, "expand_with impact callers");
+    assert_node_names(
+        &report.public_callers,
+        &expected,
+        "expand_with public macro callers",
+    );
+    assert_path_depths(
+        &report
+            .paths
+            .iter()
+            .map(|path| (path.start_id, path.depth))
+            .collect::<Vec<_>>(),
+        &expected
+            .iter()
+            .map(|(id, _name)| (*id, 1))
+            .collect::<Vec<_>>(),
+        "expand_with macro-entrypoint paths",
+    );
+
+    for row in &report.direct_call_sites {
+        assert_eq!(row.site.kind, CallSiteKind::Path);
+        assert_eq!(row.site.path, Some(path(&["expand_with"])));
+        assert_eq!(row.status.status, CallStatusKind::Resolved);
+        assert_eq!(row.status.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(row.targets.len(), 1, "{row:#?}");
+        assert_eq!(row.targets[0].target_id, target);
+        assert_eq!(row.targets[0].relation, CallRelationKind::Function);
+    }
     assert_source_file(
         &report.source_files,
         "axum-macros/src/lib.rs",
-        "expand_with empty impact report source files",
+        "expand_with proc-macro impact report source files",
     );
 
     Ok(())

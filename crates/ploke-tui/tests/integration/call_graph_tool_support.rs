@@ -516,13 +516,50 @@ impl AxumExpandWithToolFixture {
                 },
             )
             .expect("expand_with impact report");
-        assert!(
-            report.paths.is_empty()
-                && report.callers.is_empty()
-                && report.direct_callers.is_empty()
-                && report.public_callers.is_empty(),
-            "current axum fixture should keep proc-macro-body expand_with callers fail-closed: {report:#?}"
+        let expected_callers = [
+            "derive_from_request",
+            "derive_from_request_parts",
+            "derive_typed_path",
+            "derive_from_ref",
+        ];
+        assert_eq!(
+            report.paths.len(),
+            expected_callers.len(),
+            "axum fixture should expose one-hop proc-macro impact paths to expand_with: {report:#?}"
         );
+        assert_eq!(
+            report.callers.len(),
+            expected_callers.len(),
+            "axum fixture should expose proc-macro callers for expand_with: {report:#?}"
+        );
+        assert_eq!(
+            report.direct_callers.len(),
+            expected_callers.len(),
+            "axum fixture should expose direct proc-macro callers for expand_with: {report:#?}"
+        );
+        assert_eq!(
+            report.direct_call_sites.len(),
+            expected_callers.len(),
+            "axum fixture should expose direct proc-macro call sites for expand_with: {report:#?}"
+        );
+        assert_eq!(
+            report.public_callers.len(),
+            expected_callers.len(),
+            "axum fixture should expose public proc-macro callers for expand_with: {report:#?}"
+        );
+        for name in expected_callers {
+            assert!(
+                report.callers.iter().any(|caller| caller.name == name),
+                "expand_with impact should include proc-macro caller {name}: {report:#?}"
+            );
+            assert!(
+                report
+                    .public_callers
+                    .iter()
+                    .any(|caller| caller.name == name),
+                "expand_with impact should include public proc-macro caller {name}: {report:#?}"
+            );
+        }
         assert!(
             db.project_call_proof_facts_for_node(target.id, "bd:corpus-axum-call-graph")
                 .expect("project axum expand_with proof facts")

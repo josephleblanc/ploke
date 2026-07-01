@@ -86,6 +86,35 @@ fn root_selection_key(path: &Path) -> (u8, PathBuf) {
 }
 
 impl ParsedCodeGraph {
+    fn live_call_owners(&self) -> HashSet<CallBodyOwnerId> {
+        self.functions()
+            .iter()
+            .map(|function| CallBodyOwnerId::Function(function.id))
+            .chain(
+                self.consts()
+                    .iter()
+                    .map(|const_node| CallBodyOwnerId::Const(const_node.id)),
+            )
+            .chain(
+                self.statics()
+                    .iter()
+                    .map(|static_node| CallBodyOwnerId::Static(static_node.id)),
+            )
+            .chain(
+                self.macros()
+                    .iter()
+                    .map(|macro_node| CallBodyOwnerId::Macro(macro_node.id)),
+            )
+            .chain(
+                self.impls()
+                    .iter()
+                    .flat_map(|imp| imp.methods.iter())
+                    .chain(self.traits().iter().flat_map(|tr| tr.methods.iter()))
+                    .map(|method| CallBodyOwnerId::Method(method.id)),
+            )
+            .collect()
+    }
+
     pub fn new(file_path: PathBuf, crate_namespace: Uuid, graph: CodeGraph) -> Self {
         Self {
             file_path,
@@ -671,28 +700,7 @@ impl ParsedCodeGraph {
             .count();
         prune_counts.methods = methods_count_pre - methods_count_post;
 
-        let live_call_owners: HashSet<CallBodyOwnerId> = self
-            .functions()
-            .iter()
-            .map(|function| CallBodyOwnerId::Function(function.id))
-            .chain(
-                self.consts()
-                    .iter()
-                    .map(|const_node| CallBodyOwnerId::Const(const_node.id)),
-            )
-            .chain(
-                self.statics()
-                    .iter()
-                    .map(|static_node| CallBodyOwnerId::Static(static_node.id)),
-            )
-            .chain(
-                self.impls()
-                    .iter()
-                    .flat_map(|imp| imp.methods.iter())
-                    .chain(self.traits().iter().flat_map(|tr| tr.methods.iter()))
-                    .map(|method| CallBodyOwnerId::Method(method.id)),
-            )
-            .collect();
+        let live_call_owners = self.live_call_owners();
         self.call_sites_mut()
             .retain(|call| live_call_owners.contains(&call.owner()));
         let live_call_ids: HashSet<AnyCallSiteId> =
@@ -1053,34 +1061,10 @@ impl ParsedCodeGraph {
         self.graph.functions.retain(|n| set.contains(&n.any_id()));
         self.graph.consts.retain(|n| set.contains(&n.any_id()));
         self.graph.modules.retain(|n| set.contains(&n.any_id()));
+        self.graph.macros.retain(|n| set.contains(&n.any_id()));
         self.graph.statics.retain(|n| set.contains(&n.any_id()));
 
-        let live_call_owners: HashSet<CallBodyOwnerId> = self
-            .graph
-            .functions
-            .iter()
-            .map(|function| CallBodyOwnerId::Function(function.id))
-            .chain(
-                self.graph
-                    .consts
-                    .iter()
-                    .map(|const_node| CallBodyOwnerId::Const(const_node.id)),
-            )
-            .chain(
-                self.graph
-                    .statics
-                    .iter()
-                    .map(|static_node| CallBodyOwnerId::Static(static_node.id)),
-            )
-            .chain(
-                self.graph
-                    .impls
-                    .iter()
-                    .flat_map(|imp| imp.methods.iter())
-                    .chain(self.graph.traits.iter().flat_map(|tr| tr.methods.iter()))
-                    .map(|method| CallBodyOwnerId::Method(method.id)),
-            )
-            .collect();
+        let live_call_owners = self.live_call_owners();
         self.graph
             .call_sites
             .retain(|call| live_call_owners.contains(&call.owner()));

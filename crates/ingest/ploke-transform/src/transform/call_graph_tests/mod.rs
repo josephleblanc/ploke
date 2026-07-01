@@ -200,6 +200,10 @@ fn test_call_graph_projection_for_resolved_path_call() -> Result<(), Box<dyn std
             let value: DataValue = id.into();
             value
         }
+        CallBodyOwnerId::Macro(id) => {
+            let value: DataValue = id.into();
+            value
+        }
     };
     let call_site_db_id = call_site_id.to_cozo_uuid();
     let target_db_id: DataValue = target_function_id.into();

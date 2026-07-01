@@ -1007,31 +1007,100 @@ async fn call_impact_exact_reads_axum_usage_question_summary() -> Result<(), Err
 
     // Source oracle:
     //   axum-macros/src/lib.rs:377,426,665,715 call `expand_with(...)` from
-    //   public proc-macro entrypoints. Proc-macro bodies are not visited yet,
-    //   so the exact impact surface must remain fail-closed.
-    let unsupported_target = function_id_by_name_in_module(&db, &["crate"], "expand_with")?;
-    let unsupported = rag
+    //   public proc-macro entrypoints.
+    let proc_macro_target = function_id_by_name_in_module(&db, &["crate"], "expand_with")?;
+    let proc_macro_callers = [
+        (
+            macro_id_by_name(&db, "derive_from_request")?,
+            "derive_from_request",
+        ),
+        (
+            macro_id_by_name(&db, "derive_from_request_parts")?,
+            "derive_from_request_parts",
+        ),
+        (
+            macro_id_by_name(&db, "derive_typed_path")?,
+            "derive_typed_path",
+        ),
+        (macro_id_by_name(&db, "derive_from_ref")?, "derive_from_ref"),
+    ];
+    let proc_macro_report = rag
         .exact_call_impact_for_target(
-            unsupported_target,
+            proc_macro_target,
             CallPathOptions {
                 max_depth: 2,
                 max_paths: 16,
             },
         )?
         .expect("call context enabled");
-    assert_eq!(unsupported.target.name, "expand_with");
+    assert_eq!(proc_macro_report.target.name, "expand_with");
+    assert_eq!(proc_macro_report.paths.len(), proc_macro_callers.len());
+    assert_eq!(proc_macro_report.callers.len(), proc_macro_callers.len());
+    assert_eq!(
+        proc_macro_report.direct_callers.len(),
+        proc_macro_callers.len()
+    );
+    assert_eq!(
+        proc_macro_report.direct_call_sites.len(),
+        proc_macro_callers.len()
+    );
+    assert_eq!(
+        proc_macro_report.public_callers.len(),
+        proc_macro_callers.len()
+    );
+    for (id, name) in proc_macro_callers {
+        assert_call_node(
+            &proc_macro_report.callers,
+            id,
+            name,
+            "axum-macros/src/lib.rs",
+            "RAG proc-macro impact callers",
+        );
+        assert_call_node(
+            &proc_macro_report.public_callers,
+            id,
+            name,
+            "axum-macros/src/lib.rs",
+            "RAG proc-macro public callers",
+        );
+        assert!(
+            proc_macro_report
+                .paths
+                .iter()
+                .any(|path| path.start_id == id
+                    && path.end_id == proc_macro_target
+                    && path.depth == 1),
+            "RAG proc-macro impact paths should include one-hop path from {name}: {proc_macro_report:#?}"
+        );
+    }
+    for call in &proc_macro_report.direct_call_sites {
+        assert_eq!(call.kind, CallSiteKind::Path);
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(call.arg_count, Some(2));
+        assert!(
+            matches!(&call.callee, CallCalleeInfo::Path { path: call_path } if call_path == &path(&["expand_with"])),
+            "RAG proc-macro direct call should preserve expand_with path callee: {call:#?}"
+        );
+        assert!(
+            call.targets.iter().any(|target| {
+                target.target_id == proc_macro_target && target.relation == CallTargetKind::Function
+            }),
+            "RAG proc-macro direct call should target expand_with: {call:#?}"
+        );
+    }
     assert!(
-        unsupported.paths.is_empty()
-            && unsupported.callers.is_empty()
-            && unsupported.direct_callers.is_empty()
-            && unsupported.direct_call_sites.is_empty()
-            && unsupported.public_callers.is_empty(),
-        "RAG impact summary must not fabricate unsupported proc-macro public callers: {unsupported:#?}"
+        proc_macro_report.callsite_buckets.iter().any(|bucket| {
+            bucket.kind == CallSiteKind::Path
+                && bucket.relation == CallTargetKind::Function
+                && bucket.count == 4
+        }),
+        "RAG proc-macro impact summary should expose path/function bucket: {proc_macro_report:#?}"
     );
     assert_call_source_file(
-        &unsupported.source_files,
+        &proc_macro_report.source_files,
         "axum-macros/src/lib.rs",
-        "RAG unsupported impact source files",
+        "RAG proc-macro impact source files",
     );
 
     // Usage questions:
@@ -1988,6 +2057,25 @@ fn function_id_by_name_in_module(
         rows.rows.len(),
         1,
         "expected exactly one function named {name:?} in module {module_path:?}; rows: {:#?}",
+        rows.rows
+    );
+
+    to_uuid(&rows.rows[0][0]).map_err(Error::from)
+}
+
+fn macro_id_by_name(db: &Database, name: &str) -> Result<Uuid, Error> {
+    let mut params = BTreeMap::new();
+    params.insert("name".to_string(), DataValue::from(name));
+
+    let rows = db.raw_query_params(
+        r#"?[id] :=
+            *macro { id, name: $name @ 'NOW' }"#,
+        params,
+    )?;
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "expected exactly one macro node named {name:?}; rows: {:#?}",
         rows.rows
     );
 

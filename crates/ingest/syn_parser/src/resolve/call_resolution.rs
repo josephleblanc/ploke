@@ -1242,7 +1242,9 @@ impl<'a> CallRelationResolver<'a> {
 
                 Ok(scopes)
             }
-            CallBodyOwnerId::Const(_) | CallBodyOwnerId::Static(_) => Ok(Vec::new()),
+            CallBodyOwnerId::Macro(_) | CallBodyOwnerId::Const(_) | CallBodyOwnerId::Static(_) => {
+                Ok(Vec::new())
+            }
         }
     }
 
@@ -1470,7 +1472,9 @@ impl<'a> CallRelationResolver<'a> {
                             ))
                         })
                 }),
-            CallBodyOwnerId::Const(_) | CallBodyOwnerId::Static(_) => Ok(None),
+            CallBodyOwnerId::Macro(_) | CallBodyOwnerId::Const(_) | CallBodyOwnerId::Static(_) => {
+                Ok(None)
+            }
         }
     }
 }

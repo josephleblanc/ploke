@@ -100,6 +100,7 @@ impl CallTargetKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum CallNodeKind {
     Function,
+    Macro,
     Method,
     Const,
     Static,
@@ -111,6 +112,7 @@ impl CallNodeKind {
     pub(super) fn from_str(value: &str) -> Result<Self, DbError> {
         match value {
             "Function" => Ok(Self::Function),
+            "Macro" => Ok(Self::Macro),
             "Method" => Ok(Self::Method),
             "Const" => Ok(Self::Const),
             "Static" => Ok(Self::Static),

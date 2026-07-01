@@ -26,6 +26,7 @@ const CALL_GRAPH_FILE_MOD_RS: &str = "src/file_mod.rs";
 const EDGE_CASES_LIB_RS: &str = "src/lib.rs";
 const GENERICS_LIB_RS: &str = "src/lib.rs";
 const TYPE_RESOLUTION_V2_LIB_RS: &str = "src/lib.rs";
+const FIXTURE_MACROS_LIB_RS: &str = "src/lib.rs";
 const FIXTURE_IMPLS_MAIN_RS: &str = "src/main.rs";
 const FIXTURE_IMPLS_FILE_MODULE_RS: &str = "src/impl_in_file_module.rs";
 const SIMPLE_STRUCT_IMPL_SPAN: (usize, usize) = (520, 750);
@@ -73,6 +74,7 @@ const STD_PATH_NEW_CALL_SPAN: (usize, usize) = (4214, 4238);
 const ROOT_DEBUG_MACRO_CALL_SPAN: (usize, usize) = (4456, 4484);
 const LOCAL_MACRO_CALL_SPAN: (usize, usize) = (437, 457);
 const FIXTURE_MACROS_PRINTLN_CALL_SPAN: (usize, usize) = (463, 485);
+const PROC_MACRO_HELPER_CALL_SPAN: (usize, usize) = (1168, 1199);
 const DYNAMIC_CLOSURE_BINDING_CALL_SPAN: (usize, usize) = (177, 188);
 const DYNAMIC_CLOSURE_LITERAL_CALL_SPAN: (usize, usize) = (213, 222);
 const CRATE_LOCAL_TARGET_CALL_SPAN: (usize, usize) = (345, 366);
@@ -437,6 +439,17 @@ fn fixture_call_graph_file_module_function_args(ident: &'static str) -> Paranoid
         fixture: "fixture_call_graph",
         relative_file_path: CALL_GRAPH_FILE_MOD_RS,
         expected_path: &["crate", "file_mod"],
+        ident,
+        item_kind: ItemKind::Function,
+        expected_cfg: None,
+    }
+}
+
+fn fixture_macros_proc_function_args(ident: &'static str) -> ParanoidArgs<'static> {
+    ParanoidArgs {
+        fixture: "fixture_macros",
+        relative_file_path: FIXTURE_MACROS_LIB_RS,
+        expected_path: &["crate"],
         ident,
         item_kind: ItemKind::Function,
         expected_cfg: None,
@@ -1518,6 +1531,30 @@ paranoid_call_site_test!(
         &[],
         ExpectedCallOutcome::Unsupported,
     ),
+);
+
+paranoid_call_site_test!(
+    fixture_macros_proc_macro_body_resolves_helper_path_call_site,
+    fixture: "fixture_macros",
+    owner: macro {
+        module_path: &["crate"],
+        name: "parsed_derive_macro"
+    },
+    expected: {
+        let target_args = fixture_macros_proc_function_args("parsed_proc_macro_helper");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_macros");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("parsed_proc_macro_helper should regenerate a FunctionNodeId");
+        ExpectedCallSite::path(
+            &["parsed_proc_macro_helper"],
+            PROC_MACRO_HELPER_CALL_SPAN,
+            1,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedFunctionLocalExact { target },
+        )
+    },
 );
 
 paranoid_call_site_test!(

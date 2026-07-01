@@ -363,6 +363,30 @@ macro_rules! paranoid_call_site_test {
     (
         $test_name:ident,
         fixture: $fixture:expr,
+        owner: macro { module_path: $module_path:expr, name: $macro_name:expr },
+        expected: $expected:expr $(,)?
+    ) => {
+        #[test]
+        fn $test_name() -> Result<(), syn_parser::error::SynParserError> {
+            let (graph, tree) = $crate::common::build_tree_for_tests($fixture);
+            let report = syn_parser::resolve::call_resolution::resolve_call_relations_after_tree(
+                &graph, &tree,
+            )?;
+            let owner = $crate::common::call_site_paranoid::macro_owner_context(
+                &graph,
+                $module_path,
+                $macro_name,
+            );
+            let expected = $expected;
+            $crate::common::call_site_paranoid::assert_paranoid_call_site(
+                &graph, &report, &owner, &expected,
+            );
+            Ok(())
+        }
+    };
+    (
+        $test_name:ident,
+        fixture: $fixture:expr,
         owner: const_item { args: $const_args:expr },
         expected: $expected:expr $(,)?
     ) => {

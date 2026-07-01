@@ -38,10 +38,10 @@
 //! | Handler macro extraction and async body paths | `axum/src/handler/mod.rs:{217,240,242,250}` has nested async-body calls plus `$ty::from_request_parts` / `$last::from_request` | macro-template associated paths and nested async-block body calls are not projected yet. |
 //! | Receiver forwarding gaps and exact receiver positives | `axum/src/extension.rs:180`, `routing/route.rs:51`, `boxed.rs:134`, `routing/mod.rs:673`, `serve/mod.rs` router clones, and `middleware/from_fn.rs:411` exercise field/result/typed receivers | unsupported receiver shapes remain visible and targetless; exact local `Router::clone` receiver rows traverse; `Router::new` currently has 144 caller rows and 123 incoming expansion candidates. |
 //! | Await and trait-object receivers | `test_helpers/test_client.rs:134`, `serve/listener.rs:143`, and `error_handling/mod.rs:251` use await/dyn receiver calls | awaited/dyn receiver rows remain targetless; qualified `<dyn Any>::downcast_mut` is not projected yet. |
-//! | Proc-macro body calls | `axum-macros/src/lib.rs:{377,426,665,715}` call `expand_with(...)` | currently unsupported: proc-macro function bodies are not visited for call sites. |
+//! | Proc-macro body calls | `axum-macros/src/lib.rs:{377,426,665,715}` call `expand_with(...)` | proc-macro owners traverse to `expand_with` through one resolved edge each. |
 //! | Closure body call | `axum-macros/src/from_ref.rs:23` calls `expand_field(...)` inside a closure | currently unsupported: no call site targets `expand_field`. |
 //! | Dynamic callable fields | `axum/src/boxed.rs:{85,120,159}` and `serve/listener.rs:236` call function-pointer / trait-object fields | currently unsupported: visible dynamic call sites remain targetless blockers. |
-//! | Macro callback/IIFE calls | `axum-macros/src/lib.rs:{581,637,655,715,724,734-738}` and `from_request/mod.rs:200-203` cover callback arguments, `and_then(f)`, and IIFEs | callback receiver and IIFE dynamic rows are asserted; proc-macro callback argument rows and inner closure-body callback invocation remain absent. |
+//! | Macro callback/IIFE calls | `axum-macros/src/lib.rs:{581,637,655,715,724,734-738}` and `from_request/mod.rs:200-203` cover callback arguments, `and_then(f)`, and IIFEs | active proc-macro callback helper rows traverse; callback receiver and IIFE dynamic rows stay targetless; inner closure-body callback invocation remains absent. |
 //! | Shadowed local callable | `axum/src/routing/tests/mod.rs:{418,423-434}` shadows imported `get` with a closure | only the two setup `routing::get` rows are projected; closure calls inside assertion macros are not fabricated as routing edges. |
 //! | Fallback chrono corpus | `MappedLocalTime::Single`, try receiver `.naive_utc()`, and `self.queue.is_empty()` in chrono | registered `corpus_chrono_call_graph` fixture asserts resolved alias constructor rows and targetless receiver rows. |
 //! | Fallback memchr corpus | arbitrary-expression dynamic callee, function-pointer field calls, and boxed callable fields in memchr | registered `corpus_memchr_call_graph` fixture asserts dynamic field rows and absent unsupported shapes. |
@@ -52,6 +52,7 @@ mod common;
 mod fallback;
 mod multi_hop;
 mod paths;
+mod proc_macros;
 mod receivers;
 mod source_lines;
 mod trait_body;

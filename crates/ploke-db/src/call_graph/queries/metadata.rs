@@ -45,6 +45,15 @@ node_info[id, kind, name, vis_kind, module_path, file_path] :=
 
 node_info[id, kind, name, vis_kind, module_path, file_path] :=
   id = $node_id,
+  *macro{{ id, name, vis_kind @ 'NOW' }},
+  kind = "Macro",
+  ancestor[id, mod_id],
+  *module{{ id: mod_id, path: module_path @ 'NOW' }},
+  file_owner_for_module[mod_id, file_owner_id],
+  *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
+
+node_info[id, kind, name, vis_kind, module_path, file_path] :=
+  id = $node_id,
   *method{{ id, name, vis_kind @ 'NOW' }},
   kind = "Method",
   ancestor[id, mod_id],

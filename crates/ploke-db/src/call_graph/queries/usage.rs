@@ -156,6 +156,7 @@ file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod
 file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
 
 owner[id] := id = $node_id, *function{{ id @ 'NOW' }}
+owner[id] := id = $node_id, *macro{{ id @ 'NOW' }}
 owner[id] := id = $node_id, *method{{ id @ 'NOW' }}
 owner[id] := id = $node_id, *const{{ id @ 'NOW' }}
 owner[id] := id = $node_id, *static{{ id @ 'NOW' }}

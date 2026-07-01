@@ -436,6 +436,7 @@ impl CallRelationResolver<'_> {
     ) -> Option<ModuleNodeId> {
         match owner {
             CallBodyOwnerId::Function(id) => self.containing_module(id.as_any()),
+            CallBodyOwnerId::Macro(id) => self.containing_module(id.as_any()),
             CallBodyOwnerId::Method(id) => self.containing_module(id.as_any()),
             CallBodyOwnerId::Const(id) => self.containing_module(id.as_any()),
             CallBodyOwnerId::Static(id) => self.containing_module(id.as_any()),

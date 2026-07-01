@@ -111,6 +111,9 @@ impl Database {
                     *function { id: owner_id @ 'NOW' },
                     owner_kind = "Function"
                 ) or (
+                    *macro { id: owner_id @ 'NOW' },
+                    owner_kind = "Macro"
+                ) or (
                     *method { id: owner_id @ 'NOW' },
                     owner_kind = "Method"
                 ) or (

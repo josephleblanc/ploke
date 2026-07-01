@@ -122,6 +122,9 @@ pub(in crate::unit) fn owner_kind_for_call_body_owner(
                 *function { id: owner @ 'NOW' },
                 kind = "Function"
             ) or (
+                *macro { id: owner @ 'NOW' },
+                kind = "Macro"
+            ) or (
                 *method { id: owner @ 'NOW' },
                 kind = "Method"
             ) or (

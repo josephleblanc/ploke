@@ -65,6 +65,21 @@ fn receiver_param_names(parameters: &[ParamData]) -> Vec<String> {
         .collect()
 }
 
+fn typed_fn_arg_names(
+    inputs: &syn::punctuated::Punctuated<syn::FnArg, syn::token::Comma>,
+) -> Vec<String> {
+    inputs
+        .iter()
+        .filter_map(|arg| match arg {
+            syn::FnArg::Typed(typed) => match typed.pat.as_ref() {
+                syn::Pat::Ident(ident) => Some(ident.ident.to_string()),
+                _ => None,
+            },
+            syn::FnArg::Receiver(_) => None,
+        })
+        .collect()
+}
+
 pub struct CodeVisitor<'a> {
     state: &'a mut VisitorState,
 }
@@ -952,7 +967,15 @@ impl<'a, 'ast> Visit<'ast> for CodeVisitor<'a> {
                 target: PrimaryNodeId::from(typed_macro_id), // Use category enum
             };
             self.state.code_graph.relations.push(relation);
-            // Don't visit the body of the proc macro function itself with visit_item_fn
+            let parameter_names = typed_fn_arg_names(&func.sig.inputs);
+            self.record_body_call_sites(
+                CallBodyOwnerId::Macro(typed_macro_id),
+                &func.block,
+                &provisional_effective_cfgs,
+                &parameter_names,
+            );
+            // Don't recursively visit the body of the proc macro function itself
+            // with visit_item_fn; call extraction above records the body calls.
         } else {
             // --- Handle Regular Functions ---
             let fn_name = func.sig.ident.to_string();
