@@ -12,7 +12,7 @@ use super::*;
 use ploke_core::rag_types::AssembledContext;
 use ploke_core::rag_types::{
     CallCalleeInfo, CallContextInfo, CallEndpointKind, CallExpansionInfo, CallExpansionKind,
-    CallImpactInfo, CallNodeInfo, CallPathEdgeInfo, CallPathInfo, CallPathNodeInfo,
+    CallImpactInfo, CallNodeInfo, CallPathEdgeInfo, CallPathInfo, CallPathNodeInfo, CallReachInfo,
     CallReceiverInfo, CallResolutionKind as RagCallResolutionKind, CallSiteKind as RagCallSiteKind,
     CallStatusKind as RagCallStatusKind, CallTargetInfo, CallTargetKind, CanonPath, NodeFilepath,
     ProofContextInfo,
@@ -20,9 +20,10 @@ use ploke_core::rag_types::{
 use ploke_db::{
     CallContextCandidate, CallContextOptions, CallContextRelation, CallContextRow, CallContextSeed,
     CallImpactReport as DbCallImpactReport, CallNodeInfo as DbCallNodeInfo, CallPath as DbCallPath,
-    CallPathEdge as DbCallPathEdge, CallPathOptions, CallReceiver, CallRelationKind,
-    CallResolutionKind, CallSiteKind, CallStatusKind as DbCallStatusKind,
-    CallTargetKind as DbCallTargetKind, ProofGraphContextRow, ProofGraphStore,
+    CallPathEdge as DbCallPathEdge, CallPathOptions, CallReachReport as DbCallReachReport,
+    CallReceiver, CallRelationKind, CallResolutionKind, CallSiteKind,
+    CallStatusKind as DbCallStatusKind, CallTargetKind as DbCallTargetKind, ProofGraphContextRow,
+    ProofGraphStore,
 };
 use ploke_embed::indexer::EmbeddingProcessor;
 use ploke_embed::runtime::EmbeddingRuntime;
@@ -338,6 +339,28 @@ fn impact_info(db: &Database, report: DbCallImpactReport) -> Result<CallImpactIn
             .collect(),
         public_callers: report
             .public_callers
+            .into_iter()
+            .map(call_node_info)
+            .collect(),
+    })
+}
+
+fn reach_info(db: &Database, report: DbCallReachReport) -> Result<CallReachInfo, RagError> {
+    Ok(CallReachInfo {
+        owner: call_node_info(report.owner),
+        paths: report
+            .paths
+            .into_iter()
+            .map(|path| path_info(db, path))
+            .collect::<Result<Vec<_>, RagError>>()?,
+        callees: report.callees.into_iter().map(call_node_info).collect(),
+        direct_callees: report
+            .direct_callees
+            .into_iter()
+            .map(call_node_info)
+            .collect(),
+        public_callees: report
+            .public_callees
             .into_iter()
             .map(call_node_info)
             .collect(),
@@ -666,6 +689,21 @@ impl RagService {
         Ok(Some(impact_info(
             self.db.as_ref(),
             self.db.call_impact_for_target(target_id, options)?,
+        )?))
+    }
+
+    pub fn exact_call_reach_for_owner(
+        &self,
+        owner_id: Uuid,
+        options: CallPathOptions,
+    ) -> Result<Option<CallReachInfo>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(reach_info(
+            self.db.as_ref(),
+            self.db.call_reach_for_owner(owner_id, options)?,
         )?))
     }
 

@@ -161,6 +161,26 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         .get("call_paths_from_owner")
         .and_then(serde_json::Value::as_array)
         .expect("call_paths_from_owner array");
+    let reach = start_payload
+        .get("call_reach")
+        .and_then(serde_json::Value::as_object)
+        .expect("call_reach object");
+    let reach_paths = reach
+        .get("paths")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_reach paths array");
+    let reach_callees = reach
+        .get("callees")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_reach callees array");
+    let reach_direct_callees = reach
+        .get("direct_callees")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_reach direct_callees array");
+    let reach_public_callees = reach
+        .get("public_callees")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_reach public_callees array");
 
     // Matrix:
     //   docs/active/agents/call-graph/
@@ -181,6 +201,41 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
         fixture.intermediate,
         fixture.target,
         "code_item_lookup outgoing paths",
+    );
+    assert_two_hop_call_path(
+        reach_paths,
+        fixture.start,
+        fixture.intermediate,
+        fixture.target,
+        "code_item_lookup reach paths",
+    );
+    assert_impact_node(
+        reach_callees,
+        fixture.intermediate,
+        "extract_with_state",
+        "axum-core/src/ext_traits/request.rs",
+        "code_item_lookup reach callees",
+    );
+    assert_impact_node(
+        reach_callees,
+        fixture.target,
+        "from_request",
+        "axum-core/src/extract/mod.rs",
+        "code_item_lookup reach callees",
+    );
+    assert_impact_node(
+        reach_direct_callees,
+        fixture.intermediate,
+        "extract_with_state",
+        "axum-core/src/ext_traits/request.rs",
+        "code_item_lookup reach direct callees",
+    );
+    assert_impact_node(
+        reach_public_callees,
+        fixture.target,
+        "from_request",
+        "axum-core/src/extract/mod.rs",
+        "code_item_lookup reach public callees",
     );
     let target_id = fixture.target.to_string();
     let outgoing_path = outgoing_paths
@@ -222,6 +277,27 @@ async fn code_item_lookup_returns_real_corpus_two_hop_call_paths() {
             .expect("outgoing path count")
             >= 1,
         "code_item_lookup should surface outgoing call-path carrier counts"
+    );
+    assert!(
+        ui_field(start_ui, "reach_callees")
+            .parse::<usize>()
+            .expect("reach callee count")
+            >= 2,
+        "code_item_lookup should surface eventual reach callee counts"
+    );
+    assert!(
+        ui_field(start_ui, "reach_direct_callees")
+            .parse::<usize>()
+            .expect("direct reach callee count")
+            >= 1,
+        "code_item_lookup should surface direct reach callee counts"
+    );
+    assert!(
+        ui_field(start_ui, "reach_public_callees")
+            .parse::<usize>()
+            .expect("public reach callee count")
+            >= 1,
+        "code_item_lookup should surface public reach callee counts"
     );
 
     let target_params = LookupParams {

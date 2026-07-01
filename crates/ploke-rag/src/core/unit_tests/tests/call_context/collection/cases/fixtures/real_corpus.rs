@@ -744,6 +744,99 @@ async fn call_impact_exact_reads_axum_usage_question_summary() -> Result<(), Err
 }
 
 #[tokio::test]
+async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Navigation / Security analysis / Performance work:
+    //   "What functions does this request handler call directly?"
+    //   "From this owner function, which local callees can I traverse to in
+    //   the persisted graph?"
+    //   "What call chains reach a known sink/helper?"
+    //
+    // Source-oracle chain:
+    //   axum-core/src/ext_traits/request.rs:268
+    //     `RequestExt::extract` calls `self.extract_with_state(&())`.
+    //   axum-core/src/ext_traits/request.rs:279
+    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
+    //   axum-core/src/extract/mod.rs:85
+    //     defines the `FromRequest::from_request` trait method binding.
+    let start = method_id_by_file(
+        &db,
+        "extract",
+        "self.extract_with_state(&())",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let intermediate = method_id_by_file(
+        &db,
+        "extract_with_state",
+        "E::from_request(self, state)",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
+
+    let report = rag
+        .exact_call_reach_for_owner(
+            start,
+            CallPathOptions {
+                max_depth: 2,
+                max_paths: 16,
+            },
+        )?
+        .expect("call context enabled");
+    assert_eq!(report.owner.id, start);
+    assert_eq!(report.owner.kind, "Method");
+    assert_eq!(report.owner.name, "extract");
+    assert!(
+        report
+            .owner
+            .file_path
+            .as_ref()
+            .ends_with("axum-core/src/ext_traits/request.rs")
+    );
+    assert!(
+        report
+            .paths
+            .iter()
+            .any(|path| path.start_id == start && path.end_id == target && path.depth == 2),
+        "RAG reach summary should preserve the two-hop outgoing path: {report:#?}"
+    );
+    assert_call_node(
+        &report.callees,
+        intermediate,
+        "extract_with_state",
+        "axum-core/src/ext_traits/request.rs",
+        "RAG reach eventual callees",
+    );
+    assert_call_node(
+        &report.callees,
+        target,
+        "from_request",
+        "axum-core/src/extract/mod.rs",
+        "RAG reach eventual callees",
+    );
+    assert_call_node(
+        &report.direct_callees,
+        intermediate,
+        "extract_with_state",
+        "axum-core/src/ext_traits/request.rs",
+        "RAG reach direct callees",
+    );
+    assert_call_node(
+        &report.public_callees,
+        target,
+        "from_request",
+        "axum-core/src/extract/mod.rs",
+        "RAG reach public callees",
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn get_context_attaches_axum_request_extract_two_hop_call_paths() -> Result<(), Error> {
     init_tracing_once();
     let db = Arc::new(fresh_backup_fixture_db(

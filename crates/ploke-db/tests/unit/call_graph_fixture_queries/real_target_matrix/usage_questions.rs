@@ -176,6 +176,84 @@ fn axum_usage_questions_answer_direct_reachability_between_known_symbols() -> Re
 }
 
 #[test]
+fn axum_usage_questions_summarize_owner_reach_for_navigation() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Navigation:
+    //   "What functions does this request handler call directly?"
+    //   "From this owner function, which local callees can I traverse to in
+    //   the persisted graph?"
+    // Security analysis / Performance work:
+    //   "Which external dependency calls are made from this user-facing
+    //   entrypoint?" and "What call chains reach a known sink/helper?"
+    //
+    // Source-oracle chain:
+    //   axum-core/src/ext_traits/request.rs:268
+    //     `RequestExt::extract` calls `self.extract_with_state(&())`.
+    //   axum-core/src/ext_traits/request.rs:279
+    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
+    //   axum-core/src/extract/mod.rs:85
+    //     defines the `FromRequest::from_request` trait method binding.
+    let start = method_id_by_name_body_and_file_suffix(
+        &db,
+        "extract",
+        "self.extract_with_state(&())",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let intermediate = method_id_by_name_body_and_file_suffix(
+        &db,
+        "extract_with_state",
+        "E::from_request(self, state)",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
+
+    let report = db.call_reach_for_owner(
+        start,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 16,
+        },
+    )?;
+    assert_eq!(report.owner.id, start);
+    assert_eq!(report.owner.kind, CallNodeKind::Method);
+    assert_eq!(report.owner.name, "extract");
+
+    assert_path_depths(
+        &report
+            .paths
+            .iter()
+            .map(|path| (path.end_id, path.depth))
+            .collect::<Vec<_>>(),
+        &[(intermediate, 1), (target, 2)],
+        "RequestExt::extract reach report outgoing paths",
+    );
+    assert_node_names(
+        &report.callees,
+        &[
+            (intermediate, "extract_with_state"),
+            (target, "from_request"),
+        ],
+        "RequestExt::extract reach report eventual callees",
+    );
+    assert_node_names(
+        &report.direct_callees,
+        &[(intermediate, "extract_with_state")],
+        "RequestExt::extract reach report direct callees",
+    );
+    assert_node_names(
+        &report.public_callees,
+        &[(target, "from_request")],
+        "RequestExt::extract reach report public callees",
+    );
+
+    Ok(())
+}
+
+#[test]
 fn axum_usage_questions_summarize_eventual_callers_for_impact() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 

@@ -387,6 +387,15 @@ pub struct CallImpactInfo {
     pub public_callers: Vec<CallNodeInfo>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
+pub struct CallReachInfo {
+    pub owner: CallNodeInfo,
+    pub paths: Vec<CallPathInfo>,
+    pub callees: Vec<CallNodeInfo>,
+    pub direct_callees: Vec<CallNodeInfo>,
+    pub public_callees: Vec<CallNodeInfo>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialOrd, Ord, Hash, PartialEq)]
 pub struct ProofContextInfo {
     pub fact_id: String,
@@ -552,6 +561,7 @@ impl From<ContextPart> for ConciseContext {
             call_paths_from_owner: value.call_paths_from_owner,
             call_paths_to_target: value.call_paths_to_target,
             call_impact: None,
+            call_reach: None,
             proof_context: value.proof_context,
         }
     }
@@ -608,6 +618,9 @@ pub struct ConciseContext {
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub call_impact: Option<CallImpactInfo>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call_reach: Option<CallReachInfo>,
     #[serde(default)]
     pub proof_context: Vec<ProofContextInfo>,
 }

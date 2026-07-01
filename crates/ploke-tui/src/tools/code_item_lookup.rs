@@ -285,6 +285,7 @@ for a more fuzzy search."#
         let carriers = lookup_support::context_carriers_for_node(&ctx, resolved_item_id)?;
         let call_paths = lookup_support::call_path_carriers_for_node(&ctx, resolved_item_id)?;
         let call_impact = lookup_support::call_impact_for_node(&ctx, resolved_item_id)?;
+        let call_reach = lookup_support::call_reach_for_node(&ctx, resolved_item_id)?;
         let tool_results = ctx
             .state
             .io_handle
@@ -320,6 +321,7 @@ for a more fuzzy search."#
             call_paths_from_owner: call_paths.from_owner,
             call_paths_to_target: call_paths.to_target,
             call_impact,
+            call_reach,
             proof_context: carriers.proof_context,
         };
         let call_counts =
@@ -364,6 +366,33 @@ for a more fuzzy search."#
                     .call_impact
                     .as_ref()
                     .map(|impact| impact.public_callers.len())
+                    .unwrap_or_default()
+                    .to_string(),
+            )
+            .with_field(
+                "reach_callees",
+                concise_context
+                    .call_reach
+                    .as_ref()
+                    .map(|reach| reach.callees.len())
+                    .unwrap_or_default()
+                    .to_string(),
+            )
+            .with_field(
+                "reach_direct_callees",
+                concise_context
+                    .call_reach
+                    .as_ref()
+                    .map(|reach| reach.direct_callees.len())
+                    .unwrap_or_default()
+                    .to_string(),
+            )
+            .with_field(
+                "reach_public_callees",
+                concise_context
+                    .call_reach
+                    .as_ref()
+                    .map(|reach| reach.public_callees.len())
                     .unwrap_or_default()
                     .to_string(),
             )

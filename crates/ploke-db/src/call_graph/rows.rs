@@ -159,3 +159,13 @@ pub struct CallImpactReport {
     pub direct_callers: Vec<CallNodeInfo>,
     pub public_callers: Vec<CallNodeInfo>,
 }
+
+/// Owner-centered summary for navigation/reachability usage questions.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CallReachReport {
+    pub owner: CallNodeInfo,
+    pub paths: Vec<CallPath>,
+    pub callees: Vec<CallNodeInfo>,
+    pub direct_callees: Vec<CallNodeInfo>,
+    pub public_callees: Vec<CallNodeInfo>,
+}

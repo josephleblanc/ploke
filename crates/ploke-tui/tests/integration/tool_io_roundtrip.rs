@@ -345,6 +345,7 @@ fn serde_roundtrip_request_code_context() {
         call_paths_from_owner: Vec::new(),
         call_paths_to_target: Vec::new(),
         call_impact: None,
+        call_reach: None,
         proof_context,
     };
     let path_expected = ConciseContext {
@@ -358,6 +359,7 @@ fn serde_roundtrip_request_code_context() {
         call_paths_from_owner: Vec::new(),
         call_paths_to_target: Vec::new(),
         call_impact: None,
+        call_reach: None,
         proof_context: Vec::new(),
     };
     assert_eq!(
