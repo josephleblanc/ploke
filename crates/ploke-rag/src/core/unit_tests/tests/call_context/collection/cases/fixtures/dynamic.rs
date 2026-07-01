@@ -21,6 +21,13 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
             "call_parenthesized_match_initialized_function_item_binding",
         ),
     )?;
+    let block_owner = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_parenthesized_block_initialized_function_item_binding",
+        ),
+    )?;
     let unsupported_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_dereferenced_closure_binding"),
@@ -35,6 +42,7 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
     let call_context = rag.collect_call_context(&[
         (resolved_owner, 1.0),
         (branch_owner, 1.0),
+        (block_owner, 1.0),
         (unsupported_owner, 1.0),
     ])?;
     let resolved_context = call_context
@@ -80,6 +88,26 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
     assert_eq!(branch_call.targets[0].target_id, target);
     assert_eq!(
         branch_call.targets[0].relation,
+        CallTargetKind::DynamicFunction
+    );
+
+    let block_context = call_context
+        .get(&block_owner)
+        .expect("block-initialized dynamic owner should receive outgoing call context");
+    assert_eq!(
+        block_context.len(),
+        1,
+        "block-initialized dynamic owner context: {block_context:#?}"
+    );
+    let block_call = &block_context[0];
+    assert_eq!(block_call.kind, CallSiteKind::Dynamic);
+    assert_eq!(block_call.callee, CallCalleeInfo::Dynamic);
+    assert_eq!(block_call.status, CallStatusKind::Resolved);
+    assert_eq!(block_call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(block_call.targets.len(), 1);
+    assert_eq!(block_call.targets[0].target_id, target);
+    assert_eq!(
+        block_call.targets[0].relation,
         CallTargetKind::DynamicFunction
     );
 

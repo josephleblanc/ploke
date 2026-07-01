@@ -1186,6 +1186,7 @@ fn inferred_init_path(expr: Option<&syn::Expr>) -> Option<Vec<String>> {
     let path = match unparen_expr(expr?) {
         syn::Expr::Path(path) if path.qself.is_none() => &path.path,
         syn::Expr::Struct(expr) if expr.qself.is_none() => &expr.path,
+        syn::Expr::Block(_) => return block_path_expr(expr?).and_then(expr_path_segments),
         _ => return None,
     };
     let path = path_segments(path);

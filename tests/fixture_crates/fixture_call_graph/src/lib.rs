@@ -1353,3 +1353,13 @@ pub mod nested_glob_assoc_scope {
         NestedGlobAssoc::make()
     }
 }
+
+pub fn call_block_initialized_function_item_binding() -> i32 {
+    let f = { local_target };
+    f()
+}
+
+pub fn call_parenthesized_block_initialized_function_item_binding() -> i32 {
+    let f = { local_target };
+    (f)()
+}

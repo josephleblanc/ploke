@@ -63,6 +63,9 @@ Current matrix posture:
   path across parser, DB, RAG, and TUI.
 - Exact local external-trait impl receiver methods: met for axum
   `Router::clone` rows across DB, RAG, and TUI.
+- Dynamic callable bindings: exact local function-item bindings now cover
+  direct, alias, branch/match, and single-expression block initializers through
+  parser, DB, RAG, and TUI proof where exposed.
 - Dynamic/receiver/closure/import gaps: future semantic expansion buckets, not reasons to keep polishing already-proven method paths.
 
 ## Phase Transition Rule
@@ -124,7 +127,7 @@ For the current state, that should be:
 ```text
 Root plan: .hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md
 Current phase: binding/type-aware semantic resolution
-Current completed bucket: local callable bindings initialized by branch expressions
-Completed proof: fixture-backed same-target `if` and parenthesized `match` initialized callable bindings across parser, DB dynamic context/proof, and RAG call-context collection; mixed-target branch initializer remains fail-closed
+Current completed bucket: local callable bindings initialized by branch and block expressions
+Completed proof: fixture-backed same-target `if`, parenthesized `match`, and single-expression block initialized callable bindings across parser, DB dynamic context/proof, RAG call-context collection, and TUI lookup where exposed; mixed-target branch initializer remains fail-closed
 Next phase if this bucket is done: return to the coverage matrix and select the next real-corpus DB query or downstream usage-query gap
 ```

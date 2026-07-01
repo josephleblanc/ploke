@@ -33,6 +33,11 @@ fn fixture_context_reads_projected_function_item_binding_calls() -> Result<(), D
             imported_target,
         ),
         (
+            "call_block_initialized_function_item_binding",
+            path(&["f"]),
+            local_target,
+        ),
+        (
             "call_if_initialized_function_item_binding",
             path(&["f"]),
             local_target,
@@ -131,6 +136,11 @@ fn fixture_context_reads_projected_parenthesized_binding_dynamic_calls() -> Resu
         ResolvedDynamicContextCase {
             owner: "call_parenthesized_typed_function_pointer_alias_binding",
             path: &["g"],
+            expected_rows: 1,
+        },
+        ResolvedDynamicContextCase {
+            owner: "call_parenthesized_block_initialized_function_item_binding",
+            path: &["f"],
             expected_rows: 1,
         },
         ResolvedDynamicContextCase {

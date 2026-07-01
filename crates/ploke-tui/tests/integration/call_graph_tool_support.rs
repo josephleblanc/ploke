@@ -57,6 +57,7 @@ pub(crate) struct CallGraphToolFixture {
 pub(crate) struct FixtureDynamicCallableToolFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,
+    pub(crate) owner_name: &'static str,
     pub(crate) owner: Uuid,
     pub(crate) target: Uuid,
 }
@@ -223,7 +224,7 @@ impl CallGraphToolFixture {
 }
 
 impl FixtureDynamicCallableToolFixture {
-    pub(crate) async fn new() -> Self {
+    pub(crate) async fn new_for_owner(owner_name: &'static str) -> Self {
         let db = Arc::new(Database::new(
             setup_db_full_multi_embedding("fixture_call_graph").expect("fixture_call_graph db"),
         ));
@@ -235,11 +236,11 @@ impl FixtureDynamicCallableToolFixture {
             "function",
             file_path.as_path(),
             &module_path,
-            "call_parenthesized_function_item_binding",
+            owner_name,
         )
-        .expect("resolve call_parenthesized_function_item_binding")
+        .unwrap_or_else(|err| panic!("resolve {owner_name}: {err}"))
         .pop()
-        .expect("call_parenthesized_function_item_binding row")
+        .unwrap_or_else(|| panic!("{owner_name} row"))
         .id;
         let target = graph_resolve_exact(
             db.as_ref(),
@@ -256,7 +257,7 @@ impl FixtureDynamicCallableToolFixture {
             db.project_call_proof_facts_for_node(owner, "bd:fixture-call-graph")
                 .expect("project dynamic callable owner proof facts")
                 >= 3,
-            "call_parenthesized_function_item_binding should project resolved dynamic proof rows"
+            "{owner_name} should project resolved dynamic proof rows"
         );
 
         let state = app_state_with_rag(db, crate_root).await;
@@ -264,6 +265,7 @@ impl FixtureDynamicCallableToolFixture {
         Self {
             state,
             file_path,
+            owner_name,
             owner,
             target,
         }

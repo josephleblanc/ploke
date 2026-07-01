@@ -88,9 +88,18 @@ async fn code_item_lookup_returns_call_and_proof_context_for_call_graph_item() {
 
 #[tokio::test]
 async fn code_item_lookup_returns_resolved_dynamic_callable_context() {
-    let fixture = FixtureDynamicCallableToolFixture::new().await;
+    for owner_name in [
+        "call_parenthesized_function_item_binding",
+        "call_parenthesized_block_initialized_function_item_binding",
+    ] {
+        assert_resolved_dynamic_callable_lookup(owner_name).await;
+    }
+}
+
+async fn assert_resolved_dynamic_callable_lookup(owner_name: &'static str) {
+    let fixture = FixtureDynamicCallableToolFixture::new_for_owner(owner_name).await;
     let params = LookupParams {
-        item_name: Cow::Borrowed("call_parenthesized_function_item_binding"),
+        item_name: Cow::Borrowed(fixture.owner_name),
         file_path: Cow::Owned(fixture.file_path.display().to_string()),
         node_kind: Cow::Borrowed("function"),
         module_path: Cow::Borrowed("crate"),
@@ -116,6 +125,9 @@ async fn code_item_lookup_returns_resolved_dynamic_callable_context() {
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs:269
     //     `call_parenthesized_function_item_binding` binds
     //     `let f = local_target;` and calls `(f)()`.
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1362
+    //     `call_parenthesized_block_initialized_function_item_binding` binds
+    //     `let f = { local_target };` and calls `(f)()`.
     // Parser/DB/RAG already prove this as a resolved dynamic-function edge.
     // This pins the same fact at the TUI tool boundary.
     let calls = call_context
@@ -130,7 +142,7 @@ async fn code_item_lookup_returns_resolved_dynamic_callable_context() {
     assert_eq!(
         calls.len(),
         1,
-        "code_item_lookup should expose exactly one resolved dynamic callable row: {call_context:#?}"
+        "code_item_lookup should expose exactly one resolved dynamic callable row for {owner_name}: {call_context:#?}"
     );
     let call = calls[0].clone();
     assert_eq!(call.status, CallStatusKind::Resolved);
@@ -153,7 +165,7 @@ async fn code_item_lookup_returns_resolved_dynamic_callable_context() {
                 && proof.call_site_id.as_deref() == Some(site.as_str())
                 && proof.build_domain_id.as_deref() == Some("bd:fixture-call-graph")
         }),
-        "code_item_lookup should return the dynamic call_site proof row: {proof_context:#?}"
+        "code_item_lookup should return the dynamic call_site proof row for {owner_name}: {proof_context:#?}"
     );
     assert!(
         proof_rows.iter().any(|proof| {
@@ -163,7 +175,7 @@ async fn code_item_lookup_returns_resolved_dynamic_callable_context() {
                 && proof.callee_def_id.as_deref() == Some(target.as_str())
                 && proof.resolution_state.as_deref() == Some("resolved")
         }),
-        "code_item_lookup should return the resolved dynamic call_edge proof row: {proof_context:#?}"
+        "code_item_lookup should return the resolved dynamic call_edge proof row for {owner_name}: {proof_context:#?}"
     );
     assert!(
         proof_rows.iter().any(|proof| {
@@ -172,7 +184,7 @@ async fn code_item_lookup_returns_resolved_dynamic_callable_context() {
                 && proof.resolution_state.as_deref() == Some("resolved")
                 && proof.resolved_def_id.as_deref() == Some(target.as_str())
         }),
-        "code_item_lookup should return the resolved dynamic call_resolution proof row: {proof_context:#?}"
+        "code_item_lookup should return the resolved dynamic call_resolution proof row for {owner_name}: {proof_context:#?}"
     );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
@@ -181,14 +193,14 @@ async fn code_item_lookup_returns_resolved_dynamic_callable_context() {
             .parse::<usize>()
             .expect("outgoing count")
             >= 1,
-        "code_item_lookup should surface outgoing dynamic callable call context"
+        "code_item_lookup should surface outgoing dynamic callable call context for {owner_name}"
     );
     assert!(
         ui_field(ui, "proof_context")
             .parse::<usize>()
             .expect("proof count")
             >= 3,
-        "code_item_lookup should surface resolved dynamic callable proof rows"
+        "code_item_lookup should surface resolved dynamic callable proof rows for {owner_name}"
     );
 }
 

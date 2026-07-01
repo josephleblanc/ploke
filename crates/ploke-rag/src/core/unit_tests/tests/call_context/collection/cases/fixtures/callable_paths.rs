@@ -16,6 +16,10 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
         &db,
         &function_in_module_query(&["crate"], "call_if_initialized_function_item_binding"),
     )?;
+    let block_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_block_initialized_function_item_binding"),
+    )?;
     let fn_param_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_function_pointer_param"),
@@ -41,6 +45,7 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
     let call_context = rag.collect_call_context(&[
         (returned_owner, 1.0),
         (branch_owner, 1.0),
+        (block_owner, 1.0),
         (fn_param_owner, 1.0),
         (generic_owner, 1.0),
         (boxed_owner, 1.0),
@@ -107,6 +112,28 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
     assert_eq!(branch_call.targets.len(), 1);
     assert_eq!(branch_call.targets[0].target_id, local_target);
     assert_eq!(branch_call.targets[0].relation, CallTargetKind::Function);
+
+    let block_context = call_context
+        .get(&block_owner)
+        .expect("block-initialized function item owner should receive outgoing call context");
+    assert_eq!(
+        block_context.len(),
+        1,
+        "block-initialized function item context: {block_context:#?}"
+    );
+    let block_call = &block_context[0];
+    assert_eq!(block_call.kind, CallSiteKind::Path);
+    assert_eq!(
+        block_call.callee,
+        CallCalleeInfo::Path {
+            path: vec!["f".to_string()],
+        }
+    );
+    assert_eq!(block_call.status, CallStatusKind::Resolved);
+    assert_eq!(block_call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(block_call.targets.len(), 1);
+    assert_eq!(block_call.targets[0].target_id, local_target);
+    assert_eq!(block_call.targets[0].relation, CallTargetKind::Function);
 
     let fn_param_context = call_context
         .get(&fn_param_owner)
