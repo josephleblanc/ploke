@@ -11,7 +11,7 @@ pub(in crate::app) struct TopBar<'a> {
     pub(in crate::app) debug_panel: &'a mut bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub(in crate::app) struct TopBarAction {
     pub(in crate::app) selected_run: Option<usize>,
     pub(in crate::app) refresh_runs: bool,

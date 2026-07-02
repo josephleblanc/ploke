@@ -11,3 +11,6 @@ egui = "0.34"
 ploke-eval = { path = "../ploke-eval" }
 serde_json = { workspace = true }
 tokio = { workspace = true }
+
+[dev-dependencies]
+egui_kittest = { version = "0.34", features = ["eframe", "snapshot", "wgpu"] }

@@ -388,6 +388,23 @@ mod tests {
     use crate::model::WALK_REQUEST_TIMEOUT;
 
     #[test]
+    fn kittest_clicks_query_button_without_live_server() {
+        use egui_kittest::{Harness, kittest::Queryable};
+
+        let mut harness = Harness::builder()
+            .with_size(egui::Vec2::new(1280.0, 820.0))
+            .build_eframe(|_cc| test_app());
+
+        harness.get_by_label("Run Query").click();
+        harness.run();
+
+        assert_eq!(
+            harness.state().notice.as_deref(),
+            Some("select a run or enter a campaign id")
+        );
+    }
+
+    #[test]
     fn show_state_treats_missing_socket_as_offline() {
         let root = unique_temp_dir("ploke-walk-ui-missing-socket");
         fs::create_dir_all(&root).expect("create temp repo root");
@@ -447,6 +464,12 @@ mod tests {
     }
 
     fn test_app_with_client(client: WalkClient) -> WalkUiApp {
+        let mut app = test_app();
+        app.client = Some(client);
+        app
+    }
+
+    fn test_app() -> WalkUiApp {
         let (event_tx, event_rx) = mpsc::channel();
         WalkUiApp {
             event_tx,
@@ -457,7 +480,7 @@ mod tests {
             runs: Vec::new(),
             selected_run: None,
             run_error: None,
-            client: Some(client),
+            client: None,
             phases: PhaseInventory::current(),
             status: ServiceStatus::Unresolved,
             snapshot: None,
