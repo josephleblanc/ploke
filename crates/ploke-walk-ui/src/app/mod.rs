@@ -12,6 +12,13 @@ use crate::model::{
     DEFAULT_QUERY, ServiceStatus, UiButtonState, UiEvent, WalkRequestKind, WalkRequestResult,
     nonempty_path, optional_text,
 };
+use panels::{
+    debug::DebugWindow,
+    details::{DetailsAction, DetailsPanel},
+    phase_rail::PhaseRail,
+    query::{QueryAction, QueryPanel},
+    top_bar::{TopBar, TopBarAction},
+};
 
 pub(crate) struct WalkUiApp {
     event_tx: mpsc::Sender<UiEvent>,
@@ -257,27 +264,114 @@ impl WalkUiApp {
             .map(str::to_owned)
             .or_else(|| self.selected_campaign_id().map(str::to_owned))
     }
+
+    fn handle_top_bar_action(&mut self, action: TopBarAction, ctx: &egui::Context) {
+        if let Some(index) = action.selected_run {
+            self.select_run(index);
+        }
+        if action.refresh_runs {
+            self.refresh_runs();
+            self.refresh_health(Some(ctx.clone()));
+        }
+    }
+
+    fn handle_query_action(&mut self, action: QueryAction, ctx: &egui::Context) {
+        if action.run_query {
+            self.run_query(Some(ctx.clone()));
+        }
+    }
+
+    fn handle_details_action(&mut self, action: DetailsAction, ctx: &egui::Context) {
+        if action.refresh_health {
+            self.refresh_health(Some(ctx.clone()));
+        }
+        if action.show_state {
+            self.show_state(Some(ctx.clone()));
+        }
+    }
 }
 
 impl eframe::App for WalkUiApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, _ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_events();
-        egui::Panel::top("top_bar").show_inside(ui, |ui| self.top_bar(ui));
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        egui::Panel::top("top_bar").show_inside(ui, |ui| {
+            let action = TopBar {
+                status: &self.status,
+                runs: &self.runs,
+                selected_run: self.selected_run,
+                socket_input: &mut self.socket_input,
+                debug_panel: &mut self.debug_panel,
+            }
+            .show(ui);
+            self.handle_top_bar_action(action, &ctx);
+        });
 
         egui::Panel::left("phase_rail")
             .resizable(true)
             .default_size(280.0)
-            .show_inside(ui, |ui| self.phase_rail(ui));
+            .show_inside(ui, |ui| {
+                PhaseRail {
+                    phases: &self.phases,
+                    current: self.snapshot.as_ref().and_then(|snapshot| snapshot.phase),
+                }
+                .show(ui);
+            });
 
         egui::Panel::right("details")
             .resizable(true)
             .default_size(360.0)
-            .show_inside(ui, |ui| self.details_panel(ui));
+            .show_inside(ui, |ui| {
+                let action = DetailsPanel {
+                    runs: &self.runs,
+                    selected_run: self.selected_run,
+                    run_error: self.run_error.as_deref(),
+                    client_available: self.client.is_some(),
+                    walk_pending: self.walk_pending,
+                    snapshot: self.snapshot.as_ref(),
+                    notice: self.notice.as_deref(),
+                    query_result: self.query_result.as_ref(),
+                    selected_row: self.selected_row,
+                    run_details: &mut self.buttons.run_details,
+                }
+                .show(ui);
+                self.handle_details_action(action, &ctx);
+            });
 
-        egui::CentralPanel::default().show_inside(ui, |ui| self.query_panel(ui));
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            let selected_campaign = self.selected_campaign_id().map(str::to_owned);
+            let action = QueryPanel {
+                campaign_input: &mut self.campaign_input,
+                query_script: &mut self.query_script,
+                query_pending: self.query_pending,
+                query_result: self.query_result.as_ref(),
+                selected_row: &mut self.selected_row,
+                selected_campaign: selected_campaign.as_deref(),
+            }
+            .show(ui);
+            self.handle_query_action(action, &ctx);
+        });
 
         if self.debug_panel {
-            self.debug_window(ui.ctx());
+            let selected_campaign = self.selected_campaign_id().map(str::to_owned);
+            let client_socket = self
+                .client
+                .as_ref()
+                .map(|client| client.socket().display().to_string());
+            DebugWindow {
+                debug_hover: &mut self.debug_hover,
+                status: &self.status,
+                selected_campaign: selected_campaign.as_deref(),
+                client_socket: client_socket.as_deref(),
+                walk_pending: self.walk_pending,
+                query_pending: self.query_pending,
+                runs_len: self.runs.len(),
+                row_count: self.query_result.as_ref().map(|result| result.row_count),
+            }
+            .show(ui.ctx());
         }
     }
 }
