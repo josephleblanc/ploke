@@ -43,7 +43,7 @@ struct CallTargetFamily {
     target_relation: &'static str,
 }
 
-const VALID_CALL_TARGET_FAMILIES: [CallTargetFamily; 6] = [
+const VALID_CALL_TARGET_FAMILIES: [CallTargetFamily; 7] = [
     CallTargetFamily {
         relation: CallRelationKind::Function,
         source: CallSiteKind::Path,
@@ -55,6 +55,12 @@ const VALID_CALL_TARGET_FAMILIES: [CallTargetFamily; 6] = [
         source: CallSiteKind::Dynamic,
         target: CallTargetKind::Function,
         target_relation: "function",
+    },
+    CallTargetFamily {
+        relation: CallRelationKind::Closure,
+        source: CallSiteKind::Path,
+        target: CallTargetKind::Closure,
+        target_relation: "call_body_owner",
     },
     CallTargetFamily {
         relation: CallRelationKind::Method,
@@ -122,17 +128,31 @@ pub(super) fn valid_call_target_rules() -> String {
         let source = family.source.as_str();
         let target = family.target.as_str();
         let target_relation = family.target_relation;
-        writeln!(
-            &mut rules,
-            r#"
+        if target_relation == "call_body_owner" {
+            writeln!(
+                &mut rules,
+                r#"
+            valid_target[target_id, relation_kind, source_kind, target_kind] :=
+                relation_kind = "{relation}",
+                source_kind = "{source}",
+                target_kind = "{target}",
+                *{target_relation} {{ id: target_id, owner_kind: target_kind @ 'NOW' }}
+"#
+            )
+            .expect("writing call target rule to String should not fail");
+        } else {
+            writeln!(
+                &mut rules,
+                r#"
             valid_target[target_id, relation_kind, source_kind, target_kind] :=
                 relation_kind = "{relation}",
                 source_kind = "{source}",
                 target_kind = "{target}",
                 *{target_relation} {{ id: target_id @ 'NOW' }}
 "#
-        )
-        .expect("writing call target rule to String should not fail");
+            )
+            .expect("writing call target rule to String should not fail");
+        }
     }
     rules
 }

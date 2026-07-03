@@ -263,6 +263,7 @@ pub enum CallCalleeInfo {
 pub enum CallTargetKind {
     Function,
     DynamicFunction,
+    Closure,
     Method,
     AssociatedFunction,
     TupleStructConstructor,
@@ -274,6 +275,7 @@ impl CallTargetKind {
         match self {
             Self::Function => "Function",
             Self::DynamicFunction => "DynamicFunction",
+            Self::Closure => "Closure",
             Self::Method => "Method",
             Self::AssociatedFunction => "AssociatedFunction",
             Self::TupleStructConstructor => "TupleStructConstructor",
@@ -299,6 +301,7 @@ pub struct CallSiteBucketInfo {
 #[serde(rename_all = "snake_case")]
 pub enum CallEndpointKind {
     Function,
+    Closure,
     Method,
     Struct,
     Variant,

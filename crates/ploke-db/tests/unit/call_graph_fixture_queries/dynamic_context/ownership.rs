@@ -79,6 +79,18 @@ fn fixture_context_projects_closure_body_call_to_executable_owner() -> Result<()
             .all(|row| row.site.path.as_ref() != Some(&local_target_path)),
         "outer function should not absorb the closure-body local_target() row: {outer_context:#?}"
     );
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:155-157:
+    // `closure()` is a path-style call to the local closure binding. It should
+    // target the closure owner so graph traversal can continue into the
+    // closure body.
+    let closure_call = row_by_path(&outer_context, &["closure"]);
+    assert_resolved_target(
+        closure_call,
+        closure,
+        CallRelationKind::Closure,
+        CallSiteKind::Path,
+        CallTargetKind::Closure,
+    );
 
     let info = db
         .call_node_info(closure)?
@@ -128,6 +140,25 @@ fn fixture_context_projects_closure_body_call_to_executable_owner() -> Result<()
             .any(|path| path.start_id == closure && path.end_id == target && path.depth == 1),
         "closure owner should have a one-hop resolved path to local_target: {paths:#?}"
     );
+    let paths = db.call_paths_from_owner(
+        outer,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 8,
+        },
+    )?;
+    let path = paths
+        .iter()
+        .find(|path| path.start_id == outer && path.end_id == target && path.depth == 2)
+        .expect("outer function should have a two-hop path to local_target through the closure");
+    assert_eq!(path.edges[0].caller_id, outer);
+    assert_eq!(path.edges[0].callee_id, closure);
+    assert_eq!(path.edges[0].relation, CallRelationKind::Closure);
+    assert_eq!(path.edges[0].target_kind, CallTargetKind::Closure);
+    assert_eq!(path.edges[1].caller_id, closure);
+    assert_eq!(path.edges[1].callee_id, target);
+    assert_eq!(path.edges[1].relation, CallRelationKind::Function);
+    assert_eq!(path.edges[1].target_kind, CallTargetKind::Function);
 
     Ok(())
 }

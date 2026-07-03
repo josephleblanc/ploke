@@ -45,6 +45,7 @@ fn test_call_graph_projection_for_closure_body_owner() -> Result<(), Box<dyn std
                 .then_some((source, target))
             }
             CallRelation::DynamicFunction { .. }
+            | CallRelation::Closure { .. }
             | CallRelation::Method { .. }
             | CallRelation::AssociatedFunction { .. }
             | CallRelation::TupleStructConstructor { .. }

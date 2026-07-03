@@ -2,11 +2,11 @@
 use super::nodes::{AnyNodeId, PrimaryNodeIdTrait};
 use crate::parser::nodes::{
     AnyCallSiteId, AnyGenericParamId, AssociatedItemNodeId, CallBodyOwnerId,
-    ConstGenericParamNodeId, DynamicCallSiteId, EnumNodeId, FieldNodeId, FunctionNodeId,
-    GenericParamOwnerId, ImplNodeId, ImportNodeId, MethodCallSiteId, MethodNodeId, ModuleNodeId,
-    OrdinaryTypeSourceId, OrdinaryTypeTargetId, OrdinaryTypeUseId, PathCallSiteId, PrimaryNodeId,
-    StructNodeId, TraitNodeId, TraitTypeSourceId, TraitTypeTargetId, TypeGenericParamNodeId,
-    UnionNodeId, VariantNodeId,
+    ConstGenericParamNodeId, DynamicCallSiteId, EnumNodeId, ExecutableBodyId, FieldNodeId,
+    FunctionNodeId, GenericParamOwnerId, ImplNodeId, ImportNodeId, MethodCallSiteId, MethodNodeId,
+    ModuleNodeId, OrdinaryTypeSourceId, OrdinaryTypeTargetId, OrdinaryTypeUseId, PathCallSiteId,
+    PrimaryNodeId, StructNodeId, TraitNodeId, TraitTypeSourceId, TraitTypeTargetId,
+    TypeGenericParamNodeId, UnionNodeId, VariantNodeId,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -183,6 +183,15 @@ pub enum CallRelation {
         source: DynamicCallSiteId,
         target: FunctionNodeId,
     },
+    /// A path-style call site resolved to a local closure body owner.
+    ///
+    /// ```text
+    /// Closure ⊆ PathCallSiteId × ExecutableBodyId
+    /// ```
+    Closure {
+        source: PathCallSiteId,
+        target: ExecutableBodyId,
+    },
     /// A method-call site resolved to a local method definition.
     ///
     /// ```text
@@ -228,6 +237,7 @@ impl CallRelation {
         match self {
             Self::Function { .. } => "Function",
             Self::DynamicFunction { .. } => "DynamicFunction",
+            Self::Closure { .. } => "Closure",
             Self::Method { .. } => "Method",
             Self::AssociatedFunction { .. } => "AssociatedFunction",
             Self::TupleStructConstructor { .. } => "TupleStructConstructor",
@@ -239,6 +249,7 @@ impl CallRelation {
     pub fn source_kind_str(&self) -> &'static str {
         match self {
             Self::Function { .. }
+            | Self::Closure { .. }
             | Self::AssociatedFunction { .. }
             | Self::TupleStructConstructor { .. }
             | Self::EnumVariantConstructor { .. } => "Path",
@@ -251,6 +262,7 @@ impl CallRelation {
     pub fn target_kind_str(&self) -> &'static str {
         match self {
             Self::Function { .. } | Self::DynamicFunction { .. } => "Function",
+            Self::Closure { .. } => "Closure",
             Self::Method { .. } | Self::AssociatedFunction { .. } => "Method",
             Self::TupleStructConstructor { .. } => "Struct",
             Self::EnumVariantConstructor { .. } => "Variant",

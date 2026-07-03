@@ -16,10 +16,13 @@ use crate::paranoid_call_site_test;
 use ploke_core::ItemKind;
 use syn_parser::parser::graph::GraphAccess;
 use syn_parser::parser::nodes::{
-    CallBodyOwnerId, CallNode, ExecutableBodyKind, FunctionNodeId, StructNodeId, TypeDefNode,
-    VariantNodeId,
+    AnyCallSiteId, CallBodyOwnerId, CallNode, ExecutableBodyKind, FunctionNodeId, PathCallCallee,
+    StructNodeId, TypeDefNode, VariantNodeId,
 };
-use syn_parser::parser::relations::CallSiteRelation;
+use syn_parser::parser::relations::{
+    CallRelation, CallResolutionKind, CallResolutionStatus, CallSiteRelation,
+};
+use syn_parser::resolve::call_resolution::resolve_call_relations_after_tree;
 
 const IMPLS_RS: &str = "src/impls.rs";
 const CONST_STATIC_RS: &str = "src/const_static.rs";
@@ -4254,6 +4257,70 @@ fn fixture_call_graph_closure_body_call_is_not_recorded_as_outer_call_site() {
         &owner,
         CLOSURE_BODY_LOCAL_TARGET_CALL_SPAN,
         &["local_target"],
+    );
+}
+
+#[test]
+fn fixture_call_graph_closure_binding_call_resolves_to_closure_owner() {
+    let (graph, tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+    let owner = crate::common::call_site_paranoid::function_owner_context(
+        &graph,
+        &["crate"],
+        "closure_body_call_is_not_outer_call_site",
+    );
+    let closure = graph
+        .executable_bodies()
+        .iter()
+        .find(|body| body.parent == owner.id && body.kind == ExecutableBodyKind::Closure)
+        .expect("fixture should bind one closure body in closure_body_call_is_not_outer_call_site");
+
+    let call = graph
+        .call_sites()
+        .iter()
+        .find_map(|call| {
+            let CallNode::PathCall(path_call) = call else {
+                return None;
+            };
+            (path_call.owner == owner.id && path_call.path.as_slice() == ["closure"])
+                .then_some(path_call)
+        })
+        .expect("fixture should record the outer closure() path call");
+    match &call.callee {
+        PathCallCallee::ClosureBinding { path, closure_id } => {
+            assert_eq!(path.as_slice(), ["closure"]);
+            assert_eq!(*closure_id, closure.id);
+        }
+        other => panic!("closure() should carry closure binding proof, got {other:?}"),
+    }
+
+    let report = resolve_call_relations_after_tree(&graph, &tree)
+        .expect("fixture call graph resolution should succeed");
+    let source = AnyCallSiteId::Path(call.id);
+    assert!(
+        report.statuses.iter().any(|status| {
+            matches!(
+                status,
+                CallResolutionStatus::Resolved {
+                    source: actual_source,
+                    kind: CallResolutionKind::LocalExact,
+                } if *actual_source == source
+            )
+        }),
+        "closure() should resolve locally to its closure owner: {:#?}",
+        report.statuses
+    );
+    assert!(
+        report.relations.iter().any(|relation| {
+            matches!(
+                relation,
+                CallRelation::Closure {
+                    source: actual_source,
+                    target,
+                } if *actual_source == call.id && *target == closure.id
+            )
+        }),
+        "closure() should produce a typed Closure relation to the closure owner: {:#?}",
+        report.relations
     );
 }
 

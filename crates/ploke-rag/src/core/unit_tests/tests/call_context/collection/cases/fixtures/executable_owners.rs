@@ -40,6 +40,20 @@ async fn call_context_collection_reads_closure_executable_owner_rows() -> Result
             .all(|target_info| target_info.target_id != target),
         "outer function must not expose a fabricated edge to local_target: {outer_context:#?}"
     );
+    let closure_call = outer_context
+        .iter()
+        .find(|call| {
+            call.callee
+                == CallCalleeInfo::Path {
+                    path: vec!["closure".to_string()],
+                }
+        })
+        .expect("outer function should expose the closure() binding call");
+    assert_eq!(closure_call.owner_id, outer);
+    assert_eq!(closure_call.status, CallStatusKind::Resolved);
+    assert_eq!(closure_call.targets.len(), 1);
+    assert_eq!(closure_call.targets[0].target_id, closure);
+    assert_eq!(closure_call.targets[0].relation, CallTargetKind::Closure);
 
     // tests/fixture_crates/fixture_call_graph/src/lib.rs:155-157:
     // `closure_body_call_is_not_outer_call_site` binds `|| local_target()` and
@@ -48,12 +62,16 @@ async fn call_context_collection_reads_closure_executable_owner_rows() -> Result
     let closure_context = call_context
         .get(&closure)
         .expect("closure executable owner should receive outgoing call context");
-    assert_eq!(
-        closure_context.len(),
-        1,
-        "closure owner context: {closure_context:#?}"
-    );
-    let call = &closure_context[0];
+    let call = closure_context
+        .iter()
+        .find(|call| {
+            call.owner_id == closure
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["local_target".to_string()],
+                    }
+        })
+        .expect("closure owner should retain outgoing local_target() call context");
     assert_eq!(call.owner_id, closure);
     assert_eq!(call.kind, CallSiteKind::Path);
     assert_eq!(

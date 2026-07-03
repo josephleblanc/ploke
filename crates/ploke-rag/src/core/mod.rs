@@ -640,6 +640,7 @@ fn target_kind(kind: CallRelationKind) -> CallTargetKind {
     match kind {
         CallRelationKind::Function => CallTargetKind::Function,
         CallRelationKind::DynamicFunction => CallTargetKind::DynamicFunction,
+        CallRelationKind::Closure => CallTargetKind::Closure,
         CallRelationKind::Method => CallTargetKind::Method,
         CallRelationKind::AssociatedFunction => CallTargetKind::AssociatedFunction,
         CallRelationKind::TupleStructConstructor => CallTargetKind::TupleStructConstructor,
@@ -649,6 +650,7 @@ fn target_kind(kind: CallRelationKind) -> CallTargetKind {
 fn call_target_kind(kind: DbCallTargetKind) -> CallEndpointKind {
     match kind {
         DbCallTargetKind::Function => CallEndpointKind::Function,
+        DbCallTargetKind::Closure => CallEndpointKind::Closure,
         DbCallTargetKind::Method => CallEndpointKind::Method,
         DbCallTargetKind::Struct => CallEndpointKind::Struct,
         DbCallTargetKind::Variant => CallEndpointKind::Variant,

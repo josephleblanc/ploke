@@ -1498,6 +1498,7 @@ fn relation_source(relation: CallRelation) -> AnyCallSiteId {
     match relation {
         CallRelation::Function { source, .. } => source.into(),
         CallRelation::DynamicFunction { source, .. } => source.into(),
+        CallRelation::Closure { source, .. } => source.into(),
         CallRelation::Method { source, .. } => source.into(),
         CallRelation::AssociatedFunction { source, .. } => source.into(),
         CallRelation::TupleStructConstructor { source, .. } => source.into(),

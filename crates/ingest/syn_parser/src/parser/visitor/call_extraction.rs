@@ -92,6 +92,10 @@ enum LocalBindingProof {
         name: String,
         init_path: Vec<String>,
     },
+    Closure {
+        name: String,
+        closure_id: ExecutableBodyId,
+    },
     Constructed {
         name: String,
         type_path: Vec<String>,
@@ -128,6 +132,7 @@ impl LocalBindingProof {
             Self::Typed { name, .. }
             | Self::TraitObject { name, .. }
             | Self::Initialized { name, .. }
+            | Self::Closure { name, .. }
             | Self::Constructed { name, .. }
             | Self::Array { name, .. }
             | Self::Referenced { name, .. }
@@ -261,9 +266,14 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             }
         }
 
-        if let Some(binding) =
-            local_binding_proof(&local.pat, init_expr, self.param_names, &self.local_scopes)
-            && let Some(scope) = self.local_scopes.last_mut()
+        if let Some(binding) = local_binding_proof(
+            &local.pat,
+            init_expr,
+            self.owner,
+            self.cfgs,
+            self.param_names,
+            &self.local_scopes,
+        ) && let Some(scope) = self.local_scopes.last_mut()
         {
             scope.push(binding);
         }
@@ -440,6 +450,7 @@ fn classify_method_receiver(
                             init_path: type_path.clone(),
                         }
                     }
+                    LocalBindingProof::Closure { .. } => MethodCallReceiver::Unsupported,
                     LocalBindingProof::Untyped { .. } => MethodCallReceiver::Unsupported,
                 };
             }
@@ -625,6 +636,9 @@ fn local_field_receiver(
             LocalBindingProof::Referenced { .. } => {
                 Some(MethodCallReceiver::FieldLocalBinding { name, field_path })
             }
+            LocalBindingProof::Closure { .. } => {
+                Some(MethodCallReceiver::FieldLocalBinding { name, field_path })
+            }
             LocalBindingProof::Untyped { .. } => {
                 Some(MethodCallReceiver::FieldLocalBinding { name, field_path })
             }
@@ -688,6 +702,10 @@ fn classify_path_callee(
             } if is_callable_trait(trait_path) => PathCallCallee::InitializedValueBinding {
                 path: path.to_vec(),
                 init_path: init_path.clone(),
+            },
+            LocalBindingProof::Closure { closure_id, .. } => PathCallCallee::ClosureBinding {
+                path: path.to_vec(),
+                closure_id: *closure_id,
             },
             LocalBindingProof::Typed {
                 init_path: None, ..
@@ -754,6 +772,7 @@ fn classify_dynamic_callee(
                         init_path: None, ..
                     }
                     | LocalBindingProof::TraitObject { .. }
+                    | LocalBindingProof::Closure { .. }
                     | LocalBindingProof::Constructed { .. }
                     | LocalBindingProof::Array { .. }
                     | LocalBindingProof::Referenced { .. }
@@ -825,6 +844,7 @@ fn classify_dynamic_path_expr(
                     init_path: None, ..
                 }
                 | LocalBindingProof::TraitObject { .. }
+                | LocalBindingProof::Closure { .. }
                 | LocalBindingProof::Constructed { .. }
                 | LocalBindingProof::Array { .. }
                 | LocalBindingProof::Referenced { .. }
@@ -1029,6 +1049,7 @@ fn dereferenced_initialized_path(
             init_path: None, ..
         }
         | LocalBindingProof::TraitObject { .. }
+        | LocalBindingProof::Closure { .. }
         | LocalBindingProof::Constructed { .. }
         | LocalBindingProof::Array { .. }
         | LocalBindingProof::Referenced { .. }
@@ -1135,6 +1156,8 @@ fn visible_local_binding<'a>(
 fn local_binding_proof(
     pat: &syn::Pat,
     init_expr: Option<&syn::Expr>,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
     param_names: &[String],
     local_scopes: &[Vec<LocalBindingProof>],
 ) -> Option<LocalBindingProof> {
@@ -1195,6 +1218,14 @@ fn local_binding_proof(
                             type_path,
                         }
                     })
+                })
+                .or_else(|| {
+                    closure_binding_id(init_expr, owner, cfgs).map(|closure_id| {
+                        LocalBindingProof::Closure {
+                            name: name.clone(),
+                            closure_id,
+                        }
+                    })
                 });
             let proof = proof.or_else(|| {
                 referenced_alias_path(init_expr, param_names, local_scopes).map(|type_path| {
@@ -1253,6 +1284,21 @@ fn local_binding_proof(
         }
         _ => None,
     }
+}
+
+fn closure_binding_id(
+    expr: Option<&syn::Expr>,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+) -> Option<ExecutableBodyId> {
+    let syn::Expr::Closure(closure) = unparen_expr(expr?) else {
+        return None;
+    };
+    let byte_range = closure.span().byte_range();
+    let span = (byte_range.start, byte_range.end);
+    Some(ExecutableBodyId::Closure(generate_closure_body_id(
+        owner, span, cfgs,
+    )))
 }
 
 fn inferred_init_path(expr: Option<&syn::Expr>) -> Option<Vec<String>> {
@@ -1626,6 +1672,7 @@ fn init_target_path(
             | LocalBindingProof::TraitObject {
                 init_path: None, ..
             }
+            | LocalBindingProof::Closure { .. }
             | LocalBindingProof::Constructed { .. }
             | LocalBindingProof::Array { .. }
             | LocalBindingProof::Referenced { .. }

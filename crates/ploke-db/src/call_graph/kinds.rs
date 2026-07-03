@@ -35,6 +35,7 @@ impl CallSiteKind {
 pub enum CallRelationKind {
     Function,
     DynamicFunction,
+    Closure,
     Method,
     AssociatedFunction,
     TupleStructConstructor,
@@ -46,6 +47,7 @@ impl CallRelationKind {
         match self {
             Self::Function => "Function",
             Self::DynamicFunction => "DynamicFunction",
+            Self::Closure => "Closure",
             Self::Method => "Method",
             Self::AssociatedFunction => "AssociatedFunction",
             Self::TupleStructConstructor => "TupleStructConstructor",
@@ -57,6 +59,7 @@ impl CallRelationKind {
         match value {
             "Function" => Ok(Self::Function),
             "DynamicFunction" => Ok(Self::DynamicFunction),
+            "Closure" => Ok(Self::Closure),
             "Method" => Ok(Self::Method),
             "AssociatedFunction" => Ok(Self::AssociatedFunction),
             "TupleStructConstructor" => Ok(Self::TupleStructConstructor),
@@ -71,6 +74,7 @@ impl CallRelationKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CallTargetKind {
     Function,
+    Closure,
     Method,
     Struct,
     Variant,
@@ -80,6 +84,7 @@ impl CallTargetKind {
     pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::Function => "Function",
+            Self::Closure => "Closure",
             Self::Method => "Method",
             Self::Struct => "Struct",
             Self::Variant => "Variant",
@@ -89,6 +94,7 @@ impl CallTargetKind {
     pub(super) fn from_str(value: &str) -> Result<Self, DbError> {
         match value {
             "Function" => Ok(Self::Function),
+            "Closure" => Ok(Self::Closure),
             "Method" => Ok(Self::Method),
             "Struct" => Ok(Self::Struct),
             "Variant" => Ok(Self::Variant),

@@ -1039,6 +1039,10 @@ impl CallRelationSchema {
                 let target_id: cozo::DataValue = (*target).into();
                 (source.to_cozo_uuid(), target_id)
             }
+            CallRelation::Closure { source, target } => {
+                let target_id = target.to_cozo_uuid();
+                (source.to_cozo_uuid(), target_id)
+            }
             CallRelation::Method { source, target } => {
                 let target_id: cozo::DataValue = (*target).into();
                 (source.to_cozo_uuid(), target_id)

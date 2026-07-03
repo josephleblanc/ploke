@@ -102,6 +102,12 @@ pub enum PathCallCallee {
     ItemPath,
     /// The callee path names a visible local value binding or parameter.
     ValueBinding { path: Vec<String> },
+    /// The callee path names a visible local closure binding with a known
+    /// executable body owner.
+    ClosureBinding {
+        path: Vec<String>,
+        closure_id: ExecutableBodyId,
+    },
     /// The callee path names a visible local binding initialized from a path.
     InitializedValueBinding {
         path: Vec<String>,

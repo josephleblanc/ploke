@@ -27,6 +27,17 @@ impl CallRelationResolver<'_> {
                 statuses.push(CallResolutionStatus::Unsupported { source });
                 return Ok(());
             }
+            PathCallCallee::ClosureBinding { closure_id, .. } => {
+                relations.push(CallRelation::Closure {
+                    source: call.id,
+                    target: *closure_id,
+                });
+                statuses.push(CallResolutionStatus::Resolved {
+                    source,
+                    kind: CallResolutionKind::LocalExact,
+                });
+                return Ok(());
+            }
             PathCallCallee::InitializedValueBinding { init_path, .. } => {
                 self.resolve_initialized_value_binding_call(call, init_path, relations, statuses)?;
                 return Ok(());
