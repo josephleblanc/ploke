@@ -419,7 +419,8 @@ fn memchr_callable_trait_object_field_calls_are_absent_fallback_gap() -> Result<
 }
 
 #[test]
-fn generic_array_guarded_match_arm_method_guard_is_absent_fallback_gap() -> Result<(), DbError> {
+fn generic_array_guarded_match_arm_method_guard_is_targetless_fallback_oracle()
+-> Result<(), DbError> {
     let db = setup_call_graph_db(&CORPUS_GENERIC_ARRAY_CALL_GRAPH)?;
 
     // Matrix: `Fallback Source Oracle Matrix`.
@@ -430,9 +431,10 @@ fn generic_array_guarded_match_arm_method_guard_is_absent_fallback_gap() -> Resu
     //   generic-array/src/lib.rs:1276 repeats the same guard shape, with arms
     //   at lines 1278 and 1280.
     //
-    // Current model gap: these guarded match-arm receiver calls are absent from
-    // the call-site projection in this fixture.
-    assert_no_method_rows(&db, "size_hint")
+    // Current model gap: the guarded local-binding receiver rows are visible
+    // but remain targetless because receiver binding tracking does not yet
+    // resolve `iter` back to the iterator type.
+    assert_targetless_method_rows_by_name(&db, "size_hint", CallStatusKind::Unsupported, 2)
 }
 
 fn assert_owner_path_resolved_count(

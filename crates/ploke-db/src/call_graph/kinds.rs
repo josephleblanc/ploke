@@ -104,11 +104,25 @@ pub enum CallNodeKind {
     Method,
     Const,
     Static,
+    Closure,
     Struct,
     Variant,
 }
 
 impl CallNodeKind {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Function => "Function",
+            Self::Macro => "Macro",
+            Self::Method => "Method",
+            Self::Const => "Const",
+            Self::Static => "Static",
+            Self::Closure => "Closure",
+            Self::Struct => "Struct",
+            Self::Variant => "Variant",
+        }
+    }
+
     pub(super) fn from_str(value: &str) -> Result<Self, DbError> {
         match value {
             "Function" => Ok(Self::Function),
@@ -116,6 +130,7 @@ impl CallNodeKind {
             "Method" => Ok(Self::Method),
             "Const" => Ok(Self::Const),
             "Static" => Ok(Self::Static),
+            "Closure" => Ok(Self::Closure),
             "Struct" => Ok(Self::Struct),
             "Variant" => Ok(Self::Variant),
             other => Err(DbError::Cozo(format!("unknown call node kind {other:?}"))),

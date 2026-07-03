@@ -25,6 +25,7 @@ use crate::error::TransformError;
 
 // -- transforms
 use consts::transform_consts;
+use edges::transform_call_body_owners;
 use edges::transform_call_resolution_report;
 use edges::transform_call_site_relations;
 use edges::transform_call_sites;
@@ -178,6 +179,8 @@ pub fn transform_parsed_graph(
     transform_relations(db, code_graph.relations)?;
     tracing::trace!("{}: Starting", "type_relations".log_step());
     transform_type_relations(db, &type_relation_report)?;
+    tracing::trace!("{}: Starting", "call_body_owners".log_step());
+    transform_call_body_owners(db, &code_graph.executable_bodies)?;
     tracing::trace!("{}: Starting", "call_sites".log_step());
     transform_call_sites(db, &code_graph.call_sites)?;
     tracing::trace!("{}: Starting", "call_site_relations".log_step());

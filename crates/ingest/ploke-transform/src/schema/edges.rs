@@ -11,7 +11,8 @@ use cozo::{Db, MemStorage};
 use itertools::Itertools;
 use std::collections::BTreeMap;
 use syn_parser::parser::nodes::{
-    AnyCallSiteId, CallBodyOwnerId, CallNode, DynamicCallCallee, MethodCallReceiver, ToCozoUuid,
+    AnyCallSiteId, CallBodyOwnerId, CallNode, DynamicCallCallee, ExecutableBodyKind,
+    ExecutableBodyNode, MethodCallReceiver, ToCozoUuid,
 };
 use syn_parser::parser::relations::{
     CallRelation, CallResolutionKind, CallResolutionStatus, CallSiteRelation, SyntacticRelation,
@@ -63,6 +64,68 @@ define_schema!(CallResolutionStatusSchema {
     status_kind: "String",
     resolution_kind: "String?"
 });
+
+pub struct CallBodyOwnerSchema;
+
+impl CallBodyOwnerSchema {
+    pub const RELATION: &'static str = "call_body_owner";
+
+    pub fn create_and_insert_schema(db: &Db<MemStorage>) -> Result<(), TransformError> {
+        db.run_script(
+            r#":create call_body_owner {
+                id: Uuid,
+                at: Validity =>
+                owner_kind: String,
+                parent_id: Uuid,
+                parent_kind: String,
+                span: [Int; 2],
+                cfgs: [String],
+                label: String
+            }"#,
+            BTreeMap::new(),
+            cozo::ScriptMutability::Mutable,
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_executable_body(
+        db: &Db<MemStorage>,
+        body: &ExecutableBodyNode,
+    ) -> Result<(), TransformError> {
+        let owner_kind = executable_body_kind(body.kind);
+        let label = body.label.as_deref().unwrap_or(owner_kind);
+        let mut params = BTreeMap::new();
+        params.insert("id".to_string(), body.id.to_cozo_uuid());
+        params.insert("owner_kind".to_string(), cozo::DataValue::from(owner_kind));
+        params.insert(
+            "parent_id".to_string(),
+            call_body_owner_to_cozo(body.parent),
+        );
+        params.insert(
+            "parent_kind".to_string(),
+            cozo::DataValue::from(call_body_owner_kind(body.parent)),
+        );
+        params.insert("span".to_string(), span_to_cozo(body.span));
+        params.insert("cfgs".to_string(), string_list(&body.cfgs));
+        params.insert("label".to_string(), cozo::DataValue::from(label));
+
+        db.run_script(
+            r#"?[id, at, owner_kind, parent_id, parent_kind, span, cfgs, label] :=
+                id = $id,
+                owner_kind = $owner_kind,
+                parent_id = $parent_id,
+                parent_kind = $parent_kind,
+                span = $span,
+                cfgs = $cfgs,
+                label = $label,
+                at = 'ASSERT'
+            :put call_body_owner { id, at => owner_kind, parent_id, parent_kind, span, cfgs, label }"#,
+            params,
+            cozo::ScriptMutability::Mutable,
+        )?;
+        Ok(())
+    }
+}
 
 pub struct CallSiteSchema;
 
@@ -492,9 +555,7 @@ fn call_body_owner_to_cozo(owner: CallBodyOwnerId) -> cozo::DataValue {
         CallBodyOwnerId::Method(id) => id.into(),
         CallBodyOwnerId::Const(id) => id.into(),
         CallBodyOwnerId::Static(id) => id.into(),
-        CallBodyOwnerId::Executable(_) => {
-            unreachable!("executable-local call owners are not projected without owner metadata")
-        }
+        CallBodyOwnerId::Executable(id) => id.to_cozo_uuid(),
     }
 }
 
@@ -505,9 +566,13 @@ fn call_body_owner_kind(owner: CallBodyOwnerId) -> &'static str {
         CallBodyOwnerId::Method(_) => "Method",
         CallBodyOwnerId::Const(_) => "Const",
         CallBodyOwnerId::Static(_) => "Static",
-        CallBodyOwnerId::Executable(_) => {
-            unreachable!("executable-local call owners are not projected without owner metadata")
-        }
+        CallBodyOwnerId::Executable(id) => executable_body_kind(id.kind()),
+    }
+}
+
+fn executable_body_kind(kind: ExecutableBodyKind) -> &'static str {
+    match kind {
+        ExecutableBodyKind::Closure => "Closure",
     }
 }
 

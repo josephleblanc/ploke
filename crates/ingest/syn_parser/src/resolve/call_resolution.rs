@@ -15,10 +15,10 @@ use crate::{
         graph::GraphAccess,
         nodes::{
             AnyCallSiteId, AnyNodeId, AnyTypeId, AsAnyNodeId, AssociatedItemNodeId,
-            CallBodyOwnerId, CallNode, FunctionNodeId, ImplNode, ImplNodeId, MethodNodeId,
-            ModuleNodeId, OrdinaryTypeSourceId, OrdinaryTypeTargetId, OrdinaryTypeUseId, ParamData,
-            StructNodeId, TraitNode, TraitNodeId, TraitTypeSourceId, TypeAliasNodeId,
-            TypeGenericParamNodeId, VariantNodeId,
+            CallBodyOwnerId, CallNode, ExecutableBodyId, FunctionNodeId, ImplNode, ImplNodeId,
+            MethodNodeId, ModuleNodeId, OrdinaryTypeSourceId, OrdinaryTypeTargetId,
+            OrdinaryTypeUseId, ParamData, StructNodeId, TraitNode, TraitNodeId, TraitTypeSourceId,
+            TypeAliasNodeId, TypeGenericParamNodeId, VariantNodeId,
         },
         relations::{CallRelation, CallResolutionStatus, SyntacticRelation, TypeRelation},
         types::{GenericParamNode, TypeNode, TypeWherePredicate},
@@ -166,10 +166,6 @@ impl<'a> CallRelationResolver<'a> {
             super::type_resolution_v2::resolve_type_relations_after_tree(self.graph, self.tree)?;
 
         for call in self.graph.call_sites() {
-            if matches!(call.owner(), CallBodyOwnerId::Executable(_)) {
-                continue;
-            }
-
             match call {
                 CallNode::MethodCall(method_call) => {
                     self.resolve_method_call(
@@ -1246,10 +1242,12 @@ impl<'a> CallRelationResolver<'a> {
 
                 Ok(scopes)
             }
-            CallBodyOwnerId::Macro(_)
-            | CallBodyOwnerId::Const(_)
-            | CallBodyOwnerId::Static(_)
-            | CallBodyOwnerId::Executable(_) => Ok(Vec::new()),
+            CallBodyOwnerId::Macro(_) | CallBodyOwnerId::Const(_) | CallBodyOwnerId::Static(_) => {
+                Ok(Vec::new())
+            }
+            CallBodyOwnerId::Executable(id) => self.generic_bound_scopes(
+                self.executable_parent_owner(id, "generic bound scope lookup")?,
+            ),
         }
     }
 
@@ -1479,9 +1477,28 @@ impl<'a> CallRelationResolver<'a> {
                 }),
             CallBodyOwnerId::Macro(_)
             | CallBodyOwnerId::Const(_)
-            | CallBodyOwnerId::Static(_)
-            | CallBodyOwnerId::Executable(_) => Ok(None),
+            | CallBodyOwnerId::Static(_) => Ok(None),
+            CallBodyOwnerId::Executable(id) => {
+                self.owner_parameters(self.executable_parent_owner(id, "parameter lookup")?)
+            }
         }
+    }
+
+    pub(super) fn executable_parent_owner(
+        &self,
+        id: ExecutableBodyId,
+        context: &str,
+    ) -> Result<CallBodyOwnerId, SynParserError> {
+        self.graph
+            .executable_bodies()
+            .iter()
+            .find(|body| body.id == id)
+            .map(|body| body.parent)
+            .ok_or_else(|| {
+                SynParserError::InternalState(format!(
+                    "call resolution found missing executable body {id} during {context}"
+                ))
+            })
     }
 }
 

@@ -839,6 +839,60 @@ pub(super) fn assert_targetless_method_rows(
     Ok(())
 }
 
+pub(super) fn assert_targetless_method_rows_by_name(
+    db: &Database,
+    method: &str,
+    status: CallStatusKind,
+    expected_count: usize,
+) -> Result<(), DbError> {
+    let mut params = BTreeMap::new();
+    params.insert("method".to_string(), DataValue::from(method));
+    params.insert("status".to_string(), DataValue::from(format!("{status:?}")));
+
+    let rows = db.raw_query_params(
+        r#"?[site_id, owner_id, receiver_kind, receiver_path, resolution_kind] :=
+            *call_site {
+                id: site_id,
+                owner_id,
+                call_kind: "Method",
+                method_name: $method,
+                receiver_kind,
+                receiver_path @ 'NOW'
+            },
+            *call_resolution_status {
+                source_id: site_id,
+                source_kind: "Method",
+                status_kind: $status,
+                resolution_kind @ 'NOW'
+            }"#,
+        params,
+    )?;
+    assert_eq!(
+        rows.rows.len(),
+        expected_count,
+        "expected {expected_count} {status:?} targetless method rows for {method:?}: {:#?}",
+        rows.rows
+    );
+    let mut sites = Vec::new();
+    for row in &rows.rows {
+        assert_eq!(row[4], DataValue::Null);
+        let site_id = to_uuid(&row[0])?;
+        let owner = to_uuid(&row[1])?;
+        assert!(
+            relations_for_site(db, site_id)?.rows.is_empty(),
+            "{method:?} row should not have call_relation targets"
+        );
+        sites.push((owner, site_id));
+    }
+    assert_no_traversal_candidates_for_sites(
+        db,
+        &sites,
+        &format!("{status:?} method rows for {method:?}"),
+    )?;
+
+    Ok(())
+}
+
 pub(super) fn assert_targetless_dynamic_rows_by_method_name(
     db: &Database,
     method: &str,
@@ -942,28 +996,6 @@ pub(super) fn assert_no_dynamic_rows_by_function_names(
             rows.rows
         );
     }
-
-    Ok(())
-}
-
-pub(super) fn assert_no_method_rows(db: &Database, method: &str) -> Result<(), DbError> {
-    let mut params = BTreeMap::new();
-    params.insert("method".to_string(), DataValue::from(method));
-
-    let rows = db.raw_query_params(
-        r#"?[site_id] :=
-            *call_site {
-                id: site_id,
-                call_kind: "Method",
-                method_name: $method @ 'NOW'
-            }"#,
-        params,
-    )?;
-    assert!(
-        rows.rows.is_empty(),
-        "expected no method rows for {method:?}: {:#?}",
-        rows.rows
-    );
 
     Ok(())
 }

@@ -8,6 +8,7 @@ use crate::{Database, DbError, database::to_string};
 use super::super::{
     CallContextRow, CallResolutionRow, CallSiteKind, CallSiteRow, CallStatusKind,
     decode::{decode_resolution, decode_site, validate_owner_context_targets},
+    families::valid_call_owner_rules,
 };
 
 impl Database {
@@ -18,8 +19,10 @@ impl Database {
             DataValue::Uuid(UuidWrapper(owner_id)),
         );
 
-        let rows = self.run_script(
-            r#"?[
+        let mut script = valid_call_owner_rules();
+        script.push_str(
+            r#"
+            ?[
                 id,
                 owner_id,
                 call_kind,
@@ -34,22 +37,7 @@ impl Database {
                 generic_arg_count
             ] :=
                 owner_id = $owner_id,
-                (
-                    *function { id: owner_id @ 'NOW' },
-                    owner_kind = "Function"
-                ) or (
-                    *macro { id: owner_id @ 'NOW' },
-                    owner_kind = "Macro"
-                ) or (
-                    *method { id: owner_id @ 'NOW' },
-                    owner_kind = "Method"
-                ) or (
-                    *const { id: owner_id @ 'NOW' },
-                    owner_kind = "Const"
-                ) or (
-                    *static { id: owner_id @ 'NOW' },
-                    owner_kind = "Static"
-                ),
+                valid_owner[owner_id, owner_kind],
                 *call_site_edge {
                     source_id: owner_id,
                     target_id: id,
@@ -72,9 +60,8 @@ impl Database {
                     generic_arg_count @ 'NOW'
                 }
             :sort span"#,
-            params,
-            ScriptMutability::Immutable,
-        )?;
+        );
+        let rows = self.run_script(&script, params, ScriptMutability::Immutable)?;
 
         rows.rows.iter().map(|row| decode_site(row)).collect()
     }

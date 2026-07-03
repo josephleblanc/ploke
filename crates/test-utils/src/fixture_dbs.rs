@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env, fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -311,6 +311,10 @@ impl FixtureDb {
     pub fn expected_embedding_set(&self) -> Option<EmbeddingSet> {
         self.embedding
             .map(FixtureEmbeddingExpectation::embedding_set)
+    }
+
+    pub fn includes_call_graph_relations(&self) -> bool {
+        self.output_stem().ends_with("_call_graph")
     }
 
     pub fn output_stem(&self) -> &'static str {
@@ -997,7 +1001,7 @@ fn import_backup_fixture_db(
     let db = Database::init_with_schema()?;
     match fixture.import_mode {
         FixtureImportMode::PlainBackup => {
-            let prior_rels = plain_backup_import_relations(fixture, &db)?;
+            let prior_rels = backup_fixture_import_relations(fixture, &db, fixture_path)?;
             db.import_from_backup(&fixture_path, &prior_rels)
                 .map_err(DbError::from)?;
         }
@@ -1018,8 +1022,38 @@ pub fn plain_backup_import_relations(
         FixtureStatus::TypedTypeGraph => db
             .prior_rels_for_typed_type_graph_backup_import()
             .map_err(Error::from),
+        _ if fixture.includes_call_graph_relations() => db
+            .prior_rels_for_current_schema_backup_import()
+            .map_err(Error::from),
         _ => db.prior_rels_for_plain_backup_import().map_err(Error::from),
     }
+}
+
+pub fn backup_fixture_import_relations(
+    fixture: &'static FixtureDb,
+    db: &Database,
+    fixture_path: &std::path::Path,
+) -> Result<Vec<String>, Error> {
+    let mut relations = plain_backup_import_relations(fixture, db)?;
+    if fixture.includes_call_graph_relations() {
+        let available = backup_relation_names(fixture_path)?;
+        relations.retain(|relation| available.contains(relation));
+    }
+    Ok(relations)
+}
+
+fn backup_relation_names(fixture_path: &std::path::Path) -> Result<HashSet<String>, Error> {
+    let restored = cozo::new_cozo_mem()
+        .map_err(DbError::from)
+        .map_err(Error::from)?;
+    restored
+        .restore_backup(fixture_path)
+        .map_err(DbError::from)
+        .map_err(Error::from)?;
+    Database::new(restored)
+        .relations_vec()
+        .map(|relations| relations.into_iter().collect())
+        .map_err(Error::from)
 }
 
 pub fn import_backup_with_embeddings_for_fixture(
@@ -1307,6 +1341,68 @@ mod tests {
         assert_eq!(fixture.import_mode, FixtureImportMode::PlainBackup);
         assert_eq!(fixture.status, FixtureStatus::Active);
         assert_eq!(fixture.path_scope, FixturePathScope::CheckoutLocal);
+    }
+
+    #[test]
+    fn call_graph_fixture_declares_call_graph_relations() {
+        let fixture = backup_db_fixture("corpus_axum_call_graph")
+            .expect("axum call graph fixture should be registered");
+
+        assert!(fixture.includes_call_graph_relations());
+        assert!(!FIXTURE_NODES_CANONICAL.includes_call_graph_relations());
+        assert!(!CORPUS_AXUM_TYPE_GRAPH.includes_call_graph_relations());
+    }
+
+    #[test]
+    fn fixture_import_relations_follow_fixture_kind() {
+        let db = Database::init_with_schema().expect("schema");
+
+        let call_rels =
+            plain_backup_import_relations(&CORPUS_AXUM_CALL_GRAPH, &db).expect("call graph rels");
+        assert!(
+            call_rels.contains(&"call_body_owner".to_string()),
+            "call graph fixtures should import call_body_owner"
+        );
+
+        let plain_rels =
+            plain_backup_import_relations(&FIXTURE_NODES_CANONICAL, &db).expect("plain rels");
+        assert!(
+            !plain_rels.contains(&"call_body_owner".to_string()),
+            "plain fixtures should keep call graph relations excluded"
+        );
+
+        let typed_rels =
+            plain_backup_import_relations(&CORPUS_AXUM_TYPE_GRAPH, &db).expect("typed rels");
+        assert!(
+            !typed_rels.contains(&"call_body_owner".to_string()),
+            "typed graph fixtures should keep call graph relations excluded"
+        );
+        assert!(
+            typed_rels.contains(&"type_relation".to_string()),
+            "typed graph fixtures should keep typed graph relations"
+        );
+    }
+
+    #[test]
+    fn call_graph_fixture_import_relations_skip_missing_backup_relations() {
+        let db = Database::init_with_schema().expect("schema");
+        let temp_dir = unique_fixture_test_dir("call-graph-import-relations");
+        let backup_path = temp_dir.join("schema-only.sqlite");
+        db.write_backup_to_path(&backup_path)
+            .expect("write schema-only backup");
+
+        let available = backup_relation_names(&backup_path).expect("backup relations");
+        let relations = backup_fixture_import_relations(&CORPUS_AXUM_CALL_GRAPH, &db, &backup_path)
+            .expect("call graph fixture import relations");
+
+        assert!(
+            relations
+                .iter()
+                .all(|relation| available.contains(relation)),
+            "backup import should not request relations absent from the backup artifact"
+        );
+
+        std::fs::remove_dir_all(temp_dir).expect("remove fixture temp dir");
     }
 
     #[test]

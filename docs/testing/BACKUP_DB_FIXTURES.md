@@ -243,6 +243,26 @@ Checkout-local outputs remain under `tests/backup_dbs/local/` and are ignored
 local artifacts; the committed registry paths were not changed for this
 worktree-only refresh.
 
+## 2026-07-03 Active Fixture Review
+
+The active fixture set was regenerated with
+`cargo xtask fixtures regenerate --active` after adding the `call_body_owner`
+projection relation for executable-local call owners.
+
+Post-regeneration verification:
+
+- `cargo xtask verify-backup-dbs` passed for all active registered fixtures.
+- Call-graph corpus fixtures use backup-aware import relation selection so
+  empty call graph schema relations are not requested from backups that do not
+  serialize them.
+- `cargo test -p ploke-db call_graph_fixture_queries -- --nocapture` passed
+  after updating the generic-array guarded match oracle to expect two
+  targetless unsupported `size_hint` rows.
+
+Checkout-local outputs remain under `tests/backup_dbs/local/` and are ignored
+local artifacts. Shared corpus snapshots were refreshed under the configured DB
+snapshot fixture directory.
+
 ## `fixture_nodes_canonical_2026-05-17.sqlite`
 
 - File: `tests/backup_dbs/fixture_nodes_canonical_2026-05-17.sqlite`

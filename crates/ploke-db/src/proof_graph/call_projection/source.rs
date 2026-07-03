@@ -25,9 +25,16 @@ module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
 file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
 file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
 
+owner_anchor[id, mod_id] := *function{{ id @ 'NOW' }}, ancestor[id, mod_id]
+owner_anchor[id, mod_id] := *macro{{ id @ 'NOW' }}, ancestor[id, mod_id]
+owner_anchor[id, mod_id] := *method{{ id @ 'NOW' }}, ancestor[id, mod_id]
+owner_anchor[id, mod_id] := *const{{ id @ 'NOW' }}, ancestor[id, mod_id]
+owner_anchor[id, mod_id] := *static{{ id @ 'NOW' }}, ancestor[id, mod_id]
+owner_anchor[id, mod_id] := *call_body_owner{{ id, parent_id @ 'NOW' }}, owner_anchor[parent_id, mod_id]
+
 ?[file_path] :=
     owner_id = $owner_id,
-    ancestor[owner_id, mod_id],
+    owner_anchor[owner_id, mod_id],
     *module{{ id: mod_id @ 'NOW' }},
     file_owner_for_module[mod_id, file_id],
     *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}

@@ -33,6 +33,12 @@ ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
 module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
 file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
 file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
+owner_anchor[id, vis_kind, mod_id] := *function{{ id, vis_kind @ 'NOW' }}, ancestor[id, mod_id]
+owner_anchor[id, vis_kind, mod_id] := *macro{{ id, vis_kind @ 'NOW' }}, ancestor[id, mod_id]
+owner_anchor[id, vis_kind, mod_id] := *method{{ id, vis_kind @ 'NOW' }}, ancestor[id, mod_id]
+owner_anchor[id, vis_kind, mod_id] := *const{{ id, vis_kind @ 'NOW' }}, ancestor[id, mod_id]
+owner_anchor[id, vis_kind, mod_id] := *static{{ id, vis_kind @ 'NOW' }}, ancestor[id, mod_id]
+owner_anchor[id, vis_kind, mod_id] := *call_body_owner{{ id, parent_id @ 'NOW' }}, owner_anchor[parent_id, vis_kind, mod_id]
 
 node_info[id, kind, name, vis_kind, module_path, file_path] :=
   id = $node_id,
@@ -75,6 +81,14 @@ node_info[id, kind, name, vis_kind, module_path, file_path] :=
   *static{{ id, name, vis_kind @ 'NOW' }},
   kind = "Static",
   ancestor[id, mod_id],
+  *module{{ id: mod_id, path: module_path @ 'NOW' }},
+  file_owner_for_module[mod_id, file_owner_id],
+  *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}
+
+node_info[id, kind, name, vis_kind, module_path, file_path] :=
+  id = $node_id,
+  *call_body_owner{{ id, owner_kind: kind, label: name @ 'NOW' }},
+  owner_anchor[id, vis_kind, mod_id],
   *module{{ id: mod_id, path: module_path @ 'NOW' }},
   file_owner_for_module[mod_id, file_owner_id],
   *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }}

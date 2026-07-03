@@ -11,8 +11,8 @@ use ploke_embed::{
 };
 use ploke_io::IoManagerHandle;
 use ploke_test_utils::fixture_dbs::{
-    active_backup_db_fixtures, all_backup_db_fixtures, import_backup_with_embeddings_for_fixture,
-    plain_backup_import_relations,
+    active_backup_db_fixtures, all_backup_db_fixtures, backup_fixture_import_relations,
+    import_backup_with_embeddings_for_fixture,
 };
 use ploke_test_utils::{
     CheckedFixturePath, FIXTURE_NODES_LOCAL_EMBEDDINGS, FixtureAutomation, FixtureCreationStrategy,
@@ -1310,8 +1310,8 @@ fn verify_registered_backup_fixture(
     let reloaded = Database::init_with_schema().map_err(|err| err.to_string())?;
     match fixture.import_mode {
         FixtureImportMode::PlainBackup => {
-            let relations =
-                plain_backup_import_relations(fixture, &reloaded).map_err(|err| err.to_string())?;
+            let relations = backup_fixture_import_relations(fixture, &reloaded, &backup_path)
+                .map_err(|err| err.to_string())?;
             reloaded
                 .import_from_backup(&backup_path, &relations)
                 .map_err(|err| format!("roundtrip import: {err}"))?;
@@ -1817,8 +1817,8 @@ fn verify_output_backup(fixture: &'static FixtureDb, output_path: &Path) -> Resu
     let reloaded = Database::init_with_schema().map_err(|err| err.to_string())?;
     match fixture.import_mode {
         FixtureImportMode::PlainBackup => {
-            let relations =
-                plain_backup_import_relations(fixture, &reloaded).map_err(|err| err.to_string())?;
+            let relations = backup_fixture_import_relations(fixture, &reloaded, output_path)
+                .map_err(|err| err.to_string())?;
             reloaded
                 .import_from_backup(output_path, &relations)
                 .map_err(|err| format!("validate generated backup import: {err}"))?;

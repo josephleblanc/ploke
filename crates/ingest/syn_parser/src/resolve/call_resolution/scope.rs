@@ -558,7 +558,12 @@ impl CallRelationResolver<'_> {
             CallBodyOwnerId::Method(id) => self.containing_module(id.as_any()),
             CallBodyOwnerId::Const(id) => self.containing_module(id.as_any()),
             CallBodyOwnerId::Static(id) => self.containing_module(id.as_any()),
-            CallBodyOwnerId::Executable(_) => None,
+            CallBodyOwnerId::Executable(id) => self
+                .graph
+                .executable_bodies()
+                .iter()
+                .find(|body| body.id == id)
+                .and_then(|body| self.containing_module_for_owner(body.parent)),
         }
     }
 

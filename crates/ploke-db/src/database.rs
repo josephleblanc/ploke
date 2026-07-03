@@ -74,7 +74,11 @@ fn is_typed_type_graph_relation(relation: &str) -> bool {
 fn is_call_graph_relation(relation: &str) -> bool {
     matches!(
         relation,
-        "call_site" | "call_site_edge" | "call_relation" | "call_resolution_status"
+        "call_body_owner"
+            | "call_site"
+            | "call_site_edge"
+            | "call_relation"
+            | "call_resolution_status"
     )
 }
 
@@ -1548,13 +1552,13 @@ desc[id] := parent_of[id, parent], desc[parent], not file_root[id]
             .collect())
     }
 
-    /// Relation names for active plain fixtures that intentionally do not claim typed graph
-    /// coverage. Typed graph relations remain empty after importing these fixtures; source-pinned
-    /// typed graph corpus fixtures must use [`Self::prior_rels_for_typed_type_graph_backup_import`]
-    /// instead.
+    /// Relation names for active plain fixtures that intentionally do not claim typed graph or
+    /// call graph projection coverage. Source-pinned graph corpus fixtures must opt into the
+    /// corresponding full relation family at the fixture-registry boundary instead.
     pub fn prior_rels_for_plain_backup_import(&self) -> Result<Vec<String>, PlokeError> {
         let mut relations = self.prior_rels_for_current_schema_backup_import()?;
         relations.retain(|r| !is_typed_type_graph_relation(r));
+        relations.retain(|r| !is_call_graph_relation(r));
         Ok(relations)
     }
 
@@ -3759,6 +3763,7 @@ mod tests {
             "typed type graph fixtures should keep typed graph relations in their import set"
         );
         for relation in [
+            "call_body_owner",
             "call_site",
             "call_site_edge",
             "call_relation",

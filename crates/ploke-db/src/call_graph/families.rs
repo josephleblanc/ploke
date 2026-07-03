@@ -1,6 +1,39 @@
 use std::fmt::Write as _;
 
-use super::{CallRelationKind, CallSiteKind, CallTargetKind, CallTargetRow};
+use super::{CallNodeKind, CallRelationKind, CallSiteKind, CallTargetKind, CallTargetRow};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CallOwnerFamily {
+    kind: CallNodeKind,
+    owner_relation: &'static str,
+}
+
+const VALID_CALL_OWNER_FAMILIES: [CallOwnerFamily; 6] = [
+    CallOwnerFamily {
+        kind: CallNodeKind::Function,
+        owner_relation: "function",
+    },
+    CallOwnerFamily {
+        kind: CallNodeKind::Macro,
+        owner_relation: "macro",
+    },
+    CallOwnerFamily {
+        kind: CallNodeKind::Method,
+        owner_relation: "method",
+    },
+    CallOwnerFamily {
+        kind: CallNodeKind::Const,
+        owner_relation: "const",
+    },
+    CallOwnerFamily {
+        kind: CallNodeKind::Static,
+        owner_relation: "static",
+    },
+    CallOwnerFamily {
+        kind: CallNodeKind::Closure,
+        owner_relation: "call_body_owner",
+    },
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CallTargetFamily {
@@ -108,4 +141,34 @@ pub(super) fn valid_call_target(target: &CallTargetRow) -> bool {
     VALID_CALL_TARGET_FAMILIES
         .iter()
         .any(|family| family.matches(target))
+}
+
+pub(super) fn valid_call_owner_rules() -> String {
+    let mut rules = String::new();
+    for family in VALID_CALL_OWNER_FAMILIES {
+        let kind = family.kind.as_str();
+        let owner_relation = family.owner_relation;
+        if owner_relation == "call_body_owner" {
+            writeln!(
+                &mut rules,
+                r#"
+            valid_owner[owner_id, owner_kind] :=
+                owner_kind = "{kind}",
+                *{owner_relation} {{ id: owner_id, owner_kind @ 'NOW' }}
+"#
+            )
+            .expect("writing call owner rule to String should not fail");
+        } else {
+            writeln!(
+                &mut rules,
+                r#"
+            valid_owner[owner_id, owner_kind] :=
+                owner_kind = "{kind}",
+                *{owner_relation} {{ id: owner_id @ 'NOW' }}
+"#
+            )
+            .expect("writing call owner rule to String should not fail");
+        }
+    }
+    rules
 }

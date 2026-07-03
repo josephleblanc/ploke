@@ -306,6 +306,7 @@ fn test_call_graph_projection_for_resolved_path_call() -> Result<(), Box<dyn std
 }
 
 mod dynamic;
+mod executable;
 
 #[test]
 fn test_call_graph_projection_for_method_edge_and_external_path_call()

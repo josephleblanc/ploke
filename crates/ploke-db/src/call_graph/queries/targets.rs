@@ -8,7 +8,7 @@ use crate::{Database, DbError};
 use super::super::{
     CallCallerRow, CallContextRow, CallSiteRow, CallTargetRow,
     decode::{decode_site, decode_target, validate_owner_context_targets},
-    families::{valid_call_target, valid_call_target_rules},
+    families::{valid_call_owner_rules, valid_call_target, valid_call_target_rules},
 };
 
 impl Database {
@@ -56,6 +56,7 @@ impl Database {
         );
 
         let mut script = valid_call_target_rules();
+        script.push_str(&valid_call_owner_rules());
         script.push_str(
             r#"
             ?[
@@ -107,22 +108,7 @@ impl Database {
                     arg_count,
                     generic_arg_count @ 'NOW'
                 },
-                (
-                    *function { id: owner_id @ 'NOW' },
-                    owner_kind = "Function"
-                ) or (
-                    *macro { id: owner_id @ 'NOW' },
-                    owner_kind = "Macro"
-                ) or (
-                    *method { id: owner_id @ 'NOW' },
-                    owner_kind = "Method"
-                ) or (
-                    *const { id: owner_id @ 'NOW' },
-                    owner_kind = "Const"
-                ) or (
-                    *static { id: owner_id @ 'NOW' },
-                    owner_kind = "Static"
-                ),
+                valid_owner[owner_id, owner_kind],
                 id = relation_site_id,
                 call_kind = source_kind
             :sort owner_id, span, relation_kind"#,

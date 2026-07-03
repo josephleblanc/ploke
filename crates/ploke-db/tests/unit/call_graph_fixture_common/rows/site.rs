@@ -133,6 +133,8 @@ pub(in crate::unit) fn owner_kind_for_call_body_owner(
             ) or (
                 *static { id: owner @ 'NOW' },
                 kind = "Static"
+            ) or (
+                *call_body_owner { id: owner, owner_kind: kind @ 'NOW' }
             )"#,
         params,
     )?;
