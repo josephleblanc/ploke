@@ -840,11 +840,16 @@ fn classify_dynamic_path_expr(
                     path,
                     init_path: init_path.clone(),
                 },
+                LocalBindingProof::Closure { closure_id, .. } => {
+                    DynamicCallCallee::ClosureBinding {
+                        path,
+                        closure_id: *closure_id,
+                    }
+                }
                 LocalBindingProof::Typed {
                     init_path: None, ..
                 }
                 | LocalBindingProof::TraitObject { .. }
-                | LocalBindingProof::Closure { .. }
                 | LocalBindingProof::Constructed { .. }
                 | LocalBindingProof::Array { .. }
                 | LocalBindingProof::Referenced { .. }

@@ -1,4 +1,5 @@
 use super::*;
+use ploke_db::CallPathOptions;
 
 #[test]
 fn fixture_context_reads_projected_function_item_binding_calls() -> Result<(), DbError> {
@@ -146,6 +147,68 @@ fn fixture_context_reads_projected_dynamic_function_call() -> Result<(), DbError
             expected_rows: 1,
         }],
     )
+}
+
+#[test]
+fn fixture_context_reads_projected_dynamic_closure_binding_call() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "dynamic_calls")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(context.len(), 2, "dynamic_calls context rows: {context:#?}");
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:5:
+    // `(closure)()` calls a named local closure binding and should target the
+    // closure executable owner.
+    let row = row_by_kind_path(&context, CallSiteKind::Dynamic, &["closure"]);
+    assert_eq!(row.site.owner_id, owner);
+    assert_eq!(row.site.arg_count, Some(0));
+    assert_eq!(row.site.generic_arg_count, None);
+    assert_eq!(row.targets.len(), 1, "dynamic closure row: {row:#?}");
+    let closure = row.targets[0].target_id;
+    assert_resolved_target(
+        row,
+        closure,
+        CallRelationKind::DynamicClosure,
+        CallSiteKind::Dynamic,
+        CallTargetKind::Closure,
+    );
+
+    let callers = db.callers_for_target(closure)?;
+    let caller = caller_by_owner_kind_path(&callers, owner, CallSiteKind::Dynamic, &["closure"]);
+    assert_eq!(caller.status.status, CallStatusKind::Resolved);
+    assert_eq!(
+        caller.status.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(caller.target.relation, CallRelationKind::DynamicClosure);
+    assert_eq!(caller.target.target_kind, CallTargetKind::Closure);
+
+    let paths = db.call_paths_from_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 8,
+        },
+    )?;
+    let path = paths
+        .iter()
+        .find(|path| path.start_id == owner && path.end_id == closure && path.depth == 1)
+        .expect("dynamic_calls should have a one-hop path to the closure owner");
+    assert_eq!(path.edges[0].caller_id, owner);
+    assert_eq!(path.edges[0].callee_id, closure);
+    assert_eq!(path.edges[0].relation, CallRelationKind::DynamicClosure);
+    assert_eq!(path.edges[0].target_kind, CallTargetKind::Closure);
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:6:
+    // `(|| 11)()` is still targetless because literal dynamic callees do not
+    // yet get direct closure-owner proof.
+    assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::dynamic(None, CallStatusKind::Unsupported, "dynamic closure literal"),
+    );
+
+    Ok(())
 }
 
 #[test]

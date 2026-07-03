@@ -18,8 +18,9 @@ use syn_parser::parser::graph::GraphAccess;
 use syn_parser::parser::nodes::test_ids::{TestCallIds, generate_test_call_id};
 use syn_parser::parser::nodes::{
     AnyCallSiteId, CallBodyOwnerId, CallNode, CallSiteKind, ConstNodeId, DynamicCallCallee,
-    DynamicCallSiteId, FunctionNodeId, MacroCallSiteId, MethodCallReceiver, MethodCallSiteId,
-    MethodNodeId, PathCallCallee, PathCallSiteId, StaticNodeId, StructNodeId, VariantNodeId,
+    DynamicCallSiteId, ExecutableBodyId, FunctionNodeId, MacroCallSiteId, MethodCallReceiver,
+    MethodCallSiteId, MethodNodeId, PathCallCallee, PathCallSiteId, StaticNodeId, StructNodeId,
+    VariantNodeId,
 };
 use syn_parser::parser::relations::{
     CallRelation, CallResolutionKind, CallResolutionStatus, CallSiteRelation,
@@ -261,6 +262,11 @@ pub enum ExpectedDynamicCallee<'a> {
     },
     /// The callee expression names a visible local value binding or parameter.
     LocalBinding { path: &'a [&'a str] },
+    /// The callee expression names a visible local closure binding with a known executable owner.
+    ClosureBinding {
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+    },
     /// The callee expression names a local value binding initialized by another path.
     InitializedLocalBinding {
         path: &'a [&'a str],
@@ -313,6 +319,10 @@ impl ExpectedDynamicCallee<'_> {
             }
             Self::LocalBinding { path } => DynamicCallCallee::LocalBinding {
                 path: path.iter().copied().map(String::from).collect(),
+            },
+            Self::ClosureBinding { path, closure_id } => DynamicCallCallee::ClosureBinding {
+                path: path.iter().copied().map(String::from).collect(),
+                closure_id,
             },
             Self::InitializedLocalBinding { path, init_path } => {
                 DynamicCallCallee::InitializedLocalBinding {
@@ -400,6 +410,8 @@ pub enum ExpectedCallOutcome {
     ResolvedFunctionLocalExact { target: FunctionNodeId },
     /// Resolver should produce a local exact function edge from a dynamic call site.
     ResolvedDynamicFunctionLocalExact { target: FunctionNodeId },
+    /// Resolver should produce a local exact closure edge from a dynamic call site.
+    ResolvedDynamicClosureLocalExact { target: ExecutableBodyId },
     /// Resolver should produce a local exact associated-function edge.
     ResolvedAssociatedFunctionLocalExact { target: MethodNodeId },
     /// Resolver should produce a local exact tuple struct constructor edge.
@@ -644,6 +656,26 @@ impl<'a> ExpectedCallSite<'a> {
         Self {
             kind: ExpectedCallKind::Dynamic {
                 callee: ExpectedDynamicCallee::LocalBinding { path },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is a local closure binding.
+    pub const fn dynamic_closure_binding(
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::ClosureBinding { path, closure_id },
                 arg_count,
             },
             span,
@@ -1320,6 +1352,7 @@ fn assert_resolution_outcome(
         ExpectedCallOutcome::ResolvedMethodLocalExact { .. }
         | ExpectedCallOutcome::ResolvedFunctionLocalExact { .. }
         | ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { .. }
+        | ExpectedCallOutcome::ResolvedDynamicClosureLocalExact { .. }
         | ExpectedCallOutcome::ResolvedAssociatedFunctionLocalExact { .. }
         | ExpectedCallOutcome::ResolvedTupleStructConstructorLocalExact { .. }
         | ExpectedCallOutcome::ResolvedEnumVariantConstructorLocalExact { .. } => assert!(
@@ -1434,6 +1467,27 @@ fn assert_resolution_outcome(
                 relations[0]
             );
         }
+        ExpectedCallOutcome::ResolvedDynamicClosureLocalExact { target } => {
+            let source = match expected_id {
+                AnyCallSiteId::Dynamic(source) => source,
+                other => {
+                    panic!(
+                        "dynamic-closure relation expected a dynamic call-site ID, got {other:?}"
+                    )
+                }
+            };
+            assert_eq!(
+                relations.len(),
+                1,
+                "resolved dynamic closure call site {expected_id:?} should emit exactly one semantic edge; got {relations:#?}"
+            );
+            assert!(
+                matches!(relations[0], CallRelation::DynamicClosure { source: actual_source, target: actual_target }
+                    if actual_source == source && actual_target == target),
+                "expected DynamicClosure edge {source:?} -> {target:?}, got {:?}",
+                relations[0]
+            );
+        }
         ExpectedCallOutcome::ResolvedAssociatedFunctionLocalExact { target } => {
             let source = match expected_id {
                 AnyCallSiteId::Path(source) => source,
@@ -1498,6 +1552,7 @@ fn relation_source(relation: CallRelation) -> AnyCallSiteId {
     match relation {
         CallRelation::Function { source, .. } => source.into(),
         CallRelation::DynamicFunction { source, .. } => source.into(),
+        CallRelation::DynamicClosure { source, .. } => source.into(),
         CallRelation::Closure { source, .. } => source.into(),
         CallRelation::Method { source, .. } => source.into(),
         CallRelation::AssociatedFunction { source, .. } => source.into(),

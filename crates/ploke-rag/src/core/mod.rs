@@ -641,6 +641,7 @@ fn target_kind(kind: CallRelationKind) -> CallTargetKind {
         CallRelationKind::Function => CallTargetKind::Function,
         CallRelationKind::DynamicFunction => CallTargetKind::DynamicFunction,
         CallRelationKind::Closure => CallTargetKind::Closure,
+        CallRelationKind::DynamicClosure => CallTargetKind::DynamicClosure,
         CallRelationKind::Method => CallTargetKind::Method,
         CallRelationKind::AssociatedFunction => CallTargetKind::AssociatedFunction,
         CallRelationKind::TupleStructConstructor => CallTargetKind::TupleStructConstructor,

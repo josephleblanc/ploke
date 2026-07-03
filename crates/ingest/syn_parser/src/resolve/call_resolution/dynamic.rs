@@ -46,11 +46,24 @@ impl CallRelationResolver<'_> {
             return Ok(());
         }
 
+        if let DynamicCallCallee::ClosureBinding { closure_id, .. } = &call.callee {
+            relations.push(CallRelation::DynamicClosure {
+                source: call.id,
+                target: *closure_id,
+            });
+            statuses.push(CallResolutionStatus::Resolved {
+                source,
+                kind: CallResolutionKind::LocalExact,
+            });
+            return Ok(());
+        }
+
         let path = match &call.callee {
             DynamicCallCallee::Path { path } | DynamicCallCallee::FnPointerCastPath { path } => {
                 path
             }
             DynamicCallCallee::LocalBinding { .. }
+            | DynamicCallCallee::ClosureBinding { .. }
             | DynamicCallCallee::InitializedLocalBinding { .. }
             | DynamicCallCallee::FnPointerCastInitializedLocalBinding { .. }
             | DynamicCallCallee::FnPointerCastLocalBinding { .. }

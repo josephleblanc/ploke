@@ -36,6 +36,8 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
         &db,
         &function_in_module_query(&["crate"], "call_parenthesized_boxed_dyn_fn_value_binding"),
     )?;
+    let closure_binding_owner =
+        one_uuid(&db, &function_in_module_query(&["crate"], "dynamic_calls"))?;
     let unsupported_owner = one_uuid(
         &db,
         &function_in_module_query(&["crate"], "call_dereferenced_closure_binding"),
@@ -53,6 +55,7 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
         (block_owner, 1.0),
         (guarded_owner, 1.0),
         (boxed_owner, 1.0),
+        (closure_binding_owner, 1.0),
         (unsupported_owner, 1.0),
     ])?;
     let resolved_context = call_context
@@ -151,6 +154,47 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
         boxed_call.targets[0].relation,
         CallTargetKind::DynamicFunction
     );
+
+    let closure_binding_context = call_context
+        .get(&closure_binding_owner)
+        .expect("dynamic closure binding owner should receive outgoing call context");
+    assert_eq!(
+        closure_binding_context.len(),
+        2,
+        "dynamic closure binding owner context: {closure_binding_context:#?}"
+    );
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:5:
+    // `(closure)()` should resolve to the local closure executable owner.
+    let closure_binding_call = closure_binding_context
+        .iter()
+        .find(|call| {
+            call.kind == CallSiteKind::Dynamic
+                && call
+                    .targets
+                    .iter()
+                    .any(|target_info| target_info.relation == CallTargetKind::DynamicClosure)
+        })
+        .expect("dynamic closure binding call should target the closure owner");
+    assert_eq!(closure_binding_call.status, CallStatusKind::Resolved);
+    assert_eq!(
+        closure_binding_call.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(closure_binding_call.targets.len(), 1);
+    assert_eq!(
+        closure_binding_call.targets[0].relation,
+        CallTargetKind::DynamicClosure
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:6:
+    // `(|| 11)()` is still unsupported because literal dynamic callees do not
+    // yet carry direct closure-owner proof.
+    let closure_literal_call = closure_binding_context
+        .iter()
+        .find(|call| call.kind == CallSiteKind::Dynamic && call.targets.is_empty())
+        .expect("dynamic closure literal call should remain targetless");
+    assert_eq!(closure_literal_call.status, CallStatusKind::Unsupported);
+    assert!(closure_literal_call.resolution.is_none());
 
     let unsupported_context = call_context
         .get(&unsupported_owner)

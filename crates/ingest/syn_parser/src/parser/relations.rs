@@ -192,6 +192,15 @@ pub enum CallRelation {
         source: PathCallSiteId,
         target: ExecutableBodyId,
     },
+    /// A dynamically shaped call site resolved to a local closure body owner.
+    ///
+    /// ```text
+    /// DynamicClosure ⊆ DynamicCallSiteId × ExecutableBodyId
+    /// ```
+    DynamicClosure {
+        source: DynamicCallSiteId,
+        target: ExecutableBodyId,
+    },
     /// A method-call site resolved to a local method definition.
     ///
     /// ```text
@@ -238,6 +247,7 @@ impl CallRelation {
             Self::Function { .. } => "Function",
             Self::DynamicFunction { .. } => "DynamicFunction",
             Self::Closure { .. } => "Closure",
+            Self::DynamicClosure { .. } => "DynamicClosure",
             Self::Method { .. } => "Method",
             Self::AssociatedFunction { .. } => "AssociatedFunction",
             Self::TupleStructConstructor { .. } => "TupleStructConstructor",
@@ -253,7 +263,7 @@ impl CallRelation {
             | Self::AssociatedFunction { .. }
             | Self::TupleStructConstructor { .. }
             | Self::EnumVariantConstructor { .. } => "Path",
-            Self::DynamicFunction { .. } => "Dynamic",
+            Self::DynamicFunction { .. } | Self::DynamicClosure { .. } => "Dynamic",
             Self::Method { .. } => "Method",
         }
     }
@@ -262,7 +272,7 @@ impl CallRelation {
     pub fn target_kind_str(&self) -> &'static str {
         match self {
             Self::Function { .. } | Self::DynamicFunction { .. } => "Function",
-            Self::Closure { .. } => "Closure",
+            Self::Closure { .. } | Self::DynamicClosure { .. } => "Closure",
             Self::Method { .. } | Self::AssociatedFunction { .. } => "Method",
             Self::TupleStructConstructor { .. } => "Struct",
             Self::EnumVariantConstructor { .. } => "Variant",

@@ -16,6 +16,7 @@ pub(super) fn find_dynamic_relation(
                 predicate(dynamic_call).then_some((source, target))
             }
             CallRelation::Function { .. }
+            | CallRelation::DynamicClosure { .. }
             | CallRelation::Closure { .. }
             | CallRelation::Method { .. }
             | CallRelation::AssociatedFunction { .. }

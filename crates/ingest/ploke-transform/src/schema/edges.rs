@@ -761,6 +761,7 @@ fn call_site_to_params(call_site: &CallNode) -> BTreeMap<String, cozo::DataValue
                 DynamicCallCallee::Path { path }
                 | DynamicCallCallee::FnPointerCastPath { path }
                 | DynamicCallCallee::LocalBinding { path }
+                | DynamicCallCallee::ClosureBinding { path, .. }
                 | DynamicCallCallee::InitializedLocalBinding { path, .. }
                 | DynamicCallCallee::FnPointerCastInitializedLocalBinding { path, .. }
                 | DynamicCallCallee::FnPointerCastLocalBinding { path }
@@ -1040,6 +1041,10 @@ impl CallRelationSchema {
                 (source.to_cozo_uuid(), target_id)
             }
             CallRelation::Closure { source, target } => {
+                let target_id = target.to_cozo_uuid();
+                (source.to_cozo_uuid(), target_id)
+            }
+            CallRelation::DynamicClosure { source, target } => {
                 let target_id = target.to_cozo_uuid();
                 (source.to_cozo_uuid(), target_id)
             }

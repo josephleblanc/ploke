@@ -184,6 +184,12 @@ pub enum DynamicCallCallee {
     /// The callee expression is a visible local binding or parameter, such as
     /// `(closure)()` or `(f)()`.
     LocalBinding { path: Vec<String> },
+    /// The callee expression is a visible local closure binding with a known
+    /// executable body owner, such as `(closure)()`.
+    ClosureBinding {
+        path: Vec<String>,
+        closure_id: ExecutableBodyId,
+    },
     /// The callee expression is a visible local binding initialized from a
     /// path, such as `let f = local_target; (f)()`.
     InitializedLocalBinding {
