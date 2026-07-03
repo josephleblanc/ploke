@@ -1,4 +1,5 @@
 use super::*;
+use cozo::DataValue;
 use ploke_db::{CallNodeKind, CallPathOptions};
 
 #[test]
@@ -131,6 +132,41 @@ fn fixture_context_projects_closure_body_call_to_executable_owner() -> Result<()
     Ok(())
 }
 
+#[test]
+fn fixture_snippet_metadata_materializes_closure_body_owner() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let outer = function_id_by_name(&db, "closure_body_call_is_not_outer_call_site")?;
+    let closure = closure_owner_for_parent(&db, outer)?;
+    let span = closure_owner_span(&db, closure)?;
+
+    let nodes = db
+        .get_snippet_context_nodes_ordered(vec![closure])
+        .map_err(|err| DbError::Cozo(err.to_string()))?;
+    assert_eq!(
+        nodes.len(),
+        1,
+        "closure call_body_owner should be snippet-materializable for RAG expansion"
+    );
+    let (node, paths) = &nodes[0];
+    assert_eq!(node.id, closure);
+    assert_eq!(node.name, "closure");
+    assert_eq!((node.start_byte, node.end_byte), span);
+    assert!(
+        node.file_path.ends_with("fixture_call_graph/src/lib.rs"),
+        "closure owner should materialize using the parent source file: {node:#?}"
+    );
+    assert!(
+        paths.file.ends_with("fixture_call_graph/src/lib.rs"),
+        "closure owner path metadata should inherit the parent source file: {paths:#?}"
+    );
+    assert_eq!(
+        paths.canon, "crate::closure",
+        "closure owner canon path should use the parent module path plus the executable label"
+    );
+
+    Ok(())
+}
+
 fn closure_owner_for_parent(db: &Database, parent: Uuid) -> Result<Uuid, DbError> {
     let rows = db.raw_query(&format!(
         r#"?[id, owner_kind, parent_kind, label] :=
@@ -162,4 +198,38 @@ fn closure_owner_for_parent(db: &Database, parent: Uuid) -> Result<Uuid, DbError
         "closure"
     );
     to_uuid(&rows.rows[0][0])
+}
+
+fn closure_owner_span(db: &Database, owner: Uuid) -> Result<(usize, usize), DbError> {
+    let rows = db.raw_query(&format!(
+        r#"?[span] :=
+            *call_body_owner {{ id: to_uuid("{owner}"), span @ 'NOW' }}"#
+    ))?;
+    assert_eq!(
+        rows.rows.len(),
+        1,
+        "expected exactly one span row for closure owner {owner}: {:#?}",
+        rows.rows
+    );
+    span_pair(&rows.rows[0][0], "call_body_owner.span")
+}
+
+fn span_pair(value: &DataValue, label: &str) -> Result<(usize, usize), DbError> {
+    let DataValue::List(items) = value else {
+        return Err(DbError::QueryExecution(format!(
+            "{label} should be a two-item span list, got {value:?}"
+        )));
+    };
+    let [start, end] = items.as_slice() else {
+        return Err(DbError::QueryExecution(format!(
+            "{label} should have exactly two entries, got {value:?}"
+        )));
+    };
+    let start = start.get_int().ok_or_else(|| {
+        DbError::QueryExecution(format!("{label} start should be an integer, got {start:?}"))
+    })? as usize;
+    let end = end.get_int().ok_or_else(|| {
+        DbError::QueryExecution(format!("{label} end should be an integer, got {end:?}"))
+    })? as usize;
+    Ok((start, end))
 }

@@ -1320,6 +1320,27 @@ mod gat_tests {
     }
 
     #[cfg(feature = "test_harness")]
+    fn closure_owner_for_parent(
+        db: &ploke_db::Database,
+        parent: uuid::Uuid,
+    ) -> color_eyre::Result<uuid::Uuid> {
+        one_uuid(
+            db,
+            &format!(
+                r#"?[id] :=
+                    parent = to_uuid("{parent}"),
+                    *call_body_owner {{
+                        id,
+                        owner_kind: "Closure",
+                        parent_id: parent,
+                        parent_kind: "Function",
+                        label: "closure" @ 'NOW'
+                    }}"#
+            ),
+        )
+    }
+
+    #[cfg(feature = "test_harness")]
     fn one_uuid_by_file_suffix(
         db: &ploke_db::Database,
         script: &str,

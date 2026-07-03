@@ -3262,12 +3262,37 @@ snippet_node[id, name, hash, span] :=
     *variant{id, name, owner_id @ 'NOW'},
     *enum{id: owner_id, tracking_hash: hash, span @ 'NOW'}
 "#;
+        let call_body_owner_node_rule = r#"
+body_owner_hash[id, hash] :=
+    *call_body_owner{id, parent_id @ 'NOW'},
+    *function{id: parent_id, tracking_hash: hash @ 'NOW'}
+body_owner_hash[id, hash] :=
+    *call_body_owner{id, parent_id @ 'NOW'},
+    *macro{id: parent_id, tracking_hash: hash @ 'NOW'}
+body_owner_hash[id, hash] :=
+    *call_body_owner{id, parent_id @ 'NOW'},
+    *method{id: parent_id, tracking_hash: hash @ 'NOW'}
+body_owner_hash[id, hash] :=
+    *call_body_owner{id, parent_id @ 'NOW'},
+    *const{id: parent_id, tracking_hash: hash @ 'NOW'}
+body_owner_hash[id, hash] :=
+    *call_body_owner{id, parent_id @ 'NOW'},
+    *static{id: parent_id, tracking_hash: hash @ 'NOW'}
+body_owner_hash[id, hash] :=
+    *call_body_owner{id, parent_id @ 'NOW'},
+    body_owner_hash[parent_id, hash]
+
+snippet_node[id, name, hash, span] :=
+    *call_body_owner{id, label: name, span @ 'NOW'},
+    body_owner_hash[id, hash]
+"#;
 
         let script = format!(
             r#"
 target_ids[id, ordering] <- $data
 
 parent_of[child, parent] := *syntax_edge{{source_id: parent, target_id: child, relation_kind: "Contains" @ 'NOW'}}
+parent_of[child, parent] := *call_body_owner{{id: child, parent_id: parent @ 'NOW'}}
 
 {method_ancestor_rule}
 {variant_ancestor_rule}
@@ -3277,6 +3302,7 @@ ancestor[desc, asc] := parent_of[desc, intermediate], ancestor[intermediate, asc
 
 {has_node_rule}
 {variant_node_rule}
+{call_body_owner_node_rule}
 
 batch[id, name, file_path, file_hash, hash, span, namespace, canon_path, ordering] :=
     snippet_node[id, name, hash, span],
@@ -3292,6 +3318,7 @@ batch[id, name, file_path, file_hash, hash, span, namespace, canon_path, orderin
             method_ancestor_rule = METHOD_NODE_ANCESTOR_RULE,
             variant_ancestor_rule = VARIANT_ANCESTOR_RULE,
             variant_node_rule = variant_node_rule,
+            call_body_owner_node_rule = call_body_owner_node_rule,
             has_node_rule = has_node_rule
         );
 

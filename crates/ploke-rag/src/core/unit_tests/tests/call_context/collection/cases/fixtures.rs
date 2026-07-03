@@ -3,6 +3,7 @@ mod blockers;
 mod callable_paths;
 mod constructors;
 mod dynamic;
+mod executable_owners;
 mod expected;
 mod external;
 mod field_dynamic;

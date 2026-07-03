@@ -464,6 +464,23 @@ mod tests {
         to_uuid(&rows.rows[0][0])
     }
 
+    fn closure_owner_for_parent(db: &Database, parent: Uuid) -> Result<Uuid, DbError> {
+        one_uuid(
+            db,
+            &format!(
+                r#"?[id] :=
+                    parent = to_uuid("{parent}"),
+                    *call_body_owner {{
+                        id,
+                        owner_kind: "Closure",
+                        parent_id: parent,
+                        parent_kind: "Function",
+                        label: "closure" @ 'NOW'
+                    }}"#
+            ),
+        )
+    }
+
     fn one_uuid_by_file_suffix(
         db: &Database,
         script: &str,

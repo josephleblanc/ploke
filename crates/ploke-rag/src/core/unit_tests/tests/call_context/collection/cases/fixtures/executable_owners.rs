@@ -1,0 +1,72 @@
+use super::super::super::super::super::*;
+
+#[tokio::test]
+async fn call_context_collection_reads_closure_executable_owner_rows() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let target = unique_id_by_name(&db, "function", "local_target")?;
+    let outer = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "closure_body_call_is_not_outer_call_site"),
+    )?;
+    let closure = closure_owner_for_parent(&db, outer)?;
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.call_context_degraded(),
+        "fresh fixture call_graph schema should enable closure executable owner context"
+    );
+
+    let call_context = rag.collect_call_context(&[(outer, 1.0), (closure, 1.0)])?;
+
+    let outer_context = call_context
+        .get(&outer)
+        .expect("outer function should keep its own call context");
+    assert!(
+        outer_context.iter().all(|call| {
+            call.callee
+                != CallCalleeInfo::Path {
+                    path: vec!["local_target".to_string()],
+                }
+        }),
+        "outer function must not absorb the closure-body local_target() row: {outer_context:#?}"
+    );
+    assert!(
+        outer_context
+            .iter()
+            .flat_map(|call| call.targets.iter())
+            .all(|target_info| target_info.target_id != target),
+        "outer function must not expose a fabricated edge to local_target: {outer_context:#?}"
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:155-157:
+    // `closure_body_call_is_not_outer_call_site` binds `|| local_target()` and
+    // invokes the closure. RAG should read the persisted closure owner as the
+    // caller for the body path call.
+    let closure_context = call_context
+        .get(&closure)
+        .expect("closure executable owner should receive outgoing call context");
+    assert_eq!(
+        closure_context.len(),
+        1,
+        "closure owner context: {closure_context:#?}"
+    );
+    let call = &closure_context[0];
+    assert_eq!(call.owner_id, closure);
+    assert_eq!(call.kind, CallSiteKind::Path);
+    assert_eq!(
+        call.callee,
+        CallCalleeInfo::Path {
+            path: vec!["local_target".to_string()],
+        }
+    );
+    assert_eq!(call.status, CallStatusKind::Resolved);
+    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(call.targets.len(), 1);
+    assert_eq!(call.targets[0].target_id, target);
+    assert_eq!(call.targets[0].relation, CallTargetKind::Function);
+
+    Ok(())
+}
