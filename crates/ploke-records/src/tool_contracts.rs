@@ -22,7 +22,9 @@ pub use ploke_tui::tools::{
         CargoToolParamsOwned, CargoToolResult,
     },
     code_edit::{CanonicalEditOwned, CodeEditParamsOwned},
+    code_item_call_path::{CodeItemCallPathParamsOwned, CodeItemCallPathResult},
     code_item_lookup::LookupParamsOwned,
+    code_private_uncalled::{CodePrivateUncalledResult, PrivateUncalledParamsOwned},
     create_file::CreateFileParamsOwned,
     get_code_edges::EdgesParamsOwned,
     insert_rust_item::InsertRustItemParamsOwned,
@@ -140,6 +142,10 @@ pub enum ToolCallArguments {
     CodeItemLookup(LookupParamsOwned),
     #[serde(rename = "code_item_edges")]
     CodeItemEdges(EdgesParamsOwned),
+    #[serde(rename = "code_item_call_path")]
+    CodeItemCallPath(CodeItemCallPathParamsOwned),
+    #[serde(rename = "code_private_uncalled")]
+    CodePrivateUncalled(PrivateUncalledParamsOwned),
     #[serde(rename = "cargo")]
     Cargo(CargoToolParamsOwned),
     #[serde(rename = "list_dir")]
@@ -164,6 +170,8 @@ impl ToolCallArguments {
             Self::NsRead(_) => Some(ToolName::NsRead),
             Self::CodeItemLookup(_) => Some(ToolName::CodeItemLookup),
             Self::CodeItemEdges(_) => Some(ToolName::CodeItemEdges),
+            Self::CodeItemCallPath(_) => Some(ToolName::CodeItemCallPath),
+            Self::CodePrivateUncalled(_) => Some(ToolName::CodePrivateUncalled),
             Self::Cargo(_) => Some(ToolName::Cargo),
             Self::ListDir(_) => Some(ToolName::ListDir),
             Self::SearchCode(_) | Self::SearchSymbols(_) | Self::QueryCodebase(_) => None,
@@ -239,6 +247,14 @@ pub fn decode_tool_arguments(tool: &str, raw: &str) -> PersistedToolCallArgument
         ToolName::CodeItemEdges => {
             decode_as(tool_name.as_str(), raw, ToolCallArguments::CodeItemEdges)
         }
+        ToolName::CodeItemCallPath => {
+            decode_as(tool_name.as_str(), raw, ToolCallArguments::CodeItemCallPath)
+        }
+        ToolName::CodePrivateUncalled => decode_as(
+            tool_name.as_str(),
+            raw,
+            ToolCallArguments::CodePrivateUncalled,
+        ),
         ToolName::Cargo => decode_as(tool_name.as_str(), raw, ToolCallArguments::Cargo),
         ToolName::ListDir => decode_as(tool_name.as_str(), raw, ToolCallArguments::ListDir),
     }
@@ -310,6 +326,10 @@ pub enum ToolResultContent {
     NsRead(NsReadResult),
     #[serde(rename = "code_item_lookup")]
     CodeItemLookup(ConciseContext),
+    #[serde(rename = "code_item_call_path")]
+    CodeItemCallPath(CodeItemCallPathResult),
+    #[serde(rename = "code_private_uncalled")]
+    CodePrivateUncalled(CodePrivateUncalledResult),
     #[serde(rename = "cargo")]
     Cargo(CargoToolResult),
     #[serde(rename = "list_dir")]
@@ -327,6 +347,8 @@ impl ToolResultContent {
             Self::NsPatch(_) => ToolName::NsPatch,
             Self::NsRead(_) => ToolName::NsRead,
             Self::CodeItemLookup(_) => ToolName::CodeItemLookup,
+            Self::CodeItemCallPath(_) => ToolName::CodeItemCallPath,
+            Self::CodePrivateUncalled(_) => ToolName::CodePrivateUncalled,
             Self::Cargo(_) => ToolName::Cargo,
             Self::ListDir(_) => ToolName::ListDir,
         }
@@ -392,6 +414,14 @@ pub fn decode_tool_result_content(tool: &str, raw: &str) -> PersistedToolResultC
                 },
             })
         }
+        ToolName::CodeItemCallPath => {
+            decode_result_as(tool_name.as_str(), raw, ToolResultContent::CodeItemCallPath)
+        }
+        ToolName::CodePrivateUncalled => decode_result_as(
+            tool_name.as_str(),
+            raw,
+            ToolResultContent::CodePrivateUncalled,
+        ),
         ToolName::Cargo => decode_result_as(tool_name.as_str(), raw, ToolResultContent::Cargo),
         ToolName::ListDir => decode_result_as(tool_name.as_str(), raw, ToolResultContent::ListDir),
     }
@@ -429,6 +459,8 @@ fn tool_name_from_persisted(tool: &str) -> Option<ToolName> {
         "read_file" | "ns_read" => Some(ToolName::NsRead),
         "code_item_lookup" => Some(ToolName::CodeItemLookup),
         "code_item_edges" => Some(ToolName::CodeItemEdges),
+        "code_item_call_path" => Some(ToolName::CodeItemCallPath),
+        "code_private_uncalled" => Some(ToolName::CodePrivateUncalled),
         "cargo" => Some(ToolName::Cargo),
         "list_dir" => Some(ToolName::ListDir),
         _ => None,
@@ -501,6 +533,20 @@ mod tests {
     }
 
     #[test]
+    fn tool_call_arguments_decode_code_private_uncalled() {
+        let raw = r#"{"max_results":3}"#;
+        let decoded = decode_tool_arguments("code_private_uncalled", raw);
+
+        let PersistedToolCallArguments::Decoded(ToolCallArguments::CodePrivateUncalled(arguments)) =
+            decoded
+        else {
+            panic!("expected decoded code_private_uncalled arguments");
+        };
+
+        assert_eq!(arguments.max_results, Some(3));
+    }
+
+    #[test]
     fn tool_call_arguments_record_json_parse_failure() {
         let decoded = decode_tool_arguments("request_code_context", "{");
 
@@ -555,6 +601,28 @@ mod tests {
             "crates/ploke-records/src/tool_contracts.rs"
         );
         assert_eq!(result.byte_len, Some(128));
+    }
+
+    #[test]
+    fn tool_result_content_decodes_code_private_uncalled() {
+        let raw = r#"{
+            "total":1,
+            "returned":0,
+            "truncated":true,
+            "nodes":[]
+        }"#;
+        let decoded = decode_tool_result_content("code_private_uncalled", raw);
+
+        let PersistedToolResultContent::Decoded(ToolResultContent::CodePrivateUncalled(result)) =
+            decoded
+        else {
+            panic!("expected decoded code_private_uncalled result");
+        };
+
+        assert_eq!(result.total, 1);
+        assert_eq!(result.returned, 0);
+        assert!(result.truncated);
+        assert!(result.nodes.is_empty());
     }
 
     #[test]

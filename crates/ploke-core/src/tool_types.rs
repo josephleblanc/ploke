@@ -25,6 +25,8 @@ pub enum ToolName {
     CodeItemEdges,
     #[serde(rename = "code_item_call_path")]
     CodeItemCallPath,
+    #[serde(rename = "code_private_uncalled")]
+    CodePrivateUncalled,
     #[serde(rename = "cargo")]
     Cargo,
     #[serde(rename = "list_dir")]
@@ -32,7 +34,7 @@ pub enum ToolName {
 }
 
 impl ToolName {
-    pub const ALL: [ToolName; 11] = [
+    pub const ALL: [ToolName; 12] = [
         ToolName::RequestCodeContext,
         ToolName::ApplyCodeEdit,
         ToolName::InsertRustItem,
@@ -42,6 +44,7 @@ impl ToolName {
         ToolName::CodeItemLookup,
         ToolName::CodeItemEdges,
         ToolName::CodeItemCallPath,
+        ToolName::CodePrivateUncalled,
         ToolName::Cargo,
         ToolName::ListDir,
     ];
@@ -58,6 +61,7 @@ impl ToolName {
             CodeItemLookup => "code_item_lookup",
             CodeItemEdges => "code_item_edges",
             CodeItemCallPath => "code_item_call_path",
+            CodePrivateUncalled => "code_private_uncalled",
             Cargo => "cargo",
             ListDir => "list_dir",
         }
@@ -211,6 +215,21 @@ mod tests {
     fn insert_rust_item_tool_name_serializes() {
         let name = serde_json::to_string(&ToolName::InsertRustItem).expect("serialize");
         assert_eq!(name, "\"insert_rust_item\"");
+    }
+
+    #[test]
+    fn code_private_uncalled_tool_name_serializes() {
+        let name = serde_json::to_string(&ToolName::CodePrivateUncalled).expect("serialize");
+        assert_eq!(name, "\"code_private_uncalled\"");
+    }
+
+    #[test]
+    fn code_private_uncalled_description_mentions_dead_code_query() {
+        let description = tool_description(ToolName::CodePrivateUncalled).to_lowercase();
+        assert!(description.contains("private"));
+        assert!(description.contains("no incoming persisted local call edges"));
+        assert!(description.contains("dead-code"));
+        assert!(description.contains("code_item_lookup"));
     }
 
     #[test]

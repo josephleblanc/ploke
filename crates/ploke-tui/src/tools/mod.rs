@@ -51,6 +51,7 @@ pub use code_edit::{CanonicalEdit, CodeEdit, CodeEditInput, GatCodeEdit};
 pub mod cargo;
 pub mod code_item_call_path;
 pub mod code_item_lookup;
+pub mod code_private_uncalled;
 pub mod create_file;
 pub mod error;
 pub mod get_code_edges;
@@ -223,6 +224,9 @@ fn validate_tool_args(tool_name: ToolName, args: &str) -> Result<(), ToolError> 
         ToolName::CodeItemEdges => validate_tool_args_with::<get_code_edges::CodeItemEdges>(args),
         ToolName::CodeItemCallPath => {
             validate_tool_args_with::<code_item_call_path::CodeItemCallPath>(args)
+        }
+        ToolName::CodePrivateUncalled => {
+            validate_tool_args_with::<code_private_uncalled::CodePrivateUncalled>(args)
         }
         ToolName::Cargo => validate_tool_args_with::<cargo::CargoTool>(args),
         ToolName::ListDir => validate_tool_args_with::<list_dir::ListDir>(args),
@@ -523,6 +527,36 @@ pub(crate) async fn process_tool(tool_call: ToolCall, ctx: Ctx) -> color_eyre::R
                 format_args!("{:#?}", &content),
             );
             code_item_call_path::CodeItemCallPath::emit_completed(&ctx, content, ui_payload);
+            Ok(())
+        }
+        ToolName::CodePrivateUncalled => {
+            let params = code_private_uncalled::CodePrivateUncalled::deserialize_params(&args)
+                .map_err(|err| {
+                    let terr = code_private_uncalled::CodePrivateUncalled::adapt_error(err);
+                    code_private_uncalled::CodePrivateUncalled::emit_err(&ctx, terr.clone());
+                    eyre!(terr.format_for_audience(Audience::System))
+                })?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "params: {}\n",
+                format_args!("{:#?}", &params),
+            );
+            let ToolResult {
+                content,
+                ui_payload,
+            } = code_private_uncalled::CodePrivateUncalled::execute(params, ctx.clone())
+                .await
+                .map_err(|e| {
+                    let terr = code_private_uncalled::CodePrivateUncalled::adapt_error(
+                        ToolInvocationError::Exec(e),
+                    );
+                    code_private_uncalled::CodePrivateUncalled::emit_err(&ctx, terr.clone());
+                    eyre!(terr.format_for_audience(Audience::System))
+                })?;
+            tracing::debug!(target: DEBUG_TOOLS,
+                "content: {}\n",
+                format_args!("{:#?}", &content),
+            );
+            code_private_uncalled::CodePrivateUncalled::emit_completed(&ctx, content, ui_payload);
             Ok(())
         }
         ToolName::ListDir => {
@@ -900,6 +934,10 @@ mod tests {
         assert_eq!(ToolName::ApplyCodeEdit.as_str(), "apply_code_edit");
         assert_eq!(ToolName::InsertRustItem.as_str(), "insert_rust_item");
         assert_eq!(ToolName::CreateFile.as_str(), "create_file");
+        assert_eq!(
+            ToolName::CodePrivateUncalled.as_str(),
+            "code_private_uncalled"
+        );
     }
 
     #[test]

@@ -4036,6 +4036,17 @@ fn tool_argument_projection(arguments: &ToolCallArguments) -> Vec<ToolArgumentFi
             push_ref(&mut fields, "node_kind", &args.node_kind);
             push_ref(&mut fields, "module_path", &args.module_path);
         }
+        ToolCallArguments::CodeItemCallPath(args) => {
+            push_ref(&mut fields, "source_item", &args.source.item_name);
+            push_ref(&mut fields, "target_item", &args.target.item_name);
+            push_ref(&mut fields, "source_file", &args.source.file_path);
+            push_ref(&mut fields, "target_file", &args.target.file_path);
+            push_option(&mut fields, "max_depth", args.max_depth);
+            push_option(&mut fields, "max_paths", args.max_paths);
+        }
+        ToolCallArguments::CodePrivateUncalled(args) => {
+            push_option(&mut fields, "max_results", args.max_results);
+        }
         ToolCallArguments::Cargo(args) => {
             push_value(&mut fields, "command", format!("{:?}", args.command));
             push_value(&mut fields, "scope", format!("{:?}", args.scope));

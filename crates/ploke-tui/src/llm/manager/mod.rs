@@ -26,7 +26,7 @@ use crate::{
     SystemEvent,
     tools::{
         code_item_call_path::CodeItemCallPath, code_item_lookup::CodeItemLookup,
-        get_code_edges::CodeItemEdges,
+        code_private_uncalled::CodePrivateUncalled, get_code_edges::CodeItemEdges,
     },
 };
 // pub(crate) use events::LlmEvent;
@@ -780,6 +780,7 @@ async fn prepare_and_run_llm_call(args: LlmCallArgs) -> ChatSessionReport {
         CodeItemLookup::tool_def(),
         CodeItemEdges::tool_def(),
         CodeItemCallPath::tool_def(),
+        CodePrivateUncalled::tool_def(),
         CargoTool::tool_def(),
         ListDir::tool_def(),
     ];
