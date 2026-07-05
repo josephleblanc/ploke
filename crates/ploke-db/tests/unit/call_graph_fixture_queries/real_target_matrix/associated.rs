@@ -167,21 +167,36 @@ fn axum_real_target_test_client_new_high_fanout_is_documented_gap() -> Result<()
     //   984,1027,1047,1073,1164,1201}; plus the other file groups
     //   listed in the oracle matrix.
     // Current DB contract: recursive `cfg(test)` inclusion, nested glob
-    // re-export traversal, and direct imports through the public
-    // `test_helpers` glob re-export make 105 projected rows resolve to the
-    // gated local test helper target. The remaining 62 rows stay unsupported
-    // and targetless because their import evidence is still outside these
-    // exact re-export paths.
+    // re-export traversal, inherited parent glob imports, and direct imports
+    // through the public `test_helpers` glob re-export make 167 projected
+    // structural rows resolve to the gated local test helper target. The one
+    // remaining projected axum-core row stays unsupported and targetless
+    // because it depends on cross-crate test-helper import evidence.
     let target =
-        assert_resolved_path_target_count(&db, &["TestClient", "new"], 105, "TestClient::new")?;
+        assert_resolved_path_target_count(&db, &["TestClient", "new"], 167, "TestClient::new")?;
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        105,
-        "TestClient::new should expose the resolved real-corpus caller subset: {callers:#?}"
+        167,
+        "TestClient::new should expose every resolved projected real-corpus caller: {callers:#?}"
     );
-    assert_sites_match_callers(&db, target, &callers, "TestClient::new resolved subset")?;
-    assert_targetless_path_rows(&db, &["TestClient", "new"], CallStatusKind::Unsupported, 62)?;
+    assert_sites_match_callers(
+        &db,
+        target,
+        &callers,
+        "TestClient::new resolved projected callers",
+    )?;
+    assert_targetless_path_rows(&db, &["TestClient", "new"], CallStatusKind::Unsupported, 1)?;
+    assert_targetless_path_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        &["TestClient", "new"],
+        CallStatusKind::Unsupported,
+        &[SourceLineFanout {
+            file_suffix: "axum-core/src/extract/request_parts.rs",
+            lines: &[193],
+        }],
+    )?;
 
     // Matrix immediate candidate:
     //   axum/src/json.rs:237 imports `test_helpers::*`.
@@ -212,81 +227,32 @@ fn axum_real_target_test_client_new_high_fanout_is_documented_gap() -> Result<()
         },
     )?;
 
-    assert_path_module_fanout(
+    // Matrix inherited-parent-glob candidate:
+    //   axum/src/routing/tests/mod.rs:8-11 imports `crate::test_helpers::*`.
+    //   axum/src/routing/tests/fallback.rs:6 imports `super::*`.
+    //   axum/src/routing/tests/fallback.rs:10 calls `TestClient::new(app)`.
+    // Expected traversal: child module inherited glob visibility resolves the
+    // associated-function path in one edge to test_client.rs:36.
+    let fallback_owner =
+        function_id_by_name_in_module(&db, &["crate", "routing", "tests", "fallback"], "basic")?;
+    let fallback_context = db.call_context_for_owner(fallback_owner)?;
+    let fallback_row = row_by_path(&fallback_context, &["TestClient", "new"]);
+    assert_resolved_target(
+        fallback_row,
+        target,
+        CallRelationKind::AssociatedFunction,
+        CallSiteKind::Path,
+        CallTargetKind::Method,
+    );
+    assert_one_edge_traversal(
         &db,
-        &["TestClient", "new"],
-        CallStatusKind::Unsupported,
-        &[
-            (&["crate", "extract", "request_parts", "tests"], 1),
-            (&["crate", "routing", "tests", "fallback"], 25),
-            (&["crate", "routing", "tests", "handle_error"], 5),
-            (&["crate", "routing", "tests", "merge"], 16),
-            (&["crate", "routing", "tests", "nest"], 15),
-        ],
-    )?;
-    // File-level projection oracle for the same high-fanout matrix:
-    //   the oracle lists 172 selected-member text callsites. The DB currently
-    //   projects 167 structural rows. The absent source rows are
-    //   axum/src/extract/multipart.rs:{383,423,449},
-    //   one routing/tests/mod.rs row, and one routing/tests/nest.rs row.
-    //   The remaining unsupported projected rows are targetless, so traversal
-    //   edge count is 0 for this subset.
-    assert_path_file_fanout(
-        &db,
-        &["TestClient", "new"],
-        CallStatusKind::Unsupported,
-        &[
-            ("axum-core/src/extract/request_parts.rs", 1),
-            ("axum/src/routing/tests/fallback.rs", 25),
-            ("axum/src/routing/tests/handle_error.rs", 5),
-            ("axum/src/routing/tests/merge.rs", 16),
-            ("axum/src/routing/tests/nest.rs", 15),
-        ],
-    )?;
-    // Source-line projection oracle for the same matrix:
-    //   docs/active/agents/call-graph/
-    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
-    //
-    // These projected rows remain unsupported boundaries after the exact
-    // nested-glob and direct re-export-import subsets above resolve. The three
-    // multipart rows at axum/src/extract/multipart.rs:{383,423,449} are still
-    // absent in the current fixture, as are the closure-body row at
-    // axum/src/routing/tests/mod.rs:1073 and the macro-template row at
-    // axum/src/routing/tests/nest.rs:371.
-    assert_targetless_path_line_fanout(
-        &db,
-        &CORPUS_AXUM_CALL_GRAPH,
-        &["TestClient", "new"],
-        CallStatusKind::Unsupported,
-        &[
-            SourceLineFanout {
-                file_suffix: "axum-core/src/extract/request_parts.rs",
-                lines: &[193],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/tests/fallback.rs",
-                lines: &[
-                    10, 25, 40, 53, 69, 89, 101, 118, 134, 150, 171, 190, 207, 221, 241, 261, 280,
-                    299, 314, 325, 338, 359, 377, 389, 402,
-                ],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/tests/handle_error.rs",
-                lines: &[25, 42, 60, 76, 90],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/tests/merge.rs",
-                lines: &[
-                    14, 63, 81, 85, 96, 116, 136, 150, 162, 179, 208, 234, 267, 301, 345, 379,
-                ],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/tests/nest.rs",
-                lines: &[
-                    41, 65, 135, 159, 182, 193, 210, 229, 280, 298, 309, 328, 408, 431, 489,
-                ],
-            },
-        ],
+        TraversalExpectation {
+            label: "axum/src/routing/tests/fallback.rs:10 inherited-glob TestClient::new",
+            owner: fallback_owner,
+            target,
+            site_id: fallback_row.site.id,
+            expected_edge_count: 1,
+        },
     )?;
 
     Ok(())

@@ -458,6 +458,7 @@ impl CallRelationResolver<'_> {
             })?;
         }
 
+        let module_id = self.import_scope_module(module_id)?;
         self.visit_scope_candidates(module_id, segment, sink)
     }
 

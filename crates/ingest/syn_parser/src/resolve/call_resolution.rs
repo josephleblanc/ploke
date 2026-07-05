@@ -459,6 +459,7 @@ impl<'a> CallRelationResolver<'a> {
         let Some(module_id) = self.containing_module_for_owner(owner) else {
             return Ok(LocalTypeResolution::Unresolved);
         };
+        let module_id = self.import_scope_module(module_id)?;
 
         let mut candidates = Vec::new();
         self.visit_scope_candidates(module_id, segment, &mut |candidate| {
@@ -1272,6 +1273,7 @@ impl<'a> CallRelationResolver<'a> {
         let Some(mut current_module) = self.containing_module_for_owner(owner) else {
             return Ok(LocalTypeResolution::Unresolved);
         };
+        current_module = self.import_scope_module(current_module)?;
 
         let start_idx = self.start_segment_index(path, &mut current_module)?;
         if start_idx >= path.len() {
