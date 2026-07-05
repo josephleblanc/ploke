@@ -91,15 +91,31 @@ async fn request_code_context_returns_local_item_owner_projected_proof_context()
             "local_const_initializer_call_is_not_outer_call_site",
         ),
     )?;
-    let local_item = local_item_owner_for_parent(&db, outer)?;
+    let local_item = local_item_owner_for_parent_with_label(&db, outer, "local_const")?;
     assert_owner_projected_proof_context(
         &db,
         target,
         local_item,
-        "local item",
+        "local const item",
         "pub const fn assoc_const_value",
         &["assoc_const_value"],
-        "local_item_owner_projected_proof_context",
+        "local_const_owner_projected_proof_context",
+    )
+    .await?;
+
+    let local_fn_outer = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "local_fn_body_call_is_not_outer_call_site"),
+    )?;
+    let local_fn = local_item_owner_for_parent_with_label(&db, local_fn_outer, "local_fn")?;
+    assert_owner_projected_proof_context(
+        &db,
+        target,
+        local_fn,
+        "local fn item",
+        "pub const fn assoc_const_value",
+        &["assoc_const_value"],
+        "local_fn_owner_projected_proof_context",
     )
     .await
 }

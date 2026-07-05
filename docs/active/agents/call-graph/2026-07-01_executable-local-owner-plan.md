@@ -83,8 +83,9 @@ Already covered:
 
 Current gap:
 
-- General function-local executable item bodies beyond const initializers still
-  need a typed owner model.
+- Function-local const/static initializer and local `fn` item bodies have typed
+  owner coverage. Broader local-item semantics, such as resolving calls to
+  local `fn` items as callable definitions, remain future.
 - Real-corpus coverage remains selective; broaden only from source oracles and
   fixture-backed expectations.
 
@@ -172,10 +173,16 @@ Current implementation status:
   `call_body_owner` with `owner_kind = "LocalItem"` and label `local_const`,
   and verified in parser/transform/DB fixture tests without flattening into the
   enclosing function owner.
+- Function-local `fn` item body calls are parser-owned by
+  `CallBodyOwnerId::Executable(LocalItemBodyId)`, projected through
+  `call_body_owner` with `owner_kind = "LocalItem"` and label `local_fn`, and
+  verified in parser/DB/RAG/TUI fixture tests without flattening into the
+  enclosing function owner. Calls to the local `fn` item itself remain
+  targetless until local item definitions become callable targets.
 - RAG call-context collection, incoming expansion, projected proof-context
   collection, and `request_code_context` call/proof payload tests now preserve
-  the fixture-backed local-item owner as the caller for
-  `assoc_const_value()` from the local const initializer body.
+  fixture-backed local-item owners as callers for `assoc_const_value()` from
+  local const initializer and local `fn` bodies.
 
 For future executable-local shapes, do not add RAG/TUI coverage until the DB
 context row has a stable nested-owner metadata contract for that shape.

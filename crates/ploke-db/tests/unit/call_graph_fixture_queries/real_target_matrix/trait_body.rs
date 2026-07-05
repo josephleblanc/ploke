@@ -333,13 +333,15 @@ fn axum_real_target_header_value_from_static_external_paths_are_targetless() -> 
     //   initializers inside `WebSocketUpgrade::on_upgrade`.
     //   axum/src/routing/route.rs:202 includes
     //   `HeaderValue::from_static("0")` in a local const initializer.
+    //   axum/src/json.rs:208 and :217 include `HeaderValue::from_static`
+    //   inside the nested local `make_response` function.
     //   axum-core/src/response/into_response.rs:196,207,232,320,
     //   axum/src/json.rs:208,217, and axum/src/response/mod.rs:47 call the
     //   same external associated function from response conversion bodies.
     // Current DB contract: all projected rows stay external and targetless.
-    // The route local const initializer row is owned by an executable
-    // `LocalItem` owner, not flattened under the enclosing function owner and
-    // not modeled as an item-level `Const` owner. The websocket local const
+    // The local const and local function rows are owned by executable
+    // `LocalItem` owners, not flattened under enclosing function/method owners
+    // and not modeled as item-level `Const` owners. The websocket local const
     // initializer rows remain absent in this fixture.
     assert_no_method_owner_by_body_and_file_suffix(
         &db,
@@ -361,13 +363,29 @@ fn axum_real_target_header_value_from_static_external_paths_are_targetless() -> 
         }),
         "axum/src/routing/route.rs:202 local const HeaderValue::from_static should remain absent under set_content_length: {route_context:#?}"
     );
+    let json_owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "into_response",
+        "serde_json::to_writer(&mut buf, &self.0)",
+        "axum/src/json.rs",
+    )?;
+    let json_context = db.call_context_for_owner(json_owner)?;
+    assert!(
+        json_context.iter().all(|row| {
+            row.site
+                .path
+                .as_ref()
+                .is_none_or(|path| path != &["HeaderValue", "from_static"])
+        }),
+        "axum/src/json.rs:208 and :217 nested local fn HeaderValue::from_static rows should remain absent under outer Json::into_response method: {json_context:#?}"
+    );
     assert_targetless_path_owner_kind_rows(
         &db,
         &["HeaderValue", "from_static"],
         CallStatusKind::External,
         "LocalItem",
-        1,
-        "axum route local const HeaderValue::from_static row",
+        3,
+        "axum local const HeaderValue::from_static rows",
     )?;
     assert_targetless_path_owner_kind_line_fanout(
         &db,
@@ -375,25 +393,16 @@ fn axum_real_target_header_value_from_static_external_paths_are_targetless() -> 
         &["HeaderValue", "from_static"],
         CallStatusKind::External,
         "LocalItem",
-        &[SourceLineFanout {
-            file_suffix: "axum/src/routing/route.rs",
-            lines: &[202],
-        }],
-    )?;
-
-    let json_owner = method_id_by_name_body_and_file_suffix(
-        &db,
-        "into_response",
-        "serde_json::to_writer(&mut buf, &self.0)",
-        "axum/src/json.rs",
-    )?;
-    assert_owner_path_targetless_count(
-        &db,
-        json_owner,
-        &["HeaderValue", "from_static"],
-        CallStatusKind::External,
-        2,
-        "axum/src/json.rs:208 and :217 HeaderValue::from_static",
+        &[
+            SourceLineFanout {
+                file_suffix: "axum/src/json.rs",
+                lines: &[208, 217],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/route.rs",
+                lines: &[202],
+            },
+        ],
     )?;
 
     let html_owner = method_id_by_name_body_and_file_suffix(
@@ -480,10 +489,6 @@ fn axum_real_target_header_value_from_static_external_paths_are_targetless() -> 
             SourceLineFanout {
                 file_suffix: "axum-core/src/response/into_response.rs",
                 lines: &[196, 207, 232, 320],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/json.rs",
-                lines: &[208, 217],
             },
             SourceLineFanout {
                 file_suffix: "axum/src/response/mod.rs",

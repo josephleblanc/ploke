@@ -46,12 +46,17 @@ const LOCAL_ITEM_CASES: &[LocalItemCase] = &[
     LocalItemCase {
         owner_name: "local_const_initializer_call_is_not_outer_call_site",
         label: "local_const",
-        source_line: 1371,
+        source_line: 1372,
     },
     LocalItemCase {
         owner_name: "local_static_initializer_call_is_not_outer_call_site",
         label: "local_static",
         source_line: 1435,
+    },
+    LocalItemCase {
+        owner_name: "local_fn_body_call_is_not_outer_call_site",
+        label: "local_fn",
+        source_line: 1441,
     },
 ];
 

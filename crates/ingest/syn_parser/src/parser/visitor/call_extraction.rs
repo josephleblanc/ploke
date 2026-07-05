@@ -339,6 +339,36 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             .append(&mut visitor.executable_bodies);
     }
 
+    fn visit_item_fn(&mut self, item_fn: &'ast syn::ItemFn) {
+        let byte_range = item_fn.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
+        let body_id = generate_local_item_body_id(self.owner, span, self.cfgs);
+        let owner = CallBodyOwnerId::Executable(ExecutableBodyId::LocalItem(body_id));
+        self.executable_bodies.push(ExecutableBodyNode::new(
+            body_id.into(),
+            self.owner,
+            span,
+            self.cfgs.to_vec(),
+            Some("local_fn".to_string()),
+        ));
+
+        let params = local_fn_param_names(item_fn);
+        let mut visitor = BodyCallVisitor {
+            owner,
+            cfgs: self.cfgs,
+            param_names: &params,
+            local_scopes: Vec::new(),
+            calls: Vec::new(),
+            relations: Vec::new(),
+            executable_bodies: Vec::new(),
+        };
+        visitor.visit_block(item_fn.block.as_ref());
+        self.calls.append(&mut visitor.calls);
+        self.relations.append(&mut visitor.relations);
+        self.executable_bodies
+            .append(&mut visitor.executable_bodies);
+    }
+
     fn visit_expr_closure(&mut self, closure: &'ast syn::ExprClosure) {
         let byte_range = closure.span().byte_range();
         let span = (byte_range.start, byte_range.end);
@@ -1839,6 +1869,18 @@ fn pat_ident_name(pat: &syn::Pat) -> Option<String> {
 
 fn closure_param_names(closure: &syn::ExprClosure) -> Vec<String> {
     closure.inputs.iter().filter_map(pat_ident_name).collect()
+}
+
+fn local_fn_param_names(item_fn: &syn::ItemFn) -> Vec<String> {
+    item_fn
+        .sig
+        .inputs
+        .iter()
+        .filter_map(|arg| match arg {
+            syn::FnArg::Typed(typed) => pat_ident_name(typed.pat.as_ref()),
+            syn::FnArg::Receiver(_) => None,
+        })
+        .collect()
 }
 
 fn type_path_segments(ty: &syn::Type) -> Option<Vec<String>> {

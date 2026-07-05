@@ -87,10 +87,10 @@ Current matrix posture:
   type and project through DB/proof/RAG/TUI constructor surfaces. Immutable axum
   backups still pin the real-corpus `BoxedIntoRoute` `Self(...)` constructor
   rows unsupported until fixture regeneration/review.
-- Executable-local const initializer boundaries: function-local const
-  initializer calls are owned by executable `LocalItem` owners and are no
-  longer flattened into the enclosing function owner; broader function-local
-  item bodies remain future.
+- Executable-local item boundaries: function-local const/static initializer
+  calls and local `fn` body calls are owned by executable `LocalItem` owners
+  and are no longer flattened into the enclosing function owner; broader local
+  item semantics remain future.
 - Dynamic/receiver/closure/import gaps: future semantic expansion buckets, not reasons to keep polishing already-proven method paths.
 - Workspace dependency-root imports: selected workspace fixtures can contain
   one crate importing another selected crate, for example axum-core test code

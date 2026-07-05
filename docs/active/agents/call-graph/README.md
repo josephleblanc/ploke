@@ -78,8 +78,9 @@ Implemented/scaffolded:
     `CallBodyOwnerId::Const`.
 - Explicit executable-local extraction boundary:
   - parser-native call extraction descends into closure, async block, and
-    function-local const initializer bodies only under typed executable owners,
-    so inner calls are not attributed to the enclosing function owner.
+    function-local const/static initializer and local `fn` item bodies only
+    under typed executable owners, so inner calls are not attributed to the
+    enclosing function owner.
 - Typed call-resolution storage/accessor scaffold:
   - `CodeGraph.call_relations`
   - `CodeGraph.call_resolution_statuses`

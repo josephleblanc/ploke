@@ -248,14 +248,37 @@ async fn call_context_collection_reads_local_item_owner_rows() -> Result<(), Err
         "fixture_call_graph",
     )?));
     let target = unique_id_by_name(&db, "function", "assoc_const_value")?;
-    let outer = one_uuid(
-        &db,
-        &function_in_module_query(
-            &["crate"],
-            "local_const_initializer_call_is_not_outer_call_site",
+    let cases = [
+        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1372
+        (
+            "local_const",
+            1372,
+            one_uuid(
+                &db,
+                &function_in_module_query(
+                    &["crate"],
+                    "local_const_initializer_call_is_not_outer_call_site",
+                ),
+            )?,
         ),
-    )?;
-    let local_item = local_item_owner_for_parent(&db, outer)?;
+        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1441
+        (
+            "local_fn",
+            1441,
+            one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "local_fn_body_call_is_not_outer_call_site"),
+            )?,
+        ),
+    ];
+    let mut seeds = Vec::new();
+    for (label, _, outer) in cases {
+        seeds.push((outer, 1.0));
+        seeds.push((
+            local_item_owner_for_parent_with_label(&db, outer, label)?,
+            1.0,
+        ));
+    }
 
     let rag = init_test_rag_mock(Arc::clone(&db));
     assert!(
@@ -263,51 +286,61 @@ async fn call_context_collection_reads_local_item_owner_rows() -> Result<(), Err
         "fresh fixture call_graph schema should enable local item owner context"
     );
 
-    let call_context = rag.collect_call_context(&[(outer, 1.0), (local_item, 1.0)])?;
+    let call_context = rag.collect_call_context(&seeds)?;
 
-    if let Some(outer_context) = call_context.get(&outer) {
-        assert!(
-            outer_context.iter().all(|call| {
-                call.callee
-                    != CallCalleeInfo::Path {
-                        path: vec!["assoc_const_value".to_string()],
-                    }
-            }),
-            "outer function must not absorb the local-const initializer call: {outer_context:#?}"
-        );
-        assert!(
-            outer_context
-                .iter()
-                .flat_map(|call| call.targets.iter())
-                .all(|target_info| target_info.target_id != target),
-            "outer function must not expose a fabricated edge to assoc_const_value: {outer_context:#?}"
-        );
+    for (label, source_line, outer) in cases {
+        let local_item = local_item_owner_for_parent_with_label(&db, outer, label)?;
+        if let Some(outer_context) = call_context.get(&outer) {
+            assert!(
+                outer_context.iter().all(|call| {
+                    call.callee
+                        != CallCalleeInfo::Path {
+                            path: vec!["assoc_const_value".to_string()],
+                        }
+                }),
+                "outer function must not absorb the {label} body call: {outer_context:#?}"
+            );
+            assert!(
+                outer_context
+                    .iter()
+                    .flat_map(|call| call.targets.iter())
+                    .all(|target_info| target_info.target_id != target),
+                "outer function must not expose a fabricated edge to assoc_const_value from {label}: {outer_context:#?}"
+            );
+        }
+
+        // The function-local item body calls `assoc_const_value()`. RAG should
+        // read the persisted local-item owner as the caller for that body path
+        // call, not the enclosing function.
+        let local_item_context = call_context
+            .get(&local_item)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{label} owner from tests/fixture_crates/fixture_call_graph/src/lib.rs:{source_line} should receive outgoing call context"
+                )
+            });
+        let call = local_item_context
+            .iter()
+            .find(|call| {
+                call.owner_id == local_item
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: vec!["assoc_const_value".to_string()],
+                        }
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{label} owner from tests/fixture_crates/fixture_call_graph/src/lib.rs:{source_line} should retain outgoing assoc_const_value() call context"
+                )
+            });
+        assert_eq!(call.owner_id, local_item);
+        assert_eq!(call.kind, CallSiteKind::Path);
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(call.targets.len(), 1);
+        assert_eq!(call.targets[0].target_id, target);
+        assert_eq!(call.targets[0].relation, CallTargetKind::Function);
     }
-
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1371-1373:
-    // The function-local const initializer calls `assoc_const_value()`. RAG
-    // should read the persisted local-item owner as the caller for that body
-    // path call, not the enclosing function.
-    let local_item_context = call_context
-        .get(&local_item)
-        .expect("local item owner should receive outgoing call context");
-    let call = local_item_context
-        .iter()
-        .find(|call| {
-            call.owner_id == local_item
-                && call.callee
-                    == CallCalleeInfo::Path {
-                        path: vec!["assoc_const_value".to_string()],
-                    }
-        })
-        .expect("local item owner should retain outgoing assoc_const_value() call context");
-    assert_eq!(call.owner_id, local_item);
-    assert_eq!(call.kind, CallSiteKind::Path);
-    assert_eq!(call.status, CallStatusKind::Resolved);
-    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
-    assert_eq!(call.targets.len(), 1);
-    assert_eq!(call.targets[0].target_id, target);
-    assert_eq!(call.targets[0].relation, CallTargetKind::Function);
 
     Ok(())
 }

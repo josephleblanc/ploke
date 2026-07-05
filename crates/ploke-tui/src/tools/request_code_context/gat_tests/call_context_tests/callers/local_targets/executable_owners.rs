@@ -188,7 +188,12 @@ async fn request_code_context_returns_local_item_owner_call_context_for_assoc_co
             "local_const_initializer_call_is_not_outer_call_site",
         ),
     )?;
-    let local_item = local_item_owner_for_parent(&db, outer)?;
+    let local_item = local_item_owner_for_parent_with_label(&db, outer, "local_const")?;
+    let local_fn_outer = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "local_fn_body_call_is_not_outer_call_site"),
+    )?;
+    let local_fn = local_item_owner_for_parent_with_label(&db, local_fn_outer, "local_fn")?;
 
     let result = execute_fixture_request(
         &db,
@@ -209,36 +214,53 @@ async fn request_code_context_returns_local_item_owner_call_context_for_assoc_co
         "request_code_context should preserve the assoc_const_value seed part: {result:#?}"
     );
     assert!(
-        result.context.iter().all(|part| part.id != outer),
-        "local const initializer call must not expand to the enclosing outer function: {result:#?}"
+        result
+            .context
+            .iter()
+            .all(|part| part.id != outer && part.id != local_fn_outer),
+        "local item body calls must not expand to their enclosing outer functions: {result:#?}"
     );
 
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1371-1373:
-    // The local const initializer calls `assoc_const_value()`. Tool context
-    // should expose the local-item owner as the incoming caller.
-    let local_item_part = result
-        .context
-        .iter()
-        .find(|part| part.id == local_item)
-        .expect("request_code_context should materialize the local item caller");
-    let call = local_item_part
-        .call_context
-        .iter()
-        .find(|call| {
-            call.owner_id == local_item
-                && call.kind == CallSiteKind::Path
-                && call.callee
-                    == CallCalleeInfo::Path {
-                        path: path(&["assoc_const_value"]),
-                    }
-                && call
-                    .targets
-                    .iter()
-                    .any(|target_info| target_info.target_id == target)
-        })
-        .expect("local item owner should retain outgoing assoc_const_value() call context");
-    assert_resolved_target(call, target, CallTargetKind::Function);
-    assert_incoming_expansion(local_item_part, call, target);
+    for (label, source_line, local_item) in [
+        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1372
+        ("local_const", 1372, local_item),
+        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1441
+        ("local_fn", 1441, local_fn),
+    ] {
+        // The local item body calls `assoc_const_value()`. Tool context should
+        // expose the local-item owner as the incoming caller.
+        let local_item_part = result
+            .context
+            .iter()
+            .find(|part| part.id == local_item)
+            .unwrap_or_else(|| {
+                panic!(
+                    "request_code_context should materialize the {label} caller from tests/fixture_crates/fixture_call_graph/src/lib.rs:{source_line}"
+                )
+            });
+        let call = local_item_part
+            .call_context
+            .iter()
+            .find(|call| {
+                call.owner_id == local_item
+                    && call.kind == CallSiteKind::Path
+                    && call.callee
+                        == CallCalleeInfo::Path {
+                            path: path(&["assoc_const_value"]),
+                        }
+                    && call
+                        .targets
+                        .iter()
+                        .any(|target_info| target_info.target_id == target)
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "{label} owner from tests/fixture_crates/fixture_call_graph/src/lib.rs:{source_line} should retain outgoing assoc_const_value() call context"
+                )
+            });
+        assert_resolved_target(call, target, CallTargetKind::Function);
+        assert_incoming_expansion(local_item_part, call, target);
+    }
 
     Ok(())
 }

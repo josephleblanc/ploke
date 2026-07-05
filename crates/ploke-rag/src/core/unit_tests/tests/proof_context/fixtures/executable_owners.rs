@@ -77,20 +77,36 @@ async fn proof_context_collection_preserves_local_item_owner_projected_rows() ->
         "fixture_call_graph",
     )?));
     let target = unique_id_by_name(&db, "function", "assoc_const_value")?;
-    let outer = one_uuid(
-        &db,
-        &function_in_module_query(
-            &["crate"],
-            "local_const_initializer_call_is_not_outer_call_site",
+    let cases = [
+        (
+            "local_const",
+            one_uuid(
+                &db,
+                &function_in_module_query(
+                    &["crate"],
+                    "local_const_initializer_call_is_not_outer_call_site",
+                ),
+            )?,
         ),
-    )?;
-    let local_item = local_item_owner_for_parent(&db, outer)?;
+        (
+            "local_fn",
+            one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "local_fn_body_call_is_not_outer_call_site"),
+            )?,
+        ),
+    ];
 
-    assert_eq!(
-        db.project_call_proof_facts_for_owner(local_item, "bd:fixture-call-graph")?,
-        3,
-        "local item owner should project call_site, call_edge, and call_resolution facts"
-    );
+    let mut owners = Vec::new();
+    for (label, outer) in cases {
+        let local_item = local_item_owner_for_parent_with_label(&db, outer, label)?;
+        assert_eq!(
+            db.project_call_proof_facts_for_owner(local_item, "bd:fixture-call-graph")?,
+            3,
+            "{label} owner should project call_site, call_edge, and call_resolution facts"
+        );
+        owners.push((label, local_item));
+    }
 
     let rag = init_test_rag_mock(Arc::clone(&db));
     assert!(
@@ -98,11 +114,13 @@ async fn proof_context_collection_preserves_local_item_owner_projected_rows() ->
         "local item owner proof projection should enable RAG proof context"
     );
 
-    let proof_context = rag.collect_proof_context(&[(local_item, 1.0)])?;
-    let rows = proof_context
-        .get(&local_item)
-        .expect("local item owner seed should receive linked proof rows");
-    assert_projected_owner_rows(rows, local_item, target);
+    for (label, local_item) in owners {
+        let proof_context = rag.collect_proof_context(&[(local_item, 1.0)])?;
+        let rows = proof_context
+            .get(&local_item)
+            .unwrap_or_else(|| panic!("{label} owner seed should receive linked proof rows"));
+        assert_projected_owner_rows(rows, local_item, target);
+    }
 
     Ok(())
 }

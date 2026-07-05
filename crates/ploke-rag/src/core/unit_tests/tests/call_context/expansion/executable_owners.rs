@@ -136,14 +136,25 @@ async fn call_context_expansion_adds_local_item_owner_for_assoc_const_value() ->
         "fixture_call_graph",
     )?));
     let target = unique_id_by_name(&db, "function", "assoc_const_value")?;
-    let outer = one_uuid(
-        &db,
-        &function_in_module_query(
-            &["crate"],
-            "local_const_initializer_call_is_not_outer_call_site",
+    let cases = [
+        (
+            "local_const",
+            one_uuid(
+                &db,
+                &function_in_module_query(
+                    &["crate"],
+                    "local_const_initializer_call_is_not_outer_call_site",
+                ),
+            )?,
         ),
-    )?;
-    let local_item = local_item_owner_for_parent(&db, outer)?;
+        (
+            "local_fn",
+            one_uuid(
+                &db,
+                &function_in_module_query(&["crate"], "local_fn_body_call_is_not_outer_call_site"),
+            )?,
+        ),
+    ];
 
     let mut rag = init_test_rag_mock(Arc::clone(&db));
     rag.cfg.call_context.max_owner_hits = 128;
@@ -155,22 +166,25 @@ async fn call_context_expansion_adds_local_item_owner_for_assoc_const_value() ->
 
     let (expanded, expansion_info) = rag.expand_hits_with_call_context_info(&[(target, 1.0)])?;
     let expanded_ids = expanded.iter().map(|(id, _)| *id).collect::<Vec<_>>();
-    assert!(
-        expanded_ids.contains(&local_item),
-        "assoc_const_value incoming expansion should include the local item owner: expanded={expanded:#?}; expansion_info={expansion_info:#?}"
-    );
-    assert!(
-        !expanded_ids.contains(&outer),
-        "assoc_const_value incoming expansion must not flatten the local-const call into the outer function: expanded={expanded:#?}; expansion_info={expansion_info:#?}"
-    );
+    for (label, outer) in cases {
+        let local_item = local_item_owner_for_parent_with_label(&db, outer, label)?;
+        assert!(
+            expanded_ids.contains(&local_item),
+            "assoc_const_value incoming expansion should include the {label} owner: expanded={expanded:#?}; expansion_info={expansion_info:#?}"
+        );
+        assert!(
+            !expanded_ids.contains(&outer),
+            "assoc_const_value incoming expansion must not flatten the {label} call into the outer function: expanded={expanded:#?}; expansion_info={expansion_info:#?}"
+        );
 
-    let info = expansion_info.get(&local_item).unwrap_or_else(|| {
-        panic!("local item owner should carry CallExpansionInfo: {expansion_info:#?}")
-    });
-    assert_eq!(info.seed_id, target);
-    assert_eq!(info.relation, CallExpansionKind::IncomingCaller);
-    assert_eq!(info.target_id, target);
-    assert_eq!(info.distance, 1);
+        let info = expansion_info.get(&local_item).unwrap_or_else(|| {
+            panic!("{label} owner should carry CallExpansionInfo: {expansion_info:#?}")
+        });
+        assert_eq!(info.seed_id, target);
+        assert_eq!(info.relation, CallExpansionKind::IncomingCaller);
+        assert_eq!(info.target_id, target);
+        assert_eq!(info.distance, 1);
+    }
 
     Ok(())
 }

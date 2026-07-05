@@ -106,21 +106,25 @@ call context, `code_item_lookup`, and `code_item_edges` assert the resolved
 `Body::empty`. The remaining rows in this fanout are still tracked as
 import/re-export completeness gaps, not as expected-passing traversal edges. The
 DB matrix now also pins the current targetless rows by exact owner/source label
-and exact source-line fanout, with zero traversal candidates: nine external
+and exact source-line fanout, with zero traversal candidates: eight normal
+function/method-owned external
 rows in `axum/src/{extract/query.rs,
 extract/raw_form.rs,form.rs,middleware/from_fn.rs,routing/route.rs,
 routing/tests/mod.rs,serve/mod.rs}` and three unsupported rows in
 `axum/src/routing/method_routing.rs` and
-`axum/src/routing/tests/get_to_head.rs`.
+`axum/src/routing/tests/get_to_head.rs`. The
+`axum/src/routing/tests/mod.rs:228` nested local `handler` row is now pinned as
+an external targetless `LocalItem` owner row.
 The `axum/src/routing/route.rs:161` closure-body row remains absent until nested
 closure ownership is modeled.
 
 The DB matrix also pins eight currently projected external
 `HeaderValue::from_static` rows by exact owner and source line: four `axum-core`
-response conversion rows, two JSON response rows under one owner, the HTML
-response owner, and one function-local const initializer row owned by a
-`LocalItem` executable owner in `set_content_length`. The websocket upgrade
-local const initializer rows remain absent in the current axum fixture.
+response conversion rows, the HTML response owner, two JSON response rows owned
+by the nested local `make_response` `LocalItem` owner, and one function-local
+const initializer row owned by a `LocalItem` executable owner in
+`set_content_length`. The websocket upgrade local const initializer rows remain
+absent in the current axum fixture.
 
 ## High-Fanout Test Helper Matrix
 

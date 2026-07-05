@@ -481,7 +481,15 @@ mod tests {
     }
 
     fn local_item_owner_for_parent(db: &Database, parent: Uuid) -> Result<Uuid, DbError> {
-        executable_owner_for_parent(db, parent, "LocalItem", "local_const")
+        local_item_owner_for_parent_with_label(db, parent, "local_const")
+    }
+
+    fn local_item_owner_for_parent_with_label(
+        db: &Database,
+        parent: Uuid,
+        label: &str,
+    ) -> Result<Uuid, DbError> {
+        executable_owner_for_parent(db, parent, "LocalItem", label)
     }
 
     fn executable_owner_for_parent(

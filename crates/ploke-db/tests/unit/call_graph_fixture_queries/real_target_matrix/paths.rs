@@ -749,19 +749,6 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
             status: CallStatusKind::External,
         },
         BodyEmptyPathCase {
-            // axum/src/routing/tests/mod.rs:228
-            // nested `handler` returns `Response::new(Body::empty())`; the
-            // current fixture owns this nested item row under
-            // `service_in_bottom`.
-            label: "axum/src/routing/tests/mod.rs:228",
-            owner: function_id_by_name_in_module(
-                &db,
-                &["crate", "routing", "tests"],
-                "service_in_bottom",
-            )?,
-            status: CallStatusKind::External,
-        },
-        BodyEmptyPathCase {
             // axum/src/routing/tests/mod.rs:1133
             // `connect_going_to_custom_fallback` builds a CONNECT request with
             // `Body::empty()`.
@@ -845,6 +832,29 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
     for case in targetless_cases {
         assert_owner_path_targetless(&db, case.owner, &["Body", "empty"], case.status, case.label)?;
     }
+    // axum/src/routing/tests/mod.rs:228
+    // Nested local `handler` returns `Response::new(Body::empty())`. That row is
+    // owned by the local function body owner, not the enclosing
+    // `service_in_bottom` test function.
+    assert_targetless_path_owner_kind_rows(
+        &db,
+        &["Body", "empty"],
+        CallStatusKind::External,
+        "LocalItem",
+        1,
+        "axum/src/routing/tests/mod.rs:228 local handler Body::empty",
+    )?;
+    assert_targetless_path_owner_kind_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        &["Body", "empty"],
+        CallStatusKind::External,
+        "LocalItem",
+        &[SourceLineFanout {
+            file_suffix: "axum/src/routing/tests/mod.rs",
+            lines: &[228],
+        }],
+    )?;
     let route_poll_owner = method_id_by_name_body_and_file_suffix(
         &db,
         "poll",
@@ -863,9 +873,11 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
     // Matrix targetless source rows:
     //   external: axum/src/extract/query.rs:106; raw_form.rs:65;
     //   form.rs:158; middleware/from_fn.rs:411;
-    //   routing/route.rs:174; routing/tests/mod.rs:{228,1133,1151};
+    //   routing/route.rs:174; routing/tests/mod.rs:{1133,1151};
     //   serve/mod.rs:799. The routing/route.rs:161 closure-body row remains
-    //   absent until nested closure ownership is modeled.
+    //   absent until nested closure ownership is modeled. The
+    //   routing/tests/mod.rs:228 local `handler` row is asserted separately as
+    //   a `LocalItem` owner above.
     //   resolved: axum-core/src/ext_traits/request.rs:{346,364,377,390}.
     //   unsupported: routing/method_routing.rs:1700;
     //   routing/tests/get_to_head.rs:{25,59}.
@@ -879,7 +891,7 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
             ("axum/src/form.rs", 1),
             ("axum/src/middleware/from_fn.rs", 1),
             ("axum/src/routing/route.rs", 1),
-            ("axum/src/routing/tests/mod.rs", 3),
+            ("axum/src/routing/tests/mod.rs", 2),
             ("axum/src/serve/mod.rs", 1),
         ],
     )?;
@@ -911,7 +923,7 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
             },
             SourceLineFanout {
                 file_suffix: "axum/src/routing/tests/mod.rs",
-                lines: &[228, 1133, 1151],
+                lines: &[1133, 1151],
             },
             SourceLineFanout {
                 file_suffix: "axum/src/serve/mod.rs",
@@ -1053,7 +1065,6 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
             "consume_body_to_json_requires_json_content_type",
             "json.rs:264",
         ),
-        ("json_content_types", "json.rs:279"),
         ("invalid_json_syntax", "json.rs:299"),
         ("extra_chars_after_valid_json_syntax", "json.rs:318"),
         ("invalid_json_data", "json.rs:353"),
@@ -1061,6 +1072,29 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
         let owner = function_id_by_name_in_module(&db, &["crate", "json", "tests"], owner_name)?;
         assert_owner_path_targetless(&db, owner, &["post"], CallStatusKind::Unsupported, label)?;
     }
+    // axum/src/json.rs:279
+    // `post(...)` is inside the nested local async function
+    // `valid_json_content_type`, so it is owned by a local item body rather
+    // than the enclosing `json_content_types` test function.
+    assert_targetless_path_owner_kind_rows(
+        &db,
+        &["post"],
+        CallStatusKind::Unsupported,
+        "LocalItem",
+        1,
+        "axum/src/json.rs:279 local async fn post",
+    )?;
+    assert_targetless_path_owner_kind_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        &["post"],
+        CallStatusKind::Unsupported,
+        "LocalItem",
+        &[SourceLineFanout {
+            file_suffix: "axum/src/json.rs",
+            lines: &[279],
+        }],
+    )?;
 
     for (owner_name, label) in [
         (
@@ -1204,7 +1238,7 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
         &["post"],
         CallStatusKind::Unsupported,
         &[
-            ("axum/src/json.rs", 6),
+            ("axum/src/json.rs", 5),
             ("axum/src/routing/method_routing.rs", 2),
             ("axum/src/routing/tests/mod.rs", 14),
         ],
@@ -1227,7 +1261,7 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
         &[
             SourceLineFanout {
                 file_suffix: "axum/src/json.rs",
-                lines: &[248, 264, 279, 299, 318, 353],
+                lines: &[248, 264, 299, 318, 353],
             },
             SourceLineFanout {
                 file_suffix: "axum/src/routing/method_routing.rs",
