@@ -145,7 +145,7 @@ impl AxumRemainingTarget {
             Self::RequestPartsExtExtract => 1,
             Self::FromRequest => 2,
             Self::FromRequestParts => 3,
-            Self::FromRef => 2,
+            Self::FromRef => 3,
             Self::RouterNew => 310,
             Self::RouterClone => 13,
             Self::ExpandField => 1,
