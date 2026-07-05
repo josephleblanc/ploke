@@ -190,6 +190,9 @@ pub enum DynamicCallCallee {
         path: Vec<String>,
         closure_id: ExecutableBodyId,
     },
+    /// The callee expression is an inline non-async closure literal with a
+    /// known executable body owner, such as `(|| value)()`.
+    ClosureLiteral { closure_id: ExecutableBodyId },
     /// The callee expression is a visible local binding initialized from a
     /// path, such as `let f = local_target; (f)()`.
     InitializedLocalBinding {

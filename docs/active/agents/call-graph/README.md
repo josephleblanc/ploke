@@ -1204,7 +1204,7 @@ Implemented in this slice:
 1. Added parser-internal `generate_dynamic_call_site_id(...)` for `DynamicCallSiteId` construction in the `CallId` universe.
 2. The body visitor records non-path `syn::ExprCall` callees as `CallNode::DynamicCall`.
 3. Added `tests/fixture_crates/fixture_call_graph` for focused dynamic/Fn-like syntax coverage absent from existing fixtures.
-4. `(closure)()` and `(|| 11)()` are covered by paranoid call-site tests and currently receive `Unsupported` status with no semantic edge.
+4. `(closure)()` and non-async closure literals such as `(|| 11)()` are covered by paranoid call-site tests and resolve to closure executable owners with `CallRelation::DynamicClosure`.
 
 Primary implementation files:
 

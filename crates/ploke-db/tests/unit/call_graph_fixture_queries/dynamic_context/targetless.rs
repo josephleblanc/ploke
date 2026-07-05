@@ -21,7 +21,6 @@ fn fixture_context_reads_projected_targetless_dynamic_failures() -> Result<(), D
         TargetlessDynamicContextCase::unsupported("call_indexed_function_pointer"),
         TargetlessDynamicContextCase::unsupported("call_indexed_field_function_param"),
         TargetlessDynamicContextCase::unsupported("call_indexed_tuple_field_function_param"),
-        TargetlessDynamicContextCase::unsupported("call_move_closure_literal_with_body_call"),
         TargetlessDynamicContextCase::unsupported("call_async_closure_literal_with_body_call"),
         TargetlessDynamicContextCase::unsupported_path(
             "call_parenthesized_generic_fn_once_value_binding",

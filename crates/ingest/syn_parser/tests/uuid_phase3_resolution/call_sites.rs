@@ -16,8 +16,8 @@ use crate::paranoid_call_site_test;
 use ploke_core::ItemKind;
 use syn_parser::parser::graph::GraphAccess;
 use syn_parser::parser::nodes::{
-    AnyCallSiteId, CallBodyOwnerId, CallNode, ExecutableBodyKind, FunctionNodeId, PathCallCallee,
-    StructNodeId, TypeDefNode, VariantNodeId,
+    AnyCallSiteId, CallBodyOwnerId, CallNode, ExecutableBodyId, ExecutableBodyKind, FunctionNodeId,
+    PathCallCallee, StructNodeId, TypeDefNode, VariantNodeId,
 };
 use syn_parser::parser::relations::{
     CallRelation, CallResolutionKind, CallResolutionStatus, CallSiteRelation,
@@ -2032,20 +2032,29 @@ fn fixture_call_graph_dynamic_calls_records_parenthesized_binding_dynamic_call_s
     Ok(())
 }
 
-paranoid_call_site_test!(
-    fixture_call_graph_dynamic_calls_records_closure_literal_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "dynamic_calls"
-    },
-    expected: ExpectedCallSite::dynamic(
+#[test]
+fn fixture_call_graph_dynamic_calls_records_closure_literal_dynamic_call_site()
+-> Result<(), syn_parser::error::SynParserError> {
+    let (graph, tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+    let report = resolve_call_relations_after_tree(&graph, &tree)?;
+    let owner = crate::common::call_site_paranoid::function_owner_context(
+        &graph,
+        &["crate"],
+        "dynamic_calls",
+    );
+    let closure = closure_body_inside_span(&graph, &owner, DYNAMIC_CLOSURE_LITERAL_CALL_SPAN);
+    let expected = ExpectedCallSite::dynamic_closure_literal(
+        closure,
         DYNAMIC_CLOSURE_LITERAL_CALL_SPAN,
         0,
         &[],
-        ExpectedCallOutcome::Unsupported,
-    ),
-);
+        ExpectedCallOutcome::ResolvedDynamicClosureLocalExact { target: closure },
+    );
+    crate::common::call_site_paranoid::assert_paranoid_call_site(
+        &graph, &report, &owner, &expected,
+    );
+    Ok(())
+}
 
 paranoid_call_site_test!(
     fixture_call_graph_call_crate_local_target_resolves_crate_path_call_site,
@@ -4221,22 +4230,29 @@ paranoid_call_site_test!(
     },
 );
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_move_closure_literal_with_body_call_records_outer_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_move_closure_literal_with_body_call"
-    },
-    expected: {
-        ExpectedCallSite::dynamic(
-            MOVE_CLOSURE_LITERAL_DYNAMIC_CALL_SPAN,
-            0,
-            &[],
-            ExpectedCallOutcome::Unsupported,
-        )
-    },
-);
+#[test]
+fn fixture_call_graph_call_move_closure_literal_with_body_call_records_outer_dynamic_call_site()
+-> Result<(), syn_parser::error::SynParserError> {
+    let (graph, tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+    let report = resolve_call_relations_after_tree(&graph, &tree)?;
+    let owner = crate::common::call_site_paranoid::function_owner_context(
+        &graph,
+        &["crate"],
+        "call_move_closure_literal_with_body_call",
+    );
+    let closure = closure_body_inside_span(&graph, &owner, MOVE_CLOSURE_LITERAL_DYNAMIC_CALL_SPAN);
+    let expected = ExpectedCallSite::dynamic_closure_literal(
+        closure,
+        MOVE_CLOSURE_LITERAL_DYNAMIC_CALL_SPAN,
+        0,
+        &[],
+        ExpectedCallOutcome::ResolvedDynamicClosureLocalExact { target: closure },
+    );
+    crate::common::call_site_paranoid::assert_paranoid_call_site(
+        &graph, &report, &owner, &expected,
+    );
+    Ok(())
+}
 
 paranoid_call_site_test!(
     fixture_call_graph_call_async_closure_literal_with_body_call_records_outer_dynamic_call_site,
@@ -4495,6 +4511,30 @@ fn assert_executable_body_path_call_owned_at_span(
         1,
         "expected one {kind:?} BodyContainsCall relation for {span:?}, found {relations:#?}"
     );
+}
+
+fn closure_body_inside_span(
+    graph: &impl GraphAccess,
+    owner: &CallOwnerContext,
+    span: (usize, usize),
+) -> ExecutableBodyId {
+    let bodies = graph
+        .executable_bodies()
+        .iter()
+        .filter(|body| {
+            body.parent == owner.id
+                && body.kind == ExecutableBodyKind::Closure
+                && span.0 <= body.span.0
+                && body.span.1 <= span.1
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        bodies.len(),
+        1,
+        "expected one closure body owned by {} inside {span:?}, found {bodies:#?}",
+        owner.label
+    );
+    bodies[0].id
 }
 
 paranoid_call_site_test!(

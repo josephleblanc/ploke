@@ -163,38 +163,32 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
         2,
         "dynamic closure binding owner context: {closure_binding_context:#?}"
     );
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:5:
-    // `(closure)()` should resolve to the local closure executable owner.
-    let closure_binding_call = closure_binding_context
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:5-6:
+    // `(closure)()` and `(|| 11)()` should both resolve to local closure
+    // executable owners. The literal call remains pathless, so RAG exposes both
+    // callees as generic dynamic calls with `DynamicClosure` targets.
+    let dynamic_closure_calls = closure_binding_context
         .iter()
-        .find(|call| {
+        .filter(|call| {
             call.kind == CallSiteKind::Dynamic
                 && call
                     .targets
                     .iter()
                     .any(|target_info| target_info.relation == CallTargetKind::DynamicClosure)
         })
-        .expect("dynamic closure binding call should target the closure owner");
-    assert_eq!(closure_binding_call.status, CallStatusKind::Resolved);
+        .collect::<Vec<_>>();
     assert_eq!(
-        closure_binding_call.resolution,
-        Some(CallResolutionKind::LocalExact)
+        dynamic_closure_calls.len(),
+        2,
+        "dynamic_calls should expose named and literal closure targets: {closure_binding_context:#?}"
     );
-    assert_eq!(closure_binding_call.targets.len(), 1);
-    assert_eq!(
-        closure_binding_call.targets[0].relation,
-        CallTargetKind::DynamicClosure
-    );
-
-    // tests/fixture_crates/fixture_call_graph/src/lib.rs:6:
-    // `(|| 11)()` is still unsupported because literal dynamic callees do not
-    // yet carry direct closure-owner proof.
-    let closure_literal_call = closure_binding_context
-        .iter()
-        .find(|call| call.kind == CallSiteKind::Dynamic && call.targets.is_empty())
-        .expect("dynamic closure literal call should remain targetless");
-    assert_eq!(closure_literal_call.status, CallStatusKind::Unsupported);
-    assert!(closure_literal_call.resolution.is_none());
+    for call in dynamic_closure_calls {
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(call.callee, CallCalleeInfo::Dynamic);
+        assert_eq!(call.targets.len(), 1);
+        assert_eq!(call.targets[0].relation, CallTargetKind::DynamicClosure);
+    }
 
     let unsupported_context = call_context
         .get(&unsupported_owner)

@@ -210,7 +210,13 @@ impl BodyCallVisitor<'_> {
             span,
             cfgs: self.cfgs.to_vec(),
             arg_count: call.args.len(),
-            callee: classify_dynamic_callee(&call.func, self.param_names, &self.local_scopes),
+            callee: classify_dynamic_callee(
+                &call.func,
+                self.owner,
+                self.cfgs,
+                self.param_names,
+                &self.local_scopes,
+            ),
         }));
         self.relations.push(CallSiteRelation::BodyContainsCall {
             source: self.owner,
@@ -757,9 +763,15 @@ fn classify_path_callee(
 
 fn classify_dynamic_callee(
     callee: &syn::Expr,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
     param_names: &[String],
     local_scopes: &[Vec<LocalBindingProof>],
 ) -> DynamicCallCallee {
+    if let Some(closure_id) = closure_literal_callee(callee, owner, cfgs) {
+        return DynamicCallCallee::ClosureLiteral { closure_id };
+    }
+
     if let Some((name, field_path)) = local_field_path(callee, param_names, local_scopes) {
         let mut path = Vec::with_capacity(field_path.len() + 1);
         path.push(name.clone());
@@ -830,6 +842,24 @@ fn classify_dynamic_callee(
         return DynamicCallCallee::Other;
     };
     classify_dynamic_path_expr(path, param_names, local_scopes)
+}
+
+fn closure_literal_callee(
+    callee: &syn::Expr,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+) -> Option<ExecutableBodyId> {
+    let syn::Expr::Closure(closure) = unparen_expr(callee) else {
+        return None;
+    };
+    if closure.asyncness.is_some() {
+        return None;
+    }
+    let byte_range = closure.span().byte_range();
+    let span = (byte_range.start, byte_range.end);
+    Some(ExecutableBodyId::Closure(generate_closure_body_id(
+        owner, span, cfgs,
+    )))
 }
 
 fn classify_dynamic_path_expr(

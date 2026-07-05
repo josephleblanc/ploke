@@ -46,7 +46,9 @@ impl CallRelationResolver<'_> {
             return Ok(());
         }
 
-        if let DynamicCallCallee::ClosureBinding { closure_id, .. } = &call.callee {
+        if let DynamicCallCallee::ClosureBinding { closure_id, .. }
+        | DynamicCallCallee::ClosureLiteral { closure_id } = &call.callee
+        {
             relations.push(CallRelation::DynamicClosure {
                 source: call.id,
                 target: *closure_id,
@@ -64,6 +66,7 @@ impl CallRelationResolver<'_> {
             }
             DynamicCallCallee::LocalBinding { .. }
             | DynamicCallCallee::ClosureBinding { .. }
+            | DynamicCallCallee::ClosureLiteral { .. }
             | DynamicCallCallee::InitializedLocalBinding { .. }
             | DynamicCallCallee::FnPointerCastInitializedLocalBinding { .. }
             | DynamicCallCallee::FnPointerCastLocalBinding { .. }

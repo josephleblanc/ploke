@@ -267,6 +267,8 @@ pub enum ExpectedDynamicCallee<'a> {
         path: &'a [&'a str],
         closure_id: ExecutableBodyId,
     },
+    /// The callee expression is an inline non-async closure literal with a known executable owner.
+    ClosureLiteral { closure_id: ExecutableBodyId },
     /// The callee expression names a local value binding initialized by another path.
     InitializedLocalBinding {
         path: &'a [&'a str],
@@ -324,6 +326,7 @@ impl ExpectedDynamicCallee<'_> {
                 path: path.iter().copied().map(String::from).collect(),
                 closure_id,
             },
+            Self::ClosureLiteral { closure_id } => DynamicCallCallee::ClosureLiteral { closure_id },
             Self::InitializedLocalBinding { path, init_path } => {
                 DynamicCallCallee::InitializedLocalBinding {
                     path: path.iter().copied().map(String::from).collect(),
@@ -676,6 +679,25 @@ impl<'a> ExpectedCallSite<'a> {
         Self {
             kind: ExpectedCallKind::Dynamic {
                 callee: ExpectedDynamicCallee::ClosureBinding { path, closure_id },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is an inline closure literal.
+    pub const fn dynamic_closure_literal(
+        closure_id: ExecutableBodyId,
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::ClosureLiteral { closure_id },
                 arg_count,
             },
             span,

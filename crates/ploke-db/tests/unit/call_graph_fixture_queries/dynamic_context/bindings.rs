@@ -102,15 +102,17 @@ fn fixture_context_reads_projected_function_item_binding_calls() -> Result<(), D
         "shadowed binding context rows: {context:#?}"
     );
 
-    assert_targetless_row(
-        &context,
-        owner,
-        TargetlessRowCase::path(
-            &["local_target"],
-            0,
-            CallStatusKind::Unsupported,
-            "shadowed closure binding",
-        ),
+    let row = row_by_path(&context, &["local_target"]);
+    assert_ne!(
+        row.targets[0].target_id, local_target,
+        "shadowed closure binding must not fake-resolve to the module function"
+    );
+    assert_resolved_target(
+        row,
+        row.targets[0].target_id,
+        CallRelationKind::Closure,
+        CallSiteKind::Path,
+        CallTargetKind::Closure,
     );
 
     let owner = function_id_by_name(&db, "call_if_ambiguous_initialized_function_item_binding")?;
@@ -200,12 +202,30 @@ fn fixture_context_reads_projected_dynamic_closure_binding_call() -> Result<(), 
     assert_eq!(path.edges[0].target_kind, CallTargetKind::Closure);
 
     // tests/fixture_crates/fixture_call_graph/src/lib.rs:6:
-    // `(|| 11)()` is still targetless because literal dynamic callees do not
-    // yet get direct closure-owner proof.
-    assert_targetless_row(
-        &context,
-        owner,
-        TargetlessRowCase::dynamic(None, CallStatusKind::Unsupported, "dynamic closure literal"),
+    // `(|| 11)()` has no callee path, but it is a non-async closure literal
+    // whose body owner can be targeted exactly.
+    let literal_row = context
+        .iter()
+        .find(|row| {
+            row.site.kind == CallSiteKind::Dynamic
+                && row.site.path.is_none()
+                && row
+                    .targets
+                    .iter()
+                    .any(|target| target.relation == CallRelationKind::DynamicClosure)
+        })
+        .expect("dynamic closure literal should target its closure owner");
+    assert_eq!(literal_row.site.owner_id, owner);
+    assert_eq!(literal_row.site.arg_count, Some(0));
+    assert_eq!(literal_row.site.generic_arg_count, None);
+    assert_eq!(literal_row.targets.len(), 1);
+    let literal_closure = literal_row.targets[0].target_id;
+    assert_resolved_target(
+        literal_row,
+        literal_closure,
+        CallRelationKind::DynamicClosure,
+        CallSiteKind::Dynamic,
+        CallTargetKind::Closure,
     );
 
     Ok(())
