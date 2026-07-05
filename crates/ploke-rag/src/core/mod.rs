@@ -818,6 +818,20 @@ impl RagService {
         )?))
     }
 
+    pub fn exact_private_uncalled_nodes(&self) -> Result<Option<Vec<CallNodeInfo>>, RagError> {
+        if !self.cfg.call_context.enabled {
+            return Ok(None);
+        }
+
+        Ok(Some(
+            self.db
+                .private_uncalled_nodes()?
+                .into_iter()
+                .map(call_node_info)
+                .collect(),
+        ))
+    }
+
     fn call_context(
         &self,
         node_id: Uuid,

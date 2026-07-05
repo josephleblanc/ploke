@@ -1312,10 +1312,18 @@ async fn call_impact_exact_reports_private_target_without_incoming_callers() -> 
     //   No checked-in axum source row calls `traits(...)`; generated test
     //   harness entrypoints are outside the persisted source call graph.
     let target = function_id_by_name_in_module(&db, &["crate", "error_handling"], "traits")?;
-    let uncalled = db.private_uncalled_nodes()?;
+    let parse_attrs =
+        function_id_by_name_in_module(&db, &["crate", "attr_parsing"], "parse_attrs")?;
+    let uncalled = rag
+        .exact_private_uncalled_nodes()?
+        .expect("call context enabled");
     assert!(
         uncalled.iter().any(|node| node.id == target),
-        "DB private uncalled-node helper should list error_handling::traits: {uncalled:#?}"
+        "RAG private uncalled-node helper should list error_handling::traits: {uncalled:#?}"
+    );
+    assert!(
+        uncalled.iter().all(|node| node.id != parse_attrs),
+        "RAG private uncalled-node helper should exclude called parse_attrs helper: {uncalled:#?}"
     );
 
     let report = rag
