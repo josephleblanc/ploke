@@ -106,29 +106,16 @@ async fn proof_context_collection_preserves_axum_from_ref_dependency_root_path_b
     init_tracing_once();
     let db = axum_db()?;
 
-    let cases = [
-        PathCase {
-            label: "InnerState::from_ref dependency-root path",
-            owner: OwnerCase::Method {
-                name: "from_request_parts",
-                body: "InnerState::from_ref(state)",
-                file: "axum/src/extract/state.rs",
-            },
-            path: &["InnerState", "from_ref"],
-            status: CallStatusKind::Unsupported,
-            proof: ProofCheck::Blocked,
+    let cases = [PathCase {
+        label: "Secret::from_ref dependency-root path",
+        owner: OwnerCase::Function {
+            module: &["crate", "middleware", "from_extractor", "tests"],
+            name: "test_from_extractor",
         },
-        PathCase {
-            label: "Secret::from_ref dependency-root path",
-            owner: OwnerCase::Function {
-                module: &["crate", "middleware", "from_extractor", "tests"],
-                name: "test_from_extractor",
-            },
-            path: &["Secret", "from_ref"],
-            status: CallStatusKind::Unsupported,
-            proof: ProofCheck::IdentityMismatch,
-        },
-    ];
+        path: &["Secret", "from_ref"],
+        status: CallStatusKind::Unsupported,
+        proof: ProofCheck::IdentityMismatch,
+    }];
 
     let mut owners = Vec::new();
     for case in cases {
@@ -163,22 +150,18 @@ async fn proof_context_collection_preserves_axum_from_ref_dependency_root_path_b
             .get(&owner)
             .unwrap_or_else(|| panic!("{} should receive projected proof rows", case.label));
 
-        // Matrix: dependency-root `FromRef::from_ref` bounded path rows.
+        // Matrix: remaining dependency-root `FromRef::from_ref` bounded path row.
         // Source chain:
         //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
-        //   axum/src/extract/state.rs:1 imports `axum_core::extract::FromRef`;
-        //   axum/src/extract/state.rs:314 calls `InnerState::from_ref(state)`.
         //   axum/src/middleware/from_extractor.rs:306 imports the same trait;
         //   axum/src/middleware/from_extractor.rs:328 calls
         //   `Secret::from_ref(state)`.
-        // Expected proof traversal: the top-level state extractor path keeps
-        // the normal blocked call_resolution proof. The nested local
-        // `test_from_extractor` row is visible in call context, but proof
+        // Expected proof traversal: the top-level state extractor path now
+        // resolves through workspace dependency proof and is covered by the
+        // supported `FromRef` target-centered tests. The nested local
+        // `test_from_extractor` row is still visible in call context, but proof
         // context currently reports `canonical_identity_mismatch` for that
-        // local owner boundary; both rows must still have zero callee edges
-        // until dependency-root trait-bound resolution can connect this axum
-        // crate import back to the parsed axum-core `FromRef` trait method
-        // binding.
+        // local owner boundary without fabricating a call_edge.
         match case.proof {
             ProofCheck::Blocked => {
                 assert_site_blocker(rows, owner, site_id, "type_resolution_missing", case.label);

@@ -213,7 +213,7 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_chrono_call_graph_2026-07-01.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | plain corpus backup for real-target call graph query contracts | 2026-07-01 |
 | `corpus_chrono_openrouter_embeddings_2026-05-17.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_axum_type_graph_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | typed graphRAG workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
-| `corpus_axum_call_graph_2026-07-01.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-01 |
+| `corpus_axum_call_graph_2026-07-05.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-05 |
 | `corpus_axum_openrouter_embeddings_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | OpenRouter-searchable workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `ploke-db_af8e3a20-728d-5967-8523-da8a5ccdae45` | `crates/ploke-db` | currently orphaned snapshot | 2026-03-20 |
 
@@ -277,7 +277,7 @@ Post-regeneration verification:
 - Checkout-local outputs remain under `tests/backup_dbs/local/`.
 - Shared call-graph corpus snapshots were refreshed under the configured DB
   snapshot fixture directory.
-- The regenerated `corpus_axum_call_graph_2026-07-01.sqlite` shared snapshot
+- The regenerated `corpus_axum_call_graph_2026-07-05.sqlite` shared snapshot
   was copied into `tests/backup_dbs/` as the committed seed artifact.
 
 ## `fixture_nodes_canonical_2026-05-17.sqlite`
@@ -650,10 +650,10 @@ Expected searchable corpus embedding config:
   - `Token![,]` under `Punctuated<syn::Variant, Token![,]>` retains a nested
     macro type without fabricating a terminal target
 
-### `corpus_axum_call_graph_2026-07-01.sqlite`
+### `corpus_axum_call_graph_2026-07-05.sqlite`
 
 - Status: active
-- File: `tests/backup_dbs/corpus_axum_call_graph_2026-07-01.sqlite`
+- File: `tests/backup_dbs/corpus_axum_call_graph_2026-07-05.sqlite`
 - Parsed target: `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1`
 - Checkout slug: `tests/fixture_github_clones/corpus/tokio-rs__axum`
 - Selected workspace members:
@@ -684,8 +684,11 @@ Expected searchable corpus embedding config:
     resolution
   - same-crate axum-core `InnerState::from_ref` and `String::from_ref`
     bounded associated paths reach the `FromRef::from_ref` trait method
-    binding; axum rows whose bounds import `FromRef` through dependency root
-    `axum_core::extract::FromRef` remain unsupported and targetless
+    binding; the top-level axum `State` extractor row whose bound imports
+    `FromRef` through the parsed workspace dependency root
+    `axum_core::extract::FromRef` also reaches that trait method binding; the
+    nested middleware local-impl row remains targetless because its local impl
+    method is still projected under the enclosing test function owner
   - `Router` `Default::default` reaches `Router::new` through a local-exact
     `Self::new()` associated-function edge
   - axum `TestClient::new` reaches the cfg-gated local test helper target for

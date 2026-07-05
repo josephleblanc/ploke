@@ -355,7 +355,7 @@ impl CallRelationResolver<'_> {
     ) -> Result<AssocPathResolution, SynParserError> {
         let mut candidates = Vec::new();
         for trait_id in traits {
-            let trait_node = self.graph.get_trait_checked(trait_id)?;
+            let trait_node = self.trait_node(trait_id)?;
             candidates.extend(
                 trait_node
                     .methods

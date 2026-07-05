@@ -38,10 +38,10 @@ fn axum_real_target_workspace_dependency_candidates_link_selected_members() -> R
 
     // Matrix connection:
     //   axum/src/extract/state.rs imports `axum_core::extract::FromRef`.
-    //   The call resolver still leaves those dependency-root `FromRef::from_ref`
-    //   rows targetless. This carrier proves the DB can identify `axum-core`
-    //   as a parsed workspace dependency before any future resolver converts
-    //   dependency-root imports into local traversal edges.
+    //   The workspace-aware call resolver consumes this carrier for the
+    //   top-level State extractor `FromRef::from_ref` row. Nested local-impl
+    //   rows that are still projected under an enclosing function owner remain
+    //   a separate body-owner/scope gap.
     let core_candidate = by_dep
         .get("axum-core")
         .expect("axum-core path dependency should resolve to a parsed workspace crate");

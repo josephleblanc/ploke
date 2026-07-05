@@ -11,7 +11,9 @@ use syn_parser::parser::nodes::*;
 use syn_parser::parser::types::TypeNode;
 use syn_parser::parser::{graph::CodeGraph, nodes::TypeDefNode, types::VisibilityKind};
 use syn_parser::resolve::RelationIndexer;
-use syn_parser::resolve::call_resolution::resolve_call_relations_after_tree;
+use syn_parser::resolve::call_resolution::{
+    CallResolutionReport, resolve_call_relations_after_tree,
+};
 use syn_parser::resolve::module_tree::ModuleTree;
 use syn_parser::resolve::type_resolution_v2::resolve_type_relations_after_tree;
 use syn_parser::utils::LogStyle;
@@ -137,15 +139,23 @@ pub fn transform_parsed_graph(
     parsed_graph: ParsedCodeGraph,
     tree: &ModuleTree,
 ) -> Result<(), TransformError> {
-    let type_relation_report =
-        resolve_type_relations_after_tree(&parsed_graph, tree).map_err(|err| {
-            TransformError::Transformation(format!("typed type relation resolution failed: {err}"))
-        })?;
     let call_resolution_report =
         resolve_call_relations_after_tree(&parsed_graph, tree).map_err(|err| {
             TransformError::Transformation(format!("typed call relation resolution failed: {err}"))
         })?;
+    transform_parsed_graph_with_call_report(db, parsed_graph, tree, call_resolution_report)
+}
 
+pub(super) fn transform_parsed_graph_with_call_report(
+    db: &Db<MemStorage>,
+    parsed_graph: ParsedCodeGraph,
+    tree: &ModuleTree,
+    call_resolution_report: CallResolutionReport,
+) -> Result<(), TransformError> {
+    let type_relation_report =
+        resolve_type_relations_after_tree(&parsed_graph, tree).map_err(|err| {
+            TransformError::Transformation(format!("typed type relation resolution failed: {err}"))
+        })?;
     let code_graph = parsed_graph.graph;
     let crate_context = parsed_graph
         .crate_context

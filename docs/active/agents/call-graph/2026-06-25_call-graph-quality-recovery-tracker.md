@@ -936,13 +936,14 @@ Progress note, 2026-06-28:
   `Router::new`, plus the same-impl `RequestExt` and `RequestPartsExt`
   `self.extract_with_state(&())` method-call rows, through the same
   table-driven fixture as the remaining supported axum targets.
-- RAG call-context and proof-context targetless coverage now includes the
-  axum dependency-root `FromRef::from_ref` path rows. The top-level state
-  extractor keeps the normal blocked proof row; the nested `test_from_extractor`
-  local-owner row is pinned as the current `canonical_identity_mismatch` proof
-  boundary, with no fabricated call edge.
-- Exact TUI `code_item_lookup` and `code_item_edges` now cover the same
-  dependency-root `FromRef::from_ref` targetless path rows, including the
+- RAG call-context and proof-context targetless coverage now preserves the
+  remaining nested axum dependency-root `FromRef::from_ref` path row. The
+  top-level State extractor row resolves through parsed workspace dependency
+  proof; the nested `test_from_extractor` local-owner row is pinned as the
+  current `canonical_identity_mismatch` proof boundary, with no fabricated call
+  edge.
+- Exact TUI `code_item_lookup` and `code_item_edges` now cover that remaining
+  dependency-root `FromRef::from_ref` targetless row, including the
   `canonical_identity_mismatch` proof boundary for the nested local-owner row.
 - Method-call resolver orchestration and receiver/result helper logic now live
   in `resolve/call_resolution/method.rs`, following the existing
@@ -967,12 +968,12 @@ For the `ploke-db` real-corpus call-site oracle matrix:
 - `cargo test -p ploke-db real_target_matrix -- --nocapture`
   - passed: 53 passed, 0 failed.
 
-For RAG dependency-root targetless path rows:
+For remaining RAG dependency-root targetless path rows:
 
 - `cargo test -p ploke-rag from_ref_dependency_root -- --nocapture`
   - passed: 2 passed, 0 failed.
 
-For exact TUI dependency-root targetless path rows:
+For remaining exact TUI dependency-root targetless path rows:
 
 - `cargo test -p ploke-tui --test integration from_ref_dependency_root -- --nocapture`
   - passed: 2 passed, 0 failed.

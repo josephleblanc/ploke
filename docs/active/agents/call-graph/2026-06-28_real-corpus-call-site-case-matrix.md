@@ -17,7 +17,7 @@ This inventory is source evidence for future real-target DB query tests. It was 
 
 Primary target:
 
-- `corpus_axum_call_graph_2026-07-01.sqlite`
+- `corpus_axum_call_graph_2026-07-05.sqlite`
 - `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1`
 - Selected workspace members for the current call-graph fixture: `axum`, `axum-core`, `axum-macros`
 

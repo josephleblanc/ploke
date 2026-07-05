@@ -342,15 +342,16 @@ async fn code_item_lookup_returns_from_ref_dependency_root_path_rows() {
         //   docs/active/agents/call-graph/
         //   2026-06-28_real-corpus-call-site-oracle-matrices.md
         //
-        // Source chains:
-        //   axum/src/extract/state.rs:314 calls
-        //   `InnerState::from_ref(state)`.
+        // Source chain:
         //   axum/src/middleware/from_extractor.rs:328 calls
         //   `Secret::from_ref(state)`.
-        // Expected traversal: exact owner lookup exposes the unsupported,
-        // targetless dependency-root path rows with zero callee targets. The
-        // nested `test_from_extractor` proof path currently reports the same
-        // canonical-identity boundary pinned by the RAG proof-context test.
+        // Expected traversal: exact owner lookup exposes the remaining
+        // targetless dependency-root path row with zero callee targets. The
+        // top-level State extractor `InnerState::from_ref` row now resolves
+        // through parsed workspace dependency proof and is covered by the
+        // supported target-centered tests. The nested `test_from_extractor`
+        // proof path still reports the same canonical-identity boundary pinned
+        // by the RAG proof-context test.
         let callee = fixture.case.callee();
         let site_id = assert_path_context(
             call_context,
@@ -375,14 +376,14 @@ async fn code_item_lookup_returns_from_ref_dependency_root_path_rows() {
                 .parse::<usize>()
                 .expect("outgoing count")
                 >= 1,
-            "code_item_lookup should surface outgoing FromRef targetless path context"
+            "code_item_lookup should surface outgoing remaining FromRef targetless path context"
         );
         assert!(
             ui_field(ui, "proof_context")
                 .parse::<usize>()
                 .expect("proof count")
                 >= 1,
-            "code_item_lookup should surface FromRef targetless path proof rows"
+            "code_item_lookup should surface remaining FromRef targetless path proof rows"
         );
     }
 }
@@ -603,8 +604,9 @@ async fn code_item_edges_returns_from_ref_dependency_root_path_rows() {
             .and_then(serde_json::Value::as_array)
             .expect("node_info.proof_context array");
 
-        // Same real-corpus dependency-root FromRef targetless oracle as the
-        // lookup test above, exercised through the edge-oriented payload.
+        // Same remaining real-corpus dependency-root FromRef targetless oracle
+        // as the lookup test above, exercised through the edge-oriented
+        // payload.
         let callee = fixture.case.callee();
         let site_id = assert_path_context(
             call_context,
@@ -629,7 +631,7 @@ async fn code_item_edges_returns_from_ref_dependency_root_path_rows() {
                 .parse::<usize>()
                 .expect("outgoing count")
                 >= 1,
-            "code_item_edges should surface outgoing FromRef targetless path context"
+            "code_item_edges should surface outgoing remaining FromRef targetless path context"
         );
         let proof_count = proof_context.len().to_string();
         assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());

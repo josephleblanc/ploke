@@ -137,7 +137,7 @@ fn axum_real_target_trait_associated_paths_reach_trait_methods() -> Result<(), D
 }
 
 #[test]
-fn axum_real_target_from_ref_same_crate_paths_reach_trait_method() -> Result<(), DbError> {
+fn axum_real_target_from_ref_bounded_paths_reach_trait_method() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
     // Matrix: same-crate `FromRef::from_ref` bounded calls.
@@ -151,6 +151,9 @@ fn axum_real_target_from_ref_same_crate_paths_reach_trait_method() -> Result<(),
     // Expected traversal: explicit where-predicate bounds such as
     // `InnerState: FromRef<OuterState>` and `String: FromRef<S>` resolve to
     // the trait method binding in one local-exact associated-function edge.
+    // The target-centered caller query also includes the axum
+    // `extract/state.rs:309` dependency-root bound resolved by the workspace
+    // proof slice below.
     // Concrete runtime impl dispatch remains type-dependent and is not guessed.
     let target = method_id_by_trait_name(&db, "FromRef", "from_ref")?;
 
@@ -203,21 +206,22 @@ fn axum_real_target_from_ref_same_crate_paths_reach_trait_method() -> Result<(),
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        2,
-        "FromRef::from_ref should expose the two same-crate bounded associated-path callers: {callers:#?}"
+        3,
+        "FromRef::from_ref should expose the two same-crate callers plus the top-level axum dependency-root caller: {callers:#?}"
     );
     assert_sites_match_callers(
         &db,
         target,
         &callers,
-        "FromRef::from_ref same-crate real-corpus callers",
+        "FromRef::from_ref real-corpus callers",
     )?;
 
     Ok(())
 }
 
 #[test]
-fn axum_real_target_from_ref_dependency_root_bounds_are_documented_gaps() -> Result<(), DbError> {
+fn axum_real_target_from_ref_dependency_root_bound_reaches_workspace_trait_method()
+-> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
     // Matrix: dependency-root `FromRef::from_ref` bounded calls.
@@ -228,24 +232,43 @@ fn axum_real_target_from_ref_dependency_root_bounds_are_documented_gaps() -> Res
     //   `axum_core::extract::FromRef`.
     //   axum/src/middleware/from_extractor.rs:328 calls
     //   `Secret::from_ref(state)` from a test function.
-    // Current model gap: type resolution treats dependency roots as external
-    // even when the same fixture also parsed the dependency crate. These rows
-    // stay visible, unsupported, and targetless rather than guessing that
-    // `axum_core::extract::FromRef` is the local axum-core trait node.
+    // Expected traversal: the top-level State extractor row is owned by the
+    // impl method whose where predicate imports `axum_core::extract::FromRef`.
+    // The workspace-aware call resolver uses the path dependency proof
+    // `axum -> axum-core` before projection, so this row resolves to the
+    // parsed axum-core `FromRef::from_ref` trait method binding in one
+    // associated-function edge.
+    let target = method_id_by_trait_name(&db, "FromRef", "from_ref")?;
     let state_owner = method_id_by_name_body_and_file_suffix(
         &db,
         "from_request_parts",
         "InnerState::from_ref(state)",
         "axum/src/extract/state.rs",
     )?;
-    assert_owner_path_targetless(
+    let state_context = db.call_context_for_owner(state_owner)?;
+    let state_row = row_by_path(&state_context, &["InnerState", "from_ref"]);
+    assert_resolved_target(
+        state_row,
+        target,
+        CallRelationKind::AssociatedFunction,
+        CallSiteKind::Path,
+        CallTargetKind::Method,
+    );
+    assert_one_edge_traversal(
         &db,
-        state_owner,
-        &["InnerState", "from_ref"],
-        CallStatusKind::Unsupported,
-        "axum/src/extract/state.rs:309",
+        TraversalExpectation {
+            label: "axum/src/extract/state.rs:309",
+            owner: state_owner,
+            target,
+            site_id: state_row.site.id,
+            expected_edge_count: 1,
+        },
     )?;
 
+    // The nested middleware test helper row remains unsupported because its
+    // local impl method body is still projected under the enclosing test
+    // function owner, so the resolver cannot see the local impl where-bound
+    // scope that proves `Secret: FromRef<S>`.
     let middleware_owner = function_id_by_name(&db, "test_from_extractor")?;
     assert_owner_path_targetless(
         &db,

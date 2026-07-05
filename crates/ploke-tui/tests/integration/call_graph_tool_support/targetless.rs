@@ -65,11 +65,6 @@ pub(crate) struct PathToolCase {
 
 #[derive(Clone, Copy)]
 enum PathOwner {
-    Method {
-        owner_type: &'static str,
-        file_suffix: &'static str,
-        body: &'static str,
-    },
     Function {
         module_path: &'static [&'static str],
         file_suffix: &'static str,
@@ -79,7 +74,6 @@ enum PathOwner {
 
 #[derive(Clone, Copy)]
 pub(crate) enum PathProof {
-    Blocked,
     IdentityMismatch,
 }
 
@@ -243,32 +237,18 @@ impl ReceiverToolCase {
 }
 
 impl PathToolCase {
-    pub(crate) const FROM_REF_DEP_ROOT: [Self; 2] = [
-        Self {
-            label: "axum/src/extract/state.rs:314 InnerState::from_ref dependency root",
-            item: "from_request_parts",
-            path: &["InnerState", "from_ref"],
-            status: CallStatusKind::Unsupported,
-            proof: PathProof::Blocked,
-            owner: PathOwner::Method {
-                owner_type: "State",
-                file_suffix: "axum/src/extract/state.rs",
-                body: "InnerState::from_ref(state)",
-            },
+    pub(crate) const FROM_REF_DEP_ROOT: [Self; 1] = [Self {
+        label: "axum/src/middleware/from_extractor.rs:328 Secret::from_ref dependency root",
+        item: "test_from_extractor",
+        path: &["Secret", "from_ref"],
+        status: CallStatusKind::Unsupported,
+        proof: PathProof::IdentityMismatch,
+        owner: PathOwner::Function {
+            module_path: &["crate", "middleware", "from_extractor", "tests"],
+            file_suffix: "axum/src/middleware/from_extractor.rs",
+            body: "Secret::from_ref(state)",
         },
-        Self {
-            label: "axum/src/middleware/from_extractor.rs:328 Secret::from_ref dependency root",
-            item: "test_from_extractor",
-            path: &["Secret", "from_ref"],
-            status: CallStatusKind::Unsupported,
-            proof: PathProof::IdentityMismatch,
-            owner: PathOwner::Function {
-                module_path: &["crate", "middleware", "from_extractor", "tests"],
-                file_suffix: "axum/src/middleware/from_extractor.rs",
-                body: "Secret::from_ref(state)",
-            },
-        },
-    ];
+    }];
 
     pub(crate) fn callee(&self) -> CallCalleeInfo {
         CallCalleeInfo::Path {
@@ -278,14 +258,12 @@ impl PathToolCase {
 
     pub(crate) fn node_kind(&self) -> &'static str {
         match self.owner {
-            PathOwner::Method { .. } => "method",
             PathOwner::Function { .. } => "function",
         }
     }
 
     pub(crate) fn owner_type(&self) -> Option<&'static str> {
         match self.owner {
-            PathOwner::Method { owner_type, .. } => Some(owner_type),
             PathOwner::Function { .. } => None,
         }
     }
@@ -373,19 +351,6 @@ impl PathToolFixture {
     pub(crate) async fn new(case: PathToolCase) -> Self {
         let db = axum_call_graph_db();
         let owner = match case.owner {
-            PathOwner::Method {
-                owner_type,
-                file_suffix,
-                body,
-            } => owner_by_body(
-                &db,
-                case.item,
-                owner_type,
-                None,
-                file_suffix,
-                body,
-                case.label,
-            ),
             PathOwner::Function {
                 module_path,
                 file_suffix,
@@ -599,47 +564,24 @@ pub(crate) fn assert_method_proof(
 
 pub(crate) fn assert_path_proof(
     proofs: &[serde_json::Value],
-    owner: Uuid,
+    _owner: Uuid,
     site_id: Uuid,
     proof: PathProof,
     label: &str,
     tool: &str,
 ) {
-    let owner = owner.to_string();
     let site_id = site_id.to_string();
     let rows = proofs
         .iter()
         .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
         .collect::<Vec<_>>();
     match proof {
-        PathProof::Blocked => {
-            assert!(
-                rows.iter().any(|proof| {
-                    proof.kind == "call_site"
-                        && proof.caller_def_id.as_deref() == Some(owner.as_str())
-                        && proof.call_site_id.as_deref() == Some(site_id.as_str())
-                        && proof.build_domain_id.as_deref() == Some("bd:corpus-axum-call-graph")
-                }),
-                "{tool} should return the targetless path call_site proof row for {label}: {proofs:#?}"
-            );
-            assert!(
-                rows.iter().any(|proof| {
-                    proof.kind == "call_resolution"
-                        && proof.call_site_id.as_deref() == Some(site_id.as_str())
-                        && proof.resolution_state.as_deref() == Some("blocked")
-                        && proof.blocker_reason.as_deref() == Some("type_resolution_missing")
-                }),
-                "{tool} should return the targetless path blocked resolution proof row for {label}: {proofs:#?}"
-            );
-        }
-        PathProof::IdentityMismatch => {
-            assert!(
-                rows.iter().any(|proof| {
-                    proof.blocker_reason.as_deref() == Some("canonical_identity_mismatch")
-                }),
-                "{tool} should return the canonical-identity proof blocker for {label}: {proofs:#?}"
-            );
-        }
+        PathProof::IdentityMismatch => assert!(
+            rows.iter().any(|proof| {
+                proof.blocker_reason.as_deref() == Some("canonical_identity_mismatch")
+            }),
+            "{tool} should return the canonical-identity proof blocker for {label}: {proofs:#?}"
+        ),
     }
     assert!(
         rows.iter().all(|proof| {

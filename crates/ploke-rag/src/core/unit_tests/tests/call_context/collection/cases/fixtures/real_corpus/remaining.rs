@@ -157,14 +157,16 @@ async fn call_context_exact_reads_remaining_axum_supported_matrix_targets() -> R
         ExactShapeCase {
             // axum-core/src/extract/from_ref.rs:15 declares FromRef::from_ref.
             // ext_traits/mod.rs:25 calls `InnerState::from_ref(state)` and
-            // ext_traits/mod.rs:45 calls `String::from_ref(state)`.
-            label: "axum-core FromRef::from_ref same-crate bounded associated paths",
+            // ext_traits/mod.rs:45 calls `String::from_ref(state)`; axum
+            // extract/state.rs:309 calls `InnerState::from_ref(state)` through
+            // the workspace dependency root `axum_core::extract::FromRef`.
+            label: "axum-core FromRef::from_ref bounded associated paths",
             target: method_id_by_trait_name(&db, "FromRef", "from_ref")?,
             expected: vec![
                 path_shape(
                     &["InnerState", "from_ref"],
                     CallTargetKind::AssociatedFunction,
-                    1,
+                    2,
                 ),
                 path_shape(
                     &["String", "from_ref"],

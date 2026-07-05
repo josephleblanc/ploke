@@ -197,14 +197,14 @@ fn axum_real_target_supported_callers_are_one_hop_traversable() -> Result<(), Db
             // axum-core/src/ext_traits/mod.rs:45 call
             // `InnerState::from_ref(state)` through
             // `InnerState: FromRef<OuterState>` and `String::from_ref(state)`
-            // through `String: FromRef<S>`. Callee binding:
-            // axum-core/src/extract/from_ref.rs:15 trait method. The
-            // axum/src dependency-root `axum_core::extract::FromRef` rows are
-            // asserted separately as unsupported.
-            label: "axum-core FromRef::from_ref same-crate bounded associated paths",
+            // through `String: FromRef<S>`. axum/src/extract/state.rs:309
+            // calls `InnerState::from_ref(state)` through the workspace
+            // dependency root `axum_core::extract::FromRef`. Callee binding:
+            // axum-core/src/extract/from_ref.rs:15 trait method.
+            label: "axum-core FromRef::from_ref bounded associated paths",
             target: method_id_by_trait_name(&db, "FromRef", "from_ref")?,
-            expected_call_edges: 2,
-            expected_traversal_candidates: 2,
+            expected_call_edges: 3,
+            expected_traversal_candidates: 3,
         },
         ResolvedTraversalCase {
             // Router::new is defined at axum/src/routing/mod.rs:162. The
@@ -397,11 +397,12 @@ fn axum_real_target_supported_callers_match_oracle_shape_counts() -> Result<(), 
             // Callers:
             //   axum-core/src/ext_traits/mod.rs:25 InnerState::from_ref(state)
             //   axum-core/src/ext_traits/mod.rs:45 String::from_ref(state)
+            //   axum/src/extract/state.rs:309 InnerState::from_ref(state)
             // Callee binding: axum-core/src/extract/from_ref.rs:15 trait method.
-            label: "axum-core FromRef::from_ref same-crate bounded associated paths",
+            label: "axum-core FromRef::from_ref bounded associated paths",
             target: method_id_by_trait_name(&db, "FromRef", "from_ref")?,
             expected: vec![
-                ("path:InnerState::from_ref", 1),
+                ("path:InnerState::from_ref", 2),
                 ("path:String::from_ref", 1),
             ],
         },

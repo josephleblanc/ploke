@@ -150,10 +150,12 @@ async fn proof_context_exact_preserves_axum_supported_target_rows() -> Result<()
         ProofCase {
             // axum-core/src/extract/from_ref.rs:15 declares FromRef.
             // ext_traits/mod.rs:{25,45} call same-crate bounded associated
-            // paths `InnerState::from_ref` and `String::from_ref`.
+            // paths `InnerState::from_ref` and `String::from_ref`; axum
+            // extract/state.rs:309 reaches the same target through parsed
+            // workspace dependency proof for `axum_core::extract::FromRef`.
             label: "axum-core FromRef::from_ref bounded paths",
             target: trait_method_id(&db, "FromRef", "from_ref")?,
-            edges: 2,
+            edges: 3,
         },
         ProofCase {
             // axum/src/routing/mod.rs:162 defines `Router::new`.

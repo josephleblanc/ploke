@@ -75,6 +75,20 @@ impl CallResolutionSummary {
     }
 }
 
+/// Parsed workspace crates available as dependency roots during call resolution.
+#[derive(Debug, Clone, Copy)]
+pub struct CallWorkspace<'a> {
+    pub crates: &'a [WorkspaceCrate<'a>],
+}
+
+/// One parsed dependency crate that may satisfy a dependency-root path.
+#[derive(Debug, Clone, Copy)]
+pub struct WorkspaceCrate<'a> {
+    pub dependency_name: &'a str,
+    pub graph: &'a ParsedCodeGraph,
+    pub tree: &'a ModuleTree,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LocalFunctionPathResolution {
     Resolved(FunctionNodeId),
@@ -151,11 +165,21 @@ enum LocalModulePathResolution {
 pub struct CallRelationResolver<'a> {
     graph: &'a ParsedCodeGraph,
     tree: &'a ModuleTree,
+    workspace: Option<CallWorkspace<'a>>,
 }
 
 impl<'a> CallRelationResolver<'a> {
     pub fn new(graph: &'a ParsedCodeGraph, tree: &'a ModuleTree) -> Self {
-        Self { graph, tree }
+        Self {
+            graph,
+            tree,
+            workspace: None,
+        }
+    }
+
+    pub fn with_workspace(mut self, workspace: CallWorkspace<'a>) -> Self {
+        self.workspace = Some(workspace);
+        self
     }
 
     pub fn resolve_call_relations(&self) -> Result<CallResolutionReport, SynParserError> {
@@ -486,6 +510,65 @@ impl<'a> CallRelationResolver<'a> {
             return Ok(LocalTraitResolution::Unresolved);
         };
 
+        let mut candidates = Vec::new();
+        self.visit_scope_candidates(module_id, segment, &mut |candidate| {
+            if let Ok(trait_id) = TraitNodeId::try_from(candidate) {
+                candidates.push(trait_id);
+            }
+            Ok(())
+        })?;
+        candidates.sort_unstable();
+        candidates.dedup();
+
+        Ok(match candidates.as_slice() {
+            [target] => LocalTraitResolution::Resolved(*target),
+            [] => LocalTraitResolution::Unresolved,
+            _ => LocalTraitResolution::Ambiguous,
+        })
+    }
+
+    fn resolve_trait_path_from_root(
+        &self,
+        path: &[String],
+    ) -> Result<LocalTraitResolution, SynParserError> {
+        if path.is_empty() {
+            return Ok(LocalTraitResolution::Unresolved);
+        }
+
+        let mut current_module = self.tree.root();
+        let start_idx = if path.first().is_some_and(|segment| segment == "crate") {
+            1
+        } else {
+            0
+        };
+        if start_idx >= path.len() {
+            return Ok(LocalTraitResolution::Unresolved);
+        }
+
+        for idx in start_idx..path.len() {
+            let segment = path[idx].as_str();
+            let is_last = idx == path.len() - 1;
+            if is_last {
+                return self.resolve_terminal_trait(current_module, segment);
+            }
+
+            current_module = match self.resolve_module_segment(current_module, segment)? {
+                LocalModulePathResolution::Resolved(module_id) => module_id,
+                LocalModulePathResolution::Unresolved => {
+                    return Ok(LocalTraitResolution::Unresolved);
+                }
+                LocalModulePathResolution::Ambiguous => return Ok(LocalTraitResolution::Ambiguous),
+            };
+        }
+
+        Ok(LocalTraitResolution::Unresolved)
+    }
+
+    fn resolve_terminal_trait(
+        &self,
+        module_id: ModuleNodeId,
+        segment: &str,
+    ) -> Result<LocalTraitResolution, SynParserError> {
         let mut candidates = Vec::new();
         self.visit_scope_candidates(module_id, segment, &mut |candidate| {
             if let Ok(trait_id) = TraitNodeId::try_from(candidate) {
@@ -1091,7 +1174,16 @@ impl<'a> CallRelationResolver<'a> {
             }
         }
 
-        self.bound_traits_from_sources(&sources, type_relations)
+        let mut traits = self.bound_traits_from_sources(&sources, type_relations)?;
+        for source in sources {
+            if self.has_trait_relation(source, type_relations) {
+                continue;
+            }
+            traits.extend(self.workspace_trait_targets_for_source(owner, source)?);
+        }
+        traits.sort_unstable();
+        traits.dedup();
+        Ok(traits)
     }
 
     fn type_path_matches_segment(
@@ -1105,6 +1197,102 @@ impl<'a> CallRelationResolver<'a> {
             TypeNode::Paren(node) => self.type_path_matches_segment(node.inner, segment),
             _ => Ok(false),
         }
+    }
+
+    fn has_trait_relation(
+        &self,
+        source: TraitTypeSourceId,
+        type_relations: &[TypeRelation],
+    ) -> bool {
+        type_relations.iter().any(|relation| {
+            matches!(
+                relation,
+                TypeRelation::Trait {
+                    source: relation_source,
+                    ..
+                } if *relation_source == source
+            )
+        })
+    }
+
+    fn workspace_trait_targets_for_source(
+        &self,
+        owner: CallBodyOwnerId,
+        source: TraitTypeSourceId,
+    ) -> Result<Vec<TraitNodeId>, SynParserError> {
+        let path = match self.type_node(source)? {
+            TypeNode::Named(node) => &node.path,
+            TypeNode::TraitBound(node) => &node.path,
+            _ => return Ok(Vec::new()),
+        };
+
+        let mut targets = self.resolve_workspace_trait_path(path)?;
+        if targets.is_empty()
+            && let [segment] = path.as_slice()
+        {
+            targets.extend(self.resolve_workspace_trait_import(owner, segment)?);
+        }
+        targets.sort_unstable();
+        targets.dedup();
+        Ok(targets)
+    }
+
+    fn resolve_workspace_trait_import(
+        &self,
+        owner: CallBodyOwnerId,
+        segment: &str,
+    ) -> Result<Vec<TraitNodeId>, SynParserError> {
+        let Some(module_id) = self.containing_module_for_owner(owner) else {
+            return Ok(Vec::new());
+        };
+        let module_id = self.import_scope_module(module_id)?;
+        let Some(module_node) = self
+            .graph
+            .modules()
+            .iter()
+            .find(|module| module.id == module_id)
+        else {
+            return Ok(Vec::new());
+        };
+
+        let mut targets = Vec::new();
+        for import_node in &module_node.imports {
+            if import_node.visible_name != segment || import_node.is_glob {
+                continue;
+            }
+            targets.extend(self.resolve_workspace_trait_path(import_node.source_path())?);
+        }
+        targets.sort_unstable();
+        targets.dedup();
+        Ok(targets)
+    }
+
+    fn resolve_workspace_trait_path(
+        &self,
+        path: &[String],
+    ) -> Result<Vec<TraitNodeId>, SynParserError> {
+        let Some((root, tail)) = path.split_first() else {
+            return Ok(Vec::new());
+        };
+        let Some(workspace) = self.workspace else {
+            return Ok(Vec::new());
+        };
+
+        let mut targets = Vec::new();
+        for dep in workspace.crates {
+            if !dependency_name_matches(dep.dependency_name, root) {
+                continue;
+            }
+            let resolver = CallRelationResolver::new(dep.graph, dep.tree);
+            match resolver.resolve_trait_path_from_root(tail)? {
+                LocalTraitResolution::Resolved(target) => targets.push(target),
+                LocalTraitResolution::Unresolved => {}
+                LocalTraitResolution::Ambiguous => {}
+            }
+        }
+        targets.sort_unstable();
+        targets.dedup();
+        Ok(targets)
     }
 
     fn resolve_bound_method_from_types(
@@ -1168,7 +1356,7 @@ impl<'a> CallRelationResolver<'a> {
 
         let mut candidates = Vec::new();
         for trait_id in traits {
-            let trait_node = self.graph.get_trait_checked(trait_id)?;
+            let trait_node = self.trait_node(trait_id)?;
             candidates.extend(
                 trait_node
                     .methods
@@ -1182,6 +1370,22 @@ impl<'a> CallRelationResolver<'a> {
         }
 
         Ok(Some(Self::method_resolution(candidates)))
+    }
+
+    fn trait_node(&self, trait_id: TraitNodeId) -> Result<&TraitNode, SynParserError> {
+        if let Some(node) = self.graph.traits().iter().find(|node| node.id == trait_id) {
+            return Ok(node);
+        }
+        if let Some(workspace) = self.workspace {
+            for dep in workspace.crates {
+                if let Some(node) = dep.graph.traits().iter().find(|node| node.id == trait_id) {
+                    return Ok(node);
+                }
+            }
+        }
+        Err(SynParserError::InternalState(format!(
+            "call resolution found missing trait node {trait_id}"
+        )))
     }
 
     fn generic_bound_scopes(
@@ -1531,6 +1735,22 @@ pub fn resolve_call_relations_after_tree(
     tree: &ModuleTree,
 ) -> Result<CallResolutionReport, SynParserError> {
     CallRelationResolver::new(graph, tree).resolve_call_relations()
+}
+
+/// Resolves call sites with parsed workspace dependency crates available as
+/// additional proof carriers for dependency-root paths.
+pub fn resolve_call_relations_after_tree_with_workspace<'a>(
+    graph: &'a ParsedCodeGraph,
+    tree: &'a ModuleTree,
+    workspace: CallWorkspace<'a>,
+) -> Result<CallResolutionReport, SynParserError> {
+    CallRelationResolver::new(graph, tree)
+        .with_workspace(workspace)
+        .resolve_call_relations()
+}
+
+fn dependency_name_matches(dependency_name: &str, root: &str) -> bool {
+    dependency_name == root || dependency_name.replace('-', "_") == root
 }
 
 #[cfg(test)]

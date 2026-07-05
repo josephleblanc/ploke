@@ -1,15 +1,30 @@
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use cozo::{DataValue, Db, MemStorage, ScriptMutability};
 use ploke_core::WorkspaceId;
-use syn_parser::{ParsedWorkspace, discovery::workspace::WorkspaceMetadataSection};
+use syn_parser::{
+    ParsedCodeGraph, ParsedWorkspace,
+    discovery::{CrateContext, DependencyMap, workspace::WorkspaceMetadataSection},
+    resolve::{
+        call_resolution::{
+            CallWorkspace, WorkspaceCrate, resolve_call_relations_after_tree_with_workspace,
+        },
+        module_tree::ModuleTree,
+    },
+};
 
 use crate::error::TransformError;
 use crate::schema::crate_node::WorkspaceMetadataSchema;
 use tracing::instrument;
 
-use super::transform_parsed_graph;
+use super::transform_parsed_graph_with_call_report;
+
+struct ParsedCrateSlice {
+    context: CrateContext,
+    graph: ParsedCodeGraph,
+    tree: ModuleTree,
+}
 
 /// Transforms workspace metadata into a database row and then transforms each parsed crate graph.
 #[instrument(skip_all, fields(crate_count = parsed_workspace.crates.len()))]
@@ -19,23 +34,131 @@ pub fn transform_parsed_workspace(
 ) -> Result<(), TransformError> {
     transform_workspace_metadata(db, &parsed_workspace.workspace)?;
 
+    let mut crates = Vec::new();
     for parsed_crate in parsed_workspace.crates {
+        let context = parsed_crate.crate_context;
         let mut parser_output = parsed_crate.parser_output;
-        let merged_graph = parser_output.extract_merged_graph().ok_or_else(|| {
+        let graph = parser_output.extract_merged_graph().ok_or_else(|| {
             TransformError::Transformation(
                 "ParsedWorkspace crate was missing its merged graph".to_string(),
             )
         })?;
-        let module_tree = parser_output.extract_module_tree().ok_or_else(|| {
+        let tree = parser_output.extract_module_tree().ok_or_else(|| {
             TransformError::Transformation(
                 "ParsedWorkspace crate was missing its module tree".to_string(),
             )
         })?;
 
-        transform_parsed_graph(db, merged_graph, &module_tree)?;
+        crates.push(ParsedCrateSlice {
+            context,
+            graph,
+            tree,
+        });
+    }
+
+    let reports = crates
+        .iter()
+        .enumerate()
+        .map(|(idx, krate)| {
+            let deps = dependency_crates(&crates, idx);
+            let workspace = CallWorkspace {
+                crates: deps.as_slice(),
+            };
+            resolve_call_relations_after_tree_with_workspace(&krate.graph, &krate.tree, workspace)
+                .map_err(|err| {
+                    TransformError::Transformation(format!(
+                        "typed workspace call relation resolution failed: {err}"
+                    ))
+                })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    for (krate, report) in crates.into_iter().zip(reports) {
+        transform_parsed_graph_with_call_report(db, krate.graph, &krate.tree, report)?;
     }
 
     Ok(())
+}
+
+fn dependency_crates<'a>(
+    crates: &'a [ParsedCrateSlice],
+    source_idx: usize,
+) -> Vec<WorkspaceCrate<'a>> {
+    let source = &crates[source_idx];
+    let mut deps = Vec::new();
+    collect_deps(
+        &mut deps,
+        source.context.dependencies(),
+        source,
+        crates,
+        source_idx,
+    );
+    collect_deps(
+        &mut deps,
+        source.context.dev_dependencies(),
+        source,
+        crates,
+        source_idx,
+    );
+    deps
+}
+
+fn collect_deps<'a>(
+    deps: &mut Vec<WorkspaceCrate<'a>>,
+    manifest: &'a impl DependencyMap,
+    source: &'a ParsedCrateSlice,
+    crates: &'a [ParsedCrateSlice],
+    source_idx: usize,
+) {
+    for (name, dep_path) in manifest.path_dependencies() {
+        for (idx, target) in crates.iter().enumerate() {
+            if idx == source_idx {
+                continue;
+            }
+            if !paths_match(
+                &source.context.root_path,
+                dep_path,
+                &target.context.root_path,
+            ) {
+                continue;
+            }
+            if deps.iter().any(|dep| {
+                dep.dependency_name == name
+                    && dep.graph.crate_namespace == target.graph.crate_namespace
+            }) {
+                continue;
+            }
+            deps.push(WorkspaceCrate {
+                dependency_name: name,
+                graph: &target.graph,
+                tree: &target.tree,
+            });
+        }
+    }
+}
+
+fn paths_match(source_root: &Path, dep_path: &str, target_root: &Path) -> bool {
+    let dep_path = Path::new(dep_path);
+    let resolved = if dep_path.is_absolute() {
+        normalize(dep_path)
+    } else {
+        normalize(source_root.join(dep_path))
+    };
+    resolved == normalize(target_root)
+}
+
+fn normalize(path: impl AsRef<Path>) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.as_ref().components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
 }
 
 pub(super) fn transform_workspace_metadata(
