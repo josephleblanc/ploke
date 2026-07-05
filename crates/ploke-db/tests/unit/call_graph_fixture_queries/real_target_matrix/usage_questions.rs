@@ -840,6 +840,202 @@ fn axum_usage_questions_report_proc_macro_public_entrypoint_impact() -> Result<(
 }
 
 #[test]
+fn axum_usage_questions_report_architecture_boundary_edges() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Architecture review:
+    //   "Which modules call across a boundary that should be one-way?"
+    //   "Do any call chains bypass the intended abstraction layer?"
+    //
+    // Source-oracle chain:
+    //   axum-core/src/ext_traits/request.rs:279
+    //     `RequestExt::extract_with_state` calls `E::from_request(self, state)`.
+    //   axum-core/src/extract/mod.rs:85
+    //     defines the `FromRequest::from_request` trait method binding.
+    let owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "extract_with_state",
+        "E::from_request(self, state)",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let target = method_id_by_trait_name(&db, "FromRequest", "from_request")?;
+
+    let report = db.call_reach_for_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 16,
+        },
+    )?;
+
+    assert_eq!(
+        report.boundary_call_sites.len(),
+        1,
+        "architecture review should expose the direct cross-module callsite: {report:#?}"
+    );
+    let boundary_site = &report.boundary_call_sites[0];
+    assert_eq!(boundary_site.site.owner_id, owner);
+    assert_eq!(
+        boundary_site.site.path.as_ref(),
+        Some(&path(&["E", "from_request"]))
+    );
+    assert_eq!(
+        boundary_site.site.arg_count,
+        Some(2),
+        "architecture review should preserve the source argument shape for the boundary call: {boundary_site:#?}"
+    );
+    assert!(
+        boundary_site
+            .targets
+            .iter()
+            .any(|target_row| target_row.target_id == target),
+        "architecture review boundary callsite should target FromRequest::from_request: {report:#?}"
+    );
+
+    assert_eq!(
+        report.boundary_edges.len(),
+        1,
+        "architecture review should expose the same crossing as a path edge: {report:#?}"
+    );
+    let edge = report.boundary_edges[0];
+    assert_eq!(edge.caller_id, owner);
+    assert_eq!(edge.callee_id, target);
+    assert_eq!(edge.source_kind, CallSiteKind::Path);
+    assert_eq!(edge.relation, CallRelationKind::AssociatedFunction);
+
+    let caller = db
+        .call_node_info(edge.caller_id)?
+        .unwrap_or_else(|| panic!("missing caller metadata for boundary edge {edge:#?}"));
+    let callee = db
+        .call_node_info(edge.callee_id)?
+        .unwrap_or_else(|| panic!("missing callee metadata for boundary edge {edge:#?}"));
+    assert_eq!(
+        caller.module_path,
+        path(&["crate", "ext_traits", "request"])
+    );
+    assert_eq!(callee.module_path, path(&["crate", "extract"]));
+    assert_ne!(
+        caller.module_path, callee.module_path,
+        "boundary edge should represent a real module crossing"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn axum_usage_questions_report_body_empty_component_impact() -> Result<(), DbError> {
+    let db = setup_axum_call_graph_db()?;
+
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Build or deployment optimization:
+    //   "Which components are affected by a change to this API?"
+    //   "Which crates or binaries need rebuilding after this internal function changes?"
+    // API understanding:
+    //   "How is this library function used in real target code?"
+    //   "Which constructors are used directly, and which are only reached
+    //   through re-exports or aliases?"
+    //
+    // Source oracle:
+    //   axum-core/src/body.rs:52 defines `Body::empty`.
+    //   axum-core/src/body.rs:{110,116} calls `Self::empty()`.
+    //   axum-core, axum, closure-owned, and local-item rows call
+    //   `Body::empty()` through direct imports, re-exports, and inherited
+    //   glob imports.
+    let target = method_id_by_name_and_body_substring(&db, "empty", "Empty::new()")?;
+    let report = db.call_impact_for_target(
+        target,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 64,
+        },
+    )?;
+
+    assert_eq!(report.target.id, target);
+    assert_eq!(report.target.kind, CallNodeKind::Method);
+    assert_eq!(report.target.name, "empty");
+    assert_eq!(
+        report.paths.len(),
+        23,
+        "component impact should traverse every current Body::empty direct caller: {report:#?}"
+    );
+    assert_eq!(
+        report.direct_call_sites.len(),
+        23,
+        "component impact should expose every current Body::empty callsite: {report:#?}"
+    );
+    assert!(
+        !report.test_callers.is_empty() && !report.non_test_callers.is_empty(),
+        "component impact should show that Body::empty is reached from both test and non-test owners: {report:#?}"
+    );
+    assert_eq!(
+        report.test_callers.len() + report.non_test_callers.len(),
+        report.callers.len(),
+        "test/non-test component buckets should partition the eventual caller set: {report:#?}"
+    );
+    assert!(
+        report.callsite_buckets.iter().any(|bucket| {
+            bucket.kind == CallSiteKind::Path
+                && bucket.relation == CallRelationKind::AssociatedFunction
+                && bucket.count == 23
+        }),
+        "API understanding should summarize Body::empty as associated-function path usage: {report:#?}"
+    );
+
+    let path_counts = report.direct_call_sites.iter().fold(
+        BTreeMap::<Vec<String>, usize>::new(),
+        |mut counts, row| {
+            let call_path = row
+                .site
+                .path
+                .clone()
+                .expect("Body::empty caller should carry a path");
+            *counts.entry(call_path).or_default() += 1;
+            counts
+        },
+    );
+    assert_eq!(
+        path_counts,
+        BTreeMap::from([
+            (path(&["Body", "empty"]), 21),
+            (path(&["Self", "empty"]), 2)
+        ]),
+        "API understanding should distinguish direct Body::empty use from Self::empty wrapper rows"
+    );
+
+    for suffix in [
+        "axum-core/src/body.rs",
+        "axum-core/src/ext_traits/request.rs",
+        "axum/src/middleware/from_fn.rs",
+        "axum/src/routing/tests/mod.rs",
+    ] {
+        assert_source_file(
+            &report.source_files,
+            suffix,
+            "Body::empty component impact source files",
+        );
+    }
+    for module in [
+        &["crate", "body"][..],
+        &["crate", "ext_traits", "request"][..],
+        &["crate", "middleware", "from_fn"][..],
+        &["crate", "routing", "tests"][..],
+    ] {
+        assert_source_module(
+            &report.source_modules,
+            module,
+            "Body::empty component impact source modules",
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn axum_usage_questions_surface_fail_closed_debugging_context() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
