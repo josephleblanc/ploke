@@ -1,3 +1,5 @@
+use ploke_db::CallPathOptions;
+
 use super::*;
 
 #[test]
@@ -36,6 +38,86 @@ fn fixture_context_reads_projected_returned_function_nested_calls() -> Result<()
         CallSiteKind::Dynamic,
         CallTargetKind::Function,
     );
+
+    Ok(())
+}
+
+#[test]
+fn fixture_context_reads_projected_returned_closure_nested_calls() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "call_returned_closure")?;
+    let maker = function_id_by_name(&db, "make_closure")?;
+
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        2,
+        "returned closure context rows: {context:#?}"
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1431:
+    // `make_closure()()` has an inner maker path call and an outer dynamic
+    // returned-path call.
+    let maker_row = row_by_path(&context, &["make_closure"]);
+    assert_eq!(maker_row.site.owner_id, owner);
+    assert_eq!(maker_row.site.arg_count, Some(0));
+    assert_eq!(maker_row.site.generic_arg_count, Some(0));
+    assert_resolved_target(
+        maker_row,
+        maker,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1426-1428:
+    // The maker's direct final expression is the closure literal `|| 71`, so
+    // the outer dynamic call can target the closure executable owner.
+    let dynamic = row_by_kind_path(&context, CallSiteKind::Dynamic, &["make_closure"]);
+    assert_eq!(dynamic.site.owner_id, owner);
+    assert_eq!(dynamic.site.arg_count, Some(0));
+    assert_eq!(dynamic.site.generic_arg_count, None);
+    assert_eq!(dynamic.site.receiver, None);
+    assert_eq!(
+        dynamic.targets.len(),
+        1,
+        "returned closure row: {dynamic:#?}"
+    );
+    let closure = dynamic.targets[0].target_id;
+    assert_resolved_target(
+        dynamic,
+        closure,
+        CallRelationKind::DynamicClosure,
+        CallSiteKind::Dynamic,
+        CallTargetKind::Closure,
+    );
+
+    let callers = db.callers_for_target(closure)?;
+    let caller =
+        caller_by_owner_kind_path(&callers, owner, CallSiteKind::Dynamic, &["make_closure"]);
+    assert_eq!(caller.status.status, CallStatusKind::Resolved);
+    assert_eq!(
+        caller.status.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(caller.target.relation, CallRelationKind::DynamicClosure);
+    assert_eq!(caller.target.target_kind, CallTargetKind::Closure);
+
+    let paths = db.call_paths_from_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 8,
+        },
+    )?;
+    let path = paths
+        .iter()
+        .find(|path| path.start_id == owner && path.end_id == closure && path.depth == 1)
+        .expect("call_returned_closure should have a one-hop path to the returned closure owner");
+    assert_eq!(path.edges[0].caller_id, owner);
+    assert_eq!(path.edges[0].callee_id, closure);
+    assert_eq!(path.edges[0].relation, CallRelationKind::DynamicClosure);
+    assert_eq!(path.edges[0].target_kind, CallTargetKind::Closure);
 
     Ok(())
 }

@@ -3,7 +3,8 @@ use crate::{
     parser::{
         graph::GraphAccess,
         nodes::{
-            AnyCallSiteId, CallBodyOwnerId, DynamicCallCallee, DynamicCallNode, FunctionNodeId,
+            AnyCallSiteId, CallBodyOwnerId, DynamicCallCallee, DynamicCallNode, ExecutableBodyId,
+            ExecutableBodyKind, FunctionNodeId,
         },
         relations::{CallRelation, CallResolutionKind, CallResolutionStatus},
     },
@@ -157,6 +158,18 @@ impl CallRelationResolver<'_> {
             }
         };
 
+        if let Some(target) = self.direct_return_closure(returning_function)? {
+            relations.push(CallRelation::DynamicClosure {
+                source: call.id,
+                target,
+            });
+            statuses.push(CallResolutionStatus::Resolved {
+                source,
+                kind: CallResolutionKind::LocalExact,
+            });
+            return Ok(());
+        }
+
         let Some(return_path) = self.direct_return_path(returning_function)? else {
             statuses.push(CallResolutionStatus::Unsupported { source });
             return Ok(());
@@ -194,20 +207,60 @@ impl CallRelationResolver<'_> {
         &self,
         function_id: FunctionNodeId,
     ) -> Result<Option<Vec<String>>, SynParserError> {
+        let Some(expr) = self.direct_return_expr(function_id, "returned-call path proof")? else {
+            return Ok(None);
+        };
+        Ok(expr_return_path(&expr))
+    }
+
+    fn direct_return_closure(
+        &self,
+        function_id: FunctionNodeId,
+    ) -> Result<Option<ExecutableBodyId>, SynParserError> {
+        let Some(expr) = self.direct_return_expr(function_id, "returned-closure proof")? else {
+            return Ok(None);
+        };
+        if !matches!(unparen_expr(&expr), syn::Expr::Closure(_)) {
+            return Ok(None);
+        }
+
+        let owner = CallBodyOwnerId::Function(function_id);
+        let closures = self
+            .graph
+            .executable_bodies()
+            .iter()
+            .filter(|body| body.parent == owner && body.kind == ExecutableBodyKind::Closure)
+            .map(|body| body.id)
+            .collect::<Vec<_>>();
+
+        match closures.as_slice() {
+            [closure] => Ok(Some(*closure)),
+            [] => Err(SynParserError::InternalState(format!(
+                "function {function_id} returns a closure literal but no closure executable body was recorded"
+            ))),
+            _ => Ok(None),
+        }
+    }
+
+    fn direct_return_expr(
+        &self,
+        function_id: FunctionNodeId,
+        context: &str,
+    ) -> Result<Option<syn::Expr>, SynParserError> {
         let function = self.graph.get_function_checked(function_id)?;
         let Some(body) = function.body.as_deref() else {
             return Ok(None);
         };
         let block = syn::parse_str::<syn::Block>(body).map_err(|err| {
             SynParserError::InternalState(format!(
-                "failed to parse stored function body for returned-call proof in {}: {err}",
+                "failed to parse stored function body for {context} in {}: {err}",
                 function.name
             ))
         })?;
         let Some(syn::Stmt::Expr(expr, None)) = block.stmts.last() else {
             return Ok(None);
         };
-        Ok(expr_return_path(expr))
+        Ok(Some(expr.clone()))
     }
 
     fn resolve_initialized_dynamic_binding_call(

@@ -71,9 +71,9 @@ Pick one, not all.
    - Example shape: `let source = LocalAssoc; let value = source; value.instance_value()`.
    - Do not generalize through arbitrary expressions or multi-hop type inference.
 
-3. Direct closure return blocker:
-   - Preserve `make_closure()()` or returned closure values as targetless unless the returned path is already proven to a function item.
-   - Add source-oracle and proof rows that explain the missing return-value callable proof.
+3. Direct closure return proof:
+   - Resolve `make_closure()()` only when the maker's final expression is directly a closure literal with a single recorded closure executable owner.
+   - Preserve broader returned closure values as targetless unless the returned callable is proven to a function item or direct closure literal.
 
 4. Function pointer field blocker:
    - Use the existing memchr real-corpus fallback as a blocker proof target.

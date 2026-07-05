@@ -91,6 +91,7 @@ const UNQUALIFIED_LOCAL_TARGET_CALL_SPAN: (usize, usize) = (580, 594);
 const MAKE_FN_INNER_CALL_SPAN: (usize, usize) = (697, 706);
 const RETURNED_FUNCTION_DYNAMIC_CALL_SPAN: (usize, usize) = (697, 708);
 const MAKE_CLOSURE_INNER_CALL_SPAN: (usize, usize) = (31418, 31432);
+const MAKE_CLOSURE_RETURNED_CLOSURE_SPAN: (usize, usize) = (31365, 31370);
 const RETURNED_CLOSURE_DYNAMIC_CALL_SPAN: (usize, usize) = (31418, 31434);
 const LOCAL_ASSOC_IMPL_SPAN: (usize, usize) = (736, 868);
 const SELF_ASSOC_MAKE_CALL_SPAN: (usize, usize) = (848, 860);
@@ -3069,19 +3070,29 @@ paranoid_call_site_test!(
 );
 
 paranoid_call_site_test!(
-    fixture_call_graph_call_returned_closure_records_unsupported_outer_dynamic_call_site,
+    fixture_call_graph_call_returned_closure_resolves_outer_dynamic_closure_call_site,
     fixture: "fixture_call_graph",
     owner: function {
         module_path: &["crate"],
         name: "call_returned_closure"
     },
-    expected: ExpectedCallSite::dynamic_returned_path_call(
-        &["make_closure"],
-        RETURNED_CLOSURE_DYNAMIC_CALL_SPAN,
-        0,
-        &[],
-        ExpectedCallOutcome::Unsupported,
-    ),
+    expected: {
+        let (graph, _tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+        let owner = crate::common::call_site_paranoid::function_owner_context(
+            &graph,
+            &["crate"],
+            "make_closure",
+        );
+        let closure =
+            closure_body_inside_span(&graph, &owner, MAKE_CLOSURE_RETURNED_CLOSURE_SPAN);
+        ExpectedCallSite::dynamic_returned_path_call(
+            &["make_closure"],
+            RETURNED_CLOSURE_DYNAMIC_CALL_SPAN,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedDynamicClosureLocalExact { target: closure },
+        )
+    },
 );
 
 paranoid_call_site_test!(

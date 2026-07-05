@@ -74,8 +74,7 @@ fn fixture_projection_stores_real_returned_function_call_proof_facts() -> Result
 }
 
 #[test]
-fn fixture_projection_stores_returned_closure_blocker_without_dynamic_edge() -> Result<(), DbError>
-{
+fn fixture_projection_stores_returned_closure_dynamic_edge() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let owner = function_id_by_name(&db, "call_returned_closure")?;
     let maker = function_id_by_name(&db, "make_closure")?;
@@ -86,6 +85,9 @@ fn fixture_projection_stores_returned_closure_blocker_without_dynamic_edge() -> 
         "returned closure proof context rows: {context:#?}"
     );
 
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1431:
+    // The nested expression contributes a path call for `make_closure()` and a
+    // dynamic call for invoking the closure it directly returns.
     let path_row = row_by_path(&context, &["make_closure"]);
     let path_site = path_row.site.id;
     let path_span = path_row.site.span;
@@ -97,44 +99,46 @@ fn fixture_projection_stores_returned_closure_blocker_without_dynamic_edge() -> 
         CallTargetKind::Function,
     );
 
-    let dynamic_row = assert_targetless_row(
-        &context,
-        owner,
-        TargetlessRowCase::dynamic(
-            Some(&["make_closure"]),
-            CallStatusKind::Unsupported,
-            "returned closure dynamic proof setup",
-        ),
-    );
+    let dynamic_row = row_by_kind_path(&context, CallSiteKind::Dynamic, &["make_closure"]);
     let dynamic_site = dynamic_row.site.id;
     let dynamic_span = dynamic_row.site.span;
+    assert_eq!(
+        dynamic_row.targets.len(),
+        1,
+        "returned closure dynamic row: {dynamic_row:#?}"
+    );
+    let closure = dynamic_row.targets[0].target_id;
+    assert_resolved_target(
+        dynamic_row,
+        closure,
+        CallRelationKind::DynamicClosure,
+        CallSiteKind::Dynamic,
+        CallTargetKind::Closure,
+    );
 
     let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
-    assert_eq!(count, 5);
+    assert_eq!(count, 6);
 
     assert_owner_proof_edges(
         &db,
-        "returned-closure resolved maker call",
-        &[OwnerProofEdge {
-            owner,
-            site: path_site,
-            span: path_span,
-            target: maker,
-        }],
+        "returned-closure resolved calls",
+        &[
+            OwnerProofEdge {
+                owner,
+                site: path_site,
+                span: path_span,
+                target: maker,
+            },
+            OwnerProofEdge {
+                owner,
+                site: dynamic_site,
+                span: dynamic_span,
+                target: closure,
+            },
+        ],
         "fixture_call_graph/src/lib.rs",
         "type_resolution_missing",
         ProofEdgeCount::Exact,
-    )?;
-
-    assert_blocker_proofs(
-        &db,
-        "returned-closure dynamic blocker",
-        &[BlockerProofSite {
-            site: dynamic_site,
-            span: dynamic_span,
-            blocker_reason: "dynamic_dispatch_unbounded",
-        }],
-        "fixture_call_graph/src/lib.rs",
     )?;
 
     Ok(())
