@@ -18,6 +18,7 @@ pub(crate) mod utils;
 
 pub mod tool_query;
 pub mod type_graph;
+pub mod workspace;
 
 pub mod multi_embedding;
 pub use call_graph::{
@@ -64,3 +65,4 @@ pub use type_graph::{
     TypeContextRelation, TypeContextSeed, TypeRelationKind, TypeTargetPath, TypeUseCoordinate,
     TypeUseRole, TypeUseRoot,
 };
+pub use workspace::{CrateDependencyRow, WorkspaceDependencyCandidate};
