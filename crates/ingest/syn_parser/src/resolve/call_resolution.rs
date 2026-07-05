@@ -145,10 +145,9 @@ enum LocalModulePathResolution {
 ///   -> local tuple constructor proven from local type-resolution facts
 /// ```
 ///
-/// The resolver intentionally does not attempt trait dispatch, external calls,
-/// dynamic callees, macro expansion, unqualified value-binding calls,
-/// imported associated functions, or receiver typing beyond parameters and
-/// explicit local binding annotations.
+/// The resolver intentionally does not attempt macro expansion, arbitrary
+/// dynamic dispatch, or receiver typing beyond the current conservative proof
+/// carriers.
 pub struct CallRelationResolver<'a> {
     graph: &'a ParsedCodeGraph,
     tree: &'a ModuleTree,

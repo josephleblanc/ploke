@@ -20,6 +20,7 @@ async fn request_code_context_returns_targetless_special_form_proof_context()
         &function_in_module_query(&["crate"], "call_qualified_dyn_any_downcast_mut"),
     )?;
     let chained_target = one_uuid(&db, &function_in_module_query(&["crate"], "make_unary_fn"))?;
+    let returned_target = one_uuid(&db, &function_in_module_query(&["crate"], "unary_target"))?;
 
     assert_eq!(
         db.project_call_proof_facts_for_owner(extern_owner, "bd:fixture-call-graph")?,
@@ -28,8 +29,8 @@ async fn request_code_context_returns_targetless_special_form_proof_context()
     );
     assert_eq!(
         db.project_call_proof_facts_for_owner(chained_owner, "bd:fixture-call-graph")?,
-        5,
-        "chained returned-function call should project resolved and blocked proof facts"
+        6,
+        "chained returned-function call should project inner and outer resolved proof facts"
     );
     assert_eq!(
         db.project_call_proof_facts_for_owner(qself_owner, "bd:fixture-call-graph")?,
@@ -100,16 +101,11 @@ async fn request_code_context_returns_targetless_special_form_proof_context()
             "request_code_context should materialize the chained returned-function proof owner",
         );
     assert!(
-        chained_part.proof_context.len() >= 5,
+        chained_part.proof_context.len() >= 6,
         "chained returned-function proof context: {chained_part:#?}"
     );
     assert_resolved_call(&chained_part.proof_context, chained_owner, chained_target);
-    assert_blocked_resolution(
-        &chained_part.proof_context,
-        chained_owner,
-        "dynamic_dispatch_unbounded",
-    );
-    assert_proof_blockers(&chained_result, &chained_payload);
+    assert_resolved_call(&chained_part.proof_context, chained_owner, returned_target);
 
     let qself_result = execute_fixture_tool_request(
         &db,

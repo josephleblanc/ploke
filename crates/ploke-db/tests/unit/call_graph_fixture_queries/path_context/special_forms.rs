@@ -110,7 +110,8 @@ fn fixture_context_reads_projected_generic_unsafe_extern_and_chained_calls() -> 
     );
 
     let owner = function_id_by_name(&db, "call_chained_returned_function")?;
-    let target = function_id_by_name(&db, "make_unary_fn")?;
+    let maker = function_id_by_name(&db, "make_unary_fn")?;
+    let returned = function_id_by_name(&db, "unary_target")?;
     let context = db.call_context_for_owner(owner)?;
     assert_eq!(context.len(), 2, "chained call context rows: {context:#?}");
 
@@ -119,21 +120,20 @@ fn fixture_context_reads_projected_generic_unsafe_extern_and_chained_calls() -> 
     assert_eq!(row.site.generic_arg_count, Some(0));
     assert_resolved_target(
         row,
-        target,
+        maker,
         CallRelationKind::Function,
         CallSiteKind::Path,
         CallTargetKind::Function,
     );
 
-    assert_targetless_row(
-        &context,
-        owner,
-        TargetlessRowCase::dynamic_args(
-            None,
-            1,
-            CallStatusKind::Unsupported,
-            "returned-function dynamic call",
-        ),
+    let dynamic = row_by_kind_path(&context, CallSiteKind::Dynamic, &["make_unary_fn"]);
+    assert_eq!(dynamic.site.arg_count, Some(1));
+    assert_resolved_target(
+        dynamic,
+        returned,
+        CallRelationKind::DynamicFunction,
+        CallSiteKind::Dynamic,
+        CallTargetKind::Function,
     );
 
     let owner = function_id_by_name(&db, "call_qualified_dyn_any_downcast_mut")?;

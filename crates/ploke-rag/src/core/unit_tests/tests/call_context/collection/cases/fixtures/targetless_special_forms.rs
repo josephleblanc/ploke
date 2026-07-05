@@ -20,6 +20,7 @@ async fn call_context_collection_reads_real_targetless_special_form_rows() -> Re
         &function_in_module_query(&["crate"], "call_qualified_dyn_any_downcast_mut"),
     )?;
     let chained_target = one_uuid(&db, &function_in_module_query(&["crate"], "make_unary_fn"))?;
+    let returned_target = one_uuid(&db, &function_in_module_query(&["crate"], "unary_target"))?;
     let rag = init_test_rag_mock(Arc::clone(&db));
     assert!(
         !rag.call_context_degraded(),
@@ -81,14 +82,25 @@ async fn call_context_collection_reads_real_targetless_special_form_rows() -> Re
 
     let dynamic_call = chained_context
         .iter()
-        .find(|call| call.kind == CallSiteKind::Dynamic)
+        .find(|call| {
+            call.kind == CallSiteKind::Dynamic
+                && call
+                    .targets
+                    .iter()
+                    .any(|target| target.target_id == returned_target)
+        })
         .expect("outer chained returned-function dynamic call should stay visible");
     assert_eq!(dynamic_call.callee, CallCalleeInfo::Dynamic);
-    assert_eq!(dynamic_call.status, CallStatusKind::Unsupported);
-    assert!(dynamic_call.resolution.is_none());
-    assert!(
-        dynamic_call.targets.is_empty(),
-        "outer chained returned-function calls must not fabricate RAG targets: {dynamic_call:#?}"
+    assert_eq!(dynamic_call.status, CallStatusKind::Resolved);
+    assert_eq!(
+        dynamic_call.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(dynamic_call.targets.len(), 1);
+    assert_eq!(dynamic_call.targets[0].target_id, returned_target);
+    assert_eq!(
+        dynamic_call.targets[0].relation,
+        CallTargetKind::DynamicFunction
     );
 
     let qself_context = call_context

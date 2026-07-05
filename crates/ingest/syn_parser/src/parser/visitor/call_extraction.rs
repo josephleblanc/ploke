@@ -838,6 +838,10 @@ fn classify_dynamic_callee(
         return DynamicCallCallee::FnPointerCastPath { path };
     }
 
+    if let Some(path) = returned_path_call(callee) {
+        return DynamicCallCallee::ReturnedPathCall { path };
+    }
+
     if let Some(paths) = if_branch_paths(callee, param_names, local_scopes) {
         return DynamicCallCallee::IfBranchPaths { paths };
     }
@@ -1143,6 +1147,21 @@ fn fn_pointer_cast_path(callee: &syn::Expr) -> Option<Vec<String>> {
     }
 
     let syn::Expr::Path(path) = unparen_expr(cast.expr.as_ref()) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+
+    let path = path_segments(&path.path);
+    (!path.is_empty()).then_some(path)
+}
+
+fn returned_path_call(callee: &syn::Expr) -> Option<Vec<String>> {
+    let syn::Expr::Call(call) = unparen_expr(callee) else {
+        return None;
+    };
+    let syn::Expr::Path(path) = unparen_expr(call.func.as_ref()) else {
         return None;
     };
     if path.qself.is_some() {

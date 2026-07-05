@@ -3006,18 +3006,26 @@ paranoid_call_site_test!(
 );
 
 paranoid_call_site_test!(
-    fixture_call_graph_call_returned_function_records_outer_dynamic_call_site,
+    fixture_call_graph_call_returned_function_resolves_outer_dynamic_call_site,
     fixture: "fixture_call_graph",
     owner: function {
         module_path: &["crate"],
         name: "call_returned_function"
     },
-    expected: ExpectedCallSite::dynamic(
-        RETURNED_FUNCTION_DYNAMIC_CALL_SPAN,
-        0,
-        &[],
-        ExpectedCallOutcome::Unsupported,
-    ),
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "local_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("local_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::dynamic_returned_path_call(
+            &["make_fn"],
+            RETURNED_FUNCTION_DYNAMIC_CALL_SPAN,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
+        )
+    },
 );
 
 paranoid_call_site_test!(
@@ -3045,18 +3053,26 @@ paranoid_call_site_test!(
 );
 
 paranoid_call_site_test!(
-    fixture_call_graph_call_chained_returned_function_records_outer_dynamic_call_site,
+    fixture_call_graph_call_chained_returned_function_resolves_outer_dynamic_call_site,
     fixture: "fixture_call_graph",
     owner: function {
         module_path: &["crate"],
         name: "call_chained_returned_function"
     },
-    expected: ExpectedCallSite::dynamic(
-        CHAINED_RETURNED_FUNCTION_DYNAMIC_CALL_SPAN,
-        1,
-        &[],
-        ExpectedCallOutcome::Unsupported,
-    ),
+    expected: {
+        let target_args = fixture_call_graph_function_args(&["crate"], "unary_target");
+        let parsed_graphs = crate::common::run_phases_and_collect("fixture_call_graph");
+        let target_info = target_args.generate_pid(&parsed_graphs)?;
+        let target = FunctionNodeId::try_from(target_info.test_pid())
+            .expect("unary_target should regenerate a FunctionNodeId");
+        ExpectedCallSite::dynamic_returned_path_call(
+            &["make_unary_fn"],
+            CHAINED_RETURNED_FUNCTION_DYNAMIC_CALL_SPAN,
+            1,
+            &[],
+            ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { target },
+        )
+    },
 );
 
 paranoid_call_site_test!(

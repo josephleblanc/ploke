@@ -4,7 +4,8 @@ use super::*;
 fn fixture_context_reads_projected_returned_function_nested_calls() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let owner = function_id_by_name(&db, "call_returned_function")?;
-    let target = function_id_by_name(&db, "make_fn")?;
+    let maker = function_id_by_name(&db, "make_fn")?;
+    let returned = function_id_by_name(&db, "local_target")?;
 
     let context = db.call_context_for_owner(owner)?;
     assert_eq!(
@@ -19,20 +20,21 @@ fn fixture_context_reads_projected_returned_function_nested_calls() -> Result<()
     assert_eq!(row.site.generic_arg_count, Some(0));
     assert_resolved_target(
         row,
-        target,
+        maker,
         CallRelationKind::Function,
         CallSiteKind::Path,
         CallTargetKind::Function,
     );
 
-    assert_targetless_row(
-        &context,
-        owner,
-        TargetlessRowCase::dynamic(
-            None,
-            CallStatusKind::Unsupported,
-            "returned-function dynamic call",
-        ),
+    let dynamic = row_by_kind_path(&context, CallSiteKind::Dynamic, &["make_fn"]);
+    assert_eq!(dynamic.site.owner_id, owner);
+    assert_eq!(dynamic.site.arg_count, Some(0));
+    assert_resolved_target(
+        dynamic,
+        returned,
+        CallRelationKind::DynamicFunction,
+        CallSiteKind::Dynamic,
+        CallTargetKind::Function,
     );
 
     Ok(())

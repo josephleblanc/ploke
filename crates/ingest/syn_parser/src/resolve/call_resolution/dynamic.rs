@@ -1,6 +1,7 @@
 use crate::{
     error::SynParserError,
     parser::{
+        graph::GraphAccess,
         nodes::{
             AnyCallSiteId, CallBodyOwnerId, DynamicCallCallee, DynamicCallNode, FunctionNodeId,
         },
@@ -46,6 +47,11 @@ impl CallRelationResolver<'_> {
             return Ok(());
         }
 
+        if let DynamicCallCallee::ReturnedPathCall { path } = &call.callee {
+            self.resolve_returned_path_call(call, path, relations, statuses)?;
+            return Ok(());
+        }
+
         if let DynamicCallCallee::ClosureBinding { closure_id, .. }
         | DynamicCallCallee::FnPointerCastClosureBinding { closure_id, .. }
         | DynamicCallCallee::ClosureLiteral { closure_id } = &call.callee
@@ -69,6 +75,7 @@ impl CallRelationResolver<'_> {
             | DynamicCallCallee::ClosureBinding { .. }
             | DynamicCallCallee::ClosureLiteral { .. }
             | DynamicCallCallee::InitializedLocalBinding { .. }
+            | DynamicCallCallee::ReturnedPathCall { .. }
             | DynamicCallCallee::FnPointerCastInitializedLocalBinding { .. }
             | DynamicCallCallee::FnPointerCastLocalBinding { .. }
             | DynamicCallCallee::FnPointerCastClosureBinding { .. }
@@ -120,6 +127,87 @@ impl CallRelationResolver<'_> {
         }
 
         Ok(())
+    }
+
+    fn resolve_returned_path_call(
+        &self,
+        call: &DynamicCallNode,
+        path: &[String],
+        relations: &mut Vec<CallRelation>,
+        statuses: &mut Vec<CallResolutionStatus>,
+    ) -> Result<(), SynParserError> {
+        let source = AnyCallSiteId::Dynamic(call.id);
+        let returning_function = match self.resolve_dynamic_path(call.owner, path)? {
+            DynamicPathResolution::Resolved(target) => target,
+            DynamicPathResolution::Unresolved => {
+                statuses.push(CallResolutionStatus::Unresolved { source });
+                return Ok(());
+            }
+            DynamicPathResolution::Ambiguous => {
+                statuses.push(CallResolutionStatus::Ambiguous { source });
+                return Ok(());
+            }
+            DynamicPathResolution::External => {
+                statuses.push(CallResolutionStatus::External { source });
+                return Ok(());
+            }
+            DynamicPathResolution::Unsupported => {
+                statuses.push(CallResolutionStatus::Unsupported { source });
+                return Ok(());
+            }
+        };
+
+        let Some(return_path) = self.direct_return_path(returning_function)? else {
+            statuses.push(CallResolutionStatus::Unsupported { source });
+            return Ok(());
+        };
+
+        match self.resolve_dynamic_path(returning_function.into(), &return_path)? {
+            DynamicPathResolution::Resolved(target) => {
+                relations.push(CallRelation::DynamicFunction {
+                    source: call.id,
+                    target,
+                });
+                statuses.push(CallResolutionStatus::Resolved {
+                    source,
+                    kind: CallResolutionKind::LocalExact,
+                });
+            }
+            DynamicPathResolution::Unresolved => {
+                statuses.push(CallResolutionStatus::Unresolved { source });
+            }
+            DynamicPathResolution::Ambiguous => {
+                statuses.push(CallResolutionStatus::Ambiguous { source });
+            }
+            DynamicPathResolution::External => {
+                statuses.push(CallResolutionStatus::External { source });
+            }
+            DynamicPathResolution::Unsupported => {
+                statuses.push(CallResolutionStatus::Unsupported { source });
+            }
+        }
+
+        Ok(())
+    }
+
+    fn direct_return_path(
+        &self,
+        function_id: FunctionNodeId,
+    ) -> Result<Option<Vec<String>>, SynParserError> {
+        let function = self.graph.get_function_checked(function_id)?;
+        let Some(body) = function.body.as_deref() else {
+            return Ok(None);
+        };
+        let block = syn::parse_str::<syn::Block>(body).map_err(|err| {
+            SynParserError::InternalState(format!(
+                "failed to parse stored function body for returned-call proof in {}: {err}",
+                function.name
+            ))
+        })?;
+        let Some(syn::Stmt::Expr(expr, None)) = block.stmts.last() else {
+            return Ok(None);
+        };
+        Ok(expr_return_path(expr))
     }
 
     fn resolve_initialized_dynamic_binding_call(
@@ -263,5 +351,29 @@ impl CallRelationResolver<'_> {
             LocalFunctionPathResolution::Ambiguous => DynamicPathResolution::Ambiguous,
             LocalFunctionPathResolution::Unsupported => DynamicPathResolution::Unsupported,
         })
+    }
+}
+
+fn expr_return_path(expr: &syn::Expr) -> Option<Vec<String>> {
+    let syn::Expr::Path(path) = unparen_expr(expr) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+
+    let path = path
+        .path
+        .segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
+        .collect::<Vec<_>>();
+    (!path.is_empty()).then_some(path)
+}
+
+fn unparen_expr(expr: &syn::Expr) -> &syn::Expr {
+    match expr {
+        syn::Expr::Paren(paren) => unparen_expr(paren.expr.as_ref()),
+        _ => expr,
     }
 }

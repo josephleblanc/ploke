@@ -20,6 +20,7 @@ async fn request_code_context_returns_targetless_special_form_call_context()
         &function_in_module_query(&["crate"], "call_qualified_dyn_any_downcast_mut"),
     )?;
     let chained_target = one_uuid(&db, &function_in_module_query(&["crate"], "make_unary_fn"))?;
+    let returned_target = one_uuid(&db, &function_in_module_query(&["crate"], "unary_target"))?;
 
     let extern_tool_result =
         execute_fixture_tool_request(&db, "call_extern_c_function", 1, "extern_c_call_context")
@@ -111,16 +112,32 @@ async fn request_code_context_returns_targetless_special_form_call_context()
     let dynamic_call = owner_part
         .call_context
         .iter()
-        .find(|call| call.kind == CallSiteKind::Dynamic)
+        .find(|call| {
+            call.kind == CallSiteKind::Dynamic
+                && call
+                    .targets
+                    .iter()
+                    .any(|target| target.target_id == returned_target)
+        })
         .expect("outer chained returned-function dynamic call should stay visible");
     assert_eq!(dynamic_call.callee, CallCalleeInfo::Dynamic);
-    assert_eq!(dynamic_call.status, CallStatusKind::Unsupported);
-    assert!(dynamic_call.resolution.is_none());
-    assert!(
-        dynamic_call.targets.is_empty(),
-        "outer chained returned-function dynamic calls must not fabricate TUI targets: {dynamic_call:#?}"
+    assert_resolved_target(
+        dynamic_call,
+        returned_target,
+        CallTargetKind::DynamicFunction,
     );
-    assert_call_blockers(&chained_tool_result, &chained_result);
+    let returned_part = chained_result
+        .context
+        .iter()
+        .find(|part| part.id == returned_target)
+        .expect("request_code_context should materialize the returned function target");
+    assert_expansion(
+        returned_part,
+        chained_owner,
+        returned_target,
+        dynamic_call.site_id,
+        CallExpansionKind::OutgoingTarget,
+    );
 
     let qself_tool_result = execute_fixture_tool_request(
         &db,

@@ -4,7 +4,8 @@ use super::*;
 fn fixture_projection_stores_real_returned_function_call_proof_facts() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let owner = function_id_by_name(&db, "call_returned_function")?;
-    let target = function_id_by_name(&db, "make_fn")?;
+    let maker = function_id_by_name(&db, "make_fn")?;
+    let returned = function_id_by_name(&db, "local_target")?;
     let context = db.call_context_for_owner(owner)?;
     assert_eq!(
         context.len(),
@@ -17,7 +18,7 @@ fn fixture_projection_stores_real_returned_function_call_proof_facts() -> Result
     let path_span = path_row.site.span;
     assert_resolved_target(
         path_row,
-        target,
+        maker,
         CallRelationKind::Function,
         CallSiteKind::Path,
         CallTargetKind::Function,
@@ -35,39 +36,38 @@ fn fixture_projection_stores_real_returned_function_call_proof_facts() -> Result
     let dynamic_row = dynamic_rows[0];
     let dynamic_site = dynamic_row.site.id;
     let dynamic_span = dynamic_row.site.span;
-    assert_eq!(dynamic_row.status.status, CallStatusKind::Unsupported);
-    assert_eq!(dynamic_row.status.resolution, None);
-    assert!(
-        dynamic_row.targets.is_empty(),
-        "returned-function dynamic proof setup must be targetless: {dynamic_row:#?}"
+    assert_eq!(dynamic_row.site.path.as_ref(), Some(&path(&["make_fn"])));
+    assert_resolved_target(
+        dynamic_row,
+        returned,
+        CallRelationKind::DynamicFunction,
+        CallSiteKind::Dynamic,
+        CallTargetKind::Function,
     );
 
     let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
-    assert_eq!(count, 5);
+    assert_eq!(count, 6);
 
     assert_owner_proof_edges(
         &db,
-        "returned-function resolved path",
-        &[OwnerProofEdge {
-            owner,
-            site: path_site,
-            span: path_span,
-            target,
-        }],
+        "returned-function resolved calls",
+        &[
+            OwnerProofEdge {
+                owner,
+                site: path_site,
+                span: path_span,
+                target: maker,
+            },
+            OwnerProofEdge {
+                owner,
+                site: dynamic_site,
+                span: dynamic_span,
+                target: returned,
+            },
+        ],
         "fixture_call_graph/src/lib.rs",
         "type_resolution_missing",
         ProofEdgeCount::Exact,
-    )?;
-
-    assert_blocker_proofs(
-        &db,
-        "returned-function dynamic blocker",
-        &[BlockerProofSite {
-            site: dynamic_site,
-            span: dynamic_span,
-            blocker_reason: "dynamic_dispatch_unbounded",
-        }],
-        "fixture_call_graph/src/lib.rs",
     )?;
 
     Ok(())

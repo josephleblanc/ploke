@@ -20,6 +20,7 @@ async fn proof_context_collection_preserves_targetless_special_form_rows() -> Re
         &function_in_module_query(&["crate"], "call_qualified_dyn_any_downcast_mut"),
     )?;
     let chained_target = one_uuid(&db, &function_in_module_query(&["crate"], "make_unary_fn"))?;
+    let returned_target = one_uuid(&db, &function_in_module_query(&["crate"], "unary_target"))?;
 
     assert_eq!(
         db.project_call_proof_facts_for_owner(extern_owner, "bd:fixture-call-graph")?,
@@ -28,8 +29,8 @@ async fn proof_context_collection_preserves_targetless_special_form_rows() -> Re
     );
     assert_eq!(
         db.project_call_proof_facts_for_owner(chained_owner, "bd:fixture-call-graph")?,
-        5,
-        "chained returned-function call should project resolved and blocked proof facts"
+        6,
+        "chained returned-function call should project inner and outer resolved proof facts"
     );
     assert_eq!(
         db.project_call_proof_facts_for_owner(qself_owner, "bd:fixture-call-graph")?,
@@ -64,11 +65,11 @@ async fn proof_context_collection_preserves_targetless_special_form_rows() -> Re
         .expect("chained returned-function owner seed should receive proof rows");
     assert_eq!(
         chained_rows.len(),
-        5,
+        6,
         "chained returned-function proof rows: {chained_rows:#?}"
     );
     assert_resolved_call(chained_rows, chained_owner, chained_target);
-    assert_blocked_resolution(chained_rows, chained_owner, "dynamic_dispatch_unbounded");
+    assert_resolved_call(chained_rows, chained_owner, returned_target);
 
     let qself_context = rag.collect_proof_context(&[(qself_owner, 1.0)])?;
     let qself_rows = qself_context

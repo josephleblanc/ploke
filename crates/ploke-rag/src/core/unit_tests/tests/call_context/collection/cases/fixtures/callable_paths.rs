@@ -81,14 +81,25 @@ async fn call_context_collection_reads_real_fixture_callable_path_rows() -> Resu
 
     let returned_dynamic = returned_context
         .iter()
-        .find(|call| call.kind == CallSiteKind::Dynamic)
+        .find(|call| {
+            call.kind == CallSiteKind::Dynamic
+                && call
+                    .targets
+                    .iter()
+                    .any(|target| target.target_id == local_target)
+        })
         .expect("outer returned-function dynamic call should stay visible");
     assert_eq!(returned_dynamic.callee, CallCalleeInfo::Dynamic);
-    assert_eq!(returned_dynamic.status, CallStatusKind::Unsupported);
-    assert!(returned_dynamic.resolution.is_none());
-    assert!(
-        returned_dynamic.targets.is_empty(),
-        "returned-function dynamic calls must not fabricate RAG targets: {returned_dynamic:#?}"
+    assert_eq!(returned_dynamic.status, CallStatusKind::Resolved);
+    assert_eq!(
+        returned_dynamic.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(returned_dynamic.targets.len(), 1);
+    assert_eq!(returned_dynamic.targets[0].target_id, local_target);
+    assert_eq!(
+        returned_dynamic.targets[0].relation,
+        CallTargetKind::DynamicFunction
     );
 
     let branch_context = call_context

@@ -503,7 +503,7 @@ Implemented/scaffolded:
   - `fixture_call_graph_call_raw_identifier_method_resolves_raw_identifier_method_call_site`
   - `fixture_call_graph_call_unqualified_local_target_resolves_local_path_call_site`
   - `fixture_call_graph_call_returned_function_resolves_inner_make_fn_path_call_site`
-  - `fixture_call_graph_call_returned_function_records_outer_dynamic_call_site`
+  - `fixture_call_graph_call_returned_function_resolves_outer_dynamic_call_site`
   - `fixture_call_graph_call_self_make_resolves_self_associated_function_path_call_site`
   - `fixture_call_graph_call_local_assoc_make_resolves_type_associated_function_path_call_site`
   - `fixture_call_graph_call_qualified_local_assoc_make_resolves_type_associated_function_path_call_site`
@@ -1291,8 +1291,8 @@ Primary implementation files:
 Implemented in this slice:
 
 1. Added `fixture_call_graph::call_returned_function` with `make_fn()()` to cover Rust's chained call-callee syntax.
-2. The existing visitor records the inner `make_fn()` as `CallNode::PathCall` and the outer returned-function invocation as `CallNode::DynamicCall`.
-3. The inner `make_fn()` path call resolves to the local `FunctionNodeId`; the outer dynamic call remains `Unsupported` with no fabricated edge.
+2. The visitor records the inner `make_fn()` as `CallNode::PathCall` and the outer returned-function invocation as `DynamicCallCallee::ReturnedPathCall`.
+3. The inner `make_fn()` path call resolves to the local maker function, and the outer dynamic call resolves to the direct function path returned by that maker. Non-direct returned callables remain fail-closed.
 
 Primary implementation files:
 

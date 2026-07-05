@@ -248,6 +248,8 @@ pub enum ExpectedDynamicCallee<'a> {
     Path { path: &'a [&'a str] },
     /// The callee expression is a path cast to a bare function pointer before being called.
     FnPointerCastPath { path: &'a [&'a str] },
+    /// The callee expression is the result of calling a path.
+    ReturnedPathCall { path: &'a [&'a str] },
     /// The callee expression is an initialized local binding cast to a bare function pointer.
     FnPointerCastInitializedLocalBinding {
         path: &'a [&'a str],
@@ -305,6 +307,9 @@ impl ExpectedDynamicCallee<'_> {
                 path: path.iter().copied().map(String::from).collect(),
             },
             Self::FnPointerCastPath { path } => DynamicCallCallee::FnPointerCastPath {
+                path: path.iter().copied().map(String::from).collect(),
+            },
+            Self::ReturnedPathCall { path } => DynamicCallCallee::ReturnedPathCall {
                 path: path.iter().copied().map(String::from).collect(),
             },
             Self::FnPointerCastInitializedLocalBinding { path, init_path } => {
@@ -586,6 +591,25 @@ impl<'a> ExpectedCallSite<'a> {
         Self {
             kind: ExpectedCallKind::Dynamic {
                 callee: ExpectedDynamicCallee::FnPointerCastPath { path },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is a returned path call.
+    pub const fn dynamic_returned_path_call(
+        path: &'a [&'a str],
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::ReturnedPathCall { path },
                 arg_count,
             },
             span,
