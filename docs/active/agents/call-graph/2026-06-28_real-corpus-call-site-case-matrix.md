@@ -91,7 +91,7 @@ Status values:
 | Concrete `dyn Any` associated call | `axum-fixture` | axum-core | `axum-core/src/body.rs:29` | `<dyn std::any::Any>::downcast_mut::<Option<T>>(&mut k)` | External trait-object associated call should be represented and classified external. |
 | Const initializer body owner | `axum-fixture` | axum | `axum/src/routing/route.rs:202`; `axum/src/extract/ws.rs:382` | `const ZERO: HeaderValue = HeaderValue::from_static("0");`; `const UPGRADE: HeaderValue = HeaderValue::from_static("upgrade");` | Route local const initializer calls are owned by executable `LocalItem` owners, not item-level `Const` nodes or enclosing function owners; websocket local const rows remain absent in this fixture. |
 | Closure body boundary | `axum-fixture` | axum-macros | `axum-macros/src/from_ref.rs:23` | `.map(|(idx, field)| expand_field(...))` | Covered by `axum_closure_body_call_is_documented_unsupported_gap`: regenerated fixture owns the row on the nested closure executable and traverses to `expand_field`, without flattening it into the enclosing function. |
-| Async block body boundary | `axum-fixture` | axum | `axum/src/handler/mod.rs:240` | `Box::pin(async move { ... })` | Current parser boundary should not flatten async-block body calls into the enclosing owner unless nested owner modeling is added. |
+| Async block body boundary | `axum-fixture` | axum | `axum/src/handler/mod.rs:217` | `Box::pin(async move { self().await.into_response() })` | Covered by `axum_real_target_handler_async_block_body_calls_are_async_block_owned`: concrete async-block body calls are owned by a nested `AsyncBlock` owner and remain targetless; they are not flattened into the enclosing `Handler::call` owner. |
 
 ## Dynamic And Unsupported Callable Cases
 

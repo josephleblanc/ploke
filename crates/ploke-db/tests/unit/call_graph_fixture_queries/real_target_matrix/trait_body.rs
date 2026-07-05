@@ -615,7 +615,7 @@ fn axum_real_target_handler_macro_extraction_paths_are_absent_gaps() -> Result<(
 }
 
 #[test]
-fn axum_real_target_handler_async_block_body_calls_are_absent_gaps() -> Result<(), DbError> {
+fn axum_real_target_handler_async_block_body_calls_are_async_block_owned() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
     // Matrix: async block body boundary.
@@ -625,9 +625,11 @@ fn axum_real_target_handler_async_block_body_calls_are_absent_gaps() -> Result<(
     //   axum/src/handler/mod.rs:240 starts the generated `Handler::call`
     //   async block whose inner calls are separately documented by the
     //   `$ty::from_request_parts` and `$last::from_request` matrix rows.
-    // Current model gap: async-block bodies do not yet receive independent
-    // call-body ownership, so inner `self(...)` and `into_response()` calls
-    // must not be flattened into the enclosing `Handler::call` owner.
+    // Expected traversal: the concrete non-macro async block has its own
+    // executable owner. The generic callable `self()` and awaited
+    // `into_response()` receiver stay targetless, but they must be owned by the
+    // async-block body and must not be flattened into the enclosing
+    // `Handler::call` owner.
     let owner = method_id_by_name_body_and_file_suffix(
         &db,
         "call",
@@ -640,14 +642,37 @@ fn axum_real_target_handler_async_block_body_calls_are_absent_gaps() -> Result<(
         context
             .iter()
             .all(|row| row.site.kind != CallSiteKind::Dynamic),
-        "axum/src/handler/mod.rs:217 inner async-block `self()` should remain absent until nested async ownership lands: {context:#?}"
+        "axum/src/handler/mod.rs:217 inner async-block `self()` must not be flattened into Handler::call: {context:#?}"
     );
     assert!(
         context
             .iter()
             .all(|row| row.site.method.as_deref() != Some("into_response")),
-        "axum/src/handler/mod.rs:217 inner async-block `into_response()` should remain absent until nested async ownership lands: {context:#?}"
+        "axum/src/handler/mod.rs:217 inner async-block `into_response()` must not be flattened into Handler::call: {context:#?}"
     );
 
-    Ok(())
+    assert_targetless_path_owner_kind_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        &["self"],
+        CallStatusKind::Unsupported,
+        "AsyncBlock",
+        &[SourceLineFanout {
+            file_suffix: "axum/src/handler/mod.rs",
+            lines: &[217],
+        }],
+    )?;
+    assert_targetless_method_owner_kind_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        "into_response",
+        "AwaitPathCallResult",
+        Some(&["self"]),
+        CallStatusKind::Unsupported,
+        "AsyncBlock",
+        &[SourceLineFanout {
+            file_suffix: "axum/src/handler/mod.rs",
+            lines: &[217],
+        }],
+    )
 }

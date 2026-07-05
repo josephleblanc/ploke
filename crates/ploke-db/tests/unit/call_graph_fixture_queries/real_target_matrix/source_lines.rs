@@ -155,6 +155,75 @@ pub(super) fn assert_targetless_method_line_fanout(
     )
 }
 
+pub(super) fn assert_targetless_method_owner_kind_line_fanout(
+    db: &Database,
+    fixture: &FixtureDb,
+    method: &str,
+    receiver_kind: &str,
+    receiver_path: Option<&[&str]>,
+    status: CallStatusKind,
+    owner_kind: &str,
+    expected: &[SourceLineFanout],
+) -> Result<(), DbError> {
+    let mut params = BTreeMap::new();
+    params.insert("method".to_string(), DataValue::from(method));
+    params.insert("receiver_kind".to_string(), DataValue::from(receiver_kind));
+    params.insert("status".to_string(), DataValue::from(format!("{status:?}")));
+    params.insert("owner_kind".to_string(), DataValue::from(owner_kind));
+    params.insert(
+        "receiver_path".to_string(),
+        receiver_path.map_or(DataValue::Null, path_value),
+    );
+
+    let script = format!(
+        r#"
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[file_path, site_id, owner_id, span, resolution_kind] :=
+    *call_site {{
+        id: site_id,
+        owner_id,
+        call_kind: "Method",
+        method_name: $method,
+        receiver_kind: $receiver_kind,
+        receiver_path: $receiver_path,
+        span @ 'NOW'
+    }},
+    *call_resolution_status {{
+        source_id: site_id,
+        source_kind: "Method",
+        status_kind: $status,
+        resolution_kind @ 'NOW'
+    }},
+    *call_body_owner {{
+        id: owner_id,
+        owner_kind: $owner_kind,
+        parent_id @ 'NOW'
+    }},
+    ancestor[parent_id, module_id],
+    *module {{ id: module_id @ 'NOW' }},
+    file_owner_for_module[module_id, file_id],
+    *file_mod {{ owner_id: file_id, file_path @ 'NOW' }}
+:sort file_path, span, site_id
+"#
+    );
+
+    let rows = db.raw_query_params(&script, params)?;
+    assert_targetless_line_rows(
+        db,
+        fixture,
+        &rows.rows,
+        expected,
+        method,
+        &format!("{status:?} {owner_kind} source-line fanout rows for method {method:?}"),
+    )
+}
+
 pub(super) fn assert_targetless_method_line_fanout_with_needle(
     db: &Database,
     fixture: &FixtureDb,
