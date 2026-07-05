@@ -69,3 +69,40 @@ async fn proof_context_collection_preserves_async_closure_owner_projected_rows()
 
     Ok(())
 }
+
+#[tokio::test]
+async fn proof_context_collection_preserves_local_item_owner_projected_rows() -> Result<(), Error> {
+    init_tracing_once();
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let target = unique_id_by_name(&db, "function", "assoc_const_value")?;
+    let outer = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "local_const_initializer_call_is_not_outer_call_site",
+        ),
+    )?;
+    let local_item = local_item_owner_for_parent(&db, outer)?;
+
+    assert_eq!(
+        db.project_call_proof_facts_for_owner(local_item, "bd:fixture-call-graph")?,
+        3,
+        "local item owner should project call_site, call_edge, and call_resolution facts"
+    );
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.proof_context_degraded(),
+        "local item owner proof projection should enable RAG proof context"
+    );
+
+    let proof_context = rag.collect_proof_context(&[(local_item, 1.0)])?;
+    let rows = proof_context
+        .get(&local_item)
+        .expect("local item owner seed should receive linked proof rows");
+    assert_projected_owner_rows(rows, local_item, target);
+
+    Ok(())
+}

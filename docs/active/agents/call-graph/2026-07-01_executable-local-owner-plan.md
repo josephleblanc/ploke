@@ -172,9 +172,13 @@ Current implementation status:
   `call_body_owner` with `owner_kind = "LocalItem"` and label `local_const`,
   and verified in parser/transform/DB fixture tests without flattening into the
   enclosing function owner.
+- RAG call-context collection, incoming expansion, projected proof-context
+  collection, and `request_code_context` call/proof payload tests now preserve
+  the fixture-backed local-item owner as the caller for
+  `assoc_const_value()` from the local const initializer body.
 
-Do not add additional RAG/TUI coverage for new executable-local shapes until the
-DB context row has a stable nested-owner metadata contract for that shape.
+For future executable-local shapes, do not add RAG/TUI coverage until the DB
+context row has a stable nested-owner metadata contract for that shape.
 
 ## Explicit Non-Goals
 

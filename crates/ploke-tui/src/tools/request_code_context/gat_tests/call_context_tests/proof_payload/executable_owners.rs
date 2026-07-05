@@ -19,6 +19,8 @@ async fn request_code_context_returns_closure_owner_projected_proof_context()
         target,
         closure,
         "closure",
+        "pub fn local_target",
+        &["local_target"],
         "closure_owner_projected_proof_context",
     )
     .await
@@ -41,6 +43,8 @@ async fn request_code_context_returns_async_block_owner_projected_proof_context(
         target,
         async_body,
         "async block",
+        "pub fn local_target",
+        &["local_target"],
         "async_block_owner_projected_proof_context",
     )
     .await
@@ -63,7 +67,39 @@ async fn request_code_context_returns_async_closure_owner_projected_proof_contex
         target,
         async_closure,
         "async closure",
+        "pub fn local_target",
+        &["local_target"],
         "async_closure_owner_projected_proof_context",
+    )
+    .await
+}
+
+#[tokio::test]
+async fn request_code_context_returns_local_item_owner_projected_proof_context()
+-> color_eyre::Result<()> {
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let target = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "assoc_const_value"),
+    )?;
+    let outer = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "local_const_initializer_call_is_not_outer_call_site",
+        ),
+    )?;
+    let local_item = local_item_owner_for_parent(&db, outer)?;
+    assert_owner_projected_proof_context(
+        &db,
+        target,
+        local_item,
+        "local item",
+        "pub const fn assoc_const_value",
+        &["assoc_const_value"],
+        "local_item_owner_projected_proof_context",
     )
     .await
 }
@@ -73,6 +109,8 @@ async fn assert_owner_projected_proof_context(
     target: Uuid,
     owner: Uuid,
     label: &str,
+    search_term: &str,
+    callee_path: &[&str],
     request_label: &'static str,
 ) -> color_eyre::Result<()> {
     assert_eq!(
@@ -81,10 +119,9 @@ async fn assert_owner_projected_proof_context(
         "{label} owner should project call_site, call_edge, and call_resolution facts"
     );
 
-    let tool_result =
-        execute_fixture_tool_request(db, "pub fn local_target", 1, request_label).await?;
+    let tool_result = execute_fixture_tool_request(db, search_term, 1, request_label).await?;
     let result: RequestCodeContextResult = serde_json::from_str(&tool_result.content)?;
-    assert_result_ok(&result, "pub fn local_target", 1, "fixture_call_graph");
+    assert_result_ok(&result, search_term, 1, "fixture_call_graph");
     assert!(
         result
             .note
@@ -104,7 +141,7 @@ async fn assert_owner_projected_proof_context(
                 && call.kind == CallSiteKind::Path
                 && call.callee
                     == CallCalleeInfo::Path {
-                        path: path(&["local_target"]),
+                        path: path(callee_path),
                     }
                 && call
                     .targets

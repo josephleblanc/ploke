@@ -1344,6 +1344,14 @@ mod gat_tests {
     }
 
     #[cfg(feature = "test_harness")]
+    fn local_item_owner_for_parent(
+        db: &ploke_db::Database,
+        parent: uuid::Uuid,
+    ) -> color_eyre::Result<uuid::Uuid> {
+        executable_owner_for_parent(db, parent, "LocalItem", "local_const")
+    }
+
+    #[cfg(feature = "test_harness")]
     fn executable_owner_for_parent(
         db: &ploke_db::Database,
         parent: uuid::Uuid,

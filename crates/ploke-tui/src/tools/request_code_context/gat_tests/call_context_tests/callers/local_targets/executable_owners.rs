@@ -172,6 +172,78 @@ async fn request_code_context_returns_async_closure_owner_call_context_for_local
 }
 
 #[tokio::test]
+async fn request_code_context_returns_local_item_owner_call_context_for_assoc_const_value()
+-> color_eyre::Result<()> {
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let target = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "assoc_const_value"),
+    )?;
+    let outer = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "local_const_initializer_call_is_not_outer_call_site",
+        ),
+    )?;
+    let local_item = local_item_owner_for_parent(&db, outer)?;
+
+    let result = execute_fixture_request(
+        &db,
+        "pub const fn assoc_const_value",
+        1,
+        "local_item_owner_call_context",
+    )
+    .await?;
+    assert_result_ok(
+        &result,
+        "pub const fn assoc_const_value",
+        1,
+        "fixture_call_graph",
+    );
+
+    assert!(
+        result.context.iter().any(|part| part.id == target),
+        "request_code_context should preserve the assoc_const_value seed part: {result:#?}"
+    );
+    assert!(
+        result.context.iter().all(|part| part.id != outer),
+        "local const initializer call must not expand to the enclosing outer function: {result:#?}"
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1371-1373:
+    // The local const initializer calls `assoc_const_value()`. Tool context
+    // should expose the local-item owner as the incoming caller.
+    let local_item_part = result
+        .context
+        .iter()
+        .find(|part| part.id == local_item)
+        .expect("request_code_context should materialize the local item caller");
+    let call = local_item_part
+        .call_context
+        .iter()
+        .find(|call| {
+            call.owner_id == local_item
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: path(&["assoc_const_value"]),
+                    }
+                && call
+                    .targets
+                    .iter()
+                    .any(|target_info| target_info.target_id == target)
+        })
+        .expect("local item owner should retain outgoing assoc_const_value() call context");
+    assert_resolved_target(call, target, CallTargetKind::Function);
+    assert_incoming_expansion(local_item_part, call, target);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn request_code_context_returns_move_closure_literal_owner_call_context()
 -> color_eyre::Result<()> {
     let db = Arc::new(Database::new(setup_db_full_multi_embedding(
