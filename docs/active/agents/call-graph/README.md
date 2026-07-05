@@ -9,24 +9,25 @@ Short description: Current source of truth for the parser call-graph feature thr
 1. This file.
 2. [`2026-07-01_call-graph-larger-plan-map.md`](2026-07-01_call-graph-larger-plan-map.md) — bridge from the original typed call-graph plan to the active phase and next larger semantic-expansion phase.
 3. [`2026-07-01_call-graph-goal-coverage-matrix.md`](2026-07-01_call-graph-goal-coverage-matrix.md) — bucket-driven workflow guardrail for deciding when to switch focus.
-4. [`2026-07-01_executable-local-owner-plan.md`](2026-07-01_executable-local-owner-plan.md) — current semantic-expansion checkpoint for closure, async-block, and executable-local body ownership.
-5. [`2026-06-25_call-graph-quality-recovery-tracker.md`](2026-06-25_call-graph-quality-recovery-tracker.md) — active quality gate after the DB/proof/code-organization review; read before resuming implementation.
-6. [`2026-06-25_call-graph-coverage-inventory.md`](2026-06-25_call-graph-coverage-inventory.md) — compact current coverage inventory by parser, resolver, transform, DB, RAG, TUI, proof, and rollout layer.
-7. [`2026-06-28_real-corpus-call-site-case-matrix.md`](2026-06-28_real-corpus-call-site-case-matrix.md) — source-grounded real-corpus call-site matrix for axum-first DB query tests and fallback fixture candidates.
-8. [`2026-06-28_real-corpus-call-site-oracle-matrices.md`](2026-06-28_real-corpus-call-site-oracle-matrices.md) — definition/binding sites, callsite fanout, and source evidence chains for the real-corpus matrix.
-9. [`../2026-06-22_call-graph-id-domain-correction.md`](../2026-06-22_call-graph-id-domain-correction.md) — binding design decision for call-site identity.
-10. [`2026-06-22_call-site-coverage-matrix.md`](2026-06-22_call-site-coverage-matrix.md) — detailed structural/resolution case matrix for future slices.
-11. [`2026-06-22_structural-method-call-extraction-plan.md`](2026-06-22_structural-method-call-extraction-plan.md) — completed structural method-call slice.
-12. [`2026-06-22_inherent-self-method-resolution-plan.md`](2026-06-22_inherent-self-method-resolution-plan.md) — completed first semantic resolver slice.
-13. [`2026-06-22_structural-path-call-extraction-plan.md`](2026-06-22_structural-path-call-extraction-plan.md) — completed structural path-call slice.
-14. [`2026-06-22_local-free-function-path-call-resolution-plan.md`](2026-06-22_local-free-function-path-call-resolution-plan.md) — completed first local path-call resolver slice.
-15. [`2026-06-22_call-graph-db-projection-plan.md`](2026-06-22_call-graph-db-projection-plan.md) — completed first database projection slice.
-16. [`2026-06-22_external-root-path-call-classification-plan.md`](2026-06-22_external-root-path-call-classification-plan.md) — completed direct external-root classification slice.
-17. [`2026-06-22_dynamic-call-extraction-plan.md`](2026-06-22_dynamic-call-extraction-plan.md) — completed dynamic structural call-site slice.
-18. [`2026-06-22_structural-macro-call-extraction-plan.md`](2026-06-22_structural-macro-call-extraction-plan.md) — completed structural macro-call slice.
-19. [`../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md`](../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md) — task sequence for the first `fixture_nodes` slice.
-20. [`../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`](../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md) — broader typed call-graph rollout plan.
-21. Long-horizon proof context only if needed:
+4. [`2026-07-05_binding-type-aware-resolver-plan.md`](2026-07-05_binding-type-aware-resolver-plan.md) — bounded plan for the active binding/type-aware semantic-resolution phase.
+5. [`2026-07-01_executable-local-owner-plan.md`](2026-07-01_executable-local-owner-plan.md) — current semantic-expansion checkpoint for closure, async-block, and executable-local body ownership.
+6. [`2026-06-25_call-graph-quality-recovery-tracker.md`](2026-06-25_call-graph-quality-recovery-tracker.md) — active quality gate after the DB/proof/code-organization review; read before resuming implementation.
+7. [`2026-06-25_call-graph-coverage-inventory.md`](2026-06-25_call-graph-coverage-inventory.md) — compact current coverage inventory by parser, resolver, transform, DB, RAG, TUI, proof, and rollout layer.
+8. [`2026-06-28_real-corpus-call-site-case-matrix.md`](2026-06-28_real-corpus-call-site-case-matrix.md) — source-grounded real-corpus call-site matrix for axum-first DB query tests and fallback fixture candidates.
+9. [`2026-06-28_real-corpus-call-site-oracle-matrices.md`](2026-06-28_real-corpus-call-site-oracle-matrices.md) — definition/binding sites, callsite fanout, and source evidence chains for the real-corpus matrix.
+10. [`../2026-06-22_call-graph-id-domain-correction.md`](../2026-06-22_call-graph-id-domain-correction.md) — binding design decision for call-site identity.
+11. [`2026-06-22_call-site-coverage-matrix.md`](2026-06-22_call-site-coverage-matrix.md) — detailed structural/resolution case matrix for future slices.
+12. [`2026-06-22_structural-method-call-extraction-plan.md`](2026-06-22_structural-method-call-extraction-plan.md) — completed structural method-call slice.
+13. [`2026-06-22_inherent-self-method-resolution-plan.md`](2026-06-22_inherent-self-method-resolution-plan.md) — completed first semantic resolver slice.
+14. [`2026-06-22_structural-path-call-extraction-plan.md`](2026-06-22_structural-path-call-extraction-plan.md) — completed structural path-call slice.
+15. [`2026-06-22_local-free-function-path-call-resolution-plan.md`](2026-06-22_local-free-function-path-call-resolution-plan.md) — completed first local path-call resolver slice.
+16. [`2026-06-22_call-graph-db-projection-plan.md`](2026-06-22_call-graph-db-projection-plan.md) — completed first database projection slice.
+17. [`2026-06-22_external-root-path-call-classification-plan.md`](2026-06-22_external-root-path-call-classification-plan.md) — completed direct external-root classification slice.
+18. [`2026-06-22_dynamic-call-extraction-plan.md`](2026-06-22_dynamic-call-extraction-plan.md) — completed dynamic structural call-site slice.
+19. [`2026-06-22_structural-macro-call-extraction-plan.md`](2026-06-22_structural-macro-call-extraction-plan.md) — completed structural macro-call slice.
+20. [`../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md`](../2026-06-21_call-graph-fixture-nodes-orchestration-plan.md) — task sequence for the first `fixture_nodes` slice.
+21. [`../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`](../../../../.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md) — broader typed call-graph rollout plan.
+22. Long-horizon proof context only if needed:
    - [`../../../workflow/evalnomicon/drafts/formal/detached-process-callgraph-proof-target.md`](../../../workflow/evalnomicon/drafts/formal/detached-process-callgraph-proof-target.md)
    - [`../../../workflow/evalnomicon/drafts/formal/callgraph-implementation-design-for-detached-process-proof.md`](../../../workflow/evalnomicon/drafts/formal/callgraph-implementation-design-for-detached-process-proof.md)
    - [`../../../workflow/evalnomicon/drafts/formal/macro-buildrs-callgraph-sequencing-survey.md`](../../../workflow/evalnomicon/drafts/formal/macro-buildrs-callgraph-sequencing-survey.md)
