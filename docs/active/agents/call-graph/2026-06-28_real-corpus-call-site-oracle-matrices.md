@@ -99,22 +99,21 @@ owner.
 | `Body::empty` | `axum/src/form.rs:158`; `extract/query.rs:106`; `extract/raw_form.rs:65`; `extract/ws.rs:394,400,1129,1191`; `serve/mod.rs:799`; `middleware/from_fn.rs:411`; `routing/route.rs:161,174`; `routing/method_routing.rs:1700`; `routing/tests/get_to_head.rs:25,59`; `routing/tests/merge.rs:198,204`; `routing/tests/mod.rs:228,1133,1151` | local/imported `Body` -> axum re-export `axum/src/body/mod.rs:10` or direct `axum_core::body::Body` import -> `axum-core/src/body.rs:52`. |
 
 Current executable coverage: DB target traversal, proof projection, RAG exact
-call context, `code_item_lookup`, and `code_item_edges` assert the resolved
-`Body::empty` caller edges in axum-core: six literal `Body::empty()` rows from
-`response/into_response.rs` and `ext_traits/request.rs`, plus the two
-`axum-core/src/body.rs:{110,116}` `Self::empty()` rows that traverse to
-`Body::empty`. The remaining rows in this fanout are still tracked as
-import/re-export completeness gaps, not as expected-passing traversal edges. The
-DB matrix now also pins the current targetless rows by exact owner/source label
-and exact source-line fanout, with zero traversal candidates: eight normal
-function/method-owned external
-rows in `axum/src/{extract/query.rs,
-extract/raw_form.rs,form.rs,middleware/from_fn.rs,routing/route.rs,
-routing/tests/mod.rs,serve/mod.rs}` and three unsupported rows in
-`axum/src/routing/method_routing.rs` and
-`axum/src/routing/tests/get_to_head.rs`. The
+call context, `code_item_lookup`, and `code_item_edges` assert twelve resolved
+`Body::empty` caller edges: six literal `Body::empty()` rows from axum-core
+`response/into_response.rs` and `ext_traits/request.rs`, the two
+`axum-core/src/body.rs:{110,116}` `Self::empty()` rows, and four direct axum
+parsed-workspace import rows in `extract/query.rs`, `extract/raw_form.rs`,
+`form.rs`, and `serve/mod.rs`. The remaining rows in this fanout are still
+tracked as import/re-export completeness gaps, not as expected-passing traversal
+edges. The DB matrix now also pins the current targetless rows by exact
+owner/source label and exact source-line fanout, with zero traversal candidates:
+seven unsupported rows in `axum/src/middleware/from_fn.rs`,
+`axum/src/routing/route.rs`, `axum/src/routing/method_routing.rs`,
+`axum/src/routing/tests/get_to_head.rs`, and `axum/src/routing/tests/mod.rs`.
+The
 `axum/src/routing/tests/mod.rs:228` nested local `handler` row is now pinned as
-an external targetless `LocalItem` owner row.
+an unsupported targetless `LocalItem` owner row.
 The `axum/src/routing/route.rs:161` closure-body row remains absent until nested
 closure ownership is modeled.
 
@@ -270,15 +269,17 @@ item-level method row from the two nested local `impl Service` rows now owned
 by `local_impl_method:poll_ready` executable owners in `routing/tests/mod.rs`
 and `routing/tests/nest.rs`.
 The result-chain coverage also pins all 14 projected `Request::builder()` rows
-by owner and source line: eight external rows, two unresolved axum-core
-ext-trait test rows, and four unsupported rows, including the matrix chain in
+by owner and source line: five external rows, two unresolved axum-core
+ext-trait test rows, and seven unsupported rows, including the matrix chain in
 `middleware/from_fn.rs:411`.
 The exact current source-line fanout is external
-`extract/query.rs:104`, `extract/raw_form.rs:65`, `form.rs:{156,164,226}`,
-`routing/tests/mod.rs:{1129,1147}`, and `serve/mod.rs:799`; unresolved
+`extract/query.rs:104`, `extract/raw_form.rs:65`, and
+`form.rs:{156,164,226}`; unresolved
 `axum-core/src/ext_traits/request.rs:{375,388}`; unsupported
 `middleware/from_fn.rs:411`, `routing/method_routing.rs:1697`, and
-`routing/tests/get_to_head.rs:{22,56}`. Await-result receiver coverage now
+`routing/tests/get_to_head.rs:{22,56}`,
+`routing/tests/mod.rs:{1129,1147}`, and `serve/mod.rs:799`.
+Await-result receiver coverage now
 asserts 44 raw targetless `unwrap()` rows; the source-line fanout helper covers
 the 43 module-anchored rows while the additional row is owned by a nested async
 block.

@@ -1238,8 +1238,9 @@ async fn code_item_lookup_returns_real_corpus_body_empty_callers() {
     //   axum-core/src/body.rs:110 and :116 call `Self::empty()`.
     //   axum-core/src/response/into_response.rs response conversion rows call
     //   `Body::empty()`.
+    //   Four axum direct parsed-workspace import rows also call `Body::empty()`.
     // Expected tool traversal: exact lookup of the callee method exposes all
-    // four current incoming caller-site edges and their projected proof rows.
+    // twelve current incoming caller-site edges and their projected proof rows.
     assert_body_empty_incoming_context(
         call_context,
         &fixture.callers,
@@ -1265,7 +1266,7 @@ async fn code_item_lookup_returns_real_corpus_body_empty_callers() {
     );
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
-    assert_eq!(ui_field(ui, "call_context_incoming"), "4");
+    assert_eq!(ui_field(ui, "call_context_incoming"), "12");
     assert_eq!(
         ui_field(ui, "impact_test_callers"),
         impact_test_callers.len().to_string()

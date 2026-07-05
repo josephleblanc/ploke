@@ -42,6 +42,10 @@ impl<'a> CallRelationResolver<'a> {
             })
     }
 
+    fn is_workspace_dependency_path(&self, path: &[String]) -> bool {
+        self.workspace_dependency_tail(path).is_some()
+    }
+
     pub(super) fn is_external_prelude_path(
         &self,
         owner: CallBodyOwnerId,
@@ -166,6 +170,9 @@ impl<'a> CallRelationResolver<'a> {
         if matches!(import_node.kind, ImportKind::ExternFunction { .. }) {
             return Ok(true);
         }
+        if self.is_workspace_dependency_path(import_node.source_path()) {
+            return Ok(false);
+        }
         if self.is_external_path(import_node.source_path()) {
             return Ok(true);
         }
@@ -231,7 +238,10 @@ impl<'a> CallRelationResolver<'a> {
         }
 
         match self.type_node(type_id)? {
-            TypeNode::Named(node) => Ok(self.is_external_path(&node.path)),
+            TypeNode::Named(node) => {
+                Ok(!self.is_workspace_dependency_path(&node.path)
+                    && self.is_external_path(&node.path))
+            }
             TypeNode::Reference(node) => {
                 self.ordinary_type_binding_is_external(node.referenced, depth + 1)
             }

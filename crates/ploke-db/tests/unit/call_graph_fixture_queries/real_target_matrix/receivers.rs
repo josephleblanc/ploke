@@ -1093,21 +1093,21 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
             label: "axum/src/routing/tests/mod.rs:1129",
             module_path: &["crate", "routing", "tests"],
             owner: "connect_going_to_custom_fallback",
-            status: CallStatusKind::External,
+            status: CallStatusKind::Unsupported,
         },
         RequestBuilderCase {
             // axum/src/routing/tests/mod.rs:1147
             label: "axum/src/routing/tests/mod.rs:1147",
             module_path: &["crate", "routing", "tests"],
             owner: "connect_going_to_default_fallback",
-            status: CallStatusKind::External,
+            status: CallStatusKind::Unsupported,
         },
         RequestBuilderCase {
             // axum/src/serve/mod.rs:799
             label: "axum/src/serve/mod.rs:799",
             module_path: &["crate", "serve", "tests"],
             owner: "serving_on_custom_io_type",
-            status: CallStatusKind::External,
+            status: CallStatusKind::Unsupported,
         },
         RequestBuilderCase {
             // axum-core/src/ext_traits/request.rs:375
@@ -1163,7 +1163,7 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
         &db,
         from_fn_owner,
         &["Body", "empty"],
-        CallStatusKind::External,
+        CallStatusKind::Unsupported,
         "axum/src/middleware/from_fn.rs:411 Body::empty",
     )?;
     assert_owner_method_targetless(
@@ -1176,9 +1176,9 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
         CallStatusKind::Unsupported,
         "axum/src/middleware/from_fn.rs:411",
     )?;
-    assert_targetless_path_rows(&db, &["Request", "builder"], CallStatusKind::External, 8)?;
+    assert_targetless_path_rows(&db, &["Request", "builder"], CallStatusKind::External, 5)?;
     assert_targetless_path_rows(&db, &["Request", "builder"], CallStatusKind::Unresolved, 2)?;
-    assert_targetless_path_rows(&db, &["Request", "builder"], CallStatusKind::Unsupported, 4)?;
+    assert_targetless_path_rows(&db, &["Request", "builder"], CallStatusKind::Unsupported, 7)?;
     assert_targetless_path_line_fanout(
         &db,
         &CORPUS_AXUM_CALL_GRAPH,
@@ -1196,14 +1196,6 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
             SourceLineFanout {
                 file_suffix: "axum/src/form.rs",
                 lines: &[156, 164, 226],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/tests/mod.rs",
-                lines: &[1129, 1147],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/serve/mod.rs",
-                lines: &[799],
             },
         ],
     )?;
@@ -1234,6 +1226,14 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
             SourceLineFanout {
                 file_suffix: "axum/src/routing/tests/get_to_head.rs",
                 lines: &[22, 56],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/mod.rs",
+                lines: &[1129, 1147],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/serve/mod.rs",
+                lines: &[799],
             },
         ],
     )?;

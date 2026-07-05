@@ -73,8 +73,8 @@ async fn call_context_exact_reads_axum_body_empty_incoming_callers() -> Result<(
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        8,
-        "current axum fixture should resolve exactly the eight axum-core Body::empty callers: {callers:#?}"
+        12,
+        "current axum fixture should resolve exactly the twelve Body::empty callers: {callers:#?}"
     );
 
     let context = rag.exact_call_context(target)?;
@@ -98,12 +98,14 @@ async fn call_context_exact_reads_axum_body_empty_incoming_callers() -> Result<(
     //   `Body::empty()`.
     //   axum-core/src/ext_traits/request.rs request helper rows call
     //   `Body::empty()`.
+    //   axum/src/{extract/query.rs,extract/raw_form.rs,form.rs,serve/mod.rs}
+    //   call `Body::empty()` through direct parsed-workspace imports.
     // Expected traversal for the current fixture: the RAG exact call-context
-    // path preserves the same eight incoming caller-site edges exposed by
+    // path preserves the same twelve incoming caller-site edges exposed by
     // `Database::callers_for_target`.
     assert_eq!(
         incoming.len(),
-        8,
+        12,
         "RAG exact call context should expose all current Body::empty incoming edges: {context:#?}"
     );
 
@@ -134,7 +136,10 @@ async fn call_context_exact_reads_axum_body_empty_incoming_callers() -> Result<(
     }
     assert_eq!(
         path_counts,
-        BTreeMap::from([(path(&["Body", "empty"]), 6), (path(&["Self", "empty"]), 2),]),
+        BTreeMap::from([
+            (path(&["Body", "empty"]), 10),
+            (path(&["Self", "empty"]), 2),
+        ]),
         "RAG call context should preserve literal Body::empty and trait-impl Self::empty path shapes"
     );
 

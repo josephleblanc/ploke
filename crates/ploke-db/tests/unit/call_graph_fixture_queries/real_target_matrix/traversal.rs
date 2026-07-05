@@ -66,12 +66,13 @@ fn axum_real_target_supported_callers_are_one_hop_traversable() -> Result<(), Db
         ResolvedTraversalCase {
             // axum-core/src/body.rs:110 and :116 call `Self::empty()`, and
             // axum-core/src/response/into_response.rs response conversion
-            // rows and axum-core/src/ext_traits/request.rs helper rows call
+            // rows, axum-core/src/ext_traits/request.rs helper rows, and
+            // direct axum `axum_core::body::Body` imports call
             // `Body::empty()`. Callee: axum-core/src/body.rs:52.
             label: "axum-core Body::empty current resolved subset",
             target: method_id_by_name_and_body_substring(&db, "empty", "Empty::new()")?,
-            expected_call_edges: 8,
-            expected_traversal_candidates: 8,
+            expected_call_edges: 12,
+            expected_traversal_candidates: 12,
         },
         ResolvedTraversalCase {
             // axum/src/json.rs:112 and :128 call `Self::from_bytes(&bytes)`
@@ -286,11 +287,13 @@ fn axum_real_target_supported_callers_match_oracle_shape_counts() -> Result<(), 
             // Callers:
             //   axum-core/src/body.rs:{110,116} Self::empty()
             //   axum-core/src/response/into_response.rs and
-            //   axum-core/src/ext_traits/request.rs Body::empty() rows.
+            //   axum-core/src/ext_traits/request.rs Body::empty() rows,
+            //   plus direct axum workspace-import Body::empty() rows in
+            //   extract/query.rs, extract/raw_form.rs, form.rs, and serve/mod.rs.
             // Callee: axum-core/src/body.rs:52 Body::empty.
             label: "axum-core Body::empty current resolved subset",
             target: method_id_by_name_and_body_substring(&db, "empty", "Empty::new()")?,
-            expected: vec![("path:Body::empty", 6), ("path:Self::empty", 2)],
+            expected: vec![("path:Body::empty", 10), ("path:Self::empty", 2)],
         },
         ResolvedShapeCase {
             // Callers:

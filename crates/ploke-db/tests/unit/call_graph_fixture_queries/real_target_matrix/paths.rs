@@ -635,17 +635,17 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
     //   conversion impls.
     //   axum-core/src/response/into_response.rs response conversion rows call
     //   `Body::empty()`.
-    //   axum/src/extract/raw_form.rs:65 calls `Body::empty()` through a
-    //   direct `axum_core::body::Body` import inside a test helper.
-    // Expected traversal for the current fixture: six `Body::empty` rows and
+    //   axum/src/{extract/query.rs,extract/raw_form.rs,form.rs,serve/mod.rs}
+    //   call `Body::empty()` through direct `axum_core::body::Body` imports.
+    // Expected traversal for the current fixture: ten `Body::empty` rows and
     // two `Self::empty` rows reach the same target in one edge. The remaining
-    // projected matrix rows are file-bucketed below as external or unsupported
-    // and must expose zero traversal candidates.
+    // projected matrix rows are file-bucketed below as unsupported and must
+    // expose zero traversal candidates.
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        8,
-        "current axum fixture should resolve exactly the eight axum-core Body::empty callers: {callers:#?}"
+        12,
+        "current axum fixture should resolve exactly the twelve Body::empty callers: {callers:#?}"
     );
     assert_sites_match_callers(&db, target, &callers, "Body::empty current resolved subset")?;
 
@@ -659,8 +659,8 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
     )?;
     assert_eq!(
         incoming.len(),
-        8,
-        "Body::empty target expansion should traverse the eight current resolved edges: {incoming:#?}"
+        12,
+        "Body::empty target expansion should traverse the twelve current resolved edges: {incoming:#?}"
     );
 
     let mut path_counts = std::collections::BTreeMap::new();
@@ -693,17 +693,12 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
     assert_eq!(
         path_counts,
         std::collections::BTreeMap::from([
-            (path(&["Body", "empty"]), 6),
+            (path(&["Body", "empty"]), 10),
             (path(&["Self", "empty"]), 2),
         ]),
         "Body::empty callers should split into literal Body::empty and trait-impl Self::empty rows"
     );
 
-    let raw_form_owner = function_id_by_name_in_module(
-        &db,
-        &["crate", "extract", "raw_form", "tests"],
-        "check_query",
-    )?;
     struct BodyEmptyPathCase {
         label: &'static str,
         owner: Uuid,
@@ -711,31 +706,6 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
     }
 
     let targetless_cases = [
-        BodyEmptyPathCase {
-            // axum/src/extract/query.rs:106
-            // `check` builds `Request::builder().body(Body::empty())`.
-            label: "axum/src/extract/query.rs:106",
-            owner: function_id_by_name_in_module(
-                &db,
-                &["crate", "extract", "query", "tests"],
-                "check",
-            )?,
-            status: CallStatusKind::External,
-        },
-        BodyEmptyPathCase {
-            // axum/src/extract/raw_form.rs:65
-            // `check_query` builds `Request::builder().body(Body::empty())`.
-            label: "axum/src/extract/raw_form.rs:65",
-            owner: raw_form_owner,
-            status: CallStatusKind::External,
-        },
-        BodyEmptyPathCase {
-            // axum/src/form.rs:158
-            // `check_query` builds `Request::builder().body(Body::empty())`.
-            label: "axum/src/form.rs:158",
-            owner: function_id_by_name_in_module(&db, &["crate", "form", "tests"], "check_query")?,
-            status: CallStatusKind::External,
-        },
         BodyEmptyPathCase {
             // axum/src/middleware/from_fn.rs:411
             // `basic` builds `Request::builder().uri("/").body(Body::empty())`
@@ -746,7 +716,7 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
                 &["crate", "middleware", "from_fn", "tests"],
                 "basic",
             )?,
-            status: CallStatusKind::External,
+            status: CallStatusKind::Unsupported,
         },
         BodyEmptyPathCase {
             // axum/src/routing/tests/mod.rs:1133
@@ -758,7 +728,7 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
                 &["crate", "routing", "tests"],
                 "connect_going_to_custom_fallback",
             )?,
-            status: CallStatusKind::External,
+            status: CallStatusKind::Unsupported,
         },
         BodyEmptyPathCase {
             // axum/src/routing/tests/mod.rs:1151
@@ -770,19 +740,7 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
                 &["crate", "routing", "tests"],
                 "connect_going_to_default_fallback",
             )?,
-            status: CallStatusKind::External,
-        },
-        BodyEmptyPathCase {
-            // axum/src/serve/mod.rs:799
-            // `serving_on_custom_io_type` builds a request body with
-            // `Body::empty()`.
-            label: "axum/src/serve/mod.rs:799",
-            owner: function_id_by_name_in_module(
-                &db,
-                &["crate", "serve", "tests"],
-                "serving_on_custom_io_type",
-            )?,
-            status: CallStatusKind::External,
+            status: CallStatusKind::Unsupported,
         },
         BodyEmptyPathCase {
             // axum/src/routing/method_routing.rs:1700
@@ -839,7 +797,7 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
     assert_targetless_path_owner_kind_rows(
         &db,
         &["Body", "empty"],
-        CallStatusKind::External,
+        CallStatusKind::Unsupported,
         "LocalItem",
         1,
         "axum/src/routing/tests/mod.rs:228 local handler Body::empty",
@@ -848,7 +806,7 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
         &db,
         &CORPUS_AXUM_CALL_GRAPH,
         &["Body", "empty"],
-        CallStatusKind::External,
+        CallStatusKind::Unsupported,
         "LocalItem",
         &[SourceLineFanout {
             file_suffix: "axum/src/routing/tests/mod.rs",
@@ -865,94 +823,68 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
         &db,
         route_poll_owner,
         &["Body", "empty"],
-        CallStatusKind::External,
+        CallStatusKind::Unsupported,
         1,
         "axum/src/routing/route.rs:174",
     )?;
 
     // Matrix targetless source rows:
-    //   external: axum/src/extract/query.rs:106; raw_form.rs:65;
-    //   form.rs:158; middleware/from_fn.rs:411;
-    //   routing/route.rs:174; routing/tests/mod.rs:{1133,1151};
-    //   serve/mod.rs:799. The routing/route.rs:161 closure-body row remains
-    //   absent until nested closure ownership is modeled. The
-    //   routing/tests/mod.rs:228 local `handler` row is asserted separately as
-    //   a `LocalItem` owner above.
+    //   unsupported: axum/src/routing/route.rs:174;
+    //   routing/tests/mod.rs:{1133,1151}.
+    //   The routing/route.rs:161 closure-body row remains absent until nested
+    //   closure ownership is modeled. The routing/tests/mod.rs:228 local
+    //   `handler` row is asserted separately as a `LocalItem` owner above.
     //   resolved: axum-core/src/ext_traits/request.rs:{346,364,377,390}.
-    //   unsupported: routing/method_routing.rs:1700;
+    //   resolved via parsed workspace imports:
+    //   extract/query.rs:106; raw_form.rs:65; form.rs:158; serve/mod.rs:799.
+    //   unsupported: middleware/from_fn.rs:411; routing/method_routing.rs:1700;
+    //   route.rs:174; routing/tests/mod.rs:{1133,1151};
     //   routing/tests/get_to_head.rs:{25,59}.
+    assert_path_file_fanout(&db, &["Body", "empty"], CallStatusKind::External, &[])?;
+    assert_targetless_path_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        &["Body", "empty"],
+        CallStatusKind::External,
+        &[],
+    )?;
     assert_path_file_fanout(
         &db,
         &["Body", "empty"],
-        CallStatusKind::External,
+        CallStatusKind::Unsupported,
         &[
-            ("axum/src/extract/query.rs", 1),
-            ("axum/src/extract/raw_form.rs", 1),
-            ("axum/src/form.rs", 1),
             ("axum/src/middleware/from_fn.rs", 1),
+            ("axum/src/routing/method_routing.rs", 1),
             ("axum/src/routing/route.rs", 1),
+            ("axum/src/routing/tests/get_to_head.rs", 2),
             ("axum/src/routing/tests/mod.rs", 2),
-            ("axum/src/serve/mod.rs", 1),
         ],
     )?;
     assert_targetless_path_line_fanout(
         &db,
         &CORPUS_AXUM_CALL_GRAPH,
         &["Body", "empty"],
-        CallStatusKind::External,
+        CallStatusKind::Unsupported,
         &[
-            SourceLineFanout {
-                file_suffix: "axum/src/extract/query.rs",
-                lines: &[106],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/extract/raw_form.rs",
-                lines: &[65],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/form.rs",
-                lines: &[158],
-            },
             SourceLineFanout {
                 file_suffix: "axum/src/middleware/from_fn.rs",
                 lines: &[411],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/method_routing.rs",
+                lines: &[1700],
             },
             SourceLineFanout {
                 file_suffix: "axum/src/routing/route.rs",
                 lines: &[174],
             },
             SourceLineFanout {
-                file_suffix: "axum/src/routing/tests/mod.rs",
-                lines: &[1133, 1151],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/serve/mod.rs",
-                lines: &[799],
-            },
-        ],
-    )?;
-    assert_path_file_fanout(
-        &db,
-        &["Body", "empty"],
-        CallStatusKind::Unsupported,
-        &[
-            ("axum/src/routing/method_routing.rs", 1),
-            ("axum/src/routing/tests/get_to_head.rs", 2),
-        ],
-    )?;
-    assert_targetless_path_line_fanout(
-        &db,
-        &CORPUS_AXUM_CALL_GRAPH,
-        &["Body", "empty"],
-        CallStatusKind::Unsupported,
-        &[
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/method_routing.rs",
-                lines: &[1700],
-            },
-            SourceLineFanout {
                 file_suffix: "axum/src/routing/tests/get_to_head.rs",
                 lines: &[25, 59],
+            },
+            SourceLineFanout {
+                file_suffix: "axum/src/routing/tests/mod.rs",
+                lines: &[1133, 1151],
             },
         ],
     )?;
@@ -975,8 +907,8 @@ fn axum_real_target_body_empty_projects_proof_facts() -> Result<(), DbError> {
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        8,
-        "Body::empty proof setup should use the current eight resolved corpus callers: {callers:#?}"
+        12,
+        "Body::empty proof setup should use the current twelve resolved corpus callers: {callers:#?}"
     );
     let mut path_counts = std::collections::BTreeMap::new();
     for caller in &callers {
@@ -996,7 +928,7 @@ fn axum_real_target_body_empty_projects_proof_facts() -> Result<(), DbError> {
     assert_eq!(
         path_counts,
         std::collections::BTreeMap::from([
-            (path(&["Body", "empty"]), 6),
+            (path(&["Body", "empty"]), 10),
             (path(&["Self", "empty"]), 2),
         ]),
         "Body::empty proof callers should split into literal Body::empty and Self::empty rows"
@@ -1020,6 +952,10 @@ fn axum_real_target_body_empty_projects_proof_facts() -> Result<(), DbError> {
             ("axum-core/src/body.rs", 2),
             ("axum-core/src/response/into_response.rs", 2),
             ("axum-core/src/ext_traits/request.rs", 4),
+            ("axum/src/extract/query.rs", 1),
+            ("axum/src/extract/raw_form.rs", 1),
+            ("axum/src/form.rs", 1),
+            ("axum/src/serve/mod.rs", 1),
         ],
         "type_resolution_missing",
     )
