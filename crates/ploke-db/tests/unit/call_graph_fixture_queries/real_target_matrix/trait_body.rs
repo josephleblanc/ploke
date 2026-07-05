@@ -509,9 +509,8 @@ fn axum_real_target_trait_object_dispatch_rows_are_documented_gaps() -> Result<(
     //   project the current `as_mut().poll(cx)` targetless receiver bucket.
     //   axum-core/src/body.rs:32 calls
     //   `<dyn std::any::Any>::downcast_mut::<Option<T>>(&mut k)`.
-    // Current model gap: dyn Future dispatch rows stay targetless; the
-    // qualified `<dyn Any>::downcast_mut` syntax is not projected as a path row
-    // yet.
+    // Current model split: dyn Future dispatch rows stay targetless; qualified
+    // `<dyn Any>::downcast_mut` rows project as std-root external frontiers.
     assert_targetless_method_rows(
         &db,
         "poll",
@@ -579,7 +578,7 @@ fn axum_real_target_trait_object_dispatch_rows_are_documented_gaps() -> Result<(
     )?;
     for (label, owner) in [
         (
-            "axum-core/src/body.rs:29 <dyn Any>::downcast_mut",
+            "axum-core/src/body.rs:32 <dyn Any>::downcast_mut",
             function_id_by_name_in_module(&db, &["crate", "body"], "try_downcast")?,
         ),
         (
@@ -588,16 +587,24 @@ fn axum_real_target_trait_object_dispatch_rows_are_documented_gaps() -> Result<(
         ),
     ] {
         let context = db.call_context_for_owner(owner)?;
-        assert!(
-            context.iter().all(|row| {
-                row.site.method.as_deref() != Some("downcast_mut")
-                    && row.site.path.as_ref() != Some(&path(&["dyn", "Any", "downcast_mut"]))
-            }),
-            "{label} should remain absent until qualified dyn paths are projected: {context:#?}"
+        let row = row_by_path(&context, &["std", "any", "Any", "downcast_mut"]);
+        assert_external_targetless(row);
+        assert_eq!(row.site.arg_count, Some(1), "{label} arg count");
+        assert_eq!(
+            row.site.generic_arg_count,
+            Some(1),
+            "{label} generic arg count"
         );
+        assert_no_traversal_candidates_for_site(&db, owner, row.site.id, label)?;
     }
 
-    assert_no_path_rows(&db, &["dyn", "Any", "downcast_mut"])
+    assert_targetless_path_rows(
+        &db,
+        &["std", "any", "Any", "downcast_mut"],
+        CallStatusKind::External,
+        2,
+    )?;
+    Ok(())
 }
 
 #[test]
