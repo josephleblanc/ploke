@@ -896,7 +896,8 @@ Post-gate evidence, 2026-06-23:
   Proof coverage now also asserts parenthesized path/binding, cast/deref,
   block, indexed-array, field/tuple-field, and same-target, nested
   same-target, and guarded same-target branch/match dynamic
-  calls project as resolved proof edges, and opaque closure-binding cast/deref,
+  calls project as resolved proof edges, closure-binding `as fn` casts project
+  as resolved dynamic-closure proof edges, and closure-binding deref,
   ambiguous branch/match, opaque/non-path branch/match, parenthesized
   generic `FnOnce`, and boxed `dyn Fn` dynamic call rows project as the
   expected fail-closed blockers, while external setup calls remain

@@ -1,7 +1,7 @@
 # Backup DB Fixtures
 
-Last reviewed: 2026-06-28
-Last updated: 2026-07-01
+Last reviewed: 2026-07-05
+Last updated: 2026-07-05
 
 This document is the current inventory for backup database fixtures under
 the shared DB snapshot fixture directory. It records which source targets
@@ -262,6 +262,23 @@ Post-regeneration verification:
 Checkout-local outputs remain under `tests/backup_dbs/local/` and are ignored
 local artifacts. Shared corpus snapshots were refreshed under the configured DB
 snapshot fixture directory.
+
+## 2026-07-05 Active Fixture Review
+
+The active fixture set was regenerated with
+`cargo run -p xtask --features call_graph -- fixtures regenerate --active`
+after local closure-binding `as fn` cast calls began resolving to closure
+executable owners.
+
+Post-regeneration verification:
+
+- The regeneration command roundtripped all active checkout-local fixtures and
+  shared call-graph corpus snapshots successfully.
+- Checkout-local outputs remain under `tests/backup_dbs/local/`.
+- Shared call-graph corpus snapshots were refreshed under the configured DB
+  snapshot fixture directory.
+- The regenerated `corpus_axum_call_graph_2026-07-01.sqlite` shared snapshot
+  was copied into `tests/backup_dbs/` as the committed seed artifact.
 
 ## `fixture_nodes_canonical_2026-05-17.sqlite`
 

@@ -255,6 +255,11 @@ pub enum ExpectedDynamicCallee<'a> {
     },
     /// The callee expression is an opaque local binding or parameter cast to a bare function pointer.
     FnPointerCastLocalBinding { path: &'a [&'a str] },
+    /// The callee expression is a local closure binding cast to a bare function pointer.
+    FnPointerCastClosureBinding {
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+    },
     /// The callee expression is a dereferenced initialized local binding.
     DereferencedInitializedLocalBinding {
         path: &'a [&'a str],
@@ -311,6 +316,12 @@ impl ExpectedDynamicCallee<'_> {
             Self::FnPointerCastLocalBinding { path } => {
                 DynamicCallCallee::FnPointerCastLocalBinding {
                     path: path.iter().copied().map(String::from).collect(),
+                }
+            }
+            Self::FnPointerCastClosureBinding { path, closure_id } => {
+                DynamicCallCallee::FnPointerCastClosureBinding {
+                    path: path.iter().copied().map(String::from).collect(),
+                    closure_id,
                 }
             }
             Self::DereferencedInitializedLocalBinding { path, init_path } => {
@@ -617,6 +628,26 @@ impl<'a> ExpectedCallSite<'a> {
         Self {
             kind: ExpectedCallKind::Dynamic {
                 callee: ExpectedDynamicCallee::FnPointerCastLocalBinding { path },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a dynamic-call expectation whose callee is a local closure binding cast to a function pointer.
+    pub const fn dynamic_fn_pointer_cast_closure_binding(
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::FnPointerCastClosureBinding { path, closure_id },
                 arg_count,
             },
             span,

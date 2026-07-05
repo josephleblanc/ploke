@@ -5018,20 +5018,34 @@ paranoid_call_site_test!(
     ),
 );
 
-paranoid_call_site_test!(
-    fixture_call_graph_call_closure_binding_cast_fails_closed_dynamic_call_site,
-    fixture: "fixture_call_graph",
-    owner: function {
-        module_path: &["crate"],
-        name: "call_closure_binding_cast"
-    },
-    expected: ExpectedCallSite::dynamic(
+#[test]
+fn fixture_call_graph_call_closure_binding_cast_resolves_dynamic_closure_call_site()
+-> Result<(), syn_parser::error::SynParserError> {
+    let (graph, tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+    let report = resolve_call_relations_after_tree(&graph, &tree)?;
+    let owner = crate::common::call_site_paranoid::function_owner_context(
+        &graph,
+        &["crate"],
+        "call_closure_binding_cast",
+    );
+    let closure = graph
+        .executable_bodies()
+        .iter()
+        .find(|body| body.parent == owner.id && body.kind == ExecutableBodyKind::Closure)
+        .expect("call_closure_binding_cast should bind one local closure body");
+    let expected = ExpectedCallSite::dynamic_fn_pointer_cast_closure_binding(
+        &["closure"],
+        closure.id,
         CLOSURE_BINDING_CAST_DYNAMIC_CALL_SPAN,
         0,
         &[],
-        ExpectedCallOutcome::Unsupported,
-    ),
-);
+        ExpectedCallOutcome::ResolvedDynamicClosureLocalExact { target: closure.id },
+    );
+    crate::common::call_site_paranoid::assert_paranoid_call_site(
+        &graph, &report, &owner, &expected,
+    );
+    Ok(())
+}
 
 paranoid_call_site_test!(
     fixture_call_graph_call_dereferenced_closure_binding_fails_closed_dynamic_call_site,

@@ -5,10 +5,7 @@ fn fixture_projection_marks_real_unsupported_dynamic_call_without_edges() -> Res
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let mut expected = Vec::new();
 
-    for owner_name in [
-        "call_closure_binding_cast",
-        "call_dereferenced_closure_binding",
-    ] {
+    for owner_name in ["call_dereferenced_closure_binding"] {
         assert_projected_blockers(
             &db,
             &mut expected,

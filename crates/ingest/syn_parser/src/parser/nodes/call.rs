@@ -175,6 +175,13 @@ pub enum DynamicCallCallee {
     /// cast to a bare function pointer before being called, such as
     /// `(f as fn() -> i32)()` where `f` is a function-pointer parameter.
     FnPointerCastLocalBinding { path: Vec<String> },
+    /// The callee expression is a visible local closure binding cast to a
+    /// bare function pointer before being called, such as
+    /// `let closure = || 1; (closure as fn() -> i32)()`.
+    FnPointerCastClosureBinding {
+        path: Vec<String>,
+        closure_id: ExecutableBodyId,
+    },
     /// The callee expression is a dereferenced visible local binding
     /// initialized from a path, such as `let f = local_target; (*f)()`.
     DereferencedInitializedLocalBinding {

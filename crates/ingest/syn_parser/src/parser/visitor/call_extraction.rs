@@ -819,11 +819,16 @@ fn classify_dynamic_callee(
                         init_path: None, ..
                     }
                     | LocalBindingProof::TraitObject { .. }
-                    | LocalBindingProof::Closure { .. }
                     | LocalBindingProof::Constructed { .. }
                     | LocalBindingProof::Array { .. }
                     | LocalBindingProof::Referenced { .. }
                     | LocalBindingProof::Untyped { .. } => DynamicCallCallee::Other,
+                    LocalBindingProof::Closure { closure_id, .. } => {
+                        DynamicCallCallee::FnPointerCastClosureBinding {
+                            path,
+                            closure_id: *closure_id,
+                        }
+                    }
                 };
             }
             if param_names.iter().any(|candidate| candidate == name) {
