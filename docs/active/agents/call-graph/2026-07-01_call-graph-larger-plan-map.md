@@ -92,6 +92,12 @@ Current matrix posture:
   true local const owner rows remain blocked on an executable-scope identity
   model.
 - Dynamic/receiver/closure/import gaps: future semantic expansion buckets, not reasons to keep polishing already-proven method paths.
+- Workspace dependency-root imports: selected workspace fixtures can contain
+  one crate importing another selected crate, for example axum-core test code
+  importing `axum::{test_helpers::*, Router}`. Those rows must remain
+  targetless until semantic expansion introduces a typed workspace-level proof
+  carrier. The per-crate call resolver's `ModuleTree` is not enough authority
+  to convert dependency-root imports into local call edges.
 
 ## Phase Transition Rule
 

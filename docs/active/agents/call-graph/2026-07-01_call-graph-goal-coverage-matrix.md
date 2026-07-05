@@ -114,6 +114,11 @@ async-block-owner DB/RAG/TUI propagation are met for now.
 ## Parking Lot
 
 - Add binding tracking plan that ties syntax body ownership, local bindings, and type graph edges before attempting receiver/dynamic traversal.
+- Add a workspace-level dependency-root proof carrier before resolving selected
+  workspace member imports such as axum-core test code importing
+  `axum::{test_helpers::*, Router}`. The current parser resolver works inside a
+  single crate `ModuleTree`; DB projection must not turn those dependency-root
+  imports into local edges without typed workspace evidence.
 - Split future resolver work by capability: local binding, field receiver, closure body owner, import/re-export/glob, trait dispatch.
 - Consider adding a small status table to `README.md` only after this matrix has stabilized.
 
