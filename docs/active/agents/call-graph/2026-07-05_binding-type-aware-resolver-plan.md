@@ -81,11 +81,19 @@ should prevent future resumes from reselecting already-covered shapes.
    - Use the existing memchr real-corpus fallback as a blocker proof target.
    - Assert owner/source-line fanout and targetless status rather than resolving callable fields.
 
-5. Next adjacent candidate:
+5. Import/re-export/glob completeness with explicit workspace type proof -
+   completed:
+   - Regenerated axum backup data resolves the `Body::empty` re-export/import
+     target-centered set through direct parsed-workspace imports, local
+     re-export imports, inherited `super::*` imports, closure-owned rows, and
+     local-item rows.
+   - Remaining source-oracle rows stay documented rather than guessed.
+
+6. Next adjacent candidate:
    - Select from the coverage matrix parking lot rather than adding more
-     binding breadth by default. The likely next bounded slice is
-     import/re-export/glob completeness with explicit workspace proof carriers,
-     preserving targetless dependency-root rows whenever that proof is absent.
+     import breadth by default.
+   - Likely options are a bounded local binding/type proof shape or an explicit
+     workspace proof carrier for one documented dependency-root source oracle.
 
 ## Implementation Order
 
