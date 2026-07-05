@@ -211,11 +211,12 @@ fn axum_real_target_supported_callers_are_one_hop_traversable() -> Result<(), Db
             // matrix includes many real `Router::new()` callsites; the
             // regenerated fixture also resolves axum/src/routing/mod.rs:109
             // `Self::new()` from `Default for Router` and
-            // axum/src/routing/method_routing.rs:1494 `crate::Router::new()`.
+            // axum/src/routing/method_routing.rs:1494 `crate::Router::new()`,
+            // plus the axum-core request_parts workspace-import row.
             label: "axum Router::new current resolved fanout",
             target: method_id_by_name_and_body_substring(&db, "new", "default_fallback: true")?,
-            expected_call_edges: 309,
-            expected_traversal_candidates: 203,
+            expected_call_edges: 310,
+            expected_traversal_candidates: 204,
         },
     ];
 
@@ -409,13 +410,13 @@ fn axum_real_target_supported_callers_match_oracle_shape_counts() -> Result<(), 
         ResolvedShapeCase {
             // Callee: axum/src/routing/mod.rs:162 Router::new.
             // Source oracle includes many Router::new() callsites. The current
-            // fixture resolves 307 literal Router::new rows, plus
+            // fixture resolves 308 literal Router::new rows, plus
             // axum/src/routing/mod.rs:109 Self::new() from Default and
             // axum/src/routing/method_routing.rs:1494 crate::Router::new().
             label: "axum Router::new current resolved fanout",
             target: method_id_by_name_and_body_substring(&db, "new", "default_fallback: true")?,
             expected: vec![
-                ("path:Router::new", 307),
+                ("path:Router::new", 308),
                 ("path:Self::new", 1),
                 ("path:crate::Router::new", 1),
             ],

@@ -177,13 +177,15 @@ async fn call_context_exact_reads_remaining_axum_supported_matrix_targets() -> R
         },
         ExactShapeCase {
             // axum/src/routing/mod.rs:162 defines Router::new. The current
-            // fixture resolves 307 `Router::new` rows, plus
+            // fixture resolves 308 `Router::new` rows, plus
             // routing/mod.rs:109 `Self::new()` and
-            // routing/method_routing.rs:1494 `crate::Router::new()`.
+            // routing/method_routing.rs:1494 `crate::Router::new()`;
+            // the extra literal row is axum-core request_parts via
+            // `axum::Router`.
             label: "axum Router::new current resolved fanout",
             target: method_id_by_name_and_body_substring(&db, "new", "default_fallback: true")?,
             expected: vec![
-                path_shape(&["Router", "new"], CallTargetKind::AssociatedFunction, 307),
+                path_shape(&["Router", "new"], CallTargetKind::AssociatedFunction, 308),
                 path_shape(&["Self", "new"], CallTargetKind::AssociatedFunction, 1),
                 path_shape(
                     &["crate", "Router", "new"],
@@ -196,19 +198,19 @@ async fn call_context_exact_reads_remaining_axum_supported_matrix_targets() -> R
             // axum/src/test_helpers/test_client.rs:19 defines
             // TestClient::new. The regenerated fixture resolves nested/direct
             // re-export import rows and routing child-module inherited glob
-            // rows; the axum-core request_parts boundary row remains pinned
-            // targetless in the DB tests.
-            label: "axum TestClient::new resolved re-export subset",
+            // rows, plus the axum-core request_parts workspace dependency
+            // glob import.
+            label: "axum TestClient::new resolved import fanout",
             target: resolved_path_target_count(
                 &db,
                 &["TestClient", "new"],
-                167,
+                168,
                 "TestClient::new",
             )?,
             expected: vec![path_shape(
                 &["TestClient", "new"],
                 CallTargetKind::AssociatedFunction,
-                167,
+                168,
             )],
         },
     ];

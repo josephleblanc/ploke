@@ -120,6 +120,19 @@ enum AssocPathResolution {
 }
 
 #[derive(Debug, Clone, Copy)]
+struct WorkspaceTypeTarget<'a> {
+    krate: WorkspaceCrate<'a>,
+    target: OrdinaryTypeTargetId,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum WorkspaceTypeResolution<'a> {
+    Resolved(WorkspaceTypeTarget<'a>),
+    Unresolved,
+    Ambiguous,
+}
+
+#[derive(Debug, Clone, Copy)]
 struct GenericBoundScope<'a> {
     params: &'a [GenericParamNode],
     predicates: &'a [TypeWherePredicate],
@@ -153,7 +166,8 @@ enum LocalModulePathResolution {
 ///
 /// Self::function() inside an inherent impl method
 /// LocalType::function() for a directly visible local type with an inherent impl
-///   -> associated function proven from local type-resolution facts
+/// DependencyType::function() for a type proven through a parsed workspace import
+///   -> associated function proven from type-resolution facts
 ///
 /// TupleStruct(args...) / Enum::TupleVariant(args...)
 ///   -> local tuple constructor proven from local type-resolution facts
@@ -562,6 +576,76 @@ impl<'a> CallRelationResolver<'a> {
         }
 
         Ok(LocalTraitResolution::Unresolved)
+    }
+
+    fn resolve_type_path_from_root(
+        &self,
+        path: &[String],
+    ) -> Result<LocalTypeResolution, SynParserError> {
+        if path.is_empty() {
+            return Ok(LocalTypeResolution::Unresolved);
+        }
+
+        let mut current_module = self.tree.root();
+        let start_idx = if path.first().is_some_and(|segment| segment == "crate") {
+            1
+        } else {
+            0
+        };
+        if start_idx >= path.len() {
+            return Ok(LocalTypeResolution::Unresolved);
+        }
+
+        for idx in start_idx..path.len() {
+            let segment = path[idx].as_str();
+            let is_last = idx == path.len() - 1;
+            if is_last {
+                return self.resolve_terminal_type(current_module, segment);
+            }
+
+            current_module = match self.resolve_module_segment(current_module, segment)? {
+                LocalModulePathResolution::Resolved(module_id) => module_id,
+                LocalModulePathResolution::Unresolved => {
+                    return Ok(LocalTypeResolution::Unresolved);
+                }
+                LocalModulePathResolution::Ambiguous => return Ok(LocalTypeResolution::Ambiguous),
+            };
+        }
+
+        Ok(LocalTypeResolution::Unresolved)
+    }
+
+    fn resolve_module_path_from_root(
+        &self,
+        path: &[String],
+    ) -> Result<LocalModulePathResolution, SynParserError> {
+        let mut current_module = self.tree.root();
+        if path.is_empty() {
+            return Ok(LocalModulePathResolution::Resolved(current_module));
+        }
+
+        let start_idx = if path.first().is_some_and(|segment| segment == "crate") {
+            1
+        } else {
+            0
+        };
+        if start_idx >= path.len() {
+            return Ok(LocalModulePathResolution::Resolved(current_module));
+        }
+
+        for segment in &path[start_idx..] {
+            current_module = match self.resolve_module_segment(current_module, segment)? {
+                LocalModulePathResolution::Resolved(module_id) => module_id,
+                LocalModulePathResolution::Unresolved => {
+                    return Ok(LocalModulePathResolution::Unresolved);
+                }
+                LocalModulePathResolution::Ambiguous => {
+                    return Ok(LocalModulePathResolution::Ambiguous);
+                }
+            };
+        }
+
+        Ok(LocalModulePathResolution::Resolved(current_module))
     }
 
     fn resolve_terminal_trait(

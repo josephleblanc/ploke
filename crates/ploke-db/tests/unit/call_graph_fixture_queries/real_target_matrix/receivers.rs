@@ -628,19 +628,21 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
     //   axum/src/serve/mod.rs:756 calls `Router::new()`.
     //   axum/src/routing/method_routing.rs:1494 calls
     //   `crate::Router::new()`.
+    //   axum-core/src/extract/request_parts.rs:193 calls `Router::new()`
+    //   through the `axum::Router` workspace dependency import.
     //   serve/mod.rs calls `router.clone...` in the router examples and
     //   local-address tests. `boxed.rs:134` and `routing/mod.rs:673` call
     //   `self.router.clone()` from local wrapper clone impls.
-    // Expected traversal: the current caller API exposes 307 resolved
+    // Expected traversal: the current caller API exposes 308 resolved
     // `Router::new` rows, one explicit `crate::Router::new` row, and one
-    // `Self::new` row, while target expansion traverses 203 incoming candidates
+    // `Self::new` row, while target expansion traverses 204 incoming candidates
     // for the same target. Typed router clone receiver rows now reach the
     // local `impl<S> Clone for Router<S>` method at routing/mod.rs:90.
     let target = method_id_by_name_and_body_substring(&db, "new", "default_fallback: true")?;
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        309,
+        310,
         "Router::new should expose the current resolved corpus subset: {callers:#?}"
     );
     assert_sites_match_callers(&db, target, &callers, "Router::new resolved corpus subset")?;
@@ -667,7 +669,7 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
     assert_eq!(
         path_counts,
         std::collections::BTreeMap::from([
-            (path(&["Router", "new"]), 307),
+            (path(&["Router", "new"]), 308),
             (path(&["crate", "Router", "new"]), 1),
             (path(&["Self", "new"]), 1),
         ]),
@@ -720,6 +722,31 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
             owner: complex_owner,
             target,
             site_id: crate_router_new.site.id,
+            expected_edge_count: 1,
+        },
+    )?;
+
+    let axum_core_owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "extract", "request_parts", "tests"],
+        "extract_request_parts",
+    )?;
+    let axum_core_context = db.call_context_for_owner(axum_core_owner)?;
+    let axum_core_router_new = row_by_path(&axum_core_context, &["Router", "new"]);
+    assert_resolved_target(
+        axum_core_router_new,
+        target,
+        CallRelationKind::AssociatedFunction,
+        CallSiteKind::Path,
+        CallTargetKind::Method,
+    );
+    assert_one_edge_traversal(
+        &db,
+        TraversalExpectation {
+            label: "axum-core/src/extract/request_parts.rs:193 workspace-import Router::new",
+            owner: axum_core_owner,
+            target,
+            site_id: axum_core_router_new.site.id,
             expected_edge_count: 1,
         },
     )?;
@@ -880,7 +907,7 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
     )?;
     assert_eq!(
         incoming.len(),
-        203,
+        204,
         "Router::new target expansion should traverse the current incoming candidate subset"
     );
     let caller_sites = callers
@@ -896,21 +923,7 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
         assert_eq!(candidate.distance, 1);
     }
 
-    assert_targetless_path_rows(&db, &["Router", "new"], CallStatusKind::Unsupported, 1)?;
-    // Matrix: unresolved `Router::new` boundary row. This is the currently
-    // projected row that does not traverse to axum/src/routing/mod.rs:162.
-    // Source chain: callsite -> visible `Router` import/re-export evidence ->
-    // `Router::new`, but no supported target proof for the axum-core boundary.
-    assert_targetless_path_line_fanout(
-        &db,
-        &CORPUS_AXUM_CALL_GRAPH,
-        &["Router", "new"],
-        CallStatusKind::Unsupported,
-        &[SourceLineFanout {
-            file_suffix: "axum-core/src/extract/request_parts.rs",
-            lines: &[193],
-        }],
-    )?;
+    assert_targetless_path_rows(&db, &["Router", "new"], CallStatusKind::Unsupported, 0)?;
     let clone_callers = db.callers_for_target(clone_target)?;
     assert_eq!(
         clone_callers.len(),

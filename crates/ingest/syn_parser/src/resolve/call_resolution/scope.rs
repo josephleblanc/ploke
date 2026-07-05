@@ -3,8 +3,8 @@ use crate::{
     parser::{
         graph::GraphAccess,
         nodes::{
-            AnyNodeId, AsAnyNodeId, CallBodyOwnerId, FunctionNodeId, ImportKind, ImportNodeId,
-            ModuleNodeId, OrdinaryTypeUseId, TypeAliasNodeId,
+            AnyNodeId, AsAnyNodeId, CallBodyOwnerId, FunctionNodeId, ImportKind, ImportNode,
+            ImportNodeId, ModuleNodeId, OrdinaryTypeUseId, TypeAliasNodeId,
         },
         relations::SyntacticRelation,
         types::TypeNode,
@@ -14,10 +14,11 @@ use crate::{
 
 use super::{
     CallRelationResolver, LocalFunctionPathResolution, LocalModulePathResolution,
-    MAX_IMPORT_CHAIN_DEPTH,
+    LocalTypeResolution, MAX_IMPORT_CHAIN_DEPTH, WorkspaceTypeResolution, WorkspaceTypeTarget,
+    dependency_name_matches,
 };
 
-impl CallRelationResolver<'_> {
+impl<'a> CallRelationResolver<'a> {
     pub(super) fn is_unqualified_path(&self, path: &[String]) -> bool {
         path.len() == 1
     }
@@ -256,6 +257,121 @@ impl CallRelationResolver<'_> {
             LocalFunctionPathResolution::Unresolved => Ok(LocalFunctionPathResolution::Unsupported),
             resolution => Ok(resolution),
         }
+    }
+
+    pub(super) fn resolve_workspace_type_import(
+        &self,
+        owner: CallBodyOwnerId,
+        segment: &str,
+    ) -> Result<WorkspaceTypeResolution<'a>, SynParserError> {
+        let Some(module_id) = self.containing_module_for_owner(owner) else {
+            return Ok(WorkspaceTypeResolution::Unresolved);
+        };
+        let module_id = self.import_scope_module(module_id)?;
+        let Some(module_node) = self
+            .graph
+            .modules()
+            .iter()
+            .find(|module| module.id == module_id)
+        else {
+            return Ok(WorkspaceTypeResolution::Unresolved);
+        };
+
+        let mut candidates = Vec::new();
+        let mut saw_ambiguous = false;
+        for import_node in &module_node.imports {
+            if import_node.is_glob {
+                self.collect_workspace_glob_type_candidates(
+                    import_node,
+                    segment,
+                    &mut candidates,
+                    &mut saw_ambiguous,
+                )?;
+            } else if import_node.visible_name == segment {
+                self.collect_workspace_direct_type_candidates(
+                    import_node,
+                    &mut candidates,
+                    &mut saw_ambiguous,
+                )?;
+            }
+        }
+
+        candidates.sort_by_key(|candidate| candidate.target);
+        candidates.dedup_by_key(|candidate| candidate.target);
+
+        if saw_ambiguous {
+            return Ok(WorkspaceTypeResolution::Ambiguous);
+        }
+
+        Ok(match candidates.as_slice() {
+            [candidate] => WorkspaceTypeResolution::Resolved(*candidate),
+            [] => WorkspaceTypeResolution::Unresolved,
+            _ => WorkspaceTypeResolution::Ambiguous,
+        })
+    }
+
+    fn collect_workspace_direct_type_candidates(
+        &self,
+        import_node: &ImportNode,
+        candidates: &mut Vec<WorkspaceTypeTarget<'a>>,
+        saw_ambiguous: &mut bool,
+    ) -> Result<(), SynParserError> {
+        let Some((krate, tail)) = self.workspace_dependency_tail(import_node.source_path()) else {
+            return Ok(());
+        };
+        let resolver = CallRelationResolver::new(krate.graph, krate.tree);
+        match resolver.resolve_type_path_from_root(tail)? {
+            LocalTypeResolution::Resolved(target) => {
+                candidates.push(WorkspaceTypeTarget { krate, target });
+            }
+            LocalTypeResolution::Unresolved => {}
+            LocalTypeResolution::Ambiguous => {
+                *saw_ambiguous = true;
+            }
+        }
+        Ok(())
+    }
+
+    fn collect_workspace_glob_type_candidates(
+        &self,
+        import_node: &ImportNode,
+        segment: &str,
+        candidates: &mut Vec<WorkspaceTypeTarget<'a>>,
+        saw_ambiguous: &mut bool,
+    ) -> Result<(), SynParserError> {
+        let Some((krate, tail)) = self.workspace_dependency_tail(import_node.source_path()) else {
+            return Ok(());
+        };
+        let resolver = CallRelationResolver::new(krate.graph, krate.tree);
+        let module_id = match resolver.resolve_module_path_from_root(tail)? {
+            LocalModulePathResolution::Resolved(module_id) => module_id,
+            LocalModulePathResolution::Unresolved => return Ok(()),
+            LocalModulePathResolution::Ambiguous => {
+                *saw_ambiguous = true;
+                return Ok(());
+            }
+        };
+
+        resolver.visit_scope_candidates(module_id, segment, &mut |candidate| {
+            if let Some(target) = Self::ordinary_type_target(candidate) {
+                candidates.push(WorkspaceTypeTarget { krate, target });
+            }
+            Ok(())
+        })
+    }
+
+    fn workspace_dependency_tail<'p>(
+        &self,
+        path: &'p [String],
+    ) -> Option<(super::WorkspaceCrate<'a>, &'p [String])> {
+        let (root, tail) = path.split_first()?;
+        let workspace = self.workspace?;
+        workspace
+            .crates
+            .iter()
+            .find(|krate| dependency_name_matches(krate.dependency_name, root))
+            .copied()
+            .map(|krate| (krate, tail))
     }
 
     pub(super) fn resolve_local_function_path(

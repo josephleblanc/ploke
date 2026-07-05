@@ -9,9 +9,13 @@ use crate::{
         relations::TypeRelation,
         types::TypeNode,
     },
+    resolve::type_resolution_v2,
 };
 
-use super::{AssocPathResolution, CallRelationResolver, LocalTraitResolution, LocalTypeResolution};
+use super::{
+    AssocPathResolution, CallRelationResolver, LocalTraitResolution, LocalTypeResolution,
+    WorkspaceTypeResolution,
+};
 
 impl CallRelationResolver<'_> {
     pub(super) fn is_external_self_assoc(
@@ -138,13 +142,18 @@ impl CallRelationResolver<'_> {
                     ),
                 }
             }
-            LocalTypeResolution::Unresolved => self.resolve_where_bound_assoc_function_by_name(
-                owner,
-                type_segment,
-                method_name,
-                arg_count,
-                type_relations,
-            ),
+            LocalTypeResolution::Unresolved => {
+                if let Some(resolution) = self.resolve_where_bound_assoc_function_by_name(
+                    owner,
+                    type_segment,
+                    method_name,
+                    arg_count,
+                    type_relations,
+                )? {
+                    return Ok(Some(resolution));
+                }
+                self.resolve_workspace_type_assoc_function(owner, type_segment, method_name)
+            }
             LocalTypeResolution::Ambiguous => Ok(Some(AssocPathResolution::Ambiguous)),
         }
     }
@@ -289,6 +298,56 @@ impl CallRelationResolver<'_> {
         arg_count: Option<usize>,
         type_relations: &[TypeRelation],
     ) -> Result<Option<AssocPathResolution>, SynParserError> {
+        if let Some(resolution) =
+            self.resolve_inherent_type_associated_function(target, method_name, type_relations)?
+        {
+            return Ok(Some(resolution));
+        }
+
+        if let Some(arg_count) = arg_count {
+            self.resolve_generic_bound_path_item(
+                owner,
+                target,
+                method_name,
+                arg_count,
+                type_relations,
+            )
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn resolve_workspace_type_assoc_function(
+        &self,
+        owner: CallBodyOwnerId,
+        type_segment: &str,
+        method_name: &str,
+    ) -> Result<Option<AssocPathResolution>, SynParserError> {
+        match self.resolve_workspace_type_import(owner, type_segment)? {
+            WorkspaceTypeResolution::Resolved(candidate) => {
+                let type_report = type_resolution_v2::resolve_type_relations_after_tree(
+                    candidate.krate.graph,
+                    candidate.krate.tree,
+                )?;
+                let resolver =
+                    CallRelationResolver::new(candidate.krate.graph, candidate.krate.tree);
+                resolver.resolve_inherent_type_associated_function(
+                    candidate.target,
+                    method_name,
+                    &type_report.relations,
+                )
+            }
+            WorkspaceTypeResolution::Unresolved => Ok(None),
+            WorkspaceTypeResolution::Ambiguous => Ok(Some(AssocPathResolution::Ambiguous)),
+        }
+    }
+
+    fn resolve_inherent_type_associated_function(
+        &self,
+        target: OrdinaryTypeTargetId,
+        method_name: &str,
+        type_relations: &[TypeRelation],
+    ) -> Result<Option<AssocPathResolution>, SynParserError> {
         let receiver_targets = self.ordinary_receiver_targets(target, type_relations)?;
         let mut candidates = Vec::new();
         let mut matched_inherent_impl = false;
@@ -316,14 +375,6 @@ impl CallRelationResolver<'_> {
 
         if matched_inherent_impl {
             Ok(Some(Self::method_resolution(candidates)))
-        } else if let Some(arg_count) = arg_count {
-            self.resolve_generic_bound_path_item(
-                owner,
-                target,
-                method_name,
-                arg_count,
-                type_relations,
-            )
         } else {
             Ok(None)
         }

@@ -131,16 +131,16 @@ local const initializer rows remain absent in the current axum fixture.
 | `TestClient::new` | `axum/src/form.rs:262`; `json.rs:250,266,281,301,320,355`; `extension.rs:228`; `response/sse.rs:714,756,793`; `response/mod.rs:529`; `middleware/from_extractor.rs:351`; `middleware/map_request.rs:412,432`; `middleware/map_response.rs:357`; `extract/query.rs:158`; `extract/connect_info.rs:386`; `extract/multipart.rs:383,423,449`; `extract/mod.rs:103`; `extract/matched_path.rs:162,178,197,217,237,254,271,291,312,326,346,361,374,394`; `extract/nested_path.rs:136,154,172,190,205,224`; `extract/path/mod.rs:619,632,645,664,687,700,716,732,751,784,798,822,854,912,946,974,989,1010,1034`; `handler/mod.rs:418,443`; `routing/tests/nest.rs:41,65,135,159,182,193,210,229,280,298,309,328,371,408,431,489`; `routing/tests/merge.rs:14,63,81,85,96,116,136,150,162,179,208,234,267,301,345,379`; `routing/tests/handle_error.rs:25,42,60,76,90`; `routing/tests/fallback.rs:10,25,40,53,69,89,101,118,134,150,171,190,207,221,241,261,280,299,314,325,338,359,377,389,402`; `routing/tests/mod.rs:90,118,150,188,217,233,242,282,307,323,339,352,365,377,396,416,454,472,489,506,527,540,572,589,599,626,643,668,685,700,717,738,748,775,798,815,846,905,952,967,984,1027,1047,1073,1164,1201`; `axum-core/src/extract/request_parts.rs:193` | common chain: callsite -> visible `TestClient` import, direct module scope, or `test_helpers::*` -> re-export `axum/src/test_helpers/mod.rs:5-6` -> struct `test_client.rs:30` -> `new` function `test_client.rs:36`. |
 
 Current registered-backup coverage: DB target traversal and proof projection
-assert the regenerated high-fanout contract: 167 projected structural rows
-resolve to `TestClient::new`, while the axum-core `request_parts.rs:193` row
-remains unsupported, targetless, and non-traversable. The resolved set
-includes nested/direct re-export import rows and routing-test child modules
-where `use super::*` inherits the parent `test_helpers::*` glob import before
-resolving the associated-function call. RAG exact call context,
-`code_item_lookup`, and `code_item_edges` preserve the 167 resolved
-target-centered caller rows and their `TestClient::new` associated-function
-callee shape. Known source-oracle frontiers remain around multipart,
-closure-body, and macro-template projection gaps.
+assert the regenerated high-fanout contract: 168 projected structural rows
+resolve to `TestClient::new`. The resolved set includes nested/direct
+re-export import rows, routing-test child modules where `use super::*`
+inherits the parent `test_helpers::*` glob import, and axum-core
+`request_parts.rs:193` through `axum::test_helpers::*` workspace dependency
+glob proof. RAG exact call context, `code_item_lookup`, and `code_item_edges`
+preserve the 168 resolved target-centered caller rows and their
+`TestClient::new` associated-function callee shape. Known source-oracle
+frontiers remain around multipart, closure-body, and macro-template
+projection gaps.
 
 ## Constructors And Associated Calls
 
@@ -196,11 +196,13 @@ consolidated supported traversal table. RAG exact call context,
 
 The same regeneration resolves `axum/src/routing/mod.rs:109` `Self::new()` from
 `Default for Router` to `Router::new`. The real-target receiver matrix now pins
-309 `Router::new` caller edges and 203 incoming expansion candidates, including
+310 `Router::new` caller edges and 204 incoming expansion candidates, including
 the explicit `axum/src/routing/method_routing.rs:1494`
-`crate::Router::new()` row. TUI `code_item_lookup` and `code_item_edges` now
+`crate::Router::new()` row and the axum-core `request_parts.rs:193`
+workspace-import `Router::new()` row. TUI `code_item_lookup` and
+`code_item_edges` now
 accept `owner_type` for exact inherent-method disambiguation, so the downstream
-real-corpus matrix asserts both `HandleError::new` caller rows and all 309
+real-corpus matrix asserts both `HandleError::new` caller rows and all 310
 `Router::new` caller rows with target-centered proof rows.
 The same table-driven TUI matrix now also preserves the two DB/RAG-supported
 same-impl `self.extract_with_state(&())` method-call rows through
@@ -365,6 +367,6 @@ a fixture-wide absence assertion because the source checkout is not present in
 
 | Item | Current state | Required next step before stricter DB test |
 | --- | --- | --- |
-| `TestClient::new` owner-per-callsite matrix | Exact 172 file/line callsites are listed. `ploke-db` now asserts the registered axum backup's 167 projected structural rows resolve to `TestClient::new`, including nested/direct re-export import rows and inherited `use super::*` parent-glob rows from routing child modules. The axum-core `request_parts.rs:193` row remains projected but targetless. Known remaining source-oracle frontiers include multipart, closure-body, and macro-template projection gaps. | Keep the 167 resolved plus one targetless DB contract; when multipart, closure-body, macro-template ownership, or broader structural/import evidence lands, tighten this toward full 172-callsite parity. |
+| `TestClient::new` owner-per-callsite matrix | Exact 172 file/line callsites are listed. `ploke-db` now asserts the registered axum backup's 168 projected structural rows resolve to `TestClient::new`, including nested/direct re-export import rows, inherited `use super::*` parent-glob rows from routing child modules, and the axum-core `request_parts.rs:193` workspace dependency glob row. Known remaining source-oracle frontiers include multipart, closure-body, and macro-template projection gaps. | Keep the 168 resolved DB contract; when multipart, closure-body, macro-template ownership, or broader structural/import evidence lands, tighten this toward full 172-callsite parity. |
 | Markdown/doc-comment examples | Excluded from oracle rows. | Keep excluded unless parser fixture intentionally ingests docs as Rust examples. |
 | Dynamic callback targets | Source binding chains are recorded, but concrete targets remain intentionally unresolved. | Tests should assert structural dynamic call plus `Unsupported`/fail-closed status, not guessed callees. |

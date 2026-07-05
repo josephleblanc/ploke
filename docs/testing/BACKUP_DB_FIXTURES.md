@@ -692,10 +692,11 @@ Expected searchable corpus embedding config:
   - `Router` `Default::default` reaches `Router::new` through a local-exact
     `Self::new()` associated-function edge
   - axum `TestClient::new` reaches the cfg-gated local test helper target for
-    167 projected structural rows through nested glob re-export rows,
+    168 projected structural rows through nested glob re-export rows,
     inherited parent glob imports, direct `test_helpers::TestClient` imports,
-    and `test_helpers::* -> pub use test_client::*`; the axum-core
-    `request_parts.rs:193` row remains unsupported and targetless
+    `test_helpers::* -> pub use test_client::*`, and the axum-core
+    `axum::test_helpers::*` workspace dependency glob import at
+    `request_parts.rs:193`
   - typed local `Router` receiver `.clone()` rows reach the local
     `impl<S> Clone for Router<S>` method through exact local external-trait impl
     receiver resolution

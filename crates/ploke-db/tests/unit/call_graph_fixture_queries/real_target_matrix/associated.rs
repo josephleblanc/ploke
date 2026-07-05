@@ -1,7 +1,5 @@
 use super::super::*;
 use super::common::*;
-use super::source_lines::*;
-use ploke_test_utils::CORPUS_AXUM_CALL_GRAPH;
 
 #[test]
 fn axum_real_target_into_service_future_new_is_documented_gap() -> Result<(), DbError> {
@@ -168,16 +166,15 @@ fn axum_real_target_test_client_new_high_fanout_is_documented_gap() -> Result<()
     //   listed in the oracle matrix.
     // Current DB contract: recursive `cfg(test)` inclusion, nested glob
     // re-export traversal, inherited parent glob imports, and direct imports
-    // through the public `test_helpers` glob re-export make 167 projected
-    // structural rows resolve to the gated local test helper target. The one
-    // remaining projected axum-core row stays unsupported and targetless
-    // because it depends on cross-crate test-helper import evidence.
+    // through the public `test_helpers` glob re-export, plus the axum-core
+    // workspace dependency glob import, make 168 projected structural rows
+    // resolve to the gated local test helper target.
     let target =
-        assert_resolved_path_target_count(&db, &["TestClient", "new"], 167, "TestClient::new")?;
+        assert_resolved_path_target_count(&db, &["TestClient", "new"], 168, "TestClient::new")?;
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        167,
+        168,
         "TestClient::new should expose every resolved projected real-corpus caller: {callers:#?}"
     );
     assert_sites_match_callers(
@@ -186,17 +183,7 @@ fn axum_real_target_test_client_new_high_fanout_is_documented_gap() -> Result<()
         &callers,
         "TestClient::new resolved projected callers",
     )?;
-    assert_targetless_path_rows(&db, &["TestClient", "new"], CallStatusKind::Unsupported, 1)?;
-    assert_targetless_path_line_fanout(
-        &db,
-        &CORPUS_AXUM_CALL_GRAPH,
-        &["TestClient", "new"],
-        CallStatusKind::Unsupported,
-        &[SourceLineFanout {
-            file_suffix: "axum-core/src/extract/request_parts.rs",
-            lines: &[193],
-        }],
-    )?;
+    assert_targetless_path_rows(&db, &["TestClient", "new"], CallStatusKind::Unsupported, 0)?;
 
     // Matrix immediate candidate:
     //   axum/src/json.rs:237 imports `test_helpers::*`.
@@ -251,6 +238,38 @@ fn axum_real_target_test_client_new_high_fanout_is_documented_gap() -> Result<()
             owner: fallback_owner,
             target,
             site_id: fallback_row.site.id,
+            expected_edge_count: 1,
+        },
+    )?;
+
+    // Matrix cross-crate workspace dependency glob candidate:
+    //   axum-core/src/extract/request_parts.rs:177 imports
+    //   `axum::{..., test_helpers::*, Router}`.
+    //   axum-core/src/extract/request_parts.rs:193 calls
+    //   `TestClient::new(...)`.
+    // Expected traversal: the dependency-root glob import resolves through the
+    // parsed axum workspace member to test_client.rs:36 in one edge.
+    let axum_core_owner = function_id_by_name_in_module(
+        &db,
+        &["crate", "extract", "request_parts", "tests"],
+        "extract_request_parts",
+    )?;
+    let axum_core_context = db.call_context_for_owner(axum_core_owner)?;
+    let axum_core_row = row_by_path(&axum_core_context, &["TestClient", "new"]);
+    assert_resolved_target(
+        axum_core_row,
+        target,
+        CallRelationKind::AssociatedFunction,
+        CallSiteKind::Path,
+        CallTargetKind::Method,
+    );
+    assert_one_edge_traversal(
+        &db,
+        TraversalExpectation {
+            label: "axum-core/src/extract/request_parts.rs:193 workspace-glob TestClient::new",
+            owner: axum_core_owner,
+            target,
+            site_id: axum_core_row.site.id,
             expected_edge_count: 1,
         },
     )?;
