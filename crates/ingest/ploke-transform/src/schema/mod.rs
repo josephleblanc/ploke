@@ -52,7 +52,7 @@ use compilation_unit::{
     CompilationUnitEnabledNodeSchema, CompilationUnitMetaSchema, CompilationUnitSchema,
 };
 use cozo::{Db, MemStorage, ScriptMutability};
-use crate_node::{CrateContextSchema, WorkspaceMetadataSchema};
+use crate_node::{CrateContextSchema, CrateDependencySchema, WorkspaceMetadataSchema};
 use edges::SyntacticRelationSchema;
 use edges::{TypeContainsSchema, TypeRelationSchema, TypeUseSchema};
 use itertools::Itertools;
@@ -131,6 +131,7 @@ pub fn create_schema_all(db: &Db<MemStorage>) -> Result<(), crate::error::Transf
 
     // -- crate_context --
     CrateContextSchema::create_and_insert_schema(db)?;
+    CrateDependencySchema::create_and_insert_schema(db)?;
     WorkspaceMetadataSchema::create_and_insert_schema(db)?;
 
     // -- compilation_unit (structural masks; cfg follow-up) --
