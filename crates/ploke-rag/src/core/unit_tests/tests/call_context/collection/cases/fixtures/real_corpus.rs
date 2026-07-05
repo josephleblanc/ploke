@@ -1236,6 +1236,101 @@ async fn call_impact_exact_reads_axum_usage_question_summary() -> Result<(), Err
         "RAG MethodRouter::new impact source files",
     );
 
+    // Usage questions:
+    //   docs/active/agents/2026-06-30_call-graph-usage-questions.md
+    //
+    // Build or deployment optimization / API understanding:
+    //   "Which components are affected by a change to this API?"
+    //   "How is this library function used in real target code?"
+    //
+    // Source oracle:
+    //   axum-core/src/body.rs:52 defines `Body::empty`.
+    //   axum-core, axum, closure-owned, and local-item rows call
+    //   `Body::empty()` or `Self::empty()` through direct imports,
+    //   re-exports, and inherited glob imports.
+    let body_empty = method_id_by_name_and_body_substring(&db, "empty", "Empty::new()")?;
+    let body_report = rag
+        .exact_call_impact_for_target(
+            body_empty,
+            CallPathOptions {
+                max_depth: 1,
+                max_paths: 64,
+            },
+        )?
+        .expect("call context enabled");
+    assert_eq!(body_report.target.id, body_empty);
+    assert_eq!(body_report.target.kind, "Method");
+    assert_eq!(body_report.target.name, "empty");
+    assert_eq!(
+        body_report.paths.len(),
+        23,
+        "RAG Body::empty component impact should preserve all current direct paths: {body_report:#?}"
+    );
+    assert_eq!(
+        body_report.direct_call_sites.len(),
+        23,
+        "RAG Body::empty component impact should preserve every direct callsite: {body_report:#?}"
+    );
+    assert!(
+        !body_report.test_callers.is_empty() && !body_report.non_test_callers.is_empty(),
+        "RAG Body::empty component impact should preserve test/non-test caller buckets: {body_report:#?}"
+    );
+    assert_eq!(
+        body_report.test_callers.len() + body_report.non_test_callers.len(),
+        body_report.callers.len(),
+        "RAG Body::empty test/non-test buckets should partition eventual callers: {body_report:#?}"
+    );
+    assert!(
+        body_report.callsite_buckets.iter().any(|bucket| {
+            bucket.kind == CallSiteKind::Path
+                && bucket.relation == CallTargetKind::AssociatedFunction
+                && bucket.count == 23
+        }),
+        "RAG Body::empty API summary should preserve the path/associated-function bucket: {body_report:#?}"
+    );
+    let path_counts = body_report.direct_call_sites.iter().fold(
+        BTreeMap::<Vec<String>, usize>::new(),
+        |mut counts, call| {
+            let CallCalleeInfo::Path { path: call_path } = &call.callee else {
+                panic!("RAG Body::empty impact callsite should be path-shaped: {call:#?}");
+            };
+            *counts.entry(call_path.clone()).or_default() += 1;
+            counts
+        },
+    );
+    assert_eq!(
+        path_counts,
+        BTreeMap::from([
+            (path(&["Body", "empty"]), 21),
+            (path(&["Self", "empty"]), 2),
+        ]),
+        "RAG Body::empty component impact should distinguish Body::empty and Self::empty rows"
+    );
+    for suffix in [
+        "axum-core/src/body.rs",
+        "axum-core/src/ext_traits/request.rs",
+        "axum/src/middleware/from_fn.rs",
+        "axum/src/routing/tests/mod.rs",
+    ] {
+        assert_call_source_file(
+            &body_report.source_files,
+            suffix,
+            "RAG Body::empty component impact source files",
+        );
+    }
+    for module in [
+        &["crate", "body"][..],
+        &["crate", "ext_traits", "request"][..],
+        &["crate", "middleware", "from_fn"][..],
+        &["crate", "routing", "tests"][..],
+    ] {
+        assert_call_source_module(
+            &body_report.source_modules,
+            module,
+            "RAG Body::empty component impact source modules",
+        );
+    }
+
     Ok(())
 }
 
