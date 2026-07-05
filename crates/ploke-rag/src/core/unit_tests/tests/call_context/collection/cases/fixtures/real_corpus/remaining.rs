@@ -159,7 +159,9 @@ async fn call_context_exact_reads_remaining_axum_supported_matrix_targets() -> R
             // ext_traits/mod.rs:25 calls `InnerState::from_ref(state)` and
             // ext_traits/mod.rs:45 calls `String::from_ref(state)`; axum
             // extract/state.rs:309 calls `InnerState::from_ref(state)` through
-            // the workspace dependency root `axum_core::extract::FromRef`.
+            // the workspace dependency root `axum_core::extract::FromRef`;
+            // middleware/from_extractor.rs:328 calls `Secret::from_ref(state)`
+            // from a local impl method with a local where-bound.
             label: "axum-core FromRef::from_ref bounded associated paths",
             target: method_id_by_trait_name(&db, "FromRef", "from_ref")?,
             expected: vec![
@@ -170,6 +172,11 @@ async fn call_context_exact_reads_remaining_axum_supported_matrix_targets() -> R
                 ),
                 path_shape(
                     &["String", "from_ref"],
+                    CallTargetKind::AssociatedFunction,
+                    1,
+                ),
+                path_shape(
+                    &["Secret", "from_ref"],
                     CallTargetKind::AssociatedFunction,
                     1,
                 ),

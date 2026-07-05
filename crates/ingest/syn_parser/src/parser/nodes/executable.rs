@@ -3,6 +3,12 @@ use serde::{Deserialize, Serialize};
 use super::{CallBodyOwnerId, ExecutableBodyId, ExecutableBodyKind};
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ExecutableWherePredicate {
+    pub subject_path: Vec<String>,
+    pub trait_bounds: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub struct ExecutableBodyNode {
     pub id: ExecutableBodyId,
     pub kind: ExecutableBodyKind,
@@ -10,6 +16,7 @@ pub struct ExecutableBodyNode {
     pub span: (usize, usize),
     pub cfgs: Vec<String>,
     pub label: Option<String>,
+    pub where_predicates: Vec<ExecutableWherePredicate>,
 }
 
 impl ExecutableBodyNode {
@@ -27,6 +34,11 @@ impl ExecutableBodyNode {
             span,
             cfgs,
             label,
+            where_predicates: Vec::new(),
         }
+    }
+
+    pub fn set_where_predicates(&mut self, where_predicates: Vec<ExecutableWherePredicate>) {
+        self.where_predicates = where_predicates;
     }
 }

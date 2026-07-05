@@ -30,6 +30,29 @@ fn fixture_context_reads_projected_imported_trait_associated_function_calls() ->
         CallTargetKind::Method,
     );
 
+    let parent = function_id_by_name(&db, "call_local_impl_where_bound_trait_associated_function")?;
+    let owner = local_item_owner_for_parent_with_label(&db, parent, "local_impl_method:value")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        1,
+        "local impl where-bound associated function context rows: {context:#?}"
+    );
+    let row = &context[0];
+    assert_eq!(row.site.owner_id, owner);
+    assert_eq!(row.site.kind, CallSiteKind::Path);
+    assert_eq!(
+        row.site.path.as_ref(),
+        Some(&path(&["TraitAssocFunctionTarget", "trait_make"]))
+    );
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::AssociatedFunction,
+        CallSiteKind::Path,
+        CallTargetKind::Method,
+    );
+
     let target = method_id_by_trait_name(&db, "ImportedAssocFunctionTrait", "imported_trait_make")?;
     let cases = [
         (

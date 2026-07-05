@@ -348,11 +348,10 @@ async fn code_item_lookup_returns_from_ref_dependency_root_path_rows() {
         // Expected traversal: exact item lookup can resolve the enclosing
         // `test_from_extractor` function, but it must not flatten the nested
         // local impl method body row into that parent function. DB/RAG tests
-        // pin the actual `local_impl_method:from_request_parts` owner and its
-        // canonical-identity proof boundary; exact item tools do not currently
-        // accept executable body owners as `node_kind` values. The parent item
-        // can still carry non-call proof rows, so this assertion is scoped to
-        // call-context non-flattening.
+        // pin the resolved `local_impl_method:from_request_parts` owner;
+        // exact item tools do not currently accept executable body owners as
+        // `node_kind` values. The parent item can still carry non-call proof
+        // rows, so this assertion is scoped to call-context non-flattening.
         let callee = fixture.case.callee();
         assert_path_context_absent(
             call_context,

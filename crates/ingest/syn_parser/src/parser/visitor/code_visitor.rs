@@ -27,12 +27,14 @@ use crate::parser::nodes::{
 };
 // Nodes
 use crate::parser::nodes::{
-    ConstNode, EnumNode, FieldNode, FunctionNode, ImplNode, ImportNode, MacroNode, MethodNode,
-    ModuleNode, ParamData, StaticNode, StructNode, TraitNode, TypeAliasNode, TypeDefNode,
-    UnionNode, VariantNode,
+    ConstNode, EnumNode, ExecutableBodyId, ExecutableBodyNode, ExecutableWherePredicate, FieldNode,
+    FunctionNode, ImplNode, ImportNode, MacroNode, MethodNode, ModuleNode, ParamData, StaticNode,
+    StructNode, TraitNode, TypeAliasNode, TypeDefNode, UnionNode, VariantNode,
 };
 // Kinds of nodes
-use crate::parser::nodes::{ImportKind, MacroKind, ModuleKind, ProcMacroKind};
+use crate::parser::nodes::{
+    ImportKind, MacroKind, ModuleKind, ProcMacroKind, generate_local_item_body_id,
+};
 // Imported Kinds from ploke-core
 use ploke_core::ItemKind;
 
@@ -77,6 +79,81 @@ fn typed_fn_arg_names(
             },
             syn::FnArg::Receiver(_) => None,
         })
+        .collect()
+}
+
+fn executable_where_predicates(generics: &syn::Generics) -> Vec<ExecutableWherePredicate> {
+    let mut predicates = Vec::new();
+
+    for param in &generics.params {
+        let syn::GenericParam::Type(type_param) = param else {
+            continue;
+        };
+        let trait_bounds = executable_trait_bounds(&type_param.bounds);
+        if trait_bounds.is_empty() {
+            continue;
+        }
+        predicates.push(ExecutableWherePredicate {
+            subject_path: vec![type_param.ident.to_string()],
+            trait_bounds,
+        });
+    }
+
+    let Some(where_clause) = &generics.where_clause else {
+        return predicates;
+    };
+
+    predicates.extend(
+        where_clause
+            .predicates
+            .iter()
+            .filter_map(|predicate| match predicate {
+                syn::WherePredicate::Type(predicate) => {
+                    let subject_path = executable_type_path(&predicate.bounded_ty)?;
+                    let trait_bounds = executable_trait_bounds(&predicate.bounds);
+                    (!trait_bounds.is_empty()).then_some(ExecutableWherePredicate {
+                        subject_path,
+                        trait_bounds,
+                    })
+                }
+                syn::WherePredicate::Lifetime(_) => None,
+                _ => None,
+            }),
+    );
+
+    predicates
+}
+
+fn executable_trait_bounds(
+    bounds: &syn::punctuated::Punctuated<syn::TypeParamBound, syn::token::Plus>,
+) -> Vec<Vec<String>> {
+    bounds
+        .iter()
+        .filter_map(|bound| match bound {
+            syn::TypeParamBound::Trait(trait_bound) => {
+                Some(path_segments_for_executable_scope(&trait_bound.path))
+            }
+            syn::TypeParamBound::Lifetime(_) => None,
+            _ => None,
+        })
+        .collect()
+}
+
+fn executable_type_path(ty: &syn::Type) -> Option<Vec<String>> {
+    match ty {
+        syn::Type::Path(path) if path.qself.is_none() => {
+            Some(path_segments_for_executable_scope(&path.path))
+        }
+        syn::Type::Reference(reference) => executable_type_path(reference.elem.as_ref()),
+        syn::Type::Paren(paren) => executable_type_path(paren.elem.as_ref()),
+        _ => None,
+    }
+}
+
+fn path_segments_for_executable_scope(path: &syn::Path) -> Vec<String> {
+    path.segments
+        .iter()
+        .map(|segment| segment.ident.to_string())
         .collect()
 }
 
@@ -175,6 +252,7 @@ impl<'a> CodeVisitor<'a> {
     ) {
         let (mut calls, mut relations, mut executable_bodies) =
             extract_body_call_sites(owner, block, cfgs, receiver_names);
+        self.annotate_local_impl_method_scopes(owner, block, cfgs, &mut executable_bodies);
         self.state.code_graph.call_sites.append(&mut calls);
         self.state
             .code_graph
@@ -184,6 +262,37 @@ impl<'a> CodeVisitor<'a> {
             .code_graph
             .executable_bodies
             .append(&mut executable_bodies);
+    }
+
+    fn annotate_local_impl_method_scopes(
+        &mut self,
+        owner: CallBodyOwnerId,
+        block: &syn::Block,
+        cfgs: &[String],
+        bodies: &mut [ExecutableBodyNode],
+    ) {
+        for stmt in &block.stmts {
+            let syn::Stmt::Item(syn::Item::Impl(item_impl)) = stmt else {
+                continue;
+            };
+            let impl_predicates = executable_where_predicates(&item_impl.generics);
+            for item in &item_impl.items {
+                let syn::ImplItem::Fn(method) = item else {
+                    continue;
+                };
+                let span = method.extract_span_bytes();
+                let body_id =
+                    ExecutableBodyId::LocalItem(generate_local_item_body_id(owner, span, cfgs));
+                let mut predicates = executable_where_predicates(&method.sig.generics);
+                predicates.extend(impl_predicates.iter().cloned());
+                if predicates.is_empty() {
+                    continue;
+                }
+                if let Some(body) = bodies.iter_mut().find(|body| body.id == body_id) {
+                    body.set_where_predicates(predicates);
+                }
+            }
+        }
     }
 
     fn record_expr_call_sites(

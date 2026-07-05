@@ -152,19 +152,22 @@ async fn proof_context_exact_preserves_axum_supported_target_rows() -> Result<()
             // ext_traits/mod.rs:{25,45} call same-crate bounded associated
             // paths `InnerState::from_ref` and `String::from_ref`; axum
             // extract/state.rs:309 reaches the same target through parsed
-            // workspace dependency proof for `axum_core::extract::FromRef`.
+            // workspace dependency proof for `axum_core::extract::FromRef`;
+            // middleware/from_extractor.rs:328 reaches it from a nested local
+            // impl method through `Secret: FromRef<S>`.
             label: "axum-core FromRef::from_ref bounded paths",
             target: trait_method_id(&db, "FromRef", "from_ref")?,
-            edges: 3,
+            edges: 4,
         },
         ProofCase {
             // axum/src/routing/mod.rs:162 defines `Router::new`.
-            // The current fixture resolves 307 `Router::new` rows plus
-            // routing/mod.rs:109 `Self::new()` and
+            // The current fixture resolves 308 `Router::new` rows plus
+            // routing/mod.rs:109 `Self::new()`,
+            // axum-core/src/extract/request_parts.rs:193 `Router::new()`, and
             // method_routing.rs:1494 `crate::Router::new()`.
             label: "axum Router::new resolved fanout",
             target: method_id_by_name_and_body(&db, "new", "default_fallback: true")?,
-            edges: 309,
+            edges: 310,
         },
     ];
 

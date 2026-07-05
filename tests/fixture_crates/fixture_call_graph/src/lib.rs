@@ -1465,3 +1465,19 @@ pub fn local_impl_method_body_call_is_not_outer_call_site() -> i32 {
     let value = LocalImpl;
     value.value()
 }
+
+pub fn call_local_impl_where_bound_trait_associated_function() -> i32 {
+    struct LocalImpl;
+
+    impl LocalImpl
+    where
+        TraitAssocFunctionTarget: LocalAssocFunctionTrait,
+    {
+        fn value(&self) -> i32 {
+            TraitAssocFunctionTarget::trait_make()
+        }
+    }
+
+    let value = LocalImpl;
+    value.value()
+}

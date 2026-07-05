@@ -15,10 +15,10 @@ use crate::{
         graph::GraphAccess,
         nodes::{
             AnyCallSiteId, AnyNodeId, AnyTypeId, AsAnyNodeId, AssociatedItemNodeId,
-            CallBodyOwnerId, CallNode, ExecutableBodyId, FunctionNodeId, ImplNode, ImplNodeId,
-            MethodNodeId, ModuleNodeId, OrdinaryTypeSourceId, OrdinaryTypeTargetId,
-            OrdinaryTypeUseId, ParamData, StructNodeId, TraitNode, TraitNodeId, TraitTypeSourceId,
-            TypeAliasNodeId, TypeGenericParamNodeId, VariantNodeId,
+            CallBodyOwnerId, CallNode, ExecutableBodyId, ExecutableWherePredicate, FunctionNodeId,
+            ImplNode, ImplNodeId, MethodNodeId, ModuleNodeId, OrdinaryTypeSourceId,
+            OrdinaryTypeTargetId, OrdinaryTypeUseId, ParamData, StructNodeId, TraitNode,
+            TraitNodeId, TraitTypeSourceId, TypeAliasNodeId, TypeGenericParamNodeId, VariantNodeId,
         },
         relations::{CallRelation, CallResolutionStatus, SyntacticRelation, TypeRelation},
         types::{GenericParamNode, TypeNode, TypeWherePredicate},
@@ -1265,9 +1265,65 @@ impl<'a> CallRelationResolver<'a> {
             }
             traits.extend(self.workspace_trait_targets_for_source(owner, source)?);
         }
+        traits.extend(self.executable_where_bound_traits_for_type_name(owner, type_segment)?);
         traits.sort_unstable();
         traits.dedup();
         Ok(traits)
+    }
+
+    fn executable_where_bound_traits_for_type_name(
+        &self,
+        owner: CallBodyOwnerId,
+        type_segment: &str,
+    ) -> Result<Vec<TraitNodeId>, SynParserError> {
+        let CallBodyOwnerId::Executable(id) = owner else {
+            return Ok(Vec::new());
+        };
+        let body = self
+            .graph
+            .executable_bodies()
+            .iter()
+            .find(|body| body.id == id)
+            .ok_or_else(|| {
+                SynParserError::InternalState(format!(
+                    "call resolution found missing executable body {id} during executable where-bound lookup"
+                ))
+            })?;
+
+        let mut traits = Vec::new();
+        for predicate in &body.where_predicates {
+            if !executable_predicate_matches_type(predicate, type_segment) {
+                continue;
+            }
+            for bound in &predicate.trait_bounds {
+                traits.extend(self.executable_trait_bound_targets(owner, bound)?);
+            }
+        }
+        traits.sort_unstable();
+        traits.dedup();
+        Ok(traits)
+    }
+
+    fn executable_trait_bound_targets(
+        &self,
+        owner: CallBodyOwnerId,
+        path: &[String],
+    ) -> Result<Vec<TraitNodeId>, SynParserError> {
+        let mut targets = Vec::new();
+        if let [segment] = path {
+            if let LocalTraitResolution::Resolved(target) =
+                self.resolve_local_trait_segment(owner, segment)?
+            {
+                targets.push(target);
+            }
+            targets.extend(self.resolve_workspace_trait_import(owner, segment)?);
+        } else {
+            targets.extend(self.resolve_workspace_trait_path(path)?);
+        }
+
+        targets.sort_unstable();
+        targets.dedup();
+        Ok(targets)
     }
 
     fn type_path_matches_segment(
@@ -1789,6 +1845,13 @@ impl<'a> CallRelationResolver<'a> {
                 ))
             })
     }
+}
+
+fn executable_predicate_matches_type(predicate: &ExecutableWherePredicate, segment: &str) -> bool {
+    predicate
+        .subject_path
+        .last()
+        .is_some_and(|subject| subject == segment)
 }
 
 fn assert_unique_status_sources(statuses: &[CallResolutionStatus]) -> Result<(), SynParserError> {

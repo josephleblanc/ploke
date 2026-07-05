@@ -240,7 +240,7 @@ shape and target-centered proof rows.
 | handler macro `$last::from_request` | `axum/src/handler/mod.rs:250` | generated `Handler::call`, async block starts `:240` | bound `$last: FromRequest<S, M> + Send` at `:234` -> trait method. |
 | `FromRequest` ViaParts blanket inner call | `axum-core/src/extract/mod.rs:103` | blanket impl method body, async block | marker `private::ViaParts` at `:31`; blanket impl `:91`; bound `T: FromRequestParts<S>` at `:94`; call `Self::from_request_parts`; regenerated fixture owns this as an async-block path row that remains unsupported and targetless. |
 | `FromRef::from_ref` same-crate bounded calls | `axum-core/src/ext_traits/mod.rs:25,45` | axum-core state extraction test helpers | trait `FromRef` at `extract/from_ref.rs:13`; method `:15`; same-crate bounds now traverse to the trait method binding; concrete impl dispatch remains type-dependent. |
-| `FromRef::from_ref` dependency-root bounded calls | `axum/src/extract/state.rs:309`; `middleware/from_extractor.rs:328` | axum state extraction helpers and middleware tests | `FromRef` is imported through `axum_core::extract::FromRef`; the top-level `State` extractor row now traverses through parsed workspace dependency proof to the axum-core `FromRef::from_ref` trait method binding, while the nested middleware local-impl row is owned by `local_impl_method:from_request_parts` and remains targetless until local impl where-bound scope resolution exists. |
+| `FromRef::from_ref` dependency-root bounded calls | `axum/src/extract/state.rs:309`; `middleware/from_extractor.rs:328` | axum state extraction helpers and middleware tests | `FromRef` is imported through `axum_core::extract::FromRef`; both the top-level `State` extractor row and the nested middleware `local_impl_method:from_request_parts` row traverse through parsed workspace dependency proof to the axum-core `FromRef::from_ref` trait method binding. |
 | `ServiceExt::handle_error` user call | `axum/src/routing/tests/handle_error.rs:86` | `handler_service_ext` | `.handle_error(...)` -> trait default `service_ext.rs:42` -> `HandleError::new` call `:43` -> inherent fn `error_handling/mod.rs:80`. |
 | `Self::accept(self).await` | `axum/src/serve/listener.rs:41,61` | `Listener for TcpListener::accept`; `Listener for UnixListener::accept` | trait item `listener.rs:29`; impl self types at `:35` and `:55`; `Self::accept` targets external tokio listener inherent method, so projected rows should be external and targetless, not recursive trait calls. |
 | dyn `Future::poll` | `axum/src/error_handling/mod.rs:251` | `HandleErrorFuture::poll` | field type `Pin<Box<dyn Future<...>>>` at `:240`; dispatch to trait-object `Future::poll`; concrete runtime future unresolved. |
@@ -255,14 +255,11 @@ Current executable coverage: DB target traversal now asserts the two one-hop
 the two same-crate axum-core `FromRef::from_ref` bounded associated-path edges.
 These are trait method binding edges only; concrete runtime impl dispatch
 remains a documented future slice. The top-level axum dependency-root
-`FromRef::from_ref` path row at `axum/src/extract/state.rs:309` now traverses to
-the axum-core trait method binding. DB and RAG tests preserve the nested
-`axum/src/middleware/from_extractor.rs:328` row as a targetless
-`local_impl_method:from_request_parts` executable owner because local impl
-where-bound scope resolution is not modeled yet; proof-context tests pin the
-current `canonical_identity_mismatch` proof blocker for that nested local-owner
-boundary without fabricating a `call_edge`. Exact TUI lookup/edges tests assert
-the enclosing `test_from_extractor` item does not flatten that nested row.
+`FromRef::from_ref` path row at `axum/src/extract/state.rs:309` and the nested
+`axum/src/middleware/from_extractor.rs:328` `local_impl_method:from_request_parts`
+row now traverse to the axum-core trait method binding. Exact TUI lookup/edges
+tests assert the enclosing `test_from_extractor` item does not flatten that
+nested row.
 Receiver tests now assert exact owner-count buckets and source-line
 fanout for the six projected `req.extensions_mut()` local-binding rows plus
 the initialized external `Request::new` receiver row, the seven projected

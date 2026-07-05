@@ -21,31 +21,6 @@ struct MethodCase {
     status: CallStatusKind,
 }
 
-struct PathCase {
-    label: &'static str,
-    owner: OwnerCase,
-    path: &'static [&'static str],
-    status: CallStatusKind,
-}
-
-#[derive(Clone, Copy)]
-enum OwnerCase {
-    Method {
-        name: &'static str,
-        body: &'static str,
-        file: &'static str,
-    },
-    Function {
-        module: &'static [&'static str],
-        name: &'static str,
-    },
-    LocalItem {
-        parent_module: &'static [&'static str],
-        parent_name: &'static str,
-        label: &'static str,
-    },
-}
-
 #[tokio::test]
 async fn call_context_collection_reads_axum_dynamic_callable_field_gaps() -> Result<(), Error> {
     init_tracing_once();
@@ -180,85 +155,6 @@ async fn call_context_collection_reads_memchr_function_pointer_field_gaps() -> R
         assert_eq!(call.owner_id, owner);
         assert_eq!(call.arg_count, Some(case.expected_arg_count));
         assert_eq!(call.status, CallStatusKind::Unsupported);
-        assert_eq!(call.resolution, None);
-        assert!(
-            call.targets.is_empty(),
-            "{} should remain targetless in RAG call context: {call:#?}",
-            case.label
-        );
-    }
-
-    Ok(())
-}
-
-#[tokio::test]
-async fn call_context_collection_reads_axum_from_ref_dependency_root_path_gaps() -> Result<(), Error>
-{
-    init_tracing_once();
-    let (db, rag) = setup_axum_call_graph_rag()?;
-
-    // Matrix:
-    //   docs/active/agents/call-graph/
-    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
-    //
-    // Source chain:
-    //   axum/src/middleware/from_extractor.rs:306 imports
-    //   `axum_core::extract::FromRef`.
-    //   axum/src/middleware/from_extractor.rs:328 calls
-    //   `Secret::from_ref(state)`.
-    // Expected traversal: this nested local-impl row remains visible and
-    // targetless. The call is now owned by the function-local impl method body,
-    // but the resolver still cannot use that local impl where-bound scope. The
-    // top-level axum State extractor
-    // `InnerState::from_ref` row now resolves through workspace dependency
-    // proof and is covered by the supported `FromRef` target-centered tests.
-    let cases = [PathCase {
-        label: "axum/src/middleware/from_extractor.rs:328 Secret::from_ref dependency root",
-        owner: OwnerCase::LocalItem {
-            parent_module: &["crate", "middleware", "from_extractor", "tests"],
-            parent_name: "test_from_extractor",
-            label: "local_impl_method:from_request_parts",
-        },
-        path: &["Secret", "from_ref"],
-        status: CallStatusKind::Unsupported,
-    }];
-
-    for case in cases {
-        let owner = match case.owner {
-            OwnerCase::Method { name, body, file } => method_id_by_file(&db, name, body, file)?,
-            OwnerCase::Function { module, name } => {
-                function_id_by_name_in_module(&db, module, name)?
-            }
-            OwnerCase::LocalItem {
-                parent_module,
-                parent_name,
-                label,
-            } => {
-                let parent = function_id_by_name_in_module(&db, parent_module, parent_name)?;
-                local_item_owner_for_parent_with_label(&db, parent, label)?
-            }
-        };
-        let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
-        let context = call_context
-            .get(&owner)
-            .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
-        let expected = CallCalleeInfo::Path {
-            path: path(case.path),
-        };
-        let matching = context
-            .iter()
-            .filter(|call| call.kind == CallSiteKind::Path && call.callee == expected)
-            .collect::<Vec<_>>();
-        assert_eq!(
-            matching.len(),
-            1,
-            "{} should expose one targetless dependency-root path row: {context:#?}",
-            case.label
-        );
-
-        let call = matching[0];
-        assert_eq!(call.owner_id, owner);
-        assert_eq!(call.status, case.status);
         assert_eq!(call.resolution, None);
         assert!(
             call.targets.is_empty(),

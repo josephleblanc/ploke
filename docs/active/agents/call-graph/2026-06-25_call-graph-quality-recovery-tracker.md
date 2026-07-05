@@ -936,17 +936,15 @@ Progress note, 2026-06-28:
   `Router::new`, plus the same-impl `RequestExt` and `RequestPartsExt`
   `self.extract_with_state(&())` method-call rows, through the same
   table-driven fixture as the remaining supported axum targets.
-- RAG call-context and proof-context targetless coverage now preserves the
-  remaining nested axum dependency-root `FromRef::from_ref` path row. The
-  top-level State extractor row resolves through parsed workspace dependency
-  proof; the nested `local_impl_method:from_request_parts` owner row under
-  `test_from_extractor` is pinned as the current
-  `canonical_identity_mismatch` proof boundary, with no fabricated call edge.
+- RAG call-context and proof-context supported coverage now preserves the
+  nested axum dependency-root `FromRef::from_ref` path row. Both the top-level
+  State extractor row and the nested `local_impl_method:from_request_parts`
+  owner row under `test_from_extractor` resolve through parsed workspace
+  dependency proof to the axum-core `FromRef::from_ref` trait method binding.
 - Exact TUI `code_item_lookup` and `code_item_edges` now assert the enclosing
-  `test_from_extractor` function does not flatten that remaining nested
-  dependency-root `FromRef::from_ref` row; DB/RAG tests own the executable
-  `local_impl_method:from_request_parts` targetless row and
-  `canonical_identity_mismatch` proof boundary.
+  `test_from_extractor` function does not flatten the nested dependency-root
+  `FromRef::from_ref` row; DB/RAG tests own the executable
+  `local_impl_method:from_request_parts` resolved row.
 - Method-call resolver orchestration and receiver/result helper logic now live
   in `resolve/call_resolution/method.rs`, following the existing
   `path.rs`/`dynamic.rs`/`constructors.rs` sibling split. This reduces the

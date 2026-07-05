@@ -206,8 +206,8 @@ fn axum_real_target_from_ref_bounded_paths_reach_trait_method() -> Result<(), Db
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        3,
-        "FromRef::from_ref should expose the two same-crate callers plus the top-level axum dependency-root caller: {callers:#?}"
+        4,
+        "FromRef::from_ref should expose the two same-crate callers plus both axum dependency-root callers: {callers:#?}"
     );
     assert_sites_match_callers(
         &db,
@@ -265,22 +265,34 @@ fn axum_real_target_from_ref_dependency_root_bound_reaches_workspace_trait_metho
         },
     )?;
 
-    // The nested middleware test helper row is now owned by the function-local
-    // impl method body, not the enclosing async test function. It remains
-    // unsupported until the resolver models local impl where-bound scopes such
-    // as `Secret: FromRef<S>`.
+    // The nested middleware test helper row is owned by the function-local impl
+    // method body, not the enclosing async test function. Its local impl
+    // where-bound `Secret: FromRef<S>` now resolves through the parsed
+    // workspace dependency proof to the axum-core trait method binding.
     let middleware_test = function_id_by_name(&db, "test_from_extractor")?;
     let middleware_owner = local_item_owner_for_parent_with_label(
         &db,
         middleware_test,
         "local_impl_method:from_request_parts",
     )?;
-    assert_owner_path_targetless(
+    let middleware_context = db.call_context_for_owner(middleware_owner)?;
+    let middleware_row = row_by_path(&middleware_context, &["Secret", "from_ref"]);
+    assert_resolved_target(
+        middleware_row,
+        target,
+        CallRelationKind::AssociatedFunction,
+        CallSiteKind::Path,
+        CallTargetKind::Method,
+    );
+    assert_one_edge_traversal(
         &db,
-        middleware_owner,
-        &["Secret", "from_ref"],
-        CallStatusKind::Unsupported,
-        "axum/src/middleware/from_extractor.rs:328",
+        TraversalExpectation {
+            label: "axum/src/middleware/from_extractor.rs:328",
+            owner: middleware_owner,
+            target,
+            site_id: middleware_row.site.id,
+            expected_edge_count: 1,
+        },
     )?;
 
     Ok(())
