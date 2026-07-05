@@ -31,8 +31,9 @@ use crate::call_graph_tool_support::{
     AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture,
     AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture, CallGraphToolFixture,
     CallableBlockerFixture, assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
-    assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
-    assert_call_path_node, assert_handler_call_incoming_context, assert_incoming_context,
+    assert_body_empty_impact_summary, assert_body_empty_incoming_context,
+    assert_boxed_into_route_incoming_context, assert_call_path_node,
+    assert_handler_call_incoming_context, assert_incoming_context,
     assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
     assert_path_blocker_proof, assert_path_context, assert_run_ui_tests_incoming_context,
     assert_target_proof, assert_two_hop_call_path, ui_field,
@@ -1089,6 +1090,11 @@ async fn code_item_edges_returns_real_corpus_body_empty_callers() {
         .and_then(|node| node.get("proof_context"))
         .and_then(serde_json::Value::as_array)
         .expect("node_info.proof_context array");
+    let impact = payload
+        .get("node_info")
+        .and_then(|node| node.get("call_impact"))
+        .and_then(serde_json::Value::as_object)
+        .expect("node_info.call_impact object");
 
     // Real-corpus oracle matrix:
     //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
@@ -1108,6 +1114,7 @@ async fn code_item_edges_returns_real_corpus_body_empty_callers() {
         fixture.target,
         "code_item_edges",
     );
+    assert_body_empty_impact_summary(impact, "code_item_edges");
     for caller in &fixture.callers {
         assert_target_proof(
             proof_context,

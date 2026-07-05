@@ -8,8 +8,8 @@ use cozo::DataValue;
 use ploke_core::{
     ArcStr,
     rag_types::{
-        CallCalleeInfo, CallContextInfo, CallPathInfo, CallReceiverInfo, CallSiteKind,
-        CallStatusKind, ProofContextInfo,
+        CallCalleeInfo, CallContextInfo, CallPathInfo, CallReceiverInfo, CallSiteBucketInfo,
+        CallSiteKind, CallStatusKind, CallTargetKind, ProofContextInfo,
     },
 };
 use ploke_db::{
@@ -1635,6 +1635,86 @@ pub(crate) fn assert_body_empty_incoming_context(
     assert_expected_path_incoming_context(calls, callers, target, label, "Body::empty");
 }
 
+pub(crate) fn assert_body_empty_impact_summary(
+    impact: &serde_json::Map<String, serde_json::Value>,
+    label: &str,
+) {
+    let callers = impact_array(impact, "callers", label);
+    let test_callers = impact_array(impact, "test_callers", label);
+    let non_test_callers = impact_array(impact, "non_test_callers", label);
+    let direct_call_sites = impact_array(impact, "direct_call_sites", label);
+    let callsite_buckets = impact_array(impact, "callsite_buckets", label);
+    let source_files = impact_array(impact, "source_files", label);
+    let source_modules = impact_array(impact, "source_modules", label);
+
+    assert_eq!(
+        direct_call_sites.len(),
+        23,
+        "{label} Body::empty impact should expose every current direct callsite: {direct_call_sites:#?}"
+    );
+    assert!(
+        !test_callers.is_empty() && !non_test_callers.is_empty(),
+        "{label} Body::empty impact should preserve both test and non-test caller buckets: {impact:#?}"
+    );
+    assert_eq!(
+        test_callers.len() + non_test_callers.len(),
+        callers.len(),
+        "{label} Body::empty impact test/non-test buckets should partition eventual callers: {impact:#?}"
+    );
+
+    let buckets = callsite_buckets
+        .iter()
+        .map(|bucket| serde_json::from_value::<CallSiteBucketInfo>(bucket.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("typed Body::empty impact callsite buckets");
+    assert!(
+        buckets.iter().any(|bucket| {
+            bucket.kind == CallSiteKind::Path
+                && bucket.relation == CallTargetKind::AssociatedFunction
+                && bucket.count == 23
+        }),
+        "{label} Body::empty impact should summarize the path/associated-function bucket: {buckets:#?}"
+    );
+
+    let calls = direct_call_sites
+        .iter()
+        .map(|call| serde_json::from_value::<CallContextInfo>(call.clone()))
+        .collect::<Result<Vec<_>, _>>()
+        .expect("typed Body::empty impact direct callsites");
+    let mut path_counts = BTreeMap::<Vec<String>, usize>::new();
+    for call in calls {
+        let CallCalleeInfo::Path { path } = call.callee else {
+            panic!("{label} Body::empty impact callsite should be path-shaped: {call:#?}");
+        };
+        *path_counts.entry(path).or_default() += 1;
+    }
+    assert_eq!(
+        path_counts,
+        BTreeMap::from([
+            (vec!["Body".to_string(), "empty".to_string()], 21),
+            (vec!["Self".to_string(), "empty".to_string()], 2),
+        ]),
+        "{label} Body::empty impact should distinguish Body::empty and Self::empty path rows"
+    );
+
+    for suffix in [
+        "axum-core/src/body.rs",
+        "axum-core/src/ext_traits/request.rs",
+        "axum/src/middleware/from_fn.rs",
+        "axum/src/routing/tests/mod.rs",
+    ] {
+        assert_source_file_json(source_files, suffix, label);
+    }
+    for module in [
+        &["crate", "body"][..],
+        &["crate", "ext_traits", "request"][..],
+        &["crate", "middleware", "from_fn"][..],
+        &["crate", "routing", "tests"][..],
+    ] {
+        assert_source_module_json(source_modules, module, label);
+    }
+}
+
 pub(crate) fn assert_parse_attrs_incoming_context(
     calls: &[serde_json::Value],
     callers: &[ExpectedCallSite],
@@ -1642,6 +1722,41 @@ pub(crate) fn assert_parse_attrs_incoming_context(
     label: &str,
 ) {
     assert_expected_path_incoming_context(calls, callers, target, label, "parse_attrs");
+}
+
+fn impact_array<'a>(
+    impact: &'a serde_json::Map<String, serde_json::Value>,
+    field: &str,
+    label: &str,
+) -> &'a [serde_json::Value] {
+    impact
+        .get(field)
+        .and_then(serde_json::Value::as_array)
+        .unwrap_or_else(|| panic!("{label} Body::empty call_impact {field} array: {impact:#?}"))
+}
+
+fn assert_source_file_json(files: &[serde_json::Value], suffix: &str, label: &str) {
+    assert!(
+        files
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .any(|path| path.ends_with(suffix)),
+        "{label} Body::empty impact should include source file ending with {suffix:?}: {files:#?}"
+    );
+}
+
+fn assert_source_module_json(modules: &[serde_json::Value], expected: &[&str], label: &str) {
+    assert!(
+        modules.iter().any(|module| {
+            module.as_array().is_some_and(|actual| {
+                actual
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .eq(expected.iter().copied())
+            })
+        }),
+        "{label} Body::empty impact should include source module {expected:?}: {modules:#?}"
+    );
 }
 
 pub(crate) fn assert_json_from_bytes_incoming_context(
