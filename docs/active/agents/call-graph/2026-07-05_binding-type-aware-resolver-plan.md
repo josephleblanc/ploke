@@ -59,26 +59,33 @@ Current DB/RAG pattern:
 
 ## First Candidate Slices
 
-Pick one, not all.
+Pick one, not all. Status notes below reflect the current committed matrix and
+should prevent future resumes from reselecting already-covered shapes.
 
-1. Function pointer parameter blockers:
+1. Function pointer parameter blockers - completed:
    - Keep `f()` / `(f)()` where `f: fn(...)` is an owner parameter targetless unless an initializer is available.
    - Add or verify parser/DB/RAG proof that the callable parameter is visible as `ValueBinding` / `LocalBinding` with no edge.
    - This is a blocker-visibility slice, not a positive edge slice.
 
-2. Direct typed local receiver alias:
+2. Direct typed local receiver alias - completed:
    - Extend one exact local alias propagation case for method receivers only if it reuses existing initializer proof.
    - Example shape: `let source = LocalAssoc; let value = source; value.instance_value()`.
    - Do not generalize through arbitrary expressions or multi-hop type inference.
 
-3. Direct closure return proof:
+3. Direct closure return proof - completed:
    - Completed for `make_closure()()` when the maker's final expression is directly a closure literal with a single recorded closure executable owner.
    - Completed for `make_bound_closure()()` when the maker's final expression returns a local binding initialized by that single recorded closure executable owner.
    - Preserve broader returned closure values as targetless unless the returned callable is proven to a function item, direct closure literal, or direct local closure binding.
 
-4. Function pointer field blocker:
+4. Function pointer field blocker - completed:
    - Use the existing memchr real-corpus fallback as a blocker proof target.
    - Assert owner/source-line fanout and targetless status rather than resolving callable fields.
+
+5. Next adjacent candidate:
+   - Select from the coverage matrix parking lot rather than adding more
+     binding breadth by default. The likely next bounded slice is
+     import/re-export/glob completeness with explicit workspace proof carriers,
+     preserving targetless dependency-root rows whenever that proof is absent.
 
 ## Implementation Order
 

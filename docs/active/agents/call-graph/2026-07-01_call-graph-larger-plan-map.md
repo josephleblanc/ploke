@@ -77,16 +77,14 @@ Current matrix posture:
   outside the conservative classifier now persist as targetless
   `Unsupported` receiver rows instead of being dropped before status/proof
   projection.
-- Qualified trait-object qself path projection: fixture-backed
-  `<dyn std::any::Any>::downcast_mut::<T>(...)` calls now project as path-call
-  rows with generic argument counts and remain targetless `External` frontier
-  rows through DB/RAG/TUI proof surfaces. Immutable axum backups still pin the
-  real-corpus rows absent until fixture regeneration/review.
+- Qualified trait-object qself path projection: fixture-backed and regenerated
+  axum `<dyn std::any::Any>::downcast_mut::<T>(...)` calls now project as
+  path-call rows with generic argument counts and remain targetless `External`
+  frontier rows through DB/RAG/TUI proof surfaces.
 - Constructor semantic expansion: fixture-backed method-owned `Self(value)`
-  tuple-struct constructor calls now resolve through the enclosing impl self
-  type and project through DB/proof/RAG/TUI constructor surfaces. Immutable axum
-  backups still pin the real-corpus `BoxedIntoRoute` `Self(...)` constructor
-  rows unsupported until fixture regeneration/review.
+  tuple-struct constructor calls and regenerated axum `BoxedIntoRoute`
+  `Self(...)` constructor rows now resolve through the enclosing impl self type
+  and project through DB/proof/RAG/TUI constructor surfaces.
 - Executable-local item boundaries: function-local const/static initializer
   calls and local `fn` body calls are owned by executable `LocalItem` owners
   and are no longer flattened into the enclosing function owner; broader local
@@ -94,10 +92,12 @@ Current matrix posture:
 - Dynamic/receiver/closure/import gaps: future semantic expansion buckets, not reasons to keep polishing already-proven method paths.
 - Workspace dependency-root imports: selected workspace fixtures can contain
   one crate importing another selected crate, for example axum-core test code
-  importing `axum::{test_helpers::*, Router}`. Those rows must remain
-  targetless until semantic expansion introduces a typed workspace-level proof
-  carrier. The per-crate call resolver's `ModuleTree` is not enough authority
-  to convert dependency-root imports into local call edges.
+  importing `axum::{test_helpers::*, Router}`. The current resolver now has
+  bounded workspace proof for selected type/trait imports such as axum-core
+  `TestClient::new`, `Router::new`, and axum `FromRef::from_ref` rows, including
+  a nested local impl where-bound owner. Broader dependency-root imports still
+  require an explicit workspace proof carrier before they can become local call
+  edges; the per-crate `ModuleTree` alone is not enough authority.
 
 ## Phase Transition Rule
 
@@ -158,7 +158,7 @@ For the current state, that should be:
 ```text
 Root plan: .hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md
 Current phase: binding/type-aware semantic resolution
-Current completed bucket: parser-side closure body owner facts
-Completed proof: fixture-backed ordinary and move closure body calls are owned by `CallBodyOwnerId::Executable(ClosureBodyId)` in parser facts and are not attributed to the enclosing function owner; transform projection remains fail-closed until DB owner metadata exists
-Next phase if this bucket is done: either design/persist executable owner metadata as the next explicit schema slice, or return to the coverage matrix and select the next DB/RAG/TUI usage-query gap before adding more parser breadth
+Current completed bucket: executable-local body ownership plus local impl where-bound path proof
+Completed proof: closure, async-block, local-item, local `fn`, and local impl method bodies have executable owners; nested axum `local_impl_method:from_request_parts` now resolves `Secret::from_ref` through local impl where-bound evidence to axum-core `FromRef::from_ref` across DB/RAG/TUI proof surfaces
+Next phase if this bucket is done: choose the next unresolved coverage-matrix bucket, likely import/re-export/glob completeness or a bounded workspace proof carrier, before adding more parser breadth
 ```
