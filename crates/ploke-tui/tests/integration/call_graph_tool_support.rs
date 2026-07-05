@@ -351,8 +351,8 @@ impl AxumBodyEmptyToolFixture {
             .collect::<Vec<_>>();
         assert_eq!(
             callers.len(),
-            12,
-            "current axum fixture should resolve exactly the twelve Body::empty caller sites"
+            23,
+            "current axum fixture should resolve exactly the twenty-three Body::empty caller sites"
         );
         assert!(
             db.project_call_proof_facts_for_node(target.id, "bd:corpus-axum-call-graph")

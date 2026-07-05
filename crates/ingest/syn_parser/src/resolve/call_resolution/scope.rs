@@ -278,33 +278,66 @@ impl<'a> CallRelationResolver<'a> {
             return Ok(WorkspaceTypeResolution::Unresolved);
         };
         let module_id = self.import_scope_module(module_id)?;
-        let Some(module_node) = self
-            .graph
-            .modules()
-            .iter()
-            .find(|module| module.id == module_id)
-        else {
+        self.resolve_workspace_type_in_module(module_id, segment)
+    }
+
+    pub(super) fn resolve_workspace_type_path(
+        &self,
+        owner: CallBodyOwnerId,
+        path: &[String],
+    ) -> Result<WorkspaceTypeResolution<'a>, SynParserError> {
+        let Some(mut module_id) = self.containing_module_for_owner(owner) else {
             return Ok(WorkspaceTypeResolution::Unresolved);
         };
+        module_id = self.import_scope_module(module_id)?;
+        self.resolve_workspace_type_path_from_module(module_id, path)
+    }
 
+    fn resolve_workspace_type_path_from_module(
+        &self,
+        mut current_module: ModuleNodeId,
+        path: &[String],
+    ) -> Result<WorkspaceTypeResolution<'a>, SynParserError> {
+        let start_idx = self.start_segment_index(path, &mut current_module)?;
+        if start_idx >= path.len() {
+            return Ok(WorkspaceTypeResolution::Unresolved);
+        }
+
+        for idx in start_idx..path.len() {
+            let segment = path[idx].as_str();
+            let is_last = idx == path.len() - 1;
+            if is_last {
+                return self.resolve_workspace_type_in_module(current_module, segment);
+            }
+
+            current_module = match self.resolve_module_segment(current_module, segment)? {
+                LocalModulePathResolution::Resolved(module_id) => module_id,
+                LocalModulePathResolution::Unresolved => {
+                    return Ok(WorkspaceTypeResolution::Unresolved);
+                }
+                LocalModulePathResolution::Ambiguous => {
+                    return Ok(WorkspaceTypeResolution::Ambiguous);
+                }
+            };
+        }
+
+        Ok(WorkspaceTypeResolution::Unresolved)
+    }
+
+    fn resolve_workspace_type_in_module(
+        &self,
+        module_id: ModuleNodeId,
+        segment: &str,
+    ) -> Result<WorkspaceTypeResolution<'a>, SynParserError> {
         let mut candidates = Vec::new();
         let mut saw_ambiguous = false;
-        for import_node in &module_node.imports {
-            if import_node.is_glob {
-                self.collect_workspace_glob_type_candidates(
-                    import_node,
-                    segment,
-                    &mut candidates,
-                    &mut saw_ambiguous,
-                )?;
-            } else if import_node.visible_name == segment {
-                self.collect_workspace_direct_type_candidates(
-                    import_node,
-                    &mut candidates,
-                    &mut saw_ambiguous,
-                )?;
-            }
-        }
+        self.collect_workspace_type_candidates_in_module(
+            module_id,
+            segment,
+            &mut candidates,
+            &mut saw_ambiguous,
+            0,
+        )?;
 
         candidates.sort_by_key(|candidate| candidate.target);
         candidates.dedup_by_key(|candidate| candidate.target);
@@ -320,29 +353,91 @@ impl<'a> CallRelationResolver<'a> {
         })
     }
 
-    fn collect_workspace_direct_type_candidates(
+    fn collect_workspace_type_candidates_in_module(
         &self,
-        import_node: &ImportNode,
+        module_id: ModuleNodeId,
+        segment: &str,
         candidates: &mut Vec<WorkspaceTypeTarget<'a>>,
         saw_ambiguous: &mut bool,
+        depth: usize,
     ) -> Result<(), SynParserError> {
-        let Some((krate, tail)) = self.workspace_dependency_tail(import_node.source_path()) else {
+        if depth > MAX_IMPORT_CHAIN_DEPTH {
+            return Err(SynParserError::InternalState(format!(
+                "call resolution exceeded import chain depth limit of {MAX_IMPORT_CHAIN_DEPTH} while resolving workspace type `{segment}`"
+            )));
+        }
+
+        let Some(module_node) = self
+            .graph
+            .modules()
+            .iter()
+            .find(|module| module.id == module_id)
+        else {
             return Ok(());
         };
-        let resolver = CallRelationResolver::new(krate.graph, krate.tree);
-        match resolver.resolve_type_path_from_root(tail)? {
-            LocalTypeResolution::Resolved(target) => {
-                candidates.push(WorkspaceTypeTarget { krate, target });
-            }
-            LocalTypeResolution::Unresolved => {}
-            LocalTypeResolution::Ambiguous => {
-                *saw_ambiguous = true;
+
+        for import_node in &module_node.imports {
+            if import_node.is_glob {
+                self.collect_workspace_glob_type_candidates(
+                    import_node,
+                    segment,
+                    candidates,
+                    saw_ambiguous,
+                    depth + 1,
+                )?;
+            } else if import_node.visible_name == segment {
+                self.collect_workspace_direct_type_candidates(
+                    import_node,
+                    candidates,
+                    saw_ambiguous,
+                    depth + 1,
+                )?;
             }
         }
         Ok(())
     }
 
-    fn collect_workspace_glob_type_candidates(
+    fn collect_workspace_direct_type_candidates(
+        &self,
+        import_node: &ImportNode,
+        candidates: &mut Vec<WorkspaceTypeTarget<'a>>,
+        saw_ambiguous: &mut bool,
+        depth: usize,
+    ) -> Result<(), SynParserError> {
+        if depth > MAX_IMPORT_CHAIN_DEPTH {
+            return Err(SynParserError::InternalState(format!(
+                "call resolution exceeded import chain depth limit of {MAX_IMPORT_CHAIN_DEPTH} at {}",
+                import_node.id.as_any()
+            )));
+        }
+
+        if let Some((krate, tail)) = self.workspace_dependency_tail(import_node.source_path()) {
+            let resolver = CallRelationResolver::new(krate.graph, krate.tree);
+            match resolver.resolve_type_path_from_root(tail)? {
+                LocalTypeResolution::Resolved(target) => {
+                    candidates.push(WorkspaceTypeTarget { krate, target });
+                }
+                LocalTypeResolution::Unresolved => {}
+                LocalTypeResolution::Ambiguous => {
+                    *saw_ambiguous = true;
+                }
+            }
+            return Ok(());
+        }
+
+        let Some(mut module_id) = self.containing_module(import_node.id.as_any()) else {
+            return Ok(());
+        };
+        module_id = self.import_scope_module(module_id)?;
+        match self.resolve_workspace_type_path_from_module(module_id, import_node.source_path())? {
+            WorkspaceTypeResolution::Resolved(candidate) => candidates.push(candidate),
+            WorkspaceTypeResolution::Unresolved => {}
+            WorkspaceTypeResolution::Ambiguous => *saw_ambiguous = true,
+        }
+        Ok(())
+    }
+
+    fn collect_workspace_dependency_glob_type_candidates(
         &self,
         import_node: &ImportNode,
         segment: &str,
@@ -368,6 +463,70 @@ impl<'a> CallRelationResolver<'a> {
             }
             Ok(())
         })
+    }
+
+    fn collect_workspace_ancestor_glob_type_candidates(
+        &self,
+        import_node: &ImportNode,
+        segment: &str,
+        candidates: &mut Vec<WorkspaceTypeTarget<'a>>,
+        saw_ambiguous: &mut bool,
+        depth: usize,
+    ) -> Result<bool, SynParserError> {
+        if import_node.source_path().is_empty()
+            || !import_node.source_path().iter().all(|part| part == "super")
+        {
+            return Ok(false);
+        }
+
+        let Some(mut module_id) = self.containing_module(import_node.id.as_any()) else {
+            return Ok(true);
+        };
+
+        for _ in import_node.source_path() {
+            module_id = self.tree.get_parent_module_id(module_id).ok_or_else(|| {
+                SynParserError::InternalState(format!(
+                    "call resolution could not find parent module for {module_id} while resolving workspace glob import {}",
+                    import_node.source_path().join("::")
+                ))
+            })?;
+        }
+
+        let module_id = self.import_scope_module(module_id)?;
+        self.collect_workspace_type_candidates_in_module(
+            module_id,
+            segment,
+            candidates,
+            saw_ambiguous,
+            depth + 1,
+        )?;
+        Ok(true)
+    }
+
+    fn collect_workspace_glob_type_candidates(
+        &self,
+        import_node: &ImportNode,
+        segment: &str,
+        candidates: &mut Vec<WorkspaceTypeTarget<'a>>,
+        saw_ambiguous: &mut bool,
+        depth: usize,
+    ) -> Result<(), SynParserError> {
+        if self.collect_workspace_ancestor_glob_type_candidates(
+            import_node,
+            segment,
+            candidates,
+            saw_ambiguous,
+            depth + 1,
+        )? {
+            return Ok(());
+        }
+
+        self.collect_workspace_dependency_glob_type_candidates(
+            import_node,
+            segment,
+            candidates,
+            saw_ambiguous,
+        )
     }
 
     fn workspace_dependency_tail<'p>(

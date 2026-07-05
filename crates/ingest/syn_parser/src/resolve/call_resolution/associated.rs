@@ -226,8 +226,39 @@ impl CallRelationResolver<'_> {
                 Some(arg_count),
                 type_relations,
             ),
-            LocalTypeResolution::Unresolved => Ok(None),
+            LocalTypeResolution::Unresolved => self.resolve_workspace_type_path_assoc_function(
+                owner,
+                type_path,
+                method_name,
+                arg_count,
+            ),
             LocalTypeResolution::Ambiguous => Ok(Some(AssocPathResolution::Ambiguous)),
+        }
+    }
+
+    fn resolve_workspace_type_path_assoc_function(
+        &self,
+        owner: CallBodyOwnerId,
+        type_path: &[String],
+        method_name: &str,
+        _arg_count: usize,
+    ) -> Result<Option<AssocPathResolution>, SynParserError> {
+        match self.resolve_workspace_type_path(owner, type_path)? {
+            WorkspaceTypeResolution::Resolved(candidate) => {
+                let type_report = type_resolution_v2::resolve_type_relations_after_tree(
+                    candidate.krate.graph,
+                    candidate.krate.tree,
+                )?;
+                let resolver =
+                    CallRelationResolver::new(candidate.krate.graph, candidate.krate.tree);
+                resolver.resolve_inherent_type_associated_function(
+                    candidate.target,
+                    method_name,
+                    &type_report.relations,
+                )
+            }
+            WorkspaceTypeResolution::Unresolved => Ok(None),
+            WorkspaceTypeResolution::Ambiguous => Ok(Some(AssocPathResolution::Ambiguous)),
         }
     }
 

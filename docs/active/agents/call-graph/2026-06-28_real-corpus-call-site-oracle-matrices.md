@@ -99,23 +99,18 @@ owner.
 | `Body::empty` | `axum/src/form.rs:158`; `extract/query.rs:106`; `extract/raw_form.rs:65`; `extract/ws.rs:394,400,1129,1191`; `serve/mod.rs:799`; `middleware/from_fn.rs:411`; `routing/route.rs:161,174`; `routing/method_routing.rs:1700`; `routing/tests/get_to_head.rs:25,59`; `routing/tests/merge.rs:198,204`; `routing/tests/mod.rs:228,1133,1151` | local/imported `Body` -> axum re-export `axum/src/body/mod.rs:10` or direct `axum_core::body::Body` import -> `axum-core/src/body.rs:52`. |
 
 Current executable coverage: DB target traversal, proof projection, RAG exact
-call context, `code_item_lookup`, and `code_item_edges` assert twelve resolved
-`Body::empty` caller edges: six literal `Body::empty()` rows from axum-core
-`response/into_response.rs` and `ext_traits/request.rs`, the two
-`axum-core/src/body.rs:{110,116}` `Self::empty()` rows, and four direct axum
+call context, `code_item_lookup`, and `code_item_edges` assert twenty-three
+resolved `Body::empty` caller edges: six literal `Body::empty()` rows from
+axum-core `response/into_response.rs` and `ext_traits/request.rs`, the two
+`axum-core/src/body.rs:{110,116}` `Self::empty()` rows, four direct axum
 parsed-workspace import rows in `extract/query.rs`, `extract/raw_form.rs`,
-`form.rs`, and `serve/mod.rs`. The remaining rows in this fanout are still
-tracked as import/re-export completeness gaps, not as expected-passing traversal
-edges. The DB matrix now also pins the current targetless rows by exact
-owner/source label and exact source-line fanout, with zero traversal candidates:
-seven unsupported rows in `axum/src/middleware/from_fn.rs`,
-`axum/src/routing/route.rs`, `axum/src/routing/method_routing.rs`,
-`axum/src/routing/tests/get_to_head.rs`, and `axum/src/routing/tests/mod.rs`.
-The
-`axum/src/routing/tests/mod.rs:228` nested local `handler` row is now pinned as
-an unsupported targetless `LocalItem` owner row.
-The `axum/src/routing/route.rs:161` closure-body row remains absent until nested
-closure ownership is modeled.
+`form.rs`, and `serve/mod.rs`, plus eleven local re-exported, inherited,
+closure-owned, and local-item workspace rows in `middleware/from_fn.rs`,
+`routing/route.rs:{161,174}`, `routing/method_routing.rs`,
+`routing/tests/get_to_head.rs`, `routing/tests/merge.rs`, and
+`routing/tests/mod.rs:{228,1133,1151}`. The source-oracle rows in
+`extract/ws.rs:{394,400,1129,1191}` remain listed above for future tightening
+but are not part of the current resolved target-centered DB contract.
 
 The DB matrix also pins eight currently projected external
 `HeaderValue::from_static` rows by exact owner and source line: four `axum-core`

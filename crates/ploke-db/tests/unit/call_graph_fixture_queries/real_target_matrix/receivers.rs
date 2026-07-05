@@ -1159,13 +1159,6 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
 
     let from_fn_owner =
         function_id_by_name_in_module(&db, &["crate", "middleware", "from_fn", "tests"], "basic")?;
-    assert_owner_path_targetless(
-        &db,
-        from_fn_owner,
-        &["Body", "empty"],
-        CallStatusKind::Unsupported,
-        "axum/src/middleware/from_fn.rs:411 Body::empty",
-    )?;
     assert_owner_method_targetless(
         &db,
         from_fn_owner,

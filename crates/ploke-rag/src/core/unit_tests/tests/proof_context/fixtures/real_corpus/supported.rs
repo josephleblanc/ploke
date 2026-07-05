@@ -23,10 +23,12 @@ async fn proof_context_exact_preserves_axum_supported_target_rows() -> Result<()
             // axum-core/src/body.rs:{110,116} call `Self::empty()`, and
             // axum-core/src/response/into_response.rs plus
             // ext_traits/request.rs call `Body::empty()`. Four axum
-            // direct parsed-workspace import rows also reach the target.
+            // direct parsed-workspace import rows and eleven local
+            // re-exported, inherited, closure, and local-item workspace import
+            // rows also reach the target.
             label: "axum-core Body::empty current resolved subset",
             target: method_id_by_name_and_body(&db, "empty", "Empty::new()")?,
-            edges: 12,
+            edges: 23,
         },
         ProofCase {
             // axum-macros/src/attr_parsing.rs:59 defines `parse_attrs`.
