@@ -37,6 +37,14 @@ async fn proof_context_exact_preserves_axum_supported_target_rows() -> Result<()
             edges: 11,
         },
         ProofCase {
+            // axum-macros/src/from_ref.rs:29 defines `expand_field`.
+            // from_ref.rs:23 calls it from a closure body owned by a nested
+            // closure executable, not by the enclosing `from_ref::expand`.
+            label: "axum-macros closure-owned expand_field caller",
+            target: function_id(&db, &["crate", "from_ref"], "expand_field")?,
+            edges: 1,
+        },
+        ProofCase {
             // axum/src/json.rs:164 defines `Json::from_bytes`.
             // axum/src/json.rs:{112,128} call `Self::from_bytes(&bytes)`.
             label: "axum Json::from_bytes associated callers",

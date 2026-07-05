@@ -13,6 +13,7 @@ pub(crate) enum AxumRemainingTarget {
     FromRef,
     RouterNew,
     RouterClone,
+    ExpandField,
     TestClientNew,
 }
 
@@ -64,6 +65,7 @@ impl AxumRemainingTarget {
             Self::FromRef => "axum-core FromRef::from_ref",
             Self::RouterNew => "axum Router::new",
             Self::RouterClone => "axum Router::clone",
+            Self::ExpandField => "axum-macros closure expand_field",
             Self::TestClientNew => "axum TestClient::new",
         }
     }
@@ -73,6 +75,7 @@ impl AxumRemainingTarget {
             Self::CoreTryDowncast | Self::AxumTryDowncast => "try_downcast",
             Self::PositionFirst => "First",
             Self::HandleErrorNew | Self::RouterNew | Self::TestClientNew => "new",
+            Self::ExpandField => "expand_field",
             Self::RouterClone => "clone",
             Self::RequestExtExtract | Self::RequestPartsExtExtract => "extract_with_state",
             Self::FromRequest => "from_request",
@@ -94,6 +97,7 @@ impl AxumRemainingTarget {
             | Self::RequestPartsExtExtract
             | Self::RouterNew
             | Self::RouterClone
+            | Self::ExpandField
             | Self::TestClientNew => None,
         }
     }
@@ -108,6 +112,7 @@ impl AxumRemainingTarget {
             Self::CoreTryDowncast
             | Self::AxumTryDowncast
             | Self::PositionFirst
+            | Self::ExpandField
             | Self::FromRequest
             | Self::FromRequestParts
             | Self::FromRef => None,
@@ -116,7 +121,7 @@ impl AxumRemainingTarget {
 
     fn node_kind(self) -> &'static str {
         match self {
-            Self::CoreTryDowncast | Self::AxumTryDowncast => "function",
+            Self::CoreTryDowncast | Self::AxumTryDowncast | Self::ExpandField => "function",
             Self::PositionFirst => "variant",
             Self::HandleErrorNew
             | Self::RequestExtExtract
@@ -141,8 +146,9 @@ impl AxumRemainingTarget {
             Self::FromRequest => 2,
             Self::FromRequestParts => 3,
             Self::FromRef => 2,
-            Self::RouterNew => 144,
+            Self::RouterNew => 309,
             Self::RouterClone => 13,
+            Self::ExpandField => 1,
             Self::TestClientNew => 167,
         }
     }
@@ -203,6 +209,9 @@ impl AxumRemainingTarget {
                 "inner: Arc::clone(&self.inner)",
                 "axum/src/routing/mod.rs",
             ),
+            Self::ExpandField => {
+                function_target_by_name_and_file(db, "expand_field", "axum-macros/src/from_ref.rs")
+            }
             Self::TestClientNew => associated_path_target_by_resolved_rows(
                 db,
                 &["TestClient", "new"],
