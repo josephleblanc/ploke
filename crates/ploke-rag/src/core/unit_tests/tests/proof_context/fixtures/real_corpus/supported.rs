@@ -21,18 +21,20 @@ async fn proof_context_exact_preserves_axum_supported_target_rows() -> Result<()
         ProofCase {
             // axum-core/src/body.rs:52 defines `Body::empty`.
             // axum-core/src/body.rs:{110,116} call `Self::empty()`, and
-            // axum-core/src/response/into_response.rs calls `Body::empty()`.
+            // axum-core/src/response/into_response.rs plus
+            // ext_traits/request.rs call `Body::empty()`.
             label: "axum-core Body::empty current resolved subset",
             target: method_id_by_name_and_body(&db, "empty", "Empty::new()")?,
-            edges: 4,
+            edges: 8,
         },
         ProofCase {
             // axum-macros/src/attr_parsing.rs:59 defines `parse_attrs`.
             // typed_path.rs:23 calls the crate-qualified path; from_ref.rs:30
-            // and from_request/mod.rs call the imported helper.
+            // and from_request/mod.rs call the imported helper, including
+            // three closure-owned executable rows.
             label: "axum-macros parse_attrs path/import callers",
             target: function_id(&db, &["crate", "attr_parsing"], "parse_attrs")?,
-            edges: 8,
+            edges: 11,
         },
         ProofCase {
             // axum/src/json.rs:164 defines `Json::from_bytes`.
@@ -47,10 +49,11 @@ async fn proof_context_exact_preserves_axum_supported_target_rows() -> Result<()
         },
         ProofCase {
             // axum/src/boxed.rs:12 defines the tuple struct constructor.
-            // axum/src/boxed.rs:38 calls `BoxedIntoRoute(Box::new(...))`.
+            // axum/src/boxed.rs:{23,38,51} call `Self(...)`,
+            // `BoxedIntoRoute(...)`, and `Self(...)`.
             label: "axum BoxedIntoRoute explicit tuple constructor",
             target: struct_id(&db, "BoxedIntoRoute")?,
-            edges: 1,
+            edges: 3,
         },
         ProofCase {
             // axum/src/handler/mod.rs:153 declares `Handler::call`.
@@ -146,12 +149,12 @@ async fn proof_context_exact_preserves_axum_supported_target_rows() -> Result<()
         },
         ProofCase {
             // axum/src/routing/mod.rs:162 defines `Router::new`.
-            // The current fixture resolves 142 `Router::new` rows plus
+            // The current fixture resolves 307 `Router::new` rows plus
             // routing/mod.rs:109 `Self::new()` and
             // method_routing.rs:1494 `crate::Router::new()`.
             label: "axum Router::new resolved fanout",
             target: method_id_by_name_and_body(&db, "new", "default_fallback: true")?,
-            edges: 144,
+            edges: 309,
         },
     ];
 

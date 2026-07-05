@@ -45,12 +45,14 @@ fn axum_real_target_supported_callers_are_one_hop_traversable() -> Result<(), Db
         ResolvedTraversalCase {
             // axum-macros/src/typed_path.rs:23 calls
             // `crate::attr_parsing::parse_attrs(...)`; from_ref.rs:30 and
-            // from_request/mod.rs:{112,196,598,727,892,908} call the imported
-            // helper. Callee: axum-macros/src/attr_parsing.rs:59.
+            // from_request/mod.rs:{112,196,471,598,727,892,908,1029,1039}
+            // call the imported helper. The :471, :1029, and :1039 rows are
+            // owned by nested closure executable owners. Callee:
+            // axum-macros/src/attr_parsing.rs:59.
             label: "axum-macros parse_attrs current resolved fanout",
             target: function_id_by_name_in_module(&db, &["crate", "attr_parsing"], "parse_attrs")?,
-            expected_call_edges: 8,
-            expected_traversal_candidates: 6,
+            expected_call_edges: 11,
+            expected_traversal_candidates: 9,
         },
         ResolvedTraversalCase {
             // axum-macros/src/{debug_handler.rs,typed_path.rs,from_ref.rs,
@@ -64,11 +66,12 @@ fn axum_real_target_supported_callers_are_one_hop_traversable() -> Result<(), Db
         ResolvedTraversalCase {
             // axum-core/src/body.rs:110 and :116 call `Self::empty()`, and
             // axum-core/src/response/into_response.rs response conversion
-            // rows call `Body::empty()`. Callee: axum-core/src/body.rs:52.
+            // rows and axum-core/src/ext_traits/request.rs helper rows call
+            // `Body::empty()`. Callee: axum-core/src/body.rs:52.
             label: "axum-core Body::empty current resolved subset",
             target: method_id_by_name_and_body_substring(&db, "empty", "Empty::new()")?,
-            expected_call_edges: 4,
-            expected_traversal_candidates: 4,
+            expected_call_edges: 8,
+            expected_traversal_candidates: 8,
         },
         ResolvedTraversalCase {
             // axum/src/json.rs:112 and :128 call `Self::from_bytes(&bytes)`
@@ -100,12 +103,13 @@ fn axum_real_target_supported_callers_are_one_hop_traversable() -> Result<(), Db
             expected_traversal_candidates: 1,
         },
         ResolvedTraversalCase {
-            // axum/src/boxed.rs:38 calls the tuple-struct constructor
-            // `BoxedIntoRoute(...)`. Callee binding: axum/src/boxed.rs:12.
+            // axum/src/boxed.rs:{23,38,51} call the tuple-struct constructor
+            // through `Self(...)`, `BoxedIntoRoute(...)`, and `Self(...)`.
+            // Callee binding: axum/src/boxed.rs:12.
             label: "axum BoxedIntoRoute tuple constructor",
             target: struct_id_by_name(&db, "BoxedIntoRoute")?,
-            expected_call_edges: 1,
-            expected_traversal_candidates: 1,
+            expected_call_edges: 3,
+            expected_traversal_candidates: 3,
         },
         ResolvedTraversalCase {
             // axum-macros/src/with_position.rs:92 calls the enum variant
@@ -210,8 +214,8 @@ fn axum_real_target_supported_callers_are_one_hop_traversable() -> Result<(), Db
             // axum/src/routing/method_routing.rs:1494 `crate::Router::new()`.
             label: "axum Router::new current resolved fanout",
             target: method_id_by_name_and_body_substring(&db, "new", "default_fallback: true")?,
-            expected_call_edges: 144,
-            expected_traversal_candidates: 123,
+            expected_call_edges: 309,
+            expected_traversal_candidates: 203,
         },
     ];
 
@@ -252,13 +256,13 @@ fn axum_real_target_supported_callers_match_oracle_shape_counts() -> Result<(), 
             // Callers:
             //   axum-macros/src/typed_path.rs:23 crate::attr_parsing::parse_attrs
             //   axum-macros/src/from_ref.rs:30 parse_attrs
-            //   axum-macros/src/from_request/mod.rs:{112,196,598,727,892,908}
+            //   axum-macros/src/from_request/mod.rs:{112,196,471,598,727,892,908,1029,1039}
             // Callee: axum-macros/src/attr_parsing.rs:59 parse_attrs.
             label: "axum-macros parse_attrs current resolved fanout",
             target: function_id_by_name_in_module(&db, &["crate", "attr_parsing"], "parse_attrs")?,
             expected: vec![
                 ("path:crate::attr_parsing::parse_attrs", 1),
-                ("path:parse_attrs", 7),
+                ("path:parse_attrs", 10),
             ],
         },
         ResolvedShapeCase {
@@ -275,11 +279,12 @@ fn axum_real_target_supported_callers_match_oracle_shape_counts() -> Result<(), 
         ResolvedShapeCase {
             // Callers:
             //   axum-core/src/body.rs:{110,116} Self::empty()
-            //   axum-core/src/response/into_response.rs Body::empty() rows.
+            //   axum-core/src/response/into_response.rs and
+            //   axum-core/src/ext_traits/request.rs Body::empty() rows.
             // Callee: axum-core/src/body.rs:52 Body::empty.
             label: "axum-core Body::empty current resolved subset",
             target: method_id_by_name_and_body_substring(&db, "empty", "Empty::new()")?,
-            expected: vec![("path:Body::empty", 2), ("path:Self::empty", 2)],
+            expected: vec![("path:Body::empty", 6), ("path:Self::empty", 2)],
         },
         ResolvedShapeCase {
             // Callers:
@@ -308,11 +313,12 @@ fn axum_real_target_supported_callers_match_oracle_shape_counts() -> Result<(), 
             expected: vec![("path:try_downcast", 1)],
         },
         ResolvedShapeCase {
-            // Caller: axum/src/boxed.rs:38 BoxedIntoRoute(...).
+            // Callers: axum/src/boxed.rs:{23,38,51} Self(...),
+            // BoxedIntoRoute(...), and Self(...).
             // Callee binding: axum/src/boxed.rs:12 tuple struct.
             label: "axum BoxedIntoRoute tuple constructor",
             target: struct_id_by_name(&db, "BoxedIntoRoute")?,
-            expected: vec![("path:BoxedIntoRoute", 1)],
+            expected: vec![("path:BoxedIntoRoute", 1), ("path:Self", 2)],
         },
         ResolvedShapeCase {
             // Caller: axum-macros/src/with_position.rs:92 Position::First(item).
@@ -402,13 +408,13 @@ fn axum_real_target_supported_callers_match_oracle_shape_counts() -> Result<(), 
         ResolvedShapeCase {
             // Callee: axum/src/routing/mod.rs:162 Router::new.
             // Source oracle includes many Router::new() callsites. The current
-            // fixture resolves 142 literal Router::new rows, plus
+            // fixture resolves 307 literal Router::new rows, plus
             // axum/src/routing/mod.rs:109 Self::new() from Default and
             // axum/src/routing/method_routing.rs:1494 crate::Router::new().
             label: "axum Router::new current resolved fanout",
             target: method_id_by_name_and_body_substring(&db, "new", "default_fallback: true")?,
             expected: vec![
-                ("path:Router::new", 142),
+                ("path:Router::new", 307),
                 ("path:Self::new", 1),
                 ("path:crate::Router::new", 1),
             ],

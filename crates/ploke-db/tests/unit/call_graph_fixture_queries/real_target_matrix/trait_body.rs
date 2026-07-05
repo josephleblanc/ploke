@@ -565,9 +565,18 @@ fn axum_real_target_blanket_via_parts_self_path_is_absent_gap() -> Result<(), Db
     // Source chain:
     //   axum-core/src/extract/mod.rs:103 calls
     //   `Self::from_request_parts(parts, state).await`.
-    // Current model gap: this async blanket-impl body does not project a
-    // `Self::from_request_parts` path row in the axum fixture yet.
-    assert_no_path_rows(&db, &["Self", "from_request_parts"])
+    // Current model gap: the nested async block now owns the structural
+    // `Self::from_request_parts` path row, but it remains unsupported,
+    // targetless, and non-traversable.
+    assert_targetless_path_owner_kind_rows(
+        &db,
+        &["Self", "from_request_parts"],
+        CallStatusKind::Unsupported,
+        "AsyncBlock",
+        1,
+        "axum-core/src/extract/mod.rs:103 async-block Self::from_request_parts",
+    )?;
+    Ok(())
 }
 
 #[test]

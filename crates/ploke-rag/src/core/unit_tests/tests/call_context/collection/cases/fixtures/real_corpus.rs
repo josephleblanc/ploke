@@ -73,8 +73,8 @@ async fn call_context_exact_reads_axum_body_empty_incoming_callers() -> Result<(
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        4,
-        "current axum fixture should resolve exactly the four axum-core Body::empty callers: {callers:#?}"
+        8,
+        "current axum fixture should resolve exactly the eight axum-core Body::empty callers: {callers:#?}"
     );
 
     let context = rag.exact_call_context(target)?;
@@ -96,13 +96,14 @@ async fn call_context_exact_reads_axum_body_empty_incoming_callers() -> Result<(
     //   axum-core/src/body.rs:110 and :116 call `Self::empty()`.
     //   axum-core/src/response/into_response.rs response conversion rows call
     //   `Body::empty()`.
+    //   axum-core/src/ext_traits/request.rs request helper rows call
+    //   `Body::empty()`.
     // Expected traversal for the current fixture: the RAG exact call-context
-    // path preserves the same four incoming caller-site edges exposed by
-    // `Database::callers_for_target`. Broader axum re-export fanout remains a
-    // separate import/re-export completeness gap tracked by the matrix.
+    // path preserves the same eight incoming caller-site edges exposed by
+    // `Database::callers_for_target`.
     assert_eq!(
         incoming.len(),
-        4,
+        8,
         "RAG exact call context should expose all current Body::empty incoming edges: {context:#?}"
     );
 
@@ -133,7 +134,7 @@ async fn call_context_exact_reads_axum_body_empty_incoming_callers() -> Result<(
     }
     assert_eq!(
         path_counts,
-        BTreeMap::from([(path(&["Body", "empty"]), 2), (path(&["Self", "empty"]), 2),]),
+        BTreeMap::from([(path(&["Body", "empty"]), 6), (path(&["Self", "empty"]), 2),]),
         "RAG call context should preserve literal Body::empty and trait-impl Self::empty path shapes"
     );
 
@@ -150,8 +151,8 @@ async fn call_context_exact_reads_axum_parse_attrs_incoming_callers() -> Result<
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        8,
-        "current axum fixture should resolve the eight parse_attrs caller sites: {callers:#?}"
+        11,
+        "current axum fixture should resolve the eleven parse_attrs caller sites: {callers:#?}"
     );
 
     let context = rag.exact_call_context(target)?;
@@ -172,13 +173,14 @@ async fn call_context_exact_reads_axum_parse_attrs_incoming_callers() -> Result<
     //   axum-macros/src/attr_parsing.rs:59 defines `parse_attrs`.
     //   axum-macros/src/typed_path.rs:23 calls
     //   `crate::attr_parsing::parse_attrs(...)`.
-    //   from_ref.rs:30 and from_request/mod.rs:{112,196,592,715,880,896}
-    //   call imported `parse_attrs(...)`.
-    // Expected traversal: RAG exact call context preserves the same eight
+    //   from_ref.rs:30 and from_request/mod.rs:{112,196,471,598,727,892,908,
+    //   1029,1039} call imported `parse_attrs(...)`, including three
+    //   closure-owned executable rows.
+    // Expected traversal: RAG exact call context preserves the same eleven
     // incoming caller-site edges exposed by `Database::callers_for_target`.
     assert_eq!(
         incoming.len(),
-        8,
+        11,
         "RAG exact call context should expose all current parse_attrs incoming edges: {context:#?}"
     );
 
@@ -211,7 +213,7 @@ async fn call_context_exact_reads_axum_parse_attrs_incoming_callers() -> Result<
         path_counts,
         BTreeMap::from([
             (path(&["crate", "attr_parsing", "parse_attrs"]), 1),
-            (path(&["parse_attrs"]), 7),
+            (path(&["parse_attrs"]), 10),
         ]),
         "RAG call context should preserve explicit and imported parse_attrs path shapes"
     );
@@ -307,19 +309,15 @@ async fn call_context_exact_reads_axum_boxed_into_route_constructor_callers() ->
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        1,
-        "current axum fixture should resolve the explicit BoxedIntoRoute constructor caller: {callers:#?}"
+        3,
+        "current axum fixture should resolve the three BoxedIntoRoute constructor callers: {callers:#?}"
     );
 
     let context = rag.exact_call_context(target)?;
-    let expected_callee = CallCalleeInfo::Path {
-        path: path(&["BoxedIntoRoute"]),
-    };
     let incoming = context
         .iter()
         .filter(|call| {
             call.kind == CallSiteKind::Path
-                && call.callee == expected_callee
                 && call
                     .targets
                     .iter()
@@ -331,27 +329,48 @@ async fn call_context_exact_reads_axum_boxed_into_route_constructor_callers() ->
     // Source chain:
     //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
     //   axum/src/boxed.rs:12 defines `BoxedIntoRoute<S, E>(...)`.
-    //   axum/src/boxed.rs:38 calls `BoxedIntoRoute(Box::new(...))`.
+    //   axum/src/boxed.rs:23,38,51 call `Self(...)`,
+    //   `BoxedIntoRoute(...)`, and `Self(...)`.
     // Expected traversal: RAG exact call context preserves the same one-hop
-    // constructor edge exposed by `Database::callers_for_target`; the
-    // `Self(...)` rows at boxed.rs:23 and :51 remain unsupported targetless
-    // gaps and are not incoming callers for this struct target.
+    // constructor edges exposed by `Database::callers_for_target`.
     assert_eq!(
         incoming.len(),
-        1,
+        3,
         "RAG exact call context should expose the current BoxedIntoRoute constructor edge: {context:#?}"
     );
 
-    let call = incoming[0];
-    assert_eq!(call.owner_id, callers[0].site.owner_id);
-    assert_eq!(call.site_id, callers[0].site.id);
-    assert_eq!(call.status, CallStatusKind::Resolved);
-    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
-    assert_eq!(call.targets.len(), 1);
-    assert_eq!(call.targets[0].target_id, target);
+    let expected_site_ids = callers
+        .iter()
+        .map(|caller| caller.site.id)
+        .collect::<BTreeSet<_>>();
+    let incoming_site_ids = incoming
+        .iter()
+        .map(|call| call.site_id)
+        .collect::<BTreeSet<_>>();
     assert_eq!(
-        call.targets[0].relation,
-        CallTargetKind::TupleStructConstructor
+        incoming_site_ids, expected_site_ids,
+        "RAG call context should preserve the DB BoxedIntoRoute caller site identities"
+    );
+
+    let mut path_counts = BTreeMap::<Vec<String>, usize>::new();
+    for call in incoming {
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(call.targets.len(), 1);
+        assert_eq!(call.targets[0].target_id, target);
+        assert_eq!(
+            call.targets[0].relation,
+            CallTargetKind::TupleStructConstructor
+        );
+        let CallCalleeInfo::Path { path } = &call.callee else {
+            panic!("BoxedIntoRoute incoming caller should be a path call: {call:#?}");
+        };
+        *path_counts.entry(path.clone()).or_default() += 1;
+    }
+    assert_eq!(
+        path_counts,
+        BTreeMap::from([(path(&["BoxedIntoRoute"]), 1), (path(&["Self"]), 2)]),
+        "RAG call context should preserve explicit and Self constructor path shapes"
     );
 
     Ok(())
@@ -1244,7 +1263,7 @@ async fn call_impact_exact_buckets_axum_callers_by_test_source() -> Result<(), E
             target,
             CallPathOptions {
                 max_depth: 1,
-                max_paths: 256,
+                max_paths: 512,
             },
         )?
         .expect("call context enabled");

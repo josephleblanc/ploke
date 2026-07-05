@@ -631,16 +631,16 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
     //   serve/mod.rs calls `router.clone...` in the router examples and
     //   local-address tests. `boxed.rs:134` and `routing/mod.rs:673` call
     //   `self.router.clone()` from local wrapper clone impls.
-    // Expected traversal: the current caller API exposes 142 resolved
+    // Expected traversal: the current caller API exposes 307 resolved
     // `Router::new` rows, one explicit `crate::Router::new` row, and one
-    // `Self::new` row, while target expansion traverses 123 incoming candidates
+    // `Self::new` row, while target expansion traverses 203 incoming candidates
     // for the same target. Typed router clone receiver rows now reach the
     // local `impl<S> Clone for Router<S>` method at routing/mod.rs:90.
     let target = method_id_by_name_and_body_substring(&db, "new", "default_fallback: true")?;
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        144,
+        309,
         "Router::new should expose the current resolved corpus subset: {callers:#?}"
     );
     assert_sites_match_callers(&db, target, &callers, "Router::new resolved corpus subset")?;
@@ -667,7 +667,7 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
     assert_eq!(
         path_counts,
         std::collections::BTreeMap::from([
-            (path(&["Router", "new"]), 142),
+            (path(&["Router", "new"]), 307),
             (path(&["crate", "Router", "new"]), 1),
             (path(&["Self", "new"]), 1),
         ]),
@@ -880,7 +880,7 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
     )?;
     assert_eq!(
         incoming.len(),
-        123,
+        203,
         "Router::new target expansion should traverse the current incoming candidate subset"
     );
     let caller_sites = callers
@@ -896,56 +896,20 @@ fn axum_real_target_router_new_and_router_clone_contracts() -> Result<(), DbErro
         assert_eq!(candidate.distance, 1);
     }
 
-    assert_targetless_path_rows(&db, &["Router", "new"], CallStatusKind::Unsupported, 158)?;
-    // Matrix: unresolved `Router::new` helper-test rows. These are the
-    // currently projected rows that do not traverse to
-    // axum/src/routing/mod.rs:162, mostly from routing test helper modules.
+    assert_targetless_path_rows(&db, &["Router", "new"], CallStatusKind::Unsupported, 1)?;
+    // Matrix: unresolved `Router::new` boundary row. This is the currently
+    // projected row that does not traverse to axum/src/routing/mod.rs:162.
     // Source chain: callsite -> visible `Router` import/re-export evidence ->
-    // `Router::new`, but no supported target proof for this subset yet.
+    // `Router::new`, but no supported target proof for the axum-core boundary.
     assert_targetless_path_line_fanout(
         &db,
         &CORPUS_AXUM_CALL_GRAPH,
         &["Router", "new"],
         CallStatusKind::Unsupported,
-        &[
-            SourceLineFanout {
-                file_suffix: "axum-core/src/extract/request_parts.rs",
-                lines: &[193],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/tests/fallback.rs",
-                lines: &[
-                    6, 21, 22, 36, 48, 49, 65, 86, 87, 98, 99, 114, 115, 115, 127, 129, 130, 147,
-                    148, 165, 166, 181, 184, 203, 205, 215, 217, 219, 234, 236, 239, 254, 256, 258,
-                    274, 276, 278, 293, 295, 297, 312, 312, 323, 323, 334, 351, 372, 384, 398,
-                ],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/tests/get_to_head.rs",
-                lines: &[10, 44],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/tests/handle_error.rs",
-                lines: &[17, 33, 50, 68, 88],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/tests/merge.rs",
-                lines: &[
-                    8, 11, 31, 32, 33, 34, 76, 77, 85, 92, 93, 110, 111, 127, 128, 146, 147, 147,
-                    158, 159, 170, 172, 173, 174, 175, 176, 177, 194, 201, 231, 231, 232, 261, 263,
-                    263, 265, 294, 296, 296, 298, 298, 299, 339, 341, 341, 343, 373, 377,
-                ],
-            },
-            SourceLineFanout {
-                file_suffix: "axum/src/routing/tests/nest.rs",
-                lines: &[
-                    7, 37, 62, 63, 81, 82, 88, 89, 97, 105, 111, 111, 117, 122, 124, 126, 148, 150,
-                    152, 168, 170, 172, 191, 201, 204, 219, 222, 226, 238, 238, 272, 276, 291, 296,
-                    307, 323, 324, 325, 326, 392, 392, 400, 400, 405, 406, 421, 425, 455, 459, 468,
-                    471, 479, 483,
-                ],
-            },
-        ],
+        &[SourceLineFanout {
+            file_suffix: "axum-core/src/extract/request_parts.rs",
+            lines: &[193],
+        }],
     )?;
     let clone_callers = db.callers_for_target(clone_target)?;
     assert_eq!(
@@ -1119,14 +1083,14 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
             label: "axum-core/src/ext_traits/request.rs:375",
             module_path: &["crate", "ext_traits", "request", "tests"],
             owner: "extract_parts_without_state",
-            status: CallStatusKind::Unsupported,
+            status: CallStatusKind::Unresolved,
         },
         RequestBuilderCase {
             // axum-core/src/ext_traits/request.rs:388
             label: "axum-core/src/ext_traits/request.rs:388",
             module_path: &["crate", "ext_traits", "request", "tests"],
             owner: "extract_parts_with_state",
-            status: CallStatusKind::Unsupported,
+            status: CallStatusKind::Unresolved,
         },
         RequestBuilderCase {
             // axum/src/middleware/from_fn.rs:411
@@ -1182,7 +1146,8 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
         "axum/src/middleware/from_fn.rs:411",
     )?;
     assert_targetless_path_rows(&db, &["Request", "builder"], CallStatusKind::External, 8)?;
-    assert_targetless_path_rows(&db, &["Request", "builder"], CallStatusKind::Unsupported, 6)?;
+    assert_targetless_path_rows(&db, &["Request", "builder"], CallStatusKind::Unresolved, 2)?;
+    assert_targetless_path_rows(&db, &["Request", "builder"], CallStatusKind::Unsupported, 4)?;
     assert_targetless_path_line_fanout(
         &db,
         &CORPUS_AXUM_CALL_GRAPH,
@@ -1215,12 +1180,18 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
         &db,
         &CORPUS_AXUM_CALL_GRAPH,
         &["Request", "builder"],
+        CallStatusKind::Unresolved,
+        &[SourceLineFanout {
+            file_suffix: "axum-core/src/ext_traits/request.rs",
+            lines: &[375, 388],
+        }],
+    )?;
+    assert_targetless_path_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        &["Request", "builder"],
         CallStatusKind::Unsupported,
         &[
-            SourceLineFanout {
-                file_suffix: "axum-core/src/ext_traits/request.rs",
-                lines: &[375, 388],
-            },
             SourceLineFanout {
                 file_suffix: "axum/src/middleware/from_fn.rs",
                 lines: &[411],
@@ -1348,8 +1319,8 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
     //   `self.sem.clone().acquire_owned().await.unwrap()`.
     // Current model gap: awaited-result receiver shapes are visible in the
     // corpus, but they stay targetless. The test-client method owner is
-    // visible, but its async-block `unwrap()` row remains absent rather than
-    // being flattened into that owner.
+    // visible, and its async-block `unwrap()` row is now owned by the nested
+    // async executable instead of being flattened into that owner.
     let listener_owner = method_id_by_name_body_and_file_suffix(
         &db,
         "accept",
@@ -1376,7 +1347,7 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
         test_client_context
             .iter()
             .all(|row| row.site.method.as_deref() != Some("unwrap")),
-        "axum/src/test_helpers/test_client.rs:134 async-block unwrap should remain absent under RequestBuilder::into_future: {test_client_context:#?}"
+        "axum/src/test_helpers/test_client.rs:134 async-block unwrap should stay absent under RequestBuilder::into_future: {test_client_context:#?}"
     );
 
     assert_targetless_method_rows(
@@ -1385,7 +1356,7 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
         "AwaitResult",
         None,
         CallStatusKind::Unsupported,
-        43,
+        44,
     )?;
     // Matrix: awaited-result receiver rows from
     // `docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md`.
@@ -1393,8 +1364,8 @@ fn axum_real_target_await_result_receivers_are_documented_gaps() -> Result<(), D
     //   axum/src/serve/listener.rs:143
     //     `self.sem.clone().acquire_owned().await.unwrap()`
     //   axum/src/test_helpers/test_client.rs:134
-    //     `self.builder.send().await.unwrap()` remains absent under the
-    //     enclosing method owner until nested async owners are modeled.
+    //     `self.builder.send().await.unwrap()` is represented by a nested
+    //     async-block owner, not by the enclosing method owner.
     // All currently projected awaited-result `unwrap()` rows are targetless:
     // the receiver value is the result of an arbitrary awaited expression, so
     // the call graph must not fabricate a concrete callee edge.

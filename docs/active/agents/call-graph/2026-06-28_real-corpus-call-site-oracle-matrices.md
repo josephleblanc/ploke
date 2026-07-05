@@ -61,10 +61,10 @@ High-fanout targets are grouped by identical evidence chain. Before turning high
 | --- | --- | --- | --- |
 | `from_request::expand -> impl_struct_by_extracting_each_field -> extract_fields` | `axum-macros/src/from_request/mod.rs:93`; `:330`; `:412` | `axum-macros/src/from_request/mod.rs:145`; `:342` | Both calls are unqualified local path calls between normal functions in the `crate::from_request` module. This is the current regular free-function two-hop proof case for DB/RAG/TUI reachability. |
 
-Current executable coverage: `ploke-db` real-target matrix tests assert eight
+Current executable coverage: `ploke-db` real-target matrix tests assert eleven
 one-hop `parse_attrs` edges, including the explicit
 `crate::attr_parsing::parse_attrs` row through the file-module declaration at
-`axum-macros/src/lib.rs:9`, and absent nested closure-body rows for
+`axum-macros/src/lib.rs:9` and three nested closure-body rows from
 `from_request/mod.rs:471,1029,1039`. The external path test asserts
 `serde_json::Deserializer::from_slice`, the two currently projected
 `std::mem::replace` external rows at
@@ -82,11 +82,14 @@ for `middleware/{map_request,from_fn,map_response}.rs`.
 | `routing::post` | `axum/src/routing/tests/mod.rs:88,624,666,744,745,746,772,792,812,838,842,844,899,1071,1162` | routing tests | grouped `crate::routing::{..., post, ...}` import at `routing/tests/mod.rs:8-11` -> generated function binding. |
 
 Current executable coverage: `ploke-db` real-target matrix tests assert that no
-generated `post` function node exists yet, then pin the 22 currently projected
-`post(...)` rows as unsupported, targetless, and non-traversable by exact
-source-line fanout: six JSON rows, two `method_routing.rs` rows, and fourteen
-`routing/tests/mod.rs` rows. The multipart rows and the closure-body
-`routing/tests/mod.rs:1071` / `:1215` rows remain absent in the current fixture.
+generated `post` function node exists yet, then pin the 23 currently projected
+`post(...)` rows as unsupported, targetless, and non-traversable. Exact
+source-line fanout covers the 22 module-anchored rows: six JSON rows, two
+`method_routing.rs` rows, and fourteen `routing/tests/mod.rs` rows. The
+remaining raw row is owned by a nested async-block executable owner. The
+multipart rows remain absent in the current fixture; the
+`routing/tests/mod.rs:1215` row is no longer flattened into the parent function
+owner.
 
 ## Re-Exported Body Constructor Fanout
 
@@ -97,8 +100,8 @@ source-line fanout: six JSON rows, two `method_routing.rs` rows, and fourteen
 
 Current executable coverage: DB target traversal, proof projection, RAG exact
 call context, `code_item_lookup`, and `code_item_edges` assert the resolved
-`axum-core/src/response/into_response.rs` `Body::empty` caller edges. After
-regenerating the axum call-graph fixture, the DB matrix also asserts the two
+`Body::empty` caller edges in axum-core: six literal `Body::empty()` rows from
+`response/into_response.rs` and `ext_traits/request.rs`, plus the two
 `axum-core/src/body.rs:{110,116}` `Self::empty()` rows that traverse to
 `Body::empty`. The remaining rows in this fanout are still tracked as
 import/re-export completeness gaps, not as expected-passing traversal edges. The
@@ -106,9 +109,8 @@ DB matrix now also pins the current targetless rows by exact owner/source label
 and exact source-line fanout, with zero traversal candidates: nine external
 rows in `axum/src/{extract/query.rs,
 extract/raw_form.rs,form.rs,middleware/from_fn.rs,routing/route.rs,
-routing/tests/mod.rs,serve/mod.rs}` and seven unsupported rows in
-`axum-core/src/ext_traits/request.rs`,
-`axum/src/routing/method_routing.rs`, and
+routing/tests/mod.rs,serve/mod.rs}` and three unsupported rows in
+`axum/src/routing/method_routing.rs` and
 `axum/src/routing/tests/get_to_head.rs`.
 The `axum/src/routing/route.rs:161` closure-body row remains absent until nested
 closure ownership is modeled.
@@ -165,16 +167,14 @@ The DB matrix also asserts that `axum/src/handler/service.rs:171`
 `Handler::call(handler, req, self.state.clone())` now traverses to the
 `axum/src/handler/mod.rs:153` trait method binding in one edge.
 The real-target constructor matrix also asserts the current split for
-`BoxedIntoRoute`: the explicit `BoxedIntoRoute(...)` call traverses to the tuple
-struct in one edge, while both `Self(...)` constructor rows are structural,
-unsupported, and have zero traversal candidates.
+`BoxedIntoRoute`: the explicit `BoxedIntoRoute(...)` call and both
+`Self(...)` constructor rows traverse to the tuple struct in one edge each.
 It also asserts that `axum-macros/src/with_position.rs:92`
 `Position::First(item)` traverses to the local enum variant constructor at
 `axum-macros/src/with_position.rs:66` in one call edge.
 RAG exact call context, `code_item_lookup`, and `code_item_edges` now also assert
-that the explicit real-corpus `BoxedIntoRoute(...)` constructor edge is visible
-downstream with its target-centered proof row; the unsupported `Self(...)` rows
-remain DB-only fail-closed gap assertions. Exact TUI tools also accept
+that the real-corpus `BoxedIntoRoute(...)` and `Self(...)` constructor edges are
+visible downstream with their target-centered proof rows. Exact TUI tools also accept
 `node_kind=variant` and assert that the real-corpus
 `Position::First(item)` constructor edge is visible from the exact enum-variant
 target.
@@ -195,11 +195,11 @@ consolidated supported traversal table. RAG exact call context,
 
 The same regeneration resolves `axum/src/routing/mod.rs:109` `Self::new()` from
 `Default for Router` to `Router::new`. The real-target receiver matrix now pins
-144 `Router::new` caller edges and 123 incoming expansion candidates, including
+309 `Router::new` caller edges and 203 incoming expansion candidates, including
 the explicit `axum/src/routing/method_routing.rs:1494`
 `crate::Router::new()` row. TUI `code_item_lookup` and `code_item_edges` now
 accept `owner_type` for exact inherent-method disambiguation, so the downstream
-real-corpus matrix asserts both `HandleError::new` caller rows and all 144
+real-corpus matrix asserts both `HandleError::new` caller rows and all 309
 `Router::new` caller rows with target-centered proof rows.
 The same table-driven TUI matrix now also preserves the two DB/RAG-supported
 same-impl `self.extract_with_state(&())` method-call rows through
@@ -231,7 +231,7 @@ shape and target-centered proof rows.
 | `E::from_request_parts` / `T::from_request_parts` | `axum-core/src/ext_traits/request.rs:305`; `ext_traits/request_parts.rs:133`; `extract/mod.rs:115` | request and request-parts extraction helpers; blanket `FromRequestParts<S> for Result<T, T::Rejection>` | trait `FromRequestParts` at `extract/mod.rs:53`; method `:59`; bounds at call owner -> trait-associated dispatch. |
 | handler macro `$ty::from_request_parts` | `axum/src/handler/mod.rs:242` | generated `Handler::call`, async block starts `:240` | bound `$ty: FromRequestParts<S> + Send` at `:233` -> trait method. |
 | handler macro `$last::from_request` | `axum/src/handler/mod.rs:250` | generated `Handler::call`, async block starts `:240` | bound `$last: FromRequest<S, M> + Send` at `:234` -> trait method. |
-| `FromRequest` ViaParts blanket inner call | `axum-core/src/extract/mod.rs:103` | blanket impl method body, async block | marker `private::ViaParts` at `:31`; blanket impl `:91`; bound `T: FromRequestParts<S>` at `:94`; call `Self::from_request_parts`. |
+| `FromRequest` ViaParts blanket inner call | `axum-core/src/extract/mod.rs:103` | blanket impl method body, async block | marker `private::ViaParts` at `:31`; blanket impl `:91`; bound `T: FromRequestParts<S>` at `:94`; call `Self::from_request_parts`; regenerated fixture owns this as an async-block path row that remains unsupported and targetless. |
 | `FromRef::from_ref` same-crate bounded calls | `axum-core/src/ext_traits/mod.rs:25,45` | axum-core state extraction test helpers | trait `FromRef` at `extract/from_ref.rs:13`; method `:15`; same-crate bounds now traverse to the trait method binding; concrete impl dispatch remains type-dependent. |
 | `FromRef::from_ref` dependency-root bounded calls | `axum/src/extract/state.rs:309`; `middleware/from_extractor.rs:328` | axum state extraction helpers and middleware tests | `FromRef` is imported through `axum_core::extract::FromRef`; current type resolution treats dependency roots as external, so these rows stay visible, unsupported, and targetless rather than guessing a cross-crate local target. |
 | `ServiceExt::handle_error` user call | `axum/src/routing/tests/handle_error.rs:86` | `handler_service_ext` | `.handle_error(...)` -> trait default `service_ext.rs:42` -> `HandleError::new` call `:43` -> inherent fn `error_handling/mod.rs:80`. |
@@ -239,7 +239,7 @@ shape and target-centered proof rows.
 | dyn `Future::poll` | `axum/src/error_handling/mod.rs:251` | `HandleErrorFuture::poll` | field type `Pin<Box<dyn Future<...>>>` at `:240`; dispatch to trait-object `Future::poll`; concrete runtime future unresolved. |
 | `<dyn Any>::downcast_mut` | `axum-core/src/body.rs:29`; `axum/src/util.rs:105` | `try_downcast` helpers | external `std::any::Any` trait-object associated call. |
 | const initializer call owner | `axum/src/extract/ws.rs:382,384`; `routing/route.rs:202` | const initializer bodies | enclosing functions are not call owners; `HeaderValue::from_static(...)` / response value construction should be `CallBodyOwnerId::Const`. |
-| closure body boundary | `axum-macros/src/from_ref.rs:23` | closure inside `from_ref::expand` | closure call to `expand_field` should be nested-owner owned once closures are modeled; target fn `from_ref.rs:29`. |
+| closure body boundary | `axum-macros/src/from_ref.rs:23` | closure inside `from_ref::expand` | closure call to `expand_field` is nested-owner owned in the regenerated fixture and resolves to target fn `from_ref.rs:29`. |
 | async block boundary | `axum/src/handler/mod.rs:217,240` | handler `call` async blocks | calls inside async blocks should not be flattened into outer function owner once nested async owners are modeled. |
 
 Current executable coverage: DB target traversal now asserts the two one-hop
@@ -263,14 +263,18 @@ the initialized external `Request::new` receiver row, the seven projected
 nested local `impl Service` rows currently owned by their enclosing test
 functions in `routing/tests/mod.rs` and `routing/tests/nest.rs`.
 The result-chain coverage also pins all 14 projected `Request::builder()` rows
-by owner and source line: eight external rows and six unsupported rows, including
-the matrix chain in `middleware/from_fn.rs:411`.
+by owner and source line: eight external rows, two unresolved axum-core
+ext-trait test rows, and four unsupported rows, including the matrix chain in
+`middleware/from_fn.rs:411`.
 The exact current source-line fanout is external
 `extract/query.rs:104`, `extract/raw_form.rs:65`, `form.rs:{156,164,226}`,
-`routing/tests/mod.rs:{1129,1147}`, and `serve/mod.rs:799`; unsupported
-`axum-core/src/ext_traits/request.rs:{375,388}`,
+`routing/tests/mod.rs:{1129,1147}`, and `serve/mod.rs:799`; unresolved
+`axum-core/src/ext_traits/request.rs:{375,388}`; unsupported
 `middleware/from_fn.rs:411`, `routing/method_routing.rs:1697`, and
-`routing/tests/get_to_head.rs:{22,56}`.
+`routing/tests/get_to_head.rs:{22,56}`. Await-result receiver coverage now
+asserts 44 raw targetless `unwrap()` rows; the source-line fanout helper covers
+the 43 module-anchored rows while the additional row is owned by a nested async
+block.
 The targetless receiver rows for `self.0.size_hint()`, the projected
 non-turbofish `parts.extract_with_state(state)` blanket-helper call at
 `request_parts.rs:186`, and `Route::oneshot` are also pinned by exact
@@ -310,11 +314,15 @@ assert the same two owner-seeded Route receiver rows and blocked proof facts.
 | other `expand_with(...)` callers | `axum-macros/src/lib.rs:377,426,665` | derive macro entrypoints | proc-macro owners now resolve direct `expand_with(...)` helper edges; closure bodies passed to `expand_with` remain unsupported as callback bodies. |
 | direct callable parameter `f(attr,input)` | `axum-macros/src/lib.rs:737` | `expand_attr_with` | parameter `f: F` at `:727`; bound `F: FnOnce(A, I) -> K` at `:729`; structural dynamic call, target intentionally unknown. |
 | `expand_attr_with(...)` callers | `axum-macros/src/lib.rs:581,637,655` | `debug_handler`; `debug_middleware`; `__private_axum_test` | active proc-macro owners at `:581` and `:637` now resolve direct `expand_attr_with(...)` helper edges; `:655` is cfg-inactive in the current fixture profile; resolving `f(...)` still requires interprocedural callback proof. |
-| IIFE closure expression | `axum-macros/src/lib.rs:734-738`; `from_request/mod.rs:200-203` | `expand_attr_with`; `from_request::expand` | closure literal immediately invoked; structural dynamic call should persist without fake named target. |
+| `debug_handler::expand(...)` callback rows | `axum-macros/src/lib.rs:581,637` | closure callbacks passed to `expand_attr_with` | regenerated fixture owns both callback body path calls under closure executable owners; they traverse to `debug_handler::expand` without making the enclosing macro owners direct callers. |
+| IIFE closure expression | `axum-macros/src/lib.rs:734-738`; `from_request/mod.rs:200-203` | `expand_attr_with`; `from_request::expand` | closure literal immediately invoked; regenerated fixture resolves the outer dynamic call to its closure owner without inventing a named function target. |
 
 Current executable coverage: the real-target DB matrix asserts the visible
 dynamic callable-field rows, the `expand_with` callback setup, the
 `expand_attr_with` IIFE row, and the `from_request::expand` enum-state IIFE row.
+The regenerated axum fixture resolves the IIFE dynamic rows to their closure
+owners with `DynamicClosure` edges while leaving callable-parameter calls such as
+`f(attr, input)` opaque and targetless.
 It also asserts that proc-macro callback arguments such as `from_ref::expand` and
 `axum_test::expand` are not fabricated as ordinary path-call edges before
 interprocedural callback proof exists. RAG call-context and proof-context tests

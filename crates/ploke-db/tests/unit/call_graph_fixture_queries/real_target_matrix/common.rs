@@ -547,6 +547,62 @@ pub(super) fn assert_targetless_path_rows(
     Ok(())
 }
 
+pub(super) fn assert_targetless_path_owner_kind_rows(
+    db: &Database,
+    path_parts: &[&str],
+    status: CallStatusKind,
+    owner_kind: &str,
+    expected_count: usize,
+    label: &str,
+) -> Result<Vec<(Uuid, Uuid)>, DbError> {
+    let mut params = BTreeMap::new();
+    params.insert("path".to_string(), path_value(path_parts));
+    params.insert("status".to_string(), DataValue::from(format!("{status:?}")));
+    params.insert("owner_kind".to_string(), DataValue::from(owner_kind));
+
+    let rows = db.raw_query_params(
+        r#"?[site_id, owner_id, resolution_kind] :=
+            *call_site {
+                id: site_id,
+                owner_id,
+                call_kind: "Path",
+                path: $path @ 'NOW'
+            },
+            *call_resolution_status {
+                source_id: site_id,
+                source_kind: "Path",
+                status_kind: $status,
+                resolution_kind @ 'NOW'
+            },
+            *call_body_owner {
+                id: owner_id,
+                owner_kind: $owner_kind @ 'NOW'
+            }"#,
+        params,
+    )?;
+    assert_eq!(
+        rows.rows.len(),
+        expected_count,
+        "{label} should expose {expected_count} {status:?} {owner_kind} path row(s) for {path_parts:?}: {:#?}",
+        rows.rows
+    );
+
+    let mut sites = Vec::new();
+    for row in &rows.rows {
+        assert_eq!(row[2], DataValue::Null);
+        let site_id = to_uuid(&row[0])?;
+        let owner = to_uuid(&row[1])?;
+        assert!(
+            relations_for_site(db, site_id)?.rows.is_empty(),
+            "{label} should not have raw call_relation targets"
+        );
+        sites.push((owner, site_id));
+    }
+    assert_no_traversal_candidates_for_sites(db, &sites, label)?;
+
+    Ok(sites)
+}
+
 pub(super) fn assert_resolved_path_target_count(
     db: &Database,
     path_parts: &[&str],

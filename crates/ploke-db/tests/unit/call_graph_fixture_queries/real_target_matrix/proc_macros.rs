@@ -110,7 +110,61 @@ fn axum_proc_macro_attribute_helpers_reach_expand_attr_with() -> Result<(), DbEr
         "proc-macro expand_attr_with callers",
     )?;
 
-    assert_no_path_rows(&db, &["debug_handler", "expand"])?;
+    // The callback body itself now owns two closure callsites:
+    //   axum-macros/src/lib.rs:581
+    //   axum-macros/src/lib.rs:637
+    // Both closures call `debug_handler::expand(attrs, &item_fn, FunctionKind::...)`
+    // and should traverse to the helper binding in one edge.
+    let callback_target =
+        function_id_by_name_in_module(&db, &["crate", "debug_handler"], "expand")?;
+    let callback_callers = db.callers_for_target(callback_target)?;
+    assert_eq!(
+        callback_callers.len(),
+        2,
+        "debug_handler::expand should expose the two closure callback callers: {callback_callers:#?}"
+    );
+    assert_sites_match_callers(
+        &db,
+        callback_target,
+        &callback_callers,
+        "debug_handler::expand callback callers",
+    )?;
+    for (idx, caller) in callback_callers.iter().enumerate() {
+        assert_eq!(
+            owner_kind_for_call_body_owner(&db, caller.site.owner_id)?,
+            "Closure",
+            "debug_handler::expand callback caller should be closure-owned"
+        );
+        assert_eq!(caller.site.kind, CallSiteKind::Path);
+        assert_eq!(
+            caller.site.path.as_ref(),
+            Some(&path(&["debug_handler", "expand"]))
+        );
+        assert_eq!(caller.site.arg_count, Some(3));
+        assert_eq!(caller.status.status, CallStatusKind::Resolved);
+        assert_eq!(
+            caller.status.resolution,
+            Some(CallResolutionKind::LocalExact)
+        );
+        assert_eq!(caller.target.relation, CallRelationKind::Function);
+        assert_eq!(caller.target.source_kind, CallSiteKind::Path);
+        assert_eq!(caller.target.target_kind, CallTargetKind::Function);
+        assert_one_edge_traversal(
+            &db,
+            TraversalExpectation {
+                label: if idx == 0 {
+                    "axum-macros/src/lib.rs:581 closure -> debug_handler::expand"
+                } else {
+                    "axum-macros/src/lib.rs:637 closure -> debug_handler::expand"
+                },
+                owner: caller.site.owner_id,
+                target: callback_target,
+                site_id: caller.site.id,
+                expected_edge_count: 1,
+            },
+        )?;
+    }
+
     assert_no_path_rows(&db, &["axum_test", "expand"])?;
     assert_no_path_rows(&db, &["from_ref", "expand"])
 }

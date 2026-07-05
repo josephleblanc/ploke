@@ -124,10 +124,10 @@ fn axum_real_target_parse_attrs_reaches_helper_current_fanout() -> Result<(), Db
     //   from `expand_field`.
     //   axum-macros/src/from_request/mod.rs:3 imports it and source callsites
     //   are :112, :196, :471, :598, :727, :892, :908, :1029, and :1039.
-    // Expected traversal: eight call-site edges reach `parse_attrs` in one
-    // step; target expansion de-duplicates those to six owner candidates.
-    // The three closure-body rows at :471, :1029, and :1039 are asserted below
-    // as absent until nested closure call-body ownership lands.
+    // Expected traversal: eleven call-site edges reach `parse_attrs` in one
+    // step. The regenerated fixture now owns the nested closure-body rows at
+    // :471, :1029, and :1039 under closure executable owners instead of
+    // flattening them into their parent function owners.
     let cases = [
         (
             "typed_path.rs:23 expand -> crate::attr_parsing::parse_attrs",
@@ -207,11 +207,13 @@ fn axum_real_target_parse_attrs_reaches_helper_current_fanout() -> Result<(), Db
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        8,
-        "parse_attrs should expose the eight currently resolved real-corpus callers: {callers:#?}"
+        11,
+        "parse_attrs should expose the eleven currently resolved real-corpus callers: {callers:#?}"
     );
     assert_sites_match_callers(&db, target, &callers, "parse_attrs real-corpus callers")?;
     let mut actual_by_owner_path = std::collections::BTreeMap::<_, usize>::new();
+    let mut closure_owners = std::collections::BTreeSet::new();
+    let mut closure_rows = 0;
     for caller in &callers {
         assert_eq!(caller.status.status, CallStatusKind::Resolved);
         assert_eq!(
@@ -221,6 +223,16 @@ fn axum_real_target_parse_attrs_reaches_helper_current_fanout() -> Result<(), Db
         assert_eq!(caller.target.relation, CallRelationKind::Function);
         assert_eq!(caller.target.source_kind, CallSiteKind::Path);
         assert_eq!(caller.target.target_kind, CallTargetKind::Function);
+        if owner_kind_for_call_body_owner(&db, caller.site.owner_id)? == "Closure" {
+            assert_eq!(
+                caller.site.path.as_ref(),
+                Some(&path(&["parse_attrs"])),
+                "closure-owned parse_attrs rows should preserve the imported helper path"
+            );
+            closure_owners.insert(caller.site.owner_id);
+            closure_rows += 1;
+            continue;
+        }
         *actual_by_owner_path
             .entry((
                 caller.site.owner_id,
@@ -233,10 +245,21 @@ fn axum_real_target_parse_attrs_reaches_helper_current_fanout() -> Result<(), Db
             .or_default() += 1;
     }
     assert_eq!(
+        closure_rows, 3,
+        "parse_attrs should expose the three nested closure-body source rows"
+    );
+    assert_eq!(
+        closure_owners.len(),
+        3,
+        "parse_attrs closure-body rows should remain owned by distinct closure executable owners"
+    );
+    assert_eq!(
         actual_by_owner_path, expected_by_owner_path,
-        "target-centered parse_attrs callers should match the source-oracle owner fanout"
+        "target-centered non-closure parse_attrs callers should match the source-oracle owner fanout"
     );
 
+    let mut expected_incoming_owners = expected_owners;
+    expected_incoming_owners.extend(closure_owners.iter().copied());
     let incoming = db.expand_call_context(
         CallContextSeed::Target(target),
         CallContextOptions {
@@ -247,10 +270,10 @@ fn axum_real_target_parse_attrs_reaches_helper_current_fanout() -> Result<(), Db
     )?;
     assert_eq!(
         incoming.len(),
-        expected_owners.len(),
+        expected_incoming_owners.len(),
         "parse_attrs target expansion should return one one-hop candidate per owner"
     );
-    for owner in expected_owners {
+    for owner in expected_incoming_owners {
         assert!(
             incoming.iter().any(|candidate| {
                 candidate.node_id == owner
@@ -278,20 +301,6 @@ fn axum_real_target_parse_attrs_reaches_helper_current_fanout() -> Result<(), Db
         "from_request::extract_fields should keep only the current non-closure parse_attrs row; the matrix source at axum-macros/src/from_request/mod.rs:471 remains a nested-owner gap"
     );
 
-    let inferred_state = function_id_by_name_in_module(
-        &db,
-        &["crate", "from_request"],
-        "infer_state_type_from_field_attributes",
-    )?;
-    let inferred_state_context = db.call_context_for_owner(inferred_state)?;
-    assert!(
-        inferred_state_context.iter().all(|row| {
-            row.site.kind != CallSiteKind::Path
-                || row.site.path.as_ref() != Some(&path(&["parse_attrs"]))
-        }),
-        "from_request::infer_state_type_from_field_attributes should not flatten closure-body parse_attrs rows from axum-macros/src/from_request/mod.rs:1029 and :1039: {inferred_state_context:#?}"
-    );
-
     Ok(())
 }
 
@@ -304,15 +313,16 @@ fn axum_real_target_parse_attrs_projects_proof_facts() -> Result<(), DbError> {
     //   axum-macros/src/attr_parsing.rs:59 defines `parse_attrs`.
     //   axum-macros/src/typed_path.rs:23 calls
     //   `crate::attr_parsing::parse_attrs(...)`.
-    //   from_ref.rs:30 and from_request/mod.rs:{112,196,598,727,892,908}
-    //   call imported `parse_attrs(...)`.
-    // Expected proof traversal: all eight current caller sites project
+    //   from_ref.rs:30 and from_request/mod.rs:{112,196,471,598,727,892,908,
+    //   1029,1039} call imported `parse_attrs(...)`; :471, :1029, and :1039
+    //   are owned by nested closure executable owners.
+    // Expected proof traversal: all eleven current caller sites project
     // call_site, call_resolution, call_edge, and per-source provenance facts.
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        8,
-        "parse_attrs proof setup should use the current eight corpus callers: {callers:#?}"
+        11,
+        "parse_attrs proof setup should use the current eleven corpus callers: {callers:#?}"
     );
     for caller in &callers {
         assert_eq!(caller.status.status, CallStatusKind::Resolved);
@@ -342,7 +352,7 @@ fn axum_real_target_parse_attrs_projects_proof_facts() -> Result<(), DbError> {
         &[
             ("axum-macros/src/typed_path.rs", 1),
             ("axum-macros/src/from_ref.rs", 1),
-            ("axum-macros/src/from_request/mod.rs", 6),
+            ("axum-macros/src/from_request/mod.rs", 9),
         ],
         "type_resolution_missing",
     )
@@ -627,15 +637,15 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
     //   `Body::empty()`.
     //   axum/src/extract/raw_form.rs:65 calls `Body::empty()` through a
     //   direct `axum_core::body::Body` import inside a test helper.
-    // Expected traversal for the current fixture: two `Body::empty` rows and
+    // Expected traversal for the current fixture: six `Body::empty` rows and
     // two `Self::empty` rows reach the same target in one edge. The remaining
     // projected matrix rows are file-bucketed below as external or unsupported
     // and must expose zero traversal candidates.
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        4,
-        "current axum fixture should resolve exactly the four axum-core Body::empty callers: {callers:#?}"
+        8,
+        "current axum fixture should resolve exactly the eight axum-core Body::empty callers: {callers:#?}"
     );
     assert_sites_match_callers(&db, target, &callers, "Body::empty current resolved subset")?;
 
@@ -649,8 +659,8 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
     )?;
     assert_eq!(
         incoming.len(),
-        4,
-        "Body::empty target expansion should traverse the four current resolved edges: {incoming:#?}"
+        8,
+        "Body::empty target expansion should traverse the eight current resolved edges: {incoming:#?}"
     );
 
     let mut path_counts = std::collections::BTreeMap::new();
@@ -683,7 +693,7 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
     assert_eq!(
         path_counts,
         std::collections::BTreeMap::from([
-            (path(&["Body", "empty"]), 2),
+            (path(&["Body", "empty"]), 6),
             (path(&["Self", "empty"]), 2),
         ]),
         "Body::empty callers should split into literal Body::empty and trait-impl Self::empty rows"
@@ -788,50 +798,6 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
             status: CallStatusKind::External,
         },
         BodyEmptyPathCase {
-            // axum-core/src/ext_traits/request.rs:346
-            // `extract_without_state` passes `Body::empty()` to `Request::new`.
-            label: "axum-core/src/ext_traits/request.rs:346",
-            owner: function_id_by_name_in_module(
-                &db,
-                &["crate", "ext_traits", "request", "tests"],
-                "extract_without_state",
-            )?,
-            status: CallStatusKind::Unsupported,
-        },
-        BodyEmptyPathCase {
-            // axum-core/src/ext_traits/request.rs:364
-            // `extract_with_state` passes `Body::empty()` to `Request::new`.
-            label: "axum-core/src/ext_traits/request.rs:364",
-            owner: function_id_by_name_in_module(
-                &db,
-                &["crate", "ext_traits", "request", "tests"],
-                "extract_with_state",
-            )?,
-            status: CallStatusKind::Unsupported,
-        },
-        BodyEmptyPathCase {
-            // axum-core/src/ext_traits/request.rs:377
-            // `extract_parts_without_state` calls `.body(Body::empty())`.
-            label: "axum-core/src/ext_traits/request.rs:377",
-            owner: function_id_by_name_in_module(
-                &db,
-                &["crate", "ext_traits", "request", "tests"],
-                "extract_parts_without_state",
-            )?,
-            status: CallStatusKind::Unsupported,
-        },
-        BodyEmptyPathCase {
-            // axum-core/src/ext_traits/request.rs:390
-            // `extract_parts_with_state` calls `.body(Body::empty())`.
-            label: "axum-core/src/ext_traits/request.rs:390",
-            owner: function_id_by_name_in_module(
-                &db,
-                &["crate", "ext_traits", "request", "tests"],
-                "extract_parts_with_state",
-            )?,
-            status: CallStatusKind::Unsupported,
-        },
-        BodyEmptyPathCase {
             // axum/src/routing/method_routing.rs:1700
             // helper `call` builds a request with `.body(Body::empty())`.
             label: "axum/src/routing/method_routing.rs:1700",
@@ -900,8 +866,8 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
     //   routing/route.rs:174; routing/tests/mod.rs:{228,1133,1151};
     //   serve/mod.rs:799. The routing/route.rs:161 closure-body row remains
     //   absent until nested closure ownership is modeled.
-    //   unsupported: axum-core/src/ext_traits/request.rs:{346,364,377,390};
-    //   routing/method_routing.rs:1700;
+    //   resolved: axum-core/src/ext_traits/request.rs:{346,364,377,390}.
+    //   unsupported: routing/method_routing.rs:1700;
     //   routing/tests/get_to_head.rs:{25,59}.
     assert_path_file_fanout(
         &db,
@@ -958,7 +924,6 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
         &["Body", "empty"],
         CallStatusKind::Unsupported,
         &[
-            ("axum-core/src/ext_traits/request.rs", 4),
             ("axum/src/routing/method_routing.rs", 1),
             ("axum/src/routing/tests/get_to_head.rs", 2),
         ],
@@ -969,10 +934,6 @@ fn axum_real_target_body_empty_reaches_current_resolved_subset() -> Result<(), D
         &["Body", "empty"],
         CallStatusKind::Unsupported,
         &[
-            SourceLineFanout {
-                file_suffix: "axum-core/src/ext_traits/request.rs",
-                lines: &[346, 364, 377, 390],
-            },
             SourceLineFanout {
                 file_suffix: "axum/src/routing/method_routing.rs",
                 lines: &[1700],
@@ -1002,8 +963,8 @@ fn axum_real_target_body_empty_projects_proof_facts() -> Result<(), DbError> {
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        4,
-        "Body::empty proof setup should use the current four resolved corpus callers: {callers:#?}"
+        8,
+        "Body::empty proof setup should use the current eight resolved corpus callers: {callers:#?}"
     );
     let mut path_counts = std::collections::BTreeMap::new();
     for caller in &callers {
@@ -1023,7 +984,7 @@ fn axum_real_target_body_empty_projects_proof_facts() -> Result<(), DbError> {
     assert_eq!(
         path_counts,
         std::collections::BTreeMap::from([
-            (path(&["Body", "empty"]), 2),
+            (path(&["Body", "empty"]), 6),
             (path(&["Self", "empty"]), 2),
         ]),
         "Body::empty proof callers should split into literal Body::empty and Self::empty rows"
@@ -1046,6 +1007,7 @@ fn axum_real_target_body_empty_projects_proof_facts() -> Result<(), DbError> {
         &[
             ("axum-core/src/body.rs", 2),
             ("axum-core/src/response/into_response.rs", 2),
+            ("axum-core/src/ext_traits/request.rs", 4),
         ],
         "type_resolution_missing",
     )
@@ -1151,8 +1113,8 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
     // Matrix routing-test rows:
     //   routing/tests/mod.rs:88,624,666,744,745,746,772,792,812,
     //   838,842,844,899,1162 call generated `post(...)`.
-    // These 14 projected rows are grouped by owner here; the source-line
-    // assertion below pins the exact persisted span-derived file/line fanout.
+    // These 14 module-anchored rows are grouped by owner here; the raw
+    // targetless assertion below also includes one async-block-owned row.
     let routing_cases = [
         RoutingPostCase {
             owner: "hello_world",
@@ -1225,10 +1187,18 @@ fn axum_real_target_generated_post_function_is_documented_gap() -> Result<(), Db
         logging_context
             .iter()
             .all(|row| row.site.path.as_ref() != Some(&path(&["post"]))),
-        "axum/src/routing/tests/mod.rs:1215 closure-body post(...) should remain absent until closure ownership is modeled: {logging_context:#?}"
+        "axum/src/routing/tests/mod.rs:1215 closure-body post(...) should remain absent under the parent function owner: {logging_context:#?}"
     );
 
-    assert_targetless_path_rows(&db, &["post"], CallStatusKind::Unsupported, 22)?;
+    assert_targetless_path_rows(&db, &["post"], CallStatusKind::Unsupported, 23)?;
+    assert_targetless_path_owner_kind_rows(
+        &db,
+        &["post"],
+        CallStatusKind::Unsupported,
+        "AsyncBlock",
+        1,
+        "axum/src/routing/tests/mod.rs async-block-owned post(...) row",
+    )?;
     assert_path_file_fanout(
         &db,
         &["post"],

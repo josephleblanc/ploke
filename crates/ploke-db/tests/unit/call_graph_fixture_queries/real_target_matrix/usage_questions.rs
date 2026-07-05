@@ -646,7 +646,7 @@ fn axum_usage_questions_bucket_impact_callers_by_test_source() -> Result<(), DbE
         target,
         CallPathOptions {
             max_depth: 1,
-            max_paths: 256,
+            max_paths: 512,
         },
     )?;
     assert_eq!(report.target.id, target);

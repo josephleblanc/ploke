@@ -337,7 +337,7 @@ fn axum_real_target_boxed_into_route_explicit_constructor_reaches_struct() -> Re
 }
 
 #[test]
-fn axum_real_target_boxed_into_route_self_constructors_are_documented_gap() -> Result<(), DbError> {
+fn axum_real_target_boxed_into_route_self_constructors_reach_struct() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
     // Matrix: `BoxedIntoRoute` tuple-struct constructor rows.
@@ -347,10 +347,9 @@ fn axum_real_target_boxed_into_route_self_constructors_are_documented_gap() -> R
     //   from `BoxedIntoRoute::from_handler`.
     //   axum/src/boxed.rs:51 calls `Self(self.0.clone_box())` from
     //   `Clone for BoxedIntoRoute::clone`.
-    // Current model gap: each `Self(...)` constructor call is structurally
-    // visible but unsupported and targetless. The explicit
-    // `BoxedIntoRoute(...)` row above is the only current tuple-struct
-    // constructor traversal for this target.
+    // Expected traversal after the regenerated axum fixture: both `Self(...)`
+    // constructor rows resolve through the enclosing impl self type to the
+    // `BoxedIntoRoute` tuple struct.
     let target = struct_id_by_name(&db, "BoxedIntoRoute")?;
     let cases = [
         (
@@ -372,20 +371,42 @@ fn axum_real_target_boxed_into_route_self_constructors_are_documented_gap() -> R
         let context = db.call_context_for_owner(owner)?;
         let row = row_by_path(&context, &["Self"]);
 
-        assert_targetless_status(row, CallStatusKind::Unsupported);
-        assert!(
-            relations_for_site(&db, row.site.id)?.rows.is_empty(),
-            "{label} should not have persisted call_relation targets"
+        assert_resolved_target(
+            row,
+            target,
+            CallRelationKind::TupleStructConstructor,
+            CallSiteKind::Path,
+            CallTargetKind::Struct,
         );
-        assert_no_traversal_candidates_for_site(&db, owner, row.site.id, label)?;
+        assert_one_edge_traversal(
+            &db,
+            TraversalExpectation {
+                label,
+                owner,
+                target,
+                site_id: row.site.id,
+                expected_edge_count: 1,
+            },
+        )?;
     }
 
     let callers = db.callers_for_target(target)?;
-    assert!(
-        callers
-            .iter()
-            .all(|caller| caller.site.path != Some(path(&["Self"]))),
-        "BoxedIntoRoute target callers should not include unsupported Self constructor rows: {callers:#?}"
+    let mut path_counts = std::collections::BTreeMap::new();
+    for caller in &callers {
+        *path_counts
+            .entry(
+                caller
+                    .site
+                    .path
+                    .clone()
+                    .expect("BoxedIntoRoute constructor caller should carry a path"),
+            )
+            .or_insert(0usize) += 1;
+    }
+    assert_eq!(
+        path_counts,
+        std::collections::BTreeMap::from([(path(&["BoxedIntoRoute"]), 1), (path(&["Self"]), 2),]),
+        "BoxedIntoRoute target callers should include explicit and Self constructor rows"
     );
     assert_sites_match_callers(
         &db,
@@ -403,22 +424,44 @@ fn axum_real_target_boxed_into_route_constructor_projects_proof_facts() -> Resul
 
     // Matrix proof bridge:
     //   axum/src/boxed.rs:12 defines `BoxedIntoRoute<S, E>(...)`.
-    //   axum/src/boxed.rs:38 calls `BoxedIntoRoute(Box::new(...))`.
+    //   axum/src/boxed.rs:23,38,51 call `Self(...)`,
+    //   `BoxedIntoRoute(...)`, and `Self(...)`.
     // Expected proof traversal: target-centered projection stores the resolved
-    // call_site, call_resolution, and call_edge facts for the real corpus
-    // constructor edge without adding blocker facts.
-    let owner = method_id_by_name_and_body_substring(&db, "map", "BoxedIntoRoute(Box::new")?;
+    // call_site, call_resolution, and call_edge facts for all three real
+    // corpus constructor edges without adding blocker facts.
+    let from_handler = method_id_by_name_and_body_substring(&db, "from_handler", "Self(Box::new")?;
+    let map = method_id_by_name_and_body_substring(&db, "map", "BoxedIntoRoute(Box::new")?;
+    let clone = method_id_by_name_body_and_file_suffix(
+        &db,
+        "clone",
+        "Self(self.0.clone_box())",
+        "axum/src/boxed.rs",
+    )?;
     let target = struct_id_by_name(&db, "BoxedIntoRoute")?;
     let callers = db.callers_for_target(target)?;
     let expected = assert_proof_site_cases(
         &db,
         &callers,
-        &[ProofSiteCase::path(
-            owner,
-            &["BoxedIntoRoute"],
-            CallRelationKind::TupleStructConstructor,
-            CallTargetKind::Struct,
-        )],
+        &[
+            ProofSiteCase::path(
+                from_handler,
+                &["Self"],
+                CallRelationKind::TupleStructConstructor,
+                CallTargetKind::Struct,
+            ),
+            ProofSiteCase::path(
+                map,
+                &["BoxedIntoRoute"],
+                CallRelationKind::TupleStructConstructor,
+                CallTargetKind::Struct,
+            ),
+            ProofSiteCase::path(
+                clone,
+                &["Self"],
+                CallRelationKind::TupleStructConstructor,
+                CallTargetKind::Struct,
+            ),
+        ],
     )?;
 
     assert_target_proof_projection(
