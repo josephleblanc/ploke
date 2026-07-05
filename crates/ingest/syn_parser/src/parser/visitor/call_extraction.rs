@@ -324,7 +324,14 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             self.owner,
             span,
             self.cfgs.to_vec(),
-            Some("closure".to_string()),
+            Some(
+                if closure.asyncness.is_some() {
+                    "async_closure"
+                } else {
+                    "closure"
+                }
+                .to_string(),
+            ),
         ));
 
         let params = closure_param_names(closure);

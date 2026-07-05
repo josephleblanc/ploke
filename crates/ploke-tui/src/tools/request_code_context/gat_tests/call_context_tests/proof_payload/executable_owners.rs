@@ -46,6 +46,28 @@ async fn request_code_context_returns_async_block_owner_projected_proof_context(
     .await
 }
 
+#[tokio::test]
+async fn request_code_context_returns_async_closure_owner_projected_proof_context()
+-> color_eyre::Result<()> {
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let target = one_uuid(&db, &function_in_module_query(&["crate"], "local_target"))?;
+    let outer = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_async_closure_literal_with_body_call"),
+    )?;
+    let async_closure = async_closure_owner_for_parent(&db, outer)?;
+    assert_owner_projected_proof_context(
+        &db,
+        target,
+        async_closure,
+        "async closure",
+        "async_closure_owner_projected_proof_context",
+    )
+    .await
+}
+
 async fn assert_owner_projected_proof_context(
     db: &Arc<Database>,
     target: Uuid,

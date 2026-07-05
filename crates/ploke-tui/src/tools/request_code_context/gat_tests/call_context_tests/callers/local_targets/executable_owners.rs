@@ -114,6 +114,64 @@ async fn request_code_context_returns_async_block_owner_call_context_for_local_t
 }
 
 #[tokio::test]
+async fn request_code_context_returns_async_closure_owner_call_context_for_local_target()
+-> color_eyre::Result<()> {
+    let db = Arc::new(Database::new(setup_db_full_multi_embedding(
+        "fixture_call_graph",
+    )?));
+    let target = one_uuid(&db, &function_in_module_query(&["crate"], "local_target"))?;
+    let outer = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_async_closure_literal_with_body_call"),
+    )?;
+    let async_closure = async_closure_owner_for_parent(&db, outer)?;
+
+    let result =
+        execute_fixture_request(&db, "pub fn local_target", 1, "async_closure_call_context")
+            .await?;
+    assert_result_ok(&result, "pub fn local_target", 1, "fixture_call_graph");
+
+    assert!(
+        result.context.iter().any(|part| part.id == target),
+        "request_code_context should preserve the local_target seed part: {result:#?}"
+    );
+    assert!(
+        result.context.iter().all(|part| part.id != outer),
+        "async-closure local_target() must not expand to the enclosing outer function: {result:#?}"
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:848-850:
+    // The async closure body calls `local_target()`. Tool context should
+    // expose the async-closure owner as the incoming caller, while the outer
+    // dynamic closure invocation remains targetless.
+    let async_part = result
+        .context
+        .iter()
+        .find(|part| part.id == async_closure)
+        .expect("request_code_context should materialize the async closure caller");
+    let call = async_part
+        .call_context
+        .iter()
+        .find(|call| {
+            call.owner_id == async_closure
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: path(&["local_target"]),
+                    }
+                && call
+                    .targets
+                    .iter()
+                    .any(|target_info| target_info.target_id == target)
+        })
+        .expect("async closure owner should retain outgoing local_target() call context");
+    assert_resolved_target(call, target, CallTargetKind::Function);
+    assert_incoming_expansion(async_part, call, target);
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn request_code_context_returns_move_closure_literal_owner_call_context()
 -> color_eyre::Result<()> {
     let db = Arc::new(Database::new(setup_db_full_multi_embedding(

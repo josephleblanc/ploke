@@ -1336,6 +1336,14 @@ mod gat_tests {
     }
 
     #[cfg(feature = "test_harness")]
+    fn async_closure_owner_for_parent(
+        db: &ploke_db::Database,
+        parent: uuid::Uuid,
+    ) -> color_eyre::Result<uuid::Uuid> {
+        executable_owner_for_parent(db, parent, "Closure", "async_closure")
+    }
+
+    #[cfg(feature = "test_harness")]
     fn executable_owner_for_parent(
         db: &ploke_db::Database,
         parent: uuid::Uuid,

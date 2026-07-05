@@ -57,6 +57,13 @@ pub(in crate::unit) fn async_block_owner_for_parent(
     executable_owner_for_parent(db, parent, "AsyncBlock", "async_block")
 }
 
+pub(in crate::unit) fn async_closure_owner_for_parent(
+    db: &Database,
+    parent: Uuid,
+) -> Result<Uuid, DbError> {
+    executable_owner_for_parent(db, parent, "Closure", "async_closure")
+}
+
 fn executable_owner_for_parent(
     db: &Database,
     parent: Uuid,

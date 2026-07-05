@@ -4400,6 +4400,19 @@ fn fixture_call_graph_async_closure_body_call_is_not_recorded_as_outer_call_site
     );
 
     assert_no_call_site_owned_at_span(&graph, &owner, ASYNC_CLOSURE_BODY_LOCAL_TARGET_CALL_SPAN);
+    assert_closure_body_path_call_owned_at_span(
+        &graph,
+        &owner,
+        ASYNC_CLOSURE_BODY_LOCAL_TARGET_CALL_SPAN,
+        &["local_target"],
+    );
+    assert_executable_body_label_at_span(
+        &graph,
+        &owner,
+        ExecutableBodyKind::Closure,
+        ASYNC_CLOSURE_BODY_LOCAL_TARGET_CALL_SPAN,
+        Some("async_closure"),
+    );
 }
 
 #[test]
@@ -4510,6 +4523,36 @@ fn assert_executable_body_path_call_owned_at_span(
         relations.len(),
         1,
         "expected one {kind:?} BodyContainsCall relation for {span:?}, found {relations:#?}"
+    );
+}
+
+fn assert_executable_body_label_at_span(
+    graph: &impl GraphAccess,
+    parent: &CallOwnerContext,
+    kind: ExecutableBodyKind,
+    span: (usize, usize),
+    label: Option<&str>,
+) {
+    let bodies = graph
+        .executable_bodies()
+        .iter()
+        .filter(|body| {
+            body.parent == parent.id
+                && body.kind == kind
+                && body.span.0 <= span.0
+                && span.1 <= body.span.1
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        bodies.len(),
+        1,
+        "expected one {kind:?} body owned by {} containing {span:?}, found {bodies:#?}",
+        parent.label
+    );
+    assert_eq!(
+        bodies[0].label.as_deref(),
+        label,
+        "unexpected {kind:?} executable body label for {span:?}"
     );
 }
 

@@ -21,6 +21,17 @@ fn test_call_graph_projection_for_async_block_body_owner() -> Result<(), Box<dyn
     })
 }
 
+#[test]
+fn test_call_graph_projection_for_async_closure_body_owner()
+-> Result<(), Box<dyn std::error::Error>> {
+    assert_executable_body_projection(ExecutableProjectionCase {
+        owner_name: "call_async_closure_literal_with_body_call",
+        kind: ExecutableBodyKind::Closure,
+        owner_kind: "Closure",
+        label: "async_closure",
+    })
+}
+
 struct ExecutableProjectionCase {
     owner_name: &'static str,
     kind: ExecutableBodyKind,

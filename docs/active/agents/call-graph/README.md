@@ -601,7 +601,9 @@ Not implemented yet:
   value-binding fail-closed classification including function-pointer parameter
   casts, generic `F: FnOnce`, and boxed `dyn Fn` calls.
   Async closure literal calls are covered as unsupported structural
-  `DynamicCall` rows; closure/coroutine target modeling remains future work.
+  `DynamicCall` rows; their bodies are projected as `async_closure`
+  executable owners, while closure/coroutine poll/resume target modeling
+  remains future work.
 - Non-`self` method receiver classification beyond named owner parameters,
   explicitly typed local bindings, path-initialized local bindings, explicit
   dereferences of borrowed owner parameters, and one explicit reference layer
@@ -1205,6 +1207,7 @@ Implemented in this slice:
 2. The body visitor records non-path `syn::ExprCall` callees as `CallNode::DynamicCall`.
 3. Added `tests/fixture_crates/fixture_call_graph` for focused dynamic/Fn-like syntax coverage absent from existing fixtures.
 4. `(closure)()` and non-async closure literals such as `(|| 11)()` are covered by paranoid call-site tests and resolve to closure executable owners with `CallRelation::DynamicClosure`.
+5. Async closure literals such as `(async || local_target())()` keep the outer call as an unsupported targetless `DynamicCall`, but the closure body is projected as an `async_closure` executable owner with its own resolved body calls.
 
 Primary implementation files:
 

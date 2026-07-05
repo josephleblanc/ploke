@@ -472,6 +472,10 @@ mod tests {
         executable_owner_for_parent(db, parent, "AsyncBlock", "async_block")
     }
 
+    fn async_closure_owner_for_parent(db: &Database, parent: Uuid) -> Result<Uuid, DbError> {
+        executable_owner_for_parent(db, parent, "Closure", "async_closure")
+    }
+
     fn executable_owner_for_parent(
         db: &Database,
         parent: Uuid,
