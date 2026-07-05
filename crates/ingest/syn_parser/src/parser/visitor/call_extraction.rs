@@ -313,15 +313,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
     fn visit_item_const(&mut self, item_const: &'ast syn::ItemConst) {
         let byte_range = item_const.span().byte_range();
         let span = (byte_range.start, byte_range.end);
-        let body_id = generate_local_item_body_id(self.owner, span, self.cfgs);
-        let owner = CallBodyOwnerId::Executable(ExecutableBodyId::LocalItem(body_id));
-        self.executable_bodies.push(ExecutableBodyNode::new(
-            body_id.into(),
-            self.owner,
-            span,
-            self.cfgs.to_vec(),
-            Some("local_const".to_string()),
-        ));
+        let owner = self.record_local_item_owner(span, "local_const");
 
         let mut visitor = BodyCallVisitor {
             owner,
@@ -333,24 +325,13 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             executable_bodies: Vec::new(),
         };
         visitor.visit_expr(item_const.expr.as_ref());
-        self.calls.append(&mut visitor.calls);
-        self.relations.append(&mut visitor.relations);
-        self.executable_bodies
-            .append(&mut visitor.executable_bodies);
+        self.append_child(visitor);
     }
 
     fn visit_item_fn(&mut self, item_fn: &'ast syn::ItemFn) {
         let byte_range = item_fn.span().byte_range();
         let span = (byte_range.start, byte_range.end);
-        let body_id = generate_local_item_body_id(self.owner, span, self.cfgs);
-        let owner = CallBodyOwnerId::Executable(ExecutableBodyId::LocalItem(body_id));
-        self.executable_bodies.push(ExecutableBodyNode::new(
-            body_id.into(),
-            self.owner,
-            span,
-            self.cfgs.to_vec(),
-            Some("local_fn".to_string()),
-        ));
+        let owner = self.record_local_item_owner(span, "local_fn");
 
         let params = local_fn_param_names(item_fn);
         let mut visitor = BodyCallVisitor {
@@ -363,10 +344,32 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             executable_bodies: Vec::new(),
         };
         visitor.visit_block(item_fn.block.as_ref());
-        self.calls.append(&mut visitor.calls);
-        self.relations.append(&mut visitor.relations);
-        self.executable_bodies
-            .append(&mut visitor.executable_bodies);
+        self.append_child(visitor);
+    }
+
+    fn visit_item_impl(&mut self, item_impl: &'ast syn::ItemImpl) {
+        for item in &item_impl.items {
+            let syn::ImplItem::Fn(method) = item else {
+                continue;
+            };
+            let byte_range = method.span().byte_range();
+            let span = (byte_range.start, byte_range.end);
+            let label = format!("local_impl_method:{}", method.sig.ident);
+            let owner = self.record_local_item_owner(span, &label);
+
+            let params = impl_method_param_names(method);
+            let mut visitor = BodyCallVisitor {
+                owner,
+                cfgs: self.cfgs,
+                param_names: &params,
+                local_scopes: Vec::new(),
+                calls: Vec::new(),
+                relations: Vec::new(),
+                executable_bodies: Vec::new(),
+            };
+            visitor.visit_block(&method.block);
+            self.append_child(visitor);
+        }
     }
 
     fn visit_expr_closure(&mut self, closure: &'ast syn::ExprClosure) {
@@ -438,15 +441,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
     fn visit_item_static(&mut self, item_static: &'ast syn::ItemStatic) {
         let byte_range = item_static.span().byte_range();
         let span = (byte_range.start, byte_range.end);
-        let body_id = generate_local_item_body_id(self.owner, span, self.cfgs);
-        let owner = CallBodyOwnerId::Executable(ExecutableBodyId::LocalItem(body_id));
-        self.executable_bodies.push(ExecutableBodyNode::new(
-            body_id.into(),
-            self.owner,
-            span,
-            self.cfgs.to_vec(),
-            Some("local_static".to_string()),
-        ));
+        let owner = self.record_local_item_owner(span, "local_static");
 
         let mut visitor = BodyCallVisitor {
             owner,
@@ -458,6 +453,25 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             executable_bodies: Vec::new(),
         };
         visitor.visit_expr(item_static.expr.as_ref());
+        self.append_child(visitor);
+    }
+}
+
+impl BodyCallVisitor<'_> {
+    fn record_local_item_owner(&mut self, span: (usize, usize), label: &str) -> CallBodyOwnerId {
+        let body_id = generate_local_item_body_id(self.owner, span, self.cfgs);
+        let owner = CallBodyOwnerId::Executable(ExecutableBodyId::LocalItem(body_id));
+        self.executable_bodies.push(ExecutableBodyNode::new(
+            body_id.into(),
+            self.owner,
+            span,
+            self.cfgs.to_vec(),
+            Some(label.to_string()),
+        ));
+        owner
+    }
+
+    fn append_child(&mut self, mut visitor: BodyCallVisitor<'_>) {
         self.calls.append(&mut visitor.calls);
         self.relations.append(&mut visitor.relations);
         self.executable_bodies
@@ -1873,6 +1887,18 @@ fn closure_param_names(closure: &syn::ExprClosure) -> Vec<String> {
 
 fn local_fn_param_names(item_fn: &syn::ItemFn) -> Vec<String> {
     item_fn
+        .sig
+        .inputs
+        .iter()
+        .filter_map(|arg| match arg {
+            syn::FnArg::Typed(typed) => pat_ident_name(typed.pat.as_ref()),
+            syn::FnArg::Receiver(_) => None,
+        })
+        .collect()
+}
+
+fn impl_method_param_names(method: &syn::ImplItemFn) -> Vec<String> {
+    method
         .sig
         .inputs
         .iter()

@@ -95,6 +95,16 @@ async fn proof_context_collection_preserves_local_item_owner_projected_rows() ->
                 &function_in_module_query(&["crate"], "local_fn_body_call_is_not_outer_call_site"),
             )?,
         ),
+        (
+            "local_impl_method:value",
+            one_uuid(
+                &db,
+                &function_in_module_query(
+                    &["crate"],
+                    "local_impl_method_body_call_is_not_outer_call_site",
+                ),
+            )?,
+        ),
     ];
 
     let mut owners = Vec::new();

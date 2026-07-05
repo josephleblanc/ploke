@@ -117,6 +117,26 @@ async fn request_code_context_returns_local_item_owner_projected_proof_context()
         &["assoc_const_value"],
         "local_fn_owner_projected_proof_context",
     )
+    .await?;
+
+    let local_impl_outer = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "local_impl_method_body_call_is_not_outer_call_site",
+        ),
+    )?;
+    let local_impl =
+        local_item_owner_for_parent_with_label(&db, local_impl_outer, "local_impl_method:value")?;
+    assert_owner_projected_proof_context(
+        &db,
+        target,
+        local_impl,
+        "local impl method item",
+        "pub const fn assoc_const_value",
+        &["assoc_const_value"],
+        "local_impl_method_owner_projected_proof_context",
+    )
     .await
 }
 

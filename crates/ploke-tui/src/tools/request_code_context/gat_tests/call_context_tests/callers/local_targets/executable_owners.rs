@@ -194,6 +194,15 @@ async fn request_code_context_returns_local_item_owner_call_context_for_assoc_co
         &function_in_module_query(&["crate"], "local_fn_body_call_is_not_outer_call_site"),
     )?;
     let local_fn = local_item_owner_for_parent_with_label(&db, local_fn_outer, "local_fn")?;
+    let local_impl_outer = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "local_impl_method_body_call_is_not_outer_call_site",
+        ),
+    )?;
+    let local_impl =
+        local_item_owner_for_parent_with_label(&db, local_impl_outer, "local_impl_method:value")?;
 
     let result = execute_fixture_request(
         &db,
@@ -214,10 +223,9 @@ async fn request_code_context_returns_local_item_owner_call_context_for_assoc_co
         "request_code_context should preserve the assoc_const_value seed part: {result:#?}"
     );
     assert!(
-        result
-            .context
-            .iter()
-            .all(|part| part.id != outer && part.id != local_fn_outer),
+        result.context.iter().all(|part| part.id != outer
+            && part.id != local_fn_outer
+            && part.id != local_impl_outer),
         "local item body calls must not expand to their enclosing outer functions: {result:#?}"
     );
 
@@ -226,6 +234,8 @@ async fn request_code_context_returns_local_item_owner_call_context_for_assoc_co
         ("local_const", 1372, local_item),
         // tests/fixture_crates/fixture_call_graph/src/lib.rs:1441
         ("local_fn", 1441, local_fn),
+        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1461
+        ("local_impl_method:value", 1461, local_impl),
     ] {
         // The local item body calls `assoc_const_value()`. Tool context should
         // expose the local-item owner as the incoming caller.

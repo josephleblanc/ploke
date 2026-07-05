@@ -939,12 +939,14 @@ Progress note, 2026-06-28:
 - RAG call-context and proof-context targetless coverage now preserves the
   remaining nested axum dependency-root `FromRef::from_ref` path row. The
   top-level State extractor row resolves through parsed workspace dependency
-  proof; the nested `test_from_extractor` local-owner row is pinned as the
-  current `canonical_identity_mismatch` proof boundary, with no fabricated call
-  edge.
-- Exact TUI `code_item_lookup` and `code_item_edges` now cover that remaining
-  dependency-root `FromRef::from_ref` targetless row, including the
-  `canonical_identity_mismatch` proof boundary for the nested local-owner row.
+  proof; the nested `local_impl_method:from_request_parts` owner row under
+  `test_from_extractor` is pinned as the current
+  `canonical_identity_mismatch` proof boundary, with no fabricated call edge.
+- Exact TUI `code_item_lookup` and `code_item_edges` now assert the enclosing
+  `test_from_extractor` function does not flatten that remaining nested
+  dependency-root `FromRef::from_ref` row; DB/RAG tests own the executable
+  `local_impl_method:from_request_parts` targetless row and
+  `canonical_identity_mismatch` proof boundary.
 - Method-call resolver orchestration and receiver/result helper logic now live
   in `resolve/call_resolution/method.rs`, following the existing
   `path.rs`/`dynamic.rs`/`constructors.rs` sibling split. This reduces the

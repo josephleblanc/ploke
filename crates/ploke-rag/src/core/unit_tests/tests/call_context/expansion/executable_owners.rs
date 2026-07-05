@@ -154,6 +154,16 @@ async fn call_context_expansion_adds_local_item_owner_for_assoc_const_value() ->
                 &function_in_module_query(&["crate"], "local_fn_body_call_is_not_outer_call_site"),
             )?,
         ),
+        (
+            "local_impl_method:value",
+            one_uuid(
+                &db,
+                &function_in_module_query(
+                    &["crate"],
+                    "local_impl_method_body_call_is_not_outer_call_site",
+                ),
+            )?,
+        ),
     ];
 
     let mut rag = init_test_rag_mock(Arc::clone(&db));

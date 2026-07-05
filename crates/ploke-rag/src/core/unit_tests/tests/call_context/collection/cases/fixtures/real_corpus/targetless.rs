@@ -39,6 +39,11 @@ enum OwnerCase {
         module: &'static [&'static str],
         name: &'static str,
     },
+    LocalItem {
+        parent_module: &'static [&'static str],
+        parent_name: &'static str,
+        label: &'static str,
+    },
 }
 
 #[tokio::test]
@@ -202,16 +207,17 @@ async fn call_context_collection_reads_axum_from_ref_dependency_root_path_gaps()
     //   axum/src/middleware/from_extractor.rs:328 calls
     //   `Secret::from_ref(state)`.
     // Expected traversal: this nested local-impl row remains visible and
-    // targetless because the local impl method body is still projected under
-    // the enclosing test function owner, so the resolver cannot use the local
-    // impl where-bound scope. The top-level axum State extractor
+    // targetless. The call is now owned by the function-local impl method body,
+    // but the resolver still cannot use that local impl where-bound scope. The
+    // top-level axum State extractor
     // `InnerState::from_ref` row now resolves through workspace dependency
     // proof and is covered by the supported `FromRef` target-centered tests.
     let cases = [PathCase {
         label: "axum/src/middleware/from_extractor.rs:328 Secret::from_ref dependency root",
-        owner: OwnerCase::Function {
-            module: &["crate", "middleware", "from_extractor", "tests"],
-            name: "test_from_extractor",
+        owner: OwnerCase::LocalItem {
+            parent_module: &["crate", "middleware", "from_extractor", "tests"],
+            parent_name: "test_from_extractor",
+            label: "local_impl_method:from_request_parts",
         },
         path: &["Secret", "from_ref"],
         status: CallStatusKind::Unsupported,
@@ -222,6 +228,14 @@ async fn call_context_collection_reads_axum_from_ref_dependency_root_path_gaps()
             OwnerCase::Method { name, body, file } => method_id_by_file(&db, name, body, file)?,
             OwnerCase::Function { module, name } => {
                 function_id_by_name_in_module(&db, module, name)?
+            }
+            OwnerCase::LocalItem {
+                parent_module,
+                parent_name,
+                label,
+            } => {
+                let parent = function_id_by_name_in_module(&db, parent_module, parent_name)?;
+                local_item_owner_for_parent_with_label(&db, parent, label)?
             }
         };
         let call_context = rag.collect_call_context(&[(owner, 1.0)])?;

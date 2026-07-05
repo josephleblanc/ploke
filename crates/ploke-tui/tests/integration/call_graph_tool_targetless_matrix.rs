@@ -9,7 +9,7 @@ use ploke_tui::tools::{
 use crate::call_graph_tool_support::{
     DynamicToolCase, DynamicToolFixture, PathToolCase, PathToolFixture, ReceiverToolCase,
     ReceiverToolFixture, assert_dynamic_context, assert_dynamic_proof, assert_method_context,
-    assert_method_proof, assert_path_context, assert_path_proof, ui_field,
+    assert_method_proof, assert_path_context_absent, ui_field,
 };
 
 #[tokio::test]
@@ -333,7 +333,7 @@ async fn code_item_lookup_returns_from_ref_dependency_root_path_rows() {
             .get("call_context")
             .and_then(serde_json::Value::as_array)
             .expect("call_context array");
-        let proof_context = payload
+        let _proof_context = payload
             .get("proof_context")
             .and_then(serde_json::Value::as_array)
             .expect("proof_context array");
@@ -345,46 +345,24 @@ async fn code_item_lookup_returns_from_ref_dependency_root_path_rows() {
         // Source chain:
         //   axum/src/middleware/from_extractor.rs:328 calls
         //   `Secret::from_ref(state)`.
-        // Expected traversal: exact owner lookup exposes the remaining
-        // targetless dependency-root path row with zero callee targets. The
-        // top-level State extractor `InnerState::from_ref` row now resolves
-        // through parsed workspace dependency proof and is covered by the
-        // supported target-centered tests. The nested `test_from_extractor`
-        // proof path still reports the same canonical-identity boundary pinned
-        // by the RAG proof-context test.
+        // Expected traversal: exact item lookup can resolve the enclosing
+        // `test_from_extractor` function, but it must not flatten the nested
+        // local impl method body row into that parent function. DB/RAG tests
+        // pin the actual `local_impl_method:from_request_parts` owner and its
+        // canonical-identity proof boundary; exact item tools do not currently
+        // accept executable body owners as `node_kind` values. The parent item
+        // can still carry non-call proof rows, so this assertion is scoped to
+        // call-context non-flattening.
         let callee = fixture.case.callee();
-        let site_id = assert_path_context(
+        assert_path_context_absent(
             call_context,
             fixture.owner,
             &callee,
-            &fixture.case.status,
-            fixture.case.label,
-            "lookup",
-        );
-        assert_path_proof(
-            proof_context,
-            fixture.owner,
-            site_id,
-            fixture.case.proof,
             fixture.case.label,
             "lookup",
         );
 
-        let ui = result.ui_payload.as_ref().expect("ui payload");
-        assert!(
-            ui_field(ui, "call_context_outgoing")
-                .parse::<usize>()
-                .expect("outgoing count")
-                >= 1,
-            "code_item_lookup should surface outgoing remaining FromRef targetless path context"
-        );
-        assert!(
-            ui_field(ui, "proof_context")
-                .parse::<usize>()
-                .expect("proof count")
-                >= 1,
-            "code_item_lookup should surface remaining FromRef targetless path proof rows"
-        );
+        let _ui = result.ui_payload.as_ref().expect("ui payload");
     }
 }
 
@@ -598,43 +576,24 @@ async fn code_item_edges_returns_from_ref_dependency_root_path_rows() {
             .and_then(|node| node.get("call_context"))
             .and_then(serde_json::Value::as_array)
             .expect("node_info.call_context array");
-        let proof_context = payload
+        let _proof_context = payload
             .get("node_info")
             .and_then(|node| node.get("proof_context"))
             .and_then(serde_json::Value::as_array)
             .expect("node_info.proof_context array");
 
-        // Same remaining real-corpus dependency-root FromRef targetless oracle
-        // as the lookup test above, exercised through the edge-oriented
-        // payload.
+        // Same parent-function non-flattening oracle as the lookup test above,
+        // exercised through the edge-oriented payload.
         let callee = fixture.case.callee();
-        let site_id = assert_path_context(
+        assert_path_context_absent(
             call_context,
             fixture.owner,
             &callee,
-            &fixture.case.status,
-            fixture.case.label,
-            "edges",
-        );
-        assert_path_proof(
-            proof_context,
-            fixture.owner,
-            site_id,
-            fixture.case.proof,
             fixture.case.label,
             "edges",
         );
 
-        let ui = result.ui_payload.as_ref().expect("ui payload");
-        assert!(
-            ui_field(ui, "call_context_outgoing")
-                .parse::<usize>()
-                .expect("outgoing count")
-                >= 1,
-            "code_item_edges should surface outgoing remaining FromRef targetless path context"
-        );
-        let proof_count = proof_context.len().to_string();
-        assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());
+        let _ui = result.ui_payload.as_ref().expect("ui payload");
     }
 }
 

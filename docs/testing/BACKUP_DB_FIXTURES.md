@@ -687,8 +687,9 @@ Expected searchable corpus embedding config:
     binding; the top-level axum `State` extractor row whose bound imports
     `FromRef` through the parsed workspace dependency root
     `axum_core::extract::FromRef` also reaches that trait method binding; the
-    nested middleware local-impl row remains targetless because its local impl
-    method is still projected under the enclosing test function owner
+    nested middleware local-impl row is owned by
+    `local_impl_method:from_request_parts` and remains targetless until local
+    impl where-bound scope resolution exists
   - `Router` `Default::default` reaches `Router::new` through a local-exact
     `Self::new()` associated-function edge
   - axum `TestClient::new` reaches the cfg-gated local test helper target for

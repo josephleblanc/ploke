@@ -58,8 +58,6 @@ pub(crate) struct PathToolCase {
     pub(crate) label: &'static str,
     pub(crate) item: &'static str,
     pub(crate) path: &'static [&'static str],
-    pub(crate) status: CallStatusKind,
-    pub(crate) proof: PathProof,
     owner: PathOwner,
 }
 
@@ -70,11 +68,6 @@ enum PathOwner {
         file_suffix: &'static str,
         body: &'static str,
     },
-}
-
-#[derive(Clone, Copy)]
-pub(crate) enum PathProof {
-    IdentityMismatch,
 }
 
 pub(crate) struct PathToolFixture {
@@ -241,8 +234,6 @@ impl PathToolCase {
         label: "axum/src/middleware/from_extractor.rs:328 Secret::from_ref dependency root",
         item: "test_from_extractor",
         path: &["Secret", "from_ref"],
-        status: CallStatusKind::Unsupported,
-        proof: PathProof::IdentityMismatch,
         owner: PathOwner::Function {
             module_path: &["crate", "middleware", "from_extractor", "tests"],
             file_suffix: "axum/src/middleware/from_extractor.rs",
@@ -482,6 +473,26 @@ pub(crate) fn assert_path_context(
     call.site_id
 }
 
+pub(crate) fn assert_path_context_absent(
+    calls: &[serde_json::Value],
+    owner: Uuid,
+    callee: &CallCalleeInfo,
+    label: &str,
+    tool: &str,
+) {
+    let matching = calls
+        .iter()
+        .filter_map(|call| serde_json::from_value::<CallContextInfo>(call.clone()).ok())
+        .filter(|call| {
+            call.owner_id == owner && call.kind == CallSiteKind::Path && &call.callee == callee
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        matching.is_empty(),
+        "{tool} should not flatten the nested local-item path row into {label}: {calls:#?}"
+    );
+}
+
 pub(crate) fn assert_dynamic_proof(
     proofs: &[serde_json::Value],
     owner: Uuid,
@@ -559,35 +570,6 @@ pub(crate) fn assert_method_proof(
             proof.kind != "call_edge" || proof.call_site_id.as_deref() != Some(site_id.as_str())
         }),
         "{tool} should not fabricate a call_edge for targetless method row {label}: {proofs:#?}"
-    );
-}
-
-pub(crate) fn assert_path_proof(
-    proofs: &[serde_json::Value],
-    _owner: Uuid,
-    site_id: Uuid,
-    proof: PathProof,
-    label: &str,
-    tool: &str,
-) {
-    let site_id = site_id.to_string();
-    let rows = proofs
-        .iter()
-        .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
-        .collect::<Vec<_>>();
-    match proof {
-        PathProof::IdentityMismatch => assert!(
-            rows.iter().any(|proof| {
-                proof.blocker_reason.as_deref() == Some("canonical_identity_mismatch")
-            }),
-            "{tool} should return the canonical-identity proof blocker for {label}: {proofs:#?}"
-        ),
-    }
-    assert!(
-        rows.iter().all(|proof| {
-            proof.kind != "call_edge" || proof.call_site_id.as_deref() != Some(site_id.as_str())
-        }),
-        "{tool} should not fabricate a call_edge for targetless path row {label}: {proofs:#?}"
     );
 }
 

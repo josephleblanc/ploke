@@ -4,7 +4,8 @@ use super::super::*;
 use super::common::*;
 use super::source_lines::{
     SourceLineFanout, assert_targetless_method_line_fanout,
-    assert_targetless_method_line_fanout_with_needle, assert_targetless_path_line_fanout,
+    assert_targetless_method_line_fanout_with_needle,
+    assert_targetless_method_owner_kind_line_fanout, assert_targetless_path_line_fanout,
 };
 
 #[test]
@@ -509,20 +510,28 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
             // axum/src/routing/tests/mod.rs:703
             // Local `CountMiddleware<S>(S)` impl inside the test function.
             "axum/src/routing/tests/mod.rs:703",
-            function_id_by_name_in_module(
+            local_item_owner_for_parent_with_label(
                 &db,
-                &["crate", "routing", "tests"],
-                "middleware_still_run_for_unmatched_requests",
+                function_id_by_name_in_module(
+                    &db,
+                    &["crate", "routing", "tests"],
+                    "middleware_still_run_for_unmatched_requests",
+                )?,
+                "local_impl_method:poll_ready",
             )?,
         ),
         (
             // axum/src/routing/tests/nest.rs:258
             // Local `SetUriExtension<S>(S)` impl inside the test function.
             "axum/src/routing/tests/nest.rs:258",
-            function_id_by_name_in_module(
+            local_item_owner_for_parent_with_label(
                 &db,
-                &["crate", "routing", "tests", "nest"],
-                "outer_middleware_still_see_whole_url",
+                function_id_by_name_in_module(
+                    &db,
+                    &["crate", "routing", "tests", "nest"],
+                    "outer_middleware_still_see_whole_url",
+                )?,
+                "local_impl_method:poll_ready",
             )?,
         ),
     ];
@@ -599,11 +608,20 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
         "SelfField",
         Some(&["0"]),
         CallStatusKind::Unsupported,
+        &[SourceLineFanout {
+            file_suffix: "axum/src/middleware/response_axum_body.rs",
+            lines: &[45],
+        }],
+    )?;
+    assert_targetless_method_owner_kind_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        "poll_ready",
+        "SelfField",
+        Some(&["0"]),
+        CallStatusKind::Unsupported,
+        "LocalItem",
         &[
-            SourceLineFanout {
-                file_suffix: "axum/src/middleware/response_axum_body.rs",
-                lines: &[45],
-            },
             SourceLineFanout {
                 file_suffix: "axum/src/routing/tests/mod.rs",
                 lines: &[559],

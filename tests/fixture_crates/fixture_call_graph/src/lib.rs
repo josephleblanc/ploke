@@ -1452,3 +1452,16 @@ pub fn make_bound_closure() -> impl Fn() -> i32 {
 pub fn call_returned_bound_closure() -> i32 {
     make_bound_closure()()
 }
+
+pub fn local_impl_method_body_call_is_not_outer_call_site() -> i32 {
+    struct LocalImpl;
+
+    impl LocalImpl {
+        fn value(&self) -> i32 {
+            assoc_const_value()
+        }
+    }
+
+    let value = LocalImpl;
+    value.value()
+}

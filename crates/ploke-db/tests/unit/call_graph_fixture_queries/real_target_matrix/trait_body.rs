@@ -265,11 +265,16 @@ fn axum_real_target_from_ref_dependency_root_bound_reaches_workspace_trait_metho
         },
     )?;
 
-    // The nested middleware test helper row remains unsupported because its
-    // local impl method body is still projected under the enclosing test
-    // function owner, so the resolver cannot see the local impl where-bound
-    // scope that proves `Secret: FromRef<S>`.
-    let middleware_owner = function_id_by_name(&db, "test_from_extractor")?;
+    // The nested middleware test helper row is now owned by the function-local
+    // impl method body, not the enclosing async test function. It remains
+    // unsupported until the resolver models local impl where-bound scopes such
+    // as `Secret: FromRef<S>`.
+    let middleware_test = function_id_by_name(&db, "test_from_extractor")?;
+    let middleware_owner = local_item_owner_for_parent_with_label(
+        &db,
+        middleware_test,
+        "local_impl_method:from_request_parts",
+    )?;
     assert_owner_path_targetless(
         &db,
         middleware_owner,

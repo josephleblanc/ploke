@@ -139,6 +139,7 @@ const LOCAL_CONST_INITIALIZER_ASSOC_CONST_VALUE_CALL_SPAN: (usize, usize) = (300
 const LOCAL_STATIC_INITIALIZER_ASSOC_CONST_VALUE_CALL_SPAN: (usize, usize) = (31546, 31565);
 const LOCAL_FN_BODY_ASSOC_CONST_VALUE_CALL_SPAN: (usize, usize) = (31685, 31704);
 const LOCAL_FN_OUTER_INNER_CALL_SPAN: (usize, usize) = (31716, 31723);
+const LOCAL_IMPL_METHOD_BODY_ASSOC_CONST_VALUE_CALL_SPAN: (usize, usize) = (32051, 32070);
 const IF_INITIALIZED_FUNCTION_ITEM_BINDING_CALL_SPAN: (usize, usize) = (28338, 28341);
 const PARENTHESIZED_MATCH_INITIALIZED_FUNCTION_ITEM_BINDING_CALL_SPAN: (usize, usize) =
     (28529, 28534);
@@ -4664,6 +4665,36 @@ fn fixture_call_graph_local_fn_body_call_is_not_recorded_as_outer_call_site() {
         ExecutableBodyKind::LocalItem,
         LOCAL_FN_BODY_ASSOC_CONST_VALUE_CALL_SPAN,
         Some("local_fn"),
+    );
+}
+
+#[test]
+fn fixture_call_graph_local_impl_method_body_call_is_not_recorded_as_outer_call_site() {
+    let (graph, _tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+    let owner = crate::common::call_site_paranoid::function_owner_context(
+        &graph,
+        &["crate"],
+        "local_impl_method_body_call_is_not_outer_call_site",
+    );
+
+    assert_no_call_site_owned_at_span(
+        &graph,
+        &owner,
+        LOCAL_IMPL_METHOD_BODY_ASSOC_CONST_VALUE_CALL_SPAN,
+    );
+    assert_executable_body_path_call_owned_at_span(
+        &graph,
+        &owner,
+        ExecutableBodyKind::LocalItem,
+        LOCAL_IMPL_METHOD_BODY_ASSOC_CONST_VALUE_CALL_SPAN,
+        &["assoc_const_value"],
+    );
+    assert_executable_body_label_at_span(
+        &graph,
+        &owner,
+        ExecutableBodyKind::LocalItem,
+        LOCAL_IMPL_METHOD_BODY_ASSOC_CONST_VALUE_CALL_SPAN,
+        Some("local_impl_method:value"),
     );
 }
 

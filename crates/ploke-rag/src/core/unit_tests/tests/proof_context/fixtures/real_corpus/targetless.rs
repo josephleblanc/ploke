@@ -40,6 +40,11 @@ enum OwnerCase {
         module: &'static [&'static str],
         name: &'static str,
     },
+    LocalItem {
+        parent_module: &'static [&'static str],
+        parent_name: &'static str,
+        label: &'static str,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -108,9 +113,10 @@ async fn proof_context_collection_preserves_axum_from_ref_dependency_root_path_b
 
     let cases = [PathCase {
         label: "Secret::from_ref dependency-root path",
-        owner: OwnerCase::Function {
-            module: &["crate", "middleware", "from_extractor", "tests"],
-            name: "test_from_extractor",
+        owner: OwnerCase::LocalItem {
+            parent_module: &["crate", "middleware", "from_extractor", "tests"],
+            parent_name: "test_from_extractor",
+            label: "local_impl_method:from_request_parts",
         },
         path: &["Secret", "from_ref"],
         status: CallStatusKind::Unsupported,
@@ -122,6 +128,14 @@ async fn proof_context_collection_preserves_axum_from_ref_dependency_root_path_b
         let owner = match case.owner {
             OwnerCase::Method { name, body, file } => method_id_by_file(&db, name, body, file)?,
             OwnerCase::Function { module, name } => function_id(&db, module, name)?,
+            OwnerCase::LocalItem {
+                parent_module,
+                parent_name,
+                label,
+            } => {
+                let parent = function_id(&db, parent_module, parent_name)?;
+                local_item_owner_for_parent_with_label(&db, parent, label)?
+            }
         };
         let projected = db.project_call_proof_facts_for_owner(owner, AXUM_DOMAIN)?;
         assert!(
@@ -158,10 +172,10 @@ async fn proof_context_collection_preserves_axum_from_ref_dependency_root_path_b
         //   `Secret::from_ref(state)`.
         // Expected proof traversal: the top-level state extractor path now
         // resolves through workspace dependency proof and is covered by the
-        // supported `FromRef` target-centered tests. The nested local
-        // `test_from_extractor` row is still visible in call context, but proof
-        // context currently reports `canonical_identity_mismatch` for that
-        // local owner boundary without fabricating a call_edge.
+        // supported `FromRef` target-centered tests. The nested local impl
+        // method owner row is still visible in call context, but proof context
+        // currently reports `canonical_identity_mismatch` for that local owner
+        // boundary without fabricating a call_edge.
         match case.proof {
             ProofCheck::Blocked => {
                 assert_site_blocker(rows, owner, site_id, "type_resolution_missing", case.label);

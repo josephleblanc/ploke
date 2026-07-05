@@ -58,6 +58,11 @@ const LOCAL_ITEM_CASES: &[LocalItemCase] = &[
         label: "local_fn",
         source_line: 1441,
     },
+    LocalItemCase {
+        owner_name: "local_impl_method_body_call_is_not_outer_call_site",
+        label: "local_impl_method:value",
+        source_line: 1461,
+    },
 ];
 
 #[test]
