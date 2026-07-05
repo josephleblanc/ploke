@@ -7,6 +7,8 @@ fn test_call_graph_projection_for_closure_body_owner() -> Result<(), Box<dyn std
         kind: ExecutableBodyKind::Closure,
         owner_kind: "Closure",
         label: "closure",
+        callee_path: &["local_target"],
+        target_name: "local_target",
     })
 }
 
@@ -18,6 +20,8 @@ fn test_call_graph_projection_for_async_block_body_owner() -> Result<(), Box<dyn
         kind: ExecutableBodyKind::AsyncBlock,
         owner_kind: "AsyncBlock",
         label: "async_block",
+        callee_path: &["local_target"],
+        target_name: "local_target",
     })
 }
 
@@ -29,6 +33,21 @@ fn test_call_graph_projection_for_async_closure_body_owner()
         kind: ExecutableBodyKind::Closure,
         owner_kind: "Closure",
         label: "async_closure",
+        callee_path: &["local_target"],
+        target_name: "local_target",
+    })
+}
+
+#[test]
+fn test_call_graph_projection_for_local_const_initializer_owner()
+-> Result<(), Box<dyn std::error::Error>> {
+    assert_executable_body_projection(ExecutableProjectionCase {
+        owner_name: "local_const_initializer_call_is_not_outer_call_site",
+        kind: ExecutableBodyKind::LocalItem,
+        owner_kind: "LocalItem",
+        label: "local_const",
+        callee_path: &["assoc_const_value"],
+        target_name: "assoc_const_value",
     })
 }
 
@@ -37,6 +56,8 @@ struct ExecutableProjectionCase {
     kind: ExecutableBodyKind,
     owner_kind: &'static str,
     label: &'static str,
+    callee_path: &'static [&'static str],
+    target_name: &'static str,
 }
 
 fn assert_executable_body_projection(
@@ -70,6 +91,12 @@ fn assert_executable_body_projection(
             )
         })
         .clone();
+    let expected_target = merged
+        .functions()
+        .iter()
+        .find(|function| function.name == case.target_name)
+        .map(|function| function.id)
+        .unwrap_or_else(|| panic!("fixture_call_graph should define {}", case.target_name));
 
     let call_report = resolve_call_relations_after_tree(&merged, &tree)?;
     let (call_site_id, target_id) = call_report
@@ -86,8 +113,8 @@ fn assert_executable_body_projection(
                     return None;
                 };
                 (path_call.owner == CallBodyOwnerId::Executable(body.id)
-                    && path_call.path == ["local_target"])
-                .then_some((source, target))
+                    && path_call.path == case.callee_path)
+                    .then_some((source, target))
             }
             CallRelation::DynamicFunction { .. }
             | CallRelation::DynamicClosure { .. }
@@ -99,10 +126,15 @@ fn assert_executable_body_projection(
         })
         .unwrap_or_else(|| {
             panic!(
-                "{:?}-owned local_target() should resolve to the local function target",
-                case.kind
+                "{:?}-owned {:?}() should resolve to the local function target",
+                case.kind, case.callee_path
             )
         });
+    assert_eq!(
+        target_id, expected_target,
+        "{:?}-owned {:?}() resolved to the wrong target",
+        case.kind, case.callee_path
+    );
 
     let body_id = body.id.to_cozo_uuid();
     let parent_id: DataValue = outer.into();
@@ -152,7 +184,13 @@ fn assert_executable_body_projection(
     assert_eq!(&site_rows.rows[0][2], &DataValue::from("Path"));
     assert_eq!(
         &site_rows.rows[0][3],
-        &DataValue::List(vec![DataValue::from("local_target")])
+        &DataValue::List(
+            case.callee_path
+                .iter()
+                .copied()
+                .map(DataValue::from)
+                .collect()
+        )
     );
 
     let mut params = BTreeMap::new();

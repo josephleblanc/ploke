@@ -115,6 +115,7 @@ pub enum CallNodeKind {
     Static,
     Closure,
     AsyncBlock,
+    LocalItem,
     Struct,
     Variant,
 }
@@ -129,6 +130,7 @@ impl CallNodeKind {
             Self::Static => "Static",
             Self::Closure => "Closure",
             Self::AsyncBlock => "AsyncBlock",
+            Self::LocalItem => "LocalItem",
             Self::Struct => "Struct",
             Self::Variant => "Variant",
         }
@@ -143,6 +145,7 @@ impl CallNodeKind {
             "Static" => Ok(Self::Static),
             "Closure" => Ok(Self::Closure),
             "AsyncBlock" => Ok(Self::AsyncBlock),
+            "LocalItem" => Ok(Self::LocalItem),
             "Struct" => Ok(Self::Struct),
             "Variant" => Ok(Self::Variant),
             other => Err(DbError::Cozo(format!("unknown call node kind {other:?}"))),

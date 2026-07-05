@@ -61,6 +61,92 @@ fn fixture_context_does_not_project_local_const_initializer_calls_to_outer_owner
 }
 
 #[test]
+fn fixture_context_projects_local_const_initializer_call_to_executable_owner() -> Result<(), DbError>
+{
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let target = function_id_by_name(&db, "assoc_const_value")?;
+    let outer = function_id_by_name(&db, "local_const_initializer_call_is_not_outer_call_site")?;
+    let local_item = local_item_owner_for_parent(&db, outer)?;
+
+    let outer_context = db.call_context_for_owner(outer)?;
+    assert!(
+        outer_context.iter().all(|row| row.site.owner_id == outer),
+        "outer function context should only contain rows owned by the outer function: {outer_context:#?}"
+    );
+    let assoc_const_value_path = path(&["assoc_const_value"]);
+    assert!(
+        outer_context
+            .iter()
+            .all(|row| row.site.path.as_ref() != Some(&assoc_const_value_path)),
+        "outer function should not absorb the local-const initializer assoc_const_value() row: {outer_context:#?}"
+    );
+    assert!(
+        outer_context
+            .iter()
+            .flat_map(|row| row.targets.iter())
+            .all(|edge| edge.target_id != target),
+        "outer function should not expose a fabricated edge to assoc_const_value: {outer_context:#?}"
+    );
+
+    let info = db
+        .call_node_info(local_item)?
+        .expect("local const call_body_owner should expose call-node metadata");
+    assert_eq!(info.kind, CallNodeKind::LocalItem);
+    assert_eq!(info.name, "local_const");
+    assert!(
+        info.file_path.ends_with("fixture_call_graph/src/lib.rs"),
+        "local const owner should inherit the parent source file: {info:#?}"
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1371-1373:
+    // The function-local const initializer calls `assoc_const_value()`. That
+    // initializer call belongs to the local-item owner, not the enclosing
+    // function owner.
+    let local_item_context = db.call_context_for_owner(local_item)?;
+    let row = row_by_path(&local_item_context, &["assoc_const_value"]);
+    assert_eq!(row.site.owner_id, local_item);
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let callers = db.callers_for_target(target)?;
+    let caller = caller_by_owner_kind_path(
+        &callers,
+        local_item,
+        CallSiteKind::Path,
+        &["assoc_const_value"],
+    );
+    assert_eq!(caller.status.status, CallStatusKind::Resolved);
+    assert_eq!(
+        caller.status.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(caller.target.relation, CallRelationKind::Function);
+
+    let paths = db.call_paths_from_owner(
+        local_item,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 8,
+        },
+    )?;
+    let path = paths
+        .iter()
+        .find(|path| path.start_id == local_item && path.end_id == target && path.depth == 1)
+        .expect("local const owner should have a one-hop path to assoc_const_value");
+    assert_eq!(path.edges[0].caller_id, local_item);
+    assert_eq!(path.edges[0].callee_id, target);
+    assert_eq!(path.edges[0].relation, CallRelationKind::Function);
+    assert_eq!(path.edges[0].target_kind, CallTargetKind::Function);
+
+    Ok(())
+}
+
+#[test]
 fn fixture_context_projects_closure_body_call_to_executable_owner() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let target = function_id_by_name(&db, "local_target")?;
@@ -515,6 +601,41 @@ fn fixture_snippet_metadata_materializes_async_closure_owner() -> Result<(), DbE
     assert_eq!(
         paths.canon, "crate::async_closure",
         "async closure owner canon path should use the parent module path plus the executable label"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn fixture_snippet_metadata_materializes_local_item_owner() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let outer = function_id_by_name(&db, "local_const_initializer_call_is_not_outer_call_site")?;
+    let local_item = local_item_owner_for_parent(&db, outer)?;
+    let span = body_owner_span(&db, local_item)?;
+
+    let nodes = db
+        .get_snippet_context_nodes_ordered(vec![local_item])
+        .map_err(|err| DbError::Cozo(err.to_string()))?;
+    assert_eq!(
+        nodes.len(),
+        1,
+        "local const call_body_owner should be snippet-materializable for RAG expansion"
+    );
+    let (node, paths) = &nodes[0];
+    assert_eq!(node.id, local_item);
+    assert_eq!(node.name, "local_const");
+    assert_eq!((node.start_byte, node.end_byte), span);
+    assert!(
+        node.file_path.ends_with("fixture_call_graph/src/lib.rs"),
+        "local const owner should materialize using the parent source file: {node:#?}"
+    );
+    assert!(
+        paths.file.ends_with("fixture_call_graph/src/lib.rs"),
+        "local const owner path metadata should inherit the parent source file: {paths:#?}"
+    );
+    assert_eq!(
+        paths.canon, "crate::local_const",
+        "local const owner canon path should use the parent module path plus the executable label"
     );
 
     Ok(())

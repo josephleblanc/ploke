@@ -8,7 +8,7 @@ struct CallOwnerFamily {
     owner_relation: &'static str,
 }
 
-const VALID_CALL_OWNER_FAMILIES: [CallOwnerFamily; 7] = [
+const VALID_CALL_OWNER_FAMILIES: [CallOwnerFamily; 8] = [
     CallOwnerFamily {
         kind: CallNodeKind::Function,
         owner_relation: "function",
@@ -35,6 +35,10 @@ const VALID_CALL_OWNER_FAMILIES: [CallOwnerFamily; 7] = [
     },
     CallOwnerFamily {
         kind: CallNodeKind::AsyncBlock,
+        owner_relation: "call_body_owner",
+    },
+    CallOwnerFamily {
+        kind: CallNodeKind::LocalItem,
         owner_relation: "call_body_owner",
     },
 ];

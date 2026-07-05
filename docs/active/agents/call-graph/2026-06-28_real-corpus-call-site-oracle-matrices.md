@@ -115,11 +115,12 @@ routing/tests/mod.rs,serve/mod.rs}` and three unsupported rows in
 The `axum/src/routing/route.rs:161` closure-body row remains absent until nested
 closure ownership is modeled.
 
-The DB matrix also pins all seven currently projected external
+The DB matrix also pins eight currently projected external
 `HeaderValue::from_static` rows by exact owner and source line: four `axum-core`
-response conversion rows, two JSON response rows under one owner, and the HTML
-response owner. The `set_content_length` and websocket local const initializer
-rows remain absent until executable-local const body ownership is modeled.
+response conversion rows, two JSON response rows under one owner, the HTML
+response owner, and one function-local const initializer row owned by a
+`LocalItem` executable owner in `set_content_length`. The websocket upgrade
+local const initializer rows remain absent in the current axum fixture.
 
 ## High-Fanout Test Helper Matrix
 
@@ -238,7 +239,7 @@ shape and target-centered proof rows.
 | `Self::accept(self).await` | `axum/src/serve/listener.rs:41,61` | `Listener for TcpListener::accept`; `Listener for UnixListener::accept` | trait item `listener.rs:29`; impl self types at `:35` and `:55`; `Self::accept` targets external tokio listener inherent method, so projected rows should be external and targetless, not recursive trait calls. |
 | dyn `Future::poll` | `axum/src/error_handling/mod.rs:251` | `HandleErrorFuture::poll` | field type `Pin<Box<dyn Future<...>>>` at `:240`; dispatch to trait-object `Future::poll`; concrete runtime future unresolved. |
 | `<dyn Any>::downcast_mut` | `axum-core/src/body.rs:29`; `axum/src/util.rs:105` | `try_downcast` helpers | external `std::any::Any` trait-object associated call. |
-| const initializer call owner | `axum/src/extract/ws.rs:382,384`; `routing/route.rs:202` | const initializer bodies | enclosing functions are not call owners; `HeaderValue::from_static(...)` / response value construction should be `CallBodyOwnerId::Const`. |
+| const initializer call owner | `routing/route.rs:202`; `axum/src/extract/ws.rs:382,384` | const initializer bodies | `routing/route.rs:202` is owned by an executable `LocalItem` owner, not an item-level `Const` node or enclosing function owner; websocket upgrade local const rows remain absent in this fixture. |
 | closure body boundary | `axum-macros/src/from_ref.rs:23` | closure inside `from_ref::expand` | closure call to `expand_field` is nested-owner owned in the regenerated fixture and resolves to target fn `from_ref.rs:29`. |
 | async block boundary | `axum/src/handler/mod.rs:217,240` | handler `call` async blocks | calls inside async blocks should not be flattened into outer function owner once nested async owners are modeled. |
 

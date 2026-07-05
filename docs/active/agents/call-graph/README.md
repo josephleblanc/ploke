@@ -75,10 +75,10 @@ Implemented/scaffolded:
   - trait default and inherent impl associated const initializer expressions.
   - calls owned by the associated const's existing `ConstNodeId` via
     `CallBodyOwnerId::Const`.
-- Explicit closure/async extraction boundary:
-  - parser-native call extraction does not descend into closure or async block
-    bodies until a nested owner model exists, so inner calls are not attributed
-    to the enclosing function owner.
+- Explicit executable-local extraction boundary:
+  - parser-native call extraction descends into closure, async block, and
+    function-local const initializer bodies only under typed executable owners,
+    so inner calls are not attributed to the enclosing function owner.
 - Typed call-resolution storage/accessor scaffold:
   - `CodeGraph.call_relations`
   - `CodeGraph.call_resolution_statuses`

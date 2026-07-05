@@ -30,36 +30,36 @@ pub(super) fn assert_targetless_path_line_fanout(
     params.insert("path".to_string(), path_value(path_parts));
     params.insert("status".to_string(), DataValue::from(format!("{status:?}")));
 
-    let script = format!(
+    let script = [
+        ANCESTOR_RULES_NOW,
+        METHOD_NODE_ANCESTOR_RULE,
         r#"
-{ANCESTOR_RULES_NOW}
-{METHOD_NODE_ANCESTOR_RULE}
-
-module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+module_has_file[mid] := *file_mod{ owner_id: mid @ 'NOW' }
 file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
 file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
 
 ?[file_path, site_id, owner_id, span, resolution_kind] :=
-    *call_site {{
+    *call_site {
         id: site_id,
         owner_id,
         call_kind: "Path",
         path: $path,
         span @ 'NOW'
-    }},
-    *call_resolution_status {{
+    },
+    *call_resolution_status {
         source_id: site_id,
         source_kind: "Path",
         status_kind: $status,
         resolution_kind @ 'NOW'
-    }},
+    },
     ancestor[owner_id, module_id],
-    *module {{ id: module_id @ 'NOW' }},
+    *module { id: module_id @ 'NOW' },
     file_owner_for_module[module_id, file_id],
-    *file_mod {{ owner_id: file_id, file_path @ 'NOW' }}
+    *file_mod { owner_id: file_id, file_path @ 'NOW' }
 :sort file_path, span, site_id
-"#
-    );
+"#,
+    ]
+    .join("\n");
 
     let rows = db.raw_query_params(&script, params)?;
     let needle = path_parts.join("::");
@@ -70,6 +70,67 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
         expected,
         &needle,
         &format!("{status:?} source-line fanout rows for {path_parts:?}"),
+    )
+}
+
+pub(super) fn assert_targetless_path_owner_kind_line_fanout(
+    db: &Database,
+    fixture: &FixtureDb,
+    path_parts: &[&str],
+    status: CallStatusKind,
+    owner_kind: &str,
+    expected: &[SourceLineFanout],
+) -> Result<(), DbError> {
+    let mut params = BTreeMap::new();
+    params.insert("path".to_string(), path_value(path_parts));
+    params.insert("status".to_string(), DataValue::from(format!("{status:?}")));
+    params.insert("owner_kind".to_string(), DataValue::from(owner_kind));
+
+    let script = [
+        ANCESTOR_RULES_NOW,
+        METHOD_NODE_ANCESTOR_RULE,
+        r#"
+module_has_file[mid] := *file_mod{ owner_id: mid @ 'NOW' }
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+?[file_path, site_id, owner_id, span, resolution_kind] :=
+    *call_site {
+        id: site_id,
+        owner_id,
+        call_kind: "Path",
+        path: $path,
+        span @ 'NOW'
+    },
+    *call_resolution_status {
+        source_id: site_id,
+        source_kind: "Path",
+        status_kind: $status,
+        resolution_kind @ 'NOW'
+    },
+    *call_body_owner {
+        id: owner_id,
+        owner_kind: $owner_kind,
+        parent_id @ 'NOW'
+    },
+    ancestor[parent_id, module_id],
+    *module { id: module_id @ 'NOW' },
+    file_owner_for_module[module_id, file_id],
+    *file_mod { owner_id: file_id, file_path @ 'NOW' }
+:sort file_path, span, site_id
+"#,
+    ]
+    .join("\n");
+
+    let rows = db.raw_query_params(&script, params)?;
+    let needle = path_parts.join("::");
+    assert_targetless_line_rows(
+        db,
+        fixture,
+        &rows.rows,
+        expected,
+        &needle,
+        &format!("{status:?} {owner_kind} source-line fanout rows for {path_parts:?}"),
     )
 }
 

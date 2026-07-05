@@ -574,6 +574,7 @@ fn executable_body_kind(kind: ExecutableBodyKind) -> &'static str {
     match kind {
         ExecutableBodyKind::Closure => "Closure",
         ExecutableBodyKind::AsyncBlock => "AsyncBlock",
+        ExecutableBodyKind::LocalItem => "LocalItem",
     }
 }
 

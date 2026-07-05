@@ -74,19 +74,19 @@ Already covered:
   executable-local owners.
 - Parser extraction descends into fixture-backed `ExprAsync` blocks under typed
   async block owners.
-- Parser extraction intentionally skips function-local const initializers as
-  ownerless for now.
+- Parser extraction descends into fixture-backed function-local const
+  initializers under typed local-item executable owners.
 - Parser and DB tests assert closure/async/local-const body calls do not leak
   into the enclosing owner.
-- Real-corpus axum tests document closure-body and async-block rows as absent
-  until nested owners exist.
+- Real-corpus axum tests document selected closure-body, async-block, and
+  local-const initializer rows through nested executable owners.
 
 Current gap:
 
-- Async closures and function-local executable items still do not have nested
-  executable owner records.
-- Real-corpus closure/async body rows remain future until registered axum
-  fixtures are regenerated/reviewed with executable-owner expectations.
+- General function-local executable item bodies beyond const initializers still
+  need a typed owner model.
+- Real-corpus coverage remains selective; broaden only from source oracles and
+  fixture-backed expectations.
 
 ## Candidate Model
 
@@ -167,8 +167,11 @@ Current implementation status:
 - Async block owner projection, DB query helpers, RAG expansion, TUI
   call-context, and projected proof-context payloads are implemented for the
   fixture-backed `async { local_target(); }` case.
-- Function-local const initializer calls remain intentionally absent rather
-  than flattened into the enclosing owner.
+- Function-local const initializer calls are parser-owned by
+  `CallBodyOwnerId::Executable(LocalItemBodyId)`, projected through
+  `call_body_owner` with `owner_kind = "LocalItem"` and label `local_const`,
+  and verified in parser/transform/DB fixture tests without flattening into the
+  enclosing function owner.
 
 Do not add additional RAG/TUI coverage for new executable-local shapes until the
 DB context row has a stable nested-owner metadata contract for that shape.

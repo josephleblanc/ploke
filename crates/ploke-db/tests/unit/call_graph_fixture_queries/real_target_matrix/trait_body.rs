@@ -314,9 +314,10 @@ fn axum_real_target_header_value_from_static_external_paths_are_targetless() -> 
     //   axum/src/json.rs:208,217, and axum/src/response/mod.rs:47 call the
     //   same external associated function from response conversion bodies.
     // Current DB contract: all projected rows stay external and targetless.
-    // Local const initializer rows are absent rather than flattened under the
-    // enclosing function owner. No row is owned by `CallBodyOwnerId::Const`
-    // yet.
+    // The route local const initializer row is owned by an executable
+    // `LocalItem` owner, not flattened under the enclosing function owner and
+    // not modeled as an item-level `Const` owner. The websocket local const
+    // initializer rows remain absent in this fixture.
     assert_no_method_owner_by_body_and_file_suffix(
         &db,
         "on_upgrade",
@@ -337,6 +338,25 @@ fn axum_real_target_header_value_from_static_external_paths_are_targetless() -> 
         }),
         "axum/src/routing/route.rs:202 local const HeaderValue::from_static should remain absent under set_content_length: {route_context:#?}"
     );
+    assert_targetless_path_owner_kind_rows(
+        &db,
+        &["HeaderValue", "from_static"],
+        CallStatusKind::External,
+        "LocalItem",
+        1,
+        "axum route local const HeaderValue::from_static row",
+    )?;
+    assert_targetless_path_owner_kind_line_fanout(
+        &db,
+        &CORPUS_AXUM_CALL_GRAPH,
+        &["HeaderValue", "from_static"],
+        CallStatusKind::External,
+        "LocalItem",
+        &[SourceLineFanout {
+            file_suffix: "axum/src/routing/route.rs",
+            lines: &[202],
+        }],
+    )?;
 
     let json_owner = method_id_by_name_body_and_file_suffix(
         &db,
@@ -419,14 +439,14 @@ fn axum_real_target_header_value_from_static_external_paths_are_targetless() -> 
     )?;
     assert!(
         const_rows.rows.is_empty(),
-        "HeaderValue::from_static should not be modeled as const-owned until const body ownership lands: {const_rows:#?}"
+        "HeaderValue::from_static should not be modeled as item-level const-owned rows: {const_rows:#?}"
     );
 
     assert_targetless_path_rows(
         &db,
         &["HeaderValue", "from_static"],
         CallStatusKind::External,
-        7,
+        8,
     )?;
     assert_targetless_path_line_fanout(
         &db,

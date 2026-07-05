@@ -11,8 +11,8 @@ use crate::parser::nodes::{
     CallBodyOwnerId, CallNode, DynamicCallCallee, DynamicCallNode, ExecutableBodyId,
     ExecutableBodyNode, MacroCallNode, MethodCallNode, MethodCallReceiver, PathCallCallee,
     PathCallNode, generate_async_block_body_id, generate_closure_body_id,
-    generate_dynamic_call_site_id, generate_macro_call_site_id, generate_method_call_site_id,
-    generate_path_call_site_id,
+    generate_dynamic_call_site_id, generate_local_item_body_id, generate_macro_call_site_id,
+    generate_method_call_site_id, generate_path_call_site_id,
 };
 use crate::parser::relations::CallSiteRelation;
 
@@ -310,9 +310,34 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
         visit::visit_expr_method_call(self, call);
     }
 
-    // Local executable const items need scoped owner identity; do not flatten
-    // initializer calls into the enclosing body owner.
-    fn visit_item_const(&mut self, _item_const: &'ast syn::ItemConst) {}
+    fn visit_item_const(&mut self, item_const: &'ast syn::ItemConst) {
+        let byte_range = item_const.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
+        let body_id = generate_local_item_body_id(self.owner, span, self.cfgs);
+        let owner = CallBodyOwnerId::Executable(ExecutableBodyId::LocalItem(body_id));
+        self.executable_bodies.push(ExecutableBodyNode::new(
+            body_id.into(),
+            self.owner,
+            span,
+            self.cfgs.to_vec(),
+            Some("local_const".to_string()),
+        ));
+
+        let mut visitor = BodyCallVisitor {
+            owner,
+            cfgs: self.cfgs,
+            param_names: &[],
+            local_scopes: Vec::new(),
+            calls: Vec::new(),
+            relations: Vec::new(),
+            executable_bodies: Vec::new(),
+        };
+        visitor.visit_expr(item_const.expr.as_ref());
+        self.calls.append(&mut visitor.calls);
+        self.relations.append(&mut visitor.relations);
+        self.executable_bodies
+            .append(&mut visitor.executable_bodies);
+    }
 
     fn visit_expr_closure(&mut self, closure: &'ast syn::ExprClosure) {
         let byte_range = closure.span().byte_range();

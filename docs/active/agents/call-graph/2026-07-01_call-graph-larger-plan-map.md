@@ -88,9 +88,9 @@ Current matrix posture:
   backups still pin the real-corpus `BoxedIntoRoute` `Self(...)` constructor
   rows unsupported until fixture regeneration/review.
 - Executable-local const initializer boundaries: function-local const
-  initializer calls are no longer flattened into the enclosing function owner;
-  true local const owner rows remain blocked on an executable-scope identity
-  model.
+  initializer calls are owned by executable `LocalItem` owners and are no
+  longer flattened into the enclosing function owner; broader function-local
+  item bodies remain future.
 - Dynamic/receiver/closure/import gaps: future semantic expansion buckets, not reasons to keep polishing already-proven method paths.
 - Workspace dependency-root imports: selected workspace fixtures can contain
   one crate importing another selected crate, for example axum-core test code

@@ -194,6 +194,8 @@ pub enum ExecutableBodyKind {
     Closure,
     /// An async block body, such as `async { local_target(); }`.
     AsyncBlock,
+    /// A function-local item initializer body, such as `const X: i32 = f();`.
+    LocalItem,
 }
 
 impl ExecutableBodyKind {
@@ -202,6 +204,7 @@ impl ExecutableBodyKind {
         match self {
             Self::Closure => "closure",
             Self::AsyncBlock => "async_block",
+            Self::LocalItem => "local_item",
         }
     }
 }
@@ -288,6 +291,11 @@ define_executable_body_id!(
     AsyncBlockBodyId
 );
 
+define_executable_body_id!(
+    /// Typed ID for a function-local item initializer that can own nested call sites.
+    LocalItemBodyId
+);
+
 /// Finite union of parser-owned executable-local body IDs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub enum ExecutableBodyId {
@@ -295,6 +303,8 @@ pub enum ExecutableBodyId {
     Closure(ClosureBodyId),
     /// Async block body owner.
     AsyncBlock(AsyncBlockBodyId),
+    /// Function-local item initializer owner.
+    LocalItem(LocalItemBodyId),
 }
 
 impl ExecutableBodyId {
@@ -308,6 +318,7 @@ impl ExecutableBodyId {
         match self {
             Self::Closure(_) => ExecutableBodyKind::Closure,
             Self::AsyncBlock(_) => ExecutableBodyKind::AsyncBlock,
+            Self::LocalItem(_) => ExecutableBodyKind::LocalItem,
         }
     }
 
@@ -316,6 +327,7 @@ impl ExecutableBodyId {
         match self {
             Self::Closure(id) => id.base_id(),
             Self::AsyncBlock(id) => id.base_id(),
+            Self::LocalItem(id) => id.base_id(),
         }
     }
 }
@@ -337,6 +349,9 @@ impl Display for ExecutableBodyId {
             ExecutableBodyId::AsyncBlock(id) => {
                 write!(f, "ExecutableBodyId::AsyncBlock({})", id)
             }
+            ExecutableBodyId::LocalItem(id) => {
+                write!(f, "ExecutableBodyId::LocalItem({})", id)
+            }
         }
     }
 }
@@ -352,6 +367,13 @@ impl From<AsyncBlockBodyId> for ExecutableBodyId {
     #[inline]
     fn from(id: AsyncBlockBodyId) -> Self {
         ExecutableBodyId::AsyncBlock(id)
+    }
+}
+
+impl From<LocalItemBodyId> for ExecutableBodyId {
+    #[inline]
+    fn from(id: LocalItemBodyId) -> Self {
+        ExecutableBodyId::LocalItem(id)
     }
 }
 
@@ -617,6 +639,21 @@ pub(in crate::parser) fn generate_async_block_body_id(
     AsyncBlockBodyId::create(generate_executable_body_node_id(
         parent,
         ExecutableBodyKind::AsyncBlock,
+        span,
+        cfgs,
+    ))
+}
+
+/// Generates deterministic parser-local identity for a local item initializer owner.
+#[inline]
+pub(in crate::parser) fn generate_local_item_body_id(
+    parent: CallBodyOwnerId,
+    span: (usize, usize),
+    cfgs: &[String],
+) -> LocalItemBodyId {
+    LocalItemBodyId::create(generate_executable_body_node_id(
+        parent,
+        ExecutableBodyKind::LocalItem,
         span,
         cfgs,
     ))

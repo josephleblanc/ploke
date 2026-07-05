@@ -4445,6 +4445,20 @@ fn fixture_call_graph_local_const_initializer_call_is_not_recorded_as_outer_call
         &owner,
         LOCAL_CONST_INITIALIZER_ASSOC_CONST_VALUE_CALL_SPAN,
     );
+    assert_executable_body_path_call_owned_at_span(
+        &graph,
+        &owner,
+        ExecutableBodyKind::LocalItem,
+        LOCAL_CONST_INITIALIZER_ASSOC_CONST_VALUE_CALL_SPAN,
+        &["assoc_const_value"],
+    );
+    assert_executable_body_label_at_span(
+        &graph,
+        &owner,
+        ExecutableBodyKind::LocalItem,
+        LOCAL_CONST_INITIALIZER_ASSOC_CONST_VALUE_CALL_SPAN,
+        Some("local_const"),
+    );
 }
 
 fn assert_no_call_site_owned_at_span(

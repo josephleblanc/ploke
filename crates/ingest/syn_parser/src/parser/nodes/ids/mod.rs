@@ -37,7 +37,7 @@ pub use internal::{
 // --- call-site ids ---
 pub use internal::{
     AsyncBlockBodyId, ClosureBodyId, DynamicCallSiteId, ExecutableBodyId, ExecutableBodyKind,
-    MacroCallSiteId, MethodCallSiteId, PathCallSiteId,
+    LocalItemBodyId, MacroCallSiteId, MethodCallSiteId, PathCallSiteId,
 };
 // --- traits ---
 // Re-export marker traits (adjust list as needed)
@@ -78,7 +78,8 @@ pub(in crate::parser) use internal::{GenerateTypeId, GeneratesAnyNodeId};
 )]
 pub(in crate::parser) use internal::{
     generate_async_block_body_id, generate_closure_body_id, generate_dynamic_call_site_id,
-    generate_macro_call_site_id, generate_method_call_site_id, generate_path_call_site_id,
+    generate_local_item_body_id, generate_macro_call_site_id, generate_method_call_site_id,
+    generate_path_call_site_id,
 };
 
 // Tests

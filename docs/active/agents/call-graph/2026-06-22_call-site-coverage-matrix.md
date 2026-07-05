@@ -639,7 +639,7 @@ This section maps the exhaustive rows below to concrete fixtures we can use. Pre
 | Const item initializer | `const X: i32 = f();` | yes | Calls owned by `CallBodyOwnerId::Const` | Add more call-shape rows beyond the current path-call fixture. |
 | Static initializer | `static X: T = T::new();` | yes | Calls owned by `CallBodyOwnerId::Static` | Covered by `fixture_nodes::STATIC_FN_CALL`. |
 | Associated const initializer | `impl T { const X: U = f(); }` | yes | Calls owned by the associated const's `CallBodyOwnerId::Const` | Add more call-shape rows beyond the current path-call fixture. |
-| Function-local const initializer | `fn f() { const X: i32 = g(); }` | explicit extraction boundary | Inner calls are not attributed to the enclosing function owner | Needs executable-scope local item owner design; see ADR-024. |
+| Function-local const initializer | `fn f() { const X: i32 = g(); }` | yes for local const initializers | Inner calls are owned by `CallBodyOwnerId::Executable(LocalItemBodyId)` with `owner_kind = "LocalItem"` and are not attributed to the enclosing function owner | Broader function-local item bodies remain future. |
 | Enum discriminant | `A = f()` if const-call legal | no | Future const-expression owner | Need legality-focused fixture. |
 | Closure body | `let c = || f();` | parser-side partial | Inner calls are owned by `CallBodyOwnerId::Executable(ClosureBodyId)` and are not attributed to the enclosing owner | Needs persisted executable owner metadata before DB/RAG/TUI traversal. |
 | Async block/body | `async { f().await }` | explicit extraction boundary | Inner calls are not attributed to the enclosing owner | Also `.await` effect rows. |
