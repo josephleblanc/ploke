@@ -217,26 +217,49 @@ impl CallRelationResolver<'_> {
         &self,
         function_id: FunctionNodeId,
     ) -> Result<Option<ExecutableBodyId>, SynParserError> {
-        let Some(expr) = self.direct_return_expr(function_id, "returned-closure proof")? else {
+        let function = self.graph.get_function_checked(function_id)?;
+        let Some(body) = function.body.as_deref() else {
             return Ok(None);
         };
-        if !matches!(unparen_expr(&expr), syn::Expr::Closure(_)) {
+        let block = syn::parse_str::<syn::Block>(body).map_err(|err| {
+            SynParserError::InternalState(format!(
+                "failed to parse stored function body for returned-closure proof in {}: {err}",
+                function.name
+            ))
+        })?;
+        let Some(syn::Stmt::Expr(expr, None)) = block.stmts.last() else {
             return Ok(None);
+        };
+
+        if is_closure_literal(expr) {
+            return self.recorded_return_closure(function_id);
         }
 
+        if let Some(name) = expr_path_ident(expr)
+            && local_closure_binding_is_closure(&block, &name)
+        {
+            return self.recorded_return_closure(function_id);
+        }
+
+        Ok(None)
+    }
+
+    fn recorded_return_closure(
+        &self,
+        function_id: FunctionNodeId,
+    ) -> Result<Option<ExecutableBodyId>, SynParserError> {
         let owner = CallBodyOwnerId::Function(function_id);
         let closures = self
             .graph
             .executable_bodies()
             .iter()
             .filter(|body| body.parent == owner && body.kind == ExecutableBodyKind::Closure)
-            .map(|body| body.id)
             .collect::<Vec<_>>();
 
         match closures.as_slice() {
-            [closure] => Ok(Some(*closure)),
+            [closure] => Ok(Some(closure.id)),
             [] => Err(SynParserError::InternalState(format!(
-                "function {function_id} returns a closure literal but no closure executable body was recorded"
+                "function {function_id} returns a closure but no closure executable body was recorded"
             ))),
             _ => Ok(None),
         }
@@ -422,6 +445,39 @@ fn expr_return_path(expr: &syn::Expr) -> Option<Vec<String>> {
         .map(|segment| segment.ident.to_string())
         .collect::<Vec<_>>();
     (!path.is_empty()).then_some(path)
+}
+
+fn expr_path_ident(expr: &syn::Expr) -> Option<String> {
+    let syn::Expr::Path(path) = unparen_expr(expr) else {
+        return None;
+    };
+    if path.qself.is_some() {
+        return None;
+    }
+    path.path.get_ident().map(|ident| ident.to_string())
+}
+
+fn local_closure_binding_is_closure(block: &syn::Block, name: &str) -> bool {
+    for stmt in block.stmts.iter().rev().skip(1) {
+        let syn::Stmt::Local(local) = stmt else {
+            continue;
+        };
+        let syn::Pat::Ident(ident) = &local.pat else {
+            continue;
+        };
+        if ident.ident != name {
+            continue;
+        }
+        return local
+            .init
+            .as_ref()
+            .is_some_and(|init| is_closure_literal(init.expr.as_ref()));
+    }
+    false
+}
+
+fn is_closure_literal(expr: &syn::Expr) -> bool {
+    matches!(unparen_expr(expr), syn::Expr::Closure(_))
 }
 
 fn unparen_expr(expr: &syn::Expr) -> &syn::Expr {

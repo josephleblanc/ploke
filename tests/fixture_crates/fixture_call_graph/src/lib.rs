@@ -1443,3 +1443,12 @@ pub fn local_fn_body_call_is_not_outer_call_site() -> i32 {
 
     inner()
 }
+
+pub fn make_bound_closure() -> impl Fn() -> i32 {
+    let closure = || 73;
+    closure
+}
+
+pub fn call_returned_bound_closure() -> i32 {
+    make_bound_closure()()
+}

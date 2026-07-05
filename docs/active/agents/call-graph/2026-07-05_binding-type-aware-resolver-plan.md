@@ -72,8 +72,9 @@ Pick one, not all.
    - Do not generalize through arbitrary expressions or multi-hop type inference.
 
 3. Direct closure return proof:
-   - Resolve `make_closure()()` only when the maker's final expression is directly a closure literal with a single recorded closure executable owner.
-   - Preserve broader returned closure values as targetless unless the returned callable is proven to a function item or direct closure literal.
+   - Completed for `make_closure()()` when the maker's final expression is directly a closure literal with a single recorded closure executable owner.
+   - Completed for `make_bound_closure()()` when the maker's final expression returns a local binding initialized by that single recorded closure executable owner.
+   - Preserve broader returned closure values as targetless unless the returned callable is proven to a function item, direct closure literal, or direct local closure binding.
 
 4. Function pointer field blocker:
    - Use the existing memchr real-corpus fallback as a blocker proof target.
