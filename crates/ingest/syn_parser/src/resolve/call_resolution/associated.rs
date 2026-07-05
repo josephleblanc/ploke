@@ -2,14 +2,70 @@ use crate::{
     error::SynParserError,
     parser::{
         graph::GraphAccess,
-        nodes::{CallBodyOwnerId, OrdinaryTypeTargetId, TypeGenericParamNodeId},
+        nodes::{
+            CallBodyOwnerId, MethodNodeId, OrdinaryTypeTargetId, OrdinaryTypeUseId,
+            TypeGenericParamNodeId,
+        },
         relations::TypeRelation,
+        types::TypeNode,
     },
 };
 
 use super::{AssocPathResolution, CallRelationResolver, LocalTraitResolution, LocalTypeResolution};
 
 impl CallRelationResolver<'_> {
+    pub(super) fn is_external_self_assoc(
+        &self,
+        owner: CallBodyOwnerId,
+        path: &[String],
+    ) -> Result<bool, SynParserError> {
+        if !matches!(path, [segment, _] if segment == "Self") {
+            return Ok(false);
+        }
+
+        let Some(owner_method_id) = self.assoc_owner_method(owner)? else {
+            return Ok(false);
+        };
+        let Some(impl_id) = self.impl_for_owner_method(owner_method_id)? else {
+            return Ok(false);
+        };
+        let Some(impl_node) = self.maybe_impl_node(impl_id) else {
+            return Ok(false);
+        };
+        if impl_node.trait_type.is_none() {
+            return Ok(false);
+        }
+
+        self.type_use_is_external(owner, impl_node.self_type)
+    }
+
+    fn assoc_owner_method(
+        &self,
+        owner: CallBodyOwnerId,
+    ) -> Result<Option<MethodNodeId>, SynParserError> {
+        match owner {
+            CallBodyOwnerId::Method(id) => Ok(Some(id)),
+            CallBodyOwnerId::Executable(id) => self.assoc_owner_method(
+                self.executable_parent_owner(id, "external self associated lookup")?,
+            ),
+            _ => Ok(None),
+        }
+    }
+
+    fn type_use_is_external(
+        &self,
+        owner: CallBodyOwnerId,
+        type_id: OrdinaryTypeUseId,
+    ) -> Result<bool, SynParserError> {
+        match self.type_node(type_id)? {
+            TypeNode::Named(node) => Ok(self.is_external_path(&node.path)
+                || self.is_external_import_path(owner, &node.path)?),
+            TypeNode::Reference(node) => self.type_use_is_external(owner, node.referenced),
+            TypeNode::Paren(node) => self.type_use_is_external(owner, node.inner),
+            _ => Ok(false),
+        }
+    }
+
     pub(super) fn resolve_associated_function_path(
         &self,
         owner: CallBodyOwnerId,

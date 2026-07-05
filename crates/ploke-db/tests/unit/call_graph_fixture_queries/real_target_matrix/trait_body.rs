@@ -265,8 +265,8 @@ fn axum_real_target_self_accept_is_documented_gap() -> Result<(), DbError> {
     // Matrix: `Self::accept(self).await` listener row.
     // Source chain:
     //   axum/src/serve/listener.rs:41 and :61 use `Self::accept`.
-    // Current model gap: the visible `Self::accept` path row is unsupported and
-    // targetless; it should not be treated as recursive trait dispatch.
+    // Contract: the visible `Self::accept` path row is external and targetless;
+    // it should not be treated as recursive trait dispatch.
     // The current fixture projects the line-41 owner only; line 61 remains part
     // of the same body-owner completeness gap.
     let owner = method_id_by_name_body_and_file_suffix(
@@ -279,15 +279,15 @@ fn axum_real_target_self_accept_is_documented_gap() -> Result<(), DbError> {
         &db,
         owner,
         &["Self", "accept"],
-        CallStatusKind::Unsupported,
+        CallStatusKind::External,
         "axum/src/serve/listener.rs:41",
     )?;
-    assert_targetless_path_rows(&db, &["Self", "accept"], CallStatusKind::Unsupported, 1)?;
+    assert_targetless_path_rows(&db, &["Self", "accept"], CallStatusKind::External, 1)?;
     assert_targetless_path_line_fanout(
         &db,
         &CORPUS_AXUM_CALL_GRAPH,
         &["Self", "accept"],
-        CallStatusKind::Unsupported,
+        CallStatusKind::External,
         &[SourceLineFanout {
             file_suffix: "axum/src/serve/listener.rs",
             lines: &[41],
