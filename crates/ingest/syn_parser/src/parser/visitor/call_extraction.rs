@@ -404,6 +404,35 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
         self.executable_bodies
             .append(&mut visitor.executable_bodies);
     }
+
+    fn visit_item_static(&mut self, item_static: &'ast syn::ItemStatic) {
+        let byte_range = item_static.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
+        let body_id = generate_local_item_body_id(self.owner, span, self.cfgs);
+        let owner = CallBodyOwnerId::Executable(ExecutableBodyId::LocalItem(body_id));
+        self.executable_bodies.push(ExecutableBodyNode::new(
+            body_id.into(),
+            self.owner,
+            span,
+            self.cfgs.to_vec(),
+            Some("local_static".to_string()),
+        ));
+
+        let mut visitor = BodyCallVisitor {
+            owner,
+            cfgs: self.cfgs,
+            param_names: &[],
+            local_scopes: Vec::new(),
+            calls: Vec::new(),
+            relations: Vec::new(),
+            executable_bodies: Vec::new(),
+        };
+        visitor.visit_expr(item_static.expr.as_ref());
+        self.calls.append(&mut visitor.calls);
+        self.relations.append(&mut visitor.relations);
+        self.executable_bodies
+            .append(&mut visitor.executable_bodies);
+    }
 }
 
 fn path_segments(path: &syn::Path) -> Vec<String> {

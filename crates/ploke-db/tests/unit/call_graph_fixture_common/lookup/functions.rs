@@ -64,11 +64,12 @@ pub(in crate::unit) fn async_closure_owner_for_parent(
     executable_owner_for_parent(db, parent, "Closure", "async_closure")
 }
 
-pub(in crate::unit) fn local_item_owner_for_parent(
+pub(in crate::unit) fn local_item_owner_for_parent_with_label(
     db: &Database,
     parent: Uuid,
+    label: &str,
 ) -> Result<Uuid, DbError> {
-    executable_owner_for_parent(db, parent, "LocalItem", "local_const")
+    executable_owner_for_parent(db, parent, "LocalItem", label)
 }
 
 fn executable_owner_for_parent(

@@ -1430,3 +1430,8 @@ pub fn make_closure() -> impl Fn() -> i32 {
 pub fn call_returned_closure() -> i32 {
     make_closure()()
 }
+
+pub fn local_static_initializer_call_is_not_outer_call_site() -> i32 {
+    static LOCAL_STATIC_VALUE: i32 = assoc_const_value();
+    LOCAL_STATIC_VALUE
+}
