@@ -1324,6 +1324,24 @@ mod gat_tests {
         db: &ploke_db::Database,
         parent: uuid::Uuid,
     ) -> color_eyre::Result<uuid::Uuid> {
+        executable_owner_for_parent(db, parent, "Closure", "closure")
+    }
+
+    #[cfg(feature = "test_harness")]
+    fn async_block_owner_for_parent(
+        db: &ploke_db::Database,
+        parent: uuid::Uuid,
+    ) -> color_eyre::Result<uuid::Uuid> {
+        executable_owner_for_parent(db, parent, "AsyncBlock", "async_block")
+    }
+
+    #[cfg(feature = "test_harness")]
+    fn executable_owner_for_parent(
+        db: &ploke_db::Database,
+        parent: uuid::Uuid,
+        owner_kind: &str,
+        label: &str,
+    ) -> color_eyre::Result<uuid::Uuid> {
         one_uuid(
             db,
             &format!(
@@ -1331,10 +1349,10 @@ mod gat_tests {
                     parent = to_uuid("{parent}"),
                     *call_body_owner {{
                         id,
-                        owner_kind: "Closure",
+                        owner_kind: "{owner_kind}",
                         parent_id: parent,
                         parent_kind: "Function",
-                        label: "closure" @ 'NOW'
+                        label: "{label}" @ 'NOW'
                     }}"#
             ),
         )

@@ -4365,6 +4365,13 @@ fn fixture_call_graph_async_block_call_is_not_recorded_as_outer_call_site() {
     );
 
     assert_no_call_site_owned_at_span(&graph, &owner, ASYNC_BLOCK_LOCAL_TARGET_CALL_SPAN);
+    assert_executable_body_path_call_owned_at_span(
+        &graph,
+        &owner,
+        ExecutableBodyKind::AsyncBlock,
+        ASYNC_BLOCK_LOCAL_TARGET_CALL_SPAN,
+        &["local_target"],
+    );
 }
 
 #[test]
@@ -4418,12 +4425,28 @@ fn assert_closure_body_path_call_owned_at_span(
     span: (usize, usize),
     path: &[&str],
 ) {
+    assert_executable_body_path_call_owned_at_span(
+        graph,
+        parent,
+        ExecutableBodyKind::Closure,
+        span,
+        path,
+    );
+}
+
+fn assert_executable_body_path_call_owned_at_span(
+    graph: &impl GraphAccess,
+    parent: &CallOwnerContext,
+    kind: ExecutableBodyKind,
+    span: (usize, usize),
+    path: &[&str],
+) {
     let bodies = graph
         .executable_bodies()
         .iter()
         .filter(|body| {
             body.parent == parent.id
-                && body.kind == ExecutableBodyKind::Closure
+                && body.kind == kind
                 && body.span.0 <= span.0
                 && span.1 <= body.span.1
         })
@@ -4431,7 +4454,7 @@ fn assert_closure_body_path_call_owned_at_span(
     assert_eq!(
         bodies.len(),
         1,
-        "expected one closure body owned by {} containing {span:?}, found {bodies:#?}",
+        "expected one {kind:?} body owned by {} containing {span:?}, found {bodies:#?}",
         parent.label
     );
 
@@ -4444,12 +4467,12 @@ fn assert_closure_body_path_call_owned_at_span(
     assert_eq!(
         calls.len(),
         1,
-        "expected one closure-owned call site at {span:?}, found {calls:#?}"
+        "expected one {kind:?}-owned call site at {span:?}, found {calls:#?}"
     );
 
     let CallNode::PathCall(call) = calls[0] else {
         panic!(
-            "expected closure-owned path call at {span:?}, found {:#?}",
+            "expected {kind:?}-owned path call at {span:?}, found {:#?}",
             calls[0]
         );
     };
@@ -4470,7 +4493,7 @@ fn assert_closure_body_path_call_owned_at_span(
     assert_eq!(
         relations.len(),
         1,
-        "expected one closure BodyContainsCall relation for {span:?}, found {relations:#?}"
+        "expected one {kind:?} BodyContainsCall relation for {span:?}, found {relations:#?}"
     );
 }
 

@@ -192,6 +192,8 @@ define_call_site_id!(
 pub enum ExecutableBodyKind {
     /// A closure body, such as `|| local_target()`.
     Closure,
+    /// An async block body, such as `async { local_target(); }`.
+    AsyncBlock,
 }
 
 impl ExecutableBodyKind {
@@ -199,6 +201,7 @@ impl ExecutableBodyKind {
     pub(in crate::parser) fn tag(self) -> &'static str {
         match self {
             Self::Closure => "closure",
+            Self::AsyncBlock => "async_block",
         }
     }
 }
@@ -280,11 +283,18 @@ define_executable_body_id!(
     ClosureBodyId
 );
 
+define_executable_body_id!(
+    /// Typed ID for an async block body that can own nested call sites.
+    AsyncBlockBodyId
+);
+
 /// Finite union of parser-owned executable-local body IDs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub enum ExecutableBodyId {
     /// Closure body owner.
     Closure(ClosureBodyId),
+    /// Async block body owner.
+    AsyncBlock(AsyncBlockBodyId),
 }
 
 impl ExecutableBodyId {
@@ -297,6 +307,7 @@ impl ExecutableBodyId {
     pub fn kind(self) -> ExecutableBodyKind {
         match self {
             Self::Closure(_) => ExecutableBodyKind::Closure,
+            Self::AsyncBlock(_) => ExecutableBodyKind::AsyncBlock,
         }
     }
 
@@ -304,6 +315,7 @@ impl ExecutableBodyId {
     pub(in crate::parser) fn base_id(self) -> NodeId {
         match self {
             Self::Closure(id) => id.base_id(),
+            Self::AsyncBlock(id) => id.base_id(),
         }
     }
 }
@@ -322,6 +334,9 @@ impl Display for ExecutableBodyId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             ExecutableBodyId::Closure(id) => write!(f, "ExecutableBodyId::Closure({})", id),
+            ExecutableBodyId::AsyncBlock(id) => {
+                write!(f, "ExecutableBodyId::AsyncBlock({})", id)
+            }
         }
     }
 }
@@ -330,6 +345,13 @@ impl From<ClosureBodyId> for ExecutableBodyId {
     #[inline]
     fn from(id: ClosureBodyId) -> Self {
         ExecutableBodyId::Closure(id)
+    }
+}
+
+impl From<AsyncBlockBodyId> for ExecutableBodyId {
+    #[inline]
+    fn from(id: AsyncBlockBodyId) -> Self {
+        ExecutableBodyId::AsyncBlock(id)
     }
 }
 
@@ -550,6 +572,26 @@ pub(super) fn generate_call_id(
     CallId::Synthetic(Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &synthetic_data))
 }
 
+#[inline]
+fn generate_executable_body_node_id(
+    parent: CallBodyOwnerId,
+    kind: ExecutableBodyKind,
+    span: (usize, usize),
+    cfgs: &[String],
+) -> NodeId {
+    let mut synthetic_data = Vec::new();
+    synthetic_data.extend_from_slice(b"syn_parser.executable_body.v1");
+    synthetic_data.extend_from_slice(parent.base_id().uuid().as_bytes());
+    synthetic_data.extend_from_slice(kind.tag().as_bytes());
+    synthetic_data.extend_from_slice(&span.0.to_le_bytes());
+    synthetic_data.extend_from_slice(&span.1.to_le_bytes());
+    for cfg in cfgs {
+        synthetic_data.push(0);
+        synthetic_data.extend_from_slice(cfg.as_bytes());
+    }
+    NodeId::Synthetic(Uuid::new_v5(&PROJECT_NAMESPACE_UUID, &synthetic_data))
+}
+
 /// Generates deterministic parser-local identity for a closure body owner.
 #[inline]
 pub(in crate::parser) fn generate_closure_body_id(
@@ -557,20 +599,27 @@ pub(in crate::parser) fn generate_closure_body_id(
     span: (usize, usize),
     cfgs: &[String],
 ) -> ClosureBodyId {
-    let mut synthetic_data = Vec::new();
-    synthetic_data.extend_from_slice(b"syn_parser.executable_body.v1");
-    synthetic_data.extend_from_slice(parent.base_id().uuid().as_bytes());
-    synthetic_data.extend_from_slice(ExecutableBodyKind::Closure.tag().as_bytes());
-    synthetic_data.extend_from_slice(&span.0.to_le_bytes());
-    synthetic_data.extend_from_slice(&span.1.to_le_bytes());
-    for cfg in cfgs {
-        synthetic_data.push(0);
-        synthetic_data.extend_from_slice(cfg.as_bytes());
-    }
-    ClosureBodyId::create(NodeId::Synthetic(Uuid::new_v5(
-        &PROJECT_NAMESPACE_UUID,
-        &synthetic_data,
-    )))
+    ClosureBodyId::create(generate_executable_body_node_id(
+        parent,
+        ExecutableBodyKind::Closure,
+        span,
+        cfgs,
+    ))
+}
+
+/// Generates deterministic parser-local identity for an async block body owner.
+#[inline]
+pub(in crate::parser) fn generate_async_block_body_id(
+    parent: CallBodyOwnerId,
+    span: (usize, usize),
+    cfgs: &[String],
+) -> AsyncBlockBodyId {
+    AsyncBlockBodyId::create(generate_executable_body_node_id(
+        parent,
+        ExecutableBodyKind::AsyncBlock,
+        span,
+        cfgs,
+    ))
 }
 
 /// Parser-internal constructor for path-call site IDs.

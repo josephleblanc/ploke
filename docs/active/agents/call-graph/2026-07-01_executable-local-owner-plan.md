@@ -31,16 +31,20 @@ Done-for-now threshold:
 
 Current slice status:
 
-- Parser-side closure body owners now exist as typed executable-body facts:
-  `ClosureBodyId` inside `ExecutableBodyId`, carried by
-  `CallBodyOwnerId::Executable`.
+- Parser-side closure and async block body owners now exist as typed
+  executable-body facts: `ClosureBodyId` and `AsyncBlockBodyId` inside
+  `ExecutableBodyId`, carried by `CallBodyOwnerId::Executable`.
 - `CodeGraph` stores `ExecutableBodyNode` rows with parent owner, span, cfgs,
   and structural label.
 - Closure bodies are visited under their own executable owner, so
   `|| local_target()` and `(move || local_target())()` produce inner
   closure-owned `PathCall` rows without fabricating an outer-owner call row.
-- Resolver and transform projection deliberately skip executable-owned call
-  sites until DB owner metadata exists.
+- Async blocks are visited under their own executable owner, so
+  `async { local_target(); }` produces an async-block-owned `PathCall` row
+  without fabricating an outer-owner call row.
+- Transform projection persists `call_body_owner` metadata for closure and
+  async block owners, and DB/RAG/TUI callers can materialize fixture-backed
+  executable-local owners as call-context nodes.
 
 ## Existing Pattern Constraints
 
@@ -68,7 +72,8 @@ Already covered:
 
 - Parser extraction descends into ordinary closure bodies under typed
   executable-local owners.
-- Parser extraction intentionally does not descend into `ExprAsync`.
+- Parser extraction descends into fixture-backed `ExprAsync` blocks under typed
+  async block owners.
 - Parser extraction intentionally skips function-local const initializers as
   ownerless for now.
 - Parser and DB tests assert closure/async/local-const body calls do not leak
@@ -78,12 +83,10 @@ Already covered:
 
 Current gap:
 
-- There is a parser-side closure owner identity, but no persisted owner
-  metadata relation yet.
-- Async blocks, async closures, and function-local executable items still do
-  not have nested executable owner records.
-- There is no DB metadata surface for source file, span, parent owner, or owner
-  kind for nested executable bodies.
+- Async closures and function-local executable items still do not have nested
+  executable owner records.
+- Real-corpus closure/async body rows remain future until registered axum
+  fixtures are regenerated/reviewed with executable-owner expectations.
 
 ## Candidate Model
 
@@ -156,8 +159,19 @@ Recommended first code slice:
    Status: future; current DB coverage remains the outer-owner exclusion
    contract.
 
-Do not add RAG/TUI coverage until the DB context row has a stable nested-owner
-metadata contract.
+Current implementation status:
+
+- Closure owner projection, DB query helpers, RAG expansion, TUI call-context,
+  and projected proof-context payloads are implemented for the fixture-backed
+  ordinary closure case.
+- Async block owner projection, DB query helpers, RAG expansion, TUI
+  call-context, and projected proof-context payloads are implemented for the
+  fixture-backed `async { local_target(); }` case.
+- Function-local const initializer calls remain intentionally absent rather
+  than flattened into the enclosing owner.
+
+Do not add additional RAG/TUI coverage for new executable-local shapes until the
+DB context row has a stable nested-owner metadata contract for that shape.
 
 ## Explicit Non-Goals
 

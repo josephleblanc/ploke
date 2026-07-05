@@ -573,6 +573,7 @@ fn call_body_owner_kind(owner: CallBodyOwnerId) -> &'static str {
 fn executable_body_kind(kind: ExecutableBodyKind) -> &'static str {
     match kind {
         ExecutableBodyKind::Closure => "Closure",
+        ExecutableBodyKind::AsyncBlock => "AsyncBlock",
     }
 }
 

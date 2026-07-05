@@ -47,34 +47,49 @@ pub(in crate::unit) fn closure_owner_for_parent(
     db: &Database,
     parent: Uuid,
 ) -> Result<Uuid, DbError> {
+    executable_owner_for_parent(db, parent, "Closure", "closure")
+}
+
+pub(in crate::unit) fn async_block_owner_for_parent(
+    db: &Database,
+    parent: Uuid,
+) -> Result<Uuid, DbError> {
+    executable_owner_for_parent(db, parent, "AsyncBlock", "async_block")
+}
+
+fn executable_owner_for_parent(
+    db: &Database,
+    parent: Uuid,
+    owner_kind: &str,
+    label: &str,
+) -> Result<Uuid, DbError> {
     let rows = db.raw_query(&format!(
-        r#"?[id, owner_kind, parent_kind, label] :=
+        r#"?[id, kind, parent_kind, name] :=
             parent = to_uuid("{parent}"),
             *call_body_owner {{
                 id,
-                owner_kind,
+                owner_kind: kind,
                 parent_id: parent,
                 parent_kind,
-                label @ 'NOW'
-            }}"#
+                label: name @ 'NOW'
+            }},
+            kind = "{owner_kind}",
+            name = "{label}""#
     ))?;
     assert_eq!(
         rows.rows.len(),
         1,
-        "expected exactly one closure call_body_owner row for parent {parent}: {:#?}",
+        "expected exactly one {owner_kind} call_body_owner row for parent {parent}: {:#?}",
         rows.rows
     );
     assert_eq!(
         data_str(&rows.rows[0][1], "call_body_owner.owner_kind"),
-        "Closure"
+        owner_kind
     );
     assert_eq!(
         data_str(&rows.rows[0][2], "call_body_owner.parent_kind"),
         "Function"
     );
-    assert_eq!(
-        data_str(&rows.rows[0][3], "call_body_owner.label"),
-        "closure"
-    );
+    assert_eq!(data_str(&rows.rows[0][3], "call_body_owner.label"), label);
     to_uuid(&rows.rows[0][0])
 }

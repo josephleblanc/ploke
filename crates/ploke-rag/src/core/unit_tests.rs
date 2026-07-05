@@ -465,6 +465,19 @@ mod tests {
     }
 
     fn closure_owner_for_parent(db: &Database, parent: Uuid) -> Result<Uuid, DbError> {
+        executable_owner_for_parent(db, parent, "Closure", "closure")
+    }
+
+    fn async_block_owner_for_parent(db: &Database, parent: Uuid) -> Result<Uuid, DbError> {
+        executable_owner_for_parent(db, parent, "AsyncBlock", "async_block")
+    }
+
+    fn executable_owner_for_parent(
+        db: &Database,
+        parent: Uuid,
+        owner_kind: &str,
+        label: &str,
+    ) -> Result<Uuid, DbError> {
         one_uuid(
             db,
             &format!(
@@ -472,10 +485,10 @@ mod tests {
                     parent = to_uuid("{parent}"),
                     *call_body_owner {{
                         id,
-                        owner_kind: "Closure",
+                        owner_kind: "{owner_kind}",
                         parent_id: parent,
                         parent_kind: "Function",
-                        label: "closure" @ 'NOW'
+                        label: "{label}" @ 'NOW'
                     }}"#
             ),
         )

@@ -10,8 +10,9 @@ use syn::visit::{self, Visit};
 use crate::parser::nodes::{
     CallBodyOwnerId, CallNode, DynamicCallCallee, DynamicCallNode, ExecutableBodyId,
     ExecutableBodyNode, MacroCallNode, MethodCallNode, MethodCallReceiver, PathCallCallee,
-    PathCallNode, generate_closure_body_id, generate_dynamic_call_site_id,
-    generate_macro_call_site_id, generate_method_call_site_id, generate_path_call_site_id,
+    PathCallNode, generate_async_block_body_id, generate_closure_body_id,
+    generate_dynamic_call_site_id, generate_macro_call_site_id, generate_method_call_site_id,
+    generate_path_call_site_id,
 };
 use crate::parser::relations::CallSiteRelation;
 
@@ -337,7 +338,34 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             .append(&mut visitor.executable_bodies);
     }
 
-    fn visit_expr_async(&mut self, _async_block: &'ast syn::ExprAsync) {}
+    fn visit_expr_async(&mut self, async_block: &'ast syn::ExprAsync) {
+        let byte_range = async_block.span().byte_range();
+        let span = (byte_range.start, byte_range.end);
+        let body_id = generate_async_block_body_id(self.owner, span, self.cfgs);
+        let owner = CallBodyOwnerId::Executable(ExecutableBodyId::AsyncBlock(body_id));
+        self.executable_bodies.push(ExecutableBodyNode::new(
+            body_id.into(),
+            self.owner,
+            span,
+            self.cfgs.to_vec(),
+            Some("async_block".to_string()),
+        ));
+
+        let mut visitor = BodyCallVisitor {
+            owner,
+            cfgs: self.cfgs,
+            param_names: &[],
+            local_scopes: Vec::new(),
+            calls: Vec::new(),
+            relations: Vec::new(),
+            executable_bodies: Vec::new(),
+        };
+        visitor.visit_block(&async_block.block);
+        self.calls.append(&mut visitor.calls);
+        self.relations.append(&mut visitor.relations);
+        self.executable_bodies
+            .append(&mut visitor.executable_bodies);
+    }
 }
 
 fn path_segments(path: &syn::Path) -> Vec<String> {
