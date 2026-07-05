@@ -72,3 +72,70 @@ fn fixture_projection_stores_real_returned_function_call_proof_facts() -> Result
 
     Ok(())
 }
+
+#[test]
+fn fixture_projection_stores_returned_closure_blocker_without_dynamic_edge() -> Result<(), DbError>
+{
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "call_returned_closure")?;
+    let maker = function_id_by_name(&db, "make_closure")?;
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        2,
+        "returned closure proof context rows: {context:#?}"
+    );
+
+    let path_row = row_by_path(&context, &["make_closure"]);
+    let path_site = path_row.site.id;
+    let path_span = path_row.site.span;
+    assert_resolved_target(
+        path_row,
+        maker,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let dynamic_row = assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::dynamic(
+            Some(&["make_closure"]),
+            CallStatusKind::Unsupported,
+            "returned closure dynamic proof setup",
+        ),
+    );
+    let dynamic_site = dynamic_row.site.id;
+    let dynamic_span = dynamic_row.site.span;
+
+    let count = db.project_call_proof_facts_for_owner(owner, "bd:fixture-call-graph")?;
+    assert_eq!(count, 5);
+
+    assert_owner_proof_edges(
+        &db,
+        "returned-closure resolved maker call",
+        &[OwnerProofEdge {
+            owner,
+            site: path_site,
+            span: path_span,
+            target: maker,
+        }],
+        "fixture_call_graph/src/lib.rs",
+        "type_resolution_missing",
+        ProofEdgeCount::Exact,
+    )?;
+
+    assert_blocker_proofs(
+        &db,
+        "returned-closure dynamic blocker",
+        &[BlockerProofSite {
+            site: dynamic_site,
+            span: dynamic_span,
+            blocker_reason: "dynamic_dispatch_unbounded",
+        }],
+        "fixture_call_graph/src/lib.rs",
+    )?;
+
+    Ok(())
+}

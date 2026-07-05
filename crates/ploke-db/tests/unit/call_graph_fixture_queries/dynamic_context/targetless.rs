@@ -33,6 +33,41 @@ fn fixture_context_reads_projected_targetless_dynamic_failures() -> Result<(), D
 }
 
 #[test]
+fn fixture_context_reads_projected_returned_closure_dynamic_blocker() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "call_returned_closure")?;
+    let maker = function_id_by_name(&db, "make_closure")?;
+
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        2,
+        "returned closure context rows: {context:#?}"
+    );
+
+    let maker_row = row_by_path(&context, &["make_closure"]);
+    assert_resolved_target(
+        maker_row,
+        maker,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    assert_targetless_row(
+        &context,
+        owner,
+        TargetlessRowCase::dynamic(
+            Some(&["make_closure"]),
+            CallStatusKind::Unsupported,
+            "returned closure dynamic call",
+        ),
+    );
+
+    Ok(())
+}
+
+#[test]
 fn fixture_context_reads_projected_callable_value_path_failures_and_vec_external()
 -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;

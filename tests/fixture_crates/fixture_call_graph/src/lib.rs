@@ -1422,3 +1422,11 @@ pub fn call_initialized_local_alias_instance_method() -> i32 {
     let value = source;
     value.instance_value()
 }
+
+pub fn make_closure() -> impl Fn() -> i32 {
+    || 71
+}
+
+pub fn call_returned_closure() -> i32 {
+    make_closure()()
+}
