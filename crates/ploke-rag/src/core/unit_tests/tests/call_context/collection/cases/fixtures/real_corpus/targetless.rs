@@ -456,3 +456,107 @@ async fn call_context_collection_reads_axum_request_parts_local_receiver_gap() -
 
     Ok(())
 }
+
+#[tokio::test]
+async fn call_context_collection_reads_axum_handler_async_block_owner_gap() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    let parent = method_id_by_file(
+        &db,
+        "call",
+        "self().await.into_response()",
+        "axum/src/handler/mod.rs",
+    )?;
+    let owner = async_block_owner_for_method_parent(&db, parent)?;
+    let call_context = rag.collect_call_context(&[(parent, 1.0), (owner, 1.0)])?;
+
+    if let Some(parent_context) = call_context.get(&parent) {
+        assert!(
+            parent_context.iter().all(|call| {
+                call.callee
+                    != CallCalleeInfo::Path {
+                        path: path(&["self"]),
+                    }
+            }),
+            "Handler::call must not absorb the async-block self() row: {parent_context:#?}"
+        );
+        assert!(
+            parent_context.iter().all(|call| {
+                !matches!(
+                    &call.callee,
+                    CallCalleeInfo::Method { name, .. } if name == "into_response"
+                )
+            }),
+            "Handler::call must not absorb the async-block into_response() row: {parent_context:#?}"
+        );
+    }
+
+    let context = call_context
+        .get(&owner)
+        .expect("Handler::call async block owner should receive outgoing call context");
+    let self_call = context
+        .iter()
+        .filter(|call| {
+            call.owner_id == owner
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: path(&["self"]),
+                    }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        self_call.len(),
+        1,
+        "Handler::call async block should expose one targetless self() path row: {context:#?}"
+    );
+    assert_eq!(self_call[0].status, CallStatusKind::Unsupported);
+    assert_eq!(self_call[0].resolution, None);
+    assert!(
+        self_call[0].targets.is_empty(),
+        "Handler::call async-block self() row should remain targetless: {self_call:#?}"
+    );
+
+    let expected_receiver = Some(CallReceiverInfo::AwaitPathCallResult {
+        path: path(&["self"]),
+    });
+    let into_response = context
+        .iter()
+        .filter(|call| {
+            call.owner_id == owner
+                && call.kind == CallSiteKind::Method
+                && call.callee
+                    == CallCalleeInfo::Method {
+                        name: "into_response".to_string(),
+                        receiver: expected_receiver.clone(),
+                    }
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        into_response.len(),
+        1,
+        "Handler::call async block should expose one targetless awaited into_response row: {context:#?}"
+    );
+
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Source chain:
+    //   axum/src/handler/mod.rs:217 calls
+    //   `Box::pin(async move { self().await.into_response() })`.
+    // Expected traversal: the callable `self()` and awaited
+    // `into_response()` callsites are structurally visible, but they are
+    // owned by the nested async-block executable owner and have zero
+    // traversable targets until callable binding and awaited receiver proof
+    // are modeled.
+    assert_eq!(into_response[0].status, CallStatusKind::Unsupported);
+    assert_eq!(into_response[0].resolution, None);
+    assert!(
+        into_response[0].targets.is_empty(),
+        "Handler::call async-block into_response row should remain targetless: {into_response:#?}"
+    );
+
+    Ok(())
+}

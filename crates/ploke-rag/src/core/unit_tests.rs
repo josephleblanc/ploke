@@ -472,6 +472,10 @@ mod tests {
         executable_owner_for_parent(db, parent, "AsyncBlock", "async_block")
     }
 
+    fn async_block_owner_for_method_parent(db: &Database, parent: Uuid) -> Result<Uuid, DbError> {
+        executable_owner_for_parent_kind(db, parent, "Method", "AsyncBlock", "async_block")
+    }
+
     fn async_closure_owner_for_parent(db: &Database, parent: Uuid) -> Result<Uuid, DbError> {
         executable_owner_for_parent(db, parent, "Closure", "async_closure")
     }
@@ -486,6 +490,16 @@ mod tests {
         owner_kind: &str,
         label: &str,
     ) -> Result<Uuid, DbError> {
+        executable_owner_for_parent_kind(db, parent, "Function", owner_kind, label)
+    }
+
+    fn executable_owner_for_parent_kind(
+        db: &Database,
+        parent: Uuid,
+        parent_kind: &str,
+        owner_kind: &str,
+        label: &str,
+    ) -> Result<Uuid, DbError> {
         one_uuid(
             db,
             &format!(
@@ -495,7 +509,7 @@ mod tests {
                         id,
                         owner_kind: "{owner_kind}",
                         parent_id: parent,
-                        parent_kind: "Function",
+                        parent_kind: "{parent_kind}",
                         label: "{label}" @ 'NOW'
                     }}"#
             ),

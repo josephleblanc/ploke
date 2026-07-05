@@ -410,6 +410,88 @@ async fn proof_context_collection_preserves_axum_request_parts_local_receiver_bl
 }
 
 #[tokio::test]
+async fn proof_context_collection_preserves_axum_handler_async_block_owner_blockers()
+-> Result<(), Error> {
+    init_tracing_once();
+    let db = axum_db()?;
+
+    let parent = method_id_by_file(
+        &db,
+        "call",
+        "self().await.into_response()",
+        "axum/src/handler/mod.rs",
+    )?;
+    let owner = async_block_owner_for_method_parent(&db, parent)?;
+    let projected = db.project_call_proof_facts_for_owner(owner, AXUM_DOMAIN)?;
+    assert!(
+        projected >= 4,
+        "Handler::call async block should project targetless self()/into_response() proof rows"
+    );
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.proof_context_degraded(),
+        "projected axum handler async-block facts should enable RAG proof context"
+    );
+
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let calls = call_context
+        .get(&owner)
+        .expect("Handler::call async block should receive outgoing call context");
+    let self_site = targetless_path_site(
+        calls,
+        owner,
+        &["self"],
+        CallStatusKind::Unsupported,
+        "Handler::call async-block self()",
+    );
+    let into_response_callee = CallCalleeInfo::Method {
+        name: "into_response".to_string(),
+        receiver: Some(CallReceiverInfo::AwaitPathCallResult {
+            path: vec!["self".to_string()],
+        }),
+    };
+    let into_response_site = targetless_method_site(
+        calls,
+        owner,
+        &into_response_callee,
+        "Handler::call async-block into_response()",
+    );
+
+    let proof_context = rag.collect_proof_context(&[(owner, 1.0)])?;
+    let rows = proof_context
+        .get(&owner)
+        .expect("Handler::call async block should receive projected proof rows");
+
+    // Matrix: async block body boundary.
+    // Source chain:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   axum/src/handler/mod.rs:217 calls
+    //   `Box::pin(async move { self().await.into_response() })`.
+    // Expected proof traversal: owner-seeded proof context must include the
+    // call_site plus blocked call_resolution facts for the nested async-block
+    // `self()` and awaited `into_response()` rows. There are zero callee edges
+    // until callable binding and awaited receiver proof can resolve these
+    // targetless sites.
+    assert_site_blocker(
+        rows,
+        owner,
+        self_site,
+        "type_resolution_missing",
+        "Handler::call async-block self()",
+    );
+    assert_site_blocker(
+        rows,
+        owner,
+        into_response_site,
+        "type_resolution_missing",
+        "Handler::call async-block into_response()",
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn proof_context_collection_preserves_axum_dynamic_callable_blockers() -> Result<(), Error> {
     init_tracing_once();
     let db = axum_db()?;
