@@ -215,6 +215,11 @@ pub enum ExpectedPathCallee<'a> {
     ItemPath,
     /// The path call is shadowed by a visible local value binding.
     ValueBinding { path: &'a [&'a str] },
+    /// The path call is shadowed by a visible local closure binding.
+    ClosureBinding {
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+    },
     /// The path call is a visible local binding initialized by another path.
     InitializedValueBinding {
         path: &'a [&'a str],
@@ -228,6 +233,10 @@ impl ExpectedPathCallee<'_> {
             Self::ItemPath => PathCallCallee::ItemPath,
             Self::ValueBinding { path } => PathCallCallee::ValueBinding {
                 path: path.iter().copied().map(String::from).collect(),
+            },
+            Self::ClosureBinding { path, closure_id } => PathCallCallee::ClosureBinding {
+                path: path.iter().copied().map(String::from).collect(),
+                closure_id,
             },
             Self::InitializedValueBinding { path, init_path } => {
                 PathCallCallee::InitializedValueBinding {
@@ -431,6 +440,8 @@ pub enum ExpectedCallOutcome {
     ResolvedDynamicFunctionLocalExact { target: FunctionNodeId },
     /// Resolver should produce a local exact closure edge from a dynamic call site.
     ResolvedDynamicClosureLocalExact { target: ExecutableBodyId },
+    /// Resolver should produce a local exact closure edge from a path call site.
+    ResolvedClosureLocalExact { target: ExecutableBodyId },
     /// Resolver should produce a local exact associated-function edge.
     ResolvedAssociatedFunctionLocalExact { target: MethodNodeId },
     /// Resolver should produce a local exact tuple struct constructor edge.
@@ -488,6 +499,29 @@ impl<'a> ExpectedCallSite<'a> {
             kind: ExpectedCallKind::Path {
                 path,
                 callee: ExpectedPathCallee::ValueBinding { path },
+                arg_count,
+                generic_arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for a path-call expectation shadowed by a closure binding.
+    pub const fn path_closure_binding(
+        path: &'a [&'a str],
+        closure_id: ExecutableBodyId,
+        span: (usize, usize),
+        arg_count: usize,
+        generic_arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Path {
+                path,
+                callee: ExpectedPathCallee::ClosureBinding { path, closure_id },
                 arg_count,
                 generic_arg_count,
             },
@@ -1430,6 +1464,7 @@ fn assert_resolution_outcome(
         | ExpectedCallOutcome::ResolvedFunctionLocalExact { .. }
         | ExpectedCallOutcome::ResolvedDynamicFunctionLocalExact { .. }
         | ExpectedCallOutcome::ResolvedDynamicClosureLocalExact { .. }
+        | ExpectedCallOutcome::ResolvedClosureLocalExact { .. }
         | ExpectedCallOutcome::ResolvedAssociatedFunctionLocalExact { .. }
         | ExpectedCallOutcome::ResolvedTupleStructConstructorLocalExact { .. }
         | ExpectedCallOutcome::ResolvedEnumVariantConstructorLocalExact { .. } => assert!(
@@ -1562,6 +1597,23 @@ fn assert_resolution_outcome(
                 matches!(relations[0], CallRelation::DynamicClosure { source: actual_source, target: actual_target }
                     if actual_source == source && actual_target == target),
                 "expected DynamicClosure edge {source:?} -> {target:?}, got {:?}",
+                relations[0]
+            );
+        }
+        ExpectedCallOutcome::ResolvedClosureLocalExact { target } => {
+            let source = match expected_id {
+                AnyCallSiteId::Path(source) => source,
+                other => panic!("closure relation expected a path call-site ID, got {other:?}"),
+            };
+            assert_eq!(
+                relations.len(),
+                1,
+                "resolved closure call site {expected_id:?} should emit exactly one semantic edge; got {relations:#?}"
+            );
+            assert!(
+                matches!(relations[0], CallRelation::Closure { source: actual_source, target: actual_target }
+                    if actual_source == source && actual_target == target),
+                "expected Closure edge {source:?} -> {target:?}, got {:?}",
                 relations[0]
             );
         }

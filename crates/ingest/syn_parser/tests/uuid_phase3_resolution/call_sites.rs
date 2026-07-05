@@ -63,6 +63,7 @@ const HASHMAP_NEW_CALL_SPAN: (usize, usize) = (3413, 3442);
 const FS_READ_TO_STRING_CALL_SPAN: (usize, usize) = (3838, 3865);
 const PATHBUF_NEW_CALL_SPAN: (usize, usize) = (3930, 3944);
 const ENUM_VARIANT1_CALL_SPAN: (usize, usize) = (4007, 4032);
+const ALIAS_CHECKER_CLOSURE_SPAN: (usize, usize) = (4238, 4290);
 const ALIAS_CHECKER_CALL_SPAN: (usize, usize) = (4316, 4343);
 const DOCUMENTED_MACRO_CALL_SPAN: (usize, usize) = (4894, 4935);
 const DURATION_FROM_SECS_CALL_SPAN: (usize, usize) = (5235, 5257);
@@ -124,6 +125,7 @@ const PARENTHESIZED_LOCAL_TARGET_DYNAMIC_CALL_SPAN: (usize, usize) = (2911, 2927
 const CLOSURE_BODY_LOCAL_TARGET_CALL_SPAN: (usize, usize) = (3011, 3025);
 const ASYNC_BLOCK_LOCAL_TARGET_CALL_SPAN: (usize, usize) = (3129, 3143);
 const TRAIT_ASSOC_FUNCTION_CALL_SPAN: (usize, usize) = (3394, 3461);
+const SHADOWED_LOCAL_TARGET_BINDING_CLOSURE_SPAN: (usize, usize) = (3541, 3547);
 const SHADOWED_LOCAL_TARGET_BINDING_CALL_SPAN: (usize, usize) = (3553, 3567);
 const LOCAL_FUNCTION_ITEM_BINDING_CALL_SPAN: (usize, usize) = (3652, 3655);
 const BLOCK_INITIALIZED_FUNCTION_ITEM_BINDING_CALL_SPAN: (usize, usize) = (29649, 29652);
@@ -1248,20 +1250,30 @@ paranoid_call_site_test!(
 );
 
 paranoid_call_site_test!(
-    fixture_nodes_use_imported_items_records_alias_checker_value_binding_path_call_site,
+    fixture_nodes_use_imported_items_records_alias_checker_closure_binding_path_call_site,
     fixture: "fixture_nodes",
     owner: function {
         module_path: &["crate", "imports"],
         name: "use_imported_items"
     },
-    expected: ExpectedCallSite::path_value_binding(
-        &["alias_checker"],
-        ALIAS_CHECKER_CALL_SPAN,
-        1,
-        0,
-        &[],
-        ExpectedCallOutcome::Unsupported,
-    ),
+    expected: {
+        let (graph, _tree) = crate::common::build_tree_for_tests("fixture_nodes");
+        let owner = crate::common::call_site_paranoid::function_owner_context(
+            &graph,
+            &["crate", "imports"],
+            "use_imported_items",
+        );
+        let closure = closure_body_inside_span(&graph, &owner, ALIAS_CHECKER_CLOSURE_SPAN);
+        ExpectedCallSite::path_closure_binding(
+            &["alias_checker"],
+            closure,
+            ALIAS_CHECKER_CALL_SPAN,
+            1,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedClosureLocalExact { target: closure },
+        )
+    },
 );
 
 paranoid_call_site_test!(
@@ -4958,20 +4970,31 @@ paranoid_call_site_test!(
 );
 
 paranoid_call_site_test!(
-    fixture_call_graph_call_shadowed_local_target_binding_records_value_binding_path_call_site,
+    fixture_call_graph_call_shadowed_local_target_binding_records_closure_binding_path_call_site,
     fixture: "fixture_call_graph",
     owner: function {
         module_path: &["crate"],
         name: "call_shadowed_local_target_binding"
     },
-    expected: ExpectedCallSite::path_value_binding(
-        &["local_target"],
-        SHADOWED_LOCAL_TARGET_BINDING_CALL_SPAN,
-        0,
-        0,
-        &[],
-        ExpectedCallOutcome::Unsupported,
-    ),
+    expected: {
+        let (graph, _tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+        let owner = crate::common::call_site_paranoid::function_owner_context(
+            &graph,
+            &["crate"],
+            "call_shadowed_local_target_binding",
+        );
+        let closure =
+            closure_body_inside_span(&graph, &owner, SHADOWED_LOCAL_TARGET_BINDING_CLOSURE_SPAN);
+        ExpectedCallSite::path_closure_binding(
+            &["local_target"],
+            closure,
+            SHADOWED_LOCAL_TARGET_BINDING_CALL_SPAN,
+            0,
+            0,
+            &[],
+            ExpectedCallOutcome::ResolvedClosureLocalExact { target: closure },
+        )
+    },
 );
 
 paranoid_call_site_test!(
