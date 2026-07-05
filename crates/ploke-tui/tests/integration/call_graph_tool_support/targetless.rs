@@ -591,6 +591,47 @@ pub(crate) fn assert_path_proof(
     );
 }
 
+pub(crate) fn assert_path_blocker_proof(
+    proofs: &[serde_json::Value],
+    owner: Uuid,
+    site_id: Uuid,
+    build_domain: &str,
+    blocker_reason: &str,
+    label: &str,
+    tool: &str,
+) {
+    let owner = owner.to_string();
+    let site_id = site_id.to_string();
+    let rows = proofs
+        .iter()
+        .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
+        .collect::<Vec<_>>();
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_site"
+                && proof.caller_def_id.as_deref() == Some(owner.as_str())
+                && proof.call_site_id.as_deref() == Some(site_id.as_str())
+                && proof.build_domain_id.as_deref() == Some(build_domain)
+        }),
+        "{tool} should return the path call_site proof row for {label}: {proofs:#?}"
+    );
+    assert!(
+        rows.iter().any(|proof| {
+            proof.kind == "call_resolution"
+                && proof.call_site_id.as_deref() == Some(site_id.as_str())
+                && proof.resolution_state.as_deref() == Some("blocked")
+                && proof.blocker_reason.as_deref() == Some(blocker_reason)
+        }),
+        "{tool} should return the {blocker_reason} proof blocker for {label}: {proofs:#?}"
+    );
+    assert!(
+        rows.iter().all(|proof| {
+            proof.kind != "call_edge" || proof.call_site_id.as_deref() != Some(site_id.as_str())
+        }),
+        "{tool} should not fabricate a call_edge for targetless path row {label}: {proofs:#?}"
+    );
+}
+
 fn owner_by_body(
     db: &Database,
     method: &str,

@@ -62,6 +62,15 @@ pub(crate) struct FixtureDynamicCallableToolFixture {
     pub(crate) target: Uuid,
 }
 
+pub(crate) struct CallableBlockerFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) owner_name: &'static str,
+    pub(crate) owner: Uuid,
+    pub(crate) path: Vec<String>,
+    pub(crate) build_domain: &'static str,
+}
+
 pub(crate) struct AxumBodyEmptyToolFixture {
     pub(crate) state: Arc<AppState>,
     pub(crate) file_path: PathBuf,
@@ -268,6 +277,53 @@ impl FixtureDynamicCallableToolFixture {
             owner_name,
             owner,
             target,
+        }
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl CallableBlockerFixture {
+    pub(crate) async fn function_pointer_param() -> Self {
+        Self::new_for_owner("call_function_pointer_param", &["f"]).await
+    }
+
+    async fn new_for_owner(owner_name: &'static str, path: &[&str]) -> Self {
+        let db = Arc::new(Database::new(
+            setup_db_full_multi_embedding("fixture_call_graph").expect("fixture_call_graph db"),
+        ));
+        let crate_root = workspace_root().join("tests/fixture_crates/fixture_call_graph");
+        let module_path = vec!["crate".to_string()];
+        let file_path = crate_root.join("src/lib.rs");
+        let owner = graph_resolve_exact(
+            db.as_ref(),
+            "function",
+            file_path.as_path(),
+            &module_path,
+            owner_name,
+        )
+        .unwrap_or_else(|err| panic!("resolve {owner_name}: {err}"))
+        .pop()
+        .unwrap_or_else(|| panic!("{owner_name} row"))
+        .id;
+        assert_eq!(
+            db.project_call_proof_facts_for_node(owner, "bd:fixture-call-graph")
+                .expect("project callable blocker proof facts"),
+            2,
+            "{owner_name} should project exactly one call_site row and one blocked call_resolution row"
+        );
+
+        let state = app_state_with_rag(db, crate_root).await;
+
+        Self {
+            state,
+            file_path,
+            owner_name,
+            owner,
+            path: path.iter().map(|part| (*part).to_string()).collect(),
+            build_domain: "bd:fixture-call-graph",
         }
     }
 

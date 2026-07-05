@@ -1,6 +1,9 @@
 use std::{borrow::Cow, collections::HashMap, sync::Arc};
 
-use ploke_core::ArcStr;
+use ploke_core::{
+    ArcStr,
+    rag_types::{CallCalleeInfo, CallStatusKind},
+};
 use ploke_db::helpers::{graph_resolve_edges, graph_resolve_exact, list_primary_nodes};
 use ploke_embed::runtime::EmbeddingRuntime;
 use ploke_io::IoManagerHandle;
@@ -27,11 +30,12 @@ use crate::call_graph_tool_support::{
     AxumAwaitReceiverToolFixture, AxumBodyEmptyToolFixture, AxumBoxedIntoRouteToolFixture,
     AxumHandlerCallToolFixture, AxumJsonFromBytesToolFixture, AxumParseAttrsToolFixture,
     AxumRequestExtractPathToolFixture, AxumRunUiTestsToolFixture, CallGraphToolFixture,
-    assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
+    CallableBlockerFixture, assert_await_result_unwrap_context, assert_await_result_unwrap_proof,
     assert_body_empty_incoming_context, assert_boxed_into_route_incoming_context,
     assert_call_path_node, assert_handler_call_incoming_context, assert_incoming_context,
     assert_json_from_bytes_incoming_context, assert_parse_attrs_incoming_context,
-    assert_run_ui_tests_incoming_context, assert_target_proof, assert_two_hop_call_path, ui_field,
+    assert_path_blocker_proof, assert_path_context, assert_run_ui_tests_incoming_context,
+    assert_target_proof, assert_two_hop_call_path, ui_field,
 };
 
 #[tokio::test]
@@ -450,6 +454,79 @@ async fn code_item_edges_returns_call_context_for_call_graph_item() {
             .expect("outgoing count")
             >= 1,
         "code_item_edges should surface outgoing call-context count for owner lookups"
+    );
+}
+
+#[tokio::test]
+async fn code_item_edges_returns_function_pointer_param_blocker() {
+    let fixture = CallableBlockerFixture::function_pointer_param().await;
+    let params = EdgesParams {
+        item_name: Cow::Borrowed(fixture.owner_name),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("function"),
+        module_path: Cow::Borrowed("crate"),
+        owner_trait: None,
+        owner_type: None,
+    };
+
+    let result = CodeItemEdges::execute(params, fixture.ctx("fn-pointer-param-edges"))
+        .await
+        .expect("function pointer param edges");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let call_context = payload
+        .get("node_info")
+        .and_then(|node| node.get("call_context"))
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_context array");
+    let proof_context = payload
+        .get("node_info")
+        .and_then(|node| node.get("proof_context"))
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.proof_context array");
+
+    // Source oracle:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:675
+    //     `call_function_pointer_param(f: fn() -> i32)` calls `f()`.
+    //
+    // Edges should expose the same fail-closed path row as lookup while
+    // preserving zero outgoing call edges for the unproven parameter target.
+    let callee = CallCalleeInfo::Path {
+        path: fixture.path.clone(),
+    };
+    let site_id = assert_path_context(
+        call_context,
+        fixture.owner,
+        &callee,
+        &CallStatusKind::Unsupported,
+        "function pointer parameter f()",
+        "code_item_edges",
+    );
+    assert_path_blocker_proof(
+        proof_context,
+        fixture.owner,
+        site_id,
+        fixture.build_domain,
+        "type_resolution_missing",
+        "function pointer parameter f()",
+        "code_item_edges",
+    );
+    assert!(
+        summary_usize(&payload, "blocked") >= 1,
+        "code_item_edges summary should count the targetless function-pointer parameter row: {payload:#?}"
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert!(
+        ui_field(ui, "call_context_outgoing")
+            .parse::<usize>()
+            .expect("outgoing count")
+            >= 1,
+        "code_item_edges should surface the targetless function-pointer parameter call"
+    );
+    assert_eq!(
+        ui_field(ui, "proof_context"),
+        proof_context.len().to_string()
     );
 }
 
