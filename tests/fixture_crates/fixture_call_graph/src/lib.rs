@@ -1416,3 +1416,9 @@ impl SelfFieldAssocOwner {
         self.value.clone_assoc().instance_value()
     }
 }
+
+pub fn call_initialized_local_alias_instance_method() -> i32 {
+    let source = LocalAssoc;
+    let value = source;
+    value.instance_value()
+}
