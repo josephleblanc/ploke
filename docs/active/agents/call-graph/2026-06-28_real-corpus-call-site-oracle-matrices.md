@@ -43,7 +43,7 @@ High-fanout targets are grouped by identical evidence chain. Before turning high
 | `HandleError::new` | inherent impl `axum/src/error_handling/mod.rs:78`; fn `:80` | local | Called by layer impl and trait default method. |
 | `Handler::call` | trait method `axum/src/handler/mod.rs:153` | local trait | `Handler::call(...)` syntax now resolves to the trait method binding; concrete runtime impl dispatch remains type-parameter dependent. |
 | `FromRequest::from_request` | trait method `axum-core/src/extract/mod.rs:85` | local trait | `E::from_request(...)` and blanket-impl `T::from_request(...)` now resolve to the trait method binding through owner generic bounds; concrete runtime impl dispatch remains type-parameter dependent. |
-| `FromRequestParts::from_request_parts` | trait method `axum-core/src/extract/mod.rs:59` | local trait | `E::from_request_parts(...)` and blanket-impl `T::from_request_parts(...)` now resolve to the trait method binding through owner generic bounds; concrete runtime impl dispatch remains type-parameter dependent. |
+| `FromRequestParts::from_request_parts` | trait method `axum-core/src/extract/mod.rs:59` | local trait | `E::from_request_parts(...)`, blanket-impl `T::from_request_parts(...)`, and async-block-owned `Self::from_request_parts(...)` now resolve to the trait method binding through owner generic bounds; concrete runtime impl dispatch remains type-parameter dependent. |
 
 ## Path, Import, And External Call Oracles
 
@@ -238,7 +238,7 @@ shape and target-centered proof rows.
 | `E::from_request_parts` / `T::from_request_parts` | `axum-core/src/ext_traits/request.rs:305`; `ext_traits/request_parts.rs:133`; `extract/mod.rs:115` | request and request-parts extraction helpers; blanket `FromRequestParts<S> for Result<T, T::Rejection>` | trait `FromRequestParts` at `extract/mod.rs:53`; method `:59`; bounds at call owner -> trait-associated dispatch. |
 | handler macro `$ty::from_request_parts` | `axum/src/handler/mod.rs:242` | generated `Handler::call`, async block starts `:240` | bound `$ty: FromRequestParts<S> + Send` at `:233` -> trait method. |
 | handler macro `$last::from_request` | `axum/src/handler/mod.rs:250` | generated `Handler::call`, async block starts `:240` | bound `$last: FromRequest<S, M> + Send` at `:234` -> trait method. |
-| `FromRequest` ViaParts blanket inner call | `axum-core/src/extract/mod.rs:103` | blanket impl method body, async block | marker `private::ViaParts` at `:31`; blanket impl `:91`; bound `T: FromRequestParts<S>` at `:94`; call `Self::from_request_parts`; regenerated fixture owns this as an async-block path row that remains unsupported and targetless. |
+| `FromRequest` ViaParts blanket inner call | `axum-core/src/extract/mod.rs:103` | blanket impl method body, async block | marker `private::ViaParts` at `:31`; blanket impl `:91`; bound `T: FromRequestParts<S>` at `:94`; call `Self::from_request_parts`; regenerated fixture owns this as an async-block path row that resolves through the parent blanket impl bounds to `FromRequestParts::from_request_parts`. |
 | `FromRef::from_ref` same-crate bounded calls | `axum-core/src/ext_traits/mod.rs:25,45` | axum-core state extraction test helpers | trait `FromRef` at `extract/from_ref.rs:13`; method `:15`; same-crate bounds now traverse to the trait method binding; concrete impl dispatch remains type-dependent. |
 | `FromRef::from_ref` dependency-root bounded calls | `axum/src/extract/state.rs:309`; `middleware/from_extractor.rs:328` | axum state extraction helpers and middleware tests | `FromRef` is imported through `axum_core::extract::FromRef`; both the top-level `State` extractor row and the nested middleware `local_impl_method:from_request_parts` row traverse through parsed workspace dependency proof to the axum-core `FromRef::from_ref` trait method binding. |
 | `ServiceExt::handle_error` user call | `axum/src/routing/tests/handle_error.rs:86` | `handler_service_ext` | `.handle_error(...)` -> trait default `service_ext.rs:42` -> `HandleError::new` call `:43` -> inherent fn `error_handling/mod.rs:80`. |
@@ -250,8 +250,9 @@ shape and target-centered proof rows.
 | async block boundary | `axum/src/handler/mod.rs:217,240` | handler `call` async blocks | calls inside async blocks should not be flattened into outer function owner once nested async owners are modeled. |
 
 Current executable coverage: DB target traversal now asserts the two one-hop
-`E::from_request` / `T::from_request` edges to `FromRequest::from_request`, the three one-hop
-`E::from_request_parts` / `T::from_request_parts` edges to `FromRequestParts::from_request_parts`, and
+`E::from_request` / `T::from_request` edges to `FromRequest::from_request`, the four one-hop
+`E::from_request_parts`, `T::from_request_parts`, and async-block-owned
+`Self::from_request_parts` edges to `FromRequestParts::from_request_parts`, and
 the two same-crate axum-core `FromRef::from_ref` bounded associated-path edges.
 These are trait method binding edges only; concrete runtime impl dispatch
 remains a documented future slice. The top-level axum dependency-root

@@ -14,6 +14,8 @@ fn axum_real_target_trait_associated_paths_reach_trait_methods() -> Result<(), D
     //   axum-core/src/ext_traits/request.rs:305 and
     //   ext_traits/request_parts.rs:133 call `E::from_request_parts`.
     //   axum-core/src/extract/mod.rs:115 calls `T::from_request_parts`.
+    //   axum-core/src/extract/mod.rs:103 calls `Self::from_request_parts`
+    //   from an async-block owner nested inside the ViaParts blanket impl.
     // Intermediate bindings:
     //   axum-core/src/extract/mod.rs:79 declares trait `FromRequest`.
     //   axum-core/src/extract/mod.rs:85 declares `FromRequest::from_request`.
@@ -123,7 +125,7 @@ fn axum_real_target_trait_associated_paths_reach_trait_methods() -> Result<(), D
     let from_request_parts_callers = db.callers_for_target(from_request_parts)?;
     assert_eq!(
         from_request_parts_callers.len(),
-        3,
+        4,
         "FromRequestParts::from_request_parts should expose all inspected bounded callers: {from_request_parts_callers:#?}"
     );
     assert_sites_match_callers(
@@ -630,23 +632,50 @@ fn axum_real_target_trait_object_dispatch_rows_are_documented_gaps() -> Result<(
 }
 
 #[test]
-fn axum_real_target_blanket_via_parts_self_path_is_absent_gap() -> Result<(), DbError> {
+fn axum_real_target_blanket_via_parts_self_path_reaches_trait_method() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
+    let target = method_id_by_trait_name(&db, "FromRequestParts", "from_request_parts")?;
 
     // Matrix: `FromRequest` ViaParts blanket inner call.
     // Source chain:
     //   axum-core/src/extract/mod.rs:103 calls
     //   `Self::from_request_parts(parts, state).await`.
-    // Current model gap: the nested async block now owns the structural
-    // `Self::from_request_parts` path row, but it remains unsupported,
-    // targetless, and non-traversable.
-    assert_targetless_path_owner_kind_rows(
+    // Expected traversal: the nested async block owns the structural path row,
+    // but `Self` associated-function resolution climbs to the parent blanket
+    // impl method and uses the `T: FromRequestParts<S>` bound to reach the
+    // trait method binding.
+    let callers = db.callers_for_target(target)?;
+    let caller = callers
+        .iter()
+        .find(|caller| {
+            caller.site.kind == CallSiteKind::Path
+                && caller.site.path.as_deref() == Some(&path(&["Self", "from_request_parts"]))
+                && matches!(
+                    owner_kind_for_call_body_owner(&db, caller.site.owner_id),
+                    Ok(kind) if kind == "AsyncBlock"
+                )
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "FromRequestParts::from_request_parts should include the async-block Self::from_request_parts caller: {callers:#?}"
+            )
+        });
+    assert_eq!(caller.status.status, CallStatusKind::Resolved);
+    assert_eq!(
+        caller.status.resolution,
+        Some(CallResolutionKind::LocalExact)
+    );
+    assert_eq!(caller.target.target_id, target);
+    assert_eq!(caller.target.relation, CallRelationKind::AssociatedFunction);
+    assert_one_edge_traversal(
         &db,
-        &["Self", "from_request_parts"],
-        CallStatusKind::Unsupported,
-        "AsyncBlock",
-        1,
-        "axum-core/src/extract/mod.rs:103 async-block Self::from_request_parts",
+        TraversalExpectation {
+            label: "axum-core/src/extract/mod.rs:103 async-block Self::from_request_parts",
+            owner: caller.site.owner_id,
+            target,
+            site_id: caller.site.id,
+            expected_edge_count: 1,
+        },
     )?;
     Ok(())
 }

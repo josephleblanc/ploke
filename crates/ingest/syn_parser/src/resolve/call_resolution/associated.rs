@@ -95,7 +95,7 @@ impl CallRelationResolver<'_> {
 
         if type_segment == "Self" {
             return self
-                .resolve_self_associated_function(owner, method_name, type_relations)
+                .resolve_self_associated_function(owner, method_name, arg_count, type_relations)
                 .map(Some);
         }
 
@@ -256,9 +256,10 @@ impl CallRelationResolver<'_> {
         &self,
         owner: CallBodyOwnerId,
         method_name: &str,
+        arg_count: usize,
         type_relations: &[TypeRelation],
     ) -> Result<AssocPathResolution, SynParserError> {
-        let CallBodyOwnerId::Method(owner_method_id) = owner else {
+        let Some(owner_method_id) = self.assoc_owner_method(owner)? else {
             return Ok(AssocPathResolution::Unsupported);
         };
 
@@ -275,7 +276,7 @@ impl CallRelationResolver<'_> {
                         owner,
                         self_target,
                         method_name,
-                        None,
+                        Some(arg_count),
                         type_relations,
                     )
                     .map(|resolution| resolution.unwrap_or(AssocPathResolution::Unsupported));

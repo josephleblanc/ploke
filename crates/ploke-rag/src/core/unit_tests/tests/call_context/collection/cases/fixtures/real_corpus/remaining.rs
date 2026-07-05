@@ -138,7 +138,8 @@ async fn call_context_exact_reads_remaining_axum_supported_matrix_targets() -> R
             // axum-core/src/extract/mod.rs:59 declares
             // FromRequestParts::from_request_parts. ext_traits/request.rs:305
             // and ext_traits/request_parts.rs:133 call `E::...`; extract/mod.rs:115
-            // calls `T::from_request_parts(...)`.
+            // calls `T::from_request_parts(...)`; extract/mod.rs:103 calls
+            // `Self::from_request_parts(...)` from an async-block owner.
             label: "axum-core FromRequestParts::from_request_parts trait-associated paths",
             target: method_id_by_trait_name(&db, "FromRequestParts", "from_request_parts")?,
             expected: vec![
@@ -149,6 +150,11 @@ async fn call_context_exact_reads_remaining_axum_supported_matrix_targets() -> R
                 ),
                 path_shape(
                     &["T", "from_request_parts"],
+                    CallTargetKind::AssociatedFunction,
+                    1,
+                ),
+                path_shape(
+                    &["Self", "from_request_parts"],
                     CallTargetKind::AssociatedFunction,
                     1,
                 ),

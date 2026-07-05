@@ -186,11 +186,14 @@ fn axum_real_target_supported_callers_are_one_hop_traversable() -> Result<(), Db
             // axum-core/src/extract/mod.rs:115 calls
             // `T::from_request_parts(parts, state)` from
             // `T: FromRequestParts<S>`.
+            // axum-core/src/extract/mod.rs:103 calls
+            // `Self::from_request_parts(...)` from the nested async block
+            // inside the ViaParts blanket impl.
             // Callee binding: axum-core/src/extract/mod.rs:59 trait method.
             label: "axum-core FromRequestParts::from_request_parts trait-associated paths",
             target: method_id_by_trait_name(&db, "FromRequestParts", "from_request_parts")?,
-            expected_call_edges: 3,
-            expected_traversal_candidates: 3,
+            expected_call_edges: 4,
+            expected_traversal_candidates: 4,
         },
         ResolvedTraversalCase {
             // axum-core/src/ext_traits/mod.rs:25 and
@@ -388,12 +391,14 @@ fn axum_real_target_supported_callers_match_oracle_shape_counts() -> Result<(), 
             //   axum-core/src/ext_traits/request.rs:305 E::from_request_parts(...)
             //   axum-core/src/ext_traits/request_parts.rs:133 E::from_request_parts(...)
             //   axum-core/src/extract/mod.rs:115 T::from_request_parts(...)
+            //   axum-core/src/extract/mod.rs:103 async-block Self::from_request_parts(...)
             // Callee binding: axum-core/src/extract/mod.rs:59 trait method.
             label: "axum-core FromRequestParts::from_request_parts trait-associated paths",
             target: method_id_by_trait_name(&db, "FromRequestParts", "from_request_parts")?,
             expected: vec![
                 ("path:E::from_request_parts", 2),
                 ("path:T::from_request_parts", 1),
+                ("path:Self::from_request_parts", 1),
             ],
         },
         ResolvedShapeCase {
