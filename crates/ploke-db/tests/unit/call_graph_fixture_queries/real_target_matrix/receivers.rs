@@ -34,13 +34,41 @@ fn axum_core_extract_self_methods_reach_same_impl_methods() -> Result<(), DbErro
         "E::from_request_parts(self, state)",
     )?;
     let expected_targets = [request_target, parts_target];
+    let request_owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "extract",
+        "self.extract_with_state(&())",
+        "axum-core/src/ext_traits/request.rs",
+    )?;
+    let parts_owner = method_id_by_name_body_and_file_suffix(
+        &db,
+        "extract",
+        "self.extract_with_state(&())",
+        "axum-core/src/ext_traits/request_parts.rs",
+    )?;
+    let expected_owner_targets = [
+        (
+            request_owner,
+            request_target,
+            "axum-core/src/ext_traits/request.rs:268",
+        ),
+        (
+            parts_owner,
+            parts_target,
+            "axum-core/src/ext_traits/request_parts.rs:122",
+        ),
+    ];
 
-    for owner in owners {
+    for (owner, expected_target, label) in expected_owner_targets {
         let context = db.call_context_for_owner(owner)?;
         let row = row_by_method_receiver(&context, "extract_with_state", &CallReceiver::SelfValue);
         assert_eq!(row.status.status, CallStatusKind::Resolved);
         assert_eq!(row.status.resolution, Some(CallResolutionKind::LocalExact));
         assert_eq!(row.targets.len(), 1);
+        assert_eq!(
+            row.targets[0].target_id, expected_target,
+            "{label} self.extract_with_state should resolve to the extract_with_state method in the same impl: {row:#?}"
+        );
         assert!(
             expected_targets.contains(&row.targets[0].target_id),
             "self.extract_with_state should resolve to one of the same-impl extract_with_state methods: {row:#?}"
@@ -60,12 +88,24 @@ fn axum_core_extract_self_methods_reach_same_impl_methods() -> Result<(), DbErro
         )?;
     }
 
-    for target in expected_targets {
+    let expected_target_callers = [
+        (
+            request_target,
+            1,
+            "RequestExt::extract_with_state caller at request.rs:268",
+        ),
+        (
+            parts_target,
+            2,
+            "RequestPartsExt::extract_with_state callers at request_parts.rs:122 and request_parts.rs:186",
+        ),
+    ];
+    for (target, expected_count, label) in expected_target_callers {
         let callers = db.callers_for_target(target)?;
         assert_eq!(
             callers.len(),
-            1,
-            "each extract_with_state impl should have exactly one inspected self-method caller"
+            expected_count,
+            "{label} should expose every currently supported incoming method caller: {callers:#?}"
         );
         assert_sites_match_callers(
             &db,
