@@ -136,6 +136,7 @@ async fn code_item_edges_handles_trailing_module_separators() {
         module_path: Cow::Owned(module_path_with_gaps),
         owner_trait: None,
         owner_type: None,
+        parent_name: None,
     };
 
     let result = CodeItemEdges::execute(params, ctx)
@@ -254,6 +255,7 @@ async fn code_item_edges_returns_edges_for_ploke_db_primary_node() {
         module_path: Cow::Owned(focus.module_path.join("::")),
         owner_trait: None,
         owner_type: None,
+        parent_name: None,
     };
     let result = CodeItemEdges::execute(params, ctx)
         .await
@@ -374,6 +376,7 @@ async fn code_item_edges_returns_edges_for_database_struct_in_ploke_db() {
         module_path: Cow::Owned(focus.module_path.join("::")),
         owner_trait: None,
         owner_type: None,
+        parent_name: None,
     };
 
     let result = CodeItemEdges::execute(params, ctx)
@@ -404,6 +407,7 @@ async fn code_item_edges_returns_call_context_for_call_graph_item() {
         module_path: Cow::Borrowed("crate"),
         owner_trait: None,
         owner_type: None,
+        parent_name: None,
     };
 
     let result = CodeItemEdges::execute(params, ctx)
@@ -468,6 +472,7 @@ async fn code_item_edges_returns_function_pointer_param_blocker() {
         module_path: Cow::Borrowed("crate"),
         owner_trait: None,
         owner_type: None,
+        parent_name: None,
     };
 
     let result = CodeItemEdges::execute(params, fixture.ctx("fn-pointer-param-edges"))
@@ -542,6 +547,7 @@ async fn code_item_edges_returns_real_corpus_await_receiver_targetless_row() {
         module_path: Cow::Owned(module_path),
         owner_trait: None,
         owner_type: Some(Cow::Borrowed("ConnLimiter")),
+        parent_name: None,
     };
 
     let result = CodeItemEdges::execute(params, fixture.ctx("axum-await-edges"))
@@ -607,6 +613,7 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
         module_path: Cow::Owned(fixture.start_module_path_arg()),
         owner_trait: None,
         owner_type: Some(Cow::Borrowed("Request")),
+        parent_name: None,
     };
 
     let start_result = CodeItemEdges::execute(
@@ -817,6 +824,7 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
         module_path: Cow::Owned(fixture.target_module_path_arg()),
         owner_trait: Some(Cow::Borrowed("FromRequest")),
         owner_type: None,
+        parent_name: None,
     };
     let target_result = CodeItemEdges::execute(
         target_params,
@@ -1016,6 +1024,7 @@ async fn code_item_edges_returns_incoming_callers_for_call_graph_target() {
         module_path: Cow::Borrowed("crate"),
         owner_trait: None,
         owner_type: None,
+        parent_name: None,
     };
 
     let result = CodeItemEdges::execute(params, ctx)
@@ -1073,6 +1082,7 @@ async fn code_item_edges_returns_real_corpus_body_empty_callers() {
         module_path: Cow::Owned(module_path),
         owner_trait: None,
         owner_type: None,
+        parent_name: None,
     };
 
     let result = CodeItemEdges::execute(params, ctx)
@@ -1147,6 +1157,7 @@ async fn code_item_edges_returns_real_corpus_parse_attrs_callers() {
         module_path: Cow::Owned(module_path),
         owner_trait: None,
         owner_type: None,
+        parent_name: None,
     };
 
     let result = CodeItemEdges::execute(params, ctx)
@@ -1212,6 +1223,7 @@ async fn code_item_edges_returns_real_corpus_json_from_bytes_callers() {
         module_path: Cow::Owned(module_path),
         owner_trait: None,
         owner_type: None,
+        parent_name: None,
     };
 
     let result = CodeItemEdges::execute(params, ctx)
@@ -1275,6 +1287,7 @@ async fn code_item_edges_returns_real_corpus_boxed_into_route_constructor_caller
         module_path: Cow::Owned(module_path),
         owner_trait: None,
         owner_type: None,
+        parent_name: None,
     };
 
     let result = CodeItemEdges::execute(params, ctx)
@@ -1335,6 +1348,7 @@ async fn code_item_edges_returns_real_corpus_run_ui_tests_callers() {
         module_path: Cow::Owned(module_path),
         owner_trait: None,
         owner_type: None,
+        parent_name: None,
     };
 
     let result = CodeItemEdges::execute(params, ctx)
@@ -1397,6 +1411,7 @@ async fn code_item_edges_disambiguates_real_corpus_handler_call_by_owner_trait()
         module_path: Cow::Owned(module_path),
         owner_trait: Some(Cow::Borrowed("Handler")),
         owner_type: None,
+        parent_name: None,
     };
 
     let result = CodeItemEdges::execute(params, fixture.ctx("axum-handler-call-edges"))

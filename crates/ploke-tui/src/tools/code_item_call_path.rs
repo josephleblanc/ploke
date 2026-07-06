@@ -47,6 +47,10 @@ lazy_static::lazy_static! {
                     "owner_type": {
                         "type": "string",
                         "description": lookup_support::OWNER_TYPE_DESC
+                    },
+                    "parent_name": {
+                        "type": "string",
+                        "description": lookup_support::PARENT_NAME_DESC
                     }
                 },
                 "required": ["item_name", "file_path", "node_kind", "module_path"],
@@ -70,6 +74,8 @@ pub struct CodeItemCallPathEndpoint<'a> {
     pub owner_trait: Option<Cow<'a, str>>,
     #[serde(default, borrow)]
     pub owner_type: Option<Cow<'a, str>>,
+    #[serde(default, borrow)]
+    pub parent_name: Option<Cow<'a, str>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -93,6 +99,7 @@ pub struct CodeItemCallPathEndpointOwned {
     pub module_path: String,
     pub owner_trait: Option<String>,
     pub owner_type: Option<String>,
+    pub parent_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -289,6 +296,7 @@ fn endpoint_to_owned(endpoint: &CodeItemCallPathEndpoint<'_>) -> CodeItemCallPat
         module_path: endpoint.module_path.clone().into_owned(),
         owner_trait: endpoint.owner_trait.as_ref().map(ToString::to_string),
         owner_type: endpoint.owner_type.as_ref().map(ToString::to_string),
+        parent_name: endpoint.parent_name.as_ref().map(ToString::to_string),
     }
 }
 
@@ -328,6 +336,7 @@ fn resolve_endpoint(
             module_path: endpoint.module_path.as_ref(),
             owner_trait: endpoint.owner_trait.as_deref(),
             owner_type: endpoint.owner_type.as_deref(),
+            parent_name: endpoint.parent_name.as_deref(),
         },
     )
 }

@@ -101,6 +101,7 @@ async fn assert_lookup_case(case: AxumRemainingTarget, call_id: &'static str) {
         module_path: Cow::Owned(module_path),
         owner_trait: fixture.owner_trait.map(Cow::Borrowed),
         owner_type: fixture.owner_type.map(Cow::Borrowed),
+        parent_name: None,
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx(call_id))
@@ -157,6 +158,7 @@ async fn assert_edges_case(case: AxumRemainingTarget, call_id: &'static str) {
         module_path: Cow::Owned(module_path),
         owner_trait: fixture.owner_trait.map(Cow::Borrowed),
         owner_type: fixture.owner_type.map(Cow::Borrowed),
+        parent_name: None,
     };
 
     let result = CodeItemEdges::execute(params, fixture.ctx(call_id))

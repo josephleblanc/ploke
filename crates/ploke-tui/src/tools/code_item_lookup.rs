@@ -40,6 +40,10 @@ lazy_static::lazy_static! {
                 "type": "string",
                 "description": lookup_support::OWNER_TYPE_DESC
             },
+            "parent_name": {
+                "type": "string",
+                "description": lookup_support::PARENT_NAME_DESC
+            },
         },
         "required": ["item_name", "file_path", "node_kind", "module_path"],
         "additionalProperties": false
@@ -60,6 +64,8 @@ pub struct LookupParams<'a> {
     pub owner_trait: Option<std::borrow::Cow<'a, str>>,
     #[serde(default, borrow)]
     pub owner_type: Option<std::borrow::Cow<'a, str>>,
+    #[serde(default, borrow)]
+    pub parent_name: Option<std::borrow::Cow<'a, str>>,
 }
 
 impl<'a> ValidatesAbolutePath for LookupParams<'a> {
@@ -77,6 +83,7 @@ pub struct LookupParamsOwned {
     pub module_path: String,
     pub owner_trait: Option<String>,
     pub owner_type: Option<String>,
+    pub parent_name: Option<String>,
 }
 
 pub struct CodeItemLookup;
@@ -136,6 +143,7 @@ impl Tool for CodeItemLookup {
             module_path: params.module_path.clone().into_owned(),
             owner_trait: params.owner_trait.as_ref().map(|value| value.to_string()),
             owner_type: params.owner_type.as_ref().map(|value| value.to_string()),
+            parent_name: params.parent_name.as_ref().map(|value| value.to_string()),
         }
     }
 
@@ -185,6 +193,8 @@ impl Tool for CodeItemLookup {
             params.owner_type.as_deref(),
             node_kind,
         )?;
+        let parent =
+            lookup_support::normalize_parent_name(params.parent_name.as_deref(), node_kind)?;
 
         let (primary_root, policy) = ctx
             .state
@@ -238,6 +248,7 @@ for a more fuzzy search."#
             &mod_path,
             params.item_name.as_ref(),
             owner.as_ref(),
+            parent.as_deref(),
         ) {
             Ok(t) if t.len() == 1 => t,
             Ok(t) if t.is_empty() => {
@@ -247,12 +258,13 @@ for a more fuzzy search."#
                     .unwrap_or_default();
                 return Err(ploke_error::Error::Domain(DomainError::Ui {
                     message: format!(
-                        "No code item named `{}` found in {} with module_path {} and node_kind {}{}.{}",
+                        "No code item named `{}` found in {} with module_path {} and node_kind {}{}{}.{}",
                         params.item_name,
                         rel_path.display(),
                         params.module_path,
                         node_kind.as_str(),
                         lookup_support::owner_message(owner.as_ref()),
+                        lookup_support::parent_message(parent.as_deref()),
                         hint
                     ),
                 }));
@@ -263,12 +275,13 @@ for a more fuzzy search."#
                 ));
                 return Err(ploke_error::Error::Domain(DomainError::Ui {
                     message: format!(
-                        "Multiple items matched `{}` in {} with module_path {} and node_kind {}{}; expected a single match. This is an internal error: {}",
+                        "Multiple items matched `{}` in {} with module_path {} and node_kind {}{}{}; expected a single match. This is an internal error: {}",
                         params.item_name,
                         rel_path.display(),
                         params.module_path,
                         node_kind.as_str(),
                         lookup_support::owner_message(owner.as_ref()),
+                        lookup_support::parent_message(parent.as_deref()),
                         err
                     ),
                 }));

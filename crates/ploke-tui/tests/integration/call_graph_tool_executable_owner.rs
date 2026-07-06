@@ -1,7 +1,8 @@
 use std::borrow::Cow;
 
 use ploke_core::rag_types::{
-    CallCalleeInfo, CallContextInfo, CallReceiverInfo, CallSiteKind, CallStatusKind,
+    CallCalleeInfo, CallContextInfo, CallPathInfo, CallReceiverInfo, CallResolutionKind,
+    CallSiteKind, CallStatusKind, CallTargetKind,
 };
 use ploke_tui::tools::{
     Tool,
@@ -22,6 +23,7 @@ async fn code_item_lookup_accepts_local_item_body_owner() {
         module_path: Cow::Owned(fixture.module_path_arg()),
         owner_trait: None,
         owner_type: None,
+        parent_name: None,
     };
 
     let result = CodeItemLookup::execute(params, fixture.ctx("local-item-lookup"))
@@ -66,6 +68,91 @@ async fn code_item_lookup_accepts_local_item_body_owner() {
 }
 
 #[tokio::test]
+async fn code_item_lookup_rejects_ambiguous_local_item_body_owner_without_parent() {
+    let fixture =
+        LocalItemToolFixture::axum_from_extractor_from_request_parts_local_impl_method().await;
+    let params = LookupParams {
+        item_name: Cow::Borrowed("local_impl_method:from_request_parts"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("local_item"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: None,
+    };
+
+    let err =
+        match CodeItemLookup::execute(params, fixture.ctx("ambiguous-local-item-lookup")).await {
+            Ok(result) => panic!(
+                "unqualified local_impl_method:from_request_parts lookup should fail closed: {}",
+                result.content
+            ),
+            Err(err) => err,
+        };
+    let message = err.to_string();
+    assert!(
+        message.contains("Multiple items matched"),
+        "ambiguous local-item lookup should explain the duplicate exact coordinate: {message}"
+    );
+}
+
+#[tokio::test]
+async fn code_item_lookup_parent_qualifies_repeated_local_item_body_owner() {
+    let fixture =
+        LocalItemToolFixture::axum_from_extractor_from_request_parts_local_impl_method().await;
+    let params = LookupParams {
+        item_name: Cow::Borrowed("local_impl_method:from_request_parts"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("local_item"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: Some(Cow::Borrowed("test_from_extractor")),
+    };
+
+    let result = CodeItemLookup::execute(params, fixture.ctx("parent-local-item-lookup"))
+        .await
+        .expect("parent_name should disambiguate repeated local impl method labels");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize ConciseContext");
+    let owner_id = fixture.owner.to_string();
+    assert_eq!(
+        payload.get("id").and_then(serde_json::Value::as_str),
+        Some(owner_id.as_str())
+    );
+    let call_context = payload
+        .get("call_context")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_context array");
+    let calls = call_context
+        .iter()
+        .map(|value| {
+            serde_json::from_value::<CallContextInfo>(value.clone()).expect("call context row")
+        })
+        .collect::<Vec<_>>();
+
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Source chain:
+    //   axum/src/middleware/from_extractor.rs:311 defines
+    //   `test_from_extractor`; lines 317-340 define a function-local impl
+    //   method `from_request_parts`; line 328 calls `Secret::from_ref(state)`.
+    // Expected traversal: parent-qualified exact lookup selects the nested
+    // `local_impl_method:from_request_parts` owner and exposes the resolved
+    // associated-function edge to `FromRef::from_ref`.
+    let row = local_item_secret_from_ref_call(&calls, &fixture);
+    assert_eq!(row.status, CallStatusKind::Resolved);
+    assert_eq!(row.resolution, Some(CallResolutionKind::LocalExact));
+    assert_eq!(row.targets.len(), 1, "{row:#?}");
+    assert_eq!(row.targets[0].relation, CallTargetKind::AssociatedFunction);
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "call_context_outgoing"), "5");
+}
+
+#[tokio::test]
 async fn code_item_edges_accepts_local_item_body_owner() {
     let fixture = LocalItemToolFixture::axum_path_deserialize_local_impl_method().await;
     let params = EdgesParams {
@@ -75,6 +162,7 @@ async fn code_item_edges_accepts_local_item_body_owner() {
         module_path: Cow::Owned(fixture.module_path_arg()),
         owner_trait: None,
         owner_type: None,
+        parent_name: None,
     };
 
     let result = CodeItemEdges::execute(params, fixture.ctx("local-item-edges"))
@@ -122,6 +210,61 @@ async fn code_item_edges_accepts_local_item_body_owner() {
 }
 
 #[tokio::test]
+async fn code_item_edges_parent_qualifies_repeated_local_item_body_owner() {
+    let fixture =
+        LocalItemToolFixture::axum_from_extractor_from_request_parts_local_impl_method().await;
+    let params = EdgesParams {
+        item_name: Cow::Borrowed("local_impl_method:from_request_parts"),
+        file_path: Cow::Owned(fixture.file_path.display().to_string()),
+        node_kind: Cow::Borrowed("local_item"),
+        module_path: Cow::Owned(fixture.module_path_arg()),
+        owner_trait: None,
+        owner_type: None,
+        parent_name: Some(Cow::Borrowed("test_from_extractor")),
+    };
+
+    let result = CodeItemEdges::execute(params, fixture.ctx("parent-local-item-edges"))
+        .await
+        .expect("code_item_edges should accept parent-qualified local item owners");
+    let payload: serde_json::Value =
+        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+    let call_context = payload
+        .get("node_info")
+        .and_then(|node| node.get("call_context"))
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_context array");
+    let calls = call_context
+        .iter()
+        .map(|value| {
+            serde_json::from_value::<CallContextInfo>(value.clone()).expect("call context row")
+        })
+        .collect::<Vec<_>>();
+    let row = local_item_secret_from_ref_call(&calls, &fixture);
+    let target = row.targets[0].target_id;
+    let paths = payload
+        .get("call_paths_from_owner")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_paths_from_owner array")
+        .iter()
+        .map(|value| serde_json::from_value::<CallPathInfo>(value.clone()).expect("call path row"))
+        .collect::<Vec<_>>();
+    assert!(
+        paths.iter().any(|path| {
+            path.start_id == fixture.owner
+                && path.end_id == target
+                && path.depth == 1
+                && path.edges.len() == 1
+                && path.edges[0].call_site_id == row.site_id
+                && path.edges[0].relation == CallTargetKind::AssociatedFunction
+        }),
+        "parent-qualified local item should expose the one-hop Secret::from_ref traversal: {paths:#?}"
+    );
+
+    let ui = result.ui_payload.as_ref().expect("ui payload");
+    assert_eq!(ui_field(ui, "call_paths_from_owner"), "1");
+}
+
+#[tokio::test]
 async fn code_item_call_path_accepts_local_item_body_owner_endpoint() {
     let fixture = LocalItemToolFixture::axum_path_deserialize_local_impl_method().await;
     let endpoint = CodeItemCallPathEndpoint {
@@ -131,6 +274,7 @@ async fn code_item_call_path_accepts_local_item_body_owner_endpoint() {
         module_path: Cow::Owned(fixture.module_path_arg()),
         owner_trait: None,
         owner_type: None,
+        parent_name: None,
     };
     let params = CodeItemCallPathParams {
         source: endpoint.clone(),
@@ -178,6 +322,27 @@ async fn code_item_call_path_accepts_local_item_body_owner_endpoint() {
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(ui_field(ui, "reachable"), "false");
     assert_eq!(ui_field(ui, "paths"), "0");
+}
+
+fn local_item_secret_from_ref_call<'a>(
+    calls: &'a [CallContextInfo],
+    fixture: &LocalItemToolFixture,
+) -> &'a CallContextInfo {
+    calls
+        .iter()
+        .find(|call| {
+            call.owner_id == fixture.owner
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: vec!["Secret".to_string(), "from_ref".to_string()],
+                    }
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "expected local_impl_method:from_request_parts to expose Secret::from_ref() call: {calls:#?}"
+            )
+        })
 }
 
 fn local_item_serde_deserialize_call<'a>(

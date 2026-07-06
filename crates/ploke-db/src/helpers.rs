@@ -87,11 +87,53 @@ pub fn graph_resolve_exact_call_body_owner(
     item_name: &str,
     owner_kind: &str,
 ) -> Result<Vec<EmbeddingData>, DbError> {
+    graph_resolve_exact_call_body_owner_impl(
+        db,
+        file_path,
+        module_path,
+        item_name,
+        owner_kind,
+        None,
+    )
+}
+
+pub fn graph_resolve_exact_call_body_owner_for_parent(
+    db: &Database,
+    file_path: &Path,
+    module_path: &[String],
+    item_name: &str,
+    owner_kind: &str,
+    parent_name: &str,
+) -> Result<Vec<EmbeddingData>, DbError> {
+    graph_resolve_exact_call_body_owner_impl(
+        db,
+        file_path,
+        module_path,
+        item_name,
+        owner_kind,
+        Some(parent_name),
+    )
+}
+
+fn graph_resolve_exact_call_body_owner_impl(
+    db: &Database,
+    file_path: &Path,
+    module_path: &[String],
+    item_name: &str,
+    owner_kind: &str,
+    parent_name: Option<&str>,
+) -> Result<Vec<EmbeddingData>, DbError> {
     let file_path_lit = serde_json::to_string(&file_path.to_string_lossy().to_string())
         .unwrap_or_else(|_| "\"\"".to_string());
     let item_name_lit = serde_json::to_string(&item_name).unwrap_or_else(|_| "\"\"".to_string());
     let owner_kind_lit = serde_json::to_string(&owner_kind).unwrap_or_else(|_| "\"\"".to_string());
     let mod_path_lit = serde_json::to_string(&module_path).unwrap_or_else(|_| "[]".to_string());
+    let parent_predicate = parent_name
+        .map(|name| {
+            let parent_lit = serde_json::to_string(name).unwrap_or_else(|_| "\"\"".to_string());
+            format!(",\n  parent_name == {parent_lit}")
+        })
+        .unwrap_or_default();
     let ancestor_rules = lookup_ancestor_rules_now();
 
     let script = format!(
@@ -101,15 +143,15 @@ module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
 file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
 file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
 
-parent_anchor[parent_id, hash, mod_id] := *function{{ id: parent_id, tracking_hash: hash @ 'NOW' }}, ancestor[parent_id, mod_id]
-parent_anchor[parent_id, hash, mod_id] := *macro{{ id: parent_id, tracking_hash: hash @ 'NOW' }}, ancestor[parent_id, mod_id]
-parent_anchor[parent_id, hash, mod_id] := *method{{ id: parent_id, tracking_hash: hash @ 'NOW' }}, ancestor[parent_id, mod_id]
-parent_anchor[parent_id, hash, mod_id] := *const{{ id: parent_id, tracking_hash: hash @ 'NOW' }}, ancestor[parent_id, mod_id]
-parent_anchor[parent_id, hash, mod_id] := *static{{ id: parent_id, tracking_hash: hash @ 'NOW' }}, ancestor[parent_id, mod_id]
+parent_anchor[parent_id, hash, mod_id, parent_name] := *function{{ id: parent_id, tracking_hash: hash, name: parent_name @ 'NOW' }}, ancestor[parent_id, mod_id]
+parent_anchor[parent_id, hash, mod_id, parent_name] := *macro{{ id: parent_id, tracking_hash: hash, name: parent_name @ 'NOW' }}, ancestor[parent_id, mod_id]
+parent_anchor[parent_id, hash, mod_id, parent_name] := *method{{ id: parent_id, tracking_hash: hash, name: parent_name @ 'NOW' }}, ancestor[parent_id, mod_id]
+parent_anchor[parent_id, hash, mod_id, parent_name] := *const{{ id: parent_id, tracking_hash: hash, name: parent_name @ 'NOW' }}, ancestor[parent_id, mod_id]
+parent_anchor[parent_id, hash, mod_id, parent_name] := *static{{ id: parent_id, tracking_hash: hash, name: parent_name @ 'NOW' }}, ancestor[parent_id, mod_id]
 
 ?[id, name, file_path, file_hash, hash, span, namespace, mod_path] :=
   *call_body_owner{{ id, owner_kind, parent_id, label: name, span @ 'NOW' }},
-  parent_anchor[parent_id, hash, mod_id],
+  parent_anchor[parent_id, hash, mod_id, parent_name],
   *module{{ id: mod_id, path: mod_path @ 'NOW' }},
   file_owner_for_module[mod_id, file_owner_id],
   *module{{ id: file_owner_id, tracking_hash: file_hash @ 'NOW' }},
@@ -117,12 +159,13 @@ parent_anchor[parent_id, hash, mod_id] := *static{{ id: parent_id, tracking_hash
   name == {item_name_lit},
   owner_kind == {owner_kind_lit},
   file_path == {file_path_lit},
-  mod_path == {mod_path_lit}
+  mod_path == {mod_path_lit}{parent_predicate}
 "#,
         item_name_lit = item_name_lit,
         owner_kind_lit = owner_kind_lit,
         file_path_lit = file_path_lit,
         mod_path_lit = mod_path_lit,
+        parent_predicate = parent_predicate,
     );
 
     let qr = db.raw_query(&script)?;

@@ -27,6 +27,7 @@ async fn code_item_lookup_returns_dynamic_targetless_real_corpus_rows() {
             module_path: Cow::Owned(fixture.module_path_arg()),
             owner_trait: None,
             owner_type: Some(Cow::Borrowed(case.owner_type)),
+            parent_name: None,
         };
 
         let result = CodeItemLookup::execute(params, fixture.ctx("dynamic-targetless-lookup"))
@@ -104,6 +105,7 @@ async fn code_item_lookup_returns_route_oneshot_targetless_real_corpus_rows() {
             module_path: Cow::Owned(fixture.module_path_arg()),
             owner_trait: None,
             owner_type: Some(Cow::Borrowed(case.owner_type)),
+            parent_name: None,
         };
 
         let result = CodeItemLookup::execute(params, fixture.ctx("axum-route-lookup"))
@@ -178,6 +180,7 @@ async fn code_item_lookup_returns_size_hint_external_real_corpus_row() {
             module_path: Cow::Owned(fixture.module_path_arg()),
             owner_trait: None,
             owner_type: Some(Cow::Borrowed(case.owner_type)),
+            parent_name: None,
         };
 
         let result = CodeItemLookup::execute(params, fixture.ctx("axum-size-hint-lookup"))
@@ -250,6 +253,7 @@ async fn code_item_lookup_returns_from_ref_dependency_root_path_rows() {
             module_path: Cow::Owned(fixture.module_path_arg()),
             owner_trait: case.owner_trait().map(Cow::Borrowed),
             owner_type: case.owner_type().map(Cow::Borrowed),
+            parent_name: None,
         };
 
         let result = CodeItemLookup::execute(params, fixture.ctx("axum-from-ref-path-lookup"))
@@ -304,6 +308,7 @@ async fn code_item_lookup_returns_request_builder_alias_external_path_rows() {
             module_path: Cow::Owned(fixture.module_path_arg()),
             owner_trait: case.owner_trait().map(Cow::Borrowed),
             owner_type: case.owner_type().map(Cow::Borrowed),
+            parent_name: None,
         };
 
         let result = CodeItemLookup::execute(params, fixture.ctx("axum-request-builder-lookup"))
@@ -378,6 +383,7 @@ async fn code_item_lookup_returns_generated_constructor_frontier_path_rows() {
             module_path: Cow::Owned(fixture.module_path_arg()),
             owner_trait: case.owner_trait().map(Cow::Borrowed),
             owner_type: case.owner_type().map(Cow::Borrowed),
+            parent_name: None,
         };
 
         let result =
@@ -463,6 +469,7 @@ async fn code_item_edges_returns_dynamic_targetless_real_corpus_rows() {
             module_path: Cow::Owned(fixture.module_path_arg()),
             owner_trait: None,
             owner_type: Some(Cow::Borrowed(case.owner_type)),
+            parent_name: None,
         };
 
         let result = CodeItemEdges::execute(params, fixture.ctx("dynamic-targetless-edges"))
@@ -523,6 +530,7 @@ async fn code_item_edges_returns_size_hint_external_real_corpus_row() {
             module_path: Cow::Owned(fixture.module_path_arg()),
             owner_trait: None,
             owner_type: Some(Cow::Borrowed(case.owner_type)),
+            parent_name: None,
         };
 
         let result = CodeItemEdges::execute(params, fixture.ctx("axum-size-hint-edges"))
@@ -585,6 +593,7 @@ async fn code_item_edges_returns_from_ref_dependency_root_path_rows() {
             module_path: Cow::Owned(fixture.module_path_arg()),
             owner_trait: case.owner_trait().map(Cow::Borrowed),
             owner_type: case.owner_type().map(Cow::Borrowed),
+            parent_name: None,
         };
 
         let result = CodeItemEdges::execute(params, fixture.ctx("axum-from-ref-path-edges"))
@@ -629,6 +638,7 @@ async fn code_item_edges_returns_request_builder_alias_external_path_rows() {
             module_path: Cow::Owned(fixture.module_path_arg()),
             owner_trait: case.owner_trait().map(Cow::Borrowed),
             owner_type: case.owner_type().map(Cow::Borrowed),
+            parent_name: None,
         };
 
         let result = CodeItemEdges::execute(params, fixture.ctx("axum-request-builder-edges"))
@@ -692,6 +702,7 @@ async fn code_item_edges_returns_generated_constructor_frontier_path_rows() {
             module_path: Cow::Owned(fixture.module_path_arg()),
             owner_trait: case.owner_trait().map(Cow::Borrowed),
             owner_type: case.owner_type().map(Cow::Borrowed),
+            parent_name: None,
         };
 
         let result =
@@ -757,6 +768,7 @@ async fn code_item_edges_returns_route_oneshot_targetless_real_corpus_rows() {
             module_path: Cow::Owned(fixture.module_path_arg()),
             owner_trait: None,
             owner_type: Some(Cow::Borrowed(case.owner_type)),
+            parent_name: None,
         };
 
         let result = CodeItemEdges::execute(params, fixture.ctx("axum-route-edges"))

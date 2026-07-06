@@ -6,7 +6,8 @@ use ploke_core::{
 use ploke_db::{
     CallPathOptions, Database, DbError,
     helpers::{
-        graph_resolve_exact, graph_resolve_exact_call_body_owner, graph_resolve_exact_impl_method,
+        graph_resolve_exact, graph_resolve_exact_call_body_owner,
+        graph_resolve_exact_call_body_owner_for_parent, graph_resolve_exact_impl_method,
         graph_resolve_exact_trait_impl_method, graph_resolve_exact_trait_method,
         graph_resolve_exact_variant,
     },
@@ -37,6 +38,10 @@ Examples: owner_trait="Handler" for Handler::call; owner_trait="Service<Request>
 pub(super) const OWNER_TYPE_DESC: &str = r#"Optional self type name that owns an inherent method item.
 Use only with node_kind=method. Use alone for inherent methods, or combine with owner_trait for trait impl methods.
 Examples: owner_type="HandleError" for HandleError::new; owner_type="HandlerService" with owner_trait="Service<Request>" for impl Service<Request<B>> for HandlerService::call."#;
+
+pub(super) const PARENT_NAME_DESC: &str = r#"Optional parent item name for executable body-owner nodes.
+Use only with node_kind=closure, node_kind=async_block, or node_kind=local_item when file_path, module_path, item_name, and node_kind would otherwise match multiple nested executable owners.
+Example: parent_name="test_from_extractor" for a function-local impl method such as local_impl_method:from_request_parts."#;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum OwnerQualifier {
@@ -164,6 +169,24 @@ pub(super) fn normalize_owner_qualifier(
     })
 }
 
+pub(super) fn normalize_parent_name(
+    parent_name: Option<&str>,
+    node_kind: NodeKind,
+) -> Result<Option<String>, ploke_error::Error> {
+    let parent = parent_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    if parent.is_some() && node_kind.call_body_owner_kind().is_none() {
+        return Err(ploke_error::Error::Domain(ploke_error::DomainError::Ui {
+            message: "parent_name can only be used with executable body-owner node kinds: `closure`, `async_block`, or `local_item`.".to_string(),
+        }));
+    }
+
+    Ok(parent)
+}
+
 fn parse_owner_trait_qualifier(
     owner_trait: &str,
 ) -> Result<(String, Option<String>), ploke_error::Error> {
@@ -201,6 +224,7 @@ pub(super) fn resolve_exact_item(
     mod_path: &[String],
     item_name: &str,
     owner: Option<&OwnerQualifier>,
+    parent_name: Option<&str>,
 ) -> Result<Vec<EmbeddingData>, DbError> {
     match owner {
         Some(OwnerQualifier::Trait(owner)) => {
@@ -226,7 +250,13 @@ pub(super) fn resolve_exact_item(
             graph_resolve_exact_variant(db, abs_path, mod_path, item_name)
         }
         None if let Some(owner_kind) = node_kind.call_body_owner_kind() => {
-            graph_resolve_exact_call_body_owner(db, abs_path, mod_path, item_name, owner_kind)
+            if let Some(parent) = parent_name {
+                graph_resolve_exact_call_body_owner_for_parent(
+                    db, abs_path, mod_path, item_name, owner_kind, parent,
+                )
+            } else {
+                graph_resolve_exact_call_body_owner(db, abs_path, mod_path, item_name, owner_kind)
+            }
         }
         None => graph_resolve_exact(db, node_kind.as_relation(), abs_path, mod_path, item_name),
     }
@@ -244,6 +274,7 @@ pub(super) struct ExactItemRequest<'a> {
     pub(super) module_path: &'a str,
     pub(super) owner_trait: Option<&'a str>,
     pub(super) owner_type: Option<&'a str>,
+    pub(super) parent_name: Option<&'a str>,
 }
 
 impl<'a> ValidatesAbolutePath for ExactItemRequest<'a> {
@@ -270,6 +301,7 @@ pub(super) fn resolve_exact_tool_item(
         })
     })?;
     let owner = normalize_owner_qualifier(request.owner_trait, request.owner_type, node_kind)?;
+    let parent = normalize_parent_name(request.parent_name, node_kind)?;
     let abs_path = request
         .validate_to_abs_path(primary_root, policy)
         .map_err(|err| {
@@ -305,6 +337,7 @@ for a more fuzzy search."#
         &mod_path,
         request.item_name,
         owner.as_ref(),
+        parent.as_deref(),
     ) {
         Ok(items) if items.len() == 1 => items,
         Ok(items) if items.is_empty() => {
@@ -314,12 +347,13 @@ for a more fuzzy search."#
                 .unwrap_or_default();
             return Err(ploke_error::Error::Domain(DomainError::Ui {
                 message: format!(
-                    "No code item named `{}` found in {} with module_path {} and node_kind {}{}.{}",
+                    "No code item named `{}` found in {} with module_path {} and node_kind {}{}{}.{}",
                     request.item_name,
                     rel_path.display(),
                     request.module_path,
                     node_kind.as_str(),
                     owner_message(owner.as_ref()),
+                    parent_message(parent.as_deref()),
                     hint
                 ),
             }));
@@ -327,12 +361,13 @@ for a more fuzzy search."#
         Ok(_) => {
             return Err(ploke_error::Error::Domain(DomainError::Ui {
                 message: format!(
-                    "Multiple items matched `{}` in {} with module_path {} and node_kind {}{}; expected a single match.",
+                    "Multiple items matched `{}` in {} with module_path {} and node_kind {}{}{}; expected a single match.",
                     request.item_name,
                     rel_path.display(),
                     request.module_path,
                     node_kind.as_str(),
-                    owner_message(owner.as_ref())
+                    owner_message(owner.as_ref()),
+                    parent_message(parent.as_deref())
                 ),
             }));
         }
@@ -353,6 +388,12 @@ for a more fuzzy search."#
 
 pub(super) fn owner_message(owner: Option<&OwnerQualifier>) -> String {
     owner.map(OwnerQualifier::message).unwrap_or_default()
+}
+
+pub(super) fn parent_message(parent_name: Option<&str>) -> String {
+    parent_name
+        .map(|parent| format!(" and parent_name {parent}"))
+        .unwrap_or_default()
 }
 
 pub(super) struct ContextCarriers {

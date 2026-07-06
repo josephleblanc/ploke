@@ -21,6 +21,7 @@ async fn code_item_call_path_returns_real_corpus_two_hop_reachability() {
             module_path: Cow::Owned(fixture.start_module_path_arg()),
             owner_trait: None,
             owner_type: Some(Cow::Borrowed("Request")),
+            parent_name: None,
         },
         target: CodeItemCallPathEndpoint {
             item_name: Cow::Borrowed("from_request"),
@@ -29,6 +30,7 @@ async fn code_item_call_path_returns_real_corpus_two_hop_reachability() {
             module_path: Cow::Owned(fixture.target_module_path_arg()),
             owner_trait: Some(Cow::Borrowed("FromRequest")),
             owner_type: None,
+            parent_name: None,
         },
         max_depth: Some(2),
         max_paths: Some(16),
@@ -154,6 +156,7 @@ async fn code_item_call_path_returns_real_corpus_free_function_two_hop_reachabil
             module_path: Cow::Owned(fixture.module_path_arg()),
             owner_trait: None,
             owner_type: None,
+            parent_name: None,
         },
         target: CodeItemCallPathEndpoint {
             item_name: Cow::Borrowed("extract_fields"),
@@ -162,6 +165,7 @@ async fn code_item_call_path_returns_real_corpus_free_function_two_hop_reachabil
             module_path: Cow::Owned(fixture.module_path_arg()),
             owner_trait: None,
             owner_type: None,
+            parent_name: None,
         },
         max_depth: Some(2),
         max_paths: Some(128),
