@@ -272,6 +272,64 @@ async fn proof_context_collection_preserves_axum_request_builder_alias_frontier(
 }
 
 #[tokio::test]
+async fn proof_context_collection_preserves_axum_generated_constructor_frontier()
+-> Result<(), Error> {
+    init_tracing_once();
+    let db = axum_db()?;
+
+    let owner = method_id_by_name_and_body(&db, "call", "IntoServiceFuture::new(future)")?;
+    let projected = db.project_call_proof_facts_for_owner(owner, AXUM_DOMAIN)?;
+    assert!(
+        projected >= 2,
+        "HandlerService::call should project IntoServiceFuture::new frontier proof rows"
+    );
+
+    let rag = init_test_rag_mock(Arc::clone(&db));
+    assert!(
+        !rag.proof_context_degraded(),
+        "projected axum IntoServiceFuture::new facts should enable RAG proof context"
+    );
+
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let calls = call_context
+        .get(&owner)
+        .expect("HandlerService::call should receive outgoing call context");
+    let site_id = targetless_path_site(
+        calls,
+        owner,
+        &["super", "future", "IntoServiceFuture", "new"],
+        CallStatusKind::Unresolved,
+        "HandlerService::call IntoServiceFuture::new",
+    );
+
+    let rows = rag.exact_proof_context(owner)?;
+
+    // Matrix: macro-generated inherent constructor row.
+    // Source chain:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   axum/src/handler/service.rs:155 binds
+    //   `type Future = super::future::IntoServiceFuture<H::Future>`.
+    //   axum/src/handler/service.rs:174 calls
+    //   `super::future::IntoServiceFuture::new(future)`.
+    //   axum/src/handler/future.rs:11-18 and axum/src/macros.rs:19-20
+    //   generate the concrete inherent `new`.
+    // Expected proof traversal: proof context must include the call_site plus
+    // unresolved call_resolution fact for this exact targetless path row. There
+    // are zero local callee edges until macro-generated inherent items are
+    // modeled as source items.
+    assert_site_resolution_blocker(
+        &rows,
+        owner,
+        site_id,
+        "unresolved",
+        "type_resolution_missing",
+        "HandlerService::call IntoServiceFuture::new",
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn proof_context_collection_preserves_axum_request_parts_local_receiver_blocker()
 -> Result<(), Error> {
     init_tracing_once();
