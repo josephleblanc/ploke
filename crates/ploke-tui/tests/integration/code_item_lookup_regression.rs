@@ -1247,6 +1247,10 @@ async fn code_item_lookup_returns_real_corpus_body_empty_callers() {
         .get("non_test_callers")
         .and_then(serde_json::Value::as_array)
         .expect("call_impact non_test_callers array");
+    let impact_source_crates = impact
+        .get("source_crates")
+        .and_then(serde_json::Value::as_array)
+        .expect("call_impact source_crates array");
 
     // Real-corpus oracle matrix:
     //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
@@ -1293,6 +1297,10 @@ async fn code_item_lookup_returns_real_corpus_body_empty_callers() {
     assert_eq!(
         ui_field(ui, "impact_non_test_callers"),
         impact_non_test_callers.len().to_string()
+    );
+    assert_eq!(
+        ui_field(ui, "impact_source_crates"),
+        impact_source_crates.len().to_string()
     );
     assert!(
         ui_field(ui, "proof_context")

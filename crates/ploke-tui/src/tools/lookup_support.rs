@@ -588,6 +588,10 @@ pub(super) fn with_call_usage_fields(
             count(impact.map(|info| info.source_files.len())),
         )
         .with_field(
+            "impact_source_crates",
+            count(impact.map(|info| info.source_crates.len())),
+        )
+        .with_field(
             "impact_source_modules",
             count(impact.map(|info| info.source_modules.len())),
         )
@@ -635,6 +639,10 @@ pub(super) fn with_call_usage_fields(
         .with_field(
             "reach_source_files",
             count(reach.map(|info| info.source_files.len())),
+        )
+        .with_field(
+            "reach_source_crates",
+            count(reach.map(|info| info.source_crates.len())),
         )
         .with_field(
             "reach_source_modules",

@@ -1157,6 +1157,16 @@ fn axum_usage_questions_report_body_empty_component_impact() -> Result<(), DbErr
             "Body::empty component impact source files",
         );
     }
+    assert_source_crate(
+        &report.source_crates,
+        "axum-core",
+        "Body::empty component impact source crates",
+    );
+    assert_source_crate(
+        &report.source_crates,
+        "axum",
+        "Body::empty component impact source crates",
+    );
     for module in [
         &["crate", "body"][..],
         &["crate", "ext_traits", "request"][..],
@@ -1289,6 +1299,13 @@ fn assert_source_file(files: &[String], suffix: &str, label: &str) {
     assert!(
         files.iter().any(|path| path.ends_with(suffix)),
         "{label} should include source file ending with {suffix:?}: {files:#?}"
+    );
+}
+
+fn assert_source_crate(crates: &[String], expected: &str, label: &str) {
+    assert!(
+        crates.iter().any(|name| name == expected),
+        "{label} should include crate {expected:?}: {crates:#?}"
     );
 }
 

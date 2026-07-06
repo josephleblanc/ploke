@@ -1362,6 +1362,16 @@ async fn call_impact_exact_reads_axum_usage_question_summary() -> Result<(), Err
             "RAG Body::empty component impact source files",
         );
     }
+    assert_call_source_crate(
+        &body_report.source_crates,
+        "axum-core",
+        "RAG Body::empty component impact source crates",
+    );
+    assert_call_source_crate(
+        &body_report.source_crates,
+        "axum",
+        "RAG Body::empty component impact source crates",
+    );
     for module in [
         &["crate", "body"][..],
         &["crate", "ext_traits", "request"][..],
@@ -2100,6 +2110,13 @@ fn assert_call_source_file(
     assert!(
         files.iter().any(|file| file.as_ref().ends_with(suffix)),
         "{label} should include file ending with {suffix:?}: {files:#?}"
+    );
+}
+
+fn assert_call_source_crate(crates: &[String], expected: &str, label: &str) {
+    assert!(
+        crates.iter().any(|name| name == expected),
+        "{label} should include crate {expected:?}: {crates:#?}"
     );
 }
 

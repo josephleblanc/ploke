@@ -421,6 +421,8 @@ pub struct CallImpactInfo {
     pub non_test_callers: Vec<CallNodeInfo>,
     pub source_files: Vec<NodeFilepath>,
     #[serde(default)]
+    pub source_crates: Vec<String>,
+    #[serde(default)]
     pub source_modules: Vec<Vec<String>>,
 }
 
@@ -443,6 +445,8 @@ pub struct CallReachInfo {
     #[serde(default)]
     pub ambiguous_frontier_calls: Vec<CallContextInfo>,
     pub source_files: Vec<NodeFilepath>,
+    #[serde(default)]
+    pub source_crates: Vec<String>,
     #[serde(default)]
     pub source_modules: Vec<Vec<String>>,
 }

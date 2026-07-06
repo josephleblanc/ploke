@@ -170,6 +170,7 @@ pub struct CallImpactReport {
     pub test_callers: Vec<CallNodeInfo>,
     pub non_test_callers: Vec<CallNodeInfo>,
     pub source_files: Vec<String>,
+    pub source_crates: Vec<String>,
     pub source_modules: Vec<Vec<String>>,
 }
 
@@ -192,5 +193,6 @@ pub struct CallReachReport {
     #[serde(default)]
     pub ambiguous_frontier_calls: Vec<CallContextRow>,
     pub source_files: Vec<String>,
+    pub source_crates: Vec<String>,
     pub source_modules: Vec<Vec<String>>,
 }

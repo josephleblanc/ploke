@@ -1233,6 +1233,10 @@ async fn code_item_edges_returns_real_corpus_body_empty_callers() {
         .and_then(|node| node.get("call_impact"))
         .and_then(serde_json::Value::as_object)
         .expect("node_info.call_impact object");
+    let impact_source_crates = impact
+        .get("source_crates")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_impact source_crates array");
 
     // Real-corpus oracle matrix:
     //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
@@ -1264,6 +1268,10 @@ async fn code_item_edges_returns_real_corpus_body_empty_callers() {
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
     assert_eq!(ui_field(ui, "call_context_incoming"), "23");
+    assert_eq!(
+        ui_field(ui, "impact_source_crates"),
+        impact_source_crates.len().to_string()
+    );
     assert!(
         ui_field(ui, "proof_context")
             .parse::<usize>()

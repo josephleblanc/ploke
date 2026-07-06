@@ -1891,6 +1891,7 @@ pub(crate) fn assert_body_empty_impact_summary(
     let direct_call_sites = impact_array(impact, "direct_call_sites", label);
     let callsite_buckets = impact_array(impact, "callsite_buckets", label);
     let source_files = impact_array(impact, "source_files", label);
+    let source_crates = impact_array(impact, "source_crates", label);
     let source_modules = impact_array(impact, "source_modules", label);
 
     assert_eq!(
@@ -1951,6 +1952,8 @@ pub(crate) fn assert_body_empty_impact_summary(
     ] {
         assert_source_file_json(source_files, suffix, label);
     }
+    assert_source_crate_json(source_crates, "axum-core", label);
+    assert_source_crate_json(source_crates, "axum", label);
     for module in [
         &["crate", "body"][..],
         &["crate", "ext_traits", "request"][..],
@@ -1988,6 +1991,16 @@ fn assert_source_file_json(files: &[serde_json::Value], suffix: &str, label: &st
             .filter_map(serde_json::Value::as_str)
             .any(|path| path.ends_with(suffix)),
         "{label} Body::empty impact should include source file ending with {suffix:?}: {files:#?}"
+    );
+}
+
+fn assert_source_crate_json(crates: &[serde_json::Value], expected: &str, label: &str) {
+    assert!(
+        crates
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .any(|name| name == expected),
+        "{label} Body::empty impact should include source crate {expected:?}: {crates:#?}"
     );
 }
 

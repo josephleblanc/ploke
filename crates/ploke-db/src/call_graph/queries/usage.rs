@@ -71,6 +71,7 @@ impl Database {
             test_callers,
             non_test_callers,
             source_files: sources.files,
+            source_crates: sources.crates,
             source_modules: sources.modules,
         })
     }
@@ -149,6 +150,7 @@ impl Database {
             unresolved_frontier_calls,
             ambiguous_frontier_calls,
             source_files: sources.files,
+            source_crates: sources.crates,
             source_modules: sources.modules,
         })
     }
@@ -463,6 +465,7 @@ fn node_info_for_paths(
 
 struct SummarySources {
     files: Vec<String>,
+    crates: Vec<String>,
     modules: Vec<Vec<String>>,
 }
 
@@ -472,8 +475,10 @@ fn sources_for_summary<'a>(
     nodes: impl Iterator<Item = &'a CallNodeInfo>,
 ) -> Result<SummarySources, DbError> {
     let mut files = BTreeSet::new();
+    let mut node_ids = BTreeSet::new();
     let mut modules = BTreeSet::new();
     for node in nodes {
+        node_ids.insert(node.id);
         files.insert(node.file_path.clone());
         modules.insert(node.module_path.clone());
     }
@@ -494,12 +499,69 @@ fn sources_for_summary<'a>(
                 "missing call graph node metadata for summary source file {node_id}"
             ))
         })?;
+        node_ids.insert(node_id);
         files.insert(info.file_path);
         modules.insert(info.module_path);
     }
+    let crates = source_crates_for_nodes(db, &node_ids)?;
 
     Ok(SummarySources {
         files: files.into_iter().collect(),
+        crates,
         modules: modules.into_iter().collect(),
     })
+}
+
+fn source_crates_for_nodes(
+    db: &Database,
+    node_ids: &BTreeSet<Uuid>,
+) -> Result<Vec<String>, DbError> {
+    if node_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let input_rows = node_ids
+        .iter()
+        .map(|id| format!("[to_uuid(\"{id}\")]"))
+        .collect::<Vec<_>>()
+        .join(",\n");
+    let script = format!(
+        r#"
+input[id] <- [
+{input_rows}
+]
+
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
+file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
+
+node_anchor[id, mod_id] := *function{{ id @ 'NOW' }}, ancestor[id, mod_id]
+node_anchor[id, mod_id] := *macro{{ id @ 'NOW' }}, ancestor[id, mod_id]
+node_anchor[id, mod_id] := *method{{ id @ 'NOW' }}, ancestor[id, mod_id]
+node_anchor[id, mod_id] := *const{{ id @ 'NOW' }}, ancestor[id, mod_id]
+node_anchor[id, mod_id] := *static{{ id @ 'NOW' }}, ancestor[id, mod_id]
+node_anchor[id, mod_id] := *call_body_owner{{ id, parent_id @ 'NOW' }}, node_anchor[parent_id, mod_id]
+node_anchor[id, mod_id] := *struct{{ id @ 'NOW' }}, ancestor[id, mod_id]
+node_anchor[id, mod_id] := *variant{{ id, owner_id: enum_id @ 'NOW' }}, ancestor[enum_id, mod_id]
+
+?[name] :=
+  input[id],
+  node_anchor[id, mod_id],
+  file_owner_for_module[mod_id, file_owner_id],
+  *file_mod{{ owner_id: file_owner_id, namespace @ 'NOW' }},
+  *crate_context{{ name, namespace @ 'NOW' }}
+
+:sort name
+"#
+    );
+
+    let rows = db.run_script(&script, BTreeMap::new(), ScriptMutability::Immutable)?;
+    rows.rows
+        .iter()
+        .map(|row| to_string(&row[0]))
+        .collect::<Result<Vec<_>, DbError>>()
 }
