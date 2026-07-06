@@ -394,7 +394,7 @@ async fn call_context_exact_reads_chrono_alias_constructor_callers() -> Result<(
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        11,
+        12,
         "current chrono fixture should resolve all MappedLocalTime::Single alias constructor callers: {callers:#?}"
     );
 
@@ -421,14 +421,14 @@ async fn call_context_exact_reads_chrono_alias_constructor_callers() -> Result<(
     //   `MappedLocalTime<T> = LocalResult<T>`.
     //   chrono/src/offset/mod.rs:81-83 defines `LocalResult::Single(T)`.
     //   chrono/src/offset/mod.rs:{143,156,468,502,535},
-    //   offset/{fixed.rs:135,138,utc.rs:122,125}, and
+    //   offset/{fixed.rs:135,138,utc.rs:122,125,local/unix.rs:159}, and
     //   datetime/tests.rs:{75,79} call `MappedLocalTime::Single(...)`.
     // Expected traversal: RAG exact call context preserves every resolved
     // alias constructor caller-site identity exposed by
     // `Database::callers_for_target`.
     assert_eq!(
         incoming.len(),
-        11,
+        12,
         "RAG exact call context should expose all chrono alias constructor edges: {context:#?}"
     );
 

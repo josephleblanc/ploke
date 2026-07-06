@@ -22,9 +22,12 @@ fn chrono_alias_constructor_rows_reach_local_result_single() -> Result<(), DbErr
     //   chrono/src/offset/mod.rs:81-83 defines `LocalResult::Single(T)`.
     //   chrono/src/offset/mod.rs:{143,156,468,502,535} call
     //   `MappedLocalTime::Single(...)` through the alias.
-    //   chrono/src/offset/{fixed.rs:135,138,utc.rs:122,125} and
-    //   chrono/src/datetime/tests.rs:{75,79} are additional fixture-projected
-    //   direct constructor rows.
+    //   chrono/src/offset/{fixed.rs:135,138,utc.rs:122,125},
+    //   chrono/src/offset/local/unix.rs:159, and
+    //   chrono/src/datetime/tests.rs:{75,79} are additional
+    //   fixture-projected direct constructor rows. The Unix row is visible in
+    //   the regenerated fixture because bare `#[cfg(unix)]` is now evaluated
+    //   as target-family cfg evidence.
     //
     // Expected traversal: every alias path call now reaches the underlying
     // `LocalResult::Single` enum variant through the existing type-alias
@@ -35,7 +38,7 @@ fn chrono_alias_constructor_rows_reach_local_result_single() -> Result<(), DbErr
     let callers = db.callers_for_target(target)?;
     assert_eq!(
         callers.len(),
-        11,
+        12,
         "LocalResult::Single should expose all inspected alias constructor callers: {callers:#?}"
     );
     assert_sites_match_callers(
@@ -115,6 +118,13 @@ fn chrono_alias_constructor_rows_reach_local_result_single() -> Result<(), DbErr
             expected_count: 1,
         },
         AliasCase {
+            owner: "offset",
+            marker: "MappedLocalTime::Single(offset)",
+            file_suffix: "src/offset/local/unix.rs",
+            label: "chrono/src/offset/local/unix.rs:159 MappedLocalTime::Single",
+            expected_count: 1,
+        },
+        AliasCase {
             owner: "offset_from_local_datetime",
             marker: "Unexpected local time {local}",
             file_suffix: "src/datetime/tests.rs",
@@ -161,7 +171,7 @@ fn chrono_alias_constructor_rows_reach_local_result_single() -> Result<(), DbErr
         checked_sites += sites.len();
     }
     assert_eq!(
-        checked_sites, 11,
+        checked_sites, 12,
         "source-oracle case table should cover every resolved alias constructor edge"
     );
 

@@ -1684,10 +1684,10 @@ async fn code_item_lookup_returns_real_corpus_chrono_alias_constructor_callers()
     //   `MappedLocalTime<T> = LocalResult<T>`.
     //   chrono/src/offset/mod.rs:81-83 defines `LocalResult::Single(T)`.
     //   chrono/src/offset/mod.rs:{143,156,468,502,535},
-    //   offset/{fixed.rs:135,138,utc.rs:122,125}, and
+    //   offset/{fixed.rs:135,138,utc.rs:122,125,local/unix.rs:159}, and
     //   datetime/tests.rs:{75,79} call `MappedLocalTime::Single(...)`.
     // Expected tool traversal: exact lookup of the underlying enum-variant
-    // target exposes all 11 incoming alias constructor edges and proof rows.
+    // target exposes all 12 incoming alias constructor edges and proof rows.
     assert_expected_path_incoming_context(
         call_context,
         &fixture.callers,
@@ -1705,7 +1705,7 @@ async fn code_item_lookup_returns_real_corpus_chrono_alias_constructor_callers()
     }
 
     let ui = result.ui_payload.as_ref().expect("ui payload");
-    assert_eq!(ui_field(ui, "call_context_incoming"), "11");
+    assert_eq!(ui_field(ui, "call_context_incoming"), "12");
     assert!(
         ui_field(ui, "proof_context")
             .parse::<usize>()

@@ -705,7 +705,7 @@ impl ChronoAliasConstructorToolFixture {
             .collect::<Vec<_>>();
         assert_eq!(
             callers.len(),
-            11,
+            12,
             "chrono LocalResult::Single should expose all alias constructor caller rows"
         );
         assert!(
