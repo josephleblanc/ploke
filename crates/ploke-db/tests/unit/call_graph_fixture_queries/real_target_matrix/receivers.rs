@@ -1183,14 +1183,14 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
             label: "axum-core/src/ext_traits/request.rs:375",
             module_path: &["crate", "ext_traits", "request", "tests"],
             owner: "extract_parts_without_state",
-            status: CallStatusKind::Unresolved,
+            status: CallStatusKind::External,
         },
         RequestBuilderCase {
             // axum-core/src/ext_traits/request.rs:388
             label: "axum-core/src/ext_traits/request.rs:388",
             module_path: &["crate", "ext_traits", "request", "tests"],
             owner: "extract_parts_with_state",
-            status: CallStatusKind::Unresolved,
+            status: CallStatusKind::External,
         },
         RequestBuilderCase {
             // axum/src/middleware/from_fn.rs:411
@@ -1238,8 +1238,8 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
         CallStatusKind::Unsupported,
         "axum/src/middleware/from_fn.rs:411",
     )?;
-    assert_targetless_path_rows(&db, &["Request", "builder"], CallStatusKind::External, 12)?;
-    assert_targetless_path_rows(&db, &["Request", "builder"], CallStatusKind::Unresolved, 2)?;
+    assert_targetless_path_rows(&db, &["Request", "builder"], CallStatusKind::External, 14)?;
+    assert_targetless_path_rows(&db, &["Request", "builder"], CallStatusKind::Unresolved, 0)?;
     assert_targetless_path_rows(&db, &["Request", "builder"], CallStatusKind::Unsupported, 0)?;
     assert_targetless_path_line_fanout(
         &db,
@@ -1258,6 +1258,10 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
             SourceLineFanout {
                 file_suffix: "axum/src/form.rs",
                 lines: &[156, 164, 226],
+            },
+            SourceLineFanout {
+                file_suffix: "axum-core/src/ext_traits/request.rs",
+                lines: &[375, 388],
             },
             SourceLineFanout {
                 file_suffix: "axum/src/middleware/from_fn.rs",
@@ -1286,10 +1290,7 @@ fn axum_real_target_result_receiver_chains_are_documented_gaps() -> Result<(), D
         &CORPUS_AXUM_CALL_GRAPH,
         &["Request", "builder"],
         CallStatusKind::Unresolved,
-        &[SourceLineFanout {
-            file_suffix: "axum-core/src/ext_traits/request.rs",
-            lines: &[375, 388],
-        }],
+        &[],
     )?;
     assert_targetless_path_line_fanout(
         &db,

@@ -88,7 +88,7 @@ impl CallRelationResolver<'_> {
             return Ok(());
         }
 
-        if self.is_external_workspace_assoc_path(call.owner, &call.path)? {
+        if self.is_external_alias_assoc_path(call.owner, &call.path, type_relations)? {
             statuses.push(CallResolutionStatus::External { source });
             return Ok(());
         }

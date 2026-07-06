@@ -43,10 +43,11 @@ impl CallRelationResolver<'_> {
         self.type_use_is_external(owner, impl_node.self_type)
     }
 
-    pub(super) fn is_external_workspace_assoc_path(
+    pub(super) fn is_external_alias_assoc_path(
         &self,
         owner: CallBodyOwnerId,
         path: &[String],
+        type_relations: &[TypeRelation],
     ) -> Result<bool, SynParserError> {
         let Some((_method_name, type_path)) = path.split_last() else {
             return Ok(false);
@@ -58,12 +59,31 @@ impl CallRelationResolver<'_> {
             return Ok(false);
         }
 
+        if self.local_type_target_alias_is_external(owner, type_segment, type_relations)? {
+            return Ok(true);
+        }
+
         match self.resolve_workspace_type_import(owner, type_segment)? {
             WorkspaceTypeResolution::Resolved(candidate) => {
                 Self::workspace_type_target_alias_is_external(candidate)
             }
             WorkspaceTypeResolution::Unresolved => Ok(false),
             WorkspaceTypeResolution::Ambiguous => Ok(false),
+        }
+    }
+
+    fn local_type_target_alias_is_external(
+        &self,
+        owner: CallBodyOwnerId,
+        type_segment: &str,
+        type_relations: &[TypeRelation],
+    ) -> Result<bool, SynParserError> {
+        match self.resolve_local_type_segment(owner, type_segment)? {
+            LocalTypeResolution::Resolved(target) => {
+                self.ordinary_type_target_alias_is_external(target, type_relations)
+            }
+            LocalTypeResolution::Unresolved => Ok(false),
+            LocalTypeResolution::Ambiguous => Ok(false),
         }
     }
 
