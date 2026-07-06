@@ -1546,3 +1546,8 @@ fn call_single_indexed_tuple_field_function_param(holder: TupleCallbackArrayHold
 pub fn call_single_indexed_tuple_field_function_param_with_local_target() -> i32 {
     call_single_indexed_tuple_field_function_param(TupleCallbackArrayHolder([local_target]))
 }
+
+pub fn call_tuple_pattern_local_instance_method() -> i32 {
+    let (value, _) = (LocalAssoc, 0);
+    value.instance_value()
+}

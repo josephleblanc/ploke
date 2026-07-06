@@ -55,6 +55,13 @@ fn fixture_context_reads_projected_local_and_alias_instance_method_receivers() -
             },
         ),
         (
+            "call_tuple_pattern_local_instance_method",
+            CallReceiver::InitializedLocalBinding {
+                name: "value".to_string(),
+                init_path: path(&["LocalAssoc"]),
+            },
+        ),
+        (
             "call_parenthesized_typed_local_instance_method",
             CallReceiver::TypedLocalBinding {
                 name: "value".to_string(),

@@ -285,16 +285,16 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             }
         }
 
-        if let Some(binding) = local_binding_proof(
+        let bindings = local_binding_proofs(
             &local.pat,
             init_expr,
             self.owner,
             self.cfgs,
             self.param_names,
             &self.local_scopes,
-        ) && let Some(scope) = self.local_scopes.last_mut()
-        {
-            scope.push(binding);
+        );
+        if let Some(scope) = self.local_scopes.last_mut() {
+            scope.extend(bindings);
         }
     }
 
@@ -1633,6 +1633,53 @@ fn local_binding_proof(
         }
         _ => None,
     }
+}
+
+fn local_binding_proofs(
+    pat: &syn::Pat,
+    init_expr: Option<&syn::Expr>,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Vec<LocalBindingProof> {
+    if let Some(proof) = local_binding_proof(pat, init_expr, owner, cfgs, param_names, local_scopes)
+    {
+        return vec![proof];
+    }
+
+    tuple_binding_proofs(pat, init_expr, owner, cfgs, param_names, local_scopes)
+}
+
+fn tuple_binding_proofs(
+    pat: &syn::Pat,
+    init_expr: Option<&syn::Expr>,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Vec<LocalBindingProof> {
+    let syn::Pat::Tuple(pattern) = pat else {
+        return Vec::new();
+    };
+    let Some(init_expr) = init_expr else {
+        return Vec::new();
+    };
+    let syn::Expr::Tuple(init) = unparen_expr(init_expr) else {
+        return Vec::new();
+    };
+    if pattern.elems.len() != init.elems.len() {
+        return Vec::new();
+    }
+
+    pattern
+        .elems
+        .iter()
+        .zip(init.elems.iter())
+        .filter_map(|(pat, expr)| {
+            local_binding_proof(pat, Some(expr), owner, cfgs, param_names, local_scopes)
+        })
+        .collect()
 }
 
 fn closure_binding_id(
