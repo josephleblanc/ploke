@@ -56,7 +56,7 @@ impl CallRelationResolver<'_> {
         }
     }
 
-    fn type_use_is_external(
+    pub(super) fn type_use_is_external(
         &self,
         owner: CallBodyOwnerId,
         type_id: OrdinaryTypeUseId,

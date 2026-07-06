@@ -167,7 +167,7 @@ async fn code_item_lookup_returns_route_oneshot_targetless_real_corpus_rows() {
 }
 
 #[tokio::test]
-async fn code_item_lookup_returns_size_hint_targetless_real_corpus_row() {
+async fn code_item_lookup_returns_size_hint_external_real_corpus_row() {
     for case in ReceiverToolCase::SIZE_HINT {
         let fixture = ReceiverToolFixture::new(case.clone()).await;
         let params = LookupParams {
@@ -200,8 +200,8 @@ async fn code_item_lookup_returns_size_hint_targetless_real_corpus_row() {
         // Source chain:
         //   axum-core/src/body.rs:127 calls `self.0.size_hint()`.
         // Expected traversal: exact owner lookup exposes the structural
-        // self-field receiver row, with zero callee targets until tuple-field
-        // receiver proof and external http_body dispatch are modeled.
+        // self-field receiver row as an external frontier. The row remains
+        // targetless because external http-body-util dispatch is not traversed.
         let callee = fixture.case.callee();
         let site_id = assert_method_context(
             call_context,
@@ -226,14 +226,14 @@ async fn code_item_lookup_returns_size_hint_targetless_real_corpus_row() {
                 .parse::<usize>()
                 .expect("outgoing count")
                 >= 1,
-            "code_item_lookup should surface outgoing size_hint targetless call context"
+            "code_item_lookup should surface outgoing size_hint external frontier call context"
         );
         assert!(
             ui_field(ui, "proof_context")
                 .parse::<usize>()
                 .expect("proof count")
                 >= 2,
-            "code_item_lookup should surface size_hint targetless proof rows"
+            "code_item_lookup should surface size_hint external frontier proof rows"
         );
     }
 }
@@ -429,7 +429,7 @@ async fn code_item_edges_returns_dynamic_targetless_real_corpus_rows() {
 }
 
 #[tokio::test]
-async fn code_item_edges_returns_size_hint_targetless_real_corpus_row() {
+async fn code_item_edges_returns_size_hint_external_real_corpus_row() {
     for case in ReceiverToolCase::SIZE_HINT {
         let fixture = ReceiverToolFixture::new(case.clone()).await;
         let params = EdgesParams {
@@ -457,7 +457,7 @@ async fn code_item_edges_returns_size_hint_targetless_real_corpus_row() {
             .and_then(serde_json::Value::as_array)
             .expect("node_info.proof_context array");
 
-        // Same real-corpus size_hint targetless oracle as the lookup test
+        // Same real-corpus size_hint external-frontier oracle as the lookup test
         // above, exercised through the edge-oriented exact tool payload.
         let callee = fixture.case.callee();
         let site_id = assert_method_context(
@@ -483,7 +483,7 @@ async fn code_item_edges_returns_size_hint_targetless_real_corpus_row() {
                 .parse::<usize>()
                 .expect("outgoing count")
                 >= 1,
-            "code_item_edges should surface outgoing size_hint targetless call context"
+            "code_item_edges should surface outgoing size_hint external frontier call context"
         );
         let proof_count = proof_context.len().to_string();
         assert_eq!(ui_field(ui, "proof_context"), proof_count.as_str());

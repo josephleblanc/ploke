@@ -241,7 +241,7 @@ async fn call_context_collection_reads_axum_route_oneshot_receiver_gaps() -> Res
 }
 
 #[tokio::test]
-async fn call_context_collection_reads_axum_size_hint_self_field_gap() -> Result<(), Error> {
+async fn call_context_collection_reads_axum_size_hint_self_field_frontier() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;
 
@@ -255,7 +255,7 @@ async fn call_context_collection_reads_axum_size_hint_self_field_gap() -> Result
                 path: vec!["0".to_string()],
             }),
         },
-        status: CallStatusKind::Unsupported,
+        status: CallStatusKind::External,
     };
 
     let owner = method_id_by_name_and_body_substring(&db, case.method, case.body)?;
@@ -280,17 +280,17 @@ async fn call_context_collection_reads_axum_size_hint_self_field_gap() -> Result
     //
     // Source chain:
     //   axum-core/src/body.rs:127 calls `self.0.size_hint()`.
-    // Expected traversal: the tuple-field receiver is structurally visible,
-    // but has zero traversable targets until tuple-field receiver proof can
-    // connect `Body(BoxBody)` at axum-core/src/body.rs:39 to external
-    // `http_body::Body::size_hint` dispatch.
+    // Expected traversal: tuple-field receiver proof connects
+    // `Body(BoxBody)` at axum-core/src/body.rs:42 to a local type alias for an
+    // external http-body-util type. The row is an external frontier with zero
+    // local traversal targets.
     let call = matching[0];
     assert_eq!(call.owner_id, owner);
     assert_eq!(call.status, case.status);
     assert_eq!(call.resolution, None);
     assert!(
         call.targets.is_empty(),
-        "{} should remain targetless in RAG call context: {call:#?}",
+        "{} should remain targetless as an external frontier in RAG call context: {call:#?}",
         case.label
     );
 

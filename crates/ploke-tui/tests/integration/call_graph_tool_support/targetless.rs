@@ -187,10 +187,10 @@ impl ReceiverToolCase {
     ];
 
     pub(crate) const SIZE_HINT: [Self; 1] = [Self {
-        label: "axum-core/src/body.rs:127 Body::size_hint self field",
+        label: "axum-core/src/body.rs:127 Body::size_hint self-field external frontier",
         method: "size_hint",
         callee: "size_hint",
-        status: CallStatusKind::Unsupported,
+        status: CallStatusKind::External,
         owner_type: "Body",
         module_path: None,
         file_suffix: "axum-core/src/body.rs",
@@ -556,12 +556,16 @@ pub(crate) fn assert_method_proof(
         CallStatusKind::Ambiguous => "ambiguous",
         CallStatusKind::External | CallStatusKind::Unsupported => "blocked",
     };
+    let reason = match status {
+        CallStatusKind::External => "external_dependency_summary_missing",
+        _ => "type_resolution_missing",
+    };
     assert!(
         rows.iter().any(|proof| {
             proof.kind == "call_resolution"
                 && proof.call_site_id.as_deref() == Some(site_id.as_str())
                 && proof.resolution_state.as_deref() == Some(state)
-                && proof.blocker_reason.as_deref() == Some("type_resolution_missing")
+                && proof.blocker_reason.as_deref() == Some(reason)
         }),
         "{tool} should return the targetless method {state} resolution proof row for {label}: {proofs:#?}"
     );

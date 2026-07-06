@@ -3,8 +3,9 @@ use crate::{
     parser::{
         graph::GraphAccess,
         nodes::{
-            AnyCallSiteId, CallBodyOwnerId, CallNode, MethodCallNode, MethodCallReceiver,
-            OrdinaryTypeSourceId, OrdinaryTypeTargetId, OrdinaryTypeUseId, StructNodeId,
+            AnyCallSiteId, CallBodyOwnerId, CallNode, FieldNode, MethodCallNode,
+            MethodCallReceiver, OrdinaryTypeSourceId, OrdinaryTypeTargetId, OrdinaryTypeUseId,
+            StructNodeId, TypeAliasNodeId,
         },
         relations::{CallRelation, CallResolutionKind, CallResolutionStatus, TypeRelation},
         types::TypeNode,
@@ -163,7 +164,7 @@ impl CallRelationResolver<'_> {
         let Some(field_type) = self.self_field_type(call.owner, field_name, type_relations)? else {
             return Ok(false);
         };
-        self.is_external_type_method(call.owner, field_type, &call.method_name)
+        self.is_external_type_method(call.owner, field_type, &call.method_name, type_relations)
     }
 
     fn resolve_self_field_method_call(
@@ -206,12 +207,27 @@ impl CallRelationResolver<'_> {
         };
         let struct_node = self.graph.get_struct_checked(struct_id)?;
 
-        let mut matches = struct_node
-            .fields
+        Ok(Self::struct_field_type(
+            &struct_node.fields,
+            field_name,
+            &struct_node.name,
+        ))
+    }
+
+    fn struct_field_type(
+        fields: &[FieldNode],
+        field_name: &str,
+        struct_name: &str,
+    ) -> Option<OrdinaryTypeUseId> {
+        if let Ok(field_idx) = field_name.parse::<usize>() {
+            return fields.get(field_idx).map(|field| field.type_id);
+        }
+
+        let mut matches = fields
             .iter()
             .filter(|field| {
                 field.name.as_deref().is_some_and(|name| {
-                    Self::struct_field_name_matches(name, field_name, &struct_node.name)
+                    Self::struct_field_name_matches(name, field_name, struct_name)
                 })
             })
             .map(|field| field.type_id)
@@ -219,10 +235,10 @@ impl CallRelationResolver<'_> {
         matches.sort_unstable();
         matches.dedup();
 
-        Ok(match matches.as_slice() {
+        match matches.as_slice() {
             [type_id] => Some(*type_id),
             _ => None,
-        })
+        }
     }
 
     fn struct_field_name_matches(actual: &str, expected: &str, struct_name: &str) -> bool {
@@ -241,17 +257,22 @@ impl CallRelationResolver<'_> {
         owner: CallBodyOwnerId,
         type_id: OrdinaryTypeUseId,
         method_name: &str,
+        type_relations: &[TypeRelation],
     ) -> Result<bool, SynParserError> {
         let TypeNode::Named(type_node) = self.type_node(type_id)? else {
             return Ok(false);
         };
 
-        if !matches!(method_name, "extensions_mut" | "len") {
+        if !matches!(method_name, "extensions_mut" | "len" | "size_hint") {
             return Ok(false);
         }
 
-        if self.is_external_path(&type_node.path) {
+        if self.receiver_type_is_external(owner, type_id, type_relations)? {
             return Ok(true);
+        }
+
+        if method_name == "size_hint" {
+            return Ok(false);
         }
 
         match type_node.path.as_slice() {
@@ -260,6 +281,48 @@ impl CallRelationResolver<'_> {
             }
             _ => Ok(false),
         }
+    }
+
+    fn receiver_type_is_external(
+        &self,
+        owner: CallBodyOwnerId,
+        type_id: OrdinaryTypeUseId,
+        type_relations: &[TypeRelation],
+    ) -> Result<bool, SynParserError> {
+        if self.type_use_is_external(owner, type_id)? {
+            return Ok(true);
+        }
+
+        let Ok(source) = OrdinaryTypeSourceId::try_from(type_id) else {
+            return Ok(false);
+        };
+
+        let mut targets = type_relations
+            .iter()
+            .filter_map(|relation| match relation {
+                TypeRelation::Ordinary {
+                    source: relation_source,
+                    target,
+                } if *relation_source == source => Some(*target),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        targets.sort_unstable();
+        targets.dedup();
+
+        for target in targets {
+            for receiver in self.ordinary_receiver_targets(target, type_relations)? {
+                let Ok(alias_id) = TypeAliasNodeId::try_from(receiver) else {
+                    continue;
+                };
+                let alias_node = self.graph.get_type_alias_checked(alias_id)?;
+                if self.type_use_is_external(owner, alias_node.type_id)? {
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(false)
     }
 
     fn is_external_type_path_method(
@@ -779,26 +842,10 @@ impl CallRelationResolver<'_> {
         };
         let struct_node = self.graph.get_struct_checked(struct_id)?;
 
-        if let Ok(field_idx) = field_name.parse::<usize>() {
-            return Ok(struct_node.fields.get(field_idx).map(|field| field.type_id));
-        }
-
-        let mut matches = struct_node
-            .fields
-            .iter()
-            .filter(|field| {
-                field.name.as_deref().is_some_and(|name| {
-                    Self::struct_field_name_matches(name, field_name, &struct_node.name)
-                })
-            })
-            .map(|field| field.type_id)
-            .collect::<Vec<_>>();
-        matches.sort_unstable();
-        matches.dedup();
-
-        Ok(match matches.as_slice() {
-            [type_id] => Some(*type_id),
-            _ => None,
-        })
+        Ok(Self::struct_field_type(
+            &struct_node.fields,
+            field_name,
+            &struct_node.name,
+        ))
     }
 }

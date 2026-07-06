@@ -262,14 +262,15 @@ fn axum_real_target_request_extensions_mut_receivers_are_documented_gaps() -> Re
 }
 
 #[test]
-fn axum_real_target_self_field_size_hint_is_documented_gap() -> Result<(), DbError> {
+fn axum_real_target_self_field_size_hint_is_external_frontier() -> Result<(), DbError> {
     let db = setup_axum_call_graph_db()?;
 
     // Matrix: `self.0.size_hint` receiver row.
     // Source chain:
     //   axum-core/src/body.rs:127 calls `self.0.size_hint()`.
-    // Current model gap: the tuple-field receiver shape is visible but remains
-    // unsupported and targetless.
+    // The tuple-field receiver resolves through `Body(BoxBody)`, where
+    // `BoxBody` is a local type alias for an external http-body-util type.
+    // The call is therefore an external frontier, not a traversable local edge.
     let owner = method_id_by_name_and_body_substring(&db, "size_hint", "self.0.size_hint()")?;
     assert_owner_method_targetless(
         &db,
@@ -278,7 +279,7 @@ fn axum_real_target_self_field_size_hint_is_documented_gap() -> Result<(), DbErr
         &CallReceiver::SelfField {
             path: vec!["0".to_string()],
         },
-        CallStatusKind::Unsupported,
+        CallStatusKind::External,
         "axum-core/src/body.rs:127",
     )?;
     assert_targetless_method_line_fanout(
@@ -287,7 +288,7 @@ fn axum_real_target_self_field_size_hint_is_documented_gap() -> Result<(), DbErr
         "size_hint",
         "SelfField",
         Some(&["0"]),
-        CallStatusKind::Unsupported,
+        CallStatusKind::External,
         &[SourceLineFanout {
             file_suffix: "axum-core/src/body.rs",
             lines: &[127],

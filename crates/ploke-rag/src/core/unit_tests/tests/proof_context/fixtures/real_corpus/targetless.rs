@@ -154,7 +154,7 @@ async fn proof_context_collection_preserves_axum_route_oneshot_blockers() -> Res
 }
 
 #[tokio::test]
-async fn proof_context_collection_preserves_axum_size_hint_self_field_blocker() -> Result<(), Error>
+async fn proof_context_collection_preserves_axum_size_hint_self_field_frontier() -> Result<(), Error>
 {
     init_tracing_once();
     let db = axum_db()?;
@@ -169,7 +169,7 @@ async fn proof_context_collection_preserves_axum_size_hint_self_field_blocker() 
                 path: vec!["0".to_string()],
             }),
         },
-        status: CallStatusKind::Unsupported,
+        status: CallStatusKind::External,
     };
 
     let owner = method_id_by_name_and_body(&db, case.method, case.body)?;
@@ -190,7 +190,8 @@ async fn proof_context_collection_preserves_axum_size_hint_self_field_blocker() 
     let calls = call_context
         .get(&owner)
         .unwrap_or_else(|| panic!("{} should receive outgoing call context", case.label));
-    let site_id = targetless_method_site(calls, owner, &case.callee, case.label);
+    let site_id =
+        targetless_method_site_with_status(calls, owner, &case.callee, case.status, case.label);
 
     let proof_context = rag.collect_proof_context(&[(owner, 1.0)])?;
     let rows = proof_context
@@ -202,11 +203,17 @@ async fn proof_context_collection_preserves_axum_size_hint_self_field_blocker() 
     //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
     //   axum-core/src/body.rs:127 calls `self.0.size_hint()`.
     // Expected proof traversal: owner-seeded proof context must include the
-    // call_site plus blocked call_resolution facts for the unsupported,
-    // targetless tuple-field receiver row. There are zero callee edges until
-    // tuple-field receiver proof and external http_body dispatch are modeled.
-    assert_blocked_resolution(rows, owner, "type_resolution_missing");
-    assert_site_blocker(rows, owner, site_id, "type_resolution_missing", case.label);
+    // call_site plus blocked call_resolution facts for the targetless external
+    // frontier row. There are zero local callee edges for external
+    // http-body-util dispatch.
+    assert_blocked_resolution(rows, owner, "external_dependency_summary_missing");
+    assert_site_blocker(
+        rows,
+        owner,
+        site_id,
+        "external_dependency_summary_missing",
+        case.label,
+    );
 
     Ok(())
 }
