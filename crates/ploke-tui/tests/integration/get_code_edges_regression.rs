@@ -467,121 +467,127 @@ async fn code_item_edges_returns_call_context_for_call_graph_item() {
 
 #[tokio::test]
 async fn code_item_edges_returns_resolved_dynamic_callable_field_index_context() {
-    let fixture = FixtureDynamicCallableToolFixture::new_for_owner(
-        "call_aliased_indexed_named_field_function_binding",
-    )
-    .await;
-    let params = EdgesParams {
-        item_name: Cow::Borrowed(fixture.owner_name),
-        file_path: Cow::Owned(fixture.file_path.display().to_string()),
-        node_kind: Cow::Borrowed("function"),
-        module_path: Cow::Borrowed("crate"),
-        owner_trait: None,
-        owner_type: None,
-        parent_name: None,
-    };
-
-    let result = CodeItemEdges::execute(params, fixture.ctx("dynamic-callable-edges"))
-        .await
-        .expect("dynamic callable edges");
-    let payload: serde_json::Value =
-        serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
-    let call_context = payload
-        .get("node_info")
-        .and_then(|node| node.get("call_context"))
-        .and_then(serde_json::Value::as_array)
-        .expect("node_info.call_context array");
-    let proof_context = payload
-        .get("node_info")
-        .and_then(|node| node.get("proof_context"))
-        .and_then(serde_json::Value::as_array)
-        .expect("node_info.proof_context array");
-
     // Fixture source:
     //   tests/fixture_crates/fixture_call_graph/src/lib.rs:894-899
     //     `call_aliased_indexed_named_field_function_binding` constructs
     //     `CallbackArrayHolder { callbacks: [local_target] }`, aliases the
     //     holder, and calls `alias.callbacks[0]()`.
-    // Parser/DB/RAG already prove this as an exact DynamicFunction edge; this
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1534-1547
+    //     private helper parameters receive constructed holder values from a
+    //     single local caller, then call `holder.callbacks[0]()` / `holder.0[0]()`.
+    // Parser/DB/RAG already prove these as exact DynamicFunction edges; this
     // pins the same field/index proof at the code_item_edges tool boundary.
-    let calls = call_context
-        .iter()
-        .filter_map(|call| serde_json::from_value::<CallContextInfo>(call.clone()).ok())
-        .filter(|call| {
-            call.owner_id == fixture.owner
-                && call.kind == CallSiteKind::Dynamic
-                && call.callee == CallCalleeInfo::Dynamic
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        calls.len(),
-        1,
-        "code_item_edges should expose exactly one resolved field/index dynamic row for {}: {call_context:#?}",
-        fixture.owner_name
-    );
-    let call = calls[0].clone();
-    assert_eq!(call.status, CallStatusKind::Resolved);
-    assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
-    assert_eq!(call.targets.len(), 1, "{call:#?}");
-    assert_eq!(call.targets[0].target_id, fixture.target);
-    assert_eq!(call.targets[0].relation, CallTargetKind::DynamicFunction);
+    for owner_name in [
+        "call_aliased_indexed_named_field_function_binding",
+        "call_single_indexed_field_function_param",
+        "call_single_indexed_tuple_field_function_param",
+    ] {
+        let fixture = FixtureDynamicCallableToolFixture::new_for_owner(owner_name).await;
+        let params = EdgesParams {
+            item_name: Cow::Borrowed(fixture.owner_name),
+            file_path: Cow::Owned(fixture.file_path.display().to_string()),
+            node_kind: Cow::Borrowed("function"),
+            module_path: Cow::Borrowed("crate"),
+            owner_trait: None,
+            owner_type: None,
+            parent_name: None,
+        };
 
-    let owner = fixture.owner.to_string();
-    let site = call.site_id.to_string();
-    let target = fixture.target.to_string();
-    let proof_rows = proof_context
-        .iter()
-        .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
-        .collect::<Vec<_>>();
-    assert!(
-        proof_rows.iter().any(|proof| {
-            proof.kind == "call_site"
-                && proof.caller_def_id.as_deref() == Some(owner.as_str())
-                && proof.call_site_id.as_deref() == Some(site.as_str())
-                && proof.build_domain_id.as_deref() == Some("bd:fixture-call-graph")
-        }),
-        "code_item_edges should return the dynamic call_site proof row for {}: {proof_context:#?}",
-        fixture.owner_name
-    );
-    assert!(
-        proof_rows.iter().any(|proof| {
-            proof.kind == "call_edge"
-                && proof.call_site_id.as_deref() == Some(site.as_str())
-                && proof.caller_def_id.as_deref() == Some(owner.as_str())
-                && proof.callee_def_id.as_deref() == Some(target.as_str())
-                && proof.resolution_state.as_deref() == Some("resolved")
-        }),
-        "code_item_edges should return the resolved dynamic call_edge proof row for {}: {proof_context:#?}",
-        fixture.owner_name
-    );
-    assert!(
-        proof_rows.iter().any(|proof| {
-            proof.kind == "call_resolution"
-                && proof.call_site_id.as_deref() == Some(site.as_str())
-                && proof.resolution_state.as_deref() == Some("resolved")
-                && proof.resolved_def_id.as_deref() == Some(target.as_str())
-        }),
-        "code_item_edges should return the resolved dynamic call_resolution proof row for {}: {proof_context:#?}",
-        fixture.owner_name
-    );
+        let result = CodeItemEdges::execute(params, fixture.ctx("dynamic-callable-edges"))
+            .await
+            .expect("dynamic callable edges");
+        let payload: serde_json::Value =
+            serde_json::from_str(&result.content).expect("deserialize NodeEdgeInfo");
+        let call_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("call_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.call_context array");
+        let proof_context = payload
+            .get("node_info")
+            .and_then(|node| node.get("proof_context"))
+            .and_then(serde_json::Value::as_array)
+            .expect("node_info.proof_context array");
 
-    let ui = result.ui_payload.as_ref().expect("ui payload");
-    assert!(
-        ui_field(ui, "call_context_outgoing")
-            .parse::<usize>()
-            .expect("outgoing count")
-            >= 1,
-        "code_item_edges should surface outgoing dynamic callable call context for {}",
-        fixture.owner_name
-    );
-    assert!(
-        ui_field(ui, "proof_context")
-            .parse::<usize>()
-            .expect("proof count")
-            >= 3,
-        "code_item_edges should surface resolved dynamic callable proof rows for {}",
-        fixture.owner_name
-    );
+        let calls = call_context
+            .iter()
+            .filter_map(|call| serde_json::from_value::<CallContextInfo>(call.clone()).ok())
+            .filter(|call| {
+                call.owner_id == fixture.owner
+                    && call.kind == CallSiteKind::Dynamic
+                    && call.callee == CallCalleeInfo::Dynamic
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            calls.len(),
+            1,
+            "code_item_edges should expose exactly one resolved field/index dynamic row for {}: {call_context:#?}",
+            fixture.owner_name
+        );
+        let call = calls[0].clone();
+        assert_eq!(call.status, CallStatusKind::Resolved);
+        assert_eq!(call.resolution, Some(CallResolutionKind::LocalExact));
+        assert_eq!(call.targets.len(), 1, "{call:#?}");
+        assert_eq!(call.targets[0].target_id, fixture.target);
+        assert_eq!(call.targets[0].relation, CallTargetKind::DynamicFunction);
+
+        let owner = fixture.owner.to_string();
+        let site = call.site_id.to_string();
+        let target = fixture.target.to_string();
+        let proof_rows = proof_context
+            .iter()
+            .filter_map(|proof| serde_json::from_value::<ProofContextInfo>(proof.clone()).ok())
+            .collect::<Vec<_>>();
+        assert!(
+            proof_rows.iter().any(|proof| {
+                proof.kind == "call_site"
+                    && proof.caller_def_id.as_deref() == Some(owner.as_str())
+                    && proof.call_site_id.as_deref() == Some(site.as_str())
+                    && proof.build_domain_id.as_deref() == Some("bd:fixture-call-graph")
+            }),
+            "code_item_edges should return the dynamic call_site proof row for {}: {proof_context:#?}",
+            fixture.owner_name
+        );
+        assert!(
+            proof_rows.iter().any(|proof| {
+                proof.kind == "call_edge"
+                    && proof.call_site_id.as_deref() == Some(site.as_str())
+                    && proof.caller_def_id.as_deref() == Some(owner.as_str())
+                    && proof.callee_def_id.as_deref() == Some(target.as_str())
+                    && proof.resolution_state.as_deref() == Some("resolved")
+            }),
+            "code_item_edges should return the resolved dynamic call_edge proof row for {}: {proof_context:#?}",
+            fixture.owner_name
+        );
+        assert!(
+            proof_rows.iter().any(|proof| {
+                proof.kind == "call_resolution"
+                    && proof.call_site_id.as_deref() == Some(site.as_str())
+                    && proof.resolution_state.as_deref() == Some("resolved")
+                    && proof.resolved_def_id.as_deref() == Some(target.as_str())
+            }),
+            "code_item_edges should return the resolved dynamic call_resolution proof row for {}: {proof_context:#?}",
+            fixture.owner_name
+        );
+
+        let ui = result.ui_payload.as_ref().expect("ui payload");
+        assert!(
+            ui_field(ui, "call_context_outgoing")
+                .parse::<usize>()
+                .expect("outgoing count")
+                >= 1,
+            "code_item_edges should surface outgoing dynamic callable call context for {}",
+            fixture.owner_name
+        );
+        assert!(
+            ui_field(ui, "proof_context")
+                .parse::<usize>()
+                .expect("proof count")
+                >= 3,
+            "code_item_edges should surface resolved dynamic callable proof rows for {}",
+            fixture.owner_name
+        );
+    }
 }
 
 #[tokio::test]

@@ -90,10 +90,27 @@ async fn code_item_lookup_returns_call_and_proof_context_for_call_graph_item() {
 
 #[tokio::test]
 async fn code_item_lookup_returns_resolved_dynamic_callable_context() {
+    // Fixture source:
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:269
+    //     `call_parenthesized_function_item_binding` binds
+    //     `let f = local_target;` and calls `(f)()`.
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1362
+    //     `call_parenthesized_block_initialized_function_item_binding` binds
+    //     `let f = { local_target };` and calls `(f)()`.
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:657
+    //     `call_match_guarded_function_item` calls
+    //     `(match flag { true if flag => local_target, _ => local_target })()`.
+    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1534-1547
+    //     private helper parameters receive constructed holder values from a
+    //     single local caller, then call `holder.callbacks[0]()` / `holder.0[0]()`.
+    // Parser/DB/RAG already prove these as resolved dynamic-function edges.
+    // This pins the same facts at the TUI tool boundary.
     for owner_name in [
         "call_parenthesized_function_item_binding",
         "call_parenthesized_block_initialized_function_item_binding",
         "call_match_guarded_function_item",
+        "call_single_indexed_field_function_param",
+        "call_single_indexed_tuple_field_function_param",
     ] {
         assert_resolved_dynamic_callable_lookup(owner_name).await;
     }
@@ -194,18 +211,6 @@ async fn assert_resolved_dynamic_callable_lookup(owner_name: &'static str) {
         .and_then(serde_json::Value::as_array)
         .expect("proof_context array");
 
-    // Fixture source:
-    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:269
-    //     `call_parenthesized_function_item_binding` binds
-    //     `let f = local_target;` and calls `(f)()`.
-    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:1362
-    //     `call_parenthesized_block_initialized_function_item_binding` binds
-    //     `let f = { local_target };` and calls `(f)()`.
-    //   tests/fixture_crates/fixture_call_graph/src/lib.rs:657
-    //     `call_match_guarded_function_item` calls
-    //     `(match flag { true if flag => local_target, _ => local_target })()`.
-    // Parser/DB/RAG already prove this as a resolved dynamic-function edge.
-    // This pins the same fact at the TUI tool boundary.
     let calls = call_context
         .iter()
         .filter_map(|call| serde_json::from_value::<CallContextInfo>(call.clone()).ok())

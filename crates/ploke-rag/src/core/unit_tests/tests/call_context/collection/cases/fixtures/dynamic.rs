@@ -42,6 +42,28 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
         &db,
         &function_in_module_query(&["crate"], "call_dereferenced_closure_binding"),
     )?;
+    let field_param_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_single_indexed_field_function_param"),
+    )?;
+    let field_param_caller = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_single_indexed_field_function_param_with_local_target",
+        ),
+    )?;
+    let tuple_field_param_owner = one_uuid(
+        &db,
+        &function_in_module_query(&["crate"], "call_single_indexed_tuple_field_function_param"),
+    )?;
+    let tuple_field_param_caller = one_uuid(
+        &db,
+        &function_in_module_query(
+            &["crate"],
+            "call_single_indexed_tuple_field_function_param_with_local_target",
+        ),
+    )?;
 
     let rag = init_test_rag_mock(Arc::clone(&db));
     assert!(
@@ -57,6 +79,8 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
         (boxed_owner, 1.0),
         (closure_binding_owner, 1.0),
         (dereferenced_closure_owner, 1.0),
+        (field_param_owner, 1.0),
+        (tuple_field_param_owner, 1.0),
     ])?;
     let resolved_context = call_context
         .get(&resolved_owner)
@@ -219,6 +243,83 @@ async fn call_context_collection_reads_real_fixture_dynamic_rows() -> Result<(),
         dereferenced_call.targets[0].relation,
         CallTargetKind::DynamicClosure
     );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1534-1547:
+    // private helper parameters receive constructed holder values from a
+    // single local caller, so DB proof resolves `holder.callbacks[0]()` and
+    // `holder.0[0]()` to `local_target`. RAG node context also includes the
+    // incoming wrapper helper call, while still exposing pathless dynamic
+    // callees as generic `Dynamic` calls.
+    for (label, owner, caller, helper_path) in [
+        (
+            "single-caller-field-parameter",
+            field_param_owner,
+            field_param_caller,
+            vec!["call_single_indexed_field_function_param".to_string()],
+        ),
+        (
+            "single-caller-tuple-field-parameter",
+            tuple_field_param_owner,
+            tuple_field_param_caller,
+            vec!["call_single_indexed_tuple_field_function_param".to_string()],
+        ),
+    ] {
+        let context = call_context.get(&owner).unwrap_or_else(|| {
+            panic!("{label} dynamic owner should receive outgoing call context")
+        });
+        assert_eq!(
+            context.len(),
+            2,
+            "{label} dynamic owner context: {context:#?}"
+        );
+        let call = context
+            .iter()
+            .find(|call| call.owner_id == owner && call.kind == CallSiteKind::Dynamic)
+            .unwrap_or_else(|| {
+                panic!("{label} should expose outgoing indexed dynamic call: {context:#?}")
+            });
+        assert_eq!(call.kind, CallSiteKind::Dynamic, "{label}");
+        assert_eq!(call.callee, CallCalleeInfo::Dynamic, "{label}");
+        assert_eq!(call.status, CallStatusKind::Resolved, "{label}");
+        assert_eq!(
+            call.resolution,
+            Some(CallResolutionKind::LocalExact),
+            "{label}"
+        );
+        assert_eq!(call.targets.len(), 1, "{label}: {call:#?}");
+        assert_eq!(call.targets[0].target_id, target, "{label}");
+        assert_eq!(
+            call.targets[0].relation,
+            CallTargetKind::DynamicFunction,
+            "{label}"
+        );
+
+        let incoming = context
+            .iter()
+            .find(|call| call.owner_id == caller && call.kind == CallSiteKind::Path)
+            .unwrap_or_else(|| {
+                panic!("{label} should expose incoming wrapper helper call: {context:#?}")
+            });
+        assert_eq!(
+            incoming.callee,
+            CallCalleeInfo::Path { path: helper_path },
+            "{label}"
+        );
+        assert_eq!(incoming.arg_count, Some(1), "{label}");
+        assert_eq!(incoming.status, CallStatusKind::Resolved, "{label}");
+        assert_eq!(
+            incoming.resolution,
+            Some(CallResolutionKind::LocalExact),
+            "{label}"
+        );
+        assert_eq!(incoming.targets.len(), 1, "{label}: {incoming:#?}");
+        assert_eq!(incoming.targets[0].target_id, owner, "{label}");
+        assert_eq!(
+            incoming.targets[0].relation,
+            CallTargetKind::Function,
+            "{label}"
+        );
+    }
 
     Ok(())
 }
