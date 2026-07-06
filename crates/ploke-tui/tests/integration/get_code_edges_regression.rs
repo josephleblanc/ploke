@@ -793,6 +793,10 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
         .get("source_files")
         .and_then(serde_json::Value::as_array)
         .expect("node_info.call_reach.source_files array");
+    let start_reach_source_crates = start_reach
+        .get("source_crates")
+        .and_then(serde_json::Value::as_array)
+        .expect("node_info.call_reach.source_crates array");
     let start_reach_source_modules = start_reach
         .get("source_modules")
         .and_then(serde_json::Value::as_array)
@@ -882,6 +886,11 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
         "axum-core/src/extract/mod.rs",
         "code_item_edges reach source files",
     );
+    assert_source_crate_json(
+        start_reach_source_crates,
+        "axum-core",
+        "code_item_edges reach source crates",
+    );
     assert_source_module_json(
         start_reach_source_modules,
         &["crate", "ext_traits", "request"],
@@ -939,6 +948,10 @@ async fn code_item_edges_returns_real_corpus_two_hop_call_paths() {
     assert_eq!(
         ui_field(start_ui, "reach_source_files"),
         start_reach_source_files.len().to_string()
+    );
+    assert_eq!(
+        ui_field(start_ui, "reach_source_crates"),
+        start_reach_source_crates.len().to_string()
     );
     assert_eq!(
         ui_field(start_ui, "reach_source_modules"),
@@ -1621,6 +1634,16 @@ fn assert_source_file_json(files: &[serde_json::Value], suffix: &str, label: &st
             .filter_map(serde_json::Value::as_str)
             .any(|path| path.ends_with(suffix)),
         "{label} should include source file ending with {suffix:?}: {files:#?}"
+    );
+}
+
+fn assert_source_crate_json(crates: &[serde_json::Value], expected: &str, label: &str) {
+    assert!(
+        crates
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .any(|name| name == expected),
+        "{label} should include source crate {expected:?}: {crates:#?}"
     );
 }
 

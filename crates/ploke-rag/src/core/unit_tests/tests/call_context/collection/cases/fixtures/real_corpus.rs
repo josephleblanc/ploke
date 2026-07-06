@@ -1791,6 +1791,11 @@ async fn call_reach_exact_reads_axum_usage_question_summary() -> Result<(), Erro
         &["crate", "extract"],
         "RAG reach source modules",
     );
+    assert_call_source_crate(
+        &report.source_crates,
+        "axum-core",
+        "RAG reach source crates",
+    );
 
     let boundary = rag
         .exact_call_reach_for_owner(
