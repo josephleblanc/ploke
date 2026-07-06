@@ -84,6 +84,15 @@ should prevent future resumes from reselecting already-covered shapes.
      `f()` and dynamic `(f)()` call forms, while public, generic
      callable-trait, opaque, missing-argument, and multi-target shapes remain
      explicit blockers.
+   - The same complete-local-caller boundary now has one adjacent constructed
+     argument proof for private indexed field-parameter calls:
+     `call_single_indexed_field_function_param(holder: CallbackArrayHolder)
+     { holder.callbacks[0]() }` and
+     `call_single_indexed_tuple_field_function_param(holder:
+     TupleCallbackArrayHolder) { holder.0[0]() }` resolve only because each
+     private helper has one local caller that constructs the holder with
+     `local_target` in the indexed field slot. Public holder parameters and
+     arbitrary constructed/value-flow cases remain targetless.
 
 2. Direct typed local receiver alias - completed:
    - Extend one exact local alias propagation case for method receivers only if it reuses existing initializer proof.
@@ -136,9 +145,10 @@ should prevent future resumes from reselecting already-covered shapes.
 8. Next adjacent candidate:
    - Select from the coverage matrix parking lot rather than adding more
      import breadth by default.
-   - Likely options are one bounded adjacent local binding/type proof shape, a
-     broader async poll/resume proof carrier, or an explicit workspace proof
-     carrier for one documented dependency-root source oracle.
+   - Likely options are a broader async poll/resume proof carrier, an explicit
+     workspace proof carrier for one documented dependency-root source oracle,
+     or another bounded local binding/type proof only if it reuses existing
+     parser-owned evidence without arbitrary interprocedural value flow.
 
 ## Implementation Order
 

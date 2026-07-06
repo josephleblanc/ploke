@@ -1530,3 +1530,19 @@ pub fn call_single_parenthesized_function_pointer_param_with_local_target() -> i
 pub async fn call_awaited_async_closure_literal_with_body_call() {
     (async || local_target())().await;
 }
+
+fn call_single_indexed_field_function_param(holder: CallbackArrayHolder) -> i32 {
+    holder.callbacks[0]()
+}
+
+pub fn call_single_indexed_field_function_param_with_local_target() -> i32 {
+    call_single_indexed_field_function_param(CallbackArrayHolder { callbacks: [local_target] })
+}
+
+fn call_single_indexed_tuple_field_function_param(holder: TupleCallbackArrayHolder) -> i32 {
+    holder.0[0]()
+}
+
+pub fn call_single_indexed_tuple_field_function_param_with_local_target() -> i32 {
+    call_single_indexed_tuple_field_function_param(TupleCallbackArrayHolder([local_target]))
+}

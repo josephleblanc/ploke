@@ -8,9 +8,9 @@ use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
 
 use crate::parser::nodes::{
-    CallArgument, CallBodyOwnerId, CallNode, DynamicCallCallee, DynamicCallNode, ExecutableBodyId,
-    ExecutableBodyNode, MacroCallNode, MethodCallNode, MethodCallReceiver, PathCallCallee,
-    PathCallNode, generate_async_block_body_id, generate_closure_body_id,
+    ArgumentFieldInit, CallArgument, CallBodyOwnerId, CallNode, DynamicCallCallee, DynamicCallNode,
+    ExecutableBodyId, ExecutableBodyNode, MacroCallNode, MethodCallNode, MethodCallReceiver,
+    PathCallCallee, PathCallNode, generate_async_block_body_id, generate_closure_body_id,
     generate_dynamic_call_site_id, generate_local_item_body_id, generate_macro_call_site_id,
     generate_method_call_site_id, generate_path_call_site_id,
 };
@@ -194,7 +194,13 @@ impl BodyCallVisitor<'_> {
             path,
             arg_count: call.args.len(),
             generic_arg_count: path_generic_arg_count(&callee.path),
-            arguments: call_arguments(&call.args, self.owner, self.cfgs),
+            arguments: call_arguments(
+                &call.args,
+                self.owner,
+                self.cfgs,
+                self.param_names,
+                &self.local_scopes,
+            ),
         }));
         self.relations.push(CallSiteRelation::BodyContainsCall {
             source: self.owner,
@@ -562,13 +568,21 @@ fn call_arguments(
     args: &syn::punctuated::Punctuated<syn::Expr, syn::Token![,]>,
     owner: CallBodyOwnerId,
     cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
 ) -> Vec<CallArgument> {
     args.iter()
-        .map(|arg| call_argument(arg, owner, cfgs))
+        .map(|arg| call_argument(arg, owner, cfgs, param_names, local_scopes))
         .collect()
 }
 
-fn call_argument(arg: &syn::Expr, owner: CallBodyOwnerId, cfgs: &[String]) -> CallArgument {
+fn call_argument(
+    arg: &syn::Expr,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> CallArgument {
     match unparen_expr(arg) {
         syn::Expr::Path(path) if path.qself.is_none() => {
             let path = path_segments(&path.path);
@@ -585,7 +599,60 @@ fn call_argument(arg: &syn::Expr, owner: CallBodyOwnerId, cfgs: &[String]) -> Ca
                 closure_id: ExecutableBodyId::Closure(generate_closure_body_id(owner, span, cfgs)),
             }
         }
-        _ => CallArgument::Other,
+        _ => constructed_argument(arg, param_names, local_scopes).unwrap_or(CallArgument::Other),
+    }
+}
+
+fn constructed_argument(
+    arg: &syn::Expr,
+    param_names: &[String],
+    local_scopes: &[Vec<LocalBindingProof>],
+) -> Option<CallArgument> {
+    let (type_path, fields) = constructed_init(Some(arg), param_names, local_scopes)?;
+    let fields = argument_field_inits(&fields);
+    (!fields.is_empty()).then_some(CallArgument::Constructed { type_path, fields })
+}
+
+fn argument_field_inits(fields: &ConstructedFields) -> Vec<ArgumentFieldInit> {
+    let mut inits = Vec::new();
+    match fields {
+        ConstructedFields::Tuple(fields) => {
+            for (index, init) in fields.iter().enumerate() {
+                push_argument_init(&mut inits, vec![index.to_string()], init);
+            }
+        }
+        ConstructedFields::Named(fields) => {
+            for (name, init) in fields {
+                push_argument_init(&mut inits, vec![name.clone()], init);
+            }
+        }
+    }
+    inits
+}
+
+fn push_argument_init(
+    inits: &mut Vec<ArgumentFieldInit>,
+    path: Vec<String>,
+    init: &Option<FieldInitProof>,
+) {
+    match init {
+        Some(FieldInitProof::Path(init_path)) => inits.push(ArgumentFieldInit {
+            field_path: path,
+            init_path: init_path.clone(),
+        }),
+        Some(FieldInitProof::Array(elements)) => {
+            for (index, init_path) in elements.iter().enumerate() {
+                if let Some(init_path) = init_path {
+                    let mut field_path = path.clone();
+                    field_path.push(index.to_string());
+                    inits.push(ArgumentFieldInit {
+                        field_path,
+                        init_path: init_path.clone(),
+                    });
+                }
+            }
+        }
+        None => {}
     }
 }
 

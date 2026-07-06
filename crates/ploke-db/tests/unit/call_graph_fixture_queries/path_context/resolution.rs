@@ -255,6 +255,104 @@ fn fixture_context_resolves_single_caller_parenthesized_function_pointer_paramet
 }
 
 #[test]
+fn fixture_context_resolves_single_caller_indexed_field_function_parameters() -> Result<(), DbError>
+{
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let target = function_id_by_name(&db, "local_target")?;
+
+    struct Case {
+        owner: &'static str,
+        caller: &'static str,
+        path: &'static [&'static str],
+    }
+
+    let cases = [
+        Case {
+            owner: "call_single_indexed_field_function_param",
+            caller: "call_single_indexed_field_function_param_with_local_target",
+            path: &["holder", "callbacks", "0"],
+        },
+        Case {
+            owner: "call_single_indexed_tuple_field_function_param",
+            caller: "call_single_indexed_tuple_field_function_param_with_local_target",
+            path: &["holder", "0", "0"],
+        },
+    ];
+
+    for case in cases {
+        let owner = function_id_by_name(&db, case.owner)?;
+        let caller = function_id_by_name(&db, case.caller)?;
+        let helper = function_id_by_name(&db, case.owner)?;
+
+        // tests/fixture_crates/fixture_call_graph/src/lib.rs:1532-1547:
+        // These private helpers call through `holder.callbacks[0]()` and
+        // `holder.0[0]()`. Each helper has one local caller that constructs the
+        // holder with `local_target`, so the indexed field parameter call is an
+        // exact DynamicFunction edge instead of an opaque dynamic blocker.
+        let context = db.call_context_for_owner(owner)?;
+        assert_eq!(
+            context.len(),
+            1,
+            "{} owner context rows: {context:#?}",
+            case.owner
+        );
+        let row = row_by_kind_path(&context, CallSiteKind::Dynamic, case.path);
+        assert_eq!(row.site.owner_id, owner);
+        assert_eq!(row.site.arg_count, Some(0));
+        assert_eq!(row.site.generic_arg_count, None);
+        assert_resolved_target(
+            row,
+            target,
+            CallRelationKind::DynamicFunction,
+            CallSiteKind::Dynamic,
+            CallTargetKind::Function,
+        );
+
+        let callers = db.callers_for_target(target)?;
+        let caller_row =
+            caller_by_owner_kind_path(&callers, owner, CallSiteKind::Dynamic, case.path);
+        assert_eq!(caller_row.status.status, CallStatusKind::Resolved);
+        assert_eq!(
+            caller_row.status.resolution,
+            Some(CallResolutionKind::LocalExact)
+        );
+        assert_eq!(caller_row.target.target_id, target);
+        assert_eq!(
+            caller_row.target.relation,
+            CallRelationKind::DynamicFunction
+        );
+
+        let paths = db.call_paths_from_owner(
+            owner,
+            CallPathOptions {
+                max_depth: 1,
+                max_paths: 8,
+            },
+        )?;
+        let path = paths
+            .iter()
+            .find(|path| path.start_id == owner && path.end_id == target && path.depth == 1)
+            .unwrap_or_else(|| panic!("{} should have a one-hop path to local_target", case.owner));
+        assert_eq!(path.edges[0].caller_id, owner);
+        assert_eq!(path.edges[0].callee_id, target);
+        assert_eq!(path.edges[0].relation, CallRelationKind::DynamicFunction);
+
+        let caller_context = db.call_context_for_owner(caller)?;
+        let helper_call = row_by_path(&caller_context, &[case.owner]);
+        assert_eq!(helper_call.site.arg_count, Some(1));
+        assert_resolved_target(
+            helper_call,
+            helper,
+            CallRelationKind::Function,
+            CallSiteKind::Path,
+            CallTargetKind::Function,
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn fixture_context_keeps_generic_fn_once_parameter_targetless() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let owner = function_id_by_name(&db, "call_single_generic_fn_once_param")?;

@@ -34,8 +34,8 @@ use serde::{Deserialize, Serialize};
 
 // Re-export all node types from submodules
 pub use call::{
-    CallArgument, CallNode, DynamicCallCallee, DynamicCallNode, MacroCallNode, MethodCallNode,
-    MethodCallReceiver, PathCallCallee, PathCallNode,
+    ArgumentFieldInit, CallArgument, CallNode, DynamicCallCallee, DynamicCallNode, MacroCallNode,
+    MethodCallNode, MethodCallReceiver, PathCallCallee, PathCallNode,
 };
 pub use consts::ConstNode;
 pub use enums::{EnumNode, VariantNode};

@@ -107,9 +107,22 @@ pub enum CallArgument {
     /// The argument expression is an inline non-async closure literal with a
     /// known executable body owner.
     Closure { closure_id: ExecutableBodyId },
+    /// The argument expression constructs a local value with path-valued field
+    /// initializers, such as `CallbackHolder { callback: local_target }`.
+    Constructed {
+        type_path: Vec<String>,
+        fields: Vec<ArgumentFieldInit>,
+    },
     /// The argument expression is not represented by this conservative slice.
     #[default]
     Other,
+}
+
+/// Path-valued field initializer evidence for a constructed call argument.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct ArgumentFieldInit {
+    pub field_path: Vec<String>,
+    pub init_path: Vec<String>,
 }
 
 /// Coarse callee categories for syntactic path-call sites.

@@ -4,7 +4,7 @@ use crate::{
         graph::GraphAccess,
         nodes::{
             AnyCallSiteId, CallArgument, CallBodyOwnerId, CallNode, ExecutableBodyId,
-            FunctionNodeId, OrdinaryTypeUseId, PathCallCallee, PathCallNode,
+            FunctionNodeId, PathCallCallee, PathCallNode,
         },
         relations::{CallRelation, CallResolutionKind, CallResolutionStatus, TypeRelation},
         types::{TypeNode, VisibilityKind},
@@ -20,6 +20,12 @@ use super::{
 pub(super) enum ParameterCallTarget {
     Function(FunctionNodeId),
     Closure(ExecutableBodyId),
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ParameterProof<'a> {
+    Value,
+    Field(&'a [String]),
 }
 
 impl CallRelationResolver<'_> {
@@ -259,6 +265,30 @@ impl CallRelationResolver<'_> {
             return Ok(None);
         };
 
+        self.resolve_parameter_call(owner, name, ParameterProof::Value)
+    }
+
+    pub(super) fn resolve_parameter_field_call(
+        &self,
+        owner: CallBodyOwnerId,
+        path: &[String],
+    ) -> Result<Option<ParameterCallTarget>, SynParserError> {
+        let Some((name, field_path)) = path.split_first() else {
+            return Ok(None);
+        };
+        if field_path.is_empty() {
+            return Ok(None);
+        }
+
+        self.resolve_parameter_call(owner, name, ParameterProof::Field(field_path))
+    }
+
+    fn resolve_parameter_call(
+        &self,
+        owner: CallBodyOwnerId,
+        name: &str,
+        proof: ParameterProof<'_>,
+    ) -> Result<Option<ParameterCallTarget>, SynParserError> {
         let Some(parameter_owner) = self.parameter_function_owner(owner)? else {
             return Ok(None);
         };
@@ -270,13 +300,16 @@ impl CallRelationResolver<'_> {
         };
         let Some(index) = params
             .iter()
-            .position(|param| param.name.as_deref() == Some(name.as_str()))
+            .position(|param| param.name.as_deref() == Some(name))
         else {
             return Ok(None);
         };
-        if !self.parameter_allows_local_caller_proof(params[index].type_id)? {
+
+        let param_type = self.type_node(params[index].type_id)?;
+        if !self.parameter_allows_local_caller_proof(param_type, proof) {
             return Ok(None);
         }
+        let expected_type = parameter_proof_type_path(param_type, proof);
 
         let mut targets = Vec::new();
         let mut caller_count = 0usize;
@@ -291,7 +324,9 @@ impl CallRelationResolver<'_> {
             if site.arguments.len() <= index {
                 return Ok(None);
             }
-            if let Some(target) = self.resolve_call_argument(site, &site.arguments[index])? {
+            if let Some(target) =
+                self.resolve_call_argument(site, &site.arguments[index], proof, expected_type)?
+            {
                 targets.push(target);
             } else {
                 return Ok(None);
@@ -346,9 +381,14 @@ impl CallRelationResolver<'_> {
 
     fn parameter_allows_local_caller_proof(
         &self,
-        type_id: OrdinaryTypeUseId,
-    ) -> Result<bool, SynParserError> {
-        Ok(matches!(self.type_node(type_id)?, TypeNode::Function(_)))
+        param_type: &TypeNode,
+        proof: ParameterProof<'_>,
+    ) -> bool {
+        matches!(
+            (proof, param_type),
+            (ParameterProof::Value, TypeNode::Function(_))
+                | (ParameterProof::Field(_), TypeNode::Named(_))
+        )
     }
 
     fn path_call_targets_function(
@@ -378,15 +418,30 @@ impl CallRelationResolver<'_> {
         &self,
         site: &PathCallNode,
         arg: &CallArgument,
+        proof: ParameterProof<'_>,
+        expected_type: Option<&[String]>,
     ) -> Result<Option<ParameterCallTarget>, SynParserError> {
-        match arg {
-            CallArgument::Path { path } => self
+        match (proof, arg) {
+            (ParameterProof::Value, CallArgument::Path { path }) => self
                 .resolve_argument_path(site.owner, path)
                 .map(|target| target.map(ParameterCallTarget::Function)),
-            CallArgument::Closure { closure_id } => {
+            (ParameterProof::Value, CallArgument::Closure { closure_id }) => {
                 Ok(Some(ParameterCallTarget::Closure(*closure_id)))
             }
-            CallArgument::Other => Ok(None),
+            (
+                ParameterProof::Field(field_path),
+                CallArgument::Constructed { type_path, fields },
+            ) => {
+                if !expected_type.is_some_and(|expected| path_leaf_matches(type_path, expected)) {
+                    return Ok(None);
+                }
+                let Some(field) = fields.iter().find(|field| field.field_path == field_path) else {
+                    return Ok(None);
+                };
+                self.resolve_argument_path(site.owner, &field.init_path)
+                    .map(|target| target.map(ParameterCallTarget::Function))
+            }
+            _ => Ok(None),
         }
     }
 
@@ -414,4 +469,18 @@ impl CallRelationResolver<'_> {
             | LocalFunctionPathResolution::Unsupported => Ok(None),
         }
     }
+}
+
+fn parameter_proof_type_path<'a>(
+    param_type: &'a TypeNode,
+    proof: ParameterProof<'_>,
+) -> Option<&'a [String]> {
+    match (proof, param_type) {
+        (ParameterProof::Field(_), TypeNode::Named(node)) => Some(&node.path),
+        _ => None,
+    }
+}
+
+fn path_leaf_matches(path: &[String], expected: &[String]) -> bool {
+    path.last().is_some() && path.last() == expected.last()
 }

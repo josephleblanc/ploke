@@ -77,6 +77,30 @@ impl CallRelationResolver<'_> {
             return Ok(());
         }
 
+        if let DynamicCallCallee::FieldLocalBinding { path } = &call.callee
+            && let Some(target) = self.resolve_parameter_field_call(call.owner, path)?
+        {
+            match target {
+                ParameterCallTarget::Function(target) => {
+                    relations.push(CallRelation::DynamicFunction {
+                        source: call.id,
+                        target,
+                    });
+                }
+                ParameterCallTarget::Closure(target) => {
+                    relations.push(CallRelation::DynamicClosure {
+                        source: call.id,
+                        target,
+                    });
+                }
+            }
+            statuses.push(CallResolutionStatus::Resolved {
+                source,
+                kind: CallResolutionKind::LocalExact,
+            });
+            return Ok(());
+        }
+
         if let DynamicCallCallee::ClosureBinding { closure_id, .. }
         | DynamicCallCallee::FnPointerCastClosureBinding { closure_id, .. }
         | DynamicCallCallee::DereferencedClosureBinding { closure_id, .. }
