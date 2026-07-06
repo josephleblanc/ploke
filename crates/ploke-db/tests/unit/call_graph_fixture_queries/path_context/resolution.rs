@@ -174,3 +174,60 @@ fn fixture_context_resolves_single_caller_function_pointer_parameter() -> Result
 
     Ok(())
 }
+
+#[test]
+fn fixture_context_keeps_generic_fn_once_parameter_targetless() -> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let owner = function_id_by_name(&db, "call_single_generic_fn_once_param")?;
+    let caller = function_id_by_name(&db, "call_single_generic_fn_once_param_with_local_target")?;
+    let helper = function_id_by_name(&db, "call_single_generic_fn_once_param")?;
+    let target = function_id_by_name(&db, "local_target")?;
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1511-1519:
+    // the private single-caller proof is intentionally limited to bare
+    // `fn(...)` parameter types. `F: FnOnce` is callable-trait dispatch, so the
+    // `generic_f()` call stays targetless until binding/type proof can model it.
+    let context = db.call_context_for_owner(owner)?;
+    assert_eq!(
+        context.len(),
+        1,
+        "generic FnOnce parameter context rows: {context:#?}"
+    );
+    let row = row_by_path(&context, &["generic_f"]);
+    assert_eq!(row.site.owner_id, owner);
+    assert_eq!(row.site.arg_count, Some(0));
+    assert_eq!(row.site.generic_arg_count, Some(0));
+    assert_eq!(row.status.status, CallStatusKind::Unsupported);
+    assert_eq!(row.status.resolution, None);
+    assert!(
+        row.targets.is_empty(),
+        "generic FnOnce parameter call must not fabricate targets: {row:#?}"
+    );
+
+    let paths = db.call_paths_from_owner(
+        owner,
+        CallPathOptions {
+            max_depth: 1,
+            max_paths: 8,
+        },
+    )?;
+    assert!(
+        paths.iter().all(|path| path.end_id != target),
+        "generic FnOnce parameter owner should not traverse through callable-trait dispatch: {paths:#?}"
+    );
+
+    // The caller still has a normal direct call edge to the private helper; the
+    // unsupported frontier is inside the helper body.
+    let caller_context = db.call_context_for_owner(caller)?;
+    let helper_call = row_by_path(&caller_context, &["call_single_generic_fn_once_param"]);
+    assert_eq!(helper_call.site.arg_count, Some(1));
+    assert_resolved_target(
+        helper_call,
+        helper,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    Ok(())
+}

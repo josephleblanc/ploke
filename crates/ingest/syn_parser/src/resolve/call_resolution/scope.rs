@@ -448,6 +448,10 @@ impl<'a> CallRelationResolver<'a> {
         owner: CallBodyOwnerId,
         segment: &str,
     ) -> Result<WorkspaceTypeResolution<'a>, SynParserError> {
+        if self.workspace.is_none() {
+            return Ok(WorkspaceTypeResolution::Unresolved);
+        }
+
         let Some(module_id) = self.containing_module_for_owner(owner) else {
             return Ok(WorkspaceTypeResolution::Unresolved);
         };

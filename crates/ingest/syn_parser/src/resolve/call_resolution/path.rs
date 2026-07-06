@@ -4,10 +4,10 @@ use crate::{
         graph::GraphAccess,
         nodes::{
             AnyCallSiteId, CallArgument, CallBodyOwnerId, CallNode, ExecutableBodyId,
-            FunctionNodeId, PathCallCallee, PathCallNode,
+            FunctionNodeId, OrdinaryTypeUseId, PathCallCallee, PathCallNode,
         },
         relations::{CallRelation, CallResolutionKind, CallResolutionStatus, TypeRelation},
-        types::VisibilityKind,
+        types::{TypeNode, VisibilityKind},
     },
 };
 
@@ -274,6 +274,9 @@ impl CallRelationResolver<'_> {
         else {
             return Ok(None);
         };
+        if !self.parameter_allows_local_caller_proof(params[index].type_id)? {
+            return Ok(None);
+        }
 
         let mut targets = Vec::new();
         let mut caller_count = 0usize;
@@ -341,11 +344,22 @@ impl CallRelationResolver<'_> {
         Ok(matches!(function.visibility, VisibilityKind::Inherited))
     }
 
+    fn parameter_allows_local_caller_proof(
+        &self,
+        type_id: OrdinaryTypeUseId,
+    ) -> Result<bool, SynParserError> {
+        Ok(matches!(self.type_node(type_id)?, TypeNode::Function(_)))
+    }
+
     fn path_call_targets_function(
         &self,
         site: &PathCallNode,
         target: FunctionNodeId,
     ) -> Result<bool, SynParserError> {
+        if !matches!(site.callee, PathCallCallee::ItemPath) {
+            return Ok(false);
+        }
+
         let resolution = if self.is_unqualified_path(&site.path) {
             self.resolve_unqualified_local_function_path(site.owner, &site.path)?
         } else if self.is_explicit_local_path(&site.path) {

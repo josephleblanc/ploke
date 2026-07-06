@@ -67,15 +67,18 @@ should prevent future resumes from reselecting already-covered shapes.
    - Keep `f()` / `(f)()` where `f: fn(...)` is an owner parameter targetless unless an initializer is available.
    - Add or verify parser/DB/RAG proof that the callable parameter is visible as `ValueBinding` / `LocalBinding` with no edge.
    - A bounded positive subset now resolves private helper parameter calls when
-     the complete local caller set supplies exactly one proven callable target,
+     the parameter type is a bare function pointer and the complete local caller
+     set supplies exactly one proven callable target,
      for example `call_single_function_pointer_param(f: fn() -> i32) { f() }`
      called only as `call_single_function_pointer_param(local_target)`.
-   - Public helpers, unproven argument expressions, missing arguments, and
-     multi-target caller sets remain targetless; do not broaden this through
-     API entrypoints or arbitrary interprocedural value flow.
+   - Public helpers, generic callable-trait parameters such as `F: FnOnce`,
+     unproven argument expressions, missing arguments, and multi-target caller
+     sets remain targetless; do not broaden this through API entrypoints,
+     callable-trait dispatch, or arbitrary interprocedural value flow.
    - DB, RAG, and tool assertions now preserve the resolved private
-     single-caller edge to `local_target`, while public, opaque,
-     missing-argument, and multi-target shapes remain explicit blockers.
+     function-pointer single-caller edge to `local_target`, while public,
+     generic callable-trait, opaque, missing-argument, and multi-target shapes
+     remain explicit blockers.
 
 2. Direct typed local receiver alias - completed:
    - Extend one exact local alias propagation case for method receivers only if it reuses existing initializer proof.
