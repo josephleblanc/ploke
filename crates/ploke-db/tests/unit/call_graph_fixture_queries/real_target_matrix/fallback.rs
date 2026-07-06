@@ -259,7 +259,7 @@ fn chrono_try_receiver_method_rows_are_targetless_fallback_oracles() -> Result<(
 }
 
 #[test]
-fn chrono_guarded_match_arm_method_guard_is_targetless_fallback_oracle() -> Result<(), DbError> {
+fn chrono_guarded_match_arm_slice_method_guard_is_external_frontier() -> Result<(), DbError> {
     let db = setup_call_graph_db(&CORPUS_CHRONO_CALL_GRAPH)?;
 
     // Matrix: `Fallback Source Oracle Matrix`.
@@ -269,14 +269,15 @@ fn chrono_guarded_match_arm_method_guard_is_targetless_fallback_oracle() -> Resu
     //   chrono/src/format/strftime.rs:635 guards a match arm with
     //   `self.queue.is_empty()`.
     //
-    // Current model gap: field receiver classification is structural only here;
-    // the external slice method must remain targetless.
+    // Expected traversal: the named self-field type is source-visible as
+    // `&'static [Item<'static>]`, so `is_empty` is classified as an external
+    // slice frontier. No local traversal edge is fabricated.
     assert_targetless_method_rows(
         &db,
         "is_empty",
         "SelfField",
         Some(&["queue"]),
-        CallStatusKind::Unsupported,
+        CallStatusKind::External,
         1,
     )?;
     assert_targetless_method_line_fanout(
@@ -285,7 +286,7 @@ fn chrono_guarded_match_arm_method_guard_is_targetless_fallback_oracle() -> Resu
         "is_empty",
         "SelfField",
         Some(&["queue"]),
-        CallStatusKind::Unsupported,
+        CallStatusKind::External,
         &[SourceLineFanout {
             file_suffix: "src/format/strftime.rs",
             lines: &[635],
@@ -305,7 +306,7 @@ fn chrono_guarded_match_arm_method_guard_is_targetless_fallback_oracle() -> Resu
         &CallReceiver::SelfField {
             path: vec!["queue".to_string()],
         },
-        CallStatusKind::Unsupported,
+        CallStatusKind::External,
         "chrono/src/format/strftime.rs:635 self.queue.is_empty",
     )?;
 

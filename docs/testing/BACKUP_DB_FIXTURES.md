@@ -210,7 +210,7 @@ impl Drop for FixtureRestoreGuard {
 | `corpus_generic_array_call_graph_2026-06-28.sqlite` | `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23` | plain corpus backup for real-target call graph query contracts | 2026-06-28 |
 | `corpus_generic_array_openrouter_embeddings_2026-05-17.sqlite` | `github:fizyk20/generic-array@80bab87431c2e29823dc551a3311324812838a23` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_chrono_type_graph_2026-05-17.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | typed graphRAG type traversal corpus backup | 2026-05-17 |
-| `corpus_chrono_call_graph_2026-07-01.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | plain corpus backup for real-target call graph query contracts | 2026-07-01 |
+| `corpus_chrono_call_graph_2026-07-06.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | plain corpus backup for real-target call graph query contracts | 2026-07-06 |
 | `corpus_chrono_openrouter_embeddings_2026-05-17.sqlite` | `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be` | OpenRouter-searchable corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_axum_type_graph_2026-05-17.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | typed graphRAG workspace-member corpus backup for type-context matrix tests | 2026-05-17 |
 | `corpus_axum_call_graph_2026-07-06.sqlite` | `github:tokio-rs/axum@a3446d68bc03d61fb8e7513052bad2825d0c0db1` | plain workspace-member corpus backup for real-target call graph query contracts | 2026-07-06 |
@@ -640,10 +640,10 @@ Expected searchable corpus embedding config:
   - traversal from `MappedLocalTime<T>` aliases to `LocalResult<T>`
   - later traversal from timezone API owners into their generic result model
 
-### `corpus_chrono_call_graph_2026-07-01.sqlite`
+### `corpus_chrono_call_graph_2026-07-06.sqlite`
 
 - Status: active
-- File: `tests/backup_dbs/corpus_chrono_call_graph_2026-07-01.sqlite`
+- File: `tests/backup_dbs/corpus_chrono_call_graph_2026-07-06.sqlite`
 - Parsed target: `github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be`
 - Checkout slug: `tests/fixture_github_clones/corpus/chronotope__chrono`
 - Expected DB config:
@@ -653,7 +653,17 @@ Expected searchable corpus embedding config:
   - call graph relations projected from the current parser/transform baseline
 - Tests using this fixture:
   - real-target call graph matrix rows for resolved alias constructors, try
-    receivers, and guarded match-arm method calls
+    receivers, and guarded match-arm external slice receiver frontier calls
+
+## 2026-07-06 Chrono Slice Receiver Frontier Refresh
+
+- Command: `cargo run -p xtask --features call_graph -- recreate-backup-db --fixture corpus_chrono_call_graph`
+- Shared snapshot: `~/.config/ploke/db_snapshot_fixtures/corpus_chrono_call_graph_2026-07-06.sqlite`
+- Seed artifact: `tests/backup_dbs/corpus_chrono_call_graph_2026-07-06.sqlite`
+- Change covered: `chrono/src/format/strftime.rs:635`
+  `self.queue.is_empty()` now classifies as an external targetless slice
+  receiver frontier using the source-visible field type
+  `queue: &'static [Item<'static>]`.
 
 ### `corpus_chrono_openrouter_embeddings_2026-05-17.sqlite`
 

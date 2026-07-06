@@ -357,6 +357,10 @@ impl CallRelationResolver<'_> {
         method_name: &str,
         type_relations: &[TypeRelation],
     ) -> Result<bool, SynParserError> {
+        if method_name == "is_empty" {
+            return self.type_use_is_slice(type_id);
+        }
+
         let TypeNode::Named(type_node) = self.type_node(type_id)? else {
             return Ok(false);
         };
@@ -384,6 +388,15 @@ impl CallRelationResolver<'_> {
             [segment] if matches!(segment.as_str(), "String" | "Vec") => {
                 Ok(!self.local_segment_visible(owner, segment)?)
             }
+            _ => Ok(false),
+        }
+    }
+
+    fn type_use_is_slice(&self, type_id: OrdinaryTypeUseId) -> Result<bool, SynParserError> {
+        match self.type_node(type_id)? {
+            TypeNode::Slice(_) => Ok(true),
+            TypeNode::Reference(node) => self.type_use_is_slice(node.referenced),
+            TypeNode::Paren(node) => self.type_use_is_slice(node.inner),
             _ => Ok(false),
         }
     }

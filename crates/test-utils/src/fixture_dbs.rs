@@ -761,7 +761,7 @@ pub const CORPUS_CHRONO_TYPE_GRAPH: FixtureDb = FixtureDb {
 
 pub const CORPUS_CHRONO_CALL_GRAPH: FixtureDb = FixtureDb {
     id: "corpus_chrono_call_graph",
-    rel_path: "tests/backup_dbs/corpus_chrono_call_graph_2026-07-01.sqlite",
+    rel_path: "tests/backup_dbs/corpus_chrono_call_graph_2026-07-06.sqlite",
     parsed_targets: &["github:chronotope/chrono@120686c82c5da90377e815edb82c9a80b6b4f2be"],
     status: FixtureStatus::Active,
     creation: FixtureCreationStrategy::Automated(FixtureAutomation::GithubCorpusCrate {
@@ -777,8 +777,8 @@ pub const CORPUS_CHRONO_CALL_GRAPH: FixtureDb = FixtureDb {
     requires_primary_index: false,
     bm25_index_expected: false,
     embedding: None,
-    last_updated: "2026-07-01",
-    notes: "Source-pinned chrono corpus backup for real-target call graph query contracts over resolved alias constructors, try receivers, and guarded match-arm method calls.",
+    last_updated: "2026-07-06",
+    notes: "Source-pinned chrono corpus backup for real-target call graph query contracts over resolved alias constructors, try receivers, and guarded match-arm external slice receiver frontiers.",
 };
 
 pub const CORPUS_CHRONO_OPENROUTER_EMBEDDINGS: FixtureDb = FixtureDb {

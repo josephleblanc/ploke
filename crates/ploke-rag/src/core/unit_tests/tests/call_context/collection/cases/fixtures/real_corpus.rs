@@ -460,6 +460,50 @@ async fn call_context_exact_reads_chrono_alias_constructor_callers() -> Result<(
 }
 
 #[tokio::test]
+async fn call_context_collection_reads_chrono_strftime_queue_slice_frontier() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_chrono_call_graph_rag()?;
+
+    let owner =
+        method_id_by_name_and_body_substring(&db, "parse_next_item", "self.queue.is_empty()")?;
+    let context = rag.exact_call_context(owner)?;
+    let callee = CallCalleeInfo::Method {
+        name: "is_empty".to_string(),
+        receiver: Some(CallReceiverInfo::SelfField {
+            path: vec!["queue".to_string()],
+        }),
+    };
+    let matching = context
+        .iter()
+        .filter(|call| call.kind == CallSiteKind::Method && call.callee == callee)
+        .collect::<Vec<_>>();
+
+    // Matrix: chrono guarded match-arm method guard.
+    // Source chain:
+    //   docs/active/agents/call-graph/2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //   chrono/src/format/strftime.rs:198 defines
+    //   `StrftimeItems::queue: &'static [Item<'static>]`.
+    //   chrono/src/format/strftime.rs:635 calls `self.queue.is_empty()`
+    //   in a guarded match arm.
+    // Expected traversal: RAG preserves the DB external frontier row for the
+    // slice receiver and does not fabricate a local callee edge.
+    assert_eq!(
+        matching.len(),
+        1,
+        "StrftimeItems::parse_next_item should expose one queue.is_empty frontier row: {context:#?}"
+    );
+    assert_eq!(matching[0].owner_id, owner);
+    assert_eq!(matching[0].status, CallStatusKind::External);
+    assert_eq!(matching[0].resolution, None);
+    assert!(
+        matching[0].targets.is_empty(),
+        "chrono queue.is_empty slice frontier should remain targetless: {matching:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_exact_reads_axum_handler_call_trait_method_caller() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;
