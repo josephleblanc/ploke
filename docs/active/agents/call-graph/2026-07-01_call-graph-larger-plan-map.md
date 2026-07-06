@@ -89,8 +89,9 @@ Current matrix posture:
   and project through DB/proof/RAG/TUI constructor surfaces.
 - Executable-local item boundaries: function-local const/static initializer
   calls and local `fn` body calls are owned by executable `LocalItem` owners
-  and are no longer flattened into the enclosing function owner; broader local
-  item semantics remain future.
+  and are no longer flattened into the enclosing function owner; block-local
+  `fn` item calls such as `inner()` now resolve as `LocalFunction -> LocalItem`
+  edges from the enclosing function to the executable local-item owner.
 - Dynamic/receiver/closure/import gaps: future semantic expansion buckets, not reasons to keep polishing already-proven method paths.
 - Workspace dependency-root imports: selected workspace fixtures can contain
   one crate importing another selected crate, for example axum-core test code
@@ -162,6 +163,6 @@ For the current state, that should be:
 Root plan: .hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md
 Current phase: binding/type-aware semantic resolution
 Current completed bucket: executable-local body ownership plus bounded workspace type import/re-export proof
-Completed proof: closure, async-block, local-item, local `fn`, and local impl method bodies have executable owners; nested axum `local_impl_method:from_request_parts` resolves `Secret::from_ref` through local impl where-bound evidence to axum-core `FromRef::from_ref`; axum-core ViaParts async-block `Self::from_request_parts` resolves through parent blanket impl bounds to `FromRequestParts::from_request_parts`; regenerated axum `Body::empty` rows resolve through direct parsed-workspace imports, local re-export imports, inherited glob imports, closure-owned rows, and local-item rows across DB/RAG/TUI proof surfaces
+Completed proof: closure, async-block, local-item, local `fn`, and local impl method bodies have executable owners; block-local `fn` item calls resolve as `LocalFunction -> LocalItem` edges; nested axum `local_impl_method:from_request_parts` resolves `Secret::from_ref` through local impl where-bound evidence to axum-core `FromRef::from_ref`; axum-core ViaParts async-block `Self::from_request_parts` resolves through parent blanket impl bounds to `FromRequestParts::from_request_parts`; regenerated axum `Body::empty` rows resolve through direct parsed-workspace imports, local re-export imports, inherited glob imports, closure-owned rows, and local-item rows across DB/RAG/TUI proof surfaces
 Next phase if this bucket is done: choose the next unresolved coverage-matrix bucket from the binding/type-aware semantic expansion plan; do not add more import breadth unless there is an explicit workspace proof carrier and source oracle
 ```
