@@ -7,6 +7,10 @@
 use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
 
+mod model;
+
+use model::{ConstructedFields, FieldInitProof, LocalBindingProof};
+
 use crate::parser::nodes::{
     ArgumentFieldInit, CallArgument, CallBodyOwnerId, CallNode, DynamicCallCallee, DynamicCallNode,
     ExecutableBodyId, ExecutableBodyNode, MacroCallNode, MethodCallNode, MethodCallReceiver,
@@ -78,76 +82,6 @@ struct BodyCallVisitor<'a> {
     relations: Vec<CallSiteRelation>,
     executable_bodies: Vec<ExecutableBodyNode>,
     awaited_call_spans: Vec<(usize, usize)>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum LocalBindingProof {
-    Typed {
-        name: String,
-        type_path: Vec<String>,
-        init_path: Option<Vec<String>>,
-    },
-    TraitObject {
-        name: String,
-        trait_path: Vec<String>,
-        init_path: Option<Vec<String>>,
-    },
-    Initialized {
-        name: String,
-        init_path: Vec<String>,
-    },
-    Closure {
-        name: String,
-        closure_id: ExecutableBodyId,
-    },
-    LocalFunction {
-        name: String,
-        body_id: ExecutableBodyId,
-    },
-    Constructed {
-        name: String,
-        type_path: Vec<String>,
-        fields: ConstructedFields,
-    },
-    Array {
-        name: String,
-        element_init_paths: Vec<Option<Vec<String>>>,
-    },
-    Referenced {
-        name: String,
-        type_path: Vec<String>,
-    },
-    Untyped {
-        name: String,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ConstructedFields {
-    Tuple(Vec<Option<FieldInitProof>>),
-    Named(Vec<(String, Option<FieldInitProof>)>),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum FieldInitProof {
-    Path(Vec<String>),
-    Array(Vec<Option<Vec<String>>>),
-}
-
-impl LocalBindingProof {
-    fn name(&self) -> &str {
-        match self {
-            Self::Typed { name, .. }
-            | Self::TraitObject { name, .. }
-            | Self::Initialized { name, .. }
-            | Self::Closure { name, .. }
-            | Self::LocalFunction { name, .. }
-            | Self::Constructed { name, .. }
-            | Self::Array { name, .. }
-            | Self::Referenced { name, .. }
-            | Self::Untyped { name } => name,
-        }
-    }
 }
 
 impl BodyCallVisitor<'_> {
