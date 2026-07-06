@@ -225,6 +225,58 @@ async fn call_context_collection_reads_axum_captured_callback_parameter_gap() ->
 }
 
 #[tokio::test]
+async fn call_context_collection_reads_axum_generated_constructor_gap() -> Result<(), Error> {
+    init_tracing_once();
+    let (db, rag) = setup_axum_call_graph_rag()?;
+
+    let owner =
+        method_id_by_name_and_body_substring(&db, "call", "IntoServiceFuture::new(future)")?;
+    let call_context = rag.collect_call_context(&[(owner, 1.0)])?;
+    let context = call_context
+        .get(&owner)
+        .expect("HandlerService::call should receive outgoing call context");
+    let generated = context
+        .iter()
+        .filter(|call| {
+            call.owner_id == owner
+                && call.kind == CallSiteKind::Path
+                && call.callee
+                    == CallCalleeInfo::Path {
+                        path: path(&["super", "future", "IntoServiceFuture", "new"]),
+                    }
+        })
+        .collect::<Vec<_>>();
+
+    // Matrix:
+    //   docs/active/agents/call-graph/
+    //   2026-06-28_real-corpus-call-site-oracle-matrices.md
+    //
+    // Source chain:
+    //   axum/src/handler/future.rs:11-18 invokes `opaque_future!` for
+    //   `IntoServiceFuture`.
+    //   axum/src/macros.rs:19-20 is the macro template for generated `new`.
+    //   axum/src/handler/service.rs:155 binds the associated future type.
+    //   axum/src/handler/service.rs:174 calls
+    //   `super::future::IntoServiceFuture::new(future)`.
+    // Expected traversal: the path call is visible in RAG, but targetless until
+    // macro-expanded inherent impl items are modeled.
+    assert_eq!(
+        generated.len(),
+        1,
+        "HandlerService::call should expose one targetless IntoServiceFuture::new row: {context:#?}"
+    );
+    assert_eq!(generated[0].arg_count, Some(1));
+    assert_eq!(generated[0].status, CallStatusKind::Unresolved);
+    assert_eq!(generated[0].resolution, None);
+    assert!(
+        generated[0].targets.is_empty(),
+        "generated IntoServiceFuture::new row should remain targetless in RAG call context: {generated:#?}"
+    );
+
+    Ok(())
+}
+
+#[tokio::test]
 async fn call_context_collection_reads_axum_route_oneshot_receiver_gaps() -> Result<(), Error> {
     init_tracing_once();
     let (db, rag) = setup_axum_call_graph_rag()?;
