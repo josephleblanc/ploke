@@ -92,7 +92,10 @@ should prevent future resumes from reselecting already-covered shapes.
      TupleCallbackArrayHolder) { holder.0[0]() }` resolve only because each
      private helper has one local caller that constructs the holder with
      `local_target` in the indexed field slot. Public holder parameters and
-     arbitrary constructed/value-flow cases remain targetless.
+     arbitrary constructed/value-flow cases remain targetless. Parser, DB,
+     RAG, and lookup/edges tool assertions now preserve these exact indexed
+     holder-parameter `DynamicFunction` edges and the wrapper helper path rows
+     that make the single-caller proof auditable downstream.
 
 2. Direct typed local receiver alias - completed:
    - Extend one exact local alias propagation case for method receivers only if it reuses existing initializer proof.
