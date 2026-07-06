@@ -784,9 +784,9 @@ fn call_site_to_params(call_site: &CallNode) -> BTreeMap<String, cozo::DataValue
                     .split_first()
                     .filter(|(first, rest)| rest.iter().all(|path| path == *first))
                     .map_or(cozo::DataValue::Null, |(path, _)| string_list(path)),
-                DynamicCallCallee::ClosureLiteral { .. } | DynamicCallCallee::Other => {
-                    cozo::DataValue::Null
-                }
+                DynamicCallCallee::ClosureLiteral { .. }
+                | DynamicCallCallee::AwaitedAsyncClosureLiteral { .. }
+                | DynamicCallCallee::Other => cozo::DataValue::Null,
             };
             params.insert("path".to_string(), path);
             params.insert("method_name".to_string(), cozo::DataValue::Null);

@@ -290,6 +290,8 @@ pub enum ExpectedDynamicCallee<'a> {
     },
     /// The callee expression is an inline non-async closure literal with a known executable owner.
     ClosureLiteral { closure_id: ExecutableBodyId },
+    /// The callee expression is an inline async closure literal whose returned future is awaited.
+    AwaitedAsyncClosureLiteral { closure_id: ExecutableBodyId },
     /// The callee expression names a local value binding initialized by another path.
     InitializedLocalBinding {
         path: &'a [&'a str],
@@ -363,6 +365,9 @@ impl ExpectedDynamicCallee<'_> {
                 closure_id,
             },
             Self::ClosureLiteral { closure_id } => DynamicCallCallee::ClosureLiteral { closure_id },
+            Self::AwaitedAsyncClosureLiteral { closure_id } => {
+                DynamicCallCallee::AwaitedAsyncClosureLiteral { closure_id }
+            }
             Self::InitializedLocalBinding { path, init_path } => {
                 DynamicCallCallee::InitializedLocalBinding {
                     path: path.iter().copied().map(String::from).collect(),
@@ -818,6 +823,25 @@ impl<'a> ExpectedCallSite<'a> {
         Self {
             kind: ExpectedCallKind::Dynamic {
                 callee: ExpectedDynamicCallee::ClosureLiteral { closure_id },
+                arg_count,
+            },
+            span,
+            cfgs,
+            outcome,
+        }
+    }
+
+    /// Constructor for an awaited dynamic-call expectation whose callee is an async closure literal.
+    pub const fn dynamic_awaited_async_closure_literal(
+        closure_id: ExecutableBodyId,
+        span: (usize, usize),
+        arg_count: usize,
+        cfgs: &'a [&'a str],
+        outcome: ExpectedCallOutcome,
+    ) -> Self {
+        Self {
+            kind: ExpectedCallKind::Dynamic {
+                callee: ExpectedDynamicCallee::AwaitedAsyncClosureLiteral { closure_id },
                 arg_count,
             },
             span,

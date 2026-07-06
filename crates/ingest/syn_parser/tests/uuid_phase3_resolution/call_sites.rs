@@ -232,6 +232,8 @@ const EXTERN_C_ABS_CALL_SPAN: (usize, usize) = (17230, 17240);
 const TEST_ASSERT_EQ_MACRO_CALL_SPAN: (usize, usize) = (17334, 17354);
 const ASYNC_CLOSURE_LITERAL_DYNAMIC_CALL_SPAN: (usize, usize) = (17436, 17463);
 const ASYNC_CLOSURE_BODY_LOCAL_TARGET_CALL_SPAN: (usize, usize) = (17446, 17460);
+const AWAITED_ASYNC_CLOSURE_LITERAL_DYNAMIC_CALL_SPAN: (usize, usize) = (33609, 33636);
+const AWAITED_ASYNC_CLOSURE_BODY_LOCAL_TARGET_CALL_SPAN: (usize, usize) = (33619, 33633);
 const NAMED_FIELD_FUNCTION_DYNAMIC_CALL_SPAN: (usize, usize) = (17802, 17821);
 const ALIASED_NAMED_FIELD_FUNCTION_DYNAMIC_CALL_SPAN: (usize, usize) = (17991, 18009);
 const INDEXED_FIELD_FUNCTION_PARAM_DYNAMIC_CALL_SPAN: (usize, usize) = (18096, 18117);
@@ -4539,6 +4541,34 @@ paranoid_call_site_test!(
 );
 
 #[test]
+fn fixture_call_graph_call_awaited_async_closure_literal_with_body_call_resolves_outer_dynamic_call_site()
+-> Result<(), syn_parser::error::SynParserError> {
+    let (graph, tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+    let report = resolve_call_relations_after_tree(&graph, &tree)?;
+    let owner = crate::common::call_site_paranoid::function_owner_context(
+        &graph,
+        &["crate"],
+        "call_awaited_async_closure_literal_with_body_call",
+    );
+    let closure = closure_body_inside_span(
+        &graph,
+        &owner,
+        AWAITED_ASYNC_CLOSURE_LITERAL_DYNAMIC_CALL_SPAN,
+    );
+    let expected = ExpectedCallSite::dynamic_awaited_async_closure_literal(
+        closure,
+        AWAITED_ASYNC_CLOSURE_LITERAL_DYNAMIC_CALL_SPAN,
+        0,
+        &[],
+        ExpectedCallOutcome::ResolvedDynamicClosureLocalExact { target: closure },
+    );
+    crate::common::call_site_paranoid::assert_paranoid_call_site(
+        &graph, &report, &owner, &expected,
+    );
+    Ok(())
+}
+
+#[test]
 fn fixture_call_graph_closure_body_call_is_not_recorded_as_outer_call_site() {
     let (graph, _tree) = crate::common::build_tree_for_tests("fixture_call_graph");
     let owner = crate::common::call_site_paranoid::function_owner_context(
@@ -4678,6 +4708,35 @@ fn fixture_call_graph_async_closure_body_call_is_not_recorded_as_outer_call_site
         &owner,
         ExecutableBodyKind::Closure,
         ASYNC_CLOSURE_BODY_LOCAL_TARGET_CALL_SPAN,
+        Some("async_closure"),
+    );
+}
+
+#[test]
+fn fixture_call_graph_awaited_async_closure_body_call_is_not_recorded_as_outer_call_site() {
+    let (graph, _tree) = crate::common::build_tree_for_tests("fixture_call_graph");
+    let owner = crate::common::call_site_paranoid::function_owner_context(
+        &graph,
+        &["crate"],
+        "call_awaited_async_closure_literal_with_body_call",
+    );
+
+    assert_no_call_site_owned_at_span(
+        &graph,
+        &owner,
+        AWAITED_ASYNC_CLOSURE_BODY_LOCAL_TARGET_CALL_SPAN,
+    );
+    assert_closure_body_path_call_owned_at_span(
+        &graph,
+        &owner,
+        AWAITED_ASYNC_CLOSURE_BODY_LOCAL_TARGET_CALL_SPAN,
+        &["local_target"],
+    );
+    assert_executable_body_label_at_span(
+        &graph,
+        &owner,
+        ExecutableBodyKind::Closure,
+        AWAITED_ASYNC_CLOSURE_BODY_LOCAL_TARGET_CALL_SPAN,
         Some("async_closure"),
     );
 }

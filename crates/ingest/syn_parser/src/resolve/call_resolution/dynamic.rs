@@ -80,7 +80,8 @@ impl CallRelationResolver<'_> {
         if let DynamicCallCallee::ClosureBinding { closure_id, .. }
         | DynamicCallCallee::FnPointerCastClosureBinding { closure_id, .. }
         | DynamicCallCallee::DereferencedClosureBinding { closure_id, .. }
-        | DynamicCallCallee::ClosureLiteral { closure_id } = &call.callee
+        | DynamicCallCallee::ClosureLiteral { closure_id }
+        | DynamicCallCallee::AwaitedAsyncClosureLiteral { closure_id } = &call.callee
         {
             relations.push(CallRelation::DynamicClosure {
                 source: call.id,
@@ -100,6 +101,7 @@ impl CallRelationResolver<'_> {
             DynamicCallCallee::LocalBinding { .. }
             | DynamicCallCallee::ClosureBinding { .. }
             | DynamicCallCallee::ClosureLiteral { .. }
+            | DynamicCallCallee::AwaitedAsyncClosureLiteral { .. }
             | DynamicCallCallee::InitializedLocalBinding { .. }
             | DynamicCallCallee::ReturnedPathCall { .. }
             | DynamicCallCallee::FnPointerCastInitializedLocalBinding { .. }

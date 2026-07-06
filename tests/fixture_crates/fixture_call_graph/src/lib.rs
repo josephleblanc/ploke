@@ -1526,3 +1526,7 @@ fn call_single_parenthesized_function_pointer_param(f: fn() -> i32) -> i32 {
 pub fn call_single_parenthesized_function_pointer_param_with_local_target() -> i32 {
     call_single_parenthesized_function_pointer_param(local_target)
 }
+
+pub async fn call_awaited_async_closure_literal_with_body_call() {
+    (async || local_target())().await;
+}

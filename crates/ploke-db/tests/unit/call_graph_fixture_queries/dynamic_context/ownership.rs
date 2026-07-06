@@ -560,6 +560,77 @@ fn fixture_context_projects_async_closure_body_call_to_executable_owner() -> Res
 }
 
 #[test]
+fn fixture_context_resolves_awaited_async_closure_literal_call_to_executable_owner()
+-> Result<(), DbError> {
+    let db = setup_call_graph_fixture_db("fixture_call_graph")?;
+    let target = function_id_by_name(&db, "local_target")?;
+    let outer = function_id_by_name(&db, "call_awaited_async_closure_literal_with_body_call")?;
+    let async_closure = async_closure_owner_for_parent(&db, outer)?;
+
+    let outer_context = db.call_context_for_owner(outer)?;
+    assert!(
+        outer_context.iter().all(|row| row.site.owner_id == outer),
+        "outer function context should only contain rows owned by the outer function: {outer_context:#?}"
+    );
+    let local_target_path = path(&["local_target"]);
+    assert!(
+        outer_context
+            .iter()
+            .all(|row| row.site.path.as_ref() != Some(&local_target_path)),
+        "outer function should not absorb the awaited async-closure local_target() row: {outer_context:#?}"
+    );
+
+    // tests/fixture_crates/fixture_call_graph/src/lib.rs:1530-1532:
+    // `(async || local_target())().await` immediately polls the async closure
+    // future. The outer dynamic call can target the async-closure owner, while
+    // the body call remains owned by that executable owner.
+    let dynamic_row = outer_context
+        .iter()
+        .find(|row| row.site.kind == CallSiteKind::Dynamic && row.site.path.is_none())
+        .expect("awaited async closure literal should project a pathless dynamic call row");
+    assert_resolved_target(
+        dynamic_row,
+        async_closure,
+        CallRelationKind::DynamicClosure,
+        CallSiteKind::Dynamic,
+        CallTargetKind::Closure,
+    );
+
+    let async_closure_context = db.call_context_for_owner(async_closure)?;
+    let row = row_by_path(&async_closure_context, &["local_target"]);
+    assert_eq!(row.site.owner_id, async_closure);
+    assert_resolved_target(
+        row,
+        target,
+        CallRelationKind::Function,
+        CallSiteKind::Path,
+        CallTargetKind::Function,
+    );
+
+    let paths = db.call_paths_from_owner(
+        outer,
+        CallPathOptions {
+            max_depth: 2,
+            max_paths: 8,
+        },
+    )?;
+    let path = paths
+        .iter()
+        .find(|path| path.start_id == outer && path.end_id == target && path.depth == 2)
+        .expect("awaited async closure should expose a two-hop path to local_target");
+    assert_eq!(path.edges[0].caller_id, outer);
+    assert_eq!(path.edges[0].callee_id, async_closure);
+    assert_eq!(path.edges[0].relation, CallRelationKind::DynamicClosure);
+    assert_eq!(path.edges[0].target_kind, CallTargetKind::Closure);
+    assert_eq!(path.edges[1].caller_id, async_closure);
+    assert_eq!(path.edges[1].callee_id, target);
+    assert_eq!(path.edges[1].relation, CallRelationKind::Function);
+    assert_eq!(path.edges[1].target_kind, CallTargetKind::Function);
+
+    Ok(())
+}
+
+#[test]
 fn fixture_snippet_metadata_materializes_closure_body_owner() -> Result<(), DbError> {
     let db = setup_call_graph_fixture_db("fixture_call_graph")?;
     let outer = function_id_by_name(&db, "closure_body_call_is_not_outer_call_site")?;

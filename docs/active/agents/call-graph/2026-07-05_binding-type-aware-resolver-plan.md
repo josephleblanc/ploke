@@ -119,13 +119,26 @@ should prevent future resumes from reselecting already-covered shapes.
    - Opaque dereferenced callable parameters and broader callable trait-object
      dispatch remain targetless/unsupported.
 
-7. Next adjacent candidate:
+7. Immediate awaited async-closure literal proof - completed:
+   - `call_awaited_async_closure_literal_with_body_call` records
+     `(async || local_target())().await` as an awaited async-closure dynamic
+     call only when the closure call expression is the immediate base of
+     `.await`.
+   - The resolver emits `CallRelation::DynamicClosure` to the async-closure
+     executable owner, so owner traversal can continue through the separately
+     owned closure-body `local_target()` row.
+   - The existing non-awaited `(async || local_target())()` case remains
+     explicit `Unsupported` with no direct edge because constructing the future
+     does not prove that it is polled.
+   - Parser and DB tests assert the typed callee, non-flattened body owner, and
+     two-hop outer function -> async-closure owner -> `local_target` traversal.
+
+8. Next adjacent candidate:
    - Select from the coverage matrix parking lot rather than adding more
      import breadth by default.
-   - Likely options are the downstream proof for the private single-caller
-     parameter case, one bounded adjacent local binding/type proof shape, or an
-     explicit workspace proof carrier for one documented dependency-root source
-     oracle.
+   - Likely options are one bounded adjacent local binding/type proof shape, a
+     broader async poll/resume proof carrier, or an explicit workspace proof
+     carrier for one documented dependency-root source oracle.
 
 ## Implementation Order
 

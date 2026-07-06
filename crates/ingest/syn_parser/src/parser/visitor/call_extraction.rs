@@ -39,6 +39,7 @@ pub(super) fn extract_body_call_sites(
         calls: Vec::new(),
         relations: Vec::new(),
         executable_bodies: Vec::new(),
+        awaited_call_spans: Vec::new(),
     };
     visitor.visit_block(block);
     (visitor.calls, visitor.relations, visitor.executable_bodies)
@@ -62,6 +63,7 @@ pub(super) fn extract_expr_call_sites(
         calls: Vec::new(),
         relations: Vec::new(),
         executable_bodies: Vec::new(),
+        awaited_call_spans: Vec::new(),
     };
     visitor.visit_expr(expr);
     (visitor.calls, visitor.relations, visitor.executable_bodies)
@@ -75,6 +77,7 @@ struct BodyCallVisitor<'a> {
     calls: Vec<CallNode>,
     relations: Vec<CallSiteRelation>,
     executable_bodies: Vec<ExecutableBodyNode>,
+    awaited_call_spans: Vec<(usize, usize)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,6 +207,7 @@ impl BodyCallVisitor<'_> {
         let span = (byte_range.start, byte_range.end);
         let id = generate_dynamic_call_site_id(self.owner, span, self.cfgs);
         let target = id.into();
+        let is_awaited = self.awaited_call_spans.contains(&span);
 
         self.calls.push(CallNode::DynamicCall(DynamicCallNode {
             id,
@@ -217,6 +221,7 @@ impl BodyCallVisitor<'_> {
                 self.cfgs,
                 self.param_names,
                 &self.local_scopes,
+                is_awaited,
             ),
         }));
         self.relations.push(CallSiteRelation::BodyContainsCall {
@@ -306,6 +311,18 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
         visit::visit_expr_call(self, call);
     }
 
+    fn visit_expr_await(&mut self, await_expr: &'ast syn::ExprAwait) {
+        if let syn::Expr::Call(call) = unparen_expr(await_expr.base.as_ref()) {
+            let byte_range = call.span().byte_range();
+            self.awaited_call_spans
+                .push((byte_range.start, byte_range.end));
+            visit::visit_expr_await(self, await_expr);
+            self.awaited_call_spans.pop();
+        } else {
+            visit::visit_expr_await(self, await_expr);
+        }
+    }
+
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
         self.record_method_call(call);
         visit::visit_expr_method_call(self, call);
@@ -324,6 +341,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             calls: Vec::new(),
             relations: Vec::new(),
             executable_bodies: Vec::new(),
+            awaited_call_spans: Vec::new(),
         };
         visitor.visit_expr(item_const.expr.as_ref());
         self.append_child(visitor);
@@ -343,6 +361,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             calls: Vec::new(),
             relations: Vec::new(),
             executable_bodies: Vec::new(),
+            awaited_call_spans: Vec::new(),
         };
         visitor.visit_block(item_fn.block.as_ref());
         self.append_child(visitor);
@@ -367,6 +386,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
                 calls: Vec::new(),
                 relations: Vec::new(),
                 executable_bodies: Vec::new(),
+                awaited_call_spans: Vec::new(),
             };
             visitor.visit_block(&method.block);
             self.append_child(visitor);
@@ -402,6 +422,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             calls: Vec::new(),
             relations: Vec::new(),
             executable_bodies: Vec::new(),
+            awaited_call_spans: Vec::new(),
         };
         visitor.visit_expr(closure.body.as_ref());
         self.calls.append(&mut visitor.calls);
@@ -431,6 +452,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             calls: Vec::new(),
             relations: Vec::new(),
             executable_bodies: Vec::new(),
+            awaited_call_spans: Vec::new(),
         };
         visitor.visit_block(&async_block.block);
         self.calls.append(&mut visitor.calls);
@@ -452,6 +474,7 @@ impl<'ast> Visit<'ast> for BodyCallVisitor<'_> {
             calls: Vec::new(),
             relations: Vec::new(),
             executable_bodies: Vec::new(),
+            awaited_call_spans: Vec::new(),
         };
         visitor.visit_expr(item_static.expr.as_ref());
         self.append_child(visitor);
@@ -904,7 +927,12 @@ fn classify_dynamic_callee(
     cfgs: &[String],
     param_names: &[String],
     local_scopes: &[Vec<LocalBindingProof>],
+    is_awaited: bool,
 ) -> DynamicCallCallee {
+    if is_awaited && let Some(closure_id) = async_closure_literal_callee(callee, owner, cfgs) {
+        return DynamicCallCallee::AwaitedAsyncClosureLiteral { closure_id };
+    }
+
     if let Some(closure_id) = closure_literal_callee(callee, owner, cfgs) {
         return DynamicCallCallee::ClosureLiteral { closure_id };
     }
@@ -1001,6 +1029,22 @@ fn closure_literal_callee(
     if closure.asyncness.is_some() {
         return None;
     }
+    let byte_range = closure.span().byte_range();
+    let span = (byte_range.start, byte_range.end);
+    Some(ExecutableBodyId::Closure(generate_closure_body_id(
+        owner, span, cfgs,
+    )))
+}
+
+fn async_closure_literal_callee(
+    callee: &syn::Expr,
+    owner: CallBodyOwnerId,
+    cfgs: &[String],
+) -> Option<ExecutableBodyId> {
+    let syn::Expr::Closure(closure) = unparen_expr(callee) else {
+        return None;
+    };
+    closure.asyncness?;
     let byte_range = closure.span().byte_range();
     let span = (byte_range.start, byte_range.end);
     Some(ExecutableBodyId::Closure(generate_closure_body_id(
