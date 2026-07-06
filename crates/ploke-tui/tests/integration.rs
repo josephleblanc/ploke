@@ -41,6 +41,9 @@ mod command_verbosity_profile;
 #[path = "integration/call_graph_tool_support.rs"]
 mod call_graph_tool_support;
 
+#[path = "integration/call_graph_tool_executable_owner.rs"]
+mod call_graph_tool_executable_owner;
+
 #[path = "integration/call_graph_tool_remaining_matrix.rs"]
 mod call_graph_tool_remaining_matrix;
 

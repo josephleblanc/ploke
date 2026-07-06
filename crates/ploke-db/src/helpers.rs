@@ -71,6 +71,69 @@ file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module
         .map_err(|e| DbError::Cozo(e.to_string()))
 }
 
+/// Resolve an executable body owner by inherited module path, label, owner kind, and file.
+///
+/// `call_body_owner` rows are not primary syntax nodes: they inherit file and
+/// module metadata through their parent function/method/const/static/macro, and
+/// they store their display name in `label` rather than `name`.
+///
+/// This exact helper intentionally handles executable owners whose direct
+/// parent is a regular call owner. Nested executable-owner lookup should grow
+/// by adding a bounded proof shape rather than an unscoped recursive query.
+pub fn graph_resolve_exact_call_body_owner(
+    db: &Database,
+    file_path: &Path,
+    module_path: &[String],
+    item_name: &str,
+    owner_kind: &str,
+) -> Result<Vec<EmbeddingData>, DbError> {
+    let file_path_lit = serde_json::to_string(&file_path.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "\"\"".to_string());
+    let item_name_lit = serde_json::to_string(&item_name).unwrap_or_else(|_| "\"\"".to_string());
+    let owner_kind_lit = serde_json::to_string(&owner_kind).unwrap_or_else(|_| "\"\"".to_string());
+    let mod_path_lit = serde_json::to_string(&module_path).unwrap_or_else(|_| "[]".to_string());
+    let ancestor_rules = lookup_ancestor_rules_now();
+
+    let script = format!(
+        r#"
+{ancestor_rules}
+module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
+file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
+
+parent_anchor[parent_id, hash, mod_id] := *function{{ id: parent_id, tracking_hash: hash @ 'NOW' }}, ancestor[parent_id, mod_id]
+parent_anchor[parent_id, hash, mod_id] := *macro{{ id: parent_id, tracking_hash: hash @ 'NOW' }}, ancestor[parent_id, mod_id]
+parent_anchor[parent_id, hash, mod_id] := *method{{ id: parent_id, tracking_hash: hash @ 'NOW' }}, ancestor[parent_id, mod_id]
+parent_anchor[parent_id, hash, mod_id] := *const{{ id: parent_id, tracking_hash: hash @ 'NOW' }}, ancestor[parent_id, mod_id]
+parent_anchor[parent_id, hash, mod_id] := *static{{ id: parent_id, tracking_hash: hash @ 'NOW' }}, ancestor[parent_id, mod_id]
+
+?[id, name, file_path, file_hash, hash, span, namespace, mod_path] :=
+  *call_body_owner{{ id, owner_kind, parent_id, label: name, span @ 'NOW' }},
+  parent_anchor[parent_id, hash, mod_id],
+  *module{{ id: mod_id, path: mod_path @ 'NOW' }},
+  file_owner_for_module[mod_id, file_owner_id],
+  *module{{ id: file_owner_id, tracking_hash: file_hash @ 'NOW' }},
+  *file_mod{{ owner_id: file_owner_id, file_path, namespace @ 'NOW' }},
+  name == {item_name_lit},
+  owner_kind == {owner_kind_lit},
+  file_path == {file_path_lit},
+  mod_path == {mod_path_lit}
+"#,
+        item_name_lit = item_name_lit,
+        owner_kind_lit = owner_kind_lit,
+        file_path_lit = file_path_lit,
+        mod_path_lit = mod_path_lit,
+    );
+
+    let qr = db.raw_query(&script)?;
+    let mut rows = qr
+        .to_embedding_nodes()
+        .map_err(|e| DbError::Cozo(e.to_string()))?;
+    rows.sort_by_key(|row| row.id);
+    rows.dedup_by_key(|row| row.id);
+    Ok(rows)
+}
+
 /// Resolve an enum variant by canonical module path, variant name, and file.
 ///
 /// Variants are secondary nodes: the `variant` relation carries the variant id
@@ -482,6 +545,65 @@ edges_to_focus[source_name, target_name, source_id, target_id, canon_path, file_
   edges_to_focus[source_name, target_name, source_id, target_id, canon_path, file_path, relation_kind]
 "#,
         rel = relation
+    );
+
+    let qr = db.raw_query_params(&script, params)?;
+    qr.to_resolved_edges()
+        .map_err(|e| DbError::Cozo(e.to_string()))
+}
+
+/// Resolve graph edges for an already-disambiguated executable body owner.
+///
+/// This mirrors [`graph_resolve_edges_for_id`] but uses the `call_body_owner`
+/// label field as the node display name.
+pub fn graph_resolve_edges_for_call_body_owner_id(
+    db: &Database,
+    focus_id: Uuid,
+) -> Result<Vec<ResolvedEdgeData>, DbError> {
+    let common_fields_embedded: &str = COMMON_FIELDS_EMBEDDED.as_ref();
+    let ancestor_rules = lookup_ancestor_rules_now();
+    let mut params = BTreeMap::new();
+    params.insert(
+        "focus_id".to_string(),
+        cozo::DataValue::Uuid(cozo::UuidWrapper(focus_id)),
+    );
+
+    let script = format!(
+        r#"
+{common_fields_embedded}
+{ancestor_rules}
+
+module_has_file_mod[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_owner_id] := module_has_file_mod[mod_id], file_owner_id = mod_id
+file_owner_for_module[mod_id, file_owner_id] := ancestor[mod_id, parent], module_has_file_mod[parent], file_owner_id = parent
+
+resolve_item[id, name] :=
+  *call_body_owner{{ id, label: name @ 'NOW' }},
+  id = $focus_id
+
+node_with_context[id, name, canon_path, file_path] :=
+  parent_of[id, mod_id],
+  *module{{ id: mod_id, path: canon_path @ 'NOW' }},
+  file_owner_for_module[mod_id, file_owner_id],
+  *file_mod{{ owner_id: file_owner_id, file_path @ 'NOW' }},
+  has_embedding[id, name, hash, span]
+
+edges_from_focus[source_name, target_name, source_id, target_id, canon_path, file_path, relation_kind] :=
+  resolve_item[source_id, source_name],
+  *syntax_edge{{source_id, target_id, relation_kind @ 'NOW'}},
+  node_with_context[target_id, target_name, canon_path, file_path]
+
+edges_to_focus[source_name, target_name, source_id, target_id, canon_path, file_path, relation_kind] :=
+  resolve_item[source_id, source_name],
+  *syntax_edge{{source_id: other_id, target_id: source_id, relation_kind @ 'NOW'}},
+  node_with_context[other_id, target_name, canon_path, file_path],
+  target_id = other_id
+
+?[source_name, target_name, source_id, target_id, canon_path, file_path, relation_kind] :=
+  edges_from_focus[source_name, target_name, source_id, target_id, canon_path, file_path, relation_kind]
+?[source_name, target_name, source_id, target_id, canon_path, file_path, relation_kind] :=
+  edges_to_focus[source_name, target_name, source_id, target_id, canon_path, file_path, relation_kind]
+"#,
     );
 
     let qr = db.raw_query_params(&script, params)?;

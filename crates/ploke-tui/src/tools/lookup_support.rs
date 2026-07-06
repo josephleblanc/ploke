@@ -6,7 +6,7 @@ use ploke_core::{
 use ploke_db::{
     CallPathOptions, Database, DbError,
     helpers::{
-        graph_resolve_exact, graph_resolve_exact_impl_method,
+        graph_resolve_exact, graph_resolve_exact_call_body_owner, graph_resolve_exact_impl_method,
         graph_resolve_exact_trait_impl_method, graph_resolve_exact_trait_method,
         graph_resolve_exact_variant,
     },
@@ -224,6 +224,9 @@ pub(super) fn resolve_exact_item(
         ),
         None if matches!(node_kind, NodeKind::Variant) => {
             graph_resolve_exact_variant(db, abs_path, mod_path, item_name)
+        }
+        None if let Some(owner_kind) = node_kind.call_body_owner_kind() => {
+            graph_resolve_exact_call_body_owner(db, abs_path, mod_path, item_name, owner_kind)
         }
         None => graph_resolve_exact(db, node_kind.as_relation(), abs_path, mod_path, item_name),
     }

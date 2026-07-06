@@ -77,6 +77,9 @@ pub enum Edit {
 pub enum NodeKind {
     Function,
     Method,
+    Closure,
+    AsyncBlock,
+    LocalItem,
     Const,
     Enum,
     Impl,
@@ -92,9 +95,12 @@ pub enum NodeKind {
 }
 
 impl NodeKind {
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 17] = [
         Self::Function,
         Self::Method,
+        Self::Closure,
+        Self::AsyncBlock,
+        Self::LocalItem,
         Self::Const,
         Self::Enum,
         Self::Impl,
@@ -110,13 +116,12 @@ impl NodeKind {
     ];
 
     pub fn as_str(&self) -> &'static str {
-        self.as_relation()
-    }
-
-    pub fn as_relation(&self) -> &'static str {
         match self {
             NodeKind::Function => "function",
             NodeKind::Method => "method",
+            NodeKind::Closure => "closure",
+            NodeKind::AsyncBlock => "async_block",
+            NodeKind::LocalItem => "local_item",
             NodeKind::Const => "const",
             NodeKind::Enum => "enum",
             NodeKind::Impl => "impl",
@@ -132,8 +137,37 @@ impl NodeKind {
         }
     }
 
-    pub fn allowed_values() -> [&'static str; 14] {
-        Self::ALL.map(|kind| kind.as_relation())
+    pub fn as_relation(&self) -> &'static str {
+        match self {
+            NodeKind::Function => "function",
+            NodeKind::Method => "method",
+            NodeKind::Closure | NodeKind::AsyncBlock | NodeKind::LocalItem => "call_body_owner",
+            NodeKind::Const => "const",
+            NodeKind::Enum => "enum",
+            NodeKind::Impl => "impl",
+            NodeKind::Import => "import",
+            NodeKind::Macro => "macro",
+            NodeKind::Module => "module",
+            NodeKind::Static => "static",
+            NodeKind::Struct => "struct",
+            NodeKind::Trait => "trait",
+            NodeKind::TypeAlias => "type_alias",
+            NodeKind::Union => "union",
+            NodeKind::Variant => "variant",
+        }
+    }
+
+    pub fn allowed_values() -> [&'static str; 17] {
+        Self::ALL.map(|kind| kind.as_str())
+    }
+
+    pub fn call_body_owner_kind(self) -> Option<&'static str> {
+        match self {
+            Self::Closure => Some("Closure"),
+            Self::AsyncBlock => Some("AsyncBlock"),
+            Self::LocalItem => Some("LocalItem"),
+            _ => None,
+        }
     }
 
     pub fn schema_description() -> String {
@@ -171,6 +205,9 @@ impl std::str::FromStr for NodeKind {
         match s {
             "function" => Ok(Self::Function),
             "method" => Ok(Self::Method),
+            "closure" => Ok(Self::Closure),
+            "async_block" => Ok(Self::AsyncBlock),
+            "local_item" => Ok(Self::LocalItem),
             "const" => Ok(Self::Const),
             "enum" => Ok(Self::Enum),
             "impl" => Ok(Self::Impl),
@@ -199,6 +236,28 @@ mod tests {
 
         let parsed = "method".parse::<NodeKind>().expect("parse method");
         assert!(matches!(parsed, NodeKind::Method));
+    }
+
+    #[test]
+    fn node_kind_includes_executable_body_owner_kinds() {
+        assert_eq!(NodeKind::Closure.as_str(), "closure");
+        assert_eq!(NodeKind::Closure.as_relation(), "call_body_owner");
+        assert_eq!(NodeKind::Closure.call_body_owner_kind(), Some("Closure"));
+        assert_eq!(
+            NodeKind::AsyncBlock.call_body_owner_kind(),
+            Some("AsyncBlock")
+        );
+        assert_eq!(
+            NodeKind::LocalItem.call_body_owner_kind(),
+            Some("LocalItem")
+        );
+        assert!(NodeKind::allowed_values().contains(&"local_item"));
+        assert!(matches!(
+            "async_block"
+                .parse::<NodeKind>()
+                .expect("parse async block"),
+            NodeKind::AsyncBlock
+        ));
     }
 
     #[test]

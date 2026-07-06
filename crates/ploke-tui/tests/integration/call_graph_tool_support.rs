@@ -14,7 +14,7 @@ use ploke_core::{
 };
 use ploke_db::{
     Database,
-    helpers::graph_resolve_exact,
+    helpers::{graph_resolve_exact, graph_resolve_exact_call_body_owner},
     multi_embedding::db_ext::{ANCESTOR_RULES_NOW, METHOD_NODE_ANCESTOR_RULE},
     to_uuid,
 };
@@ -69,6 +69,13 @@ pub(crate) struct CallableBlockerFixture {
     pub(crate) owner: Uuid,
     pub(crate) path: Vec<String>,
     pub(crate) build_domain: &'static str,
+}
+
+pub(crate) struct LocalItemToolFixture {
+    pub(crate) state: Arc<AppState>,
+    pub(crate) file_path: PathBuf,
+    pub(crate) module_path: Vec<String>,
+    pub(crate) owner: Uuid,
 }
 
 pub(crate) struct AxumBodyEmptyToolFixture {
@@ -325,6 +332,56 @@ impl CallableBlockerFixture {
             path: path.iter().map(|part| (*part).to_string()).collect(),
             build_domain: "bd:fixture-call-graph",
         }
+    }
+
+    pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
+        ctx_for_state(&self.state, call_id)
+    }
+}
+
+impl LocalItemToolFixture {
+    pub(crate) async fn axum_path_deserialize_local_impl_method() -> Self {
+        let db = axum_call_graph_db();
+        let target = axum_call_body_owner_target_by_label(
+            db.as_ref(),
+            "LocalItem",
+            "local_impl_method:deserialize",
+            &["crate", "extract", "path"],
+            "axum/src/extract/path/mod.rs",
+        );
+        let exact = graph_resolve_exact_call_body_owner(
+            db.as_ref(),
+            target.file_path.as_path(),
+            &target.module_path,
+            "local_impl_method:deserialize",
+            "LocalItem",
+        )
+        .expect("resolve local_impl_method:deserialize owner");
+        assert_eq!(
+            exact.len(),
+            1,
+            "local_impl_method:deserialize should be exact-addressable through call_body_owner"
+        );
+        assert_eq!(exact[0].id, target.id);
+        assert!(
+            db.project_call_proof_facts_for_node(target.id, "bd:corpus-axum-call-graph")
+                .expect("project local item proof facts")
+                >= 2,
+            "local_impl_method:deserialize should project node-scoped call/proof rows"
+        );
+        let state =
+            axum_state_for_target(Arc::clone(&db), &target, "local_impl_method:deserialize").await;
+
+        Self {
+            state,
+            file_path: target.file_path,
+            module_path: target.module_path,
+            owner: target.id,
+        }
+    }
+
+    pub(crate) fn module_path_arg(&self) -> String {
+        self.module_path.join("::")
     }
 
     pub(crate) fn ctx(&self, call_id: &'static str) -> Ctx {
@@ -1573,6 +1630,71 @@ file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_f
         id: to_uuid(&row[0]).expect("ConnLimiter::accept uuid"),
         file_path: PathBuf::from(data_str(&row[2], "file_path")),
         module_path: data_path(&row[3], "module path"),
+    }
+}
+
+fn axum_call_body_owner_target_by_label(
+    db: &Database,
+    owner_kind: &str,
+    label: &str,
+    module_path: &[&str],
+    file_suffix: &str,
+) -> TargetInfo {
+    let script = format!(
+        r#"
+ancestor[desc, desc] := *module{{ id: desc @ 'NOW' }}
+{ANCESTOR_RULES_NOW}
+{METHOD_NODE_ANCESTOR_RULE}
+
+module_has_file[mid] := *file_mod{{ owner_id: mid @ 'NOW' }}
+file_owner_for_module[mod_id, file_id] := module_has_file[mod_id], file_id = mod_id
+file_owner_for_module[mod_id, file_id] := ancestor[mod_id, parent], module_has_file[parent], file_id = parent
+
+parent_anchor[parent_id, mod_id] := *function{{ id: parent_id @ 'NOW' }}, ancestor[parent_id, mod_id]
+parent_anchor[parent_id, mod_id] := *macro{{ id: parent_id @ 'NOW' }}, ancestor[parent_id, mod_id]
+parent_anchor[parent_id, mod_id] := *method{{ id: parent_id @ 'NOW' }}, ancestor[parent_id, mod_id]
+parent_anchor[parent_id, mod_id] := *const{{ id: parent_id @ 'NOW' }}, ancestor[parent_id, mod_id]
+parent_anchor[parent_id, mod_id] := *static{{ id: parent_id @ 'NOW' }}, ancestor[parent_id, mod_id]
+
+?[id, file_path, mod_path] :=
+    *call_body_owner {{ id, owner_kind: $owner_kind, parent_id, label: $label @ 'NOW' }},
+    parent_anchor[parent_id, mod_id],
+    *module{{ id: mod_id, path: mod_path @ 'NOW' }},
+    file_owner_for_module[mod_id, file_id],
+    *file_mod{{ owner_id: file_id, file_path @ 'NOW' }}
+"#
+    );
+    let mut params = BTreeMap::new();
+    params.insert("owner_kind".to_string(), DataValue::from(owner_kind));
+    params.insert("label".to_string(), DataValue::from(label));
+
+    let rows = db
+        .raw_query_params(&script, params)
+        .unwrap_or_else(|err| panic!("query axum call_body_owner {label}: {err}"));
+    let module_path = module_path
+        .iter()
+        .map(|part| (*part).to_string())
+        .collect::<Vec<_>>();
+    let matching = rows
+        .rows
+        .iter()
+        .filter(|row| {
+            data_str(&row[1], "file_path").ends_with(file_suffix)
+                && data_path(&row[2], "module path") == module_path
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        matching.len(),
+        1,
+        "expected exactly one axum call_body_owner {label:?} in {file_suffix:?} with module path {module_path:?}; rows: {:#?}",
+        rows.rows
+    );
+    let row = matching[0];
+
+    TargetInfo {
+        id: to_uuid(&row[0]).unwrap_or_else(|err| panic!("{label} uuid: {err}")),
+        file_path: PathBuf::from(data_str(&row[1], "file_path")),
+        module_path: data_path(&row[2], "module path"),
     }
 }
 

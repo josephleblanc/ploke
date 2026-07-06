@@ -7,7 +7,9 @@ use ploke_core::{
     tool_types::ToolName,
 };
 use ploke_db::{
-    helpers::{graph_resolve_edges, graph_resolve_edges_for_id},
+    helpers::{
+        graph_resolve_edges, graph_resolve_edges_for_call_body_owner_id, graph_resolve_edges_for_id,
+    },
     typed_rows::ResolvedEdgeData,
 };
 use ploke_error::DomainError;
@@ -298,7 +300,9 @@ for a more fuzzy search."#
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
             .collect_vec();
-        let resolved_edges = if owner.is_some() || matches!(node_kind, NodeKind::Variant) {
+        let resolved_edges = if node_kind.call_body_owner_kind().is_some() {
+            graph_resolve_edges_for_call_body_owner_id(&ctx.state.db, resolved_item_id)?
+        } else if owner.is_some() || matches!(node_kind, NodeKind::Variant) {
             graph_resolve_edges_for_id(&ctx.state.db, node_kind.as_relation(), resolved_item_id)?
         } else {
             graph_resolve_edges(
