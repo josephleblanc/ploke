@@ -15,7 +15,7 @@ Root plan: `.hermes/plans/2026-06-15_225532-ploke-call-graph-typed-plan.md`
 
 Current phase: binding/type-aware semantic resolution.
 
-Current completed bucket: direct and typed tuple-pattern local receiver proof.
+Current completed bucket: external `Service`-bound self-field receiver frontier.
 
 Exit criteria for the first implementation slice:
 
@@ -176,7 +176,21 @@ should prevent future resumes from reselecting already-covered shapes.
      out of scope unless an explicit local type annotation supplies a
      per-element type proof.
 
-9. Next adjacent candidate:
+9. External `Service`-bound self-field receiver frontier - completed:
+   - Regenerated axum `self.inner.poll_ready(cx)` and `self.0.poll_ready(cx)`
+     forwarding rows now classify as targetless `External` frontier rows when
+     the receiver field type is either a concrete external service receiver
+     type or a generic parameter with a source-visible external `Service`
+     bound.
+   - The resolver reuses existing self-field type proof and generic-bound
+     source collection. It does not fabricate a local `tower_service::Service`
+     target or broaden concrete trait dispatch.
+   - DB real-corpus assertions pin seven `SelfField(inner)` rows and three
+     `SelfField(0)` rows over the regenerated axum call-graph fixture.
+   - Broader external trait methods, dynamic dispatch, and async poll/resume
+     effect edges remain out of scope.
+
+10. Next adjacent candidate:
    - Select from the coverage matrix parking lot rather than adding more
      import breadth by default.
    - Likely options are a broader async poll/resume proof carrier, an explicit

@@ -40,6 +40,17 @@ future work can choose the next batch without rereading the diary-style notes.
 
 ## Recent downstream slice
 
+- 2026-07-06: Self-field receiver forwarding through external `Service` bounds
+  now classifies as targetless `External` frontier rows instead of
+  `Unsupported` when the receiver field type is a generic parameter with a
+  source-visible external `Service` bound, or a concrete external service
+  receiver type. The axum source oracle is `self.inner.poll_ready(cx)` across
+  seven service wrappers and
+  `self.0.poll_ready(cx)` across one tuple wrapper plus two local impl method
+  owners. The resolver reuses self-field type proof and generic-bound source
+  collection and does not fabricate a local `tower_service::Service` target.
+  Focused verification:
+  `cargo test -p ploke-db axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps -- --nocapture`.
 - 2026-07-06: Owner reach summaries now split the remaining nonresolved
   frontier statuses into `unresolved_frontier_calls` and
   `ambiguous_frontier_calls`, alongside the existing full `frontier_calls`,

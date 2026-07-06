@@ -506,8 +506,9 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
     //   axum/src/extension.rs:180 calls `self.inner.poll_ready(cx)`.
     //   Other service wrappers use the same `SelfField` forwarding shape, and
     //   tuple wrappers project as `self.0.poll_ready(...)`.
-    // Current model gap: external trait receiver dispatch is visible but
-    // targetless.
+    // Current model boundary: external trait receiver dispatch is visible as
+    // targetless external frontier rows. The resolver does not fabricate a
+    // concrete `tower_service::Service` target.
     let inner_receiver = CallReceiver::SelfField {
         path: vec!["inner".to_string()],
     };
@@ -597,7 +598,7 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
             owner,
             "poll_ready",
             &inner_receiver,
-            CallStatusKind::Unsupported,
+            CallStatusKind::External,
             1,
             label,
         )?;
@@ -617,7 +618,7 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
         tuple_method_owner,
         "poll_ready",
         &tuple_receiver,
-        CallStatusKind::Unsupported,
+        CallStatusKind::External,
         1,
         // axum/src/middleware/response_axum_body.rs:45
         "axum/src/middleware/response_axum_body.rs:45",
@@ -659,7 +660,7 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
             owner,
             "poll_ready",
             &tuple_receiver,
-            CallStatusKind::Unsupported,
+            CallStatusKind::External,
             1,
             label,
         )?;
@@ -670,7 +671,7 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
         "poll_ready",
         "SelfField",
         Some(&["inner"]),
-        CallStatusKind::Unsupported,
+        CallStatusKind::External,
         7,
     )?;
     assert_targetless_method_rows(
@@ -678,7 +679,7 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
         "poll_ready",
         "SelfField",
         Some(&["0"]),
-        CallStatusKind::Unsupported,
+        CallStatusKind::External,
         3,
     )?;
     assert_targetless_method_line_fanout(
@@ -687,7 +688,7 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
         "poll_ready",
         "SelfField",
         Some(&["inner"]),
-        CallStatusKind::Unsupported,
+        CallStatusKind::External,
         &[
             SourceLineFanout {
                 file_suffix: "axum-core/src/extract/default_body_limit.rs",
@@ -725,7 +726,7 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
         "poll_ready",
         "SelfField",
         Some(&["0"]),
-        CallStatusKind::Unsupported,
+        CallStatusKind::External,
         &[SourceLineFanout {
             file_suffix: "axum/src/middleware/response_axum_body.rs",
             lines: &[45],
@@ -737,7 +738,7 @@ fn axum_real_target_poll_ready_forwarding_receivers_are_documented_gaps() -> Res
         "poll_ready",
         "SelfField",
         Some(&["0"]),
-        CallStatusKind::Unsupported,
+        CallStatusKind::External,
         "LocalItem",
         &[
             SourceLineFanout {

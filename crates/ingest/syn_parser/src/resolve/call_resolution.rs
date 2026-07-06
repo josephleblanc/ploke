@@ -1185,6 +1185,17 @@ impl<'a> CallRelationResolver<'a> {
         param_id: Option<TypeGenericParamNodeId>,
         type_relations: &[TypeRelation],
     ) -> Result<Vec<TraitNodeId>, SynParserError> {
+        let sources = self.generic_bound_sources(owner, target, param_id, type_relations)?;
+        self.bound_traits_from_sources(&sources, type_relations)
+    }
+
+    fn generic_bound_sources(
+        &self,
+        owner: CallBodyOwnerId,
+        target: OrdinaryTypeTargetId,
+        param_id: Option<TypeGenericParamNodeId>,
+        type_relations: &[TypeRelation],
+    ) -> Result<Vec<TraitTypeSourceId>, SynParserError> {
         let mut sources = Vec::new();
         for scope in self.generic_bound_scopes(owner)? {
             if let Some(param_id) = param_id {
@@ -1216,7 +1227,9 @@ impl<'a> CallRelationResolver<'a> {
             }
         }
 
-        self.bound_traits_from_sources(&sources, type_relations)
+        sources.sort_unstable();
+        sources.dedup();
+        Ok(sources)
     }
 
     fn bound_traits_from_sources(

@@ -274,12 +274,12 @@ nested row.
 Receiver tests now assert exact owner-count buckets and source-line
 fanout for the projected `req.extensions_mut()` local-binding rows, split into
 direct/single-reference external parameter receivers and still-unresolved
-generic receiver rows, plus the initialized external `Request::new` receiver row, the seven projected
-`self.inner.poll_ready(cx)` forwarding rows, and the three projected
-`self.0.poll_ready(cx)` tuple-field rows. The tuple-field coverage splits the
-item-level method row from the two nested local `impl Service` rows now owned
-by `local_impl_method:poll_ready` executable owners in `routing/tests/mod.rs`
-and `routing/tests/nest.rs`.
+generic receiver rows, plus the initialized external `Request::new` receiver
+row, the seven projected `self.inner.poll_ready(cx)` external frontier rows,
+and the three projected `self.0.poll_ready(cx)` external frontier rows. The
+tuple-field coverage splits the item-level method row from the two nested local
+`impl Service` rows now owned by `local_impl_method:poll_ready` executable
+owners in `routing/tests/mod.rs` and `routing/tests/nest.rs`.
 The result-chain coverage also pins all 14 projected `Request::builder()` rows
 by owner and source line: five external rows, two unresolved axum-core
 ext-trait test rows, and seven unsupported rows, including the matrix chain in

@@ -324,7 +324,7 @@ impl<'a> CallRelationResolver<'a> {
         })
     }
 
-    fn segment_external_paths(
+    pub(super) fn segment_external_paths(
         &self,
         module_id: ModuleNodeId,
         segment: &str,
@@ -351,6 +351,48 @@ impl<'a> CallRelationResolver<'a> {
                 paths.extend(self.ancestor_external_paths(import_node, segment, depth + 1)?);
             } else if import_node.visible_name == segment {
                 paths.extend(self.import_external_paths(import_node.id, depth + 1)?);
+            }
+        }
+        if paths.is_empty() {
+            paths.extend(self.equivalent_module_external_paths(module_id, segment, depth + 1)?);
+        }
+        paths.sort();
+        paths.dedup();
+        Ok(paths)
+    }
+
+    fn equivalent_module_external_paths(
+        &self,
+        module_id: ModuleNodeId,
+        segment: &str,
+        depth: usize,
+    ) -> Result<Vec<Vec<String>>, SynParserError> {
+        if depth > MAX_IMPORT_CHAIN_DEPTH {
+            return Err(SynParserError::InternalState(format!(
+                "call resolution exceeded import chain depth limit of {MAX_IMPORT_CHAIN_DEPTH} while resolving external import `{segment}` through equivalent modules"
+            )));
+        }
+
+        let Some(module_node) = self
+            .graph
+            .modules()
+            .iter()
+            .find(|module| module.id == module_id)
+        else {
+            return Ok(Vec::new());
+        };
+
+        let mut paths = Vec::new();
+        for candidate in self
+            .graph
+            .modules()
+            .iter()
+            .filter(|candidate| candidate.id != module_id && candidate.path == module_node.path)
+        {
+            for import_node in &candidate.imports {
+                if import_node.visible_name == segment && !import_node.is_glob {
+                    paths.extend(self.import_external_paths(import_node.id, depth + 1)?);
+                }
             }
         }
         paths.sort();

@@ -5,7 +5,7 @@ use crate::{
         nodes::{
             AnyCallSiteId, AsAnyNodeId, CallBodyOwnerId, CallNode, FieldNode, MethodCallNode,
             MethodCallReceiver, OrdinaryTypeSourceId, OrdinaryTypeTargetId, OrdinaryTypeUseId,
-            StructNodeId, TypeAliasNodeId,
+            StructNodeId, TraitTypeSourceId, TypeAliasNodeId, TypeGenericParamNodeId,
         },
         relations::{CallRelation, CallResolutionKind, CallResolutionStatus, TypeRelation},
         types::TypeNode,
@@ -16,6 +16,12 @@ use super::{
     AssocPathResolution, CallRelationResolver, LocalFunctionPathResolution, LocalTraitResolution,
     LocalTypeResolution, trait_declares_instance_method,
 };
+
+#[derive(Debug, Clone, Copy)]
+struct SelfFieldTypeInfo {
+    declared: OrdinaryTypeUseId,
+    impl_arg: Option<OrdinaryTypeUseId>,
+}
 
 impl CallRelationResolver<'_> {
     pub(super) fn resolve_method_call(
@@ -164,13 +170,47 @@ impl CallRelationResolver<'_> {
         field_path: &[String],
         type_relations: &[TypeRelation],
     ) -> Result<bool, SynParserError> {
+        if self.is_external_executable_self_field_method(
+            call.owner,
+            field_path,
+            &call.method_name,
+        )? {
+            return Ok(true);
+        }
+
         let [field_name] = field_path else {
             return Ok(false);
         };
-        let Some(field_type) = self.self_field_type(call.owner, field_name, type_relations)? else {
+        let Some(field_type) = self.self_field_type_info(call.owner, field_name, type_relations)?
+        else {
             return Ok(false);
         };
-        self.is_external_type_method(call.owner, field_type, &call.method_name, type_relations)
+        if self.is_external_type_method(
+            call.owner,
+            field_type.declared,
+            &call.method_name,
+            type_relations,
+        )? {
+            return Ok(true);
+        }
+
+        let mut candidates = vec![field_type.declared];
+        if let Some(impl_arg) = field_type.impl_arg {
+            candidates.push(impl_arg);
+        }
+
+        for field_type in candidates {
+            if self.is_external_bound_self_field_method(
+                call.owner,
+                field_type,
+                &call.method_name,
+                type_relations,
+            )? {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     fn resolve_self_field_method_call(
@@ -195,6 +235,17 @@ impl CallRelationResolver<'_> {
         field_name: &str,
         type_relations: &[TypeRelation],
     ) -> Result<Option<OrdinaryTypeUseId>, SynParserError> {
+        Ok(self
+            .self_field_type_info(owner, field_name, type_relations)?
+            .map(|field_type| field_type.declared))
+    }
+
+    fn self_field_type_info(
+        &self,
+        owner: CallBodyOwnerId,
+        field_name: &str,
+        type_relations: &[TypeRelation],
+    ) -> Result<Option<SelfFieldTypeInfo>, SynParserError> {
         let CallBodyOwnerId::Method(owner_method_id) = owner else {
             return Ok(None);
         };
@@ -213,11 +264,46 @@ impl CallRelationResolver<'_> {
         };
         let struct_node = self.graph.get_struct_checked(struct_id)?;
 
-        Ok(Self::struct_field_type(
-            &struct_node.fields,
-            field_name,
-            &struct_node.name,
-        ))
+        let Some(declared) =
+            Self::struct_field_type(&struct_node.fields, field_name, &struct_node.name)
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(SelfFieldTypeInfo {
+            declared,
+            impl_arg: self.impl_self_arg_for_struct_field(
+                impl_node,
+                struct_node,
+                declared,
+                type_relations,
+            )?,
+        }))
+    }
+
+    fn impl_self_arg_for_struct_field(
+        &self,
+        impl_node: &crate::parser::nodes::ImplNode,
+        struct_node: &crate::parser::nodes::StructNode,
+        field_type: OrdinaryTypeUseId,
+        type_relations: &[TypeRelation],
+    ) -> Result<Option<OrdinaryTypeUseId>, SynParserError> {
+        let Some(field_target) = self.single_ordinary_target(field_type, type_relations)? else {
+            return Ok(None);
+        };
+        let Ok(field_param) = TypeGenericParamNodeId::try_from(field_target) else {
+            return Ok(None);
+        };
+        let Some(field_index) = struct_node.generic_params.iter().position(|param| {
+            TypeGenericParamNodeId::try_refine(param.id, &param.kind).ok() == Some(field_param)
+        }) else {
+            return Ok(None);
+        };
+
+        let TypeNode::Named(self_type) = self.type_node(impl_node.self_type)? else {
+            return Ok(None);
+        };
+        Ok(self_type.arguments.get(field_index).copied())
     }
 
     fn struct_field_type(
@@ -269,7 +355,10 @@ impl CallRelationResolver<'_> {
             return Ok(false);
         };
 
-        if !matches!(method_name, "extensions_mut" | "len" | "size_hint") {
+        if !matches!(
+            method_name,
+            "extensions_mut" | "len" | "poll_ready" | "size_hint"
+        ) {
             return Ok(false);
         }
 
@@ -287,6 +376,143 @@ impl CallRelationResolver<'_> {
             }
             _ => Ok(false),
         }
+    }
+
+    fn is_external_bound_self_field_method(
+        &self,
+        owner: CallBodyOwnerId,
+        field_type: OrdinaryTypeUseId,
+        method_name: &str,
+        type_relations: &[TypeRelation],
+    ) -> Result<bool, SynParserError> {
+        if method_name != "poll_ready" {
+            return Ok(false);
+        }
+
+        let Some(target) = self.single_ordinary_target(field_type, type_relations)? else {
+            return Ok(false);
+        };
+        let Ok(param_id) = TypeGenericParamNodeId::try_from(target) else {
+            return Ok(false);
+        };
+
+        let sources = self.generic_bound_sources(owner, target, Some(param_id), type_relations)?;
+        for source in sources {
+            if self.is_external_service_trait_bound(owner, source)? {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    fn is_external_service_trait_bound(
+        &self,
+        owner: CallBodyOwnerId,
+        source: TraitTypeSourceId,
+    ) -> Result<bool, SynParserError> {
+        let path = match self.type_node(source)? {
+            TypeNode::Named(node) => &node.path,
+            TypeNode::TraitBound(node) => &node.path,
+            _ => return Ok(false),
+        };
+
+        self.is_external_service_path(owner, path)
+    }
+
+    fn is_external_service_path(
+        &self,
+        owner: CallBodyOwnerId,
+        path: &[String],
+    ) -> Result<bool, SynParserError> {
+        if !path.last().is_some_and(|segment| segment == "Service") {
+            return Ok(false);
+        }
+        if self.is_external_path(path) {
+            return Ok(true);
+        }
+        if self.is_external_import_path(owner, path)? {
+            return Ok(!self.service_trait_is_local(owner, path)?);
+        }
+
+        let [segment] = path else {
+            return Ok(false);
+        };
+        let Some(module_id) = self.containing_module_for_owner(owner) else {
+            return Ok(false);
+        };
+        let module_id = self.import_scope_module(module_id)?;
+        let paths = self.segment_external_paths(module_id, segment, 0)?;
+        if paths.is_empty() || self.service_trait_is_local(owner, path)? {
+            return Ok(false);
+        }
+
+        Ok(paths
+            .iter()
+            .all(|path| path.last().is_some_and(|segment| segment == "Service")))
+    }
+
+    fn service_trait_is_local(
+        &self,
+        owner: CallBodyOwnerId,
+        path: &[String],
+    ) -> Result<bool, SynParserError> {
+        let [segment] = path else {
+            return Ok(false);
+        };
+
+        Ok(!matches!(
+            self.resolve_local_trait_segment(owner, segment)?,
+            LocalTraitResolution::Unresolved
+        ))
+    }
+
+    fn is_external_executable_self_field_method(
+        &self,
+        owner: CallBodyOwnerId,
+        field_path: &[String],
+        method_name: &str,
+    ) -> Result<bool, SynParserError> {
+        if method_name != "poll_ready" || field_path != ["0"] {
+            return Ok(false);
+        }
+
+        let CallBodyOwnerId::Executable(id) = owner else {
+            return Ok(false);
+        };
+        let body = self
+            .graph
+            .executable_bodies()
+            .iter()
+            .find(|body| body.id == id)
+            .ok_or_else(|| {
+                SynParserError::InternalState(format!(
+                    "call resolution found missing executable body {id} during external self-field method lookup"
+                ))
+            })?;
+        if !body
+            .label
+            .as_deref()
+            .is_some_and(|label| label.starts_with("local_impl_method:"))
+        {
+            return Ok(false);
+        }
+
+        for predicate in &body.where_predicates {
+            if predicate.subject_path.len() != 1 {
+                continue;
+            }
+            for bound in &predicate.trait_bounds {
+                if !bound.last().is_some_and(|segment| segment == "Service") {
+                    continue;
+                }
+                if self.is_external_service_path(owner, bound)? {
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(false)
     }
 
     fn receiver_type_is_external(
